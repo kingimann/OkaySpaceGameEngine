@@ -120,7 +120,8 @@ static std::string Sdna(const std::vector<std::pair<std::string, std::string>>& 
 
 int main() {
     RUN_SUITE("blend_hostile");
-    const char* names[] = {"blend_attr_41.blend", "blend_attr_36.blend", "blend_attr_be32.blend", "blend_attr_41_gz.blend", "blend_skin_anim.blend", "blend_modifiers.blend"};
+    const char* names[] = {"blend_attr_41.blend", "blend_attr_36.blend", "blend_attr_be32.blend", "blend_attr_41_gz.blend", "blend_skin_anim.blend", "blend_modifiers.blend",
+                           "blend_subsurf_41.blend", "blend_subsurf_36.blend", "blend_subsurf_293.blend"};
     std::vector<std::string> fixtures;
     for (const char* n : names) { fixtures.push_back(Slurp(kDir + n)); CHECK(!fixtures.back().empty()); }
 

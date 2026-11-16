@@ -11,6 +11,7 @@
 #include "BlendModifiers.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -277,6 +278,302 @@ static void TestFixture() {
     CHECK(ex.parts.size() == 1 && ex.parts[0].mesh.triangles.size() == 80 * 3);
 }
 
+// DeRose et al. (1998) semi-sharp creases, beyond one uniform edge.
+static void TestCreasesDeRose() {
+    // Vertex (1,1,1) (index 6) with two creased edges: to vertex 2 (sharpness 2) and to vertex 7 (sharpness 0.5). Its rule
+    // is "crease" now and "smooth" one level down (only the half towards 2 stays creased), so the paper blends the two by
+    // the vertex sharpness, the mean (2 + 0.5) / 2 = 1.25, clamped to 1: the crease rule alone,
+    // ((1,1,-1) + 6 (1,1,1) + (-1,1,1)) / 8 = (0.75, 1, 0.75). (Clamping each edge first would give 0.75 and a blend.)
+    PolyMesh m = Cube();
+    m.creases = {Crease{2, 6, 2.0f}, Crease{6, 7, 0.5f}};
+    SubsurfSettings s1; s1.levels = 1;
+    CHECK(Subdivide(m, s1, 100000) == 1);
+    CHECK_NEAR(m.pos[6].x, 0.75, 1e-6); CHECK_NEAR(m.pos[6].y, 1.0, 1e-6); CHECK_NEAR(m.pos[6].z, 0.75, 1e-6);
+    // Both creases 0.5: crease now, smooth next: blend by 0.5 between the crease point and the smooth point (5/9 each).
+    PolyMesh h = Cube();
+    h.creases = {Crease{2, 6, 0.5f}, Crease{6, 7, 0.5f}};
+    CHECK(Subdivide(h, s1, 100000) == 1);
+    CHECK_NEAR(h.pos[6].x, 0.5 * 0.75 + 0.5 * 5.0 / 9.0, 1e-6); CHECK_NEAR(h.pos[6].y, 0.5 * 1.0 + 0.5 * 5.0 / 9.0, 1e-6);
+
+    // Sharpness goes down by one per level: sharpness 1.5 on edge 2-6 for two levels equals one level, then the two
+    // halves with sharpness 0.5 for one more level.
+    auto findPos = [](const PolyMesh& pm, Vec3 p) { for (std::size_t i = 0; i < pm.pos.size(); ++i) if (std::fabs(pm.pos[i].x - p.x) < 1e-6f && std::fabs(pm.pos[i].y - p.y) < 1e-6f && std::fabs(pm.pos[i].z - p.z) < 1e-6f) return (int)i; return -1; };
+    auto samePos = [](const PolyMesh& a, const PolyMesh& b) {
+        if (a.pos.size() != b.pos.size() || a.loopVert != b.loopVert) return false;
+        for (std::size_t i = 0; i < a.pos.size(); ++i) if (std::fabs(a.pos[i].x - b.pos[i].x) > 1e-6f || std::fabs(a.pos[i].y - b.pos[i].y) > 1e-6f || std::fabs(a.pos[i].z - b.pos[i].z) > 1e-6f) return false;
+        return true;
+    };
+    {
+        PolyMesh two = Cube(); two.creases = {Crease{2, 6, 1.5f}};
+        SubsurfSettings s2; s2.levels = 2;
+        CHECK(Subdivide(two, s2, 100000) == 2);
+        PolyMesh step = Cube(); step.creases = {Crease{2, 6, 1.5f}};
+        CHECK(Subdivide(step, s1, 100000) == 1);
+        const int mid = findPos(step, Vec3{1, 1, 0});   // sharp for this level: the edge point is the midpoint
+        CHECK(mid >= 0);
+        step.creases = {Crease{2, mid, 0.5f}, Crease{mid, 6, 0.5f}};
+        CHECK(Subdivide(step, s1, 100000) == 1);
+        CHECK(samePos(two, step));
+    }
+    // Variable sharpness (the paper's Chaikin rule (s_neighbour + 3 s) / 4 - 1 per half): edge 2-6 sharpness 2 with
+    // neighbour 6-7 sharpness 0.5. Half at 2 (no other crease there): (2 + 6) / 4 - 1 = 1; half at 6: (0.5 + 6) / 4 - 1
+    // = 0.625; both halves of 6-7: (2 + 1.5) / 4 - 1 < 0 and (0.5 + 1.5) / 4 - 1 < 0, so 0.
+    {
+        PolyMesh two = Cube(); two.creases = {Crease{2, 6, 2.0f}, Crease{6, 7, 0.5f}};
+        SubsurfSettings s2; s2.levels = 2;
+        CHECK(Subdivide(two, s2, 100000) == 2);
+        PolyMesh step = Cube(); step.creases = {Crease{2, 6, 2.0f}, Crease{6, 7, 0.5f}};
+        CHECK(Subdivide(step, s1, 100000) == 1);
+        const int mid = findPos(step, Vec3{1, 1, 0});
+        CHECK(mid >= 0);
+        step.creases = {Crease{2, mid, 1.0f}, Crease{mid, 6, 0.625f}};
+        CHECK(Subdivide(step, s1, 100000) == 1);
+        CHECK(samePos(two, step));
+        // and a uniform rule (s - 1 for every half) would not give this result
+        PolyMesh other = Cube(); other.creases = {Crease{2, 6, 2.0f}, Crease{6, 7, 0.5f}};
+        Subdivide(other, s1, 100000);
+        other.creases = {Crease{2, mid, 1.0f}, Crease{mid, 6, 1.0f}};
+        Subdivide(other, s1, 100000);
+        CHECK(!samePos(two, other));
+    }
+    // Blender's 0..1 crease as a sharpness
+    CHECK_NEAR(CreaseToSharpness(0.5f, 2, false), 1.0, 1e-7);
+    CHECK_NEAR(CreaseToSharpness(0.5f, 2, true), 2.5, 1e-6);
+    CHECK(std::isinf(CreaseToSharpness(1.0f, 3, true)) && std::isinf(CreaseToSharpness(1.0f, 3, false)));
+    CHECK(CreaseToSharpness(0.0f, 3, true) == 0.0f);
+}
+
+static PolyMesh Grid(int n) {   // n x n quads in z = 0, from (0,0) to (n,n)
+    std::vector<Vec3> pos;
+    for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x) pos.push_back(Vec3{(float)x, (float)y, 0.0f});
+    std::vector<std::vector<int>> faces;
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) { const int a = y * (n + 1) + x; faces.push_back({a, a + 1, a + n + 2, a + n + 1}); }
+    return MakeMesh(pos, faces);
+}
+
+static void TestKeepCorners() {
+    // boundary smooth "keep corners": a boundary vertex with one face stays; the others follow the boundary rule
+    PolyMesh g = Grid(2);
+    SubsurfSettings s; s.levels = 1;
+    PolyMesh all = g;
+    Subdivide(all, s, 100000);
+    CHECK(UsedPositions(all).count(K(0.125, 0.125, 0)) == 1);   // (a + 6 S + b) / 8 with a = (1, 0), b = (0, 1)
+    CHECK(UsedPositions(all).count(K(0, 0, 0)) == 0);
+    s.keepCorners = true;
+    PolyMesh kc = g;
+    Subdivide(kc, s, 100000);
+    for (int c : {0, 2, 6, 8}) CHECK_NEAR(kc.pos[(std::size_t)c].x, g.pos[(std::size_t)c].x, 1e-7);
+    CHECK(UsedPositions(kc).count(K(0, 0, 0)) == 1 && UsedPositions(kc).count(K(2, 2, 0)) == 1);
+    CHECK(UsedPositions(kc).count(K(0.125, 0.125, 0)) == 0);
+    // the corners stay through further levels too
+    s.levels = 3;
+    PolyMesh kc3 = g;
+    Subdivide(kc3, s, 100000);
+    CHECK(UsedPositions(kc3).count(K(0, 2, 0)) == 1);
+}
+
+static void TestLimit() {
+    // The limit position does not depend on the level it is computed from: each vertex of level 1 (indices below 26 on the
+    // cube; vertex points keep their index) has the same limit whether projected at level 1 or at level 2.
+    auto check = [](PolyMesh base, bool keepCorners) {
+        SubsurfSettings s; s.limitSurface = true; s.keepCorners = keepCorners;
+        PolyMesh a = base, b = base;
+        s.levels = 1; CHECK(Subdivide(a, s, 1000000) == 1);
+        s.levels = 2; CHECK(Subdivide(b, s, 1000000) == 2);
+        double worst = 0;
+        for (std::size_t i = 0; i < a.pos.size(); ++i)
+            worst = std::max({worst, (double)std::fabs(a.pos[i].x - b.pos[i].x), (double)std::fabs(a.pos[i].y - b.pos[i].y), (double)std::fabs(a.pos[i].z - b.pos[i].z)});
+        CHECK(worst < 2e-6);
+        if (worst >= 2e-6) std::printf("  limit: level 1 vs level 2 differ by %g\n", worst);
+        return a;
+    };
+    const PolyMesh c1 = check(Cube(), false);
+    // by hand: the face point (1, 0, 0) of the cube's level 1 is a regular vertex; its 4 edge neighbours are (3/4, +-3/4, 0)
+    // and (3/4, 0, +-3/4), its 4 diagonal corners (5/9, +-5/9, +-5/9): x = (16 + 4 * 4 * 3/4 + 4 * 5/9) / 36 = 0.839506
+    CHECK(UsedPositions(c1).count(K(68.0 / 81.0, 0, 0)) == 1);
+    // and the plain subdivision converges to it: level 6, the same point, without the limit
+    // (the gap shrinks about 4 times per level: 6e-4 at level 5, 1.5e-4 at level 6)
+    double gap[2] = {0, 0};
+    for (int lv = 5; lv <= 6; ++lv) {
+        PolyMesh c6 = Cube(); SubsurfSettings s6; s6.levels = lv;
+        CHECK(Subdivide(c6, s6, 1000000) == lv);
+        float mx = 0; for (const Vec3& p : c6.pos) if (std::fabs(p.y) < 1e-6f && std::fabs(p.z) < 1e-6f) mx = std::max(mx, p.x);
+        gap[lv - 5] = std::fabs(mx - 68.0 / 81.0);
+    }
+    CHECK(gap[1] < 2e-4 && gap[1] < gap[0] * 0.3);
+    // an open grid (boundary curve limit (a + 4 S + b) / 6 and corners), with and without "keep corners"
+    PolyMesh g = Grid(3);
+    g.pos[5].z = 1.0f; g.pos[10].z = -0.5f;   // two inner vertices raised and lowered
+    check(g, false);
+    const PolyMesh gk = check(g, true);
+    CHECK(UsedPositions(gk).count(K(3, 3, 0)) == 1);
+    // a cube with every edge infinitely sharp keeps its corners and straight edges at the limit too
+    PolyMesh sharp = Cube();
+    const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    for (auto& e : edges) sharp.creases.push_back(Crease{e[0], e[1], INFINITY});
+    const PolyMesh sl = check(sharp, false);
+    CHECK(UsedPositions(sl).count(K(1, 1, 1)) == 1 && UsedPositions(sl).count(K(1, 1, 0)) == 1);
+    // a flat mesh stays flat
+    PolyMesh flat = Grid(2);
+    SubsurfSettings sf; sf.levels = 2; sf.limitSurface = true;
+    Subdivide(flat, sf, 100000);
+    for (const Vec3& p : flat.pos) CHECK(p.z == 0.0f);
+    // UVs on islands stay inside their island at the limit
+    PolyMesh cu = Cube();
+    for (std::size_t f = 0; f < 6; ++f) { cu.loopUv.push_back({0, 0}); cu.loopUv.push_back({1, 0}); cu.loopUv.push_back({1, 1}); cu.loopUv.push_back({0, 1}); }
+    SubsurfSettings su; su.levels = 2; su.limitSurface = true;
+    Subdivide(cu, su, 100000);
+    CHECK(Valid(cu));
+    for (const Vec2& u : cu.loopUv) CHECK(u.x >= -1e-6f && u.x <= 1.000001f && u.y >= -1e-6f && u.y <= 1.000001f);
+}
+
+// A fan of 6 quads around vertex 0 (12 ring vertices at 30 degree steps), UVs = xy cut into islands (lists of faces).
+static PolyMesh Fan(const std::vector<std::vector<int>>& islands) {
+    std::vector<Vec3> pos{{0, 0, 0.25f}};
+    for (int j = 0; j < 12; ++j) {
+        const double a = j * 3.14159265358979323846 / 6.0;
+        pos.push_back(Vec3{(float)(std::round(std::cos(a) * 1e6) / 1e6), (float)(std::round(std::sin(a) * 1e6) / 1e6), 0.0f});
+    }
+    std::vector<std::vector<int>> faces;
+    for (int i = 0; i < 6; ++i) faces.push_back({0, 1 + 2 * i, 1 + 2 * i + 1, 1 + (2 * i + 2) % 12});
+    PolyMesh m = MakeMesh(pos, faces);
+    for (int f = 0; f < 6; ++f) {
+        int k = 0;
+        for (std::size_t i = 0; i < islands.size(); ++i) for (int x : islands[i]) if (x == f) k = (int)i;
+        for (int v : faces[(std::size_t)f])
+            m.loopUv.push_back(Vec2{(float)(std::round((pos[(std::size_t)v].x * 0.2 + 0.25 + 0.5 * (k % 2)) * 1e6) / 1e6), (float)(std::round((pos[(std::size_t)v].y * 0.2 + 0.25 + 0.5 * (k / 2)) * 1e6) / 1e6)});
+    }
+    return m;
+}
+
+static void TestUvModes() {
+    // For each original face f, child quad 4 f's corner 0 is the centre vertex's new UV in f's island. Held: unchanged.
+    auto centreMoved = [](PolyMesh m, UvSmooth mode, std::vector<bool>& moved) {
+        std::vector<Vec2> before(6);
+        for (int f = 0; f < 6; ++f) before[(std::size_t)f] = m.loopUv[(std::size_t)m.faceStart[(std::size_t)f]];
+        SubsurfSettings s; s.levels = 1; s.uvSmooth = mode;
+        Subdivide(m, s, 100000);
+        moved.assign(6, false);
+        for (int f = 0; f < 6; ++f) {
+            const Vec2 u = m.loopUv[(std::size_t)(4 * f * 4)];
+            moved[(std::size_t)f] = std::fabs(u.x - before[(std::size_t)f].x) > 1e-6f || std::fabs(u.y - before[(std::size_t)f].y) > 1e-6f;
+        }
+    };
+    std::vector<bool> mv;
+    // three islands of two faces (120 degrees each): the centre has 3 UVs, a junction, but in each island it has two faces
+    const PolyMesh junction = Fan({{0, 1}, {2, 3}, {4, 5}});
+    centreMoved(junction, UvSmooth::All, mv);                          CHECK(mv[0] && mv[2] && mv[4]);
+    centreMoved(junction, UvSmooth::KeepCorners, mv);                  CHECK(mv[0] && mv[2] && mv[4]);
+    centreMoved(junction, UvSmooth::KeepCornersJunctions, mv);         CHECK(!mv[0] && !mv[2] && !mv[4]);
+    centreMoved(junction, UvSmooth::KeepCornersJunctionsConcave, mv);  CHECK(!mv[0] && !mv[2] && !mv[4]);
+    centreMoved(junction, UvSmooth::KeepBoundaries, mv);               CHECK(!mv[0] && !mv[2] && !mv[4]);
+    centreMoved(junction, UvSmooth::Linear, mv);                       CHECK(!mv[0] && !mv[2] && !mv[4]);
+    // islands of 4 faces (240 degrees: concave at the centre) and 2 faces (120 degrees): 2 UVs, no junction
+    const PolyMesh concave = Fan({{0, 1, 2, 3}, {4, 5}});
+    centreMoved(concave, UvSmooth::KeepCornersJunctions, mv);          CHECK(mv[0] && mv[4]);
+    centreMoved(concave, UvSmooth::KeepCornersJunctionsConcave, mv);   CHECK(!mv[0] && mv[4]);
+    centreMoved(concave, UvSmooth::KeepBoundaries, mv);                CHECK(!mv[0] && !mv[4]);
+    // islands of one face each: the centre is a corner (one face) in every island
+    const PolyMesh corners = Fan({{0}, {1}, {2}, {3}, {4}, {5}});
+    centreMoved(corners, UvSmooth::All, mv);                           CHECK(mv[0] && mv[3]);
+    centreMoved(corners, UvSmooth::KeepCorners, mv);                   CHECK(!mv[0] && !mv[3]);
+    // the open quad: its UV corners are corners (one face)
+    PolyMesh q = MakeMesh({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, {{0, 1, 2, 3}});
+    q.loopUv = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    SubsurfSettings s; s.levels = 1; s.uvSmooth = UvSmooth::KeepCorners;
+    Subdivide(q, s, 1000);
+    CHECK_NEAR(q.loopUv[0].x, 0.0, 1e-7); CHECK_NEAR(q.loopUv[0].y, 0.0, 1e-7);
+}
+
+// Point clouds (position + UV) equal within a tolerance, duplicates removed.
+using P5 = std::array<float, 5>;
+static std::vector<P5> Dedup(const std::vector<P5>& in) {
+    std::vector<P5> out;
+    for (const P5& p : in) {
+        bool dup = false;
+        for (const P5& q : out) { bool same = true; for (int k = 0; k < 5; ++k) if (std::fabs(p[(std::size_t)k] - q[(std::size_t)k]) > 1e-4f) same = false; if (same) { dup = true; break; } }
+        if (!dup) out.push_back(p);
+    }
+    return out;
+}
+static bool SameCloud(const std::vector<P5>& a0, const std::vector<P5>& b0) {
+    const std::vector<P5> a = Dedup(a0), b = Dedup(b0);
+    if (a.size() != b.size()) return false;
+    for (const P5& p : a) {
+        bool found = false;
+        for (const P5& q : b) { bool same = true; for (int k = 0; k < 5; ++k) if (std::fabs(p[(std::size_t)k] - q[(std::size_t)k]) > 1e-4f) same = false; if (same) { found = true; break; } }
+        if (!found) return false;
+    }
+    return true;
+}
+static std::vector<P5> CloudOf(const ImportedModel& m) {
+    std::vector<P5> c;
+    for (const ImportedPart& p : m.parts)
+        for (std::size_t i = 0; i < p.mesh.vertices.size(); ++i) {
+            const Vec2 uv = i < p.mesh.uvs.size() ? p.mesh.uvs[i] : Vec2{0, 0};
+            c.push_back(P5{p.mesh.vertices[i].x, p.mesh.vertices[i].y, p.mesh.vertices[i].z, uv.x, uv.y});
+        }
+    return c;
+}
+static std::vector<P5> CloudOf(const PolyMesh& m) {   // Blender space -> engine space (x, z, -y), UV v flipped
+    std::vector<P5> c;
+    for (std::size_t l = 0; l < m.loopVert.size(); ++l) {
+        const Vec3& p = m.pos[(std::size_t)m.loopVert[l]];
+        const Vec2 uv = l < m.loopUv.size() ? m.loopUv[l] : Vec2{0, 0};
+        c.push_back(P5{p.x, p.z, -p.y, uv.x, 1.0f - uv.y});
+    }
+    return c;
+}
+
+// The three 2.9+ fixtures (scripts/gen_blend_fixtures.py): every Subdivision option is read by field name from the file
+// and has its effect: the reader's mesh equals the same steps done by hand with those settings, and differs from the
+// result with the old defaults (all UVs smoothed, no keep corners, no limit surface).
+static void TestSubsurfFixtures() {
+    struct Case { const char* file; PolyMesh mesh; SubsurfSettings set; std::size_t tris; };
+    std::vector<Case> cases;
+    {   // 4.x names: grid, crease 0.5 on edge 1-4 (10 c^2 = 2.5), 2 levels, limit, UV keep corners, boundary keep corners
+        PolyMesh g = MakeMesh({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {0, 1, 0}, {1, 1, 0.5f}, {2, 1, 0}, {0, 2, 0}, {1, 2, 0}, {2, 2, 0}},
+                              {{0, 1, 4, 3}, {1, 2, 5, 4}, {3, 4, 7, 6}, {4, 5, 8, 7}});
+        for (int v : g.loopVert) g.loopUv.push_back(Vec2{g.pos[(std::size_t)v].x / 2.0f, g.pos[(std::size_t)v].y / 2.0f});
+        g.creases = {Crease{1, 4, CreaseToSharpness(0.5f, 2, true)}};
+        SubsurfSettings s; s.levels = 2; s.limitSurface = true; s.uvSmooth = UvSmooth::KeepCorners; s.keepCorners = true;
+        cases.push_back({"blend_subsurf_41.blend", g, s, 2 * 64});
+    }
+    {   // 3.6 names: the fan, UV islands of two faces (junction), 1 level, creases off, limit on, UV keep corners + junctions
+        SubsurfSettings s; s.levels = 1; s.limitSurface = true; s.uvSmooth = UvSmooth::KeepCornersJunctions; s.useCreases = false;
+        cases.push_back({"blend_subsurf_36.blend", Fan({{0, 1}, {2, 3}, {4, 5}}), s, 2 * 24});
+    }
+    {   // 2.93 layout: the open box, crease byte 128 on edge 1-2, 2 levels (render), no limit (flag 64), UV keep boundaries
+        PolyMesh b = MakeMesh({{0, -1, -1}, {1, -1, -1}, {1, 1, -1}, {0, 1, -1}, {0, -1, 1}, {1, -1, 1}, {1, 1, 1}, {0, 1, 1}},
+                              {{0, 3, 2, 1}, {4, 5, 6, 7}, {1, 2, 6, 5}, {0, 1, 5, 4}, {3, 7, 6, 2}});
+        for (int v : b.loopVert) { const Vec3& p = b.pos[(std::size_t)v]; b.loopUv.push_back(Vec2{p.x * 0.5f, (p.y + 1) * 0.25f + (p.z + 1) * 0.25f}); }
+        b.creases = {Crease{1, 2, CreaseToSharpness(128.0f / 255.0f, 2, true)}};
+        SubsurfSettings s; s.levels = 2; s.uvSmooth = UvSmooth::KeepBoundaries;
+        cases.push_back({"blend_subsurf_293.blend", b, s, 2 * 80});
+    }
+    for (Case& c : cases) {
+        ImportedModel m; std::string err;
+        CHECK(ReadBlendFile(kDir + c.file, m, &err, true));
+        std::size_t tris = 0;
+        for (const ImportedPart& p : m.parts) tris += p.mesh.triangles.size() / 3;
+        CHECK(tris == c.tris);
+        PolyMesh want = c.mesh;
+        Subdivide(want, c.set, 1000000);
+        const bool same = SameCloud(CloudOf(m), CloudOf(want));
+        CHECK(same);
+        PolyMesh old = c.mesh;
+        SubsurfSettings o; o.levels = c.set.levels; o.useCreases = c.set.useCreases;
+        Subdivide(old, o, 1000000);
+        CHECK(!SameCloud(CloudOf(m), CloudOf(old)));
+        std::printf("  %s: %zu triangles, %s the hand-made result\n", c.file, tris, same ? "equal to" : "DIFFERENT from");
+        if (!m.notes.empty()) for (const std::string& n : m.notes) std::printf("    note: %s\n", n.c_str());
+    }
+    // the copy shipped for the owner to try (docs/try_it.md, examples/own_readers/subsurf_options_42.blend) reads the same
+    ImportedModel ex; std::string err;
+    CHECK(ReadBlendFile(std::string(OKAY_SOURCE_DIR) + "/examples/own_readers/subsurf_options_42.blend", ex, &err, true));
+    CHECK(ex.parts.size() == 1 && ex.parts[0].mesh.triangles.size() == 128 * 3);
+}
+
 // Real files with modifiers (Assimp's test directory): the triangle counts Assimp gives, our bounds in engine space.
 static void TestCorpus() {
     const char* corpus = std::getenv("OKAY_MODEL_CORPUS");
@@ -345,6 +642,7 @@ static void TestFuzz() {
             if (!Valid(m)) ++bad;
         }
         SubsurfSettings ss; ss.levels = 1 + (int)(Rnd() % 3); ss.simple = (Rnd() % 4) == 0; ss.smoothUv = (Rnd() & 1) != 0; ss.joinCoincident = (Rnd() & 1) != 0;
+        ss.uvSmooth = (UvSmooth)(Rnd() % 6); ss.keepCorners = (Rnd() & 1) != 0; ss.limitSurface = (Rnd() & 1) != 0; ss.useCreases = (Rnd() % 4) != 0;
         const std::size_t faces = m.loopVert.size();
         const int done = Subdivide(m, ss, 20000);
         if (!Valid(m)) ++bad;
@@ -360,8 +658,13 @@ int main() {
     TestSimpleAndBoundary();
     TestCreases();
     TestUv();
+    TestCreasesDeRose();
+    TestKeepCorners();
+    TestLimit();
+    TestUvModes();
     TestMirror();
     TestFixture();
+    TestSubsurfFixtures();
     TestCorpus();
     TestFuzz();
     TEST_MAIN_RESULT();

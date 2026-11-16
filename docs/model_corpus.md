@@ -57,6 +57,23 @@ OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 - `test_model_corpus --one|--list|--fbxdump|--fbxdiff|--fbxclips|--keys ...` print what the readers found, for comparing with another importer. `--list` takes the readers `fbx-own`, `dae`, `3ds`, `bvh`, `obj`, `stl`, `ply` and `gltf` (`.gltf` and `.glb`); the batch-D readers `ac`, `ogre`, `xgl`, `irr` and `nff`, the batch-B readers `3mf`, `amf`, `x3d`, `dxf` and `lwo` and the batch-C readers `md2`, `md3`, `irrmesh`, `b3d` and `x` take the same arguments. For `obj`, `stl`, `ply` and `gltf` a row also carries `tex` (distinct texture files over all materials), `nodes`, `uv` and `nrm` (1 when some mesh has per-vertex UVs or normals); glTF sizes are the file's own (the importer's auto-scale of very large or tiny models is undone).
 - The Assimp side of the glTF/OBJ/STL/PLY comparison: `scripts/assimp_corpus_dump.cpp` prints Assimp's view of a file in the same TSV shape (meshes, triangles, area, bounding box, materials, distinct textures, nodes, animations and their length, UV and normal presence; only `aiProcess_Triangulate` is applied), and `scripts/compare_model_corpus.py ours.tsv assimp.tsv` lists the differences. It does not print two differences that are by design: Assimp adds a default material to a file whose meshes have none (its material count is one higher), and our readers generate normals a file lacks (Assimp leaves them absent). Build Assimp with only the importers needed: `cmake -DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=OFF -DASSIMP_BUILD_OBJ_IMPORTER=ON -DASSIMP_BUILD_STL_IMPORTER=ON -DASSIMP_BUILD_PLY_IMPORTER=ON -DASSIMP_BUILD_GLTF_IMPORTER=ON -DASSIMP_NO_EXPORT=ON` on the same v5.4.3 checkout.
 
+### In CI
+
+Two jobs in `.github/workflows/ci.yml` read the corpus on every pull request and every push to `main`. Both use the Assimp checkout that job `assimp-models` keeps in the Actions cache (`~/assimp-src`, key `assimp-src-<tag>`, the tag read from `engine/CMakeLists.txt`). The files are read in place; nothing is copied into the repository.
+
+- **`assimp-models`** ("Model readers with Assimp": Release, `OKAY_USE_ASSIMP=ON`) builds `test_model_corpus` with the other model tests and runs `model_corpus` and `fbx_reader` with `OKAY_MODEL_CORPUS=$HOME/assimp-src/test`. After the tests it prints the row count (`414 manifest rows: 380 read, 34 recorded as failing` today) and the number of real FBX files (`42 real FBX files from OKAY_MODEL_CORPUS`). It fails when the row count line is missing, so a skipped corpus cannot pass quietly.
+- **`sanitizers-models`** ("Model readers (ASan + UBSan, real files)") builds two trees with `-DOKAY_SANITIZE=address,undefined,float-cast-overflow`. The engine-linked tests (`3ds_reader`, `bvh_reader`, every `own_dispatch*` test, and `model_corpus` on the corpus) use the exact options of job `sanitizers` (Debug, `-g1`, no `-O`). The standalone reader tests (every `*_hostile` and `*_budget` target; `fbx_hostile` stays in job `sanitizers`) compile only reader sources and use `-O1`: at `-O0` their worst cases ran 5 to 25 times slower than an optimized build. `-O1` is not used for the engine tree because the largest engine file then needs over 6.7 GB to compile. With the corpus set, `batche_hostile`, `blend_hostile` and `terragen_hostile` also read their real files. This job only restores the cache, never saves it: on a miss it fetches just `test/models` and `test/models-nonbsd`, and a partial checkout saved under the key would break the Assimp build of the other job.
+
+A drifted row fails the job and prints `<file> (<reader>): <field> <old> -> <new>` (or "recorded as failing but now reads"). When a reader got better, change the manifest row in the same pull request and say why.
+
+To run the same thing on your machine, clone the corpus and point the tests at it:
+
+```
+git clone --depth 1 --branch v5.4.3 --filter=blob:none --sparse https://github.com/assimp/assimp <scratch dir>
+git -C <scratch dir> sparse-checkout set test/models test/models-nonbsd
+OKAY_MODEL_CORPUS=<scratch dir>/test ctest -R "^(model_corpus|fbx_reader)$" --output-on-failure
+```
+
 ## Results
 
 ### FBX (own reader vs ufbx)

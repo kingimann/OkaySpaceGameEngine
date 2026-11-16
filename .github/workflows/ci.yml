@@ -253,11 +253,107 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
+  # More model-reader tests under ASan + UBSan, with the real-file corpus (docs/model_corpus.md). A job of its own,
+  # beside "sanitizers": that job already takes about 25 of its 45 minutes, and these tests take several minutes more.
+  # Two build trees, both with -fsanitize=address,undefined,float-cast-overflow:
+  #   build-asan    the engine-linked tests (3ds_reader, bvh_reader, every own_dispatch* test, model_corpus), with the
+  #                 exact options of "sanitizers" (Debug, -g1, no -O) and its cap of 3 parallel build jobs: a sanitized
+  #                 link of the whole engine per test runs the runner out of memory with an unbounded -j, and -O1 would
+  #                 make the largest engine file (SceneSerializer.cpp) need over 6.7 GB to compile (4.6 GB at -O0).
+  #   build-asan-o1 the standalone reader tests (every *_hostile and *_budget target except fbx_hostile, which
+  #                 "sanitizers" runs; they compile only reader sources, never the engine) at -O1: at -O0 their worst
+  #                 cases ran 5 to 25 times slower than an optimized build and batchd_hostile alone took 14 minutes
+  #                 (measured locally); -O1 halves that, and the sanitizers still check every access.
+  # The corpus is the test directory of the Assimp checkout that "assimp-models" keeps in the cache.
+  sanitizers-models:
+    name: Model readers (ASan + UBSan, real files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+
+      - name: Make ASan's address layout reliable
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Find the Assimp version
+        run: echo "ASSIMP_TAG=$(grep -oE 'GIT_TAG +v[0-9.]+' engine/CMakeLists.txt | head -n1 | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      # Restore only, never save: on a miss this job fetches only the test models, and a partial checkout saved under
+      # this key would break "assimp-models", which builds Assimp from the same folder.
+      - name: Restore the Assimp source
+        id: assimp-src
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/assimp-src
+          key: assimp-src-${{ env.ASSIMP_TAG }}
+
+      - name: Fetch the Assimp test models
+        if: steps.assimp-src.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$ASSIMP_TAG" --filter=blob:none --sparse https://github.com/assimp/assimp.git "$HOME/assimp-src"
+          git -C "$HOME/assimp-src" sparse-checkout set test/models test/models-nonbsd
+
+      - name: Configure
+        run: |
+          for o in "build-asan:-g1" "build-asan-o1:-O1 -g1"; do
+            cmake -S . -B "${o%%:*}" -G Ninja -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_CXX_FLAGS_DEBUG=${o#*:}" \
+              -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
+              -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+          done
+
+      # New test_own_dispatch* targets and new *_hostile / *_budget reader tests join without editing this job.
+      - name: List the tests
+        run: |
+          ENGINE_TESTS="test_3ds_reader test_bvh_reader test_model_corpus"
+          ENGINE_TESTS="$ENGINE_TESTS $(grep -oE 'add_executable\(test_own_dispatch[A-Za-z0-9_]*' tests/CMakeLists.txt | cut -c16- | tr '\n' ' ')"
+          HOSTILE_TESTS="$(ninja -C build-asan-o1 -t targets all | grep -oE '^test_[A-Za-z0-9_]+_(hostile|budget):' | tr -d ':' | grep -vx test_fbx_hostile | tr '\n' ' ')"
+          echo "ENGINE_TESTS=$ENGINE_TESTS" >> "$GITHUB_ENV"
+          echo "HOSTILE_TESTS=$HOSTILE_TESTS" >> "$GITHUB_ENV"
+          echo "engine-linked: $ENGINE_TESTS"
+          echo "standalone: $HOSTILE_TESTS"
+
+      - name: Build
+        run: |
+          cmake --build build-asan-o1 -j 3 --target $HOSTILE_TESTS
+          cmake --build build-asan -j 3 --target $ENGINE_TESTS
+
+      # Run from <tree>/tests, where ctest runs them. OKAY_MODEL_CORPUS makes model_corpus read every manifest row
+      # and batche_hostile, blend_hostile and terragen_hostile read their real files too.
+      - name: Test
+        run: |
+          export OKAY_MODEL_CORPUS="$HOME/assimp-src/test"
+          if [ ! -d "$OKAY_MODEL_CORPUS/models" ] || [ ! -d "$OKAY_MODEL_CORPUS/models-nonbsd" ]; then
+            echo "::error::no Assimp test models under $OKAY_MODEL_CORPUS"; exit 1
+          fi
+          failed=""
+          run() {   # run <tree> <test>: output to <tree>/tests/<test>.log, the last lines and the time printed
+            echo "== $2"
+            local start=$SECONDS
+            (cd "$1/tests" && "./$2" > "$2.log" 2>&1) || failed="$failed $1/tests/$2"
+            tail -n 3 "$1/tests/$2.log"
+            echo "   ($((SECONDS - start)) s)"
+          }
+          for t in $ENGINE_TESTS; do run build-asan "$t"; done
+          for t in $HOSTILE_TESTS; do run build-asan-o1 "$t"; done
+          for t in $failed; do echo "== $t (failed), whole output:"; cat "$t.log"; done
+          grep -h 'manifest rows:' build-asan/tests/test_model_corpus.log || failed="$failed model_corpus(corpus-not-read)"
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
   # The model readers with Assimp compiled in (OKAY_USE_ASSIMP=ON), which no other job
   # builds: ModelImportAssimp.cpp is compiled and the reader tests that compare the
   # built-in readers with Assimp's run. Only the model test targets are built. Assimp's
   # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
   # and its objects come from ccache. The built-in-reader switches stay at their defaults.
+  # The same checkout's test/models and test/models-nonbsd are the real-file corpus that
+  # model_corpus and fbx_reader read (see the Test step).
   assimp-models:
     name: Model readers with Assimp
     runs-on: ubuntu-latest
@@ -306,10 +402,23 @@ jobs:
       - name: Build
         run: |
           cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_model_corpus
 
+      # The real-file corpus (docs/model_corpus.md): OKAY_MODEL_CORPUS points at the test directory of the
+      # Assimp checkout above, whose models/ and models-nonbsd/ hold files real exporters wrote. model_corpus
+      # re-reads every row of tests/data/model_corpus_manifest.tsv with our own readers, and fbx_reader also
+      # compares ufbx and our FBX reader on the real .fbx files. The files are read in place, never copied.
+      # The last command prints the row count and fails when the corpus was not read (for example "skipped").
       - name: Test
-        run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
+        run: |
+          export OKAY_MODEL_CORPUS="$HOME/assimp-src/test"
+          if [ ! -d "$OKAY_MODEL_CORPUS/models" ] || [ ! -d "$OKAY_MODEL_CORPUS/models-nonbsd" ]; then
+            echo "::error::no Assimp test models under $OKAY_MODEL_CORPUS"; exit 1
+          fi
+          ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container|model_corpus)$'
+          log=build-assimp/Testing/Temporary/LastTest.log
+          grep -q 'manifest rows:' "$log" || { echo "::error::model_corpus did not read the corpus"; exit 1; }
+          grep -hE 'manifest rows:|real FBX files from OKAY_MODEL_CORPUS' "$log"
 
   # Our own HTTP client (docs/own_http_client.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client

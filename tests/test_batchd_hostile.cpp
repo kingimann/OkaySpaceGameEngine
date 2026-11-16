@@ -48,6 +48,14 @@ template <class F> static void Sweep(const char* name, F&& read, const std::stri
     std::fprintf(stderr, "  %s: %zu truncations + %ld mutations in %.1f s\n", name, fixture.size(), iters, Now() - t0);
 }
 template <class F> static double Timed(F&& f) { const double t = Now(); f(); return Now() - t; }
+// The time limits below are for a normal build. Under ASan + UBSan (CI's model-reader sanitizer job, -O1) the NFF cases with 600
+// tess-6 spheres and with 5,000 fills took 110 and 117 seconds against 12 and 11 at -O2 (one loaded machine), so every limit is
+// 5 times longer there, as in test_batchd_budget.cpp. A reader that really runs away still does not finish inside it.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+static constexpr double kSlow = 5.0;
+#else
+static constexpr double kSlow = 1.0;
+#endif
 
 static std::string Repeat(const std::string& s, std::size_t n) { std::string r; r.reserve(s.size() * n); for (std::size_t i = 0; i < n; ++i) r += s; return r; }
 
@@ -91,9 +99,9 @@ static void Ac3d() {
     {   std::string s = head + "numvert 60002\n"; for (int i = 0; i < 60002; ++i) s += std::to_string(i % 100) + " " + std::to_string(i / 100) + " " + std::to_string(i % 7) + "\n";
         s += "numsurf 1\nSURF 0x14\nmat 0\nrefs 60002\n"; for (int i = 0; i < 60002; ++i) s += std::to_string(i) + " 0 0\n"; s += "kids 0\n";
         ImportedModel m; std::string e; const double t = Timed([&] { ReadAc(s, m, e); });
-        CHECK(!e.empty() || fx::Sane(m)); CHECK(t < 20.0); }
+        CHECK(!e.empty() || fx::Sane(m)); CHECK(t < 20.0 * kSlow); }
     {   const double t = Timed([&] { ImportedModel m; std::string e; std::string s = fx::BuildAc3dCube(0); s.replace(s.find("name \"cube\"\n"), 12, "name \"cube\"\nsubdiv 1000000\n"); const bool ok = ReadAc(s, m, e); CHECK(ok && fx::Sane(m)); CHECK(m.parts.size() == 1 && m.parts[0].mesh.triangles.size() > 100000); });
-        CHECK(t < 60.0); }
+        CHECK(t < 60.0 * kSlow); }
     // an index at 4294967295, negative indices, a polygon that names one vertex 1,000 times
     Try(ReadAc, head + "numvert 3\n0 0 0\n1 0 0\n0 1 0\nnumsurf 1\nSURF 0x0\nmat 0\nrefs 3\n4294967295 0 0\n1 0 0\n2 0 0\nkids 0\n");
     Try(ReadAc, head + "numvert 3\n0 0 0\n1 0 0\n0 1 0\nnumsurf 1\nSURF 0x0\nmat 0\nrefs 3\n-1 0 0\n1 0 0\n2 0 0\nkids 0\n");
@@ -130,12 +138,12 @@ static void Ogre() {
     Try(ReadOg, Repeat("<a>", 5000) + Repeat("</a>", 5000));
     { std::string s = "<mesh><submeshes>" + Repeat("<submesh material=\"m\"/>", 100000) + "</submeshes></mesh>"; ImportedModel m; std::string e; CHECK(!ReadOg(s, m, e)); }
     { std::string s = "<mesh><submeshes><submesh><geometry vertexcount=\"1\"><vertexbuffer><vertex><position x=\"1\" y=\"1\" z=\"" + std::string(3000000, '1') + "\"/></vertex></vertexbuffer></geometry><faces count=\"0\"/></submesh></submeshes></mesh>"; Try(ReadOg, s); }
-    { std::string s = good; s.insert(s.find("<submeshes>") + 11, Repeat("<submesh usesharedvertices=\"true\"><faces count=\"1\"><face v1=\"0\" v2=\"1\" v3=\"2\"/></faces></submesh>", 50000)); ImportedModel m; std::string e; const double t = Timed([&] { ReadOg(s, m, e); }); CHECK(t < 20.0); CHECK(e.empty() ? fx::Sane(m) : true); }
+    { std::string s = good; s.insert(s.find("<submeshes>") + 11, Repeat("<submesh usesharedvertices=\"true\"><faces count=\"1\"><face v1=\"0\" v2=\"1\" v3=\"2\"/></faces></submesh>", 50000)); ImportedModel m; std::string e; const double t = Timed([&] { ReadOg(s, m, e); }); CHECK(t < 20.0 * kSlow); CHECK(e.empty() ? fx::Sane(m) : true); }
     // a big valid mesh: 60,000 triangles over 30,000 vertices
     {   std::string s = "<mesh><submeshes><submesh material=\"m\"><faces count=\"60000\">"; for (int i = 0; i < 60000; ++i) s += "<face v1=\"" + std::to_string(i % 30000) + "\" v2=\"" + std::to_string((i + 1) % 30000) + "\" v3=\"" + std::to_string((i + 2) % 30000) + "\"/>";
         s += "</faces><geometry vertexcount=\"30000\"><vertexbuffer positions=\"true\">"; for (int i = 0; i < 30000; ++i) s += "<vertex><position x=\"" + std::to_string(i % 173) + "\" y=\"" + std::to_string(i / 173) + "\" z=\"" + std::to_string(i % 11) + "\"/></vertex>";
         s += "</vertexbuffer></geometry></submesh></submeshes></mesh>";
-        ImportedModel m; std::string e; const double t = Timed([&] { ReadOg(s, m, e); }); CHECK(e.empty() && fx::Sane(m)); CHECK(t < 20.0); }
+        ImportedModel m; std::string e; const double t = Timed([&] { ReadOg(s, m, e); }); CHECK(e.empty() && fx::Sane(m)); CHECK(t < 20.0 * kSlow); }
     // material scripts: unbalanced braces, a million words, deep braces, junk numbers, a very long name
     for (const std::string& script : {Repeat("{", 100000), Repeat("}", 100000), Repeat("material a { pass { diffuse nan inf 1e999 } ", 20000), Repeat("material ", 100000), "material x : : : {" + Repeat("technique {", 50000), std::string("material ") + std::string(2000000, 'q') + " { pass { texture_unit { texture " + std::string(100000, 'z') + " } } }"}) {
         const std::vector<std::string> sc{script};
@@ -173,9 +181,9 @@ static void Xgl() {
     }
     // 5,000 nested objects (cap 256 for the nesting), 100,000 objects each using the mesh (output cap), a mesh with 100,000 faces
     { std::string s = "<WORLD>" + Repeat("<OBJECT>", 5000) + Repeat("</OBJECT>", 5000) + "</WORLD>"; Try(ReadXg, s); }
-    { std::string g = good; g.replace(g.find("<OBJECT><NAME>A"), g.find("</WORLD>") - g.find("<OBJECT><NAME>A"), Repeat("<OBJECT><MESHREF>0</MESHREF></OBJECT>", 20000)); ImportedModel m; std::string e; const double t = Timed([&] { ReadXg(g, m, e); }); CHECK(e.empty() ? fx::Sane(m) : true); CHECK(t < 30.0); }
+    { std::string g = good; g.replace(g.find("<OBJECT><NAME>A"), g.find("</WORLD>") - g.find("<OBJECT><NAME>A"), Repeat("<OBJECT><MESHREF>0</MESHREF></OBJECT>", 20000)); ImportedModel m; std::string e; const double t = Timed([&] { ReadXg(g, m, e); }); CHECK(e.empty() ? fx::Sane(m) : true); CHECK(t < 30.0 * kSlow); }
     { std::string s = "<WORLD><MESH><P ID=\"0\">0,0,0</P><P ID=\"1\">1,0,0</P><P ID=\"2\">0,1,0</P>" + Repeat("<F><FV1><PREF>0</PREF></FV1><FV2><PREF>1</PREF></FV2><FV3><PREF>2</PREF></FV3></F>", 100000) + "</MESH></WORLD>";
-      ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadXg(s, m, e)); }); CHECK(fx::Sane(m)); CHECK(t < 20.0); }
+      ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadXg(s, m, e)); }); CHECK(fx::Sane(m)); CHECK(t < 20.0 * kSlow); }
     // a face with 20,000 corners; a billion-laughs entity; a long text
     { std::string s = "<WORLD><MESH><P ID=\"0\">0,0,0</P><F>"; for (int i = 1; i <= 20000; ++i) s += "<FV" + std::to_string(i) + "><PREF>0</PREF></FV" + std::to_string(i) + ">"; s += "</F></MESH></WORLD>"; Try(ReadXg, s); }
     Try(ReadXg, "<!DOCTYPE w [<!ENTITY a \"aaaa\"><!ENTITY b \"&a;&a;&a;&a;\">]><WORLD/>");
@@ -218,9 +226,9 @@ static void Irr() {
     }
     // 5,000 nested nodes (cap 256), 100,000 flat nodes, 200 mesh nodes naming 200 failing files, 20,000 nodes using one mesh (output cap)
     { std::string s = "<irr_scene>" + Repeat("<node type=\"empty\">", 5000) + Repeat("</node>", 5000) + "</irr_scene>"; ImportedModel m; std::string e; CHECK(!ReadIr(s, m, e)); }
-    { std::string s = "<irr_scene>" + Repeat("<node type=\"cube\"/>", 3000) + "</irr_scene>"; ImportedModel m; std::string e; const double t = Timed([&] { ReadIr(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : true); CHECK(t < 30.0); }
+    { std::string s = "<irr_scene>" + Repeat("<node type=\"cube\"/>", 3000) + "</irr_scene>"; ImportedModel m; std::string e; const double t = Timed([&] { ReadIr(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : true); CHECK(t < 30.0 * kSlow); }
     { std::string s = "<irr_scene>"; for (int i = 0; i < 1200; ++i) s += "<node type=\"mesh\"><attributes><string name=\"Mesh\" value=\"fail" + std::to_string(i) + ".x\"/></attributes></node>"; s += "</irr_scene>"; ImportedModel m; std::string e; CHECK(!ReadIr(s, m, e)); }
-    { std::string s = "<irr_scene>" + Repeat("<node type=\"mesh\"><attributes><string name=\"Mesh\" value=\"a.x\"/></attributes></node>", 60000) + "</irr_scene>"; ImportedModel m; std::string e; const double t = Timed([&] { ReadIr(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
+    { std::string s = "<irr_scene>" + Repeat("<node type=\"mesh\"><attributes><string name=\"Mesh\" value=\"a.x\"/></attributes></node>", 60000) + "</irr_scene>"; ImportedModel m; std::string e; const double t = Timed([&] { ReadIr(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0 * kSlow); }
     // a billion-laughs entity, a mesh path of 3 MB, a loader that returns a model with no nodes
     Try(ReadIr, "<!DOCTYPE s [<!ENTITY a \"aaaa\"><!ENTITY b \"&a;&a;&a;&a;\">]><irr_scene/>");
     Try(ReadIr, "<irr_scene><node type=\"mesh\"><attributes><string name=\"Mesh\" value=\"" + std::string(3000000, 'p') + "\"/></attributes></node></irr_scene>");
@@ -265,13 +273,13 @@ static void Nff() {
     }
     // a cone with zero length, equal ends at a point, a huge radius; a sphere with a huge radius; tess 6 solids, 2,000 of them (output cap)
     for (const char* c : {"c\n0 0 0 1\n0 0 0 1\n", "c\n0 0 0 0\n0 0 0 0\n", "c\n0 0 0 1e15\n0 0 1 1e15\n", "c\n0 0 0 -1\n0 0 1 1\n"}) Try(ReadNf, c);
-    { std::string s = "tess 6\n" + Repeat("s 0 0 0 1e14\n", 600); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
-    { std::string s = "tess 6\n" + Repeat("c\n0 0 0 1\n0 0 1 1\n", 300); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
+    { std::string s = "tess 6\n" + Repeat("s 0 0 0 1e14\n", 600); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0 * kSlow); }
+    { std::string s = "tess 6\n" + Repeat("c\n0 0 0 1\n0 0 1 1\n", 300); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0 * kSlow); }
     // 100,000 polygons, a polygon of 100,000 vertices, a Sense8 file of 100,000 polygons, 5,000 fills, a 3 MB token
-    { std::string s = Repeat("p 3\n0 0 0\n1 0 0\n0 1 0\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m) && m.parts.size() == 1 && fx::TriCount(m) == 100000); CHECK(t < 20.0); }
-    { std::string s = "p 100000\n"; for (int i = 0; i < 100000; ++i) s += std::to_string(i % 977) + " " + std::to_string(i % 313) + " " + std::to_string(i % 7) + "\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 30.0); }
-    { std::string s = "nff\nObj\n3\n0 0 0\n1 0 0\n0 1 0\n100000\n" + Repeat("3 0 1 2 matid 1\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m)); CHECK(t < 20.0); }
-    { std::string s; for (int i = 0; i < 5000; ++i) s += "f 1 0 0 0 0 " + std::to_string(i) + "\ns 0 0 0 1\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
+    { std::string s = Repeat("p 3\n0 0 0\n1 0 0\n0 1 0\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m) && m.parts.size() == 1 && fx::TriCount(m) == 100000); CHECK(t < 20.0 * kSlow); }
+    { std::string s = "p 100000\n"; for (int i = 0; i < 100000; ++i) s += std::to_string(i % 977) + " " + std::to_string(i % 313) + " " + std::to_string(i % 7) + "\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 30.0 * kSlow); }
+    { std::string s = "nff\nObj\n3\n0 0 0\n1 0 0\n0 1 0\n100000\n" + Repeat("3 0 1 2 matid 1\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m)); CHECK(t < 20.0 * kSlow); }
+    { std::string s; for (int i = 0; i < 5000; ++i) s += "f 1 0 0 0 0 " + std::to_string(i) + "\ns 0 0 0 1\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0 * kSlow); }
     Try(ReadNf, "s 0 0 0 " + std::string(3000000, '1') + "\n");
     Try(ReadNf, "f 1 1 1 " + std::string(3000000, 'x') + "\ns 0 0 0 1\n");
     // the Sense8 mtable: a path that climbs out, a name that is a folder, a 3 MB name

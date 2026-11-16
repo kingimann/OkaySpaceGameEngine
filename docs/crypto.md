@@ -17,7 +17,8 @@ exactly the primitives the network layer uses today, plus their direct building 
 | Kx session keys (X25519, then BLAKE2b-512 of `q || client_pk || server_pk`, split into rx and tx) | same construction as libsodium's `crypto_kx` | `SecureChannel::Establish` |
 | BLAKE2b | RFC 7693 | Kx |
 | Ed25519 (detached, strict like libsodium: S < L, no small-order R or key, canonical key) | RFC 8032 | session tickets, host identity (`shared/AntiCheatCrypto.hpp`) |
-| SHA-256, SHA-512 | FIPS 180-4 | ticket key binding, Ed25519 |
+| SHA-256 (header-only `Crypto/Sha256.hpp`, the engine's only SHA-256), HMAC-SHA256, PBKDF2-HMAC-SHA256 | FIPS 180-4, RFC 2104 / 4231, RFC 8018 / 7914 | file checksums (updater, anti-cheat manifest), local account passwords, anti-cheat clock tag, voice room key, ticket key binding |
+| SHA-512 | FIPS 180-4 | Ed25519 |
 | `RandomBytes` (getrandom, getentropy, BCryptGenRandom; aborts if the OS has none), `MemZero`, `ConstantTimeEqual` | | everywhere |
 
 No custom random generator. No assembly. Field arithmetic mod 2^255-19 comes in two interchangeable versions with the same
@@ -31,6 +32,8 @@ fixed loops, masks, no secret-dependent branch or table index, fixed-length ladd
 design (valgrind, and a statistical timing test; see the review package, section 4), and they found something: clang compiled
 two mask selects into branches, now guarded by a value barrier (`ct::Barrier`). That is still evidence from the compilers,
 flags and CPU we ran, not a guarantee.
+
+SHA-256, HMAC-SHA256 and PBKDF2-HMAC-SHA256 are the exception: they are one header (`Crypto/Sha256.hpp`) with no link needed, and they are NOT behind `OKAY_OWN_CRYPTO`: they were always the engine's own code (checksums, account passwords, anti-cheat tag) and libsodium is not used for them. Until `claude/one-sha256` there were three separate copies; `docs/sha256_comparison.md` says how the best one was chosen and how all outputs were checked to be byte-identical.
 
 `okay::crypto` is its own static library (`okay_crypto`, `okay::crypto` in CMake), so code that must not link the engine can use it:
 `shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz

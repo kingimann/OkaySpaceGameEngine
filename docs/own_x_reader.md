@@ -9,7 +9,7 @@ The DirectX `.x` file is the older model format of Direct3D (Microsoft's DirectX
 | File | What |
 |---|---|
 | `engine/src/Render/XFileReader.cpp` | `okay::ReadXBuffer` / `okay::ReadXFile` (declared in `ModelData.hpp`) |
-| `engine/src/Core/ImageDecode.cpp` | The engine's inflate (`okay::Inflate`), used for MSZIP |
+| `engine/src/Core/ImageDecode.cpp` | `okay::Inflate`, a wrapper over the engine's one inflate (`engine/include/okay/Core/Inflate.hpp`), used for MSZIP |
 | `engine/src/Render/ReaderCommon.hpp`, `TextReaderUtil.hpp` | Shared number parsing and file reading |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 21 of the opt-in table |
 | `tests/test_x_reader.cpp`, `tests/batchc_fixtures.hpp` | Hand-computed checks on synthetic files (`x_reader`) |

@@ -3947,7 +3947,9 @@ bool BeginDragDropSource(int flags) {
     (void)flags;
     if (!g_lay.active) return false;
     const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
-    const int sid = (int)(((unsigned)(int)(px * 4.0f) * 73856093u) ^ ((unsigned)(int)(py * 4.0f) * 19349663u) ^ (unsigned)g_lay.seed) | 1;
+    // Hash the float bits (a NaN, infinity or 1e30 position must not go through a float-to-int cast: undefined).
+    auto bitsOf = [](float f) { std::uint32_t u; std::memcpy(&u, &f, sizeof u); return u; };
+    const int sid = (int)((bitsOf(px) * 73856093u) ^ (bitsOf(py) * 19349663u) ^ (unsigned)g_lay.seed) | 1;
     if (!g_tdd.active && !g_tdd.armed && g_pressed && hit(px, py, pw, ph)) {
         g_tdd.armed = true; g_tdd.srcId = sid; g_tdd.armX = g_in.mouseX; g_tdd.armY = g_in.mouseY;
     }

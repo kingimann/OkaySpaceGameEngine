@@ -29,6 +29,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "okay/Crypto/Sha256.hpp"
+
 namespace okay::crypto {
 
 // ---- sizes ------------------------------------------------------------------
@@ -119,20 +121,7 @@ private:
 void Blake2bHash(std::uint8_t* out, std::size_t outLen, const std::uint8_t* m, std::size_t n,
                  const std::uint8_t* key = nullptr, std::size_t keyLen = 0);
 
-class Sha256 {
-public:
-    Sha256();
-    void Update(const std::uint8_t* m, std::size_t n);
-    void Final(std::uint8_t out[32]);
-private:
-    std::uint32_t m_h[8];
-    std::uint64_t m_len;
-    std::uint8_t m_buf[64];
-    std::size_t m_fill;
-    void Block(const std::uint8_t* p);
-};
-void Sha256Hash(std::uint8_t out[32], const std::uint8_t* m, std::size_t n);
-
+// SHA-256, HMAC-SHA256 and PBKDF2-HMAC-SHA256 are header-only in Sha256.hpp (the one copy in the engine).
 class Sha512 {
 public:
     Sha512();

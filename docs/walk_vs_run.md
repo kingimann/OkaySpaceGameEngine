@@ -11,7 +11,29 @@ is a jog and 8.0 a sprint. So both looked like running, and the built-in charact
 (`tests/test_walk_vs_run.cpp`, run with `OKAY_OLD_GAIT=1`, the same program that checks the new gait; 60 frames a second, feet read
 from the skinned mesh, 8 s after a 3 s settle):
 
-@@BEFORE@@
+**A new project (Animator clips), old defaults 4.5 / 8.0 m/s**, W at several speeds and Shift at 8.0:
+
+| m/s | key | state | steps/min | step m | flight % | double % | arm deg | elbow deg | lean deg | bounce cm |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1.0 | W | walk | 92 | 0.65 | 0 | 39 | 15 | 14 | 1.8 | 9.1 |
+| 2.0 | W | walk | 145 | 0.83 | 0 | 29 | 20 | 19 | 2.6 | 14.2 |
+| 3.0 | W | walk | 202 | 0.89 | 23 | 0 | 24 | 62 | 4.8 | 6.3 |
+| 4.5 | W | walk | 217 | 1.25 | 44 | 0 | 36 | 88 | 7.4 | 6.6 |
+| 8.0 | Shift | run | 250 | 1.92 | 64 | 0 | 55 | 77 | 11.5 | 8.4 |
+
+**The Character alone (procedural stride), same defaults:**
+
+| m/s | key | state | steps/min | step m | flight % | double % | arm deg | elbow deg | lean deg | bounce cm |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1.0 | W | walk | 92 | 0.65 | 0 | 35 | 15 | 14 | 1.8 | 9.0 |
+| 2.0 | W | walk | 145 | 0.83 | 0 | 27 | 20 | 18 | 2.6 | 14.2 |
+| 3.0 | W | walk | 202 | 0.89 | 0 | 19 | 25 | 24 | 3.4 | 14.0 |
+| 4.5 | W | walk | 269 | 1.00 | 33 | 0 | 30 | 47 | 5.5 | 11.0 |
+| 8.0 | Shift | run | 251 | 1.91 | 64 | 0 | 55 | 104 | 11.6 | 8.6 |
+
+Plain W at 4.5 m/s stepped 217 (clips) or 269 (procedural) times a minute; Shift at 8.0 stepped 251. Both feet were off the ground 44 and 33 percent of the time for W, and the procedural walk bobbed 11 cm against the run's 8.6.
+
+These numbers were first measured on a build of the unmodified code (a separate pristine checkout of main, same test measuring code): W at 4.5 m/s 217 steps/min, 1.24 m step, flight 43%, double support 0%; Shift at 8.0 251 steps/min. That run failed the natural targets on steps/min, flight and double support, and `OKAY_OLD_GAIT=1` reproduces the same numbers.
 
 How to read the table: `steps` are steps a minute, `step` the metres of ground per step, `flight` the share of the time both feet are
 off the ground, `double` the share both are on it, `arm`, `elbow` and `lean` degrees, `bounce` the hips' up and down in centimetres.
@@ -56,7 +78,7 @@ walk is therefore about 130 steps a minute at 2 m/s, and anything faster needs t
 |---|---|---|
 | Default speeds | First Person and Third Person walk **2.0**, run **5.5** m/s (were 4.5 and 8.0); the Third Person Shooter walks 2.0 and runs 5.0 (was 4.5 and 7.5). `Character::Locomotion` has the same defaults. | `Components/NaturalGait.hpp` (the numbers), the three controllers, `Components/Character.hpp` |
 | Crouch and prone speed | 1.0 and 0.5 m/s (were 2.2 and 1.1): crouching must stay under the walk. The shooter's `StanceControl` starts the same. | the controllers |
-| Walk stride | Calmer: the stance shrinks as the speed rises (double support is gone at 2.5 m/s, where a walk ends), the planted foot lands closer and pushes off farther back with a longer heel rise, and the ankle **rolls over the planted foot** (it no longer stays pinned while the foot pitches, so the sole does not slide). The hips bob about 8 cm instead of 14. | `Animation/HumanoidMotion.cpp` (`GaitForNatural`, `RockerDrift`) |
+| Walk stride | Calmer: the stance shrinks as the speed rises (double support shrinks to a few percent by 2.5 m/s, where a walk ends), the planted foot lands closer and pushes off farther back with a longer heel rise, and the ankle **rolls over the planted foot** (it no longer stays pinned while the foot pitches, so the sole does not slide). The hips bob about 8 cm instead of 14. | `Animation/HumanoidMotion.cpp` (`GaitForNatural`, `RockerDrift`) |
 | Run stride | Cadence 160 steps a minute at 2.5 m/s rising to about 190 at 6, a longer stance, so a run has flight but steps like a runner, not a sprinter (it stepped 227 times a minute at 5.5 m/s). | `Animation/HumanoidMotion.cpp` |
 | Walk-to-run look | Follows the **real ground speed** (a walk up to 2.4 m/s, a jog from 3.4, a smooth change between), not the controller's settings. A controller whose walk is 2 m/s shows a walk, one whose "walk" is 4.5 shows the jog it really is. The run state keeps its own hysteresis (starts at 1.15 times the walk speed, ends at 1.05), so nothing flickers. | `Components/Character.cpp` (`DriveLocomotion`) |
 | Baked clips | The default Animator graph's clips come from the same laws; a 3 m/s run clip was added so a slow sprint or a remote player the owner calls a run at 3.2 m/s is not a 4 m/s clip in slow motion. | `Animation/HumanoidLibrary.cpp` |
@@ -91,9 +113,40 @@ That is a format decision for the coordinator and the owner, not a small change,
 All rows: the built-in character, 60 frames a second, feet read from the mesh. "New project" is the Character with the default Animator
 graph (what a template gives); "procedural" is the Character on its own (NPCs, scripts).
 
-@@AFTER@@
+**A new project (Animator clips), natural defaults 2.0 / 5.5 m/s:**
 
-@@PICTURES@@
+| m/s | key | state | steps/min | step m | flight % | double % | arm deg | elbow deg | lean deg | bounce cm |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0.5 | W | walk | 71 | 0.43 | 0 | 46 | 13 | 12 | 1.5 | 1.2 |
+| 1.0 | W | walk | 93 | 0.65 | 0 | 38 | 15 | 14 | 1.8 | 4.2 |
+| 1.5 | W | walk | 106 | 0.85 | 0 | 28 | 17 | 16 | 2.2 | 6.3 |
+| 2.0 | W | walk | 129 | 0.93 | 0 | 21 | 20 | 19 | 2.6 | 8.1 |
+| 3.0 | W | run | 166 | 1.09 | 11 | 0 | 26 | 82 | 5.6 | 8.9 |
+| 4.5 | W | run | 178 | 1.52 | 39 | 0 | 36 | 84 | 7.4 | 9.5 |
+| 5.5 | Shift | run | 187 | 1.76 | 44 | 0 | 42 | 83 | 8.6 | 10.8 |
+
+**The Character alone (procedural stride):**
+
+| m/s | key | state | steps/min | step m | flight % | double % | arm deg | elbow deg | lean deg | bounce cm |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0.5 | W | walk | 79 | 0.38 | 0 | 36 | 12 | 12 | 1.4 | 1.5 |
+| 1.0 | W | walk | 92 | 0.65 | 0 | 35 | 15 | 14 | 1.8 | 4.1 |
+| 1.5 | W | walk | 106 | 0.85 | 0 | 29 | 18 | 16 | 2.2 | 8.1 |
+| 2.0 | W | walk | 129 | 0.93 | 0 | 21 | 20 | 19 | 2.6 | 8.0 |
+| 3.0 | W | run | 172 | 1.04 | 11 | 0 | 26 | 62 | 4.8 | 8.3 |
+| 4.5 | W | run | 178 | 1.51 | 36 | 0 | 35 | 89 | 7.4 | 9.8 |
+| 5.5 | Shift | run | 187 | 1.77 | 45 | 0 | 41 | 94 | 8.6 | 10.8 |
+
+Gap at the defaults (Animator): +57 steps/min, step 1.9 times longer, flight +44 points, double support -21, arm swing 2.1 times, elbow +65 degrees, lean +6 degrees, bounce +2.7 cm. Full tables of every speed: run `test_walk_vs_run --table` (and with `OKAY_OLD_GAIT=1 ... --old --table`). Foot slip of a planted foot stays under 0.4 m/s.
+
+## Pictures
+
+Software renders from Linux (the engine's own rasteriser, headless), not screenshots of the Windows player. Eight poses evenly spaced over one stride, side view; the bands on the ground are 0.5 m apart.
+
+* ![new walk and run](images/walk_vs_run/sheet.png)
+* ![old walk and run](images/walk_vs_run/sheet_old.png)
+
+Singles: `new_walk.png`, `run.png`, `old_walk.png`, `old_run.png` in `docs/images/walk_vs_run/`. Remake: `walk_vs_run_strips <folder>` (and with `OKAY_OLD_GAIT=1`).
 
 ## 5. Compare with the old gait in the same build
 

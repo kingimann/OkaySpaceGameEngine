@@ -1128,6 +1128,31 @@ Issue #888, findings 69, 71 and 72.
 still pass. `editor/main.cpp` and `editor/SplineTools.cpp` were only syntax-checked, not built or run: the Inspector rows,
 the popup hint and the saved setting are unverified until you look.
 
+### UI layout and anti-cheat rule files are tracked: rename one and its references follow
+
+Before this change the asset database did not know `.okayui` (UI layout text) or `.okayac` (anti-cheat rules), so a
+path to one was never seen as a reference: renaming the file left the old name behind, Find References showed nothing
+and `is:unused` listed files that were in use.
+
+1. Open a project in the editor. In the Project panel make a folder `UI` and, with any text editor, save a file
+   `Assets/UI/hud.okayui` with one line: `image texture=Assets/UI/panel.png` (put any picture at `Assets/UI/panel.png`).
+2. In an OkayScript file (`.okay`), add a line that names it, for example `print("Assets/UI/hud.okayui")`.
+3. In the Project panel, right-click `hud.okayui` > **Find References**. Expected: the script is listed. The Project panel
+   now shows the file's type as "UI layout".
+4. Rename `hud.okayui` to `main_hud` (F2). Expected: the script's line now says `Assets/UI/main_hud.okayui`. Ctrl+Z puts
+   the old name back in both places.
+5. Rename `panel.png`: the `texture=` path inside the `.okayui` file is rewritten too.
+6. The same works for a `.okayac` anti-cheat rules file named in a script (`net_anticheat_load("Assets/net/rules.okayac")`)
+   or in an Anti-Cheat Config component.
+
+Note: nothing in the engine draws a `.okayui` file yet; today it is read by the localization scanner (loc keys) and now
+by the asset database. Files that are saves, per-user settings or sidecars (`.okayprefs`, `.okaysave`, `.okaygame`,
+`.okayslot`, `.okaycreation`, `.okayconfig`, `.okaypkg`, `.okayframes`, `.okayproj`, `.okaylabels`, `.okayasset`,
+`.okaymeta`) are left out of the asset list on purpose; they are named in `NonAssetExtensions()`.
+
+**Status.** Tested headless in `tests/test_asset_ext_table.cpp` (116 checks, 0 failures on Linux; before the fix 17 of them failed: `.okayac` and `.okayui` were in neither list, nothing found their users and renames rewrote nothing). `test_asset_database` (693), `test_project_panel` (450), `test_project_panel_db` (141), `test_import_settings_real` (40) and `test_editor_refs_multiedit_snap` (81) still pass with 0 failures. The editor itself was not built or
+run for this change: the "UI layout" label and the Find References list are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

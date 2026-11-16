@@ -212,6 +212,9 @@ std::string TypeLabel(const std::string& e, bool isDir) {
     if (e == ".okayquest") return "Quest";
     if (e == ".okaybt") return "Behavior tree";
     if (e == ".okayseq") return "Cutscene";
+    if (e == ".okayui") return "UI layout";
+    if (e == ".okaytheme") return "UI theme";
+    if (e == ".okayac") return "Anti-cheat rules";
     using T = okay::AssetType;
     switch (okay::AssetTypeFromExtension(e)) {
         case T::Texture: return "Image";

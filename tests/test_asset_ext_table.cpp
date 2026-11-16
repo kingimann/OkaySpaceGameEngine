@@ -50,7 +50,12 @@ void ScanLine(const std::string& rawLine, const std::string& where, std::map<std
         std::string lit;
         std::size_t j = i + 1;
         while (j < line.size() && line[j] != '"') {
-            if (line[j] == '\\' && j + 1 < line.size()) { lit += line[j + 1]; j += 2; continue; }
+            if (line[j] == '\\' && j + 1 < line.size()) {   // "\n", "\t": a control char, so ".okayscene\n" ends at the 'e'
+                const char x = line[j + 1];
+                lit += (x == '"' || x == '\\' || x == '\'') ? x : '\x01';
+                j += 2;
+                continue;
+            }
             lit += line[j++];
         }
         for (std::size_t p = lit.find(".okay"); p != std::string::npos; p = lit.find(".okay", p + 1)) {

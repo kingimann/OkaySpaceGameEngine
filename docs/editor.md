@@ -571,6 +571,13 @@ thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Deta
   database's extension table (`engine/src/Core/ImportSettings.cpp`), so a scene's script record and a script's
   `ui_load_theme("...okaytheme")` call count as references: rename and move rewrite them, Find References lists them and
   `is:unused` no longer lists files that are in use.
+- **Every project file type is in the table.** `.okayui` (UI layout) and `.okayac` (anti-cheat rules) are Data too, and
+  their own text is read for paths (a layout's `texture=`, a rules file's prefabs), so rename, move, Find References and
+  `is:unused` see them. Files that are not project assets (saves, per-user settings, sidecars, package archives,
+  recordings: `.okayprefs`, `.okaysave`, `.okaygame`, `.okayslot`, `.okaycreation`, `.okayconfig`, `.okaypkg`,
+  `.okayframes`, `.okayproj`, `.okaylabels`, `.okayasset`, `.okaymeta`) are listed in `okay::NonAssetExtensions()`.
+  `tests/test_asset_ext_table.cpp` reads every engine, editor and launcher source and fails when a `".okay<x>"` string
+  is in neither list, so a new file type cannot be forgotten.
 
 ### Multi-select edits and snap steps (issue #888 findings 71 and 72)
 

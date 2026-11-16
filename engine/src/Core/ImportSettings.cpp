@@ -39,6 +39,8 @@ const ExtRow kExtensions[] = {
     {"okayweapon", AssetType::Data},
     {"okayrecipes", AssetType::Data}, {"okayloc", AssetType::Data}, {"okaynav", AssetType::Data},
     {"okaytheme", AssetType::Data},         // UI theme files, loaded by ui_load_theme("...okaytheme")
+    {"okayui", AssetType::Data},            // UI layout text (image texture=..., text "@key"); LocScan reads it for loc keys
+    {"okayac", AssetType::Data},            // anti-cheat rules: an AntiCheatConfig, a scene's anticheat line, --anticheat FILE
     {"json", AssetType::Data}, {"txt", AssetType::Data}, {"bin", AssetType::Data},
     {"ttf", AssetType::Font}, {"otf", AssetType::Font},
 };

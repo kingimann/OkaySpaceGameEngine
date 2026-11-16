@@ -40,7 +40,35 @@ static void TestUnsetEnv(const char* n) {
 static void WriteFile(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
 static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
 
-struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris; bool (*direct)(const std::string&, ImportedModel&, std::string*); };
+struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris; bool (*direct)(const std::string&, ImportedModel&, std::string*); bool expectOwn; };
+
+// tests/CMakeLists.txt defines OKAY_EXPECT_OWN_<FMT> when the build was configured with -DOKAY_OWN_<FMT>=ON (or -DOKAY_OWN_STACK=ON):
+// the own reader is then the build default and the "off by default" checks below turn into "on by default".
+#ifdef OKAY_EXPECT_OWN_AC3D
+constexpr bool EXPECT_AC3D = true;
+#else
+constexpr bool EXPECT_AC3D = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_OGRE
+constexpr bool EXPECT_OGRE = true;
+#else
+constexpr bool EXPECT_OGRE = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_XGL
+constexpr bool EXPECT_XGL = true;
+#else
+constexpr bool EXPECT_XGL = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_IRR
+constexpr bool EXPECT_IRR = true;
+#else
+constexpr bool EXPECT_IRR = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_NFF
+constexpr bool EXPECT_NFF = true;
+#else
+constexpr bool EXPECT_NFF = false;
+#endif
 static bool DAc(const std::string& p, ImportedModel& m, std::string* e) { return ReadAc3dFile(p, m, e); }
 static bool DOg(const std::string& p, ImportedModel& m, std::string* e) { return ReadOgreXmlFile(p, m, e); }
 static bool DXg(const std::string& p, ImportedModel& m, std::string* e) { return ReadXglFile(p, m, e); }
@@ -64,11 +92,11 @@ int main() {
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch_d";
     fs::create_directories(dir);
     const Case cases[] = {
-        {"t.ac", ".ac", "OKAY_OWN_AC3D", fx::BuildAc3d(), 5, DAc},
-        {"t.mesh.xml", ".mesh.xml", "OKAY_OWN_OGRE", fx::BuildOgreXml(), 3, DOg},
-        {"t.xgl", ".xgl", "OKAY_OWN_XGL", fx::BuildXgl(), 6, DXg},
-        {"t.irr", ".irr", "OKAY_OWN_IRR", fx::BuildIrrScene(), 60, DIr},   // the cube (12) and the sphere (48); the mesh node names a file that is not there (the direct call has no loader at all)
-        {"t.nff", ".nff", "OKAY_OWN_NFF", fx::BuildNff(), 111, DNf},
+        {"t.ac", ".ac", "OKAY_OWN_AC3D", fx::BuildAc3d(), 5, DAc, EXPECT_AC3D},
+        {"t.mesh.xml", ".mesh.xml", "OKAY_OWN_OGRE", fx::BuildOgreXml(), 3, DOg, EXPECT_OGRE},
+        {"t.xgl", ".xgl", "OKAY_OWN_XGL", fx::BuildXgl(), 6, DXg, EXPECT_XGL},
+        {"t.irr", ".irr", "OKAY_OWN_IRR", fx::BuildIrrScene(), 60, DIr, EXPECT_IRR},   // the cube (12) and the sphere (48); the mesh node names a file that is not there (the direct call has no loader at all)
+        {"t.nff", ".nff", "OKAY_OWN_NFF", fx::BuildNff(), 111, DNf, EXPECT_NFF},
     };
     for (const Case& c : cases) {
         const std::string path = (dir / c.file).string();
@@ -99,8 +127,11 @@ int main() {
         TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
-        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable()) {
+        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch);
+        // on by default in a build configured with the option on
+        if (c.expectOwn) {
+            CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
+        } else if (!AssimpAvailable()) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

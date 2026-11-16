@@ -16,10 +16,11 @@ How to try one (Windows)
    clips). Press Import.
    For cube.irr, cube.lws and rig.md5mesh first untick "Copy the file into the project's Assets": each one names
    a second file next to it (cube.irrmesh, cube.lwo, rig.md5anim), and the copy takes only the file you picked.
-6. The list below says what you should see. The variable lives only in that Command Prompt window.
-
-Help > About OkaySpace shows which formats our code reads now (readers=own(...)). Today it names the first 20
-switches below (FBX to X); the newer ones (AC3D to LWS) are not in that line yet.
+6. The list below says what you should see. The Console also says which reader read the file, for example
+   model import '...\rig.pmx': read by our own PMX reader
+   (without the variable it says "read by Assimp", or "read by ufbx" for FBX).
+The variable lives only in that Command Prompt window. Help > About OkaySpace also lists the formats our code reads
+now (readers=own(...)).
 
 The files: switch, file, what you should see
 --------------------------------------------
@@ -28,7 +29,7 @@ OKAY_OWN_FBX       cube.fbx            a cube (12 triangles) with a small red te
 OKAY_OWN_COLLADA   skinned_strip.dae   a strip on 2 bones, with a clip
 OKAY_OWN_3DS       cube.3ds            a red cube
 OKAY_OWN_BVH       walk.bvh            no mesh: a skeleton (empty objects) and 1 clip
-OKAY_OWN_OFF       cube.off            a cube
+OKAY_OWN_OFF       cube.off            a white cube
 OKAY_OWN_SMD       rig.smd             a small arm (3 triangles) on 4 bones, no clip
 OKAY_OWN_MD5       rig.md5mesh         2 triangles on 3 joints; rig.md5anim next to it adds its clip
                    rig.md5anim         no mesh: a skeleton and 1 clip
@@ -61,8 +62,8 @@ OKAY_OWN_IQM       rig.iqm             the column on 2 bones (white); clip "bend
 OKAY_OWN_COB       cube.cob            a green cube
 OKAY_OWN_PMX       rig.pmx             the gold column on 2 bones (PMX files hold no clips)
 OKAY_OWN_LWS       cube.lws            cube.lwo, turning once round in 2 seconds (clip "scene")
-(no switch yet)    cube.stl, cube.ply  a cube each. Our STL and PLY readers are chosen when the program is built, so
-                                       the download reads these two the old way.
+OKAY_OWN_STL       cube.stl            a cube
+OKAY_OWN_PLY       cube.ply            a cube
 OKAY_OWN_NDO       (no file)           our NDO reader only recognises the file and refuses it (docs/own_ndo_reader.md),
                                        so there is nothing to try.
 

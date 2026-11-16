@@ -42,8 +42,8 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   1. Pick a switch from `examples/own_readers/README.txt` (one per reader, for example `OKAY_OWN_PMX`), run `set OKAY_OWN_PMX=1`, then start `Tools\OkayEngine.exe`.
   2. Choose **File > Import Model...** and pick that switch's file (`examples/own_readers/rig.pmx`). For `cube.irr`, `cube.lws` and `rig.md5mesh` untick **Copy the file into the project's Assets** first.
   3. Press **Import**.
-- **See:** the Import Model window lists what the README says (meshes, skeleton, clips) and the shape appears.
-- **Partial:** the startup line names only 20 of the switches; for the newer readers (AC3D to LWS) nothing shows which reader ran, and Assimp in the release reads most of these formats too. STL and PLY have no switch yet. NDO has no sample (its reader refuses every file).
+- **See:** the Import Model window lists what the README says (meshes, skeleton, clips), the shape appears, and the Console says `read by our own PMX reader`.
+- **Partial:** nobody has opened these samples in a real editor window yet. NDO has no sample (its reader refuses every file). Assimp was not run on the samples, so the comparison import without the variable is unchecked.
 - **Link:** [../../try_it.md](../../try_it.md)
 
 ### V-OC-005 Own WAV decoder

@@ -80,9 +80,8 @@ const std::vector<Row>& Table() {
         {"OKAY_OWN_NDO", "NDO", {".ndo"}, Want::Mesh, true},   // the reader is a seam: it refuses every file (docs/own_ndo_reader.md)
         {"OKAY_OWN_PMX", "PMX", {".pmx"}, Want::Mesh, false},
         {"OKAY_OWN_LWS", "LWS", {".lws", ".mot"}, Want::Mesh, false},
-        // STL and PLY: own readers chosen by the build option OKAY_PREFER_OWN_READERS (no run-time switch yet: flip proposal row 0.8)
-        {"", "STL", {".stl"}, Want::Mesh, false},
-        {"", "PLY", {".ply"}, Want::Mesh, false},
+        {"OKAY_OWN_STL", "STL", {".stl"}, Want::Mesh, false},   // STL and PLY: the build option OKAY_PREFER_OWN_READERS, or these switches
+        {"OKAY_OWN_PLY", "PLY", {".ply"}, Want::Mesh, false},
     };
     return t;
 }

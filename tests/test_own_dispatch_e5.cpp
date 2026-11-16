@@ -106,9 +106,11 @@ int main() {
         TestUnsetEnv("OKAY_OWN_LWS");
         TestSetEnv("OKAY_OWN_PMX", "1");
         TestSetEnv("OKAY_OWN_LWS", "0");
+        TestSetEnv("OKAY_OWN_NFF", "0");   // pinned off so that a -DOKAY_OWN_NFF=ON (or -DOKAY_OWN_STACK=ON) build still has NFF off here
         CHECK(EffectiveImportBackend(".pmx") == ImportBackend::Own && EffectiveImportBackend(".lws") != ImportBackend::Own && EffectiveImportBackend(".nff") != ImportBackend::Own && EffectiveImportBackend(".obj") == ImportBackend::Own);
         TestUnsetEnv("OKAY_OWN_PMX");
         TestUnsetEnv("OKAY_OWN_LWS");
+        TestUnsetEnv("OKAY_OWN_NFF");
     }
     // a format is not absorbed by a neighbour's reader
     {

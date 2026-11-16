@@ -1,4 +1,6 @@
 #include "okay/Modeling/PolyOps.hpp"
+#include <unordered_map>
+#include <cstdint>
 
 #include <algorithm>
 #include <cmath>
@@ -379,16 +381,105 @@ int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vecto
 
 // ---------------------------------------------------------------------------
 int DissolveEdges(PolyMesh& pm, const EdgeList& edges, bool cleanVerts) {
+    // Works on a directed-edge -> face table kept up to date as faces merge, so the cost
+    // grows with the number of edges, not edges x faces (audit: dissolving every edge of a
+    // 100k-triangle mesh took minutes with the old whole-mesh scan per edge).
+    const int nv = (int)pm.verts.size();
+    auto key = [&](int a, int b) { return (std::int64_t)a * (nv + 1) + b; };
+    std::unordered_map<std::int64_t, int> owner;
+    owner.reserve(pm.faces.size() * 4);
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        const PolyFace& F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            if (a >= 0 && b >= 0 && a < nv && b < nv) owner[key(a, b)] = f;
+        }
+    }
+    std::vector<char> dead(pm.faces.size(), 0);
+    auto find = [&](int a, int b) {
+        if (a < 0 || b < 0 || a >= nv || b >= nv) return -1;
+        auto it = owner.find(key(a, b));
+        if (it == owner.end() || dead[it->second] || !Runs(pm.faces[it->second], a, b)) return -1;
+        return it->second;
+    };
     int done = 0;
     std::set<int> ends;
-    for (const auto& e : edges)
-        if (MergeAcross(pm, e.first, e.second)) { ++done; ends.insert(e.first); ends.insert(e.second); }
-    if (cleanVerts) {
-        // A vertex left with two edges sits in the middle of a side: take it out.
-        for (int v : ends) {
-            PolyTopology T(pm);
-            if (T.Neighbours(v).size() == 2) RemoveVertexFromFaces(pm, v);
+    for (const auto& e : edges) {
+        const int f0 = find(e.first, e.second), f1 = find(e.second, e.first);
+        if (f0 < 0 || f1 < 0 || f0 == f1) continue;
+        PolyFace A = pm.faces[f0];
+        const PolyFace B = pm.faces[f1];
+        const int a = e.first, b = e.second;
+        const bool uv = HasUV(A) && HasUV(B);
+        PolyFace m;
+        m.material = A.material; m.hasColor = A.hasColor; m.color = A.color;
+        const int ib = CornerIn(A, b), n = A.Size();
+        for (int k = 0; k < n; ++k) {
+            const int c = (ib + k) % n;
+            m.verts.push_back(A.verts[c]);
+            if (uv) m.uvs.push_back(A.uvs[c]);
         }
+        const int ia = CornerIn(B, a), nb = B.Size();
+        for (int k = 1; k < nb - 1; ++k) {
+            const int c = (ia + k) % nb;
+            m.verts.push_back(B.verts[c]);
+            if (uv) m.uvs.push_back(B.uvs[c]);
+        }
+        CleanFace(m);
+        if (m.Size() < 3) continue;       // the two faces together enclose nothing: keep them
+        dead[f1] = 1;
+        pm.faces[f0] = m;
+        for (int k = 0; k < m.Size(); ++k) owner[key(m.verts[k], m.verts[(k + 1) % m.Size()])] = f0;
+        ++done; ends.insert(a); ends.insert(b);
+    }
+    {
+        std::vector<PolyFace> kept;
+        kept.reserve(pm.faces.size());
+        for (int f = 0; f < (int)pm.faces.size(); ++f) if (!dead[f]) kept.push_back(std::move(pm.faces[f]));
+        pm.faces = std::move(kept);
+    }
+    if (cleanVerts && done > 0) {
+        // A vertex left with two edges sits in the middle of a side: take it out, as long as
+        // every face around it keeps at least three corners (so dissolving can never erase
+        // the whole mesh; audit: 4 edges of a cube used to leave 0 faces).
+        std::unordered_map<int, std::vector<int>> vf;      // faces around each end vertex
+        std::unordered_map<int, std::set<int>> nbr;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) {
+            const PolyFace& F = pm.faces[f];
+            for (int k = 0; k < F.Size(); ++k) {
+                const int v = F.verts[k];
+                if (!ends.count(v)) continue;
+                vf[v].push_back(f);
+                nbr[v].insert(F.verts[(k + 1) % F.Size()]);
+                nbr[v].insert(F.verts[(k + F.Size() - 1) % F.Size()]);
+            }
+        }
+        std::vector<char> gone(pm.faces.size(), 0);
+        for (int v : ends) {
+            auto it = nbr.find(v);
+            if (it == nbr.end() || it->second.size() != 2) continue;
+            bool ok = true;
+            for (int f : vf[v]) if (gone[f] || pm.faces[f].Size() <= 3) ok = false;
+            if (!ok) continue;
+            const int p = *it->second.begin(), q = *it->second.rbegin();
+            for (int f : vf[v]) {
+                PolyFace& F = pm.faces[f];
+                const bool uv = HasUV(F);
+                for (int i = F.Size() - 1; i >= 0; --i)
+                    if (F.verts[i] == v) { F.verts.erase(F.verts.begin() + i); if (uv) F.uvs.erase(F.uvs.begin() + i); }
+                CleanFace(F);
+                if (F.Size() < 3) gone[f] = 1;
+            }
+            for (int w : {p, q}) {
+                auto nw = nbr.find(w);
+                if (nw == nbr.end()) continue;
+                nw->second.erase(v);
+                nw->second.insert(w == p ? q : p);
+            }
+        }
+        std::vector<PolyFace> kept;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) if (!gone[f]) kept.push_back(std::move(pm.faces[f]));
+        pm.faces = std::move(kept);
     }
     return done;
 }
@@ -1045,6 +1136,7 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
     // New mesh: original verts (moved), then edge points, then face points.
     PolyMesh out;
     out.verts = vertPt;
+    out.slotColors = pm.slotColors;
     const int edgeBase = (int)out.verts.size();
     out.verts.insert(out.verts.end(), edgePt.begin(), edgePt.end());
     const int faceBase = (int)out.verts.size();

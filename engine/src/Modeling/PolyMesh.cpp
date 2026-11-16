@@ -223,6 +223,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
+    const bool hasSlots = mesh.HasSlots();
+    if (hasSlots) pm.slotColors = mesh.slotColors;
     std::vector<int> group;   // polyFace id of each kept triangle
     for (int t = 0; t < mesh.TriangleCount(); ++t) {
         PolyFace f;
@@ -235,6 +237,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         }
         if (!ok || f.verts[0] == f.verts[1] || f.verts[1] == f.verts[2] || f.verts[0] == f.verts[2]) continue;
         if (hasCol) { f.hasColor = true; f.color = mesh.triColors[t]; }
+        if (hasSlots) f.material = std::max(0, mesh.triSlot[t]);
         pm.faces.push_back(f);
         srcTri.push_back(t);
         if (hasGroups) group.push_back(mesh.polyFace[t]);
@@ -369,11 +372,14 @@ static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<in
 
 Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
     Mesh m;
-    bool anyUV = false, anyColor = false;
+    bool anyUV = false, anyColor = false, anySlot = false;
     for (const PolyFace& f : faces) {
         if (!f.uvs.empty() && f.uvs.size() == f.verts.size()) anyUV = true;
         if (f.hasColor) anyColor = true;
+        if (f.material != 0) anySlot = true;
     }
+    if (!slotColors.empty()) anySlot = true;
+    if (anySlot && !slotColors.empty()) anyColor = true;   // slot colours are drawn as face colours
     // One mesh vertex per (polygon vertex, UV): shared unless a seam splits it.
     std::map<std::tuple<int, long, long>, int> slot;
     auto vertexFor = [&](int pv, const Vec2& uv) {
@@ -416,10 +422,16 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
                 m.triangles.push_back(vertexFor(f.verts[corner], uv));
                 if (anyUV && !splitSeams) m.cornerUVs.push_back(uv);
             }
-            if (anyColor) m.triColors.push_back(f.hasColor ? f.color : Color{1, 1, 1, 1});
+            if (anyColor) {
+                Color c = f.hasColor ? f.color : Color{1, 1, 1, 1};
+                if (!slotColors.empty() && f.material >= 0 && f.material < (int)slotColors.size()) c = slotColors[f.material];
+                m.triColors.push_back(c);
+            }
             m.polyFace.push_back(fi);
+            if (anySlot) m.triSlot.push_back(std::max(0, f.material));
         }
     }
+    if (anySlot) m.slotColors = slotColors;
     // Seams that are still edges of some face (vertex i of the mesh is polygon vertex i).
     if (!seams.empty()) {
         std::set<std::pair<int, int>> edges;
@@ -449,6 +461,8 @@ std::string PolyMesh::Serialize() const {
         if (f.material != 0) o << " mat " << f.material;
         o << "\n";
     }
+    for (std::size_t i = 0; i < slotColors.size(); ++i)
+        o << "slot " << i << " " << slotColors[i].r << " " << slotColors[i].g << " " << slotColors[i].b << " " << slotColors[i].a << "\n";
     for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
 }
@@ -512,6 +526,11 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "slot") {
+            int idx = -1; Color c;
+            if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0 || idx > 255) return fail(lineNo, "a slot needs a number (0-255) and r g b a");
+            if ((int)pm.slotColors.size() <= idx) pm.slotColors.resize(idx + 1, Color{1, 1, 1, 1});
+            pm.slotColors[idx] = c;
         } else if (tag == "seam") {
             int a = -1, b = -1;
             if (!(ls >> a >> b)) return fail(lineNo, "a seam needs two vertex numbers");

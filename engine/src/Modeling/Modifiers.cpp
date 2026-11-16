@@ -131,6 +131,8 @@ void HashMesh(std::uint64_t& h, const Mesh& m) {
     if (!m.polyFace.empty()) HashBytes(h, m.polyFace.data(), m.polyFace.size() * sizeof(int));
     if (!m.cornerUVs.empty()) HashBytes(h, m.cornerUVs.data(), m.cornerUVs.size() * sizeof(m.cornerUVs[0]));
     if (!m.triColors.empty()) HashBytes(h, m.triColors.data(), m.triColors.size() * sizeof(m.triColors[0]));
+    if (!m.triSlot.empty()) HashBytes(h, m.triSlot.data(), m.triSlot.size() * sizeof(int));
+    if (!m.slotColors.empty()) HashBytes(h, m.slotColors.data(), m.slotColors.size() * sizeof(m.slotColors[0]));
     std::size_t nn = m.normals.size(); HashBytes(h, &nn, sizeof nn);
 }
 

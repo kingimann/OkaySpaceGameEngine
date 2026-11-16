@@ -955,6 +955,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Material slots (per-face material: which slot each triangle uses, and each
+        // slot's colour). Separate records so older scenes still load; they follow the
+        // geometry so the triangle count lines up.
+        if (mr->mesh.HasSlots() && !generated) {
+            out << "  meshslots " << mr->mesh.triSlot.size();
+            for (int sl : mr->mesh.triSlot) out << " " << sl;
+            out << "\n  slotcolors " << mr->mesh.slotColors.size();
+            for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -4609,6 +4619,27 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
                     for (int i = 0; i < cc && in; ++i) {
                         Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
+                    }
+                } else if (field == "meshslots") {
+                    // Per-triangle material slot; ignored later if the count doesn't match.
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    if (!in || !countOk(sc, 1)) return bad("meshslots: bad count");
+                    mr->mesh.triSlot.clear();
+                    mr->mesh.triSlot.reserve(sc > 0 ? sc : 0);
+                    for (int i = 0; i < sc && in; ++i) {
+                        int sl = 0; in >> sl;
+                        mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
+                    }
+                } else if (field == "slotcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int kc = 0; in >> kc;
+                    if (!in || !countOk(kc, 4) || kc > 256) return bad("slotcolors: bad count");
+                    mr->mesh.slotColors.clear();
+                    for (int i = 0; i < kc && in; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.slotColors.push_back(c);
                     }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint

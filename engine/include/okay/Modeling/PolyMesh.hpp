@@ -42,6 +42,9 @@ class PolyMesh {
 public:
     std::vector<Vec3>     verts;
     std::vector<PolyFace> faces;
+    /// Colour of each material slot (PolyFace::material indexes it). Empty = no slot table.
+    /// Saved in the .okaymesh as "slot N r g b a" lines; older files simply have none.
+    std::vector<Color> slotColors;
     /// UV seams: edges (a < b) the unwrapper cuts the surface open along.
     std::vector<std::pair<int, int>> seams;
     bool IsSeam(int a, int b) const;

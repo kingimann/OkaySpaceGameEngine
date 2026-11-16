@@ -2094,6 +2094,14 @@ add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
 
+# Modeling "more": per-face material slots, dissolve fixes (docs/modeling_audit.md)
+add_executable(test_modeling_more test_modeling_more.cpp)
+target_link_libraries(test_modeling_more PRIVATE okay::engine)
+add_test(NAME modeling_more COMMAND test_modeling_more)
+add_executable(test_modeling_more_scene test_modeling_more_scene.cpp)
+target_link_libraries(test_modeling_more_scene PRIVATE okay::engine)
+add_test(NAME modeling_more_scene COMMAND test_modeling_more_scene)
+
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
 target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)

@@ -26,7 +26,7 @@ smaller; left click swings the real arm (so others see the swing too); a two-han
 | Preset | What it does |
 |---|---|
 | Normal (default) | Arm always in view, forearm in the shirt colour, click swings, both hands for two-handed items |
-| Both arms | Normal, but whatever you hold is held in both hands. With empty hands one arm shows (a two-arm empty stance is not built yet) |
+| Both arms | Normal, but asks for both hands on a held item. A one-handed item still shows one hand and empty hands show one arm, so it looks like Normal for those; **a real two-arm stance is not built yet** |
 | Right hand only | Normal, but only the right arm ever shows |
 | Minimal (hand only) | Just a small hand block, no forearm |
 | Old look | The behaviour before presets, for comparing: floating block, only while holding, no click swing |

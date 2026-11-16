@@ -47,7 +47,7 @@ public:
             case Preset::Normal:
                 return "The arm is always in view (not only when you hold something): a hand and a forearm in your shirt colour that leaves the bottom of the screen. Left click swings it. A two-handed item uses both.";
             case Preset::BothArms:
-                return "Normal, but whatever you hold is held in both hands, even a small one-handed item. With empty hands one arm shows (a two-arm empty stance is not built yet).";
+                return "Normal, but asks for both hands on a held item. Today an item whose own grip is one-handed still shows one hand, and with empty hands one arm shows, so this looks the same as Normal for those (a two-arm stance is not built yet).";
             case Preset::RightHandOnly:
                 return "Normal, but only the right arm ever shows, even for a two-handed item.";
             case Preset::Minimal:

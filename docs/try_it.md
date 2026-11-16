@@ -841,7 +841,7 @@ front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.
 3. Walk up to a block (red cube, blue block, green box), press **E** to hold it. It sits in the hand. The green box is two-handed.
 4. The small picture at the top right is a second camera looking back at you: you should see a whole person with two arms, the
    held block in the hand and the arm swinging when you click. No floating hand there.
-5. Stop. Select **Player**, in the Inspector find **First Person Hands**, open **Preset** and pick Both arms (hold a block: both hands), Right hand
+5. Stop. Select **Player**, in the Inspector find **First Person Hands**, open **Preset** and pick Both arms (looks like Normal except for two-handed items, see fp_hand.md), Right hand
    only, Minimal (just the hand block) or **Old look**; press Play each time. **Use normal first-person arms** brings the normal look back (Ctrl+Z also undoes it).
    **Open Preview** shows both views live as you change a preset.
 

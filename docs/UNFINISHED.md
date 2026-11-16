@@ -103,7 +103,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
-- Blocky character's arms in first person: the owner's complaint ("fix the first person hand so it looks normal to others and to us") is addressed on `claude/fp-hand-fix` (presets, always-visible arm with forearm, click swing, example scene, see [fp_hand.md](fp_hand.md)); still open: no fingers, a finer arm pose than a block, the first-person pose is not sent over the network, owner sign-off on the default look
+- Blocky character's arms in first person: the owner's complaint ("fix the first person hand so it looks normal to others and to us") is addressed on `claude/fp-hand-fix` (presets, always-visible arm with forearm, click swing, example scene, see [fp_hand.md](fp_hand.md)); still open: a real two-arm stance (Both arms preset only changes two-handed items), no fingers, a finer arm pose than a block, the first-person pose is not sent over the network, owner sign-off on the default look
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials (renderer submeshes)
 - Script editor: classes, default templates, no random script on New Script

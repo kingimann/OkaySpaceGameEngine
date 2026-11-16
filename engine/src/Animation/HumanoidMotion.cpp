@@ -1,5 +1,7 @@
 #include "okay/Animation/HumanoidMotion.hpp"
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace okay {
 namespace HumanoidMotion {
@@ -13,6 +15,7 @@ namespace HumanoidMotion {
 // soles, knee 0.55, ankle 0.12.
 namespace {
 constexpr float kThigh = 0.37f, kShin = 0.43f, kHipToAnkle = 0.80f, kAnkleH = 0.12f;
+constexpr float kToeAhead = 0.20f, kHeelBehind = 0.10f;   // the foot: toe tip ahead of the ankle, heel behind it
 constexpr float kPi = 3.14159265f, kRad2Deg = 57.2957795f;
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 float frac(float v) { return v - std::floor(v); }
@@ -39,8 +42,19 @@ void LegIK(float fwd, float down, float side, float pitch, Vec3& thigh, Vec3& sh
 // toe (0.2 ahead) or heel (0.1 behind) as the contact point.
 float AnkleLiftForPitch(float pitch) {
     float r = pitch * (kPi / 180.0f);
-    return r >= 0.0f ? kAnkleH * std::cos(r) + 0.20f * std::sin(r) - kAnkleH
-                     : kAnkleH * std::cos(r) - 0.10f * std::sin(r) - kAnkleH;
+    return r >= 0.0f ? kAnkleH * std::cos(r) + kToeAhead * std::sin(r) - kAnkleH
+                     : kAnkleH * std::cos(r) - kHeelBehind * std::sin(r) - kAnkleH;
+}
+// How far the ankle moves FORWARD over a planted foot when the foot is pitched `pitch` degrees from flat
+// (+ = toes down, heel up). A planted foot rolls about its toe (pitch > 0) or its heel (pitch < 0) and stays
+// put on the ground, so the ankle, 0.12 above the sole, swings forward (and up) with it. Without this the
+// ankle is pinned while the foot pitches, and the sole slides over the ground at heel strike and toe off.
+// Worked out from the foot's own shape (toe 0.20 ahead of the ankle, heel 0.10 behind it, ankle 0.12 up).
+float RockerDrift(float pitch) {
+    const float r = pitch * (kPi / 180.0f);
+    if (r >= 0.0f) return kToeAhead * (1.0f - std::cos(r)) + kAnkleH * std::sin(r);
+    const float f = -r;
+    return kHeelBehind * (std::cos(f) - 1.0f) - kAnkleH * std::sin(f);
 }
 
 // One stride layout. Distances are in the rig's metres (feet at y = 0).
@@ -54,12 +68,24 @@ struct Gait {
     float sag;       // extra knee give at mid-stance
     bool  crouch;
     bool  run;       // running style: flight, forefoot strike, heel kicked up behind
+    // The natural walk and run lay the planted foot out a little more like a person's. The defaults here
+    // reproduce the old stride exactly (OKAY_OLD_GAIT=1 uses them).
+    float bias = 0.0f;       // the planted foot's sweep sits this far behind the hip joint: it lands closer, pushes off farther back
+    float drift = 0.0f;      // 1 = the ankle rolls forward over the planted foot (RockerDrift); 0 = pinned, the old way
+    float offAdd = 0.0f;     // extra toe-off pitch, degrees (a longer, higher heel rise)
+    float offStart = 0.65f;  // the heel rise starts this far through the stance ...
+    float offSpan = 0.35f;   // ... and reaches its peak at the end of it
 };
 
 // The leg is only 0.80 from hip to ankle, so every centimetre the hips sink folds
 // the knee by several degrees: a walk keeps the stance leg nearly straight, a run
 // gives at the knee (the leg's spring), more the faster it goes.
-Gait GaitFor(int state, float v) {
+//
+// The stride before the natural walk and run (docs/walk_vs_run.md). Its walk is tuned for a person hurrying
+// at up to about 1.8 m/s and turns frantic above that (the cadence follows the speed up to 350 steps a
+// minute at 5.5 m/s); its run steps like a sprinter at every speed (227 steps a minute at 5.5 m/s). Kept
+// verbatim behind OKAY_OLD_GAIT=1.
+Gait GaitForOld(int state, float v) {
     Gait g{};
     g.crouch = (state == 17);
     g.run = (state == 3);
@@ -99,20 +125,71 @@ Gait GaitFor(int state, float v) {
     return g;
 }
 
+// The natural walk and run (docs/walk_vs_run.md): the stride laid out the way a person's is, from general facts
+// of human gait. The numbers are this rig's own (leg 0.80 from hip to ankle), found by measuring its feet:
+//  * Walk: cadence 80 steps a minute at a stroll, 90 at 1 m/s, 105 at 1.4, about 130 at 2 m/s (the top of what
+//    a person walks; past roughly 2.1 m/s the walk turns into a jog). One foot is always on the ground, the
+//    stance shrinks as the speed rises, the planted foot lands a little closer and pushes off farther back with
+//    a longer heel rise, and its ankle rolls over it (RockerDrift) so the sole stays put.
+//  * Run: cadence 160 steps a minute at 2.5 m/s rising slowly to about 190 at 6 m/s, so both feet leave the
+//    ground for a good part of every step and the stance is long enough for the leg to take the landing.
+constexpr float kWalkReach = 1.0f;     // widest sweep of a planted ankle in a walk (m): past it the hips dip too far
+constexpr float kRunReach  = 0.9f;     // ... and in a run
+
+Gait GaitForNatural(int state, float v) {
+    Gait g{};
+    g.crouch = (state == 17);
+    g.run = (state == 3);
+    v = v < 0.0f ? 0.0f : v;
+    g.speed = v;
+    if (g.crouch) return GaitForOld(state, v);       // the crouch walk is unchanged
+    g.drift = 1.0f;
+    if (g.run) {
+        g.freq = clampf((140.0f + 8.5f * v) / 120.0f, 0.95f, 2.2f);
+        float stride = v / g.freq;
+        g.beta = stride > 1e-4f ? clampf(kRunReach / stride, 0.16f, 0.42f) : 0.42f;
+        g.reach = stride * g.beta;
+        float k = clampf(v, 2.5f, 8.0f) - 2.5f;
+        g.baseDrop = 0.002f * k;
+        g.sag = 0.03f + 0.004f * k;
+        g.lift = clampf(0.05f + 0.04f * v, 0.08f, 0.32f);
+    } else {
+        g.beta = 0.62f - 0.08f * clampf(v - 1.0f, 0.0f, 1.5f);
+        g.freq = std::fmax(0.55f + 0.22f * v, std::fmax(v / 1.95f, v * g.beta / kWalkReach));
+        g.reach = v / g.freq * g.beta;
+        g.baseDrop = 0.0f;
+        g.sag = 0.004f;
+        g.lift = clampf(0.05f + 0.015f * v, 0.05f, 0.11f);
+        const float k = clampf(g.reach / kWalkReach, 0.0f, 1.0f);   // a short stride needs none of this
+        g.bias = 0.10f * g.reach;
+        g.offAdd = 15.0f * k;
+        g.offStart = 0.45f;
+        g.offSpan = 0.55f;
+    }
+    return g;
+}
+
+Gait GaitFor(int state, float v) { return OldGait() ? GaitForOld(state, v) : GaitForNatural(state, v); }
+
 float SpeedFor(int state, float speed) { return speed >= 0.0f ? speed : NaturalSpeed(state); }
 
-struct FootState { float fwd, lift, pitch; bool planted; float u; };
+// `sweep` is the stride's position of the foot (the swing in -reach/2 .. +reach/2): the arms and the pelvis
+// follow it. `fwd` is where the ankle really is: the sweep, moved back by the gait's bias and forward by the
+// ankle's roll over the foot.
+struct FootState { float fwd, sweep, lift, pitch; bool planted; float u; };
 // Where one foot is at cycle phase p (0 = touchdown).
-FootState FootAt(float p, float beta, float reach, float lift, float speed, bool crouch, bool run) {
+FootState FootAt(float p, const Gait& g) {
     FootState f{};
     p = frac(p);
-    float off = crouch ? 0.0f : (14.0f + 2.5f * clampf(speed, 0.0f, 6.0f));   // toes down pushing off
+    const bool crouch = g.crouch, run = g.run;
+    const float beta = g.beta, reach = g.reach, speed = g.speed;
+    float off = crouch ? 0.0f : (14.0f + 2.5f * clampf(speed, 0.0f, 6.0f) + g.offAdd);   // toes down pushing off
     float land = crouch ? 0.0f : (run ? 12.0f : -9.0f);    // walkers land heel first, runners on the forefoot
     if (p < beta) {                                     // planted: slides back under the hip
         float u = p / beta;
         f.planted = true; f.u = u;
-        f.fwd = reach * (0.5f - u);
-        float heelOff = crouch ? 0.0f : clampf((u - 0.65f) / 0.35f, 0.0f, 1.0f);
+        f.sweep = reach * (0.5f - u);
+        float heelOff = crouch ? 0.0f : clampf((u - g.offStart) / g.offSpan, 0.0f, 1.0f);
         float strike = crouch ? 0.0f : clampf(1.0f - u / 0.2f, 0.0f, 1.0f);
         f.pitch = off * heelOff * heelOff + land * strike * strike;
         f.lift = AnkleLiftForPitch(f.pitch);
@@ -122,15 +199,16 @@ FootState FootAt(float p, float beta, float reach, float lift, float speed, bool
         // The heel folds up behind first (toward the seat when running), then the
         // knee brings the foot through and the leg reaches forward to land.
         float k = run ? clampf((speed - 2.0f) / 4.0f, 0.0f, 1.0f) : 0.0f;
-        f.fwd = reach * (smooth01(std::pow(u, 1.0f + 0.35f * k)) - 0.5f);
+        f.sweep = reach * (smooth01(std::pow(u, 1.0f + 0.35f * k)) - 0.5f);
         // A runner's foot keeps travelling back after push-off, then the knee drives
         // it well ahead before it comes back to land: the legs scissor in the air.
-        f.fwd += k * (-0.14f * std::sin(kPi * clampf(u / 0.4f, 0.0f, 1.0f))
-                      + 0.16f * std::sin(kPi * clampf((u - 0.4f) / 0.6f, 0.0f, 1.0f)));
-        f.lift = lift * std::sin(kPi * std::pow(u, 0.75f - 0.2f * k));
+        f.sweep += k * (-0.14f * std::sin(kPi * clampf(u / 0.4f, 0.0f, 1.0f))
+                        + 0.16f * std::sin(kPi * clampf((u - 0.4f) / 0.6f, 0.0f, 1.0f)));
+        f.lift = g.lift * std::sin(kPi * std::pow(u, 0.75f - 0.2f * k));
         f.pitch = off * (1.0f - u) * (1.0f - u) + land * u * u;
         f.lift += AnkleLiftForPitch(f.pitch);   // same rule as stance: no seam at lift-off / touch-down
     }
+    f.fwd = f.sweep - g.bias + g.drift * RockerDrift(f.pitch);
     return f;
 }
 
@@ -149,7 +227,7 @@ float GaitHipYFor(const Gait& g, float ph) {
     float drop = -1.0f;
     bool anyPlanted = false;
     for (int leg = 0; leg < 2; ++leg) {
-        FootState f = FootAt(ph + 0.5f * leg, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
+        FootState f = FootAt(ph + 0.5f * leg, g);
         anyPlanted = anyPlanted || f.planted;
         drop = std::fmax(drop, need(f));
     }
@@ -160,8 +238,8 @@ float GaitHipYFor(const Gait& g, float ph) {
         float s = frac(ph) - g.beta; if (s >= 0.5f) s -= 0.5f;     // cycles into this flight
         float flightCycles = 0.5f - g.beta;
         float w = clampf(s / flightCycles, 0.0f, 1.0f);
-        FootState off = FootAt(g.beta - 1e-4f, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
-        FootState on  = FootAt(1e-4f, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
+        FootState off = FootAt(g.beta - 1e-4f, g);
+        FootState on  = FootAt(1e-4f, g);
         float a = need(off), b = need(on);
         float flight = flightCycles / g.freq;                        // seconds
         float rise = 0.5f * 9.81f * (0.25f * flight * flight) * 4.0f * w * (1.0f - w);
@@ -182,10 +260,10 @@ float GaitHipY(int state, const Inputs& in) {
 
 void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, const Inputs& in) {
     float down = kHipToAnkle + hipY;                       // hip joint to ankle, at rest on the ground
-    FootState fl = FootAt(ph, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
-    FootState fr = FootAt(ph + 0.5f, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
+    FootState fl = FootAt(ph, g);
+    FootState fr = FootAt(ph + 0.5f, g);
     float half = g.reach > 1e-4f ? 0.5f * g.reach : 1.0f;
-    float sl = clampf(fl.fwd / half, -1.0f, 1.0f), sr = clampf(fr.fwd / half, -1.0f, 1.0f);
+    float sl = clampf(fl.sweep / half, -1.0f, 1.0f), sr = clampf(fr.sweep / half, -1.0f, 1.0f);
     float v = g.speed;
     float twist = g.crouch ? 3.0f : (g.run ? clampf(3.0f + 1.0f * v, 3.0f, 9.0f) : clampf(3.0f + 1.5f * v, 3.0f, 8.0f));
     // Running feet land closer to the centre line.
@@ -246,6 +324,24 @@ void GaitPose(std::vector<Vec3>& r, int state, const Inputs& in) {
     for (std::size_t i = 0; i < r.size(); ++i) r[i] = a[i] + (b[i] - a[i]) * w;
 }
 } // namespace
+
+namespace {
+int g_oldGaitMode = -1;   // -1 = ask the environment (once), 0 = off, 1 = on
+}
+
+bool OldGait() {
+    if (g_oldGaitMode >= 0) return g_oldGaitMode != 0;
+    static const bool fromEnv = [] {
+        const char* e = std::getenv("OKAY_OLD_GAIT");
+        const bool on = e && e[0] && !(e[0] == '0' && e[1] == '\0');
+        // One line when it is on, so a person who left it set by accident can tell (stderr, like the stack line).
+        if (on) std::fprintf(stderr, "[okay] gait: OLD walk and run (OKAY_OLD_GAIT is set); unset it for the natural gait (docs/walk_vs_run.md)\n");
+        return on;
+    }();
+    return fromEnv;
+}
+
+void SetOldGait(int mode) { g_oldGaitMode = mode < 0 ? -1 : (mode > 0 ? 1 : 0); }
 
 float NaturalSpeed(int state) {
     return state == 3 ? 4.8f : (state == 17 ? 1.0f : (state == 7 ? 0.8f : 1.5f));

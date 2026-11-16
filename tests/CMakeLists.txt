@@ -1550,6 +1550,13 @@ target_link_libraries(test_vs_node_behavior PRIVATE okay::engine)
 target_compile_definitions(test_vs_node_behavior PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_node_behavior COMMAND test_vs_node_behavior)
 
+# Issue #888 findings 31 and 33: a NaN / Inf from a node never reaches a position, scale or velocity, and the
+# float -> int casts in nodes are defined for NaN, Inf and 1e30.
+add_executable(test_vs_nan_writes test_vs_nan_writes.cpp)
+target_link_libraries(test_vs_nan_writes PRIVATE okay::engine)
+target_compile_definitions(test_vs_nan_writes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_nan_writes COMMAND test_vs_nan_writes)
+
 add_executable(test_vs_playground test_vs_playground.cpp)
 target_link_libraries(test_vs_playground PRIVATE okay::engine)
 target_compile_definitions(test_vs_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

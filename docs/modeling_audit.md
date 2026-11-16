@@ -78,3 +78,17 @@ Header-only parts built at -O2: Bisect 139 ms, WeldVertices after the fix 95 ms 
 Engine parts, built at **-O0** (so only the order of size is meaningful): modifier-stack input hash 0.45 ms per frame, geometry hash
 3.9 ms, one undo copy 0.31 ms, `FromMesh` 338 ms, Solidify 8 ms, Displace 33 ms, Decimate 33 ms, Array 23 ms, smooth normals 14 ms.
 Nothing here measures the editor window itself (selection, drawing): unmeasured. Before/after exists only for the items in the table above.
+
+## New tools at 105k triangles (headless, -O2, one run each, median of 7, shared machine, load about 2.4)
+
+| Step | Before the tuning | After |
+|---|---|---|
+| Measure the whole mesh (size, area, volume) | 0.8 to 1.2 ms | same; the editor now recomputes it twice a second, not every frame |
+| Measure a selection of 50% of the faces | 11.4 ms | 7.5 ms (marks instead of sets); also only twice a second |
+| Grow Selection on 50% of the faces | 131 ms | 26 ms (hash table + marks) |
+| Select Similar (facing) / Select Up-Facing | 0.8 ms / 0.7 ms | - |
+| Snap to a vertex while moving (per frame) | 0.05 ms | - |
+| Snap to an edge / a face while moving (per frame) | 1.8 ms / 2.9 ms | - |
+
+Per-frame work that was removed before it shipped: the command list now guesses "are edges selected" from the selection counts instead
+of working out the real edges every frame (that took milliseconds on big meshes). Not measured: drawing, selection picking, G / R / S in the real window.

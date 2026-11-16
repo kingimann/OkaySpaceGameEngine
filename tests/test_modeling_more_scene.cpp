@@ -81,14 +81,14 @@ PolyMesh MakeHorn() {
 }
 void BuildToolsScene(Scene& s) {
     GameObject* cam = s.CreateGameObject("Main Camera");
-    cam->transform->localPosition = {-0.8f, 2.0f, 11.0f};
+    cam->transform->localPosition = {0.2f, 2.2f, 13.0f};
     cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
     GameObject* sun = s.CreateGameObject("Sun");
     sun->transform->localRotation = Quat::Euler(40, -30, 0);
     sun->AddComponent<Light>();
     Put(s, "Spun Vase", MakeVase().ToMesh(), {-3.0f, 0, 0});
     Put(s, "Bent Horn", MakeHorn().ToMesh(), {-1.0f, 0, 0});
-    Put(s, "Table", MakeTable(), {3.6f, 0, 0});                                  // the "Add a Table" recipe
+    Put(s, "Table", MakeTable(), {6.0f, 0, 0});                                  // the "Add a Table" recipe
     Mesh wall = Mesh::Cube(1.0f);
     wall.vertices = Mesh::Cube(1.0f).Transformed({1.6f, 1.2f, 0.25f}, {0, 0, 0}).vertices;
     std::string werr;
@@ -266,8 +266,8 @@ int main() {
         if (const char* pic = std::getenv("OKAY_MODELING_PICTURE_DIR")) {
             Scene t("pic"); BuildToolsScene(t); t.Start();
             for (const auto& go : t.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
-            const Vec3 eye{-0.8f, 2.4f, 11.5f}; const int W = 640, H = 360;
-            const Mat4 vp = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {-0.8f, 0.7f, 0}, Vec3::Up);
+            const Vec3 eye{0.2f, 2.6f, 13.5f}; const int W = 640, H = 360;
+            const Mat4 vp = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.2f, 0.7f, 0}, Vec3::Up);
             ApplySceneLight(t);
             Raster rr; rr.Resize(W, H); rr.Clear(0xFF3A2A22u);
             RenderMeshes(rr, t, vp, eye);

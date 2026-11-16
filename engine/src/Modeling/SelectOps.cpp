@@ -6,6 +6,8 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <unordered_map>
+#include <cstdint>
 
 namespace okay::modeling {
 
@@ -22,19 +24,29 @@ Vec3 Normal(const Mesh& m, int t) {
     return Vec3::Cross(m.vertices[m.triangles[t * 3 + 1]] - a, m.vertices[m.triangles[t * 3 + 2]] - a);
 }
 // Corner position ids of every triangle, and the triangles around each position.
+struct KeyHash {
+    std::size_t operator()(const Key& k) const {
+        std::uint64_t h = (std::uint64_t)std::get<0>(k) * 0x9E3779B97F4A7C15ull;
+        h ^= (std::uint64_t)std::get<1>(k) + 0x7F4A7C15ull + (h << 6) + (h >> 2);
+        h ^= (std::uint64_t)std::get<2>(k) * 0xC2B2AE3D27D4EB4Full + (h << 6) + (h >> 2);
+        return (std::size_t)h;
+    }
+};
 struct Adj {
     std::vector<std::array<int, 3>> corner;
-    std::map<int, std::vector<int>> around;
+    std::vector<std::vector<int>> around;      // by position id
 };
 Adj Build(const Mesh& m) {
     Adj a;
-    std::map<Key, int> ids;
+    std::unordered_map<Key, int, KeyHash> ids;
+    ids.reserve(m.vertices.size() * 2);
     a.corner.assign((std::size_t)m.TriangleCount(), std::array<int, 3>{-1, -1, -1});
     for (int t = 0; t < m.TriangleCount(); ++t) {
         if (!TriOk(m, t)) continue;
         for (int k = 0; k < 3; ++k) {
             auto it = ids.emplace(KeyOf(m.vertices[m.triangles[t * 3 + k]]), (int)ids.size()).first;
             a.corner[t][k] = it->second;
+            if ((int)a.around.size() <= it->second) a.around.resize(it->second + 1);
             a.around[it->second].push_back(t);
         }
     }
@@ -51,19 +63,24 @@ std::vector<int> GrowFaces(const Mesh& m, const std::vector<int>& tris) {
     const std::set<int> sel = Clean(m, tris);
     if (sel.empty()) return {};
     const Adj a = Build(m);
-    std::set<int> out = sel;
-    for (int t : sel) for (int k = 0; k < 3; ++k) for (int n : a.around.at(a.corner[t][k])) out.insert(n);
-    return std::vector<int>(out.begin(), out.end());
+    std::vector<char> mark((std::size_t)m.TriangleCount(), 0);
+    for (int t : sel) for (int k = 0; k < 3; ++k) for (int n : a.around[a.corner[t][k]]) mark[n] = 1;
+    for (int t : sel) mark[t] = 1;
+    std::vector<int> out;
+    for (int t = 0; t < (int)mark.size(); ++t) if (mark[t]) out.push_back(t);
+    return out;
 }
 
 std::vector<int> ShrinkFaces(const Mesh& m, const std::vector<int>& tris) {
     const std::set<int> sel = Clean(m, tris);
     if (sel.empty()) return {};
     const Adj a = Build(m);
+    std::vector<char> in((std::size_t)m.TriangleCount(), 0);
+    for (int t : sel) in[t] = 1;
     std::vector<int> out;
     for (int t : sel) {
         bool rim = false;
-        for (int k = 0; k < 3 && !rim; ++k) for (int n : a.around.at(a.corner[t][k])) if (!sel.count(n)) { rim = true; break; }
+        for (int k = 0; k < 3 && !rim; ++k) for (int n : a.around[a.corner[t][k]]) if (!in[n]) { rim = true; break; }
         if (!rim) out.push_back(t);
     }
     return out;

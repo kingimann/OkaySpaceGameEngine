@@ -62,13 +62,16 @@ Measurement MeasureSelection(const Mesh& m, const std::vector<int>& verts, const
         r.edgeLength += (Scaled(m.vertices[e.first], scale) - Scaled(m.vertices[e.second], scale)).Magnitude();
         vs.insert(e.first); vs.insert(e.second);
     }
-    std::set<int> ts;
-    for (int t : tris) if (t >= 0 && t < m.TriangleCount()) ts.insert(t);
+    std::vector<char> seenTri((std::size_t)std::max(0, m.TriangleCount()), 0);
+    std::vector<int> ts;
+    for (int t : tris) if (t >= 0 && t < m.TriangleCount() && !seenTri[t]) { seenTri[t] = 1; ts.push_back(t); }
+    std::vector<char> seenV(m.vertices.size(), 0);
+    for (int v : vs) seenV[v] = 1;
     for (int t : ts) {
         const int i0 = m.triangles[t * 3], i1 = m.triangles[t * 3 + 1], i2 = m.triangles[t * 3 + 2];
         if (!Ok(m, i0) || !Ok(m, i1) || !Ok(m, i2)) continue;
         r.area += TriArea(Scaled(m.vertices[i0], scale), Scaled(m.vertices[i1], scale), Scaled(m.vertices[i2], scale));
-        vs.insert(i0); vs.insert(i1); vs.insert(i2);
+        for (int v : {i0, i1, i2}) if (!seenV[v]) { seenV[v] = 1; vs.insert(v); }
         ++r.faces;
     }
     for (int v : vs) Fit(lo, hi, any, Scaled(m.vertices[v], scale));

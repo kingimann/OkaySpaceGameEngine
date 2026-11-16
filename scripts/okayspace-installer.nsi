@@ -1423,6 +1423,9 @@ Section "OkaySpace" SecMain
   SetDetailsPrint both
   DetailPrint "Done."
   ${Log} "OK: shortcuts and the Apps & features entry are written"
+  ; Logged here, not in .onInstSuccess: that runs only when the person closes the Finish page, and a log that stops before its last line
+  ; looks like a crash.
+  ${Log} "Setup finished. Exit code 0."
 SectionEnd
 
 Function Register
@@ -1468,10 +1471,6 @@ Function Register
   WriteRegDWORD HKCU "${ARP_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${ARP_KEY}" "NoRepair" 1
   ; No support link on purpose (owner decision: none until there is a stable page).
-FunctionEnd
-
-Function .onInstSuccess
-  ${Log} "Setup finished. Exit code 0."
 FunctionEnd
 
 ; NSIS calls this after a failure it found itself (for example the disk filled while unpacking): put everything back.
@@ -1983,6 +1982,7 @@ Section "Uninstall"
     ${EndIf}
   ${EndIf}
   ${LogU} "Removed $UnGone files from the folders that were swept."
+  ${LogU} "Uninstall finished. Exit code 0."   ; here and not in un.onUninstSuccess, which runs only when the Finish page is closed
 SectionEnd
 
 ; Log what is left directly in the install folder.
@@ -2083,10 +2083,6 @@ Function un.SweepIfThere
       ${LogU} "WARNING: something in $R0 could not be removed"
     ${EndIf}
   ${EndIf}
-FunctionEnd
-
-Function un.onUninstSuccess
-  ${LogU} "Uninstall finished. Exit code 0."
 FunctionEnd
 
 Function un.onUninstFailed

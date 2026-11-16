@@ -174,6 +174,27 @@ struct Reader {
     }
 };
 
+// Counts the records (and the properties they declare) by walking the record headers only, so the flat arrays can be
+// allocated once at their final size: growing them by doubling copied everything and touched about twice the memory
+// (fresh memory costs time). Damaged or hostile headers just stop the count early: the real parse below reports them.
+void CountRecords(const std::uint8_t* p, std::size_t n, std::uint32_t version, std::size_t pos, std::size_t end, std::size_t depth,
+                  const Limits& lim, std::size_t& elems, std::size_t& props) {
+    const bool wide = version >= 7500;
+    const std::size_t hdr = wide ? 25 : 13;
+    while (pos < end && end - pos >= hdr && depth <= lim.maxDepth && elems <= lim.maxElements) {
+        std::uint64_t endOff = 0, nProps = 0, propLen = 0;
+        if (wide) { std::memcpy(&endOff, p + pos, 8); std::memcpy(&nProps, p + pos + 8, 8); std::memcpy(&propLen, p + pos + 16, 8); }
+        else { std::uint32_t a, b, c; std::memcpy(&a, p + pos, 4); std::memcpy(&b, p + pos + 4, 4); std::memcpy(&c, p + pos + 8, 4); endOff = a; nProps = b; propLen = c; }
+        const std::uint8_t nameLen = p[pos + hdr - 1];
+        if (endOff == 0 && nProps == 0 && propLen == 0 && nameLen == 0) return;   // null record: end of this level
+        if (endOff > end || endOff < pos + hdr + nameLen || propLen > endOff - (pos + hdr + nameLen) || nProps > propLen) return;
+        ++elems; props += (std::size_t)nProps;
+        const std::size_t children = pos + hdr + nameLen + (std::size_t)propLen;
+        if (children < endOff) CountRecords(p, n, version, children, (std::size_t)endOff, depth + 1, lim, elems, props);
+        pos = (std::size_t)endOff;
+    }
+}
+
 } // namespace
 
 bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim) {
@@ -187,6 +208,12 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
     out.binary = true;
     if (r.version < 7100 || r.version > 9999) return fail("unsupported FBX version " + std::to_string(r.version));
     std::size_t pos = 27;
+    {
+        std::size_t ne = 0, np = 0;
+        CountRecords(data, size, r.version, 27, size, 1, lim, ne, np);
+        out.elems.reserve(std::min(ne, lim.maxElements + 1));
+        out.props.reserve(std::min(np, size / 2));   // a property takes at least 2 bytes
+    }
     std::uint32_t last = kNone;
     Linker link{out.elems, out.root};
     bool ok = true;

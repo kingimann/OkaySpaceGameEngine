@@ -102,26 +102,39 @@ struct BitReader {
     size_t BytesUsed() const { return pos - size_t(cnt >> 3); }
 };
 
+// The low `bits` bits of v (bits <= 16) in reverse order: all 16 bits reversed by swapping ever larger groups
+// (single bits, pairs, nibbles, bytes), then shifted down.
 inline uint32_t Reverse(uint32_t v, int bits) {
-    uint32_t r = 0;
-    for (int i = 0; i < bits; ++i) { r = (r << 1) | (v & 1); v >>= 1; }
-    return r;
+    v &= (1u << bits) - 1u;   // only the low `bits` bits take part, as before
+    v = ((v >> 1) & 0x5555u) | ((v & 0x5555u) << 1);
+    v = ((v >> 2) & 0x3333u) | ((v & 0x3333u) << 2);
+    v = ((v >> 4) & 0x0F0Fu) | ((v & 0x0F0Fu) << 4);
+    v = ((v >> 8) & 0x00FFu) | ((v & 0x00FFu) << 8);
+    return v >> (16 - bits);
 }
 
 // ---- canonical Huffman decoder ---------------------------------------------------------------------
 constexpr int kFastBits = 10;
 constexpr int kMaxBits = 15;
 
-struct Decoder {
-    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low kFastBits of i, 0 if none
-    uint16_t quick[1 << kFastBits];
+struct DecoderBase {
+    enum class Shape { Oversubscribed, Incomplete, Complete };
+    enum : int { kBadCode = -1, kStarved = -2 };
+};
+
+// FastBits: the width of the direct lookup table. Literal/length and distance codes use kFastBits; the code-length
+// code (lengths of at most 7 bits) uses 7, so each dynamic block fills a 128-entry table for it instead of 1024.
+// Every code no longer than FastBits is found in the table, longer ones by the slow path, so the width changes
+// nothing but the work.
+template <int FastBits>
+struct DecoderT : DecoderBase {
+    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low FastBits of i, 0 if none
+    uint16_t quick[1 << FastBits];
     uint16_t sorted[288];                 // symbols ordered by (length, symbol)
     uint16_t lowestCode[kMaxBits + 1];     // first canonical code of each length
     uint16_t slotBase[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
     uint16_t countOf[kMaxBits + 1];
     int used = 0;                         // symbols that have a code
-
-    enum class Shape { Oversubscribed, Incomplete, Complete };
 
     Shape Build(const uint8_t* lens, int n) {
         std::memset(quick, 0, sizeof quick);
@@ -147,20 +160,18 @@ struct Decoder {
             if (!l) continue;
             sorted[slotBase[l] + fill[l]++] = uint16_t(sym);
             uint32_t c = next[l]++;
-            if (l <= kFastBits) {
+            if (l <= FastBits) {
                 uint32_t rev = Reverse(c, l);
-                for (uint32_t i = rev; i < (1u << kFastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
+                for (uint32_t i = rev; i < (1u << FastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
             }
         }
         return kraft == (1u << kMaxBits) ? Shape::Complete : Shape::Incomplete;
     }
 
-    enum : int { kBadCode = -1, kStarved = -2 };
-
     // Returns the symbol, kBadCode (no such code) or kStarved (the input ends inside the code).
     int Next(BitReader& br) const {
         if (br.cnt < kMaxBits) br.Refill();
-        uint16_t e = quick[br.buf & ((1u << kFastBits) - 1)];
+        uint16_t e = quick[br.buf & ((1u << FastBits) - 1)];
         if (e) {
             int l = e & 15;
             if (l > br.cnt) return kStarved;
@@ -170,7 +181,7 @@ struct Decoder {
         // slow path: compare the next 15 bits, as a most-significant-first number, with each length's range
         uint32_t v = uint32_t(br.buf & ((1u << kMaxBits) - 1));
         v = Reverse(v, kMaxBits);
-        for (int l = kFastBits + 1; l <= kMaxBits; ++l) {
+        for (int l = FastBits + 1; l <= kMaxBits; ++l) {
             uint32_t prefix = v >> (kMaxBits - l);
             uint32_t k = prefix - lowestCode[l];
             if (prefix >= lowestCode[l] && k < countOf[l]) {
@@ -183,6 +194,7 @@ struct Decoder {
         return br.cnt < kMaxBits && br.pos >= br.len ? kStarved : kBadCode;
     }
 };
+using Decoder = DecoderT<kFastBits>;
 
 struct FixedCodes {
     Decoder lit, dist;
@@ -401,7 +413,7 @@ inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::str
     uint8_t clLens[19] = {0};
     for (int i = 0; i < hclen; ++i) clLens[kClOrder[i]] = uint8_t(br.Take(3));
     if (br.starved) { why = "deflate data ends early"; return false; }
-    Decoder cl;
+    DecoderT<7> cl;
     auto cs = cl.Build(clLens, 19);
     if (cs == Decoder::Shape::Oversubscribed || (op.strictCodes && cs != Decoder::Shape::Complete)) {
         why = "deflate code-length code is not a complete prefix code"; return false;

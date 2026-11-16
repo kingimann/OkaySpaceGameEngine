@@ -79,8 +79,10 @@ struct Array {
 
 struct Prop {
     char type = 0;                 ///< binary type letter: Y C I F D L S R, or 'a' = numeric array
-    std::int64_t i = 0;            ///< Y C I L
-    double d = 0;                  ///< F D
+    union {
+        std::int64_t i = 0;        ///< Y C I L
+        double d;                  ///< F D (shares the bytes of `i`: read the one the type says, or Num())
+    };
     std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes
     Array arr;                     ///< numeric arrays (f d l i b c)
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }

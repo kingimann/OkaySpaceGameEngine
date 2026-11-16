@@ -225,6 +225,16 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+// A script path written beside the scene ("debug_me.os") is found in the scene's folder when it is relative and
+// does not exist from the working folder. Anything else is left exactly as written.
+static std::string ResolveBesideScene(const std::string& p) {
+    if (p.empty() || g_loadingSceneDir.empty()) return p;
+    const std::filesystem::path pp(p);
+    std::error_code ec;
+    if (pp.is_absolute() || std::filesystem::exists(pp, ec)) return p;
+    const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
+    return std::filesystem::exists(alt, ec) ? alt.string() : p;
+}
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
 
@@ -5842,7 +5852,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // source (a leading quote). Old scenes used separate lines.
                     in >> std::ws;
                     if (in.peek() == '"') {
-                        sc->SetPath(ReadQuoted(in));
+                        sc->SetPath(ResolveBesideScene(ReadQuoted(in)));
                         int n = 0; in >> n;
                         for (int i = 0; i < n && in; ++i) {
                             std::string k = ReadQuoted(in), v = ReadQuoted(in);
@@ -5852,7 +5862,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "scriptpath") {
                     std::string p = ReadQuoted(in);
-                    if (auto* sc = LastOf(go->GetComponents<ScriptComponent>())) sc->SetPath(p);
+                    if (auto* sc = LastOf(go->GetComponents<ScriptComponent>())) sc->SetPath(ResolveBesideScene(p));
                 } else if (field == "scriptfields") {
                     int n = 0; in >> n;
                     auto* sc = LastOf(go->GetComponents<ScriptComponent>());

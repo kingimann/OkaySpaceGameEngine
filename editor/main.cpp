@@ -731,6 +731,7 @@ int main(int argc, char** argv) {
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
+#include "okay/Scripting/ScriptDebug.hpp"   // the text-script (OkayScript) debugger: breakpoints by line, stepping
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "EditorPlayInput.hpp"     // Play keyboard: SDL state -> the keys scripts read
@@ -2168,9 +2169,25 @@ bool g_paused = false;           // pause the simulation while staying in Play
 // tick runs on this fiber, so a breakpoint can freeze it mid-frame and the editor
 // keeps drawing; Continue / Step resume the tick right where it stopped.
 static okay::editor::GameFiber g_gameFiber;
+// Text-script (OkayScript) debugger view: where the game froze (script path + line), the call stack,
+// variables and watches. Same shape as the visual debugger's okay::editor::vsed::VsDebugView
+// (stopped / key / vars / resume); `ctx` is live while stopped because the stopped script is frozen mid-call.
+struct ScriptDbgView {
+    bool stopped = false, resume = false, focusPending = false;
+    std::string key, message;
+    int line = 0;
+    okay::ScriptStopReason reason = okay::ScriptStopReason::Breakpoint;
+    std::vector<okay::ScriptDebugFrame> frames;
+    okay::ScriptDebugVars locals, globals;
+    okay::ScriptDebugContext* ctx = nullptr;
+    std::vector<std::string> watches;
+    char watchInput[160] = "";
+    int frame = 0;                       // the call-stack row whose variables are shown
+};
+static ScriptDbgView g_sdv;
 static void TickGame(EditorState& ed, float dt) {
     if (g_gameFiber.Suspended()) return;   // frozen at a breakpoint: Continue / Step carry it on
-    if (ed.isPlaying() && okay::vs::VsDebugger::Get().Active()) g_gameFiber.Run([&ed, dt] { ed.Tick(dt); });
+    if (ed.isPlaying() && (okay::vs::VsDebugger::Get().Active() || okay::ScriptDebugger::s_attached)) g_gameFiber.Run([&ed, dt] { ed.Tick(dt); });
     else ed.Tick(dt);
 }
 /// Finish a frame frozen at a breakpoint, stopping at nothing (before Stop, undo,
@@ -2181,7 +2198,12 @@ static void FinishFrozenTick() {
     const bool was = d.enabled;
     d.enabled = false;
     d.RequestStep(okay::vs::VsDebugger::Step::None);
+    auto& sd = okay::ScriptDebugger::Get();
+    const bool sdWas = sd.Enabled();
+    sd.SetEnabled(false);
+    sd.RequestStep(okay::ScriptDebugger::Step::None);
     g_gameFiber.Resume();
+    sd.SetEnabled(sdWas);
     d.enabled = was;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
@@ -2969,6 +2991,111 @@ void OpenScriptFileInEditorAt(const std::string& path, int line) {
     g_scriptPendingPath = path;
     g_scriptPendingLine = line > 0 ? line : 1;
 }
+bool  g_showScriptDebugger = false;   // the Script Debugger window (text-script breakpoints, see ScriptDbgView)
+// The Script Debugger window (OkayScript text scripts). Breakpoints are set by clicking a line number in the
+// Script Editor; this window lists them, and while the game is frozen at one it shows the call stack, the
+// variables and watch expressions, with Continue / Step buttons (F5, F10, F11, Shift+F11 as in the visual debugger).
+static void DrawScriptDebugger(EditorState& ed) {
+    auto& dbg = okay::ScriptDebugger::Get();
+    using Step = okay::ScriptDebugger::Step;
+    ScriptDbgView& v = g_sdv;
+    ImGui::SetNextWindowSize(ImVec2(460, 520), ImGuiCond_FirstUseEver);
+    bool open = g_showScriptDebugger || v.stopped;
+    if (!ImGui::Begin("Script Debugger", &open)) { ImGui::End(); g_showScriptDebugger = open; return; }
+    auto go = [&](Step s) { if (!v.stopped) return; dbg.RequestStep(s); v.resume = true; };
+    if (v.stopped) {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) go(Step::None);
+            if (ImGui::IsKeyPressed(ImGuiKey_F10, false)) go(Step::Over);
+            if (ImGui::IsKeyPressed(ImGuiKey_F11, false)) go(io.KeyShift ? Step::Out : Step::Into);
+        }
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.30f, 1.0f), v.reason == okay::ScriptStopReason::Error ? "Paused on an error" : "Paused");
+        ImGui::SameLine();
+        ImGui::TextWrapped("line %d of %s", v.line, v.key.c_str());
+        if (v.reason == okay::ScriptStopReason::Error) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "%s", v.message.c_str());
+        if (ImGui::SmallButton("Continue (F5)")) go(Step::None);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step (F10)")) go(Step::Over);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run this line and stop at the next one (a function call runs whole).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step Into (F11)")) go(Step::Into);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop at the very next line, even inside a function it calls.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Step Out (Shift+F11)")) go(Step::Out);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Run until this function returns, then stop.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Stop Play")) { ed.Stop(); ConsoleLog("Stop"); }
+    } else {
+        ImGui::TextDisabled("Not paused. Click a line number in the Script Editor to set a breakpoint, then press Play.");
+    }
+    bool poe = dbg.PauseOnError();
+    if (ImGui::Checkbox("Pause on error", &poe)) dbg.SetPauseOnError(poe);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also pause when a script error is raised (even one a try/catch would handle).");
+    ImGui::Separator();
+    if (v.stopped) {
+        if (ImGui::CollapsingHeader("Call stack", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (int i = 0; i < (int)v.frames.size(); ++i) {
+                char lbl[200]; std::snprintf(lbl, sizeof(lbl), "%s  (line %d)##f%d", v.frames[i].name.c_str(), v.frames[i].line, i);
+                if (ImGui::Selectable(lbl, v.frame == i)) {
+                    v.frame = i;
+                    v.locals = v.ctx ? v.ctx->Locals(i) : okay::ScriptDebugVars{};
+                    OpenScriptFileInEditorAt(v.key, v.frames[i].line);
+                }
+            }
+        }
+        auto table = [&](const char* id, const okay::ScriptDebugVars& vars) {
+            if (vars.empty()) { ImGui::TextDisabled("(none)"); return; }
+            if (ImGui::BeginTable(id, 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                for (const auto& kv : vars) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::TextUnformatted(kv.first.c_str());
+                    ImGui::TableNextColumn(); ImGui::TextWrapped("%s", okay::vs::VsDescribe(kv.second).c_str());
+                }
+                ImGui::EndTable();
+            }
+        };
+        if (ImGui::CollapsingHeader(v.frame == (int)v.frames.size() - 1 ? "Variables (script)" : "Variables (this call)", ImGuiTreeNodeFlags_DefaultOpen)) table("##locals", v.locals);
+        if (ImGui::CollapsingHeader("Globals")) table("##globals", v.globals);
+        if (ImGui::CollapsingHeader("Watch", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SetNextItemWidth(-60.0f);
+            const bool enter = ImGui::InputTextWithHint("##watchin", "expression, e.g. total * 2", v.watchInput, sizeof(v.watchInput), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::SmallButton("Add") || enter) && v.watchInput[0]) { v.watches.push_back(v.watchInput); v.watchInput[0] = 0; }
+            int remove = -1;
+            for (int i = 0; i < (int)v.watches.size(); ++i) {
+                okay::vs::VsValue val; std::string err;
+                const bool ok = v.ctx && v.ctx->Evaluate(v.watches[i], val, &err);
+                ImGui::PushID(i);
+                if (ImGui::SmallButton("x")) remove = i;
+                ImGui::SameLine();
+                if (ok) ImGui::TextWrapped("%s = %s", v.watches[i].c_str(), okay::vs::VsDescribe(val).c_str());
+                else ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s : %s", v.watches[i].c_str(), err.c_str());
+                ImGui::PopID();
+            }
+            if (remove >= 0) v.watches.erase(v.watches.begin() + remove);
+            ImGui::TextDisabled("Watches only read values: no assignment or function calls (len, abs, min, max, floor, ceil, round, sqrt, clamp, str are fine).");
+        }
+    }
+    if (ImGui::CollapsingHeader("Breakpoints", ImGuiTreeNodeFlags_DefaultOpen)) {
+        std::pair<std::string, int> removeBp; bool have = false;
+        for (const auto& bp : dbg.Breakpoints()) {
+            ImGui::PushID((bp.first + ":" + std::to_string(bp.second)).c_str());
+            if (ImGui::SmallButton("x")) { removeBp = bp; have = true; }
+            ImGui::SameLine();
+            const std::string name = std::filesystem::path(bp.first).filename().string();
+            if (ImGui::Selectable((name + "  line " + std::to_string(bp.second)).c_str())) OpenScriptFileInEditorAt(bp.first, bp.second);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", bp.first.c_str());
+            ImGui::PopID();
+        }
+        if (have) dbg.SetBreakpoint(removeBp.first, removeBp.second, false);
+        if (dbg.Breakpoints().empty()) ImGui::TextDisabled("(none)");
+        else if (ImGui::SmallButton("Clear all")) dbg.ClearBreakpoints();
+    }
+    ImGui::End();
+    g_showScriptDebugger = open;
+}
+
 bool  g_showScenes = false;
 bool  g_showInstPrefab = false;
 bool  g_showArrayDup   = false;     // "Array Duplicate" tool popup
@@ -5417,6 +5544,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
         {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
+        {"Script Debugger", "Script Debugger",         &g_showScriptDebugger, "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
@@ -16964,6 +17092,35 @@ void DrawScriptEditor(EditorState& ed) {
             float chW = te.CharWidth() > 0.5f ? te.CharWidth() : 8.0f;
             ImVec2 corg = te.ContentOrigin();
             float textX = te.TextStartX();
+            // Script debugger gutter: click a line number to set or clear a breakpoint (red dot); while the game is
+            // paused the stopped line is highlighted. Breakpoints are kept by file path (okay::ScriptDebugger).
+            if (sc && !sc->Path().empty()) {
+                auto& sdbg = okay::ScriptDebugger::Get();
+                const std::string dbgKey = okay::ScriptDebugger::KeyForPath(sc->Path());
+                const ImGuiIO& gio = ImGui::GetIO();
+                const bool inGutter = gio.MousePos.x >= teMin.x && gio.MousePos.x < textX - 6.0f &&
+                                      gio.MousePos.y >= teMin.y && gio.MousePos.y < teMax.y;
+                if (inGutter && rowH > 1.0f && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    const int ln = (int)std::floor((gio.MousePos.y - corg.y) / rowH) + 1;
+                    if (ln >= 1 && ln <= lines) {
+                        sdbg.ToggleBreakpoint(dbgKey, ln);
+                        ConsoleLog(std::string(sdbg.HasBreakpoint(dbgKey, ln) ? "Breakpoint set" : "Breakpoint cleared") + " at line " + std::to_string(ln) +
+                                   ". It stops the game while playing (Script Debugger window).");
+                        g_showScriptDebugger = true;
+                    }
+                }
+                for (const auto& bp : sdbg.Breakpoints()) {
+                    if (bp.first != dbgKey) continue;
+                    const float y = corg.y + (bp.second - 1) * rowH;
+                    if (y + rowH < teMin.y || y > teMax.y) continue;
+                    fdl->AddCircleFilled(ImVec2(teMin.x + 8.0f, y + rowH * 0.5f), rowH * 0.28f, IM_COL32(230, 70, 60, 240));
+                }
+                if (g_sdv.stopped && g_sdv.key == dbgKey && g_sdv.line > 0) {
+                    const float y = corg.y + (g_sdv.line - 1) * rowH;
+                    fdl->AddRectFilled(ImVec2(teMin.x, y), ImVec2(teMax.x, y + rowH), IM_COL32(255, 210, 60, 50));
+                    fdl->AddRect(ImVec2(teMin.x, y), ImVec2(teMax.x, y + rowH), IM_COL32(255, 210, 60, 160));
+                }
+            }
             // Hard-wrap margin: a faint rule at column 120 (Rider's right margin).
             {
                 float rx = textX + 120.0f * chW;
@@ -17730,7 +17887,7 @@ void DrawScriptEditor(EditorState& ed) {
                 }
             }
             // F11 — toggle a bookmark on the caret line (markers via breakpoints).
-            if (chordOK && ImGui::IsKeyPressed(ImGuiKey_F11, false) && caret.line >= 1) {
+            if (chordOK && !g_sdv.stopped && ImGui::IsKeyPressed(ImGuiKey_F11, false) && caret.line >= 1) {   // (while paused F11 is Step Into)
                 if (!bookmarks.erase(caret.line)) bookmarks.insert(caret.line);
             }
             // Alt+Enter — apply the caret line's quick-fix (Rider's intention action):
@@ -49939,6 +50096,33 @@ int main(int argc, char** argv) {
         v.graph = nullptr;
         v.resume = false;
     };
+    // Text-script debugger: a line breakpoint (or step, or an error with "pause on error" on) freezes the game
+    // here the same way; the Script Debugger window shows the stack, variables and watches.
+    okay::ScriptDebugger::Get().SetOnStop([](const okay::ScriptStop& st) {
+        if (!g_gameFiber.InFiber()) return;   // only a tick on the fiber can be frozen
+        auto& v = g_sdv;
+        auto keepWatches = std::move(v.watches);
+        char keepInput[sizeof(v.watchInput)]; std::memcpy(keepInput, v.watchInput, sizeof(keepInput));
+        v = ScriptDbgView{};
+        v.watches = std::move(keepWatches);
+        std::memcpy(v.watchInput, keepInput, sizeof(keepInput));
+        v.stopped = true;
+        v.key = st.key; v.line = st.line; v.reason = st.reason; v.message = st.message;
+        v.ctx = st.ctx;
+        v.frames = st.ctx->Frames();
+        v.locals = st.ctx->Locals(0);
+        v.globals = st.ctx->Globals();
+        v.focusPending = true;
+        g_showScriptDebugger = true;
+        if (!st.key.empty()) OpenScriptFileInEditorAt(st.key, st.line);
+        ConsoleLog(std::string(st.reason == okay::ScriptStopReason::Error ? "Script error: " + st.message + ". Paused" : "Script paused")
+                   + " at line " + std::to_string(st.line) + " of " + st.key + ". F5 continue, F10 step, F11 step into.",
+                   st.reason == okay::ScriptStopReason::Error ? 2 : 0);
+        g_gameFiber.YieldToEditor();   // the game stays frozen here until Continue / Step
+        v.stopped = false;
+        v.ctx = nullptr;
+        v.resume = false;
+    });
     EditorState::finishFrozenTick = []() { StopTimelinePreview(); FinishFrozenTick(); };   // the preview hands back before a scene is rebuilt
     // Saving rewrote an edited mesh asset and re-triangulated it: vertex numbers are
     // kept (so vertex and edge selections stay), triangle numbers aren't.
@@ -50668,7 +50852,10 @@ int main(int argc, char** argv) {
         }
         {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
             auto& dv = okay::editor::vsed::DebugView();
-            if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
+            if (g_gameFiber.Suspended()) {
+                if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); }
+                else if (g_sdv.resume) { g_sdv.resume = false; g_gameFiber.Resume(); }
+            }
             else {   // (was `else if (!g_paused)`: the editor's Pause is a Game pause the Play loop honours, see EditorState::SetPaused)
                 // One hitch (a compile, an asset load, a window drag) mustn't become
                 // one huge physics step: the Play loop (ed.PlayFrame, a GameLoop) clamps
@@ -51512,6 +51699,7 @@ int main(int argc, char** argv) {
         if (std::getenv("OKAY_UI_DIAG") && g_showVisualScript && g_sceneDockId)
             ImGui::SetNextWindowDockID(g_sceneDockId, ImGuiCond_Always);
         { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
+        { OKAY_PROFILE("UI.ScriptDebugger"); if (g_showScriptDebugger || g_sdv.stopped) DrawScriptDebugger(ed); }
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
         { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }
         { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }

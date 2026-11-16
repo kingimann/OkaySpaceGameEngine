@@ -110,7 +110,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Docs:** `docs/visual_scripting.md` ("Debugging: breakpoints, stepping and the watch panel")
 - **Tests:** `vs_debug`, `game_fiber`
 - **Status:** Works - engine half and fiber have tests; the drawing side is not unit-tested
-- **Open:** the debugger covers graphs only: text scripts have no breakpoints (13.5); fiber debugging is used only while a breakpoint is set
+- **Open:** this debugger covers graphs only; OkayScript text scripts have their own twin (55.1.3) that shares its `Step` enum and data shapes; fiber debugging is used only while a breakpoint is set
 - **Related:** 14.1, 13.5, 15.5
 - **Words:** debugger, breakpoint, step into, step over, step out, call stack, watch, variables window, game fiber, frozen game
 - **Seen as:** a breakpoint does not stop; the game freezes and the editor hangs; step goes to the wrong node; watch shows stale values; graph edits lost after continuing

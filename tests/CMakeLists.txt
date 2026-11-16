@@ -1567,6 +1567,12 @@ target_include_directories(test_vs_choices PRIVATE ${CMAKE_SOURCE_DIR}/editor ${
 target_link_libraries(test_vs_choices PRIVATE okay::engine)
 add_test(NAME vs_choices COMMAND test_vs_choices)
 
+# OkayScript text debugger: breakpoints by line, stepping, call stack, locals, watch, pause-on-error
+add_executable(test_script_debugger test_script_debugger.cpp)
+target_link_libraries(test_script_debugger PRIVATE okay::engine)
+target_compile_definitions(test_script_debugger PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME script_debugger COMMAND test_script_debugger)
+
 # C# / OkayScript: classes, generics, lambdas, coroutines, components.
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)

@@ -1102,3 +1102,28 @@ foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to f
 OkayScript is the engine's text scripting language, alongside a
 node-based **visual scripting** graph (see [visual_scripting.md](visual_scripting.md)).
 Scripts can be edited in the in-engine Script Editor panel or in an external IDE.
+
+## Debugging a text script
+
+OkayScript has a step debugger, like the one for visual scripts. Scripts only run in Play, so that is where it works.
+
+1. Open the script in the Script Editor (it must be a file, so it has a path).
+2. Click a line number: a red dot appears. Click again to clear it. The **Script Debugger** window
+   (View > Editors & Tools) lists every breakpoint.
+3. Press Play. When a script reaches that line the game freezes there, the line is highlighted, and the Script Debugger
+   shows the **call stack** (function names and the line each one is on), the **variables** of the chosen call, the
+   **globals** and your **watches**.
+4. **Continue** (F5) runs on. **Step** (F10) runs one line and stops at the next one, treating a function call as one
+   step. **Step Into** (F11) goes inside the call. **Step Out** (Shift+F11) runs until the function returns.
+5. **Watch**: type an expression such as `total * 2` and press Add. Watches only read: assignment, `new`, lambdas and
+   function calls are refused, except `len`, `abs`, `min`, `max`, `floor`, `ceil`, `round`, `sqrt`, `clamp` and `str`.
+6. **Pause on error** also stops at the line that raises a script error, before the call stack unwinds.
+
+Try it on `examples/script_debugger/debug_me.os` (scene `script_debugger.okayscene`). Limits: only OkayScript (not the
+C#-style typed interpreter); statements inside coroutines are not stopped at; a watch uses the innermost call's variables.
+
+For embedders: `okay::ScriptDebugger::Get()` (`engine/include/okay/Scripting/ScriptDebug.hpp`) has `SetBreakpoint(key, line,
+on)` (the key is `ScriptDebugger::KeyForPath(path)`), `RequestStep`, `SetPauseOnError` and `SetOnStop`. While nothing is
+attached the VM pays one bool test per statement. It reuses the visual debugger's `Step` enum and the sorted name/value
+variable shape, and runs the same way: the stop handler freezes the game and returns when you continue. The tests are in
+`tests/test_script_debugger.cpp`.

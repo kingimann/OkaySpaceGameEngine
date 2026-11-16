@@ -113,6 +113,7 @@ add_library(okay_engine
     src/Components/VisualScriptComponent.cpp
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
+    src/Scripting/ScriptDebug.cpp
     src/Scripting/ScriptVM.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp

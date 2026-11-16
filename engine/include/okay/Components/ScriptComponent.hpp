@@ -32,7 +32,7 @@ public:
     /// Optional path to an external script file (edit in your IDE; Reload picks
     /// up changes). Empty for inline scripts.
     const std::string& Path() const { return m_path; }
-    void SetPath(const std::string& path) { m_path = path; }
+    void SetPath(const std::string& path) { m_path = path; UpdateDebugKey(); }
     /// Re-read and recompile from the external file (no-op without a path).
     bool Reload(std::string* error = nullptr) {
         return m_path.empty() ? false : LoadFile(m_path, error);
@@ -116,6 +116,7 @@ private:
 
     std::string m_language;
     std::string m_source;
+    void UpdateDebugKey();   // tells an OkayScript VM its file, so line breakpoints find it (ScriptDebug.hpp)
     std::string m_path;
     std::unique_ptr<IScriptVM> m_vm;
     ScriptHost m_host;

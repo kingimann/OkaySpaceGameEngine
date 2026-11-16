@@ -47,6 +47,11 @@ public:
     /// so every text-script builtin is reachable from a graph.
     vs::VsValue CallBuiltin(const std::string& name, std::vector<vs::VsValue> args, std::string* error = nullptr);
 
+    /// The script's path, the key its breakpoints are stored under (ScriptDebug.hpp).
+    /// Call before Load; empty = this script has no breakpoints.
+    void SetDebugKey(const std::string& key);
+    const std::string& DebugKey() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

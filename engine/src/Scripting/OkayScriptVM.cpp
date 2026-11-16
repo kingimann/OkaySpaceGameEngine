@@ -2,6 +2,7 @@
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/ScriptDebug.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/Ragdoll.hpp"
@@ -403,6 +404,7 @@ struct ScriptError : std::runtime_error {
     using std::runtime_error::runtime_error;
     int line = 0;                                  // source line (0 = unknown)
     int column = 0;                                // 1-based column (0 = unknown)
+    bool dbgSeen = false;                          // the debugger already paused on this error
     ScriptError(const std::string& msg, int ln, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
@@ -603,7 +605,7 @@ private:
 struct Runtime;
 
 struct Expr { virtual ~Expr() = default; virtual Value Eval(Runtime&) = 0; };
-struct Stmt { virtual ~Stmt() = default; virtual void Exec(Runtime&) = 0; };
+struct Stmt { virtual ~Stmt() = default; virtual void Exec(Runtime&) = 0; int line = 0; /* source line for the debugger; -1 = a container that never stops */ };
 using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
 
@@ -978,6 +980,18 @@ struct Runtime {
         if (statics && statics->vars.count(n)) return true;
         return SelfField(n) != nullptr;
     }
+
+    // ---- Debugger (ScriptDebug.hpp): costs one bool test per statement while detached ----
+    struct DbgFrame { std::string name; std::size_t scopeIdx; int callerLine; };
+    std::vector<DbgFrame> dbgFrames;   // calls made while a debugger was attached
+    int dbgLine = 0;                   // the line of the statement running now
+    std::string dbgKey;                // this script's path (the breakpoint key)
+    inline void Run(Stmt& s) {
+        if (ScriptDebugger::s_attached) { RunDebug(s); return; }
+        s.Exec(*this);
+    }
+    void RunDebug(Stmt& s);
+    void DebugStop(int line, ScriptStopReason why, const std::string& msg);
 
     Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
     Value InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args);
@@ -1595,23 +1609,24 @@ struct TryStmt : Stmt {
     bool hasCatch = false;
     void Exec(Runtime& r) override {
         try {
-            for (auto& s : body) s->Exec(r);
+            for (auto& s : body) r.Run(*s);
         } catch (const std::exception& ex) {
             if (!hasCatch) return;   // no handler: swallow the error
             if (!catchVar.empty()) r.Define(catchVar, Value{std::string(ex.what())});
-            for (auto& s : catchB) s->Exec(r);
+            for (auto& s : catchB) r.Run(*s);
         }
     }
 };
 struct BlockStmt : Stmt {
+    BlockStmt() { line = -1; }
     std::vector<StmtPtr> body;
-    void Exec(Runtime& r) override { for (auto& s : body) s->Exec(r); }
+    void Exec(Runtime& r) override { for (auto& s : body) r.Run(*s); }
 };
 struct IfStmt : Stmt {
     ExprPtr cond; std::vector<StmtPtr> thenB, elseB;
     void Exec(Runtime& r) override {
-        if (cond->Eval(r).AsBool()) for (auto& s : thenB) s->Exec(r);
-        else for (auto& s : elseB) s->Exec(r);
+        if (cond->Eval(r).AsBool()) for (auto& s : thenB) r.Run(*s);
+        else for (auto& s : elseB) r.Run(*s);
     }
 };
 struct WhileStmt : Stmt {
@@ -1619,7 +1634,7 @@ struct WhileStmt : Stmt {
     void Exec(Runtime& r) override {
         int guard = 0;
         while (cond->Eval(r).AsBool()) {
-            try { for (auto& s : body) s->Exec(r); }
+            try { for (auto& s : body) r.Run(*s); }
             catch (ContinueSignal&) {}
             catch (BreakSignal&) { break; }
             if (++guard > 1000000) throw ScriptError("while loop exceeded iteration limit");
@@ -1647,7 +1662,7 @@ struct SwitchStmt : Stmt {
         if (start < 0) return;
         try {
             for (std::size_t i = start; i < cases.size(); ++i)   // fall-through until break
-                for (auto& s : cases[i].body) s->Exec(r);
+                for (auto& s : cases[i].body) r.Run(*s);
         } catch (BreakSignal&) {}
     }
 };
@@ -1657,7 +1672,7 @@ struct DoWhileStmt : Stmt {
     void Exec(Runtime& r) override {
         int guard = 0;
         do {
-            try { for (auto& s : body) s->Exec(r); }
+            try { for (auto& s : body) r.Run(*s); }
             catch (ContinueSignal&) {}
             catch (BreakSignal&) { break; }
             if (++guard > 1000000) throw ScriptError("do-while loop exceeded iteration limit");
@@ -1669,10 +1684,10 @@ struct ForStmt : Stmt {
     // the current scope, so `return` inside the body can't corrupt the stack.
     StmtPtr init; ExprPtr cond; ExprPtr step; std::vector<StmtPtr> body;
     void Exec(Runtime& r) override {
-        if (init) init->Exec(r);
+        if (init) r.Run(*init);
         int guard = 0;
         while (!cond || cond->Eval(r).AsBool()) {
-            try { for (auto& s : body) s->Exec(r); }
+            try { for (auto& s : body) r.Run(*s); }
             catch (ContinueSignal&) {}        // fall through to the step
             catch (BreakSignal&) { break; }
             if (step) step->Eval(r);
@@ -1692,7 +1707,7 @@ struct ForEachStmt : Stmt {
             std::size_t n = arr->size();
             for (std::size_t i = 0; i < n && i < arr->size(); ++i) {
                 r.Assign(var, (*arr)[i]);
-                try { for (auto& s : body) s->Exec(r); }
+                try { for (auto& s : body) r.Run(*s); }
                 catch (ContinueSignal&) {}
                 catch (BreakSignal&) { break; }
             }
@@ -1711,7 +1726,7 @@ struct ForEachStmt : Stmt {
                     r.Assign(var, kv);
                 } else
                 r.Assign(var, Value{k});
-                try { for (auto& s : body) s->Exec(r); }
+                try { for (auto& s : body) r.Run(*s); }
                 catch (ContinueSignal&) {}
                 catch (BreakSignal&) { break; }
             }
@@ -1787,8 +1802,9 @@ struct YieldStmt : Stmt {
 };
 // Several statements in the current scope (C# `int a = 1, b = 2;`).
 struct MultiStmt : Stmt {
+    MultiStmt() { line = -1; }
     std::vector<StmtPtr> list;
-    void Exec(Runtime& r) override { for (auto& st : list) st->Exec(r); }
+    void Exec(Runtime& r) override { for (auto& st : list) r.Run(*st); }
 };
 struct FunctionStmt : Stmt {
     std::string name; FunctionDecl decl;
@@ -1806,8 +1822,88 @@ struct CallDepthGuard {
     ~CallDepthGuard() { --t_callDepth; }
 };
 
+// Pushes a call-stack entry while a debugger is attached (and not inside a coroutine, whose
+// scopes are moved around when it yields).
+struct DbgFrameGuard {
+    Runtime* r = nullptr;
+    DbgFrameGuard(Runtime& rt, const std::string& name, const char* suffix) {
+        if (!ScriptDebugger::s_attached || rt.currentCo) return;
+        r = &rt;
+        rt.dbgFrames.push_back({name + suffix, rt.scopes.size(), rt.dbgLine});
+    }
+    ~DbgFrameGuard() {
+        if (!r || r->dbgFrames.empty()) return;
+        r->dbgLine = r->dbgFrames.back().callerLine;
+        r->dbgFrames.pop_back();
+    }
+    DbgFrameGuard(const DbgFrameGuard&) = delete;
+    DbgFrameGuard& operator=(const DbgFrameGuard&) = delete;
+};
+
+namespace {
+ScriptDebugVars SortedVars(const std::unordered_map<std::string, Value>& m) {
+    ScriptDebugVars out(m.begin(), m.end());
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    return out;
+}
+}
+
+class DbgContext : public ScriptDebugContext {
+public:
+    explicit DbgContext(Runtime& rt) : m_rt(rt) {}
+    std::vector<ScriptDebugFrame> Frames() const override {
+        std::vector<ScriptDebugFrame> out;
+        const int k = (int)m_rt.dbgFrames.size();
+        for (int j = k; j >= 0; --j)
+            out.push_back({j > 0 ? m_rt.dbgFrames[j - 1].name : std::string("(script)"),
+                           j == k ? m_rt.dbgLine : m_rt.dbgFrames[j].callerLine});
+        return out;
+    }
+    ScriptDebugVars Locals(int frame) const override {
+        const int k = (int)m_rt.dbgFrames.size();
+        const int j = k - frame;             // frame 0 = innermost
+        if (frame < 0 || j < 0) return {};
+        if (j == 0) return Globals();        // the entry frame's variables are the globals
+        const std::size_t idx = m_rt.dbgFrames[j - 1].scopeIdx;
+        if (idx >= m_rt.scopes.size()) return {};
+        return SortedVars(m_rt.scopes[idx].vars);
+    }
+    ScriptDebugVars Globals() const override { return SortedVars(m_rt.scopes.front().vars); }
+    bool Evaluate(const std::string& expression, Value& out, std::string* error) const override;
+private:
+    Runtime& m_rt;
+};
+
+void Runtime::DebugStop(int line, ScriptStopReason why, const std::string& msg) {
+    DbgContext ctx(*this);
+    ScriptStop st;
+    st.key = dbgKey; st.line = line; st.reason = why; st.message = msg; st.ctx = &ctx;
+    ScriptDebugger::Get().Stopped(st, (int)dbgFrames.size());
+}
+
+void Runtime::RunDebug(Stmt& s) {
+    auto& d = ScriptDebugger::Get();
+    if (currentCo || s.line <= 0 || d.InStop()) { s.Exec(*this); return; }
+    const int myLine = s.line;
+    dbgLine = myLine;
+    if (d.ShouldStop(dbgKey, myLine, (int)dbgFrames.size()))
+        DebugStop(myLine, d.PendingStep() == ScriptDebugger::Step::None && d.HasBreakpoint(dbgKey, myLine)
+                              ? ScriptStopReason::Breakpoint : ScriptStopReason::Step, "");
+    if (!d.WantsErrorStops()) { s.Exec(*this); return; }
+    try { s.Exec(*this); }
+    catch (ScriptError& e) {
+        if (!e.dbgSeen) {
+            e.dbgSeen = true;
+            dbgLine = e.line > 0 ? e.line : myLine;
+            DebugStop(dbgLine, ScriptStopReason::Error, e.what());
+        }
+        throw;
+    }
+}
+
 Value Runtime::InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args) {
     CallDepthGuard depthGuard(label);
+    DbgFrameGuard dbgGuard(*this, label, "");
     scopes.push_back(Environment{});
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
         const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
@@ -1817,7 +1913,7 @@ Value Runtime::InvokeDecl(const FunctionDecl& fn, const std::string& label, std:
     }
     Value ret;
     try {
-        for (auto& s : fn.body) s->Exec(*this);
+        for (auto& s : fn.body) Run(*s);
     } catch (ReturnSignal& rs) {
         ret = rs.value;
     } catch (BreakSignal&) {
@@ -2016,6 +2112,7 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std
     }
 
     CallDepthGuard depthGuard(name + "()");
+    DbgFrameGuard dbgGuard(*this, name, "()");
     const FunctionDecl& fn = f->second;
     std::vector<char> present;
     std::vector<Value> slot;
@@ -2035,7 +2132,7 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std
 
     Value ret;
     try {
-        for (auto& s : fn.body) s->Exec(*this);
+        for (auto& s : fn.body) Run(*s);
     } catch (ReturnSignal& rs) {
         ret = rs.value;
     } catch (BreakSignal&) {       // stray break/continue (no enclosing loop):
@@ -2057,6 +2154,7 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::v
     auto lb = lambdas.find(SafeInt(it->second.AsFloat()));
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
     CallDepthGuard depthGuard("a lambda");
+    DbgFrameGuard dbgGuard(*this, "a lambda", "");
     const auto& ps = *lb->second.params;
     const std::vector<ExprPtr>* defs = lb->second.defaults;
     std::vector<char> present;
@@ -2073,7 +2171,7 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::v
         } catch (...) { scopes.pop_back(); throw; }
     }
     Value ret;
-    try { for (auto& st : *lb->second.body) st->Exec(*this); }
+    try { for (auto& st : *lb->second.body) Run(*st); }
     catch (ReturnSignal& rs) { ret = rs.value; }
     catch (...) { scopes.pop_back(); throw; }
     scopes.pop_back();
@@ -2376,6 +2474,12 @@ public:
         return top;
     }
     std::unordered_map<std::string, UserClass> TakeClasses() { return std::move(m_classes); }
+    /// One expression and nothing else (the debugger's watch box).
+    ExprPtr ParseWatchExpression() {
+        ExprPtr e = ParseExpression();
+        if (!Check(Tok::End)) throw ScriptError("parse error: unexpected text after the expression", Peek().line, Peek().column);
+        return e;
+    }
 
     // Parse for diagnostics only: keep going after a parse error by recording it
     // and re-synchronizing to the next statement boundary, so the editor can list
@@ -2870,6 +2974,12 @@ private:
     }
 
     StmtPtr ParseStatement() {
+        const int startLine = Peek().line;
+        StmtPtr st = ParseStatementInner();
+        if (st && st->line == 0) st->line = startLine;
+        return st;
+    }
+    StmtPtr ParseStatementInner() {
         // yield return <expr>; / yield break;  (coroutines)
         if (Check(Tok::Ident) && Peek().text == "yield") {
             ++m_pos;
@@ -3528,6 +3638,34 @@ private:
 } // namespace
 
 // ===================== OkayScriptVM::Impl =====================
+bool DbgContext::Evaluate(const std::string& expression, Value& out, std::string* error) const {
+    try {
+        Lexer lex(expression);
+        std::vector<Token> toks = lex.Scan();
+        // Read-only: refuse anything that could change state or run code.
+        static const std::set<std::string> kPure = {"len", "abs", "min", "max", "floor", "ceil", "round", "sqrt", "clamp", "str"};
+        for (std::size_t i = 0; i < toks.size(); ++i) {
+            const Token& t = toks[i];
+            switch (t.type) {
+                case Tok::Assign: case Tok::PlusEq: case Tok::MinusEq: case Tok::StarEq: case Tok::SlashEq:
+                case Tok::PercentEq: case Tok::Inc: case Tok::Dec: case Tok::QuestionQuestionEq: case Tok::Arrow: case Tok::Semicolon:
+                    throw ScriptError("a watch expression can only read values (no assignment, lambda or ';')");
+                default: break;
+            }
+            if (t.type == Tok::Ident && t.text == "new") throw ScriptError("a watch expression can't create objects");
+            if (t.type == Tok::Ident && i + 1 < toks.size() && toks[i + 1].type == Tok::LParen && !kPure.count(t.text))
+                throw ScriptError("a watch expression can't call '" + t.text + "' (it could change the game); calls allowed: len, abs, min, max, floor, ceil, round, sqrt, clamp, str");
+        }
+        Parser parser(std::move(toks));
+        ExprPtr e = parser.ParseWatchExpression();
+        out = e->Eval(m_rt);
+        return true;
+    } catch (const std::exception& ex) {
+        if (error) *error = ex.what();
+        return false;
+    }
+}
+
 struct OkayScriptVM::Impl {
     Runtime rt;
     // Tweens and timers outlive a call; their callbacks check this so they do
@@ -11052,7 +11190,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         // Load (the contract every caller relies on). In bare mode the top-level
         // is also the per-frame loop, so this first run is the first tick — the
         // first Update skips re-running it to keep the overall tick count intact.
-        for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt);
+        for (auto& s : m_impl->topLevel) m_impl->rt.Run(*s);
         m_impl->bareSkipFirstUpdate = m_impl->bareMode;
         m_impl->loaded = true;
         return true;
@@ -11178,6 +11316,9 @@ void OkayScriptVM::CallStart() {
     CallFirst(m_impl->rt, {"Start", "start"}, none, "Start");
 }
 
+void OkayScriptVM::SetDebugKey(const std::string& key) { m_impl->rt.dbgKey = key; }
+const std::string& OkayScriptVM::DebugKey() const { return m_impl->rt.dbgKey; }
+
 void OkayScriptVM::CallUpdate(float deltaTime) {
     if (!m_impl->loaded) return;
     if (m_impl->rt.host) m_impl->rt.host->deltaTime = deltaTime;
@@ -11188,7 +11329,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
         if (m_impl->bareSkipFirstUpdate) {
             m_impl->bareSkipFirstUpdate = false;
         } else {
-            try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
+            try { for (auto& s : m_impl->topLevel) m_impl->rt.Run(*s); }
             catch (const ReturnSignal&) {}     // a stray top-level return/break/continue
             catch (const BreakSignal&) {}      // ends this frame's run, like it does in Load
             catch (const ContinueSignal&) {}

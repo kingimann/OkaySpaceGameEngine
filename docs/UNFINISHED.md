@@ -473,8 +473,8 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [55.1](feature_map/43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) | Breakpoints and stepping for text scripts | Partial | first step: a line hook in the OkayScript VM and the typed-script interpreter (`engine/src/Script/Interpreter.cpp`) that calls a... |
-| [55.2](feature_map/43-proposals.md#552-watch-and-call-stack) | Watch and call stack | Partial | first step: expose the interpreter's frame and locals read-only to the editor while paused. |
+| [55.1](feature_map/43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) | Breakpoints and stepping for text scripts | Partial | OkayScript has line breakpoints, stepping, call stack, locals and watch (Script Debugger window). Open: the typed interpreter (`NextScriptVM`), coroutines, conditional breakpoints, saved breakpoints, editor part not run in a real window (unverified). |
+| [55.2](feature_map/43-proposals.md#552-watch-and-call-stack) | Watch and call stack | Partial | done for OkayScript (55.1.3); open: the typed interpreter has no frame view, watches are not saved. |
 
 ### 56. Platform targets and store packaging
 

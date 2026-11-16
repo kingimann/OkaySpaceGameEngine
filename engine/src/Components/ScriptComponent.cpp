@@ -1,4 +1,6 @@
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/ScriptDebug.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
 #include "okay/Testing/ObjectPath.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -69,6 +71,10 @@ void ScriptComponent::ApplyFieldOverrides() {
         m_vm->SetGlobal(kv.first, ParseFieldValue(kv.second));
 }
 
+void ScriptComponent::UpdateDebugKey() {
+    if (auto* okayVm = dynamic_cast<OkayScriptVM*>(m_vm.get())) okayVm->SetDebugKey(ScriptDebugger::KeyForPath(m_path));
+}
+
 bool ScriptComponent::LoadSource(const std::string& source, std::string* error) {
     m_source = source;
     m_vm = CreateScriptVM(m_language);
@@ -79,6 +85,7 @@ bool ScriptComponent::LoadSource(const std::string& source, std::string* error) 
         OKAY_ERROR(e);
         return false;
     }
+    UpdateDebugKey();   // breakpoints are kept by path
     bool ok = m_vm->Load(source, error);
     if (ok) ApplyFieldOverrides();   // override the script's defaults with inspector values
     return ok;

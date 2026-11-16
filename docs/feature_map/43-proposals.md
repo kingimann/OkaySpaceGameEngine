@@ -952,16 +952,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 55.1.1 Visual-script debugger - `Components/ActionList`, `VisualScript/VsDebug`, `editor/GameFiber.hpp` - breakpoints on nodes freeze the game mid-frame; continue and step; red badges
   - 55.1.2 Script editor markers - `editor/main.cpp` - F11 toggles a bookmark shown as a marker (the editor widget's breakpoint markers are repurposed for bookmarks)
-  - 55.1.3 VM debug hooks - `-` - not found: the script VM headers have no breakpoint, step or trace interface
-- **Code:** `Components/ActionList`, `VisualScript/VsDebug`, `editor/GameFiber.hpp`, `Scripting/OkayScriptVM`, `Scripting/NextScriptVM`
-- **API:** `ActionList::Breakpoints()`
-- **Editor:** Visual Script editor debug bar; Script editor bookmarks
-- **Docs:** `docs/visual_scripting.md`
-- **Tests:** `vs_debug`, `game_fiber`
-- **Status:** Partial - graphs can be debugged; text scripts cannot.
-- **Exists today:** Parts 55.1.1 and 55.1.2. The game fiber is reusable for text scripts.
+  - 55.1.3 VM debug hooks - `Scripting/ScriptDebug`, `Scripting/OkayScriptVM` - per-line breakpoints by script path, Step Into / Over / Out, continue, pause on error, call stack, locals, read-only watch; one bool test per statement while detached (OkayScript VM only)
+  - 55.1.4 Script Debugger window and gutter breakpoints - `editor/main.cpp` (`DrawScriptDebugger`) - click a line number in the Script Editor for a red breakpoint; while Play is frozen: call stack, variables, globals, watch, Continue / Step buttons, F5 / F10 / F11
+- **Code:** `Components/ActionList`, `VisualScript/VsDebug`, `Scripting/ScriptDebug`, `editor/GameFiber.hpp`, `Scripting/OkayScriptVM`, `Scripting/NextScriptVM`
+- **API:** `ActionList::Breakpoints()`; `ScriptDebugger::Get()` (`SetBreakpoint(key, line, on)`, `RequestStep`, `SetPauseOnError`, `SetOnStop`; the stop handler gets a `ScriptDebugContext` with `Frames()`, `Locals()`, `Globals()`, `Evaluate()`)
+- **Editor:** Visual Script editor debug bar; Script editor gutter breakpoints (click a line number) and bookmarks (F11); View > Editors & Tools > Script Debugger
+- **Docs:** `docs/visual_scripting.md`, `docs/scripting.md` (Debugging a text script)
+- **Tests:** `vs_debug`, `game_fiber`, `script_debugger`
+- **Status:** Partial - graphs and OkayScript text scripts can be debugged; the C#-style typed interpreter (`NextScriptVM`) cannot.
+- **Exists today:** Parts 55.1.1 to 55.1.4. The visual debugger's `Step` enum, key + number breakpoint set, onStop-freezes-the-game design, game fiber and variable shape are reused. The editor panel is separate from the visual debugger's bar (same data shapes, two windows).
 - **Suggested priority:** High - most gameplay is written in text scripts and today the only tool is `print`.
-- **Open:** first step: a line hook in the OkayScript VM and the typed-script interpreter (`engine/src/Script/Interpreter.cpp`) that calls a debug callback; reuse the game fiber to freeze the frame.
+- **Open:** the same hook in the typed-script interpreter (`NextScriptVM`); stops inside coroutines (StartCoroutine) are skipped; a watch sees the innermost frame only; no conditional breakpoints or hit counts; pause-on-error also fires for errors a try/catch handles; breakpoints are not saved with the project; one window for both debuggers; the editor part was compiled but not run in a real window (unverified).
 - **Related:** 13.5, 14.5, 23.4
 - **Words:** script debugger, breakpoint, step over, step into, call stack, pause on error, GameFiber, debug script
 - **Seen as:** my script does something odd and I can only add prints
@@ -971,16 +972,17 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** See variable values and the chain of calls that led here.
 - **Parts:**
   - 55.2.1 Live variables - `editor/main.cpp` - the Variables window and the Inspector show visual-script variables and script fields live in Play
-  - 55.2.2 Call stack - `-` - not built for text scripts
+  - 55.2.2 Call stack - `Scripting/ScriptDebug` (`ScriptDebugContext::Frames`), Script Debugger window - function names and the line each frame is on, OkayScript only
+  - 55.2.3 Expression watch - `ScriptDebugContext::Evaluate` - read-only: no assignment, `new`, lambdas or calls except len, abs, min, max, floor, ceil, round, sqrt, clamp, str
 - **Code:** `editor/main.cpp`
 - **API:** none
 - **Editor:** Variables window
 - **Docs:** `docs/editor.md`
 - **Tests:** none
-- **Status:** Partial - variables show live; no call stack or expression watch.
-- **Exists today:** Variable display; no stack or expression watch.
+- **Status:** Partial - variables show live; OkayScript has a call stack and expression watch while paused.
+- **Exists today:** Variable display; stack, locals and watch for OkayScript (55.1.3).
 - **Suggested priority:** Medium - follows 55.1.
-- **Open:** first step: expose the interpreter's frame and locals read-only to the editor while paused.
+- **Open:** the typed-script interpreter has no frame view; watches are not saved; no editing a variable while paused.
 - **Related:** 55.1, 34.2
 - **Words:** watch window, call stack, locals, inspect variable, expression watch
 - **Seen as:** cannot see a local variable

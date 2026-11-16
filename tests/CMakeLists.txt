@@ -1129,6 +1129,56 @@ add_executable(test_voxel_dig test_voxel_dig.cpp)
 target_link_libraries(test_voxel_dig PRIVATE okay::engine)
 add_test(NAME voxel_dig COMMAND test_voxel_dig)
 
+# Voxel terrain edit path (docs/voxel_edit_perf.md): the surface after any edit equals a full rebuild, the faster marching-cubes
+# loop equals the original bit for bit, the running game draws the terrain in chunk objects that look like one big mesh, the
+# brushes and the local floater cleanup do what they always did, and bad brush numbers no longer write NaN into the field.
+add_executable(test_voxel_edit test_voxel_edit.cpp)
+target_link_libraries(test_voxel_edit PRIVATE okay::engine)
+add_test(NAME voxel_edit COMMAND test_voxel_edit)
+
+add_executable(test_voxel_materials test_voxel_materials.cpp)
+target_link_libraries(test_voxel_materials PRIVATE okay::engine)
+add_test(NAME voxel_materials COMMAND test_voxel_materials)
+
+add_executable(test_voxel_digger_real test_voxel_digger_real.cpp)
+target_link_libraries(test_voxel_digger_real PRIVATE okay::engine)
+add_test(NAME voxel_digger_real COMMAND test_voxel_digger_real)
+
+add_executable(test_voxel_more test_voxel_more.cpp)
+target_link_libraries(test_voxel_more PRIVATE okay::engine)
+target_compile_definitions(test_voxel_more PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME voxel_more COMMAND test_voxel_more)
+
+add_executable(test_voxel_bughunt test_voxel_bughunt.cpp)
+target_link_libraries(test_voxel_bughunt PRIVATE okay::engine)
+add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
+add_executable(test_voxel_chunks test_voxel_chunks.cpp)
+target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
+add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
+add_executable(test_mesh_hash test_mesh_hash.cpp)
+target_link_libraries(test_mesh_hash PRIVATE okay::engine)
+add_test(NAME mesh_hash COMMAND test_mesh_hash)
+# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/terrain_audit.md): same normals, far faster.
+add_executable(test_terrain_water_speed test_terrain_water_speed.cpp)
+target_link_libraries(test_terrain_water_speed PRIVATE okay::engine)
+add_test(NAME terrain_water_speed COMMAND test_terrain_water_speed)
+# The shipped examples/voxel scenes open and dig (OKAY_WRITE_VOXEL_EXAMPLES=1 rewrites them from the Sandbox template).
+add_executable(test_voxel_examples test_voxel_examples.cpp)
+target_link_libraries(test_voxel_examples PRIVATE okay::engine)
+target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME voxel_examples COMMAND test_voxel_examples)
+# Bugs the terrain audit proved (docs/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# World Streamer threw away a dug voxel cell when it unloaded it.
+add_executable(test_terrain_audit test_terrain_audit.cpp)
+target_link_libraries(test_terrain_audit PRIVATE okay::engine)
+add_test(NAME terrain_audit COMMAND test_terrain_audit)
+# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
+add_executable(bench_voxel_edit bench_voxel_edit.cpp)
+target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
+add_executable(bench_voxel_real bench_voxel_real.cpp)
+target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)
 add_test(NAME api_expand COMMAND test_api_expand)
@@ -3724,3 +3774,14 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
+# OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
+add_executable(test_walk_vs_run test_walk_vs_run.cpp)
+target_link_libraries(test_walk_vs_run PRIVATE okay::engine)
+add_test(NAME walk_vs_run COMMAND test_walk_vs_run)
+add_test(NAME walk_vs_run_old COMMAND ${CMAKE_COMMAND} -E env OKAY_OLD_GAIT=1 $<TARGET_FILE:test_walk_vs_run> --old)
+add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
+target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)

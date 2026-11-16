@@ -155,6 +155,8 @@ add_library(okay_engine
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
+    src/Components/VoxelEdit.cpp
+    src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
     src/Components/ModelAnimatorPose.cpp
     src/Components/PlayerView.cpp

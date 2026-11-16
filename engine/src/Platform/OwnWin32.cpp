@@ -368,6 +368,17 @@ public:
                            MB_OK | MB_ICONERROR) != 0;
     }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
+    bool SetSystemCursor(SystemCursor c) override {
+        static const LPCWSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_HAND, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW,
+                                       IDC_SIZENWSE, IDC_NO, IDC_WAIT};
+        const int i = (int)c;
+        if (i < 0 || i >= (int)(sizeof(kIds) / sizeof(kIds[0]))) return false;
+        HCURSOR h = LoadCursorW(nullptr, kIds[i]);   // shared system cursor: never destroyed
+        if (!h) return false;
+        m_shape = h;
+        if (m_cursorShown && !m_relative) ::SetCursor(h);
+        return true;
+    }
     void WarpMouse(Window* w, int x, int y) override {
         HWND h = w ? (HWND)w->NativeHandle() : GetForegroundWindow();
         POINT p = {x, y};
@@ -523,6 +534,7 @@ public:
         }
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT && b->m_shape) { SetCursor(b->m_shape); return TRUE; }   // SetSystemCursor's shape
             break;
         default: break;
         }
@@ -541,6 +553,7 @@ public:
     std::map<HWND, WinWindow*> m_wins;
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
+    HCURSOR m_shape = nullptr;   // SetSystemCursor (null = the class cursor, the arrow)
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
     std::string m_err;

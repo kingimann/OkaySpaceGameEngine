@@ -50,6 +50,9 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself
     LauncherThreads.cpp   # threads, mutexes and atomics over our own CoreThreads (no SDL; tested by core_threads)
+    LauncherGfx.cpp       # the drawing seam: OKAY_LAUNCHER_RENDERER=own (window via okay::platform, our GL painter, our ImGui backends)
+    LauncherGfxSdl.cpp    # the drawing seam's sdl side: SDL_Renderer + ImGui's SDL2 backends (the default)
+    ImGuiOwnBackend.cpp   # our own ImGui renderer (on an okay::platform::Painter) and platform glue (tested by launcher_imgui_renderer)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
@@ -85,6 +88,11 @@ if(TARGET okay_ui_screens)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+endif()
+# The software painter (okayui/soft): the own renderer's fallback when the window has no OpenGL.
+if(TARGET okay_ui_soft)
+    target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_LAUNCHER_HAVE_SOFT_PAINTER=1)
 endif()
 # okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)

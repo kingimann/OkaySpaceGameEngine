@@ -65,6 +65,9 @@ constexpr int kKeyCount = 512;
 
 enum Mod : uint32_t { ModShift = 1, ModCtrl = 2, ModAlt = 4, ModGui = 8, ModCaps = 16, ModNum = 32 };
 
+/// The pointer shapes an app can ask for (Backend::SetSystemCursor): the OS's own cursors, no images of ours.
+enum class SystemCursor { Arrow, TextInput, Hand, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, NotAllowed, Wait };
+
 enum MouseButton : int { MouseLeft = 1, MouseMiddle = 2, MouseRight = 3, MouseX1 = 4, MouseX2 = 5 };
 /// Bit for a MouseButton in the mask returned by Backend::MouseState.
 constexpr uint32_t MouseMask(int button) { return 1u << (button - 1); }
@@ -287,6 +290,9 @@ public:
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// The pointer shape over this app's windows (the OS's own cursor for `c`). False when the backend cannot change it.
+    /// ShowCursor(false) still hides it; the shape comes back with ShowCursor(true).
+    virtual bool SetSystemCursor(SystemCursor c) { (void)c; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }

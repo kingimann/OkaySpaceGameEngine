@@ -2953,6 +2953,21 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
+# The launcher's own Dear ImGui renderer (launcher/ImGuiOwnBackend.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference software
+# rasterisation of the same draw data: headless on the software painter, and under Xvfb on our OpenGL painter
+# (engine/src/Platform/GlPainter.cpp) on an sdl2 and an own window. Own code, off by default; the tests only check it.
+if(TARGET launcher_imgui AND TARGET okay_ui_soft)
+    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/launcher/ImGuiOwnBackend.cpp)
+    target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher)
+    target_link_libraries(test_launcher_imgui_renderer PRIVATE launcher_imgui okay_ui_soft)
+    add_test(NAME launcher_imgui_renderer COMMAND test_launcher_imgui_renderer)
+    if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME launcher_imgui_renderer_gl
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_launcher_imgui_renderer> --gl)
+        set_tests_properties(launcher_imgui_renderer_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
+endif()
+
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)

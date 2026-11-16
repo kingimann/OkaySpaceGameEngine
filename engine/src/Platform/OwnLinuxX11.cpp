@@ -77,6 +77,7 @@ namespace {
     F(Cursor, XCreatePixmapCursor, (Display*, Pixmap, Pixmap, XColor*, XColor*, unsigned, unsigned)) \
     F(int, XFreePixmap, (Display*, Pixmap)) \
     F(int, XFreeCursor, (Display*, Cursor)) \
+    F(Cursor, XCreateFontCursor, (Display*, unsigned)) \
     F(int, XDefineCursor, (Display*, ::Window, Cursor)) \
     F(int, XUndefineCursor, (Display*, ::Window)) \
     F(int, XGrabPointer, (Display*, ::Window, int, unsigned, int, int, ::Window, Cursor, Time)) \
@@ -262,6 +263,8 @@ class X11Impl final : public X11System {
 public:
     ~X11Impl() override {
         if (m_blankCursor) m_x.XFreeCursor(m_dpy, m_blankCursor);
+        for (Cursor& fc : m_fontCursors) if (fc) { m_x.XFreeCursor(m_dpy, fc); fc = 0; }
+        m_shapeCursor = 0;
         if (m_im) m_x.XCloseIM(m_im);
         if (m_dpy) m_x.XCloseDisplay(m_dpy);
         // libX11 / libGL stay loaded; they may be shared with other code.
@@ -624,13 +627,30 @@ public:
         m_x.XFlush(m_dpy);
         return true;
     }
+    bool SetSystemCursor(SystemCursor c) override {
+        // Shapes of the X core cursor font (the numbers of X11/cursorfont.h, which is part of the X protocol).
+        static const unsigned kGlyph[] = {68 /*left_ptr*/, 152 /*xterm*/, 60 /*hand2*/, 52 /*fleur*/, 116 /*sb_v_double_arrow*/,
+            108 /*sb_h_double_arrow*/, 12 /*bottom_left_corner*/, 14 /*bottom_right_corner*/, 0 /*X_cursor*/, 150 /*watch*/};
+        const int i = (int)c;
+        if (!m_dpy || i < 0 || i >= (int)(sizeof(kGlyph) / sizeof(kGlyph[0]))) return false;
+        if (!m_fontCursors[i]) m_fontCursors[i] = m_x.XCreateFontCursor(m_dpy, kGlyph[i]);
+        if (!m_fontCursors[i]) return false;
+        m_shapeCursor = c == SystemCursor::Arrow ? 0 : m_fontCursors[i];   // the arrow is the window's default: undefine
+        for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
+        m_x.XFlush(m_dpy);
+        return true;
+    }
     void ShowCursor(bool show) override {
         m_cursorHidden = !show;
         for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
         m_x.XFlush(m_dpy);
     }
     void HideCursorOn(::Window w, bool hide) {
-        if (!hide) { m_x.XUndefineCursor(m_dpy, w); return; }
+        if (!hide) {
+            if (m_shapeCursor) m_x.XDefineCursor(m_dpy, w, m_shapeCursor);
+            else m_x.XUndefineCursor(m_dpy, w);
+            return;
+        }
         if (!m_blankCursor) {
             static const char data[1] = {0};
             XColor black; std::memset(&black, 0, sizeof(black));
@@ -755,6 +775,8 @@ public:
     Atom m_aWmState = 0, m_aNetHidden = 0;   // interned on first use by X11Win::IsMinimized
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
+    Cursor m_fontCursors[10] = {};   // SetSystemCursor shapes, made on first use
+    Cursor m_shapeCursor = 0;        // the shape shown while the cursor is visible (0 = the default arrow)
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;   // motion since RelativeMouseState was last read
     int m_lastBtn = 0, m_clicks = 0; unsigned long m_lastBtnTime = 0;

@@ -203,6 +203,17 @@ public:
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
     bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }
+    bool SetSystemCursor(SystemCursor c) override {
+        static const SDL_SystemCursor kMap[] = {SDL_SYSTEM_CURSOR_ARROW, SDL_SYSTEM_CURSOR_IBEAM, SDL_SYSTEM_CURSOR_HAND,
+            SDL_SYSTEM_CURSOR_SIZEALL, SDL_SYSTEM_CURSOR_SIZENS, SDL_SYSTEM_CURSOR_SIZEWE, SDL_SYSTEM_CURSOR_SIZENESW,
+            SDL_SYSTEM_CURSOR_SIZENWSE, SDL_SYSTEM_CURSOR_NO, SDL_SYSTEM_CURSOR_WAIT};
+        const int i = (int)c;
+        if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return false;
+        if (!m_cursors[i]) m_cursors[i] = SDL_CreateSystemCursor(kMap[i]);   // made once, kept for the process
+        if (!m_cursors[i]) return false;
+        SDL_SetCursor(m_cursors[i]);
+        return true;
+    }
     uint32_t RelativeMouseState(int* dx, int* dy) override { return SDL_GetRelativeMouseState(dx, dy); }
     bool SupportsRelativeMouseState() override { return true; }
     uint32_t ModState() override { return ModsFromSdl((Uint16)SDL_GetModState()); }
@@ -295,6 +306,8 @@ public:
     }
 
 private:
+    SDL_Cursor* m_cursors[10] = {};   // one per SystemCursor, made on first use
+
     static bool Translate(const SDL_Event& e, Event& r) {
         r.timestampMs = e.common.timestamp;
         switch (e.type) {

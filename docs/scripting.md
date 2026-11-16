@@ -578,6 +578,16 @@ creates nothing, returns false (0 for `spawn_wave`) and logs a
 `refusing ...` line in the Console. Before this, those calls loaded a prefab
 (and ran its scripts) from anywhere on disk.
 
+The other script calls that read a file keep to it too: `pool_get`,
+`pool_prewarm` and `pool_idle` (the pool's prefab), `ui_load_theme` (a
+`.okaytheme`), `bt_run` (a `.okaybt` behaviour tree) and `net_spawn_owned`,
+plus the action-list op `net_spawn_owned` and the visual-script
+**NetSpawnOwned** node. An outside path loads nothing, the call returns false
+or 0 (an empty id for `net_spawn_owned`) and the Console shows a `refusing ...`
+line; `pool_get("prefabs/bullet.okayprefab", 0, 0)` or
+`ui_load_theme("themes/Forest.okaytheme")` work as before. (`load_clips` takes
+clip text, not a file name, so it has nothing to refuse.)
+
 ### Rendering: post-processing, fog, weather, time of day
 
 The scene's look (the Lighting panel's Post-processing, Sky, Fog and Weather

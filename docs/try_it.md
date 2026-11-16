@@ -1088,6 +1088,22 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Scripts can't load files from outside the game (branch `claude2/script-path-guard-rest`, not merged or released yet)
+
+Follow-up to the spawn path guard. `pool_get`, `pool_prewarm`, `pool_idle`, `ui_load_theme`, `bt_run`,
+`net_spawn_owned`, the action-list op `net_spawn_owned` and the visual-script **NetSpawnOwned** node now refuse
+absolute paths, drive letters and `..`, like `spawn` does.
+
+1. Open the editor (`Tools\OkayEngine.exe`), open any scene with a prefab in it (for example `bullet.okayprefab` next to
+   the scene), and add an OkayScript to an object with:
+   `function start() { print(pool_get("C:\\Windows\\x.okayprefab", 0, 0)); print(pool_get("bullet.okayprefab", 0, 0)); }`
+2. Press **Play** and show **View > Console**.
+3. You should see `[script] pool_get: refusing file 'C:\Windows\x.okayprefab' (use a name or a relative path; ...)`
+   and `false`, then `true` with a bullet in the scene. Try `ui_load_theme("../x.okaytheme")` or
+   `bt_run("/tmp/x.okaybt")` the same way: each gives a `refusing` line and 0.
+
+**Status.** Tested headless on Linux (`test_script_path_guard_rest`). Not tried on Windows or in the editor.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

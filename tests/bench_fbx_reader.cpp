@@ -1,6 +1,6 @@
 // Speed and memory of our own FBX reader (okay::fbx) against ufbx, on the same files.
 //
-// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --import-digest] [--only WHAT] <file.fbx | directory> ...
+// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --import-digest] [--only WHAT [--time]] <file.fbx | directory> ...
 //       (a directory is searched recursively for .fbx files; with no argument it reads $OKAY_MODEL_CORPUS and the
 //        fixtures in tests/assets/fbx)
 //
@@ -24,7 +24,8 @@
 // hashes the scene after BuildParts without the polygon arrays (the triangulated parts: what `--digest` hashed before
 // the reader left the triangulation to the import, 2026-11-16); `--import-digest` does the same for the whole imported
 // scene (our reader on), hashed as SceneSerializer writes it. `--only own-tree|own-load|ufbx-load|import-own|
-// import-ufbx` runs just that, once per file, for a profiler (valgrind --tool=callgrind). Large synthetic files: python3 scripts/gen_fbx_bench.py <dir>.
+// import-ufbx` runs just that, once per file, for a profiler (valgrind --tool=callgrind); with `--time` it runs it
+// --runs times per file and prints the minimum and the median (steadier for one file on a busy machine). Large synthetic files: python3 scripts/gen_fbx_bench.py <dir>.
 // Written for this project; the counting allocator and the statistics are our own.
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
@@ -265,7 +266,7 @@ std::uint64_t Digest(const fbx::Scene& s, bool polygons) {
 
 int main(int argc, char** argv) {
     int runs = 5;
-    bool quiet = false, digest = false, partsDigest = false, importDigest = false;
+    bool quiet = false, digest = false, partsDigest = false, importDigest = false, timeOnly = false;
     std::string only;   // --only own-tree|own-load|ufbx-load|import-own|import-ufbx: run that once per file (for a profiler)
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
@@ -276,6 +277,7 @@ int main(int argc, char** argv) {
         else if (a == "--parts-digest") partsDigest = true;
         else if (a == "--import-digest") importDigest = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
+        else if (a == "--time") timeOnly = true;   // with --only: run it --runs times and print the minimum and the median
         else if (a == "-h" || a == "--help") { std::printf("bench_fbx_reader [--runs N] [--quiet] <file.fbx|dir> ...\n"); return 0; }
         else Collect(a, files);
     }
@@ -336,6 +338,7 @@ int main(int argc, char** argv) {
         r.synthetic = fs::path(path).filename().string().rfind("bench_", 0) == 0;
         r.bytes = data.size();
         if (!only.empty()) {
+            auto once = [&]() -> int {   // 1 read, 0 not read, -1 unknown --only
             bool ok = false;
             if (only == "own-tree") { fbx::Document d; std::string e; ok = fbx::Parse(data.data(), data.size(), d, &e); }
             else if (only == "own-load") { fbx::Scene s; std::string e; ok = fbx::LoadMemory(data.data(), data.size(), s, &e); }
@@ -344,8 +347,24 @@ int main(int argc, char** argv) {
                 fbx::SetOwnReaderEnabled(only == "import-own");
                 Scene sc("bench"); ok = ImportModelScene(sc, path, &ok) && ok;
                 fbx::SetOwnReaderEnabled(false);
-            } else { std::fprintf(stderr, "unknown --only %s\n", only.c_str()); return 1; }
-            std::printf("%s %s\n", r.name.c_str(), ok ? "ok" : "fail");
+            } else return -1;
+            return ok ? 1 : 0;
+            };
+            if (!timeOnly) {
+                const int ok = once();
+                if (ok < 0) { std::fprintf(stderr, "unknown --only %s\n", only.c_str()); return 1; }
+                std::printf("%s %s\n", r.name.c_str(), ok ? "ok" : "fail");
+                continue;
+            }
+            std::vector<double> t; int ok = 1;
+            for (int k = 0; k < runs && ok > 0; ++k) {
+                const auto a = Clock::now();
+                ok = once();
+                t.push_back(std::chrono::duration<double, std::milli>(Clock::now() - a).count());
+            }
+            if (ok < 0) { std::fprintf(stderr, "unknown --only %s\n", only.c_str()); return 1; }
+            std::sort(t.begin(), t.end());
+            std::printf("%s %s %s runs %zu min %.3f ms median %.3f ms\n", r.name.c_str(), only.c_str(), ok ? "ok" : "fail", t.size(), t.front(), t[t.size() / 2]);
             continue;
         }
         r.tree = Run(runs, [&] { fbx::Document d; std::string e; return fbx::Parse(data.data(), data.size(), d, &e); });

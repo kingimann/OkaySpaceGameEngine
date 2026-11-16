@@ -9,6 +9,8 @@
 #include "PolygonTriangulate.hpp"
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +19,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -44,7 +48,13 @@ struct XNode {
     std::string name;                                        // without a namespace prefix
     std::vector<std::pair<std::string, std::string>> attrs;
     std::vector<int> kids;
-    std::string text;
+    // The element's text. Most text (every big number array) is one piece with no entity in it: then it is a view into
+    // the file's own bytes (`tp`, `tl`), not a copy. Text in several pieces or with an entity is decoded into `own`.
+    std::string own;
+    const char* tp = nullptr;
+    std::size_t tl = 0;
+    bool owned = false;
+    std::string_view Text() const { return owned ? std::string_view(own) : std::string_view(tp, tl); }
 };
 
 struct Xml {
@@ -81,14 +91,19 @@ struct Xml {
         }
         return -1;
     }
-    const std::string& Text(int i) const { return n[(std::size_t)i].text; }
+    std::string_view Text(int i) const { return n[(std::size_t)i].Text(); }
 };
 
+inline bool HasAmp(const std::string& s, std::size_t a, std::size_t b) {
+    return b > a && std::memchr(s.data() + a, '&', b - a) != nullptr;
+}
+
 void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::size_t b) {
-    if (s.find('&', a) >= b) { dst.append(s, a, b - a); return; }
+    if (!HasAmp(s, a, b)) { dst.append(s, a, b - a); return; }
     for (std::size_t i = a; i < b; ++i) {
         if (s[i] != '&') { dst += s[i]; continue; }
-        std::size_t e = s.find(';', i);
+        const void* semi = std::memchr(s.data() + i, ';', std::min(b - i, (std::size_t)14));
+        const std::size_t e = semi ? (std::size_t)((const char*)semi - s.data()) : std::string::npos;
         if (e == std::string::npos || e >= b || e - i > 12) { dst += '&'; continue; }
         const std::string ent = s.substr(i + 1, e - i - 1);
         if (ent == "amp") dst += '&';
@@ -126,6 +141,14 @@ std::string StripPrefix(const std::string& s) {
     return c == std::string::npos ? s : s.substr(c + 1);
 }
 
+// Add the piece s[a, b) to a node's text: a view when it is the first piece and has no entity, else decoded into `own`.
+void AddText(XNode& nd, const std::string& s, std::size_t a, std::size_t b, bool decode) {
+    if (a >= b) return;
+    if (!nd.owned && nd.tl == 0 && (!decode || !HasAmp(s, a, b))) { nd.tp = s.data() + a; nd.tl = b - a; return; }
+    if (!nd.owned) { nd.own.assign(nd.tp, nd.tl); nd.owned = true; }
+    if (decode) AppendDecoded(nd.own, s, a, b); else nd.own.append(s, a, b - a);
+}
+
 bool ParseXml(const std::string& s, Xml& x, std::string& err) {
     std::size_t p = 0;
     const std::size_t n = s.size();
@@ -137,7 +160,7 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
         if (s[p] != '<') {
             std::size_t e = s.find('<', p);
             if (e == std::string::npos) e = n;
-            if (!stack.empty()) AppendDecoded(x.n[(std::size_t)stack.back()].text, s, p, e);
+            if (!stack.empty()) AddText(x.n[(std::size_t)stack.back()], s, p, e, true);
             p = e;
             continue;
         }
@@ -149,7 +172,7 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
         if (s.compare(p, 9, "<![CDATA[") == 0) {
             std::size_t e = s.find("]]>", p + 9);
             if (e == std::string::npos) return fail("XML: unterminated CDATA");
-            if (!stack.empty()) x.n[(std::size_t)stack.back()].text.append(s, p + 9, e - p - 9);
+            if (!stack.empty()) AddText(x.n[(std::size_t)stack.back()], s, p + 9, e, false);
             p = e + 3; continue;
         }
         if (s.compare(p, 2, "<?") == 0) {
@@ -232,10 +255,50 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
 // Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
 // unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
 // counts such tokens so the reader can say so.
-bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nullptr) {
+// Whitespace-separated tokens in t, for reserving the exact size.
+std::size_t CountTokens(std::string_view t) {
+    std::size_t n = 0;
+    bool in = false;
+    for (char c : t) { const bool w = IsWs(c); if (!w && !in) ++n; in = !w; }
+    return n;
+}
+
+// True when the C library reads '.' as the decimal point (the usual case): then std::from_chars, which always does and
+// gives the same correctly rounded value as strtof, may stand in for it.
+inline bool PointLocale() {
+    const char* dp = std::localeconv()->decimal_point;
+    return !dp || (dp[0] == '.' && dp[1] == 0);
+}
+
+// One float token [p, q) the way strtof reads it, whole token only. The fast path is from_chars for plain decimal
+// tokens; anything else (a sign '+', hex, inf / nan, out of range) goes the old way, so the result is the same.
+inline bool TokenToFloat(const char* p, const char* q, bool fast, float& v) {
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    if (fast && *p != '+') {
+        bool plain = true;
+        for (const char* c = p; c < q; ++c) { const char k = *c; if (!((k >= '0' && k <= '9') || k == '.' || k == '-' || k == 'e' || k == 'E')) { plain = false; break; } }
+        if (plain) {
+            const auto r = std::from_chars(p, q, v);
+            if (r.ec == std::errc() && r.ptr == q) return true;
+        }
+    }
+#else
+    (void)fast;
+#endif
+    // the token ends at whitespace, at '<' or ']' (the view into the file) or at the string's end: strtof stops there
+    char* e = nullptr;
+    v = detail::StrToF(p, &e);
+    return e == q;
+}
+
+// Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
+// unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
+// counts such tokens so the reader can say so.
+bool ParseFloats(std::string_view t, std::vector<float>& out, int* commas = nullptr) {
     out.clear();
-    out.reserve(t.size() / 4 + 1);
-    const char* p = t.c_str();
+    out.reserve(CountTokens(t));
+    const bool fast = PointLocale();
+    const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
         while (p < end && IsWs(*p)) ++p;
@@ -243,18 +306,17 @@ bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nu
         const char* q = p;
         bool comma = false, point = false;
         while (q < end && !IsWs(*q)) { if (*q == ',') comma = true; else if (*q == '.') point = true; ++q; }
-        char* e = nullptr;
         float v;
         if (comma && !point && q - p < 64) {
             char buf[72];
             for (const char* c = p; c < q; ++c) buf[c - p] = *c == ',' ? '.' : *c;
             buf[q - p] = 0;
+            char* e = nullptr;
             v = detail::StrToF(buf, &e);
             if (e != buf + (q - p)) return false;
             if (commas) ++*commas;
-        } else {
-            v = detail::StrToF(p, &e);
-            if (e != q) return false;   // not a whole token (or no number at all)
+        } else if (!TokenToFloat(p, q, fast, v)) {
+            return false;   // not a whole token (or no number at all)
         }
         if (!std::isfinite(v)) return false;
         out.push_back(v);
@@ -262,32 +324,46 @@ bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nu
     }
     return true;
 }
+bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nullptr) { return ParseFloats(std::string_view(t), out, commas); }
 
-bool ParseInts(const std::string& t, std::vector<int>& out) {
-    out.clear();
-    out.reserve(t.size() / 2 + 1);
-    const char* p = t.c_str();
+// Integers as strtol(..., 10) reads them one after another (a number ends where strtol stops), appended to `out`.
+bool AppendInts(std::string_view t, std::vector<int>& out) {
+    out.reserve(out.size() + CountTokens(t));
+    const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
         while (p < end && IsWs(*p)) ++p;
         if (p >= end) break;
-        char* e = nullptr;
-        long v = std::strtol(p, &e, 10);
-        if (e == p || v < -2147483647L || v > 2147483647L) return false;
+        long v = 0;
+        if (*p == '+') {   // from_chars takes no '+': the old way (the token ends at whitespace, '<', ']' or the end)
+            char* e = nullptr;
+            v = std::strtol(p, &e, 10);
+            if (e == p || v < -2147483647L || v > 2147483647L) return false;
+            p = e;
+        } else {
+            const auto r = std::from_chars(p, end, v, 10);
+            if (r.ptr == p || r.ec == std::errc::invalid_argument) return false;
+            if (r.ec == std::errc::result_out_of_range || v < -2147483647L || v > 2147483647L) return false;
+            p = r.ptr;
+        }
         out.push_back((int)v);
-        p = e;
     }
     return true;
 }
+bool ParseInts(std::string_view t, std::vector<int>& out) {
+    out.clear();
+    return AppendInts(t, out);
+}
 
-std::vector<std::string> Tokens(const std::string& t) {
+std::vector<std::string> Tokens(std::string_view t) {
     std::vector<std::string> r;
+    r.reserve(CountTokens(t));
     std::size_t i = 0;
     while (i < t.size()) {
         while (i < t.size() && IsWs(t[i])) ++i;
         std::size_t b = i;
         while (i < t.size() && !IsWs(t[i])) ++i;
-        if (i > b) r.push_back(t.substr(b, i - b));
+        if (i > b) r.emplace_back(t.substr(b, i - b));
     }
     return r;
 }
@@ -474,12 +550,7 @@ struct Reader {
         // Corner stream -> polygons.
         std::vector<int> all;
         std::vector<std::pair<std::size_t, std::size_t>> polys;   // (first corner, corner count)
-        auto addP = [&](int pn) -> bool {
-            std::vector<int> v;
-            if (!ParseInts(x.Text(pn), v)) return false;
-            all.insert(all.end(), v.begin(), v.end());
-            return true;
-        };
+        auto addP = [&](int pn) -> bool { return AppendInts(x.Text(pn), all); };
         if (kind == "triangles") {
             const int pn = x.First(prim, "p");
             if (pn < 0) return true;   // empty set
@@ -618,11 +689,11 @@ struct Reader {
         if (im < 0 || x.n[(std::size_t)im].name != "image") return std::string();
         int f = x.First(im, "init_from");
         if (f < 0) return std::string();
-        std::string t = x.Text(f);
+        std::string_view t = x.Text(f);
         const int r = x.First(f, "ref");
         if (r >= 0) t = x.Text(r);
         std::string trimmed;
-        { std::size_t a = 0, b = t.size(); while (a < b && IsWs(t[a])) ++a; while (b > a && IsWs(t[b - 1])) --b; trimmed = t.substr(a, b - a); }
+        { std::size_t a = 0, b = t.size(); while (a < b && IsWs(t[a])) ++a; while (b > a && IsWs(t[b - 1])) --b; trimmed.assign(t.substr(a, b - a)); }
         return trimmed.empty() ? std::string() : ResolveImagePath(trimmed, baseDir);
     }
 
@@ -1351,6 +1422,11 @@ bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* e
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    if (std::fseek(fp, 0, SEEK_END) == 0) {   // reserve the file's size once (the buffer used to grow by doubling)
+        const long sz = std::ftell(fp);
+        if (sz > 0 && (unsigned long)sz <= dae::kMaxFileBytes) bytes.reserve((std::size_t)sz);
+    }
+    std::rewind(fp);
     char buf[65536];
     for (;;) {
         const std::size_t n = std::fread(buf, 1, sizeof(buf), fp);

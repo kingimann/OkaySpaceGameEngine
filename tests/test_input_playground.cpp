@@ -195,6 +195,11 @@ int main() {
         Step(scene, {'0'}); Step(scene, {});
         CHECK(Has(TextOf(scene, "F Players"), "Rumble strength 1"));
         InputHaptics::Stop(0);
+        CHECK(Has(TextOf(scene, "F Players"), "by key position: false"));
+        Step(scene, {'k'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "F Players"), "by key position: true") && Input::KeysByPosition());
+        Step(scene, {'k'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "F Players"), "by key position: false") && !Input::KeysByPosition());
     }
 
     // G: record then replay

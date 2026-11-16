@@ -82,6 +82,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
+| input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -1345,6 +1346,22 @@ What changes for you:
 5. New check: a branch that adds an `.exe`/`.dll`/`.so`/archive or a big binary file fails "No built programs or big binary files in git" (`python3 scripts/branch_lint.py binaries`).
 
 **Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
+
+## input. Input upgrade: playground, rumble patterns, vibration setting, key positions
+
+**What it is.** One scene with eight stations (devices, timing, chords, curves, rebinding, two players, recording) that shows the input system working. New in this step: the vibration setting now switches off all rumble (not only patterns), and a switch to read letters by key position so AZERTY players keep WASD under the same fingers.
+
+**Steps.**
+1. Open the editor from the Windows release. Click **File > Open** and choose `examples\input\input_playground.okayscene` (the folder sits beside the editor).
+2. Press **Play**. Press keys and move the mouse: station A shows what the game sees. Station F ("Players") is the one for this change.
+3. With a controller plugged in: press **H** (heartbeat shake on pad 1) and **J** (pulse on pad 2).
+4. Press **0**: the line "Rumble strength" goes from 1 to 0 and the controller stops shaking; press H again, nothing shakes. Press **0** again to turn it back on.
+5. Press **K**: the line "Letters read by key position" goes from false to true. On an AZERTY keyboard, W A S D movement now works on the Z Q S D keys (the US places). Press K again to go back.
+6. In a built game the same switches are the script calls `haptic_strength(0..1)` and `key_positions(true/false)`; both are kept for the player.
+
+**What you should see.** The station F text changes as described. Without a controller you still see the strength and key-position lines change.
+
+**Status.** Tested headless on Linux (`input_deep`, `input_playground`; the playground test presses H, 0 and K and renders a software picture). Unverified: Windows, a real controller (rumble was only checked as the request the host takes), a real AZERTY keyboard. No Settings-screen toggle yet.
 
 ## Team tooling (not part of the Windows release)
 

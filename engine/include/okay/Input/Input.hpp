@@ -218,7 +218,13 @@ public:
     /// (low = heavy rumble, high = light buzz) for `seconds`. The windowed runtime
     /// picks the request up with TakeRumble.
     static void Rumble(float low, float high, float seconds, int player = 0);
-    /// The latest Rumble request since the last call, for the runtime to play.
+    /// Read letters and digits by KEY POSITION (the US layout's places: W A S D stay where a US keyboard has them, so
+    /// AZERTY players get Z Q S D under the same fingers) instead of by the letter printed on the key. Off by default;
+    /// kept for the player in Prefs ("input.keypos"). The windowed hosts read it through KeyForLetter (PlatformKeys.hpp).
+    static void SetKeysByPosition(bool on);
+    static bool KeysByPosition();
+    /// The latest Rumble request since the last call, for the runtime to play. The player's vibration
+    /// setting (InputHaptics::SetStrength, 0 = off) is already applied to the two strengths.
     static bool TakeRumble(float& low, float& high, float& seconds, int player = 0);
 
     // ---- Text input (real typed characters: shift, caps, symbols, layout) ----

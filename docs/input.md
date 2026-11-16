@@ -332,6 +332,15 @@ on one half of the keyboard (one-handed play); `Reset()` undoes them.
 `InputHaptics::Play("heartbeat", player)` plays a short list of rumble steps (tap, buzz, pulse, heartbeat, ramp, ramp down) on a
 controller, or `Play(steps, player)` with your own `{heavy, light, seconds}` steps. `InputHaptics::SetStrength(0.5)` scales every
 pattern (0 = vibration off) and is kept for the player (`input.haptics`). OkayScript: `haptic("heartbeat", 0)`, `haptic_strength(0.5)`.
+The strength is applied once, when the host takes the request (`Input::TakeRumble`), so a plain `Input::Rumble(...)` call obeys the
+player's vibration setting too (0 = no vibration at all), not only patterns.
+
+### Keys by position (AZERTY and other layouts)
+By default a letter means the key that has that letter printed on it, so on AZERTY the "W" key is bottom left. A player can
+switch to key positions: `Input::SetKeysByPosition(true)` (kept in Prefs as `input.keypos`; OkayScript `key_positions(true)`).
+Then every letter and digit is read at its US place, so W A S D are the Z Q S D keys on AZERTY, under the same fingers as on a US
+keyboard. `KeyForLetter` in `PlatformKeys.hpp` reads the switch, so the player host uses it with no other change. Off by default.
+Not tried on a real AZERTY keyboard.
 
 ### Pictures that follow the device
 `Input::LastDevice()` says whether the player last used the keyboard, mouse, a controller or touch. `Input::GamepadFamily(p)`

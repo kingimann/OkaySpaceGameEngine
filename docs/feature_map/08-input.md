@@ -21,7 +21,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Docs:** `docs/input.md`
 - **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
 - **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
-- **Open:** the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
+- **Open:** keys by position for AZERTY exist (`Input::SetKeysByPosition`, off by default, no Settings toggle yet); the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one
@@ -111,9 +111,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Input::Rumble`, `Input::TakeRumble`, script `Input.Rumble(low, high, seconds)`, `rumble(low, high, seconds)`
 - **Editor:** none
 - **Docs:** `docs/input.md`
-- **Tests:** -
-- **Status:** Basic - request and playback code read; no test file covers rumble
-- **Open:** no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no haptic pattern assets or intensity setting in the settings screen
+- **Tests:** `input_deep`, `input_playground`
+- **Status:** Works in headless tests - request, patterns (`InputHaptics`) and the vibration setting (scales every `Input::Rumble`, 0 = off) are covered; real controller playback unverified
+- **Open:** no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no vibration slider in a Settings screen yet (the setting is `haptic_strength`, kept in Prefs)
 - **Related:** 8.2, 11.7, 32.1
 - **Words:** rumble, vibration, haptics, force feedback, controller shake, Rumble, low motor, high motor
 - **Seen as:** the controller does not shake on a hit or explosion; vibration cannot be turned off by the player

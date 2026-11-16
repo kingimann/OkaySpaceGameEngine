@@ -1,5 +1,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Input/Haptics.hpp"
+#include "okay/Core/Prefs.hpp"
 #include <cctype>
 #include <cmath>
 
@@ -276,8 +278,17 @@ bool Input::TakeRumble(float& low, float& high, float& seconds, int player) {
     if (i < 0) return false;
     RumbleRequest& r = PendingRumble(i);
     if (!r.pending) return false;
-    low = r.low; high = r.high; seconds = r.seconds; r.pending = false;
+    // The player's vibration setting (InputHaptics::Strength, 0 = off) scales every request: patterns and plain Input::Rumble alike.
+    const float k = InputHaptics::Strength();
+    low = r.low * k; high = r.high * k; seconds = r.seconds; r.pending = false;
     return true;
+}
+
+namespace { int g_keysByPos = -1; }   // -1: not read from Prefs yet
+void Input::SetKeysByPosition(bool on) { g_keysByPos = on ? 1 : 0; Prefs::SetBool("input.keypos", on); }
+bool Input::KeysByPosition() {
+    if (g_keysByPos < 0) g_keysByPos = (Prefs::Has("input.keypos") && Prefs::GetBool("input.keypos")) ? 1 : 0;
+    return g_keysByPos == 1;
 }
 
 int Input::GamepadButtonFromName(const std::string& name) {

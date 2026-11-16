@@ -16,8 +16,7 @@ void Begin(int p) {
     if (r.at >= r.steps.size()) { r.active = false; Input::Rumble(0, 0, 0, p); return; }
     const InputHaptics::Step& s = r.steps[r.at];
     r.left = s.seconds;
-    const float k = InputHaptics::Strength();
-    Input::Rumble(s.low * k, s.high * k, s.seconds, p);
+    Input::Rumble(s.low, s.high, s.seconds, p);   // the player's vibration setting is applied once, in Input::TakeRumble
 }
 } // namespace
 

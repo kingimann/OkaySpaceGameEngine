@@ -151,9 +151,10 @@ gameobject 8 "F Players"
   if (key_down(\"h\")) { haptic(\"heartbeat\", 0); }
   if (key_down(\"j\")) { haptic(\"pulse\", 1); }
   if (key_down(\"0\")) { if (haptic_strength() > 0) { haptic_strength(0); } else { haptic_strength(1); } }
+  if (key_down(\"k\")) { key_positions(!key_positions()); }
   var s = \"F. TWO PLAYERS   player 1 = first controller, player 2 = second   (H and J shake pad 1 and 2)\\n\";
   s = s + \"P1 jump \" + action(\"jump\", 0) + \" move \" + to_fixed(action_x(\"move\", 0), 1) + \",\" + to_fixed(action_y(\"move\", 0), 1) + \"   connected \" + gamepad_connected(0) + \"\\n\";
-  s = s + \"P2 jump \" + action(\"jump\", 1) + \" move \" + to_fixed(action_x(\"move\", 1), 1) + \",\" + to_fixed(action_y(\"move\", 1), 1) + \"   connected \" + gamepad_connected(1) + \"\\nRumble strength \" + haptic_strength() + \"  (press 0 to switch rumble off or on)\";
+  s = s + \"P2 jump \" + action(\"jump\", 1) + \" move \" + to_fixed(action_x(\"move\", 1), 1) + \",\" + to_fixed(action_y(\"move\", 1), 1) + \"   connected \" + gamepad_connected(1) + \"\\nRumble strength \" + haptic_strength() + \"  (press 0 to switch rumble off or on)\\nLetters read by key position: \" + key_positions() + \"  (press K to switch; on AZERTY it keeps WASD under your fingers)\";
   set_text(s);
 }" "" 0
   text "" 1 1 1 1 1.5 1 24 460.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4

@@ -295,6 +295,13 @@ int main() {
         CHECK(KeyForLetter(Key::Unknown, '5') == Key::N5);
         CHECK(KeyForLetter(Key::Unknown, '0') == Key::N0);
         CHECK(KeyForLetter(Key::Z, 'w') == Key::Z);                  // AZERTY: the key labelled W stays W
+        // ...unless the player asks for key positions: then W is read at the US place (the key labelled Z on AZERTY)
+        CHECK(!Input::KeysByPosition());
+        Input::SetKeysByPosition(true);
+        CHECK(Input::KeysByPosition() && KeyForLetter(Key::Z, 'w') == Key::W && KeyForLetter(Key::Q, 'a') == Key::A);
+        CHECK(KeyForLetter(Key::N1, '5') == Key::N5 && KeyForLetter(Key::Unknown, 'd') == Key::D);
+        Input::SetKeysByPosition(false);
+        CHECK(!Input::KeysByPosition() && KeyForLetter(Key::Z, 'w') == Key::Z);
         std::vector<char> chars;
         TapCharsForKey(Key::Up, [](char c) { return KeyForLetter(Key::Unknown, c); }, chars);
         CHECK(chars.size() == 2 && chars[0] == 'w' && chars[1] == Input::KeyUp);
@@ -633,6 +640,16 @@ int main() {
         CHECK(Input::TakeRumble(lo, hi, sec, 0) && std::fabs(hi - 0.5f) < 1e-5f);
         InputHaptics::SetStrength(0.0f);
         InputHaptics::Play("buzz", 0); CHECK(Input::TakeRumble(lo, hi, sec, 0) && hi == 0.0f && lo == 0.0f);
+        // the vibration setting also scales a plain Input::Rumble call (a game that does not use patterns)
+        InputHaptics::SetStrength(0.5f);
+        Input::Rumble(0.8f, 0.4f, 0.3f, 0);
+        CHECK(Input::TakeRumble(lo, hi, sec, 0) && std::fabs(lo - 0.4f) < 1e-5f && std::fabs(hi - 0.2f) < 1e-5f && std::fabs(sec - 0.3f) < 1e-5f);
+        InputHaptics::SetStrength(0.0f);
+        Input::Rumble(1.0f, 1.0f, 1.0f, 0);
+        CHECK(Input::TakeRumble(lo, hi, sec, 0) && lo == 0.0f && hi == 0.0f);   // off means off
+        InputHaptics::SetStrength(1.0f);
+        Input::Rumble(0.8f, 0.4f, 0.3f, 0);
+        CHECK(Input::TakeRumble(lo, hi, sec, 0) && std::fabs(lo - 0.8f) < 1e-5f);
         InputHaptics::Stop(0); InputHaptics::SetStrength(1.0f);
         CHECK(!InputHaptics::Playing(0) && !InputHaptics::Play("tap", 9));
     }

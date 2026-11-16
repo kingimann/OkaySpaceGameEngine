@@ -13,10 +13,11 @@ namespace okay {
 /// (Backend::KeyForChar). Layouts with no Latin letters (Russian, Greek, Arabic, Hebrew...)
 /// report "unknown" for 'w', which used to leave W A S D dead; then the key at that letter's
 /// place on a US keyboard is used instead, so the game stays playable. Latin layouts (AZERTY,
-/// QWERTZ, Dvorak) are unchanged: the key labelled W is still W.
+/// QWERTZ, Dvorak) are unchanged: the key labelled W is still W, unless the player turned on
+/// Input::SetKeysByPosition (then every letter and digit is read at its US key position).
 inline platform::Key KeyForLetter(platform::Key found, char c) {
     using platform::Key;
-    if (found != Key::Unknown) return found;
+    if (found != Key::Unknown && !Input::KeysByPosition()) return found;   // "by position" (Input::SetKeysByPosition): always the US place
     if (c >= 'a' && c <= 'z') return (Key)((int)Key::A + (c - 'a'));
     if (c >= '1' && c <= '9') return (Key)((int)Key::N1 + (c - '1'));
     if (c == '0') return Key::N0;

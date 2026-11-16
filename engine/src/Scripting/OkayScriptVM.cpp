@@ -3920,6 +3920,8 @@ struct OkayScriptVM::Impl {
         // haptic_strength(0.5) scales every pattern (0 = vibration off), kept for the player.
         b["haptic"] = [](std::vector<Value>& a) { return Value{!a.empty() && InputHaptics::Play(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0)}; };
         b["haptic_strength"] = [](std::vector<Value>& a) { if (!a.empty()) InputHaptics::SetStrength(a[0].AsFloat()); return Value{InputHaptics::Strength()}; };
+        // key_positions(true): read letters by key position (US places, so AZERTY players keep W A S D under the same fingers); returns the setting.
+        b["key_positions"] = [](std::vector<Value>& a) { if (!a.empty()) Input::SetKeysByPosition(a[0].AsBool()); return Value{Input::KeysByPosition()}; };
         b["gamepad_count"] = [](std::vector<Value>&) { return Value{(float)Input::GamepadCount()}; };
         b["gamepad_connected"] = [](std::vector<Value>& a) { return Value{Input::GamepadConnected(a.empty() ? 0 : SafeInt(a[0].AsFloat()))}; };
         b["set_per_player"] = [](std::vector<Value>& a) { if (!a.empty()) InputActions::SetPerPlayer(a[0].AsString(), a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };

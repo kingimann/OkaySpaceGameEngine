@@ -1452,3 +1452,10 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## File > Examples opens the examples (fix)
+
+1. Open the editor from the Windows release (also when it was started from a project folder).
+2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
+3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
+4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.

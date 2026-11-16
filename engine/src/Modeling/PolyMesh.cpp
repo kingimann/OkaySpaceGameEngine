@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
 #include <tuple>
+#include <unordered_map>
 
 namespace okay::modeling {
 
@@ -149,11 +151,16 @@ std::vector<int> PolyMesh::TriangulateFace(int face) const {
 // Rebuild one polygon from the triangles that share a polyFace id: their outer
 // edges must chain into a single loop. Returns false (the triangles are then
 // treated like any others) when they don't.
-static bool PolygonFromTriangles(const std::vector<PolyFace>& tris, const std::vector<int>& members, PolyFace& out) {
+static bool PolygonFromTriangles(const std::vector<PolyFace>& tris, const std::vector<int>& members, PolyFace& out,
+                                 const std::vector<int>* canon = nullptr) {
+    // `canon` maps a vertex to the first vertex at the same position. A mesh whose corners were split for smooth shading
+    // (one vertex per smoothing group) still has one outline per polygon; the loop is followed through the canonical ids
+    // and the polygon keeps the vertices its own triangles use.
+    auto cv = [&](int v) { return canon && v >= 0 && v < (int)canon->size() ? (*canon)[v] : v; };
     std::map<std::pair<int, int>, int> directed;   // (from, to) -> corner's triangle, for the UV
     for (int t : members) {
         const PolyFace& f = tris[t];
-        for (int i = 0; i < 3; ++i) directed[{f.verts[i], f.verts[(i + 1) % 3]}] = t;
+        for (int i = 0; i < 3; ++i) directed[{cv(f.verts[i]), cv(f.verts[(i + 1) % 3])}] = t;
     }
     std::map<int, std::pair<int, int>> next;      // from -> (to, triangle)
     for (const auto& kv : directed) {
@@ -170,15 +177,18 @@ static bool PolygonFromTriangles(const std::vector<PolyFace>& tris, const std::v
     for (std::size_t steps = 0; steps < next.size(); ++steps) {
         auto it = next.find(v);
         if (it == next.end()) return false;
-        out.verts.push_back(v);
+        const PolyFace& f = tris[it->second.second];
+        int corner = -1;
+        for (int i = 0; i < 3; ++i) if (cv(f.verts[i]) == v) corner = i;
+        if (corner < 0) return false;
+        out.verts.push_back(f.verts[corner]);
         if (uv) {
-            const PolyFace& f = tris[it->second.second];
             if (f.uvs.size() != 3) return false;
-            for (int i = 0; i < 3; ++i) if (f.verts[i] == v) out.uvs.push_back(f.uvs[i]);
+            out.uvs.push_back(f.uvs[corner]);
         }
         v = it->second.first;
     }
-    return v == out.verts.front() && out.verts.size() == next.size();
+    return v == next.begin()->first && out.verts.size() == next.size();
 }
 
 static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<int>* faceOf);
@@ -224,10 +234,13 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
     // Weld by position: corners keep their own UVs, so seams survive.
     std::vector<int> remap(nv);
     if (opt.weld) {
-        std::map<std::tuple<long, long, long>, int> ids;
+        struct PosKey { long x, y, z; bool operator==(const PosKey& o) const { return x == o.x && y == o.y && z == o.z; } };
+        struct PosHash { std::size_t operator()(const PosKey& k) const { return (std::size_t)(k.x * 73856093L) ^ (std::size_t)(k.y * 19349663L) ^ (std::size_t)(k.z * 83492791L); } };
+        std::unordered_map<PosKey, int, PosHash> ids;
+        ids.reserve((std::size_t)nv * 2 + 1);
         for (int i = 0; i < nv; ++i) {
             const Vec3& v = mesh.vertices[i];
-            auto key = std::make_tuple(std::lround(v.x * 1e5f), std::lround(v.y * 1e5f), std::lround(v.z * 1e5f));
+            const PosKey key{std::lround(v.x * 1e5f), std::lround(v.y * 1e5f), std::lround(v.z * 1e5f)};
             auto it = ids.find(key);
             if (it == ids.end()) { it = ids.emplace(key, (int)pm.verts.size()).first; pm.verts.push_back(v); }
             remap[i] = it->second;
@@ -283,6 +296,22 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         rest.verts = pm.verts;
         std::vector<int> restKept;                      // kept-triangle index of each face in rest
         std::vector<int> faceOfKept(pm.faces.size(), -1);
+        // Corners split for smooth shading have different vertex numbers at one position: find the first vertex at each position.
+        std::vector<int> canon;
+        if (!opt.weld) {
+            canon.resize(pm.verts.size());
+            struct PosKey { long x, y, z; bool operator==(const PosKey& o) const { return x == o.x && y == o.y && z == o.z; } };
+            struct PosHash { std::size_t operator()(const PosKey& k) const { return (std::size_t)(k.x * 73856093L) ^ (std::size_t)(k.y * 19349663L) ^ (std::size_t)(k.z * 83492791L); } };
+            std::unordered_map<PosKey, int, PosHash> first;
+            first.reserve(pm.verts.size() * 2);
+            for (int i = 0; i < (int)pm.verts.size(); ++i) {
+                const Vec3& p = pm.verts[i];
+                const PosKey k{std::lround(p.x * 1e5f), std::lround(p.y * 1e5f), std::lround(p.z * 1e5f)};
+                canon[i] = i;
+                auto it = first.find(k);
+                if (it == first.end()) first.emplace(k, i); else canon[i] = it->second;
+            }
+        }
         std::map<int, char> done;
         for (int t = 0; t < (int)pm.faces.size(); ++t) {
             const int g = group[t];
@@ -291,7 +320,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
             const std::vector<int>& mem = members[g];
             PolyFace poly;
             if (mem.size() == 1) { faceOfKept[t] = (int)exact.size(); exact.push_back(pm.faces[t]); }
-            else if (PolygonFromTriangles(pm.faces, mem, poly)) { for (int m : mem) faceOfKept[m] = (int)exact.size(); exact.push_back(poly); }
+            else if (PolygonFromTriangles(pm.faces, mem, poly, opt.weld ? nullptr : &canon)) { for (int m : mem) faceOfKept[m] = (int)exact.size(); exact.push_back(poly); }
             else for (int m : mem) { restKept.push_back(m); rest.faces.push_back(pm.faces[m]); }
         }
         std::vector<int> restFace;
@@ -473,33 +502,39 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
 }
 
 std::string PolyMesh::Serialize() const {
-    std::ostringstream o;
-    o.precision(9);
-    o << "okaymesh 1\n";
-    o << "verts " << verts.size() << "\n";
-    for (const Vec3& v : verts) o << "v " << v.x << " " << v.y << " " << v.z << "\n";
-    o << "faces " << faces.size() << "\n";
+    // Same text as an ostream with precision 9 (%.9g), written with snprintf into one buffer: this is saved on every
+    // guided change, and a finely detailed model has hundreds of thousands of numbers.
+    std::string o;
+    o.reserve(verts.size() * 40 + faces.size() * 70 + 64);
+    char buf[64];
+    auto fl = [&](float x) { const int n = std::snprintf(buf, sizeof buf, "%.9g", (double)x); o.append(buf, n > 0 ? (std::size_t)n : 0); };
+    auto in = [&](long long x) { const int n = std::snprintf(buf, sizeof buf, "%lld", x); o.append(buf, n > 0 ? (std::size_t)n : 0); };
+    o += "okaymesh 1\n";
+    o += "verts "; in((long long)verts.size()); o += "\n";
+    for (const Vec3& v : verts) { o += "v "; fl(v.x); o += ' '; fl(v.y); o += ' '; fl(v.z); o += '\n'; }
+    o += "faces "; in((long long)faces.size()); o += "\n";
     for (const PolyFace& f : faces) {
-        o << "f " << f.verts.size();
-        for (int v : f.verts) o << " " << v;
+        o += "f "; in((long long)f.verts.size());
+        for (int v : f.verts) { o += ' '; in(v); }
         if (f.uvs.size() == f.verts.size() && !f.uvs.empty()) {
-            o << " uv";
-            for (const Vec2& t : f.uvs) o << " " << t.x << " " << t.y;
+            o += " uv";
+            for (const Vec2& t : f.uvs) { o += ' '; fl(t.x); o += ' '; fl(t.y); }
         }
-        if (f.hasColor) o << " color " << f.color.r << " " << f.color.g << " " << f.color.b << " " << f.color.a;
-        if (f.material != 0) o << " mat " << f.material;
-        o << "\n";
+        if (f.hasColor) { o += " color "; fl(f.color.r); o += ' '; fl(f.color.g); o += ' '; fl(f.color.b); o += ' '; fl(f.color.a); }
+        if (f.material != 0) { o += " mat "; in(f.material); }
+        o += '\n';
     }
-    for (std::size_t i = 0; i < slotColors.size(); ++i)
-        o << "slot " << i << " " << slotColors[i].r << " " << slotColors[i].g << " " << slotColors[i].b << " " << slotColors[i].a << "\n";
+    for (std::size_t i = 0; i < slotColors.size(); ++i) {
+        o += "slot "; in((long long)i); o += ' '; fl(slotColors[i].r); o += ' '; fl(slotColors[i].g); o += ' '; fl(slotColors[i].b); o += ' '; fl(slotColors[i].a); o += '\n';
+    }
     for (std::size_t i = 0; i < vertColors.size() && i < verts.size(); ++i) {
         const Color& c = vertColors[i];
         if (c.r == 1 && c.g == 1 && c.b == 1 && c.a == 1) continue;     // white is the default: only the painted vertices are written
-        o << "vcolor " << i << " " << c.r << " " << c.g << " " << c.b << " " << c.a << "\n";
+        o += "vcolor "; in((long long)i); o += ' '; fl(c.r); o += ' '; fl(c.g); o += ' '; fl(c.b); o += ' '; fl(c.a); o += '\n';
     }
-    for (const EdgeCrease& c : creases) o << "crease " << c.a << " " << c.b << " " << c.w << "\n";
-    for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
-    return o.str();
+    for (const EdgeCrease& c : creases) { o += "crease "; in(c.a); o += ' '; in(c.b); o += ' '; fl(c.w); o += '\n'; }
+    for (const auto& e : seams) { o += "seam "; in(e.first); o += ' '; in(e.second); o += '\n'; }
+    return o;
 }
 
 bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error) {

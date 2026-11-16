@@ -1,0 +1,13 @@
+okayguided 1
+template plant 1
+param count 1
+param detail 1
+param seed 1
+param size 0.69999999999999996
+param spread 1
+slot plant bush
+slot pot clay
+color plant 0.25 0.550000012 0.25 1
+color pot 0.699999988 0.400000006 0.280000001 1
+material plant 0
+material pot 1

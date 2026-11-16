@@ -400,6 +400,32 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         if (dg == "long") shapes::Append(m, Loft({{{0.04f, d.shoulderY - 0.02f, nr * 1.05f}, 0.012f, 0.05f}, {{0.045f, d.shoulderY - 0.2f * d.tl, nr * 1.1f + 0.01f}, 0.012f, 0.055f}, {{0.05f, d.shoulderY - 0.45f * d.tl, nr * 1.12f + 0.012f}, 0.012f, 0.05f}}, kFwd, 8, false, false));
         return m;
     });
+    // Fine detail (High and Ultra) on the clothes: a row of buttons down the front, a placket, the hem, and two pockets. A part of its own, removable.
+    if (shapes::DetailF() >= 1.99f && r.DesignFor("shirt", "shirt/0") != "none" && !r.DesignFor("shirt", "shirt/0").empty()) {
+        const std::string sh = r.DesignFor("shirt", "shirt/0");
+        const float zf = d.td * 0.5f * (d.bt == 2 ? 1.1f : 1.0f) + 0.012f;   // the front of the shirt shell at the chest
+        const float yb = d.hipY + 0.14f * d.tl, yt = d.shoulderY - 0.06f;
+        o.Add("button/0", "fitting", FrameAA({-0.02f, yb, zf - 0.02f}, {0.02f, yt, zf + 0.03f}), [&](const std::string& dg) {
+            if (dg == "none") return PolyMesh();
+            PolyMesh m;
+            const int n = sh == "vest" || sh == "jacket" || sh == "hoodie" ? 5 : 3;
+            for (int k = 0; k < n; ++k) {
+                const float y = yb + (yt - yb) * (float)k / (float)std::max(1, n - 1);
+                Frame f; f.origin = {0, y, zf - 0.006f}; f.t = {1, 0, 0}; f.u = {0, 0, 1}; f.n = {0, -1, 0}; f.sx = 0.022f; f.sy = 0.016f; f.sz = 0.022f;
+                shapes::Append(m, shapes::Prism(f, 8));
+            }
+            if (sh != "tshirt" && sh != "tank") shapes::Append(m, BoxAA({-0.004f, yb - 0.02f, zf - 0.012f}, {0.004f, yt + 0.02f, zf - 0.002f}));   // the placket
+            return m;
+        });
+        if (sh == "jacket" || sh == "hoodie")
+            o.Add("pocket/0", "fitting", FrameAA({-d.sw * 0.36f, d.hipY - 0.1f, zf - 0.03f}, {d.sw * 0.36f, d.hipY + 0.14f, zf + 0.02f}), [&](const std::string& dg) {
+                if (dg == "none") return PolyMesh();
+                PolyMesh m;
+                for (int sg = -1; sg <= 1; sg += 2) shapes::Append(m, BoxAA({sg * d.sw * 0.22f - 0.05f, d.hipY - 0.1f, zf - 0.03f}, {sg * d.sw * 0.22f + 0.05f, d.hipY + 0.06f, zf + 0.012f}));
+                shapes::Append(m, BoxAA({-d.sw * 0.3f, d.hipY - 0.115f, zf - 0.028f}, {d.sw * 0.3f, d.hipY - 0.105f, zf + 0.008f}));   // the hem band
+                return m;
+            });
+    }
     // Hands and feet were built at the origin: move each to its joint.
     for (GeneratedPart& p : parts) {
         if (p.id.rfind("hand/", 0) == 0) {

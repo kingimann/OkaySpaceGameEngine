@@ -1349,10 +1349,14 @@ build with tests on; the memory columns need glibc, elsewhere they print `-`):
 3. Run it: `build/tests/bench_fbx_reader /tmp/fbxbench` (or a folder of your own `.fbx` files; with no argument it reads
    `$OKAY_MODEL_CORPUS` and the fixtures in `tests/assets/fbx`).
 4. You should see a table, one row per file: milliseconds and peak MB for our reader and for ufbx, the ratio, the same for
-   the whole import, then totals and the five worst ratios. On the 204,800-triangle grid expect our import within about
-   1.2x of ufbx's and our import peak lower than ufbx's (`docs/own_fbx_reader.md`, "Speed and memory").
-5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced; run it before and after
-   a change to the reader to show the output did not change.
+   the whole import, then totals and the five worst ratios. On the 204,800-triangle grid expect our import at about 0.6x
+   of ufbx's time with about a quarter of its peak memory, and our reader alone at about 2.5x ufbx's
+   (`docs/own_fbx_reader.md`, "Speed and memory"; a shared machine moves single numbers by 10 to 20 %).
+5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced, and
+   `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene; run them before and after a change to
+   the reader to show the output did not change (the lines must be identical).
+6. `build/tests/test_fbx_exact` (about a second) checks the reader's arithmetic shortcuts against the plain code; expect
+   `11 checks, 0 failures`.
 
 ## Team tooling (not part of the Windows release)
 

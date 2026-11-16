@@ -3724,3 +3724,14 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
+# OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
+add_executable(test_walk_vs_run test_walk_vs_run.cpp)
+target_link_libraries(test_walk_vs_run PRIVATE okay::engine)
+add_test(NAME walk_vs_run COMMAND test_walk_vs_run)
+add_test(NAME walk_vs_run_old COMMAND ${CMAKE_COMMAND} -E env OKAY_OLD_GAIT=1 $<TARGET_FILE:test_walk_vs_run> --old)
+add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
+target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)

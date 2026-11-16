@@ -229,9 +229,9 @@ on and 36.8 ms with it off: the saving is on the worker threads, which callgrind
 The commits on `claude/perf-pass-1`, in order: the benchmark and the profiler scopes, then one commit for each change
 below (1, 2, 3, 5, 4), then the benchmark's switches, then this log with the docs and the example scenes.
 The commit messages quote shares "of the instructions" (60, 86, 83, 38 percent, a fifth): those are shares of the main
-thread's instructions (the limit in section 1; a commit message cannot be changed without rewriting the branch). The first
-version of this log, and the commit message of change 1, also quoted a first `Physics.3D` measurement (21.7 to 1.06 ms)
-taken while the machine ran at load 10 to 15; tables 4.1 and 4.2 replace it.
+thread's instructions (the limit in section 1; a commit message cannot be changed without rewriting the branch). The commit
+message of change 1 also quotes a first `Physics.3D` measurement (21.7 to 1.06 ms) taken while the machine ran at load
+10 to 15; tables 4.1 and 4.2 replace it.
 
 ### 0. The benchmark (`tests/bench_frame.cpp`) and the `Render.*` profiler scopes
 

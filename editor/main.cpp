@@ -907,9 +907,9 @@ static void RunEditorPlayKeyTest(int& failures) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
-#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings

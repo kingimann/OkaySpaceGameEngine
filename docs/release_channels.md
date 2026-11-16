@@ -212,6 +212,10 @@ it replaces a test build by itself.
 **Not verified:** the workflow has never run on GitHub, the publisher has never written to the real Supabase storage (only to a fake that mimics the
 calls the release publisher already uses), and nothing in the launcher or the editor was run on Windows. See `docs/UNFINISHED.md`.
 
+**Written from** (CLAUDE.md rule 19a): this repository's own release scripts and docs (`release.yml`, `publish-supabase.sh`, `versions_index.py`,
+`sign_index.py`, `updater.md`) and the storage calls they already make. No code, tests or text from another project; no new library or action (every
+workflow action is one `release.yml` or `ci.yml` already uses, at the same version).
+
 ## Signed releases
 
 `versions.json` lists the SHA-256 of every file, so it is what an attacker who controls the bucket would change. Signing it

@@ -13,8 +13,9 @@ run-name: Test build of ${{ inputs.ref || github.ref_name }}
 #   * it makes no GitHub Release, no tag, no push (permissions: contents read), and builds no installer, no Linux server, no zip;
 #   * it never writes VERSION.txt, NOTES.txt, LTS.txt or versions.json: it calls scripts/publish-supabase-dev.sh, which writes only under dev/
 #     (never scripts/publish-supabase.sh), so "latest" and the LTS line are as they were. A normal player never reads dev/;
-#   * the build job has no secret: it runs the branch's own build scripts, and the key is only given to the publish job, which runs the scripts of
-#     THIS workflow's commit (a branch cannot change what publishes), and only a run started from the default branch gets that far;
+#   * the build job never receives a secret's value (it only asks whether the publish key exists): it runs the branch's own build scripts. The key
+#     is only given to the publish job, which runs the scripts of THIS workflow's commit (a branch cannot change what publishes), and only a run
+#     started from the default branch gets that far;
 #   * it signs nothing with Authenticode (the sign secrets stay out of the build job).
 #
 # The number: <newest published release>.<run number>, for example 2.876.0.17 (shared/TestBuild.hpp). It is put into this checkout's

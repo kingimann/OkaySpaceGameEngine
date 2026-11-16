@@ -126,6 +126,11 @@ grep -rqF "$KEY" "$T/store" && bad "first publish: the key is stored in an objec
 grep -qF "$KEY" "$T/requests.log" && bad "first publish: the key is in the request log"
 snap_one="$(fp_all)"
 
+# ---- 2b. a dry run refuses a version that is already listed too (it reads the public list), and writes nothing -------------------------------------
+: > "$T/requests.log"
+code="$(publish -u SUPABASE_SERVICE_KEY DRY_RUN=1)"
+expect_refused "a dry run of a version that is already listed" "$code" "already"
+
 # ---- 3. the same version again: refused, nothing written ------------------------------------------------------------------------------------
 : > "$T/requests.log"
 code="$(publish)"

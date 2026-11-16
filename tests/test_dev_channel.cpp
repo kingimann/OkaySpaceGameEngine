@@ -230,7 +230,9 @@ int main() {
         back = tb::ChooseTarget("dev", "2.876.0", "", false, false, true);
         CHECK(back.kind == K::None);
         back = tb::ChooseTarget("2.876.0.5", "", "", false, false, true);               // the stable head is unknown: never a guess
-        CHECK(back.kind == K::None && Has(back.note, "Couldn't find out"));
+        CHECK(back.kind == K::None && Has(back.note, "Couldn't find out") && back.failed);
+        CHECK(!tb::ChooseTarget("2.876.0", "2.876.0", "", false, false, true).failed);  // "nothing to go back from" is not a failure
+        CHECK(tb::ChooseTarget("2.876.0", "", "", true, false, false).failed);          // nothing could be read at all
         back = tb::ChooseTarget("2.876.0.5", "2.876.0", "2.876.0.9", true, false, true);   // go back wins over a newer test build
         CHECK(back.kind == K::GoBack && back.version == "2.876.0");
         // Whatever the answer, a normal install only ever happens for a version that is newer than the one installed.

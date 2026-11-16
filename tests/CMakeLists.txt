@@ -20,6 +20,8 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+    # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release_channels.md "Test builds").
+    add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
     # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -1796,6 +1798,16 @@ target_link_libraries(test_update_signature PRIVATE okay::crypto)   # shared/Ant
 target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
+
+# Test builds (the dev channel; shared/TestBuild.hpp, LoadDevIndex in launcher/VersionsManager.cpp, scripts/dev_index.py): the order of a four-number version, the
+# real list and VERSION.txt ignoring such versions, the dev list read from dev/ only and signed like the real one, ChooseTarget (what the update check installs),
+# the "Get test builds" setting (off by default, nothing written when off) and the same install rules. No window, no network; python3 is run when it is there.
+add_executable(test_dev_channel test_dev_channel.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_dev_channel PRIVATE cxx_std_17)
+target_include_directories(test_dev_channel PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_dev_channel PRIVATE okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed lists)
+target_compile_definitions(test_dev_channel PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME dev_channel COMMAND test_dev_channel)
 find_program(OKAY_BASH bash)
 find_program(OKAY_PYTHON3 python3)
 if(OKAY_PYTHON3 AND NOT WIN32)
@@ -1804,6 +1816,11 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
+    add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
+    # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
+    add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
+    set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 

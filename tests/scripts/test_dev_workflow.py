@@ -40,15 +40,34 @@ def check(cond, what):
         fails.append(what)
 
 
+class StrictLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a key written twice in one mapping (PyYAML silently keeps the last one; GitHub would reject the file)."""
+
+
+def _no_duplicate_keys(loader, node, deep=False):
+    seen = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise yaml.constructor.ConstructorError(None, None, "found a duplicate key %r" % (key,), key_node.start_mark)
+        seen.add(key)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep)
+
+
+StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
+
+
 def load(path):
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    return yaml.safe_load(text), text
+    return yaml.load(text, Loader=StrictLoader), text
 
 
 dev, dev_text = load(DEV)
 rel, _ = load(REL)
 ci, ci_text = load(os.path.join(ROOT, ".github", "workflows", "ci.yml"))
+check("\t" not in dev_text, "the workflow has no tab characters (YAML does not allow them)")
+check(dev_text.endswith("\n") and "\r" not in dev_text, "the workflow ends with a newline and uses LF line endings")
 on = dev.get("on", dev.get(True))   # (YAML 1.1 reads a bare `on` as the boolean true)
 jobs = dev["jobs"]
 build, publish = jobs["windows-exe"], jobs["publish"]

@@ -168,3 +168,23 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Words:** Steam, SteamPipe, steamcmd, depot, app build, setlive, Steamworks, upload.sh, 1172560, auto-update
 - **Seen as:** Steam players don't get an update (not set live); steamcmd asks for Steam Guard
 - **Ask me like:** "upload a new build to Steam and leave it on the beta branch"
+
+### 18.9 Test builds (the dev channel)
+- **What:** A build of any branch that the coordinator publishes to the `dev/` folder of the Supabase release bucket, so the owner can try unmerged work in the launcher in about 15 to 30 minutes, without a pull request, a GitHub Release or a normal release. Off by default in the launcher; never touches "latest" or LTS.
+- **Parts:**
+  - 18.9.1 Test build workflow - `.github/workflows/dev-build.yml` - `workflow_dispatch` only (inputs `ref`, `note`), from `main` only; a build job (a copy of release.yml's build steps, no secrets, numbered `<newest release>.<run number>`) and a publish job (the reviewed scripts, one at a time); no release, tag, installer, Linux server or Windows signing
+  - 18.9.2 Test build publisher - `scripts/publish-supabase-dev.sh` - writes only under `dev/` (versions in `dev/v<ver>/` uploaded without overwrite, then `dev/versions.json`, its signature, `dev/NOTES-DEV.txt`, and `dev/DEV.txt` last); refuses an existing version, leftovers, a damaged list, a stale base release, a missing checksum; keeps the newest `DEV_KEEP` (3); refuses to run traced with a key set
+  - 18.9.3 Test build list - `scripts/dev_index.py` - merge, notes, prune-list, check and the job summary for `dev/versions.json` (schema 1, four-number versions, branch, commit, note, checksums); self-test
+  - 18.9.4 The number and the rules - `shared/TestBuild.hpp` - a four-number version (2.876.0.17) sorts just above its release and below every later one; `ChooseTarget` (newer of release and test build, the way back); the cleaned labels; the installed-test-build marker
+  - 18.9.5 The launcher - `launcher/VersionsManager.cpp`, `launcher/main.cpp` - `LoadDevIndex` (reads only `dev/`, same signature rule), the real reader skips four-number versions, `Settings::testBuilds` (`test_builds=1`), Settings > Behavior > Get test builds and Go back to the stable version, labels in About, the update window, the sidebar and the editor
+- **Code:** `.github/workflows/dev-build.yml`, `scripts/publish-supabase-dev.sh`, `scripts/dev_index.py`, `shared/TestBuild.hpp`, `shared/SelfUpdate.hpp`, `launcher/VersionsManager.cpp`, `launcher/VersionsManager.hpp`, `launcher/main.cpp`, `launcher/VersionsUI.cpp`, `editor/main.cpp`
+- **API:** `gh workflow run dev-build.yml --ref main -f ref=<branch> -f note=<line>`, `DEV_BRANCH`, `DEV_SHA`, `DEV_NOTE`, `DEV_KEEP`, `DRY_RUN`, `okay::testbuild::ChooseTarget`, `okayversions::LoadDevIndex`, `okayversions::IndexKind`, `launcher.cfg` `test_builds`
+- **Editor:** Help > About and the window title say "(test build)"; the launcher has Settings > Behavior > Startup & updates > Get test builds
+- **Docs:** `docs/release_channels.md` (Test builds), `docs/updater.md` (Test builds), `docs/try_it.md` (7v)
+- **Tests:** `dev_channel`, `dev_index`, `dev_publish_script`, `dev_workflow_lint`, `self_update`
+- **Status:** Basic - rules, list reader, publisher (against a fake storage server) and workflow lint are tested on Linux; the workflow never ran on GitHub, nothing was written to the real storage, nothing ran on Windows
+- **Open:** the first real run (GitHub Actions, the real bucket, Windows launcher screens, a real restart and rollback of a four-number version); the workflow can only be started once it is on `main`; no screenshots; the OkayUI preview What's New page shows the plain number; a branch that is behind `main` builds without main's newest changes (the notes do not say how far behind)
+- **Related:** 18.4, 18.5, 17.1, 41.6
+- **Words:** test build, dev channel, dev folder, Get test builds, dev-build, publish-supabase-dev, DEV.txt, NOTES-DEV.txt, four-number version, try a branch, go back to the stable version
+- **Seen as:** the owner wants to try unmerged work without waiting for a release; a "Test build of ..." message in the launcher; a version with four numbers; "(test build)" after a version
+- **Ask me like:** "start a test build of walk-vs-run for the owner", "how do I turn test builds off?"

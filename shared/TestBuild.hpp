@@ -151,6 +151,7 @@ struct Choice {
     } kind = None;
     std::string version;
     std::string note;
+    bool failed = false;    ///< `None` because something could not be found out (offline, no answer), not because there is nothing to do
 };
 
 /// Which version the update check should work towards.
@@ -168,13 +169,13 @@ inline Choice ChooseTarget(std::string_view local, std::string_view stableHead, 
     const std::string stable = IsReleaseShaped(stableHead) ? okayver::NormalizeVersion(stableHead) : std::string();
     const std::string test = (testBuildsOn && !onLts && IsTestVersion(testHead)) ? okayver::NormalizeVersion(testHead) : std::string();
     if (goBack) {
-        if (stable.empty()) { c.note = "Couldn't find out which normal release is the newest, so nothing was changed."; return c; }
+        if (stable.empty()) { c.note = "Couldn't find out which normal release is the newest, so nothing was changed."; c.failed = true; return c; }
         if (!IsTestVersion(local)) { c.note = "You're already on a normal release (" + okayver::DisplayVersion(local) + "), so there is nothing to go back to."; return c; }
         c.kind = okayver::CompareVersions(stable, local) > 0 ? Choice::Stable : Choice::GoBack;   // a newer release is an ordinary update
         c.version = stable;
         return c;
     }
-    if (stable.empty() && test.empty()) { c.note = "Couldn't find out which version is the newest."; return c; }
+    if (stable.empty() && test.empty()) { c.note = "Couldn't find out which version is the newest."; c.failed = true; return c; }
     if (!test.empty() && (stable.empty() || okayver::CompareVersions(test, stable) > 0)) { c.kind = Choice::TestBuild; c.version = test; return c; }
     c.kind = Choice::Stable;
     c.version = stable;
@@ -211,9 +212,10 @@ inline Marker ParseMarker(std::string_view text) {
     if (line != "okayspace test build 1") return m;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        const std::size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        const std::string_view lv(line);
+        const std::size_t eq = lv.find('=');
+        if (eq == std::string_view::npos) continue;
+        const std::string_view k = lv.substr(0, eq), v = lv.substr(eq + 1);
         if (k == "version") m.version = okayver::NormalizeVersion(v);
         else if (k == "branch") m.branch = CleanBranch(v);
         else if (k == "sha") m.sha = CleanSha(v);

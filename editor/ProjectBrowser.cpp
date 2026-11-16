@@ -86,7 +86,6 @@ ctx::Kind MenuKind(const std::string& path, bool isDir) {
     using K = ctx::Kind;
     if (isDir) return K::Folder;
     std::string ext = okay::AssetExtension(path);
-    if (ext == "okay") return K::Script;   // OkayScript is not in the database's table
     if (ext == "bin") return K::Other;     // listed as data there, but it is binary
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: return K::Image;

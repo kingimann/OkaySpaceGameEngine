@@ -310,6 +310,30 @@ int WriteFieldAxes(const std::vector<GameObject*>& objs, const std::string& type
     return n;
 }
 
+unsigned ChangedAxes(const Vec3& before, const Vec3& after) {
+    return (before.x != after.x ? 1u : 0u) | (before.y != after.y ? 2u : 0u) | (before.z != after.z ? 4u : 0u);
+}
+
+Vec3 MergeAxes(const Vec3& base, const Vec3& edit, unsigned mask) {
+    return {(mask & 1u) ? edit.x : base.x, (mask & 2u) ? edit.y : base.y, (mask & 4u) ? edit.z : base.z};
+}
+
+int ApplyTransformAxes(const std::vector<GameObject*>& selection, const GameObject* primary, TransformField field,
+                       const Vec3& value, unsigned mask) {
+    if (!(mask & 7u)) return 0;
+    int n = 0;
+    for (GameObject* g : selection) {
+        if (!g || g == primary || !g->transform) continue;
+        if (field == TransformField::Scale && g->GetComponent<Camera>()) continue;
+        Vec3& v = field == TransformField::Position ? g->transform->localPosition : g->transform->localScale;
+        const Vec3 nv = MergeAxes(v, value, mask);
+        if (nv.x == v.x && nv.y == v.y && nv.z == v.z) continue;
+        v = nv;
+        ++n;
+    }
+    return n;
+}
+
 ComponentEdit BeginComponentEdit(const std::vector<GameObject*>& selection, const GameObject* primary, const Component& comp) {
     ComponentEdit e;
     if (selection.size() < 2 || !primary || std::find(selection.begin(), selection.end(), primary) == selection.end()) return e;
@@ -335,8 +359,20 @@ int PropagateComponentEdit(const std::vector<GameObject*>& selection, GameObject
         for (const auto& up : g->Components())
             if (up && PropertyRegistry::FindFor(*up) == info) { if (n++ == idx) { other = up.get(); break; } }
         if (!other) continue;
-        for (const PropertyDiff& d : diff)
-            if (d.kind == PropertyDiffKind::Changed && PropertyRegistry::SetComponentProperty(*other, d.property, d.after)) ++written;
+        for (const PropertyDiff& d : diff) {
+            if (d.kind != PropertyDiffKind::Changed) continue;
+            PropertyValue v = d.after;
+            const int comps = PropertyTypeComponentCount(d.after.Type());
+            if (comps > 1 && d.before.Type() == d.after.Type()) {
+                // Only the channels the drawer changed (alpha alone must not copy the primary's RGB).
+                unsigned mask = 0;
+                for (int i = 0; i < comps; ++i)
+                    if (!AxisEqual(d.before, d.after, i)) mask |= 1u << i;
+                const PropertyValue cur = PropertyRegistry::GetComponentProperty(*other, d.property);
+                if (cur.Type() == d.after.Type()) v = WithAxes(cur, d.after, mask);
+            }
+            if (PropertyRegistry::SetComponentProperty(*other, d.property, v)) ++written;
+        }
     }
     return written;
 }

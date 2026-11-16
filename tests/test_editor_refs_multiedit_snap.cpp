@@ -10,10 +10,12 @@
 #include "../editor/ProjectBrowser.hpp"
 #include "EditorState.hpp"
 #include "InspectorModel.hpp"
+#include "SnapIncrement.hpp"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 namespace fs = std::filesystem;
 using namespace okay;
@@ -112,10 +114,94 @@ void TestComponentChannelEdit() {
     CHECK(cb2.r == 0.5f && cb2.g == 1.0f && cb2.b == 0.0f && cb2.a == 1.0f);
 }
 
+void TestTransformAxisEdit() {
+    RUN_SUITE("Position Y edited with 5 objects selected keeps each object's own X and Z (finding 71)");
+    Scene s("t");
+    std::vector<GameObject*> sel;
+    for (int i = 0; i < 5; ++i) {
+        GameObject* g = Make(s, "o" + std::to_string(i));
+        g->transform->localPosition = Vec3(float(i), 10.0f + float(i), -float(i) * 2.0f);
+        g->transform->localScale = Vec3(1.0f + float(i), 2.0f, 3.0f);
+        sel.push_back(g);
+    }
+    GameObject* primary = sel[2];
+    // What the Inspector row does: the primary is edited, the changed axes go to the others.
+    const Vec3 before = primary->transform->localPosition;
+    Vec3 after = before; after.y = 0.0f;
+    const unsigned mask = oked::ChangedAxes(before, after);
+    CHECK(mask == 2u);
+    primary->transform->localPosition = after;
+    CHECK(oked::ApplyTransformAxes(sel, primary, oked::TransformField::Position, after, mask) == 4);
+    for (int i = 0; i < 5; ++i) {
+        const Vec3 p = sel[(std::size_t)i]->transform->localPosition;
+        CHECK(p.y == 0.0f);                                  // all on the floor
+        CHECK(p.x == float(i) && p.z == -float(i) * 2.0f);   // each keeps its own X and Z
+    }
+    // Scale X only; a camera's scale is locked and is skipped.
+    sel[4]->AddComponent<Camera>();
+    const Vec3 sb = primary->transform->localScale;
+    Vec3 sa = sb; sa.x = 5.0f;
+    primary->transform->localScale = sa;
+    CHECK(oked::ApplyTransformAxes(sel, primary, oked::TransformField::Scale, sa, oked::ChangedAxes(sb, sa)) == 3);
+    CHECK(sel[0]->transform->localScale.x == 5.0f && sel[0]->transform->localScale.y == 2.0f);
+    CHECK(sel[4]->transform->localScale.x == 5.0f);          // (it was 5 already: 1 + 4)
+    sel[4]->transform->localScale.x = 9.0f;
+    CHECK(oked::ApplyTransformAxes(sel, primary, oked::TransformField::Scale, sa, 1u) == 0);
+    CHECK(sel[4]->transform->localScale.x == 9.0f);          // the camera kept its scale
+    // Nothing changed: nothing written.
+    CHECK(oked::ApplyTransformAxes(sel, primary, oked::TransformField::Position, after, 0u) == 0);
+    // Rotation angles (Euler) use the same merge.
+    const Vec3 m = oked::MergeAxes(Vec3(10, 20, 30), Vec3(0, 90, 0), oked::ChangedAxes(Vec3(1, 2, 3), Vec3(1, 90, 3)));
+    CHECK(m.x == 10.0f && m.y == 90.0f && m.z == 30.0f);
+}
+
+void TestSnapIncrement() {
+    RUN_SUITE("snap steps: 0, -1, inf and NaN are clamped or refused (finding 72)");
+    using oked::kMoveSnapLimits; using oked::kRotateSnapLimits;
+    const float inf = std::numeric_limits<float>::infinity(), nan = std::numeric_limits<float>::quiet_NaN();
+    auto zero = oked::CleanSnapIncrement(0.0f, 0.5f, kMoveSnapLimits);
+    CHECK(zero.changed && zero.value == kMoveSnapLimits.min && zero.value > 0.0f && zero.note[0] != 0);
+    auto neg = oked::CleanSnapIncrement(-1.0f, 0.5f, kMoveSnapLimits);
+    CHECK(neg.changed && neg.value == kMoveSnapLimits.min);
+    auto pinf = oked::CleanSnapIncrement(inf, 0.5f, kMoveSnapLimits);
+    CHECK(pinf.changed && pinf.value == 0.5f && pinf.note[0] != 0);          // refused: the old step stays
+    auto ninf = oked::CleanSnapIncrement(-inf, 0.5f, kMoveSnapLimits);
+    CHECK(ninf.changed && ninf.value == 0.5f);
+    auto bad = oked::CleanSnapIncrement(nan, 0.5f, kMoveSnapLimits);
+    CHECK(bad.changed && bad.value == 0.5f);
+    auto badPrev = oked::CleanSnapIncrement(nan, nan, kMoveSnapLimits);      // the old one was bad too: the default
+    CHECK(badPrev.value == kMoveSnapLimits.fallback);
+    auto huge = oked::CleanSnapIncrement(3e38f, 0.5f, kMoveSnapLimits);
+    CHECK(huge.changed && huge.value == kMoveSnapLimits.max);
+    auto ok = oked::CleanSnapIncrement(0.25f, 0.5f, kMoveSnapLimits);
+    CHECK(!ok.changed && ok.value == 0.25f && ok.note[0] == 0);
+    auto rot0 = oked::CleanSnapIncrement(0.0f, 15.0f, kRotateSnapLimits);
+    CHECK(rot0.value == kRotateSnapLimits.min && rot0.value > 0.0f);
+    CHECK(oked::CleanSnapIncrement(inf, 15.0f, kRotateSnapLimits).value == 15.0f);
+    // Every snapping path uses SnapStep: always finite and positive, so a snapped value is never NaN.
+    for (float bad2 : {0.0f, -1.0f, inf, -inf, nan, 3e38f, 1e-30f}) {
+        const float st = oked::SnapStep(bad2, kMoveSnapLimits);
+        CHECK(std::isfinite(st) && st >= kMoveSnapLimits.min && st <= kMoveSnapLimits.max);
+        const float v = oked::SnapToStep(1.3f, bad2, kMoveSnapLimits);
+        CHECK(std::isfinite(v));
+        CHECK(std::isfinite(oked::SnapToStep(37.0f, bad2, kRotateSnapLimits)));
+    }
+    CHECK(oked::SnapToStep(1.3f, 0.5f, kMoveSnapLimits) == 1.5f);
+    CHECK(oked::SnapToStep(37.0f, 15.0f, kRotateSnapLimits) == 30.0f);
+    // The saved setting: 0, negative or broken loads as the default; good values come back, clamped.
+    CHECK(oked::LoadSnapIncrement(0.0f, kMoveSnapLimits) == 1.0f);
+    CHECK(oked::LoadSnapIncrement(-5.0f, kMoveSnapLimits) == 1.0f);
+    CHECK(oked::LoadSnapIncrement(nan, kRotateSnapLimits) == 15.0f);
+    CHECK(oked::LoadSnapIncrement(0.25f, kMoveSnapLimits) == 0.25f);
+    CHECK(oked::LoadSnapIncrement(5000.0f, kMoveSnapLimits) == kMoveSnapLimits.max);
+}
+
 } // namespace
 
 int main() {
     TestScriptAndThemeRename();
     TestComponentChannelEdit();
+    TestTransformAxisEdit();
+    TestSnapIncrement();
     TEST_MAIN_RESULT();
 }

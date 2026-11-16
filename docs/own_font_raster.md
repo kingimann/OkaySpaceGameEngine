@@ -77,7 +77,9 @@ write them again and print the table.
    ImGui's loader does (measured); with plain rounding the text sat one pixel higher at 14, 17, 18 and 32 px.
 3. **OkayUI drew 1:1 glyphs at fractional positions.** At the baked size OkayUI kept the pen's fraction for every
    glyph, so linear filtering blurred most letters by up to half a pixel. Each glyph quad now lands on the whole pixel
-   nearest its pen (the pen keeps its fraction, so spacing is unchanged).
+   nearest its pen (the pen keeps its fraction, so spacing is unchanged). Together with kerning this changed the text pixels of 17
+   OkayUI golden images (`okayui/tests/golden/`, launcher look only); they were regenerated with
+   `OKAYUI_UPDATE_GOLDEN=1` after looking at them side by side (only letter spacing and edge sharpness differ).
 4. **Speed** (section 5): the outline is now read once per glyph, not two or three times.
 
 Gamma: both rasterisers write linear coverage and both paths blend it the same way, so nothing changes there. No
@@ -167,6 +169,7 @@ The margin is small and the machine was loaded; treat "faster" as "about the sam
 |---|---|
 | `ttf_rasterizer` (extended) | GPOS and `kern` parsing on synthetic fonts; Roboto pairs against fontTools; the last 400 truncation lengths of the GPOS font; truncations (every 7 bytes in the first 2 KB, then every 4 KB) and 440 random mutations of the embedded Roboto and JetBrains Mono (kerning exercised too). Also builds standalone under ASan and UBSan (see below) |
 | `ttf_text` (new) | `TtfFont::Kerning` and `Measure` with kerning; `FontChain` order, runs, widths, missing characters; golden images of our rasteriser (two strings, 12 to 48 px, `tests/golden/ttf/`, `OKAY_UPDATE_GOLDEN=1` rewrites them, 2 levels of tolerance) |
+| OkayUI tests (all 25) | Pass with the regenerated launcher-look goldens |
 | `font_raster_compare` (new) | Our loader inside Dear ImGui: equal advances, ascent, descent and line height to Dear ImGui's loader at every size; ours at least as close to exact coverage as Dear ImGui's, under 1 level per glyph on average and under 24 levels at any pixel of a single glyph; merged-font fallback on both loaders; the switch reads the variable. `OKAY_FONT_COMPARE_OUT` and `OKAY_FONT_COMPARE_BENCH` add the pictures, tables and the benchmark |
 
 Sanitizers: `test_ttf_rasterizer` built with `-DOKAY_TTF_STANDALONE` (only `TtfRaster.cpp`, the test and the

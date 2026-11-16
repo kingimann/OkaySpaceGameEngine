@@ -116,7 +116,7 @@ int main() {
         Put(a.version, "3.14.15-beta");
         a.defaultWidth = 1920; a.defaultHeight = 1080;
         a.gravity2D[0] = 1.5f; a.gravity2D[1] = -20.25f;
-        a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 123456.789f;
+        a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 1234.5678f;   // many digits, inside the -10000..10000 range the loader keeps
         a.physicsHz = 30.0f;
         a.smoothPhysics = false;
         a.ambient = 0.123456789f;

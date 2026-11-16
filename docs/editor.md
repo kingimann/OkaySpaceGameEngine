@@ -448,7 +448,7 @@ Each project has its own `project.okayproj` and its own build settings: opening 
 project's, and a new project starts from the defaults. (Earlier versions kept one `project.okayproj` beside the
 editor, shared by every project. A project with no file of its own takes that old file once, then keeps its own.)
 Numbers in `project.okayproj` are checked when it loads: a value that is not a number (text, `nan`, `inf`) keeps the
-default, and one out of range is pulled to the nearest end (size 16..16384, gravity -1000..1000 per part, steps per
+default, and one out of range is pulled to the nearest end (size 16..16384, gravity -10000..10000 per part, steps per
 second 1..500, ambient and splash colours 0..1). Each one writes a one-line `WARN` line to the engine log.
 Editor preferences (theme, layouts, the recent list, the Project panel's view) are not project data: they live in
 `okay_settings.txt`, `okay_layouts.txt`, `okay_recent.txt` and `okay_projectview.txt` in the working folder, and

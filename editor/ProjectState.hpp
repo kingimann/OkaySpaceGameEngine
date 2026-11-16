@@ -402,7 +402,7 @@ inline std::string WriteProjectSettings(const ProjectSettings& s) { return Write
 // The range each number in project.okayproj may take. A value outside it is pulled to the nearest end; a value
 // that is not a number at all (text, nan, inf) leaves the setting as it was (the default on a fresh load).
 constexpr int   kProjectMinSize = 16, kProjectMaxSize = 16384;   // default window / build size, pixels
-constexpr float kProjectMaxGravity = 1000.0f;                    // each gravity part, m/s^2, either sign
+constexpr float kProjectMaxGravity = 10000.0f;                   // each gravity part, m/s^2, either sign
 constexpr float kProjectMinHz = 1.0f, kProjectMaxHz = 500.0f;    // physics steps per second
 
 /// Read exactly `n` finite floats, separated by spaces, from the start of `v`. False (and `out` untouched)

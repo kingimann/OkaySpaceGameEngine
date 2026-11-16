@@ -64,9 +64,9 @@ void ProjectFile() {
         const auto w = CaptureWarnings([&] { oked::ParseProjectSettings(s, text); });
         const bool ok =
             s.defaultWidth >= 16 && s.defaultWidth <= 16384 && s.defaultHeight >= 16 && s.defaultHeight <= 16384 &&
-            std::isfinite(s.gravity2D[0]) && std::isfinite(s.gravity2D[1]) && std::fabs(s.gravity2D[0]) <= 1000.0f &&
-            std::fabs(s.gravity2D[1]) <= 1000.0f && Finite3(s.gravity3D) && std::fabs(s.gravity3D[0]) <= 1000.0f &&
-            std::fabs(s.gravity3D[1]) <= 1000.0f && std::fabs(s.gravity3D[2]) <= 1000.0f &&
+            std::isfinite(s.gravity2D[0]) && std::isfinite(s.gravity2D[1]) && std::fabs(s.gravity2D[0]) <= 10000.0f &&
+            std::fabs(s.gravity2D[1]) <= 10000.0f && Finite3(s.gravity3D) && std::fabs(s.gravity3D[0]) <= 10000.0f &&
+            std::fabs(s.gravity3D[1]) <= 10000.0f && std::fabs(s.gravity3D[2]) <= 10000.0f &&
             s.physicsHz >= 1.0f && s.physicsHz <= 500.0f && s.ambient >= 0.0f && s.ambient <= 1.0f &&
             In01(s.splashBgTop, 3) && In01(s.splashBgBot, 3) && In01(s.splashAccent, 3);
         if (!ok) std::cerr << "  bad value kept for " << text;
@@ -87,7 +87,7 @@ void ProjectFile() {
         CHECK(s.gravity3D[0] == def.gravity3D[0] && s.gravity3D[1] == def.gravity3D[1] && s.gravity3D[2] == def.gravity3D[2]);
         CHECK(s.ambient == def.ambient && s.physicsHz == def.physicsHz);
         CHECK(s.splashBgTop[0] == def.splashBgTop[0] && s.splashBgTop[1] == def.splashBgTop[1] && s.splashBgTop[2] == def.splashBgTop[2]);
-        CHECK(s.gravity2D[0] == 0.0f && s.gravity2D[1] == -1000.0f);   // huge: clamped
+        CHECK(s.gravity2D[0] == 0.0f && s.gravity2D[1] == -10000.0f);   // huge: clamped
         CHECK(s.splashAccent[0] == 1.0f && s.splashAccent[1] == 0.5f && s.splashAccent[2] == 0.0f);
     }
     // Good values are untouched and give no warning.

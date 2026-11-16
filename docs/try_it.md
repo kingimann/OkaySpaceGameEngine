@@ -1147,7 +1147,7 @@ Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; 
 3. You should see Gravity 3D back at `0, -9.81, 0` (a line with `nan` is ignored, so the default stays), Ambient at
    `1` (5 is pulled down to the top of 0..1) and the splash background top colour at its default. Before this fix the
    window showed `nan`, and Apply to current scene copied `nan` into the scene.
-   The rules: sizes 16..16384, gravity -1000..1000 per part, steps per second 1..500, ambient and colours 0..1. Each
+   The rules: sizes 16..16384, gravity -10000..10000 per part, steps per second 1..500, ambient and colours 0..1. Each
    corrected line writes one `WARN` line to the engine log.
 
 **Tagging a texture no longer shrinks it (finding 75).**

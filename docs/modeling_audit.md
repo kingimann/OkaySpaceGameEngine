@@ -45,8 +45,9 @@ selection, snapping, mirror, repair pieces, stats) already exists. This change d
 | 7 | `Mesh::FillHoles` wiped **all painted face colours** (and would drop slots) whenever it filled a hole. | `triColors.clear()`. | Old faces keep colour and slot; the caps are white / slot 0. |
 | 8 | In edit mode the polygon cache key hashed all triangle bytes **one byte at a time**: about **4.1 ms per call** at 240k triangles, several calls a frame. | Byte-wise FNV. | Eight bytes at a time: **0.8 ms**. |
 
-Not fixed, reported: `ExtrudeFaces`, `InsetFaces` and `BevelEdges` given NaN produce NaN vertices (a NaN cannot come from the
-drag fields); `BevelEdges` leaves the 8 original corner vertices unused (by design: tools keep vertex numbers, the editor
+Fixed later: `ExtrudeFaces`, `InsetFaces`, the Individual versions and `BevelEdges` given NaN produced NaN vertices; they now do nothing (Bevel says why).
+
+Not fixed, reported: `BevelEdges` leaves the 8 original corner vertices unused (by design: tools keep vertex numbers, the editor
 compacts them); `CatmullClark` has no cap on `levels` (the modifier and the UI cap it at 4; calling it with 50 asks for 6 * 4^50 faces).
 
 ## Checked and fine

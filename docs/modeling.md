@@ -129,9 +129,10 @@ is rebuilt. Nothing is lost until you press **Apply**.
 | **Boolean** | Union / Subtract / Intersect with another mesh object (by name), using its *modified* mesh. Moving or editing the cutter updates the result. **Show cutter** hides or shows the cutter object. | object, operation, voxel size |
 | **Decimate** | Merges vertices within cells of the given size. | cell size |
 | **Displace** | Roughens along the normals with noise. | strength, frequency, seed |
+| **Array Along Curve** | Places `count` copies evenly (by length) along a curve you edit as a list of points (presets: Arc, Wave, Helix). Each copy turns so the mesh's +X axis follows the curve (switch **Follow the curve** off to keep them upright). Slots and colours carry to every copy. | count, follow, curve points |
 
-Each modifier has an on/off checkbox and a **...** menu (or right-click its
-name) with **Move Up** / **Move Down**, **Apply** (bake just that one into the
+Each modifier shows how long it took (`0.42 ms`) under its name, has an on/off checkbox and a **...** menu (or right-click its
+name) with **Move Up** / **Move Down**, **Copy** (a second modifier with the same settings right below), **Apply** (bake just that one into the
 base — it runs on the base mesh, as in Blender, so apply from the top) and
 **Remove**. **Show in edit mode** off hides it while you edit the base in Edit
 Mesh, where the base's vertices are shown as a cage over the result. Every
@@ -366,6 +367,16 @@ multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
 paint strokes too).
 
+### Spin, Extrude Along Path, measuring, snapping (Edit Mesh)
+
+- **Spin** (Edit Mesh, under the edge-loop tools): select edges (a profile you drew), pick the axis, the angle and the steps, press **Spin**. The edges are turned around the axis through the object's origin (or the **Spin centre** point) and every step is filled with faces: a lathe of whatever you selected. 360 deg closes into a ring; a vertex on the axis becomes one point (a cap). If the faces point inward, press **Flip Normals**.
+- **Extrude Along Path**: select faces, pick Straight, Arc, S-Curve or Spiral with a length, a bend and a number of steps, press **Extrude Along Path**. The faces are pushed along a curve that starts in the middle of the selection and heads along its average normal; the face turns with the curve (no twist), walls join each step, and the original faces become the end caps. Slots and colours carry over.
+- **Array Along Curve** is a modifier (see the table above).
+- **Snapping and measuring** (Edit Mesh): **Snap (Ctrl)**, the grid size, the turn step, and **Snap to**: Grid, Vertex, Edge or Face. With Vertex, Edge or Face chosen, a Move (G) sticks the middle of the selection to the nearest vertex, edge point or face point of the mesh within **reach** (a percent of the camera distance); a yellow ring shows where, and the status line says "snapping to Edge". The vertices you are moving never snap to themselves. Below, **Whole mesh** shows width x height x depth (the object's scale included), area and volume, and **Selection** shows what is selected: two vertices give their distance and x/y/z difference, edges their total length, faces their area, any selection its size.
+- **Shortcuts and recent tools**: a list of the keys in the 3D view and the last six tools you used (a reminder list, not buttons).
+- **Material library** and **Palette** (under Material Slots): ready colours (wood, stone, metal, cloth, nature, paint, glass) for the chosen slot, and palettes (House, Castle, Barn, Workshop, Forest, Desert, Winter, Primary) that set several slots at once.
+- **Add to scene as object** (Modeling window, Import page): makes an independent copy of the object next to it with the collider you pick: none, a fitted box, or the exact mesh.
+
 ### Material slots
 
 Under Paint, **Material Slots** gives a mesh several named-by-number
@@ -388,9 +399,14 @@ colours, so slots show everywhere without renderer changes.
 
 Changing a slot's colour repaints that slot's faces (it replaces hand-painted colour on them); a face you paint after assigning it keeps its paint through the other tools.
 
-**What slots are not (yet):** a slot is a colour, not a full material. Per-slot
-textures, shaders and separate draw calls per slot (real renderer submeshes)
-are not built; they are listed in `docs/UNFINISHED.md`. A few older
+Each slot row also has a **picture path** box: the software renderer draws that
+image on the slot's faces (`MeshRenderer::slotTextures`, saved as a `slottex`
+record, and packaged with the game).
+
+**What slots are not (yet):** a slot is a colour (and, in the software renderer,
+a picture), not a full material. OpenGL, Direct3D 11 and Direct3D 12 show the slot
+colour but not the slot picture; per-slot shaders and separate draw calls per slot
+(real renderer submeshes) are not built; they are listed in `docs/UNFINISHED.md`. A few older
 triangle-level tools (Split by plane, Extrude Individual and similar) rebuild
 triangles without carrying slots; the colours they leave stay, and the faces
 fall back to no slot. Tools that go through the polygon mesh (loop cut,

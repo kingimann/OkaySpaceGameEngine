@@ -965,6 +965,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // A picture per material slot (optional record; empty entries mean "no picture for this slot").
+        {
+            bool any = false;
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) any = true;
+            if (any) {
+                out << "  slottex " << mr->slotTextures.size();
+                for (const std::string& st : mr->slotTextures) out << " " << Quote(st);
+                out << "\n";
+            }
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -4638,6 +4648,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sl = 0; in >> sl;
                         mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
                     }
+                } else if (field == "slottex") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int tc = 0; in >> tc;
+                    if (!in || tc < 0 || tc > 256) return bad("slottex: bad count");
+                    mr->slotTextures.clear();
+                    for (int i = 0; i < tc && in; ++i) { in >> std::ws; mr->slotTextures.push_back(in.peek() == '"' ? ReadQuoted(in) : std::string()); }
                 } else if (field == "slotcolors") {
                     auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
@@ -9367,7 +9384,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* sr : go->GetComponents<SpriteRenderer>()) add(sr->texture);
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         for (auto* mp : go->GetComponents<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
+        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); for (const std::string& st : mr->slotTextures) add(st); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
         for (auto* terrain : go->GetComponents<Terrain>())         { add(terrain->texture); add(terrain->normalMap); for (const auto& l : terrain->layers) add(l.texture); }
         for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
         for (auto* de : go->GetComponents<Decal>())         add(de->texture);

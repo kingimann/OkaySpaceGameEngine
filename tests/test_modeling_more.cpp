@@ -1,6 +1,7 @@
 // Modeling "more": per-face material slots (the M5b gap) and the audit fixes.
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
+#include "okay/Modeling/MaterialLibrary.hpp"
 #include "okay/Modeling/Measure.hpp"
 #include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyOps.hpp"
@@ -417,6 +418,29 @@ int main() {
         CHECK_NEAR(c.x, 1.0f, 1e-6); CHECK_NEAR(c.y, 0.0f, 1e-6);                  // past the end: the end
         const Vec3 t = ClosestOnTriangle(Vec3{5, 5, 1}, Vec3{0, 0, 0}, Vec3{1, 0, 0}, Vec3{0, 1, 0});
         CHECK_NEAR(t.x + t.y, 1.0f, 1e-5); CHECK_NEAR(t.z, 0.0f, 1e-6);            // outside: on the far edge
+    }
+    RUN_SUITE("material library");
+    {
+        const auto& lib = MaterialLibrary();
+        CHECK(lib.size() >= 30);
+        std::set<std::string> names, groups;
+        for (const auto& m : lib) {
+            CHECK(names.insert(m.name).second);                                    // names are unique
+            groups.insert(m.group);
+            CHECK(m.color.r >= 0 && m.color.r <= 1 && m.color.g >= 0 && m.color.g <= 1 && m.color.b >= 0 && m.color.b <= 1 && m.color.a == 1.0f);
+        }
+        CHECK(groups.size() >= 6);
+        CHECK(FindLibraryMaterial("Brick") && FindLibraryMaterial("Brick")->color.r > FindLibraryMaterial("Brick")->color.b);
+        CHECK(FindLibraryMaterial("Nope") == nullptr && FindLibraryMaterial("") == nullptr);
+        CHECK(SlotPalettes().size() >= 6);
+        for (const auto& p : SlotPalettes()) CHECK(p.slots.size() >= 3 && p.slots.size() <= 8 && std::string(p.name).size() > 0);
+        // A palette can be handed to a mesh as its slot colours.
+        Mesh m = Mesh::Cube();
+        m.AssignSlot({0}, 3);
+        const auto& pal = SlotPalettes()[0];
+        for (size_t i = 0; i < pal.slots.size(); ++i) m.slotColors[i] = pal.slots[i].color;
+        m.ApplySlotColors();
+        CHECK(m.triColors[0].r == pal.slots[3].color.r);
     }
     TEST_MAIN_RESULT();
 }

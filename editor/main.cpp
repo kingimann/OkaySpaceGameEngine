@@ -42,6 +42,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
+#include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
 #include "okay/Modeling/Measure.hpp"         // measuring and snapping to vertices, edges and faces
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
@@ -3234,11 +3235,23 @@ okay::modeling::Ray g_meModalRay0{};
 
 // A modeling tool button that is greyed out (with the reason on hover) until the
 // selection it works on is there, instead of a button that silently does nothing.
+// The last few modeling tools that were used (newest first), shown as a plain list in Edit Mesh.
+static std::vector<std::string> g_recentTools;
+static void NoteRecentTool(const char* label) {
+    std::string n = label;
+    const std::size_t hash = n.find("##");
+    if (hash != std::string::npos) n.resize(hash);
+    if (n.empty()) return;
+    g_recentTools.erase(std::remove(g_recentTools.begin(), g_recentTools.end(), n), g_recentTools.end());
+    g_recentTools.insert(g_recentTools.begin(), n);
+    if (g_recentTools.size() > 6) g_recentTools.resize(6);
+}
 static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
     ImGui::BeginDisabled(!ok);
     const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
+    if (hit && ok) NoteRecentTool(label);
     return hit && ok;
 }
 static const char* const kNeedFaces = "Select faces first: Face mode (key 3), then click faces in the 3D view.";
@@ -28460,6 +28473,26 @@ void DrawModeling(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the selected faces in place as detached geometry — the copies stay selected, so just drag them away.");
             {
+                ImGui::SeparatorText("Shortcuts and recent tools");
+                if (!g_recentTools.empty()) {
+                    std::string line = "Recent: ";
+                    for (std::size_t i = 0; i < g_recentTools.size(); ++i) line += (i ? ", " : "") + g_recentTools[i];
+                    ImGui::TextDisabled("%s", line.c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The last tools you used, newest first (a reminder; press the tool's own button to use it again).");
+                } else ImGui::TextDisabled("Recent: (none yet)");
+                if (ImGui::TreeNode("Keys in the 3D view##mkeys")) {
+                    const char* rows[][2] = {
+                        {"1 / 2 / 3", "Vertex / edge / face select mode"}, {"G, R, S", "Move, rotate, scale the selection"},
+                        {"X, Y, Z", "Lock to an axis while moving (Shift: the plane)"}, {"Ctrl", "Snap while moving, rotating, scaling"},
+                        {"type a number", "Exact value during G / R / S"}, {"Enter / Esc", "Confirm / cancel"},
+                        {"G, G", "Edge slide"}, {"Ctrl+R", "Loop cut"}, {"Ctrl+B", "Bevel"}, {"K", "Knife"},
+                        {"Ctrl+Z / Ctrl+Y", "Undo / redo mesh edits"},
+                    };
+                    for (const auto& r : rows) { ImGui::TextUnformatted(r[0]); ImGui::SameLine(130); ImGui::TextDisabled("%s", r[1]); }
+                    ImGui::TreePop();
+                }
+            }
+            {
                 // Snapping and measuring, shown here so they can be set and read without hunting for keys.
                 ImGui::SeparatorText("Snapping and measuring");
                 ImGui::Checkbox("Snap (Ctrl)##msnap", &g_snap);
@@ -28933,7 +28966,55 @@ void DrawModeling(EditorState& ed) {
                     ed.dirty = true;
                 }
                 if (!ImGui::IsMouseDown(0)) s_slotColEdit = false;
+                // A picture for this slot (software renderer; the GPU renderers still show the colour).
+                if ((int)mr->slotTextures.size() <= i) mr->slotTextures.resize(i + 1);
+                {
+                    char tb[256];
+                    std::strncpy(tb, mr->slotTextures[i].c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
+                    ImGui::SetNextItemWidth(170);
+                    if (ImGui::InputTextWithHint("##slottex", "picture path (optional)", tb, sizeof(tb))) {
+                        ed.PushUndo(); mr->slotTextures[i] = tb; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An image file (for example Assets/brick.png) drawn on this slot's faces instead of the plain colour.\nShown by the software renderer; OpenGL and Direct3D still show the slot colour for now.");
+                }
                 ImGui::PopID();
+            }
+            {
+                namespace pmo = okay::modeling;
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::BeginCombo("##matlib", "Material library")) {
+                    const char* group = "";
+                    for (const auto& lm : pmo::MaterialLibrary()) {
+                        if (std::strcmp(group, lm.group) != 0) { group = lm.group; ImGui::SeparatorText(group); }
+                        ImGui::ColorButton((std::string("##lc") + lm.name).c_str(), ImVec4(lm.color.r, lm.color.g, lm.color.b, 1), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+                        ImGui::SameLine();
+                        if (ImGui::Selectable(lm.name)) {
+                            EditUndoPoint(ed, mr);
+                            if ((int)mr->mesh.slotColors.size() <= s_slot) mr->mesh.slotColors.resize(s_slot + 1, Color{1, 1, 1, 1});
+                            if (!mr->mesh.HasSlots()) mr->mesh.triSlot.assign((std::size_t)mr->mesh.TriangleCount(), 0);
+                            mr->mesh.slotColors[s_slot] = lm.color;
+                            mr->mesh.ApplySlotColors();
+                            ed.dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Give the chosen slot a ready colour (wood, stone, metal, cloth, nature, paint, glass).");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+                if (ImGui::BeginCombo("##slotpal", "Palette")) {
+                    for (const auto& pal : pmo::SlotPalettes())
+                        if (ImGui::Selectable(pal.name)) {
+                            EditUndoPoint(ed, mr);
+                            const int n = (int)pal.slots.size();
+                            if ((int)mr->mesh.slotColors.size() < n) mr->mesh.slotColors.resize(n, Color{1, 1, 1, 1});
+                            if (!mr->mesh.HasSlots()) mr->mesh.triSlot.assign((std::size_t)mr->mesh.TriangleCount(), 0);
+                            for (int i = 0; i < n; ++i) mr->mesh.slotColors[i] = pal.slots[i].color;
+                            mr->mesh.ApplySlotColors();
+                            ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set several slots at once: House, Castle, Barn, Workshop, Forest, Desert, Winter, Primary.");
             }
             if (ImGui::SmallButton("+ Slot##slot") && slotN < 256) {
                 EditUndoPoint(ed, mr);
@@ -28970,6 +29051,26 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Load##modelobj") && mr->meshPath[0]) LoadMeshFileInto(ed, mr);
         SaveMeshAssetButton(ed, go, mr);
+
+        // Add a finished model to the scene as its own object, with the collision you want.
+        {
+            SectionHeader("Add to scene as object");
+            static int s_addCol = 2;
+            const char* cols[] = {"No collider", "Box (bounds)", "Exact mesh"};
+            ImGui::SetNextItemWidth(140); ImGui::Combo("Collider##addobj", &s_addCol, cols, 3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("No collider: scenery you walk through. Box: a fitted box (fast, loose). Exact mesh: collides with the real triangles (floors, walls, ramps).");
+            ImGui::SameLine();
+            if (ImGui::Button("Add Copy to Scene##addobj")) {
+                if (GameObject* copy = ed.DuplicateSelected()) {
+                    for (auto* c : copy->GetComponents<Collider3D>()) copy->RemoveComponent(c);
+                    if (s_addCol == 1) { copy->AddComponent<BoxCollider3D>(); FitColliders(copy, false); }
+                    else if (s_addCol == 2) copy->AddComponent<MeshCollider3D>();
+                    ConsoleLog("Added " + copy->name + " to the scene (" + std::string(cols[s_addCol]) + ")");
+                    ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make an independent copy of this object (mesh, colours, material slots, modifiers) next to it, with the chosen collider.\nThe copy is selected; the original is untouched.");
+        }
 
         if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
             ImGui::Spacing();

@@ -1922,6 +1922,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!vis.Visible(go.get())) { swCulled.insert(go.get()); continue; }
         ++swDrawn;
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
+        for (const std::string& st : mr->slotTextures) if (!st.empty()) GetCachedMips(st);   // per-slot pictures (loaded here, read by the bands)
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
         if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
@@ -1954,6 +1955,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool hasUV = drawMesh.uvs.size() == v.size();
         const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
         const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        // Per-slot pictures: triangles whose material slot has a texture use it instead of the object's own.
+        std::vector<const MipChain*> slotTex;
+        if (drawMesh.HasSlots() && !mr->slotTextures.empty())
+            for (const std::string& st : mr->slotTextures) slotTex.push_back(st.empty() ? nullptr : GetCachedMips(st));
+        bool anySlotTex = false;
+        for (const MipChain* m : slotTex) if (m && !m->empty()) anySlotTex = true;
         const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
@@ -1966,7 +1973,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // Lit, untextured meshes shade via the smooth (Gouraud) path even without
         // per-vertex normals — they use the face normal, interpolated per vertex, so
         // there are no flat-shading facet lines (only truly unlit meshes stay flat).
-        const bool smooth = useMatcap || (!tex && !unlit);
+        const bool smooth = useMatcap || (!tex && !anySlotTex && !unlit);
         // Normal matrix = inverse-transpose of the model's linear part. Using the
         // model matrix directly SKEWS normals under non-uniform scale (e.g. a ground
         // scaled {40,1,40} or a stretched sphere) — lighting then "acts up" as the
@@ -2037,6 +2044,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
+            // This triangle's picture: its slot's texture if it has one, else the object's.
+            const MipChain* triTex = tex;
+            if (anySlotTex) {
+                const int sl = drawMesh.triSlot[i / 3];
+                if (sl >= 0 && sl < (int)slotTex.size() && slotTex[sl] && !slotTex[sl]->empty()) triTex = slotTex[sl];
+            }
             Vec3 wp[3];
             for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[idx[k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
@@ -2275,7 +2288,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
                     float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
-                                    tex, base, shaded, eye, faceShine, faceSpec,
+                                    triTex, base, shaded, eye, faceShine, faceSpec,
                                     faceEr, faceEg, faceEb,
                                     fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
@@ -2286,11 +2299,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
                                     aoMips, mr->aoStrength, mr->receiveShadows);
-                } else if (tex) {
+                } else if (triTex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, shaded, lr, lg, lb, sp3,
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *triTex, shaded, lr, lg, lb, sp3,
                                   faceEr, faceEg, faceEb,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {

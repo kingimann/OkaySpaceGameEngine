@@ -67,7 +67,7 @@ release job or the installer build for this change.
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
-| 7zh | Modeling: material slots (give faces their own colour slot), Repair Mesh | `examples\modeling_tools\material_slots.okayscene` (File > Open...), then Modeling window > Edit Mesh > Paint > Material Slots | New in this change; real window and GPU renderers unverified |
+| 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 
 ---
@@ -664,11 +664,31 @@ not built.
 **Files.** `examples\modeling_tools\slot_house.okaymesh` and `slot_ball.okaymesh` are the same two models as plain files: in the Inspector set **Mesh File**
 to one of them (it is in the Modeling window; the exact tab is unverified), or open one in a text editor to see the `slot N r g b a` lines.
 
+
+**More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+headless software render of it.
+1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
+   Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
+   Open its **...** menu and press **Copy**: a second identical modifier appears below it (the row is now doubled); **Remove** it again.
+2. **Spin.** Click **Spun Vase**, open the Modeling window, tick **Edit Mesh**, press key **2** (edge mode) and click one edge of the vase, then press **Spin**
+   (Y axis, 360 deg, 16 steps): a ring of new faces is made around the vase. Ctrl+Z removes it.
+3. **Extrude Along Path.** Click **Bent Horn** (or a cube), Edit Mesh, key **3** (faces), click the top face, choose **Arc**, press **Extrude Along Path**: a bent arm grows out of the face.
+4. **Measuring.** In Edit Mesh, under **Snapping and measuring**, read **Whole mesh** (width x height x depth, area, volume). Press key **1** (vertices), click two corners:
+   **Selection** shows their distance and the x, y, z difference. Select edges: it shows their total length; faces: their area.
+5. **Snapping.** Set **Snap to** to **Vertex** (or Edge or Face), tick **Snap (Ctrl)**, select a vertex, press **G** and move the mouse near another vertex: a yellow ring shows
+   it and the vertex jumps onto it; the bottom line says "snapping to Vertex". Enter confirms, Esc cancels.
+6. **Material library.** Select **Slot House**, Edit Mesh, **Material Slots**: pick a slot, open **Material library** and choose *Copper*: that slot takes the colour. Open **Palette** and choose *Barn*: four slots change at once.
+7. **Picture per slot.** In a slot row, type an image path (for example one of your own `Assets/brick.png`) in the **picture path** box: in the software renderer the slot's faces show the picture.
+   (The OpenGL and Direct3D renderers still show the colour; that part is not built yet.)
+8. **Add to scene as object.** Modeling window > **Import** page > **Add to scene as object**: choose **Exact mesh** and press **Add Copy to Scene**: a copy appears next to the object, with a Mesh Collider (choose **Box** or **No collider** for the others).
+9. **Shortcuts and recent tools.** Edit Mesh > **Shortcuts and recent tools** lists the keys and the last tools you used.
+
 **Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
-the software renderer drawing each slot's colour, Repair Mesh, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
-editor window, run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
+the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
+editor window (the editor code was only syntax-checked, the snapping ring and the buttons in steps 1 to 9 are unseen), run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
 ## 7v. Test builds: try a branch before it is released
 
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you

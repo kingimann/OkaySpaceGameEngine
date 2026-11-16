@@ -174,6 +174,53 @@ int main() {
         CHECK(SceneSerializer::LoadFromFile(r, p));
         CHECK(r.Find("House")->GetComponent<MeshRenderer>()->mesh.triSlot[0] == 3);
     }
+    RUN_SUITE("slots: a picture per slot (software renderer)");
+    {
+        Image magenta(8, 8); magenta.Fill(Color{1, 0, 1, 1});
+        RegisterTexture("@slot_magenta", std::move(magenta));
+        auto render = [&](bool withTexture) {
+            Scene s("tex");
+            BuildScene(s);
+            auto* mr = s.Find("Slot House")->GetComponent<MeshRenderer>();
+            if (withTexture) mr->slotTextures = {"", "@slot_magenta"};      // slot 1 (the roof) gets the picture, slot 0 none
+            s.Start();
+            const Vec3 eye{0.2f, 1.8f, 5.5f};
+            const Mat4 vp = Mat4::Perspective(40.0f, 640.0f / 360.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.2f, 0.7f, 0}, Vec3::Up);
+            ApplySceneLight(s);
+            Raster r; r.Resize(640, 360); r.Clear(0xFF3A2A22u);
+            RenderMeshes(r, s, vp, eye);
+            return r;
+        };
+        auto magentaPixels = [](const Raster& r) {
+            int n = 0;
+            for (std::uint32_t p : r.color) { const int R = p & 255, G = (p >> 8) & 255, B = (p >> 16) & 255; if (R > 60 && B > 60 && G * 2 < R && G * 2 < B) ++n; }
+            return n;
+        };
+        auto redPixels = [](const Raster& r) {
+            int n = 0;
+            for (std::uint32_t p : r.color) { const int R = p & 255, G = (p >> 8) & 255, B = (p >> 16) & 255; if (R > 60 && G * 3 < R && B * 3 < R) ++n; }
+            return n;
+        };
+        const Raster plain = render(false), textured = render(true);
+        CHECK(magentaPixels(plain) < 50);                     // no picture: no magenta anywhere
+        CHECK(magentaPixels(textured) > 1000);                // the roof now shows the picture
+        CHECK(redPixels(textured) < redPixels(plain) / 4);    // ...instead of its red slot colour
+        // The door (slot 3) has no picture and keeps its colour, so only the roof changed.
+        CHECK(Count(textured, kDoor, 90) > 0);
+        // Saved with the scene, and an empty picture list writes nothing.
+        Scene s("tt"); BuildScene(s);
+        const std::string p = (dir / "tt.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(s, p));
+        { std::ifstream f(p); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("slottex") == std::string::npos); }
+        s.Find("Slot House")->GetComponent<MeshRenderer>()->slotTextures = {"", "Assets/brick.png", "", "Assets/door.png"};
+        CHECK(SceneSerializer::SaveToFile(s, p));
+        Scene r("x"); CHECK(SceneSerializer::LoadFromFile(r, p));
+        const auto& st = r.Find("Slot House")->GetComponent<MeshRenderer>()->slotTextures;
+        CHECK(st.size() == 4 && st[0].empty() && st[1] == "Assets/brick.png" && st[2].empty() && st[3] == "Assets/door.png");
+        bool listed = false;
+        for (const auto& a : SceneSerializer::CollectAssetPaths(s)) if (a == "Assets/brick.png") listed = true;
+        CHECK(listed);                                        // packaged with the game
+    }
     RUN_SUITE("spin, path and curve array: objects, save and load, Copy");
     {
         const PolyMesh vase = MakeVase();

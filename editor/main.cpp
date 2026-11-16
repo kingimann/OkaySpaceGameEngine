@@ -6567,6 +6567,14 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
         if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
         if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
+        ImGui::Separator();   // UI library slice 3
+        if (ImGui::MenuItem("Menu Bar"))           addUI("Menu Bar",    oked::BuildUIMenuBar);
+        if (ImGui::MenuItem("Toolbar"))            addUI("Toolbar",     oked::BuildUIToolbar);
+        if (ImGui::MenuItem("Tree View"))          addUI("Tree View",   oked::BuildUITreeView);
+        if (ImGui::MenuItem("Data Table"))         addUI("Data Table",  oked::BuildUIDataTable);
+        if (ImGui::MenuItem("Wizard"))             addUI("Wizard",      oked::BuildUIWizard);
+        if (ImGui::MenuItem("Form Group"))         addUI("Form Group",  oked::BuildUIFormGroup);
+        ImGui::TextDisabled("Color Picker (above) has an Advanced switch.");
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -40769,6 +40777,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
             oked::FieldTip("Selected##ucp");
             AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            if (ImGui::Checkbox("Advanced (hue square, value and alpha sliders)##ucp", &cp->advanced)) { cp->SetAdvanced(cp->advanced); ed.dirty = true; }   // UI library slice 3
+            oked::FieldTip("Advanced (hue square, value and alpha sliders)##ucp");
+            if (cp->advanced) {
+                float h = cp->hue, sa = cp->sat, va = cp->val, al = cp->alpha;
+                bool edit = ImGui::DragFloat("Hue##ucp", &h, 1.0f, 0.0f, 360.0f);
+                edit = ImGui::DragFloat("Saturation##ucp", &sa, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Value##ucp", &va, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Alpha##ucp", &al, 0.005f, 0.0f, 1.0f) || edit;
+                if (edit) { cp->SetHSVA(h, sa, va, al); ed.dirty = true; }
+                if (ImGui::DragFloat("Square size##ucp", &cp->squareSize, 1.0f, 48.0f, 400.0f)) ed.dirty = true;
+                ImGui::TextDisabled("Colour now: %s   (script: Hex(), SetHSVA(h, s, v, a))", cp->Hex().c_str());
+            }
             cp->Rebuild();
             for (int i = 0; i < cp->Count(); ++i) {
                 Color c = cp->swatches[(std::size_t)i];
@@ -42089,6 +42109,12 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMenuBar>(), "UI Menu Bar")) { go->AddComponent<UIMenuBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToolbar>(), "UI Toolbar")) { go->AddComponent<UIToolbar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITreeView>(), "UI Tree View")) { go->AddComponent<UITreeView>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDataTable>(), "UI Data Table")) { go->AddComponent<UIDataTable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIWizard>(), "UI Wizard")) { go->AddComponent<UIWizard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFormGroup>(), "UI Form Group")) { go->AddComponent<UIFormGroup>()->Rebuild(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBind>(), "UI Bind (widget <-> variable)")) { go->AddComponent<UIBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIVisibleIf>(), "UI Visible If (show from a condition)")) { go->AddComponent<UIVisibleIf>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListBind>() && go->GetComponent<UIListView>(), "UI List Bind (array -> list)")) { go->AddComponent<UIListBind>(); ed.dirty = true; }

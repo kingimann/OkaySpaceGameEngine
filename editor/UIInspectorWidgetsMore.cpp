@@ -147,6 +147,21 @@ const Slice2Part* Slice2Of(Component* comp) {
     static const Slice2Part kHot{"UI Hot Reload", "Watches a markup file for the UI Document, or an .okaytheme for the UI Theme, on the Target object. Save the file and the screen updates while the game runs."};
     static const Slice2Part kHint{"UI Focus Hint", "Tab and Shift+Tab walk the Tab Index (lowest first). Up, Down, Left, Right name the object focus goes to; a - keeps focus where it is."};
     static const Slice2Part kLinks{"UI Rich Links", "Makes [url=target]words[/url] in this object's rich text clickable. A click runs on_link and stores the target in the Prefs value ui_link."};
+    // slice 3: the app parts
+    static const Slice2Part kMenuBar{"UI Menu Bar", "Menus split by ;  name before a colon  entries split by |  - is a line  ~ greys an entry out  Entry@Ctrl+S shows a shortcut. on_select runs on the script; ChosenPath() is File/Open."};
+    static const Slice2Part kToolbar{"UI Toolbar", "Items split by |  - is a separator  a * on the end makes a toggle  a = on the end makes one-of-a-group  Label@N adds an icon (a letter or an image path)."};
+    static const Slice2Part kTree{"UI Tree View", "One row per |, each leading > goes one level deeper. Click the arrow to open a row, the name to select it; then Up, Down, Left, Right, Home, End. on_select, on_activate run on the script."};
+    static const Slice2Part kTable{"UI Data Table", "Columns: Name:150|Class|Level (a number after a colon is the width). Rows: Ava|Mage|42;Bo|Rogue|17. A click on a header sorts; only the rows on screen are drawn, so thousands are fine."};
+    static const Slice2Part kWizard{"UI Wizard", "Steps and Next / Back. Pages names one object per step (shown on that step only). Validate has one entry per step, split by ;  a Form Group object name, or if:<condition>. Next waits until it is valid."};
+    static const Slice2Part kForm{"UI Form Group", "Makes one input box (with a UI Input Validator) for each field: Name:text|Email:email|Age:int:13..120|Nick:text:?  Kinds: text email int number letters alnum. Options: ? optional, minN, maxN, a..b, =Label must match."};
+    static const Slice2Part kSquare{"UI Color Square", "Hue across, saturation down. The UI Color Picker makes and drives one in its Advanced mode; on its own, read Hue and Sat."};
+    if (dynamic_cast<UIMenuBar*>(comp)) return &kMenuBar;
+    if (dynamic_cast<UIToolbar*>(comp)) return &kToolbar;
+    if (dynamic_cast<UITreeView*>(comp)) return &kTree;
+    if (dynamic_cast<UIDataTable*>(comp)) return &kTable;
+    if (dynamic_cast<UIWizard*>(comp)) return &kWizard;
+    if (dynamic_cast<UIFormGroup*>(comp)) return &kForm;
+    if (dynamic_cast<UIColorSquare*>(comp)) return &kSquare;
     if (dynamic_cast<UIRadialMenu*>(comp)) return &kRadial;
     if (dynamic_cast<UIKillFeed*>(comp)) return &kFeed;
     if (dynamic_cast<UIAmmoCounter*>(comp)) return &kAmmo;
@@ -262,6 +277,33 @@ void BuildUIAbilityIcon(GameObject* g) {
     r->fill = Color::FromBytes(20, 22, 30, 235); r->background = Color::FromBytes(120, 220, 150, 200);
     g->AddComponent<UIAbilityIcon>();
 }
+// ---- slice 3: create helpers (GameObject > UI > App) ----
+void BuildUIMenuBar(GameObject* g) {
+    auto* w = g->AddComponent<UIMenuBar>();
+    w->anchor = UIAnchor::TopLeft; w->position = {0, 0}; w->size = {640, 32};
+}
+void BuildUIToolbar(GameObject* g) {
+    auto* w = g->AddComponent<UIToolbar>();
+    w->size = {420, 40};
+    w->showLabels = false;
+}
+void BuildUITreeView(GameObject* g) {
+    auto* w = g->AddComponent<UITreeView>();
+    w->size = {300, 220};
+}
+void BuildUIDataTable(GameObject* g) {
+    auto* w = g->AddComponent<UIDataTable>();
+    w->size = {520, 220};
+}
+void BuildUIWizard(GameObject* g) {
+    auto* w = g->AddComponent<UIWizard>();
+    w->size = {640, 340};
+}
+void BuildUIFormGroup(GameObject* g) {
+    auto* w = g->AddComponent<UIFormGroup>();
+    w->size = {520, 260};
+    w->Rebuild();   // makes the input boxes now, so they show while you edit
+}
 void BuildUIBoundSlider(GameObject* g) {
     auto* s = g->AddComponent<UISlider>();
     s->size = {300, 24};
@@ -295,6 +337,10 @@ void DrawMoreUIComponentInspector(Component* comp, EditorState& ed, Component** 
             ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a UI Radial Progress (the cooldown ring).");
         if (dynamic_cast<UIBind*>(comp) && comp->gameObject && !static_cast<UIBind*>(comp)->HasWidget())
             ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a Slider, Stepper, Toggle, Dropdown, Range Slider or Input Field.");
+        if (auto* fg = dynamic_cast<UIFormGroup*>(comp)) {
+            if (ImGui::SmallButton("Rebuild the input boxes from Fields")) { fg->Rebuild(); ed.dirty = true; }
+            ImGui::Text("Valid now: %s (%d to fix)", fg->IsValid() ? "yes" : "no", fg->ErrorCount());
+        }
         if (dynamic_cast<UIListBind*>(comp) && comp->gameObject && !comp->gameObject->GetComponent<UIListView>())
             ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a UI List View.");
         ImGui::TextDisabled("%s", part->help);

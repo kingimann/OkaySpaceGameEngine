@@ -92,7 +92,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Camera",          "Where the player is looking: follow, switch, zoom, tilt and shake.", "Sound, Camera & Screen"},
     {"Screen Text",     "Words and numbers drawn on the screen.", "Sound, Camera & Screen"},
     {"Buttons & Inputs", "Buttons, sliders, toggles, dropdowns, text fields and pickers.", "Sound, Camera & Screen"},
-    {"Bars & Layout",   "Progress bars, game HUD parts, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
+    {"Bars & Layout",   "Progress bars, game HUD parts, app parts, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
     {"Popups & Dialogs", "Toasts, tooltips, modals and bottom sheets.", "Sound, Camera & Screen"},
     // ---- Scenes and the environment
     {"Scenes & Levels", "Load, restart and quit scenes, and read which scene is open.", "Scenes & Environment"},
@@ -231,6 +231,7 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Buttons & Inputs", "Pickers & Search", "Color, date, time and file pickers, and search bars."},
     {"Bars & Layout", "Progress Bars", "Progress bars, radial bars, spinners and loading skeletons."},
     {"Bars & Layout", "Game HUD", "Radial menus, kill feeds, ammo counters, key prompts, objective trackers, compasses, item cards and ability icons."},
+    {"Bars & Layout", "App Parts", "Menu bars, toolbars, tree views, data tables, wizards and form groups."},
     {"Bars & Layout", "Tabs & Pages", "Tabs, pages, accordions and breadcrumbs."},
     {"Bars & Layout", "Scroll Areas & Grids", "Scroll views and slot grids."},
     {"Bars & Layout", "Layout Helpers", "Begin and end a panel or card, put things on one line, separators and list rows."},

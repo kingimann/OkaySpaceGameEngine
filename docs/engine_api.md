@@ -124,6 +124,9 @@ A row of color swatches. The chosen swatch is the current color.
 |---|---|---|---|---|---|
 | `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
 | `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+| `GetComponent<UIColorPicker>().SetAdvanced(on)` | `UIColorPicker.SetAdvanced/1` | step | on (Bool), Target (Object) | - | Show or hide the hue / saturation square and the value and alpha sliders. |
+| `GetComponent<UIColorPicker>().SetHSVA(hue, saturation, value, alpha)` | `UIColorPicker.SetHSVA/4` | step | hue (Number), saturation (Number), value (Number), alpha (Number), Target (Object) | - | Make a colour from hue (0 to 360 degrees), saturation, value and alpha (each 0 to 1). |
+| `GetComponent<UIColorPicker>().Hex()` | `UIColorPicker.Hex/0` | value | Target (Object) | Result (Text) | The current colour as "#RRGGBB" ("#RRGGBBAA" when see-through). |
 
 ## Crosshair
 
@@ -460,6 +463,82 @@ Watches a UI markup file or .okaytheme and applies it when it changes.
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
 | `GetComponent<UIHotReload>().ReloadNow()` | `UIHotReload.ReloadNow/0` | step | Target (Object) | Result (Bool) | Apply the file now. False (and the reason in the log) when it could not be applied. |
+
+## UIMenuBar
+
+A bar of menus. on_select fires when an entry is chosen; ChosenPath() is "File/Open".
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIMenuBar>().Open(menu)` | `UIMenuBar.Open/1` | step | menu (Number), Target (Object) | - | Drop menu number `menu` down (0 is the first). |
+| `GetComponent<UIMenuBar>().Close()` | `UIMenuBar.Close/0` | step | Target (Object) | - | Close the open menu. |
+| `GetComponent<UIMenuBar>().Choose(menu, entry)` | `UIMenuBar.Choose/2` | step | menu (Number), entry (Number), Target (Object) | Result (Bool) | Choose an entry as if it was clicked. False for a separator, a greyed-out entry or one that does not exist. |
+| `GetComponent<UIMenuBar>().ChosenPath()` | `UIMenuBar.ChosenPath/0` | value | Target (Object) | Result (Text) | The entry chosen last, like "File/Open" (empty before the first). |
+| `GetComponent<UIMenuBar>().IsOpen()` | `UIMenuBar.IsOpen/0` | value | Target (Object) | Result (Bool) | True while a menu is dropped down. |
+
+## UIToolbar
+
+A row of buttons, toggles and one-of-a-group choices. on_select fires when one is pressed.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIToolbar>().Press(index)` | `UIToolbar.Press/1` | step | index (Number), Target (Object) | Result (Bool) | Press button number `index` (separators count). False when it cannot be pressed. |
+| `GetComponent<UIToolbar>().IsOn(index)` | `UIToolbar.IsOn/1` | value | index (Number), Target (Object) | Result (Bool) | True while the toggle or radio button is on. |
+| `GetComponent<UIToolbar>().SetOn(index, on)` | `UIToolbar.SetOn/2` | step | index (Number), on (Bool), Target (Object) | - | Turn a toggle or radio button on or off without pressing it. |
+
+## UITreeView
+
+Nested rows that open and close. on_select fires when the selected row changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITreeView>().Select(row)` | `UITreeView.Select/1` | step | row (Number), Target (Object) | Result (Bool) | Select node number `row` (opens the rows above it). False when there is no such node. |
+| `GetComponent<UITreeView>().Selected()` | `UITreeView.Selected/0` | value | Target (Object) | Result (Number) | The selected node (-1 for none). |
+| `GetComponent<UITreeView>().SelectedPath()` | `UITreeView.SelectedPath/0` | value | Target (Object) | Result (Text) | The selected node's path, like "World/Level 1". |
+| `GetComponent<UITreeView>().Toggle(node)` | `UITreeView.Toggle/1` | step | node (Number), Target (Object) | - | Open a closed node, or close an open one. |
+| `GetComponent<UITreeView>().ExpandAll()` | `UITreeView.ExpandAll/0` | step | Target (Object) | - | Open every node. |
+| `GetComponent<UITreeView>().CollapseAll()` | `UITreeView.CollapseAll/0` | step | Target (Object) | - | Close every node. |
+| `GetComponent<UITreeView>().SetNodes(nodes)` | `UITreeView.SetNodes/1` | step | nodes (Text), Target (Object) | - | Replace the tree (World|>Level 1|>>Boss ...). |
+
+## UIDataTable
+
+Columns and rows with sorting and a selected row. on_select and on_sort fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDataTable>().SortBy(column, ascending)` | `UIDataTable.SortBy/2` | step | column (Number), ascending (Bool), Target (Object) | - | Sort by a column (0 is the first; -1 keeps the written order). |
+| `GetComponent<UIDataTable>().SetRows(rows)` | `UIDataTable.SetRows/1` | step | rows (Text), Target (Object) | - | Replace every row (Ava|Mage|42;Bo|Rogue|17). |
+| `GetComponent<UIDataTable>().AddRow(cells)` | `UIDataTable.AddRow/1` | step | cells (Text), Target (Object) | - | Add one row at the end (Ava|Mage|42). |
+| `GetComponent<UIDataTable>().Select(row)` | `UIDataTable.Select/1` | step | row (Number), Target (Object) | Result (Bool) | Select a row by its place in the written rows. False when there is no such row. |
+| `GetComponent<UIDataTable>().Selected()` | `UIDataTable.Selected/0` | value | Target (Object) | Result (Number) | The selected row's place in the written rows (-1 for none). |
+| `GetComponent<UIDataTable>().RowCount()` | `UIDataTable.RowCount/0` | value | Target (Object) | Result (Number) | How many rows there are. |
+| `GetComponent<UIDataTable>().Cell(row, column)` | `UIDataTable.Cell/2` | value | row (Number), column (Number), Target (Object) | Result (Text) | The text of a cell, counting rows in the order shown (after sorting). |
+
+## UIWizard
+
+A sequence of steps. on_next, on_back, on_invalid and on_finish fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIWizard>().Next()` | `UIWizard.Next/0` | step | Target (Object) | Result (Bool) | Go to the next step (or finish on the last). False when the step is not valid yet. |
+| `GetComponent<UIWizard>().Back()` | `UIWizard.Back/0` | step | Target (Object) | Result (Bool) | Go back one step. |
+| `GetComponent<UIWizard>().GoTo(step)` | `UIWizard.GoTo/1` | step | step (Number), Target (Object) | Result (Bool) | Jump to a step (earlier ones always; later ones only with Free Navigation). |
+| `GetComponent<UIWizard>().Restart()` | `UIWizard.Restart/0` | step | Target (Object) | - | Go back to the first step. |
+| `GetComponent<UIWizard>().Step()` | `UIWizard.Step/0` | value | Target (Object) | Result (Number) | The current step (0 is the first). |
+| `GetComponent<UIWizard>().IsFinished()` | `UIWizard.IsFinished/0` | value | Target (Object) | Result (Bool) | True after Next on the last step. |
+
+## UIFormGroup
+
+Labelled input fields that check themselves. on_submit and on_invalid fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIFormGroup>().Submit()` | `UIFormGroup.Submit/0` | step | Target (Object) | Result (Bool) | Check every field. When all are valid, write the answers to the variables and run on_submit; else show the problems. |
+| `GetComponent<UIFormGroup>().Reset()` | `UIFormGroup.Reset/0` | step | Target (Object) | - | Empty every field. |
+| `GetComponent<UIFormGroup>().IsValid()` | `UIFormGroup.IsValid/0` | value | Target (Object) | Result (Bool) | True when every field is acceptable now. |
+| `GetComponent<UIFormGroup>().ErrorCount()` | `UIFormGroup.ErrorCount/0` | value | Target (Object) | Result (Number) | How many fields are not acceptable now. |
+| `GetComponent<UIFormGroup>().Value(label)` | `UIFormGroup.Value/1` | value | label (Text), Target (Object) | Result (Text) | What is typed in the field with this label. |
+| `GetComponent<UIFormGroup>().SetValue(label, text)` | `UIFormGroup.SetValue/2` | step | label (Text), text (Text), Target (Object) | - | Type text into the field with this label. |
 
 ## Input
 

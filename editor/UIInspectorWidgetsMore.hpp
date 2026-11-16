@@ -33,5 +33,12 @@ void BuildUIBoundSlider(okay::GameObject* g);
 void BuildUIBoundList(okay::GameObject* g);
 void BuildUIHotReload(okay::GameObject* g);
 void BuildUIVisibleIf(okay::GameObject* g);
+// Slice 3: app parts (GameObject > UI > App).
+void BuildUIMenuBar(okay::GameObject* g);
+void BuildUIToolbar(okay::GameObject* g);
+void BuildUITreeView(okay::GameObject* g);
+void BuildUIDataTable(okay::GameObject* g);
+void BuildUIWizard(okay::GameObject* g);
+void BuildUIFormGroup(okay::GameObject* g);
 
 } // namespace oked

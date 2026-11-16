@@ -14,6 +14,10 @@
 
 namespace okay {
 
+/// Slice 3 app parts (UIAppParts.cpp): run `fn` on the part on `go`; the function names this part offers.
+bool RunAppPartAction(GameObject* go, const std::string& fn, float arg);
+std::vector<std::string> AppPartActionNames(GameObject* go);
+
 /// Bridge a Button On Click (or any UI action) to a **native** component
 /// method on `go`, passing `arg` as the amount. Returns true if a native component
 /// handled the name; UIButton falls back to a script's CallEvent when this is false,
@@ -153,6 +157,8 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
             return true;
         }
     }
+    // UI library slice 3: the app parts (UIAppParts.cpp; they need UIButton, which includes this header, so they live in a .cpp).
+    if (RunAppPartAction(go, fn, arg)) return true;
     // Consumables::UseItem is dispatched by UIButton (Consumables depends on this
     // header, so it can't be referenced here without a cycle).
     return false;
@@ -191,6 +197,7 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<UIKillFeed>())      add({"AddSampleKill", "Clear"});
     if (go->GetComponent<UIAbilityIcon>())   add({"Use", "Reset"});
     if (go->GetComponent<UIAmmoCounter>())   add({"Shoot", "Reload"});
+    for (const std::string& n : AppPartActionNames(go)) out.push_back(n);
     return out;
 }
 

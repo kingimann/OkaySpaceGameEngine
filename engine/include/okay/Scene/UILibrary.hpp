@@ -3,13 +3,16 @@
 //
 // BuildSlice1() fills a scene with the parts added in slice 1 (range slider, input validation, aspect-ratio
 // container) next to plain on-screen instructions. BuildSlice2() does the same for slice 2 (game HUD parts and the
-// data-driven glue: bindings, conditions, array lists, rich text links, hot reload). Written for this engine from its own UI helpers
+// data-driven glue: bindings, conditions, array lists, rich text links, hot reload). BuildSlice3() does it for slice 3 (app parts: menu bar,
+// toolbar, tree view, data table, wizard, form group, the colour picker's advanced mode). Written for this engine from its own UI helpers
 // (UITemplates, UIGallery's card helpers); no other project's code or assets were used.
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIAppParts.hpp"
+#include "okay/Components/UIColorPicker.hpp"
 #include <string>
 
 namespace okay { namespace UILibrary {
@@ -331,6 +334,143 @@ inline GameObject* BuildSlice2(Scene& scene) {
         doc->AddComponent<UIDocument>()->markup = HotReloadDemoMarkup();
         auto* hot = doc->AddComponent<UIHotReload>();
         hot->file = "examples/ui_library/hot_reload_demo.okayui"; hot->interval = 0.5f;
+    }
+    return root;
+}
+
+/// Slice 3: app parts. Returns the page root. Everything on the page is wired with no script: the status card shows what each part
+/// chose through variables (menu_pick_text, tool_pick, tb_bold, tree_pick_text, table_pick_text, wiz_step, signup_name ...).
+inline GameObject* BuildSlice3(Scene& scene) {
+    EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
+    GameObject* canvas = EnsureCanvas(scene);
+    if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+    GameObject* root = Group(scene, canvas, "UI Library 3");
+    Panel(scene, root, "Backdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
+    scene.Find("Backdrop")->GetComponent<UIPanel>()->borderWidth = 0.0f;
+    Text(scene, root, "Title", "UI Library 3", UIAnchor::TopLeft, {32, 40}, {400, 36}, 28.0f, slate::Text(), 0, true);
+    detail2::Note(scene, root, "Subtitle",
+         "Press Play. Try the menu bar, toolbar, tree, table, wizard and colour picker.",
+         {34, 76}, 1220, 20);
+    auto onClick = [&](GameObject* btn, const char* target, const char* fn, float arg = 0.0f) {
+        auto* b = btn->GetComponent<UIButton>();
+        b->clickTarget = target; b->clickFunction = fn; b->clickArg = arg; b->fontScale = 1.5f;
+        return btn;
+    };
+    auto line = [&](GameObject* parent, const char* name, const char* format, Vec2 pos, float width) {
+        GameObject* g = Text(scene, parent, name, format, UIAnchor::TopLeft, pos, {width, 28.0f}, 11.0f, slate::Text());
+        g->GetComponent<TextRenderer>()->wrap = true; g->GetComponent<TextRenderer>()->vcenter = false;
+        g->AddComponent<UITextBind>()->format = format;
+        return g;
+    };
+
+    // ---- Toolbar -------------------------------------------------------------------------------------------
+    {
+        GameObject* g = Child(scene, root, "Toolbar");
+        auto* w = g->AddComponent<UIToolbar>();
+        w->anchor = UIAnchor::TopLeft; w->position = {32, 100}; w->size = {420, 40};
+        w->items = "New@N|Open@O|Save@S|-|Bold@B*|Italic@I*|Underline@U*|-|Left@L=|Center@C=|Right@R=";
+        w->states = "00000000010";                 // Center starts on
+        w->showLabels = false;
+        w->chosenVar = "tool_pick"; w->varPrefix = "tb_";
+        w->accent = slate::Accent();
+    }
+
+    // ---- Card 1: tree view ---------------------------------------------------------------------------------
+    GameObject* c1 = gx::Card(scene, root, "TreeCard", "Tree view", {32, 152}, {330, 262});
+    {
+        GameObject* g = Child(scene, c1, "Tree");
+        auto* w = g->AddComponent<UITreeView>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 44}; w->size = {290, 170};
+        w->nodes = "World|>Forest|>>Wolf den|>>Old oak|>Castle|>>Gate|>>Throne room|Settings|>Audio|>Video";
+        w->expanded = "0,1"; w->selectedVar = "tree_pick";
+        w->background = Color::FromBytes(255, 255, 255, 14); w->accent = slate::Accent();
+        detail2::Note(scene, c1, "TreeHint", "Arrows open rows. Then use the arrow keys.", {20, 222}, 290, 34);
+    }
+
+    // ---- Card 2: data table ----------------------------------------------------------------------------------
+    GameObject* c2 = gx::Card(scene, root, "TableCard", "Data table", {382, 152}, {520, 262});
+    {
+        GameObject* g = Child(scene, c2, "Table");
+        auto* w = g->AddComponent<UIDataTable>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 44}; w->size = {480, 172};
+        w->columns = "Name:170|Class:170|Level";
+        w->rows = "Ava|Mage|42;Bo|Rogue|17;Cy|Knight|30;Di|Mage|8;Eli|Rogue|25;Fen|Knight|51;Gia|Mage|3;Hux|Rogue|12";
+        w->selectedVar = "table_pick";
+        w->background = Color::FromBytes(255, 255, 255, 14); w->accent = slate::Accent();
+        onClick(gx::Btn(scene, c2, "AddRow", "Add a row", {20, 224}, {150, 28}, 0), "Table", "AddSampleRow");
+        onClick(gx::Btn(scene, c2, "SortLevel", "By level", {178, 224}, {140, 28}, 0), "Table", "SortBy", 2.0f);
+        onClick(gx::Btn(scene, c2, "Unsorted", "Unsorted", {326, 224}, {130, 28}, 1), "Table", "ClearSort");
+    }
+
+    // ---- Card 3: what each part chose ----------------------------------------------------------------------
+    GameObject* c3 = gx::Card(scene, root, "StatusCard", "What you chose", {922, 152}, {326, 262});
+    line(c3, "SMenu", "Menu: {menu_pick_text|none yet}", {20, 48}, 290);
+    line(c3, "STool", "Tool: {tool_pick|none yet}", {20, 78}, 290);
+    line(c3, "SToggles", "B {tb_bold|0}  I {tb_italic|0}  U {tb_underline|0}", {20, 108}, 290);
+    line(c3, "STree", "Tree: {tree_pick_text|none yet}", {20, 138}, 290);
+    line(c3, "STable", "Row: {table_pick_text|none yet}", {20, 168}, 290);
+    line(c3, "SWizard", "Wizard step {wiz_step|0}, {wiz_progress|0} percent", {20, 198}, 290);
+    line(c3, "SForm", "Fields all valid: {wiz_valid|0}", {20, 228}, 290);
+
+    // ---- Card 4: wizard with form groups -------------------------------------------------------------------
+    GameObject* c4 = gx::Card(scene, root, "WizardCard", "Wizard and form group", {32, 426}, {700, 282});
+    {
+        GameObject* g = Child(scene, c4, "Wizard");
+        auto* w = g->AddComponent<UIWizard>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 44}; w->size = {660, 228};
+        w->steps = "Account|Profile|Done"; w->pages = "AccountPage|ProfilePage|DonePage"; w->validate = "AccountForm;ProfileForm;";
+        w->progressVar = "wiz_progress"; w->stepVar = "wiz_step";
+        w->background = Color::FromBytes(255, 255, 255, 10); w->accent = slate::Accent();
+    }
+    {
+        GameObject* page = Group(scene, c4, "AccountPage");
+        GameObject* g = Child(scene, page, "AccountForm");
+        auto* f = g->AddComponent<UIFormGroup>();
+        f->anchor = UIAnchor::TopLeft; f->position = {50, 118}; f->size = {580, 100};
+        f->fields = "Name:text|Email:email"; f->labelWidth = 110.0f; f->rowHeight = 50.0f; f->fieldHeight = 32.0f;
+        f->submitLabel.clear(); f->valuesVar = "signup_"; f->validVar = "wiz_valid"; f->showSummary = false;
+        f->Rebuild();
+    }
+    {
+        GameObject* page = Group(scene, c4, "ProfilePage");
+        GameObject* g = Child(scene, page, "ProfileForm");
+        auto* f = g->AddComponent<UIFormGroup>();
+        f->anchor = UIAnchor::TopLeft; f->position = {50, 118}; f->size = {580, 100};
+        f->fields = "Age:int:13..120|Nickname:text:?"; f->labelWidth = 110.0f; f->rowHeight = 50.0f; f->fieldHeight = 32.0f;
+        f->submitLabel.clear(); f->valuesVar = "signup_"; f->showSummary = false;
+        f->Rebuild();
+        page->active = false;
+    }
+    {
+        GameObject* page = Group(scene, c4, "DonePage");
+        GameObject* t = Text(scene, page, "DoneText", "Welcome, {signup_name|friend}! Press Finish.", UIAnchor::TopLeft, {50, 128}, {580, 30}, 20.0f, slate::Text(), 0, true);
+        t->AddComponent<UITextBind>()->format = "Welcome, {signup_name|friend}! Press Finish.";
+        GameObject* n = detail2::Note(scene, page, "DoneNote", "We will write to {signup_email|your address}. Back goes to the steps before.", {50, 164}, 580, 20);
+        n->AddComponent<UITextBind>()->format = "We will write to {signup_email|your address}. Back goes to the steps before.";
+        page->active = false;
+    }
+
+    // ---- Card 5: colour picker, advanced ----------------------------------------------------------------------
+    GameObject* c5 = gx::Card(scene, root, "ColorCard", "Colour picker, advanced", {752, 426}, {496, 282});
+    {
+        GameObject* g = Child(scene, c5, "Picker");
+        auto* cp = g->AddComponent<UIColorPicker>();
+        cp->anchor = UIAnchor::TopLeft; cp->position = {20, 44};
+        cp->advanced = true;
+        cp->Rebuild();
+        detail2::Note(scene, c5, "ColorHint", "Drag in the square, then the two sliders.",
+                      {246, 150}, 230, 60);
+        onClick(gx::Btn(scene, c5, "ToggleAdvanced", "Advanced on / off", {246, 232}, {230, 30}, 1), "Picker", "ToggleAdvanced");
+    }
+
+    // ---- Menu bar (last, so its dropdown is drawn over everything) ------------------------------------------------
+    {
+        GameObject* g = Child(scene, root, "MenuBar");
+        auto* w = g->AddComponent<UIMenuBar>();
+        w->anchor = UIAnchor::TopLeft; w->position = {0, 0}; w->size = {1280, 32};
+        w->menus = "File:New scene|Open@Ctrl+O|Save@Ctrl+S|-|~Export (soon)|Quit;Edit:Undo@Ctrl+Z|Redo@Ctrl+Y|-|Cut|Copy|Paste;View:Zoom in|Zoom out|-|Full screen;Help:Manual|About";
+        w->chosenVar = "menu_pick"; w->accent = slate::Accent();
+        w->background = Color::FromBytes(20, 24, 34, 255);
     }
     return root;
 }

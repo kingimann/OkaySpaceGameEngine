@@ -125,7 +125,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Camera | Where the player is looking: follow, switch, zoom, tilt and shake. | Follow & Switch, Zoom & Shake |
 |  | Screen Text | Words and numbers drawn on the screen. | Text Style & Format, Numbers in Text, Script Text Widgets |
 |  | Buttons & Inputs | Buttons, sliders, toggles, dropdowns, text fields and pickers. | Sliders & Toggles, Dropdowns & Text Fields, Pickers & Search |
-|  | Bars & Layout | Progress bars, game HUD parts, tabs and pages, scroll areas and grids, layout helpers and themes. | Progress Bars, Game HUD, Tabs & Pages, Scroll Areas & Grids, Layout Helpers, Themes |
+|  | Bars & Layout | Progress bars, game HUD parts, app parts, tabs and pages, scroll areas and grids, layout helpers and themes. | Progress Bars, Game HUD, App Parts, Tabs & Pages, Scroll Areas & Grids, Layout Helpers, Themes |
 |  | Popups & Dialogs | Toasts, tooltips, modals and bottom sheets. | Toasts & Tooltips, Modals & Sheets |
 | **Scenes & Environment** | Scenes & Levels | Load, restart and quit scenes, and read which scene is open. |  |
 |  | Lighting & Sky | Ambient light, background color and the lights in a scene. |  |

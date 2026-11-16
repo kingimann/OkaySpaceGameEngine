@@ -123,4 +123,13 @@ New: the game parts `UIRadialMenu`, `UIKillFeed`, `UIAmmoCounter`, `UIInteractio
 `UIAbilityIcon`; the data parts `UIBind`, `UIVisibleIf`, `UIListBind`, `UIHotReload`, `UIFocusHint`, `UIRichLinks`; rich text `[url]` and
 `[icon]` tags; `NavigateUI` Tab order; the shipped scene `examples/ui_library/ui_library_2.okayscene`; tests `ui_library2`,
 `ui_library2_example`, `ui_library2_shots`. See [ui_library.md](ui_library.md) (slice 2 section) for how to try each and what is not done.
-Slice 3 (app parts: menu bar, toolbar, tree view, data table, wizard, colour picker, form group with Submit) is still open.
+Slice 3 (app parts) is below.
+
+## Slice 3
+
+New: the app parts `UIMenuBar`, `UIToolbar`, `UITreeView`, `UIDataTable`, `UIWizard`, `UIFormGroup`; `UIColorSquare`; the colour picker's
+advanced mode (hue / saturation square, value and alpha sliders, extending `UIColorPicker` in place); the shipped scene
+`examples/ui_library/ui_library_3.okayscene`; tests `ui_library3`, `ui_library3_example`, `ui_library3_shots`. Already there and left as
+they were: `UIContextMenu`, `UITabs`, `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UIListView`, `UISearchBar`, `UIDateTimePicker`,
+`UIInputValidator` (the form group uses it). See [ui_library.md](ui_library.md) (slice 3 section) for how to try each and what is not done.
+

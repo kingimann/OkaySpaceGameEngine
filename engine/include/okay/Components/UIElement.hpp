@@ -32,6 +32,7 @@
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
 #include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIAppParts.hpp"
 #include "okay/Components/UIDataGlue.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
@@ -550,6 +551,8 @@ enum : int {
     K_RangeSlider,  // UIRangeSlider (appended: older layer numbers stay put)
     K_Validator,    // UIInputValidator ring and message (over the input it checks)
     K_GameHud,      // slice 2 game HUD parts: radial menu, kill feed, ammo, prompt, objectives, compass, item card, ability icon
+    K_AppParts,     // slice 3 app parts: menu bar, toolbar, tree view, data table, wizard, form group labels, colour square
+    K_AppPopup,     // slice 3: what an app part opens over everything else (a menu bar's dropdown)
     K_Count
 };
 } // namespace uilayers
@@ -561,7 +564,7 @@ inline const char* UILayerName(int kind) {
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
         "keybind", "modal dim", "context menu", "captions", "virtual stick", "d-pad", "touch button",
-        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet", "range slider", "validation", "game hud"};
+        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet", "range slider", "validation", "game hud", "app parts", "app popup"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -611,7 +614,8 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIBottomSheet>())    add(K_BottomSheet);
     if (g->GetComponent<UIRangeSlider>())    add(K_RangeSlider);
     if (g->GetComponent<UIInputValidator>() && g->GetComponent<UIInputField>()) add(K_Validator);
-    if (g->GetComponent<UIHudBase>() || g->GetComponent<UIAbilityIcon>()) add(K_GameHud);
+    if (g->GetComponent<UIAppBase>()) { add(K_AppParts); if (g->GetComponent<UIMenuBar>()) add(K_AppPopup); }
+    else if (g->GetComponent<UIHudBase>() || g->GetComponent<UIAbilityIcon>()) add(K_GameHud);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -657,6 +661,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UISkeleton>())       return K_Skeleton;
     if (go->GetComponent<UIBottomSheet>())    return K_BottomSheet;
     if (go->GetComponent<UIRangeSlider>())    return K_RangeSlider;
+    if (go->GetComponent<UIAppBase>()) return K_AppParts;
     if (go->GetComponent<UIHudBase>() || go->GetComponent<UIAbilityIcon>()) return K_GameHud;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;

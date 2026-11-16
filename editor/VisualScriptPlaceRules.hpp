@@ -962,6 +962,8 @@ inline const VsRule kApiRules[] = {
     {"UIRadialMenu.*", "Bars & Layout", "Game HUD"}, {"UIKillFeed.*", "Bars & Layout", "Game HUD"}, {"UIAmmoCounter.*", "Bars & Layout", "Game HUD"},
     {"UIInteractionPrompt.*", "Bars & Layout", "Game HUD"}, {"UICompass.*", "Bars & Layout", "Game HUD"}, {"UIItemTooltipCard.*", "Bars & Layout", "Game HUD"},
     {"UIAbilityIcon.*", "Bars & Layout", "Game HUD"}, {"UIHotReload.*", "Bars & Layout", "Themes"},
+    {"UIMenuBar.*", "Bars & Layout", "App Parts"}, {"UIToolbar.*", "Bars & Layout", "App Parts"}, {"UITreeView.*", "Bars & Layout", "App Parts"},
+    {"UIDataTable.*", "Bars & Layout", "App Parts"}, {"UIWizard.*", "Bars & Layout", "App Parts"}, {"UIFormGroup.*", "Bars & Layout", "App Parts"},
     {"UISearchBar.*", "Buttons & Inputs", "Pickers & Search"},
     {"UIDateTimePicker.*", "Buttons & Inputs", "Pickers & Search"},
     {"UIFilePicker.*", "Buttons & Inputs", "Pickers & Search"},

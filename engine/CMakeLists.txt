@@ -147,7 +147,9 @@ add_library(okay_engine
     src/Components/UIVars.cpp
     src/Components/UIDataGlue.cpp
     src/Components/UIGameHud.cpp
+    src/Components/UIAppParts.cpp
     src/UI/UIGameHudDraw.cpp
+    src/UI/UIAppPartsDraw.cpp
     src/Components/UIOwnerData.cpp
     src/Components/UIDamageNumbers.cpp
     src/Components/UIDialogueBox.cpp

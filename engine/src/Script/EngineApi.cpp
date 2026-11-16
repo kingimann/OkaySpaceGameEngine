@@ -420,6 +420,16 @@ EngineApi Build() {
             "The selected swatch, or -1.");
         val.pure = true;
         cp.methods.push_back(std::move(val));
+        cp.methods.push_back(method("SetAdvanced", {tBool}, {"on"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetAdvanced(std::get<bool>(a[0])); return Value{}; },
+            "Show or hide the hue / saturation square and the value and alpha sliders."));
+        cp.methods.push_back(method("SetHSVA", {tFloat, tFloat, tFloat, tFloat}, {"hue", "saturation", "value", "alpha"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetHSVA(F(a[0]), F(a[1]), F(a[2]), F(a[3])); return Value{}; },
+            "Make a colour from hue (0 to 360 degrees), saturation, value and alpha (each 0 to 1)."));
+        ApiMethod hx = method("Hex", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Hex()}; },
+            "The current colour as \"#RRGGBB\" (\"#RRGGBBAA\" when see-through).");
+        hx.pure = true; cp.methods.push_back(std::move(hx));
         api.types.push_back(std::move(cp));
     }
     // ---- grok/ui-hud: crosshair recovery, radial options, slot grid ----
@@ -1170,6 +1180,135 @@ EngineApi Build() {
         w.methods.push_back(method("ReloadNow", {}, {}, tBool,
             [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->ReloadNow()}; },
             "Apply the file now. False (and the reason in the log) when it could not be applied."));
+        api.types.push_back(std::move(w));
+    }
+    // ---- UI library slice 3: app parts ----
+    {
+        ApiType w; w.name = "UIMenuBar"; w.isComponent = true;
+        w.doc = "A bar of menus. on_select fires when an entry is chosen; ChosenPath() is \"File/Open\".";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIMenuBar>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIMenuBar>(s, c, "UI Menu Bar"); };
+        w.methods.push_back(method("Open", {tInt}, {"menu"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Open(I(a[0])); return Value{}; }, "Drop menu number `menu` down (0 is the first)."));
+        w.methods.push_back(method("Close", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Close(); return Value{}; }, "Close the open menu."));
+        w.methods.push_back(method("Choose", {tInt, tInt}, {"menu", "entry"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->Choose(I(a[0]), I(a[1]))}; },
+            "Choose an entry as if it was clicked. False for a separator, a greyed-out entry or one that does not exist."));
+        ApiMethod cp = method("ChosenPath", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->ChosenPath()}; }, "The entry chosen last, like \"File/Open\" (empty before the first).");
+        cp.pure = true; w.methods.push_back(std::move(cp));
+        ApiMethod io = method("IsOpen", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsOpen()}; }, "True while a menu is dropped down.");
+        io.pure = true; w.methods.push_back(std::move(io));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIToolbar"; w.isComponent = true;
+        w.doc = "A row of buttons, toggles and one-of-a-group choices. on_select fires when one is pressed.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIToolbar>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIToolbar>(s, c, "UI Toolbar"); };
+        w.methods.push_back(method("Press", {tInt}, {"index"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->Press(I(a[0]))}; }, "Press button number `index` (separators count). False when it cannot be pressed."));
+        ApiMethod on = method("IsOn", {tInt}, {"index"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->IsOn(I(a[0]))}; }, "True while the toggle or radio button is on.");
+        on.pure = true; w.methods.push_back(std::move(on));
+        w.methods.push_back(method("SetOn", {tInt, tBool}, {"index", "on"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetOn(I(a[0]), std::get<bool>(a[1])); return Value{}; }, "Turn a toggle or radio button on or off without pressing it."));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UITreeView"; w.isComponent = true;
+        w.doc = "Nested rows that open and close. on_select fires when the selected row changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITreeView>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UITreeView>(s, c, "UI Tree View"); };
+        w.methods.push_back(method("Select", {tInt}, {"row"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->Select(I(a[0]))}; }, "Select node number `row` (opens the rows above it). False when there is no such node."));
+        ApiMethod sel = method("Selected", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->selected}; }, "The selected node (-1 for none).");
+        sel.pure = true; w.methods.push_back(std::move(sel));
+        ApiMethod sp = method("SelectedPath", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { auto* x = of(s, c); return Value{x->selected >= 0 ? x->Path(x->selected) : std::string()}; }, "The selected node's path, like \"World/Level 1\".");
+        sp.pure = true; w.methods.push_back(std::move(sp));
+        w.methods.push_back(method("Toggle", {tInt}, {"node"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Toggle(I(a[0])); return Value{}; }, "Open a closed node, or close an open one."));
+        w.methods.push_back(method("ExpandAll", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->ExpandAll(); return Value{}; }, "Open every node."));
+        w.methods.push_back(method("CollapseAll", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->CollapseAll(); return Value{}; }, "Close every node."));
+        w.methods.push_back(method("SetNodes", {tString}, {"nodes"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { auto* x = of(s, c); x->nodes = S(a[0]); x->selected = -1; x->expanded.clear(); return Value{}; }, "Replace the tree (World|>Level 1|>>Boss ...)."));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIDataTable"; w.isComponent = true;
+        w.doc = "Columns and rows with sorting and a selected row. on_select and on_sort fire on the object's script.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIDataTable>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIDataTable>(s, c, "UI Data Table"); };
+        w.methods.push_back(method("SortBy", {tInt, tBool}, {"column", "ascending"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SortBy(I(a[0]), std::get<bool>(a[1])); return Value{}; }, "Sort by a column (0 is the first; -1 keeps the written order)."));
+        w.methods.push_back(method("SetRows", {tString}, {"rows"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRows(S(a[0])); return Value{}; }, "Replace every row (Ava|Mage|42;Bo|Rogue|17)."));
+        w.methods.push_back(method("AddRow", {tString}, {"cells"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->AddRow(S(a[0])); return Value{}; }, "Add one row at the end (Ava|Mage|42)."));
+        w.methods.push_back(method("Select", {tInt}, {"row"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->Select(I(a[0]))}; }, "Select a row by its place in the written rows. False when there is no such row."));
+        ApiMethod sel = method("Selected", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->selected}; }, "The selected row's place in the written rows (-1 for none).");
+        sel.pure = true; w.methods.push_back(std::move(sel));
+        ApiMethod rc = method("RowCount", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->RowCount()}; }, "How many rows there are.");
+        rc.pure = true; w.methods.push_back(std::move(rc));
+        ApiMethod ce = method("Cell", {tInt, tInt}, {"row", "column"}, tString,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                auto* x = of(s, c);
+                const int r = I(a[0]);
+                return Value{r >= 0 && r < x->RowCount() ? x->Cell(r, I(a[1])) : std::string()};
+            }, "The text of a cell, counting rows in the order shown (after sorting).");
+        ce.pure = true; w.methods.push_back(std::move(ce));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIWizard"; w.isComponent = true;
+        w.doc = "A sequence of steps. on_next, on_back, on_invalid and on_finish fire on the object's script.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIWizard>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIWizard>(s, c, "UI Wizard"); };
+        w.methods.push_back(method("Next", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Next()}; }, "Go to the next step (or finish on the last). False when the step is not valid yet."));
+        w.methods.push_back(method("Back", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Back()}; }, "Go back one step."));
+        w.methods.push_back(method("GoTo", {tInt}, {"step"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->GoTo(I(a[0]))}; }, "Jump to a step (earlier ones always; later ones only with Free Navigation)."));
+        w.methods.push_back(method("Restart", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Restart(); return Value{}; }, "Go back to the first step."));
+        ApiMethod st = method("Step", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->step}; }, "The current step (0 is the first).");
+        st.pure = true; w.methods.push_back(std::move(st));
+        ApiMethod fi = method("IsFinished", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Finished()}; }, "True after Next on the last step.");
+        fi.pure = true; w.methods.push_back(std::move(fi));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIFormGroup"; w.isComponent = true;
+        w.doc = "Labelled input fields that check themselves. on_submit and on_invalid fire on the object's script.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIFormGroup>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIFormGroup>(s, c, "UI Form Group"); };
+        w.methods.push_back(method("Submit", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Submit()}; }, "Check every field. When all are valid, write the answers to the variables and run on_submit; else show the problems."));
+        w.methods.push_back(method("Reset", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Reset(); return Value{}; }, "Empty every field."));
+        ApiMethod iv = method("IsValid", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsValid()}; }, "True when every field is acceptable now.");
+        iv.pure = true; w.methods.push_back(std::move(iv));
+        ApiMethod ec = method("ErrorCount", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->ErrorCount()}; }, "How many fields are not acceptable now.");
+        ec.pure = true; w.methods.push_back(std::move(ec));
+        ApiMethod gv = method("Value", {tString}, {"label"}, tString,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { auto* x = of(s, c); return Value{x->Value(x->IndexOfLabel(S(a[0])))}; }, "What is typed in the field with this label.");
+        gv.pure = true; w.methods.push_back(std::move(gv));
+        w.methods.push_back(method("SetValue", {tString, tString}, {"label", "text"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { auto* x = of(s, c); x->SetValue(x->IndexOfLabel(S(a[0])), S(a[1])); return Value{}; }, "Type text into the field with this label."));
         api.types.push_back(std::move(w));
     }
     // ---- Input ----

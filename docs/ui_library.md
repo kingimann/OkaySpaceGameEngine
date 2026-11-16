@@ -8,7 +8,7 @@ and what is missing. The library is built in slices; each slice adds the missing
 |---|---|---|
 | 1 | Essentials and layout: range slider, input validation, aspect-ratio box | built (this page) |
 | 2 | Game HUD parts and data-driven glue: radial menu, kill feed, ammo counter, interaction prompt, objective tracker, compass, item tooltip card, ability icon; two-way binding, conditional visibility, array to list, rich text links and icons, focus hints, hot reload | built (see "Slice 2" below) |
-| 3 | App parts | not started |
+| 3 | App parts: menu bar, toolbar, tree view, sortable data table, wizard, form group; colour picker upgrade (hue / saturation square, value and alpha sliders) | built (see "Slice 3" below) |
 
 ## How to try slice 1
 
@@ -183,3 +183,109 @@ Icons draw in the pixel font's cell size; with a TTF font the cell is the same s
 Found while testing the examples: `test_examples_work` fails any example scene without a main camera (Play would show nothing). The
 slice 1 example had none, so both builders now add one (`EnsureSceneCamera`) and `ui_library_1.okayscene` was written again. The same
 branch fix belongs on the slice 1 branch (`claude/ui-lib-1`).
+
+## Slice 3: app parts
+
+### How to try slice 3
+
+1. Open the editor. **File > Examples > UI library (every in-game UI part) > ui_library_3**. (Greyed out when `examples\ui_library` is not
+   next to the editor.)
+2. Press **Play**. Everything below is on screen; the card "What you chose" (top right) shows what each part picked.
+   - **Menu bar** (top). Click **File**, then **Open**: "Menu: File/Open". Slide over **Edit** while a menu is open and it switches.
+     **Export (soon)** is greyed out. Escape or a click elsewhere closes. Keys while open: Left, Right, Up, Down, Enter.
+   - **Toolbar** (under the title). **B**, **I**, **U** are toggles that stay pressed; **L**, **C**, **R** are one-of-a-group.
+   - **Tree view.** Click an arrow to open or close a row; click a name to select it; then Up, Down, Left, Right, Home, End.
+   - **Data table.** Click a header to sort (again to flip). Click a row to select it: the same person stays selected through a sort.
+     **Add a row** adds made-up rows; scroll with the wheel. Click the table first to use the keys.
+   - **Wizard and form group.** **Next** is refused while the step's form has a problem (red sentences show). Name and Email on step 1,
+     Age (13 to 120) on step 2, then **Finish**. Step 3 greets you by the name you typed (a variable, shown by a UI Text Bind).
+   - **Colour picker, advanced.** Click a swatch, drag in the square (hue across, saturation down), drag the brightness and
+     see-through sliders. **Advanced on / off** hides and shows them.
+
+To add the parts to your own scene: **GameObject > UI > App** (Menu Bar, Toolbar, Tree View, Data Table, Wizard, Form Group), the
+**Color Picker** entry has an **Advanced** tick in its Inspector, or select an object and use **Add Component**.
+
+Pictures (headless software renders, not a real window) are written by `ui_library3_shots` to `<build>/tests/ui_library3/` and copied to
+`docs/images/ui_library/` (`menubar-open.png`, `toolbar.png`, `toolbar-labels.png`, `tree.png`, `table.png`, `form-errors.png`,
+`wizard.png`, `color-advanced.png`, `example3-1280x720.png`, `example3-1280x900.png`).
+
+### What was there and what is new
+
+| Part | Before | Slice 3 |
+|---|---|---|
+| Context menu, tabs, accordion, breadcrumbs, pagination, list view, search bar, date and time picker, input validator | existed | unchanged (the input validator now also serves the form group) |
+| Colour picker | a swatch strip and a chip (`UIColorPicker`) | extended in place: `advanced` adds the hue / saturation square (`UIColorSquare`) and two real `UISlider` children (value, alpha); off by default, so old pickers look the same |
+| Menu bar, toolbar, tree view, data table, wizard, form group | missing | new: `UIMenuBar`, `UIToolbar`, `UITreeView`, `UIDataTable`, `UIWizard`, `UIFormGroup` |
+
+All new parts share one base (`UIAppBase`, a rectangle with `position`, `size`, `anchor`, three colours, `fontScale`, `interactable`), one
+layer (`K_AppParts`, appended to the layer table; a menu bar's open dropdown has its own `K_AppPopup` layer so it lands over everything),
+the files `Components/UIAppParts.hpp` (the parts), `UI/UIAppPartsDraw.cpp` (drawing), `Components/UIAppParts.cpp` (button actions), and the
+records `uimenubar`, `uitoolbar`, `uitree`, `uitable`, `uiwizard`, `uiform`, `uicolorsquare` (plus extra fields on `uicolorpicker`; an
+older version that does not know a record skips it, an older file loads with the defaults). Each is in the property registry, so the
+Inspector shows every field with its tooltip, and each has a typed script API (`UIMenuBar`, `UIToolbar`, `UITreeView`, `UIDataTable`,
+`UIWizard`, `UIFormGroup`, and `SetAdvanced`, `SetHSVA`, `Hex` on `UIColorPicker`).
+
+Text formats (kept as one readable line so a scene file stays easy to read and to diff):
+
+| Part | Format |
+|---|---|
+| Menu bar | `File:New\|Open@Ctrl+O\|-\|~Export\|Quit;Edit:Undo\|Redo` menus split by `;`, entries by `\|`, `-` a line, `~` greyed, `@Ctrl+O` a shortcut |
+| Toolbar | `New@N\|Open\|-\|Bold*\|Left=\|Center=` `-` a separator, `*` a toggle, `=` one-of-a-group, `@N` an icon (a letter, or an image path); `states` keeps `1` for each item that is on |
+| Tree view | `World\|>Forest\|>>Wolf den\|>Castle` each leading `>` is one level deeper; `expanded` lists the open rows ("0,1") |
+| Data table | columns `Name:150\|Class\|Level` (a number after a colon is the width), rows `Ava\|Mage\|42;Bo\|Rogue\|17` |
+| Wizard | `steps` `Account\|Profile\|Done`; `pages` one object name per step; `validate` one entry per step split by `;`: a Form Group object name, or `if:<condition>` (the UI Visible If language) |
+| Form group | `Name:text\|Email:email\|Age:int:13..120\|Password:text:min6\|Repeat:text:=Password\|Nick:text:?` kinds text email int number letters alnum; options `?` optional, `minN`, `maxN`, `a..b` a number range, `=Label` must match |
+
+### The parts
+
+| Part | What it does | Variables it writes | Events |
+|---|---|---|---|
+| UI Menu Bar | bar of menus; a click drops one down, sliding over another name switches, entries can be greyed, have a shortcut or be a line; keys Left, Right, Up, Down, Enter, Escape | `chosenVar` (entry number) and `<chosenVar>_text` ("File/Open") | `on_select` |
+| UI Toolbar | buttons with an icon (letter or image) and a label (`showLabels`), toggles, radio runs, separators, greyed buttons | `chosenVar` (label pressed last); with `varPrefix`, `<prefix><label>` is 1 or 0 for each toggle and radio | `on_select` |
+| UI Tree View | rows that open and close, one selected row, the open rows kept in `expanded`, scrolling (wheel and keep-selection-visible), only visible rows drawn; keys Up, Down, Left, Right, Home, End, Enter | `selectedVar` and `<selectedVar>_text` (the path) | `on_select`, `on_activate`, `on_expand`, `on_collapse` |
+| UI Data Table | columns with widths, header-click sort (numbers as numbers, words ignoring capitals, numbers first, ties keep the written order), selection that follows the row through a sort, zebra rows, scroll bar, keys Up, Down, PageUp, PageDown, Home, End; row virtualisation: a draw visits only the rows in view (tested with 10000 rows) | `selectedVar` and `<selectedVar>_text` (the first cell) | `on_select`, `on_sort`, `on_activate` |
+| UI Wizard | numbered step strip, Back and Next (Finish on the last), a step may refuse Next until its form is valid or a condition holds, a page object per step that shows only on its step, progress | `progressVar` (0 to 100), `stepVar` | `on_next`, `on_back`, `on_invalid`, `on_finish` |
+| UI Form Group | makes one UI Input Field and UI Input Validator child per field (named `<group>_<label>`), lays them under their labels, optional Submit button; `Submit()` shows every problem or fires `on_submit` | `valuesVar` + label: each answer as it is typed; `validVar`: 1 or 0 | `on_submit`, `on_invalid` |
+| UI Color Picker (advanced) | the swatch strip as before, plus a square (hue across, saturation down), a value slider and an alpha slider; a swatch click loads its numbers, an edit makes a colour of your own | - | `on_change` |
+
+Buttons can drive them with no script (**On Click**, Target = the object): menu bar `Open`, `Close`; tree `ExpandAll`, `CollapseAll`, `Select`;
+table `SortBy` (Amount = column), `ClearSort`, `Select`, `AddSampleRow`; wizard `Next`, `Back`, `Restart`; form group `Submit`, `Reset`;
+colour picker `ToggleAdvanced`.
+
+An open menu takes the click that lands on it, so a table or tree under the dropdown does not also select a row (a "claim" flag the parts
+share; the menu bar runs first for that reason).
+
+### What each file was written from
+
+All code is our own, written for this engine from the plain ideas: the menu bar and toolbar from lists of labelled boxes with hit tests
+on their rectangles, the tree view from the outline idea (a depth number per row, visible rows are those whose parents are all open),
+the table from a stable sort over precomputed keys and a row window computed from the scroll offset, the wizard from a step counter
+with a gate, the form from the same validator rules as slice 1, and the colour maths (`Render/ColorHSV.hpp`) from the definition of the
+HSV hexcone (six 60 degree sectors). They reuse only our own helpers (`UIVars`, `UIInputField`, `UIInputValidator`, `UIButton`,
+`UISlider`, the UI painter and shape fills, the property registry and the scene text format). No third-party code, fonts, images or SDKs
+were added. The drawing helpers (box, frame, text, clipping) are small copies of the slice 2 ones.
+
+### Slice 3 tests
+
+`ui_library3` (335 checks: every part's maths, parsing, pointer, keys, variables, events, native actions, claim of a click by an open menu, 3000 row tree and
+10000 row table, save and load round trips including an older colour picker line), `ui_library3_example` (87 checks: loads and plays the shipped scene:
+menu, toolbar, tree, table, a wizard through all three steps, the colour square), `ui_library3_shots` (11 checks: headless pictures), plus the existing
+`ui_layer_table`, `save_coverage`, `property_registry` and `examples_work`, which now list the new parts and the scene.
+
+### Not done in slice 3
+
+- **Gamepad and Tab focus.** The new parts are not in the focus ring that `NavigateUI` walks; keys work only after a click on the part
+  (menu bar: while it is open). Wiring them in (the slice 1 range slider shows how) is open.
+- **No scroll bar dragging** in the tree and table (the wheel, the keys and keep-selection-visible work; the bar only shows where you are).
+- **Table:** no column resize or reorder, no multi-select, no editing of cells, and rows and cells cannot contain `;` or `|` when typed as
+  text (a script that builds rows has the same limit, because the rows are one saved string).
+- **Tree view:** node names cannot contain `|`; no drag to reorder, no icons, no check boxes.
+- **Menu bar:** no sub-menus, no check marks, no Alt+letter opening; shortcuts are shown but not bound to keys.
+- **Toolbar:** horizontal only; no tooltips; an icon is one or two letters or an image path.
+- **Form group:** one text box per field (no drop-downs, check boxes or password dots yet: set the field's `contentType` on the child by hand);
+  the labels are drawn to the left of the boxes only.
+- **Colour picker:** the colour picker has no registry entry (it still saves through its older record); the hex number is not typed in, only read
+  (`Hex()` from a script); the value and alpha sliders are plain sliders (no gradient behind them).
+- **Layout:** the parts use fixed pixel boxes like the other app widgets; the example scene is laid out for 1280 x 720 and scaled by the canvas.
+- Nothing in this slice was run on Windows or in a real window. The editor files were syntax-checked with `g++ -fsyntax-only` (the whole `main.cpp` too); the editor was not linked or run.
+

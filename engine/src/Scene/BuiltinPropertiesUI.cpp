@@ -24,6 +24,7 @@
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
 #include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIAppParts.hpp"
 #include "okay/Components/UIDataGlue.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UIScrollView.hpp"
@@ -898,6 +899,99 @@ void RegisterUILibrary2() {
     }
 }
 
+
+// UI library slice 3: the app parts.
+template <class B> B& AppBaseProps(B& b) {
+    HudBaseProps(b);
+    b.AddFloat("fontScale", &UIAppBase::fontScale).Range(0.5, 8, 0.05).Tooltip("Size of the words (1 is the small 8 pixel letters)")
+     .AddBool("interactable", &UIAppBase::interactable).Tooltip("The player can click and use it");
+    return b;
+}
+
+void RegisterUILibrary3() {
+    {
+        PropertyBuilder<UIMenuBar> b("UIMenuBar", "uimenubar", "UI");
+        AppBaseProps(b);
+        b.AddString("menus", &UIMenuBar::menus).Tooltip("File:New|Open|-|Quit;Edit:Undo|Redo  (menus split by ;  entries by |  - is a line  ~ greys out  @Ctrl+S shows a shortcut)")
+         .AddFloat("itemHeight", &UIMenuBar::itemHeight).Range(12, 100, 1).Tooltip("Height of one entry in a dropdown")
+         .AddFloat("menuWidth", &UIMenuBar::menuWidth).Range(40, 800, 1).Tooltip("The least width of a dropdown")
+         .AddString("chosenVar", &UIMenuBar::chosenVar).Tooltip("A variable that receives the entry number (<name>_text gets \"Menu/Entry\")");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIToolbar> b("UIToolbar", "uitoolbar", "UI");
+        AppBaseProps(b);
+        b.AddString("items", &UIToolbar::items).Tooltip("New@N|Open|-|Bold*|Left=  (- separator, * toggle, = one-of-a-group, @icon = image path or letters, ~ greyed)")
+         .AddString("states", &UIToolbar::states).Tooltip("One letter per item: 1 where a toggle or radio starts on")
+         .AddBool("showLabels", &UIToolbar::showLabels).Tooltip("Show the words next to the icons")
+         .AddString("chosenVar", &UIToolbar::chosenVar).Tooltip("A variable that receives the label of the button pressed last")
+         .AddString("varPrefix", &UIToolbar::varPrefix).Tooltip("Toggles and radios write 1 or 0 into <prefix><label>");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UITreeView> b("UITreeView", "uitree", "UI");
+        AppBaseProps(b);
+        b.AddString("nodes", &UITreeView::nodes).Tooltip("World|>Level 1|>>Boss|Settings  (one row per |, each leading > goes one level deeper)")
+         .AddString("expanded", &UITreeView::expanded).Tooltip("The numbers of the open rows, separated by commas")
+         .AddInt("selected", &UITreeView::selected).Range(-1, 100000, 1).Tooltip("The selected row (-1 for none)")
+         .AddFloat("rowHeight", &UITreeView::rowHeight).Range(8, 200, 1).Tooltip("Height of a row")
+         .AddFloat("indent", &UITreeView::indent).Range(0, 200, 1).Tooltip("How far each level moves right")
+         .AddString("selectedVar", &UITreeView::selectedVar).Tooltip("A variable that receives the selected row's number (<name>_text gets its path)");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIDataTable> b("UIDataTable", "uitable", "UI");
+        AppBaseProps(b);
+        b.AddString("columns", &UIDataTable::columns).Tooltip("Name:150|Class|Level  (a number after a colon is the column's width)")
+         .AddString("rows", &UIDataTable::rows).Tooltip("Ava|Mage|42;Bo|Rogue|17  (rows split by ;  cells by |)")
+         .AddFloat("rowHeight", &UIDataTable::rowHeight).Range(8, 200, 1).Tooltip("Height of a row")
+         .AddFloat("headerHeight", &UIDataTable::headerHeight).Range(8, 200, 1).Tooltip("Height of the header row")
+         .AddInt("sortColumn", &UIDataTable::sortColumn).Range(-1, 1000, 1).Tooltip("The column the rows are sorted by (-1 keeps the written order)")
+         .AddBool("ascending", &UIDataTable::ascending).Tooltip("Sort from small to large (off: large to small)")
+         .AddBool("sortable", &UIDataTable::sortable).Tooltip("A click on a header sorts by it")
+         .AddBool("zebra", &UIDataTable::zebra).Tooltip("Every other row is a little lighter")
+         .AddInt("selected", &UIDataTable::selected).Range(-1, 10000000, 1).Tooltip("The selected row, as its place in Rows (-1 for none)")
+         .AddString("selectedVar", &UIDataTable::selectedVar).Tooltip("A variable that receives the selected row's number (<name>_text gets its first cell)");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIWizard> b("UIWizard", "uiwizard", "UI");
+        AppBaseProps(b);
+        b.AddString("steps", &UIWizard::steps).Tooltip("Account|Profile|Done  (the step names)")
+         .AddString("pages", &UIWizard::pages).Tooltip("One object name per step, separated by |: only the current step's page is shown")
+         .AddString("validate", &UIWizard::validate).Tooltip("One entry per step, separated by ;: a Form Group object name, or if:<condition>. Next waits until it is valid")
+         .AddInt("step", &UIWizard::step).Range(0, 1000, 1).Tooltip("The current step (0 is the first)")
+         .AddBool("showButtons", &UIWizard::showButtons).Tooltip("Show Back and Next at the bottom")
+         .AddBool("freeNavigation", &UIWizard::freeNavigation).Tooltip("A click on any step number jumps there (else only back)")
+         .AddString("progressVar", &UIWizard::progressVar).Tooltip("A variable that receives how far along you are, 0 to 100")
+         .AddString("stepVar", &UIWizard::stepVar).Tooltip("A variable that receives the step number");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIFormGroup> b("UIFormGroup", "uiform", "UI");
+        AppBaseProps(b);
+        b.AddString("fields", &UIFormGroup::fields).Tooltip("Name:text|Email:email|Age:int:13..120|Nick:text:?  (kinds text email int number letters alnum; ? optional, minN, maxN, a..b, =Label must match)")
+         .AddFloat("labelWidth", &UIFormGroup::labelWidth).Range(20, 800, 1).Tooltip("Width of the label column")
+         .AddFloat("rowHeight", &UIFormGroup::rowHeight).Range(20, 300, 1).Tooltip("Height of one field with its message line")
+         .AddFloat("fieldHeight", &UIFormGroup::fieldHeight).Range(16, 200, 1).Tooltip("Height of the input box")
+         .AddString("submitLabel", &UIFormGroup::submitLabel).Tooltip("Words on the Submit button (empty = no button)")
+         .AddString("valuesVar", &UIFormGroup::valuesVar).Tooltip("Each answer is written into <prefix><label> as it changes (empty = none)")
+         .AddString("validVar", &UIFormGroup::validVar).Tooltip("A variable that holds 1 while every field is valid, else 0")
+         .AddBool("showSummary", &UIFormGroup::showSummary).Tooltip("Show how many fields still need fixing")
+         .AddColor("fieldColor", &UIFormGroup::fieldColor).Range(0, 1, 0.01).Tooltip("Colour of the input boxes")
+         .AddColor("fieldFocusColor", &UIFormGroup::fieldFocusColor).Range(0, 1, 0.01).Tooltip("Colour of the box being typed in");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIColorSquare> b("UIColorSquare", "uicolorsquare", "UI");
+        AppBaseProps(b);
+        b.AddFloat("hue", &UIColorSquare::hue).Range(0, 360, 1).Tooltip("Hue in degrees (left to right)")
+         .AddFloat("sat", &UIColorSquare::sat).Range(0, 1, 0.01).Tooltip("Saturation (full at the top)")
+         .AddFloat("brightness", &UIColorSquare::brightness).Range(0, 1, 0.01).Tooltip("The value the square is drawn at");
+        b.Commit();
+    }
+}
+
 void RegisterUIInventoryBind() {
     PropertyBuilder<UIInventoryBind> b("UIInventoryBind", "uiinvbind", "UI");
     b.AddString("inventoryName", &UIInventoryBind::inventoryName).Tooltip("Object that holds the Inventory (empty = the Player, else the first Inventory in the scene)")
@@ -981,6 +1075,7 @@ void RegisterUIProperties() {
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
     RegisterUILibrary2();
+    RegisterUILibrary3();
 }
 
 } // namespace detail

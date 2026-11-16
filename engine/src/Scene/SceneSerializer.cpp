@@ -3529,6 +3529,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
         for (const Color& c : cp->swatches)
             out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+        if (cp->advanced || cp->useCustom)   // slice 3: the advanced mode, appended so an older reader stops after the swatches
+            out << " " << (cp->advanced ? 1 : 0) << " " << cp->hue << " " << cp->sat << " " << cp->val << " " << cp->alpha << " "
+                << (cp->useCustom ? 1 : 0) << " " << cp->squareSize;
         out << "\n";
     }
     for (auto* sa : go->GetComponents<UISafeArea>())
@@ -8700,6 +8703,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         Color c;
                         in >> c.r >> c.g >> c.b >> c.a;
                         cp->swatches.push_back(c);
+                    }
+                    {   // slice 3 fields; an older file ends after the swatches. Read into temporaries so a short line leaves the defaults.
+                        int adv = 0, custom = 0; float hh = 0, ss = 0, vv = 0, aa = 1, sq = 140;
+                        if (in >> adv >> hh >> ss >> vv >> aa >> custom >> sq) {
+                            cp->advanced = adv != 0; cp->useCustom = custom != 0; cp->hue = hh; cp->sat = ss; cp->val = vv; cp->alpha = aa; cp->squareSize = sq;
+                        } else in.clear();
                     }
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();

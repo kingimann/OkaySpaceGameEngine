@@ -14,6 +14,7 @@
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
 #include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIAppParts.hpp"
 #include "okay/Components/UIDataGlue.hpp"
 #include <iostream>
 #include <string>
@@ -333,6 +334,44 @@ inline void WriteMoreUI(std::ostream& out, GameObject* go) {
         UIWriteColor(out, w->readyColor);
         out << ' ' << UIQuote(w->label) << ' ' << UIQuote(w->iconPath) << ' ' << UIQuote(w->keyText) << '\n';
     }
+    // ---- slice 3: app parts ----
+    auto appBase = [&](const UIAppBase* w) {
+        hudBase(w);
+        out << ' ' << w->fontScale << ' ' << UIBit(w->interactable);
+    };
+    if (auto* w = go->GetComponent<UIMenuBar>()) {
+        out << "  uimenubar "; appBase(w);
+        out << ' ' << w->itemHeight << ' ' << w->menuWidth << ' ' << UIQuote(w->menus) << ' ' << UIQuote(w->chosenVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIToolbar>()) {
+        out << "  uitoolbar "; appBase(w);
+        out << ' ' << UIBit(w->showLabels) << ' ' << UIQuote(w->items) << ' ' << UIQuote(w->states) << ' ' << UIQuote(w->chosenVar) << ' ' << UIQuote(w->varPrefix) << '\n';
+    }
+    if (auto* w = go->GetComponent<UITreeView>()) {
+        out << "  uitree "; appBase(w);
+        out << ' ' << w->rowHeight << ' ' << w->indent << ' ' << w->selected << ' ' << UIQuote(w->nodes) << ' ' << UIQuote(w->expanded) << ' ' << UIQuote(w->selectedVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIDataTable>()) {
+        out << "  uitable "; appBase(w);
+        out << ' ' << w->rowHeight << ' ' << w->headerHeight << ' ' << w->sortColumn << ' ' << UIBit(w->ascending) << ' ' << UIBit(w->sortable)
+            << ' ' << UIBit(w->zebra) << ' ' << w->selected << ' ' << UIQuote(w->columns) << ' ' << UIQuote(w->rows) << ' ' << UIQuote(w->selectedVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIWizard>()) {
+        out << "  uiwizard "; appBase(w);
+        out << ' ' << w->step << ' ' << UIBit(w->showButtons) << ' ' << UIBit(w->freeNavigation) << ' ' << UIQuote(w->steps) << ' ' << UIQuote(w->pages)
+            << ' ' << UIQuote(w->validate) << ' ' << UIQuote(w->progressVar) << ' ' << UIQuote(w->stepVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIFormGroup>()) {
+        out << "  uiform "; appBase(w);
+        out << ' ' << w->labelWidth << ' ' << w->rowHeight << ' ' << w->fieldHeight << ' ' << UIBit(w->showSummary) << ' ';
+        UIWriteColor(out, w->fieldColor); out << ' ';
+        UIWriteColor(out, w->fieldFocusColor);
+        out << ' ' << UIQuote(w->fields) << ' ' << UIQuote(w->submitLabel) << ' ' << UIQuote(w->valuesVar) << ' ' << UIQuote(w->validVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIColorSquare>()) {
+        out << "  uicolorsquare "; appBase(w);
+        out << ' ' << w->hue << ' ' << w->sat << ' ' << w->brightness << '\n';
+    }
     if (auto* w = go->GetComponent<UIBind>())
         out << "  uidatabind " << (int)w->mode << ' ' << UIQuote(w->var) << ' ' << UIQuote(w->varHigh) << '\n';
     if (auto* w = go->GetComponent<UIVisibleIf>())
@@ -356,6 +395,70 @@ inline bool TryReadMoreUI(const std::string& field, std::istream& in, GameObject
         w->anchor = (UIAnchor)anchor;
         UIReadColor(in, w->background); UIReadColor(in, w->accent); UIReadColor(in, w->textColor);
     };
+    auto readApp = [&](UIAppBase* w) {
+        readHud(w);
+        int inter = 1;
+        in >> w->fontScale >> inter;
+        w->interactable = bit(inter);
+    };
+    if (field == "uimenubar") {
+        auto* w = go->AddComponent<UIMenuBar>();
+        readApp(w);
+        in >> w->itemHeight >> w->menuWidth;
+        w->menus = UIReadQuoted(in); w->chosenVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitoolbar") {
+        auto* w = go->AddComponent<UIToolbar>();
+        int labels = 1;
+        readApp(w);
+        in >> labels;
+        w->showLabels = bit(labels);
+        w->items = UIReadQuoted(in); w->states = UIReadQuoted(in); w->chosenVar = UIReadQuoted(in); w->varPrefix = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitree") {
+        auto* w = go->AddComponent<UITreeView>();
+        readApp(w);
+        in >> w->rowHeight >> w->indent >> w->selected;
+        w->nodes = UIReadQuoted(in); w->expanded = UIReadQuoted(in); w->selectedVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitable") {
+        auto* w = go->AddComponent<UIDataTable>();
+        int asc = 1, sortable = 1, zebra = 1;
+        readApp(w);
+        in >> w->rowHeight >> w->headerHeight >> w->sortColumn >> asc >> sortable >> zebra >> w->selected;
+        w->ascending = bit(asc); w->sortable = bit(sortable); w->zebra = bit(zebra);
+        w->columns = UIReadQuoted(in); w->rows = UIReadQuoted(in); w->selectedVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiwizard") {
+        auto* w = go->AddComponent<UIWizard>();
+        int buttons = 1, freeNav = 0;
+        readApp(w);
+        in >> w->step >> buttons >> freeNav;
+        w->showButtons = bit(buttons); w->freeNavigation = bit(freeNav);
+        w->steps = UIReadQuoted(in); w->pages = UIReadQuoted(in); w->validate = UIReadQuoted(in);
+        w->progressVar = UIReadQuoted(in); w->stepVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiform") {
+        auto* w = go->AddComponent<UIFormGroup>();
+        int summary = 1;
+        readApp(w);
+        in >> w->labelWidth >> w->rowHeight >> w->fieldHeight >> summary;
+        w->showSummary = bit(summary);
+        UIReadColor(in, w->fieldColor); UIReadColor(in, w->fieldFocusColor);
+        w->fields = UIReadQuoted(in); w->submitLabel = UIReadQuoted(in); w->valuesVar = UIReadQuoted(in); w->validVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uicolorsquare") {
+        auto* w = go->AddComponent<UIColorSquare>();
+        readApp(w);
+        in >> w->hue >> w->sat >> w->brightness;
+        return true;
+    }
     if (field == "uiradialmenu") {
         auto* w = go->AddComponent<UIRadialMenu>();
         int key = 0, hold = 1, close = 1, always = 0;

@@ -375,7 +375,7 @@ static void TestRegistryBasics() {
         "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
         "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind",
         "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
-        "UIPagination", "UISkeleton", "UIBottomSheet", "UIRangeSlider", "UIAspectRatio", "UIInputValidator", "UIRadialMenu", "UIKillFeed", "UIAmmoCounter", "UIInteractionPrompt",
+        "UIPagination", "UISkeleton", "UIBottomSheet", "UIRangeSlider", "UIAspectRatio", "UIInputValidator", "UIRadialMenu", "UIKillFeed", "UIMenuBar", "UIToolbar", "UITreeView", "UIDataTable", "UIWizard", "UIFormGroup", "UIColorSquare", "UIAmmoCounter", "UIInteractionPrompt",
         "UIObjectiveTracker", "UICompass", "UIItemTooltipCard", "UIAbilityIcon", "UIBind", "UIVisibleIf", "UIListBind", "UIHotReload", "UIFocusHint", "UIRichLinks"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 

@@ -804,6 +804,17 @@ target_link_libraries(test_ui_library2_example PRIVATE okay::engine)
 target_compile_definitions(test_ui_library2_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_library2_example COMMAND test_ui_library2_example)
 
+# UI library slice 3: app parts (menu bar, toolbar, tree view, data table, wizard, form group) and the colour picker's advanced mode
+add_executable(test_ui_library3 test_ui_library3.cpp)
+target_link_libraries(test_ui_library3 PRIVATE okay::engine)
+add_test(NAME ui_library3 COMMAND test_ui_library3)
+
+# The shipped sample scene examples/ui_library/ui_library_3.okayscene, loaded and played
+add_executable(test_ui_library3_example test_ui_library3_example.cpp)
+target_link_libraries(test_ui_library3_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library3_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library3_example COMMAND test_ui_library3_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -2347,6 +2358,12 @@ if(SDL2_FOUND)
     target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
     target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
+
+    add_executable(test_ui_library3_shots test_ui_library3_shots.cpp)
+    target_link_libraries(test_ui_library3_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library3_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library3_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library3_shots COMMAND test_ui_library3_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})

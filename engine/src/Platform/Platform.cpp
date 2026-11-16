@@ -76,6 +76,15 @@ Backend* Default() {
     return Get(DefaultKind() == BackendKind::Own ? BackendKind::Sdl2 : BackendKind::Own);
 }
 
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return sdlWindow ? WrapSdl2WindowImpl(sdlWindow) : nullptr;
+#else
+    (void)sdlWindow;
+    return nullptr;
+#endif
+}
+
 // ---- Backend defaults (shared by both backends) ----------------------------------
 Key Backend::KeyForChar(char c) {
     // US layout: the HID numbering puts a..z at 4.., 1..9 at 30.., 0 at 39.

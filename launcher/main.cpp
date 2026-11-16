@@ -129,6 +129,10 @@ extern "C" {
 
 namespace fs = std::filesystem;
 
+// The launcher's windows are SDL windows, so the asks about them (focus, pointer, event pump) go to the sdl2 backend of okay::platform
+// whatever OKAY_PLATFORM_BACKEND says: the own backend does not know SDL's windows. (docs/sdl_removal_plan.md, step 3)
+static okay::platform::Backend& SdlSeam() { return *okay::platform::Get(okay::platform::BackendKind::Sdl2); }
+
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
 #endif
@@ -9951,7 +9955,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             peerTyping = g_chatPeerTyping;
             // We're looking at this conversation (window focused, not minimised):
             // lets the poller mark it read and tell the peer we're in the chat.
-            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = okay::platform::TicksMs32();
+            if (!selUid.empty() && SdlSeam().KeyboardFocusWindowId() != 0) g_chatViewMs = okay::platform::TicksMs32();
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -16685,6 +16689,7 @@ static void DrawToastOverlay() {
 struct ChatWindowHost {
     SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
+    std::unique_ptr<okay::platform::Window> pw;   // a non-owning seam view of `win` (okay::platform::WrapSdl2Window): window state asks go through it
 };
 static ChatWindowHost g_chatHost;
 // Keep a window reachable: when too little of it (or its title bar) is on any
@@ -16721,12 +16726,13 @@ static bool ChatHostCreate() {
     g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
                                       SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!g_chatHost.win) return false;
+    g_chatHost.pw = okay::platform::WrapSdl2Window(g_chatHost.win);
     SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
     okay::SetAppIcon(g_chatHost.win);
     // No VSync here: the launcher's present already paces the loop.
     g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
     if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
-    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
+    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; g_chatHost.pw.reset(); return false; }
     g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
@@ -16761,7 +16767,7 @@ static void ChatHostSync() {
     }
 }
 static bool ChatHostFocused() {
-    return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    return g_chatHost.shown && g_chatHost.pw && g_chatHost.pw->IsFocused();
 }
 static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
 // Route an SDL event to the chat window; true when it belonged to it.
@@ -16824,7 +16830,7 @@ static void PlaytimeTick(bool loggedIn) {
 // Draw + present one chat-window frame (call with the launcher's context current).
 static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;
+    if (g_chatHost.pw && g_chatHost.pw->IsMinimized()) return;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
     const float fontScale = ImGui::GetIO().FontGlobalScale;
@@ -18332,7 +18338,7 @@ int main(int argc, char** argv) {
         VerifyJob vj{ accountPtr.get(), false };
         okay::lt::Thread* vt = okay::lt::StartThread(VerifySessionWorker, "okay-verify", &vj);
         while (!vj.done) {
-            SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
+            SdlSeam().PumpEvents();   // keep the window responsive (and mapped) while we wait
             int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
             okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
             okay::platform::DelayMs(16);
@@ -18442,7 +18448,7 @@ int main(int argc, char** argv) {
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
-                    SDL_GetGlobalMouseState(&gx, &gy);
+                    SdlSeam().GlobalMouseState(&gx, &gy);
                     SDL_GetWindowPosition(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;

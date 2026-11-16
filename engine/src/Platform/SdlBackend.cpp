@@ -27,10 +27,11 @@ SampleFormat FromSdlFormat(SDL_AudioFormat f) { return SDL_AUDIO_ISFLOAT(f) ? Sa
 
 class SdlWindow final : public Window {
 public:
-    SdlWindow(SDL_Window* w) : m_win(w) {}
+    /// `owns` false = a view over a window the app made with SDL_CreateWindow (WrapSdl2Window): it is never destroyed here.
+    SdlWindow(SDL_Window* w, bool owns = true) : m_win(w), m_owns(owns) {}
     ~SdlWindow() override {
         DestroyGLContext();
-        if (m_win) SDL_DestroyWindow(m_win);
+        if (m_owns && m_win) SDL_DestroyWindow(m_win);
     }
     uint32_t Id() const override { return SDL_GetWindowID(m_win); }
     BackendKind Kind() const override { return BackendKind::Sdl2; }
@@ -52,6 +53,10 @@ public:
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+    bool IsMinimized() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MINIMIZED) != 0; }
+    bool IsVisible() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_HIDDEN) == 0; }
+    bool HasMouseFocus() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MOUSE_FOCUS) != 0; }
+    bool SetInputFocus() override { return SDL_SetWindowInputFocus(m_win) == 0; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom((void*)rgba, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
@@ -90,6 +95,7 @@ public:
 
 private:
     SDL_Window* m_win = nullptr;
+    bool m_owns = true;
     SDL_GLContext m_ctx = nullptr;
 };
 
@@ -271,6 +277,12 @@ public:
         return n ? n : "";
     }
 
+    uint32_t KeyboardFocusWindowId() override { SDL_Window* w = SDL_GetKeyboardFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    uint32_t MouseFocusWindowId() override { SDL_Window* w = SDL_GetMouseFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
+    uint32_t GlobalMouseState(int* x, int* y) override { return SDL_GetGlobalMouseState(x, y); }
+    void PumpEvents() override { SDL_PumpEvents(); }
+
     int GamepadDeviceCount() override {
         if (!(SDL_WasInit(0) & SDL_INIT_GAMECONTROLLER)) { if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return 0; m_started |= SDL_INIT_GAMECONTROLLER; }
         const int n = SDL_NumJoysticks();
@@ -335,6 +347,10 @@ private:
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
+
+std::unique_ptr<Window> WrapSdl2WindowImpl(void* sdlWindow) {
+    return std::unique_ptr<Window>(new SdlWindow(static_cast<SDL_Window*>(sdlWindow), false));
+}
 
 } // namespace okay::platform
 #endif // OKAY_PLATFORM_HAVE_SDL2

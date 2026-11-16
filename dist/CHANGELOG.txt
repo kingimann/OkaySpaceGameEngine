@@ -1,5 +1,52 @@
 OkaySpace Game Engine — Changelog
 
+v2.879.0
+  Modeling
+  - Guided modeling, built into the existing 3D modeler: pick a category
+    (Architecture, Vehicles, Characters, or Fences), pick a start design,
+    and get a normal editable model that you can customise and keep working
+    on by hand. Fences come in 7 styles; Architecture has 29 designs (walls
+    that can follow a path you click out, stairs, doors, windows, roofs and
+    whole buildings); Vehicles has cars, trucks, buses, motorcycles and
+    trailers (33 designs); Characters has humans, robots and creatures
+    (26 designs). Every part (a wheel, a headlight, a head, a hat, a window)
+    can be swapped for another design, resized and moved, and you can save
+    your own parts and whole models as templates. If you change a setting,
+    the things you drew or edited by hand are kept; if a change would touch
+    something you edited, the modeler asks first.
+  - A Detail slider from blocky low poly to very fine (Low, Medium, High,
+    Ultra) with the triangle count shown next to it, a Seed with "Randomise
+    within style", and a check that tells you if a model is one connected
+    piece. Try File > Examples > Guided modeling.
+  - Material slots: give faces different colours (and pictures, in the
+    software view), assign selected faces to a slot, and pick colours from a
+    library. Repair Mesh closes holes. Vertex colours can be painted with a
+    smooth brush. Crease edges for smooth subdivision (shown pink) and bevel
+    weights (shown green).
+  - Faster modeling: a quick toolbar, a right-click menu, a Ctrl+K command
+    palette (type "bevel" and press Enter), Shift+R to repeat the last
+    action, a hint bar and a clickable undo list. Hide, reveal and isolate
+    faces (H, Alt+H), box, circle and lasso select (B, C, L) with X-ray
+    (Alt+Z), Shift+D duplicate, mirror on X, Y or Z, add shapes at the
+    cursor, join and separate objects. Select similar, grow and shrink.
+  - New tools: spin (lathe), extrude along a path, an array that follows a
+    curve, bezier curves that become pipes, ribbons or swept shapes, quad
+    remesh, shrinkwrap, "Reduce Polygons", measuring and snapping to
+    vertices, edges and faces, reference images in the Scene view, and a
+    browser for model parts in your project. Add a copy to the scene with a
+    collider of your choice.
+  - Fixes: dissolving edges no longer leaves holes in closed models and is
+    about 150 times faster on big ones; weld, delete faces, decimate and
+    fill holes no longer wipe or corrupt models on odd input; many tools no
+    longer turn a model into garbage when given invalid numbers. After Play
+    and then Stop, objects that use a saved model are no longer replaced by
+    plain cubes.
+
+  Not done yet (said plainly): the guided panel and the new tools have been
+  tested in headless runs but not by a person in the editor window, the
+  graphics-card drawing of material slots and vertex colours has never run
+  on a graphics card, and motorcycles and hair are still rough.
+
 v2.878.0
   Walking, physics and digging
   - Walking looks like walking and running looks like running. The default

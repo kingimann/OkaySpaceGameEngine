@@ -47,10 +47,12 @@ struct Arena {
         ok = sc->LoadSource(src, &e);
         if (!ok) std::printf("  parse: %s\n", e.c_str());
         s.Start();
+        s.Update(1.0f / 60.0f);   // Destroy() takes effect at the end of a frame
     }
     void Hit(GameObject* other) {
         Collision3D c; c.gameObject = other;
         sc->OnCollisionEnter3D(c);
+        s.Update(1.0f / 60.0f);
     }
     bool Alive(GameObject* g) const { return GameObject::FromInstanceId(g->InstanceId()) != nullptr; }
     vs::VsValue Global(const char* n) const { return sc->VM()->GetGlobal(n); }

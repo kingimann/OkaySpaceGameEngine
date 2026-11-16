@@ -47,6 +47,13 @@ Storage and download traffic count against the Supabase plan's quotas.
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
 
+## Try a branch before it is released (test builds)
+
+To let the owner try a branch without a pull request or a release, start the **Test build (dev channel)** workflow (`gh workflow run dev-build.yml
+--ref main -f ref=<branch> -f note="<what to try>"`). It publishes to the `dev/` folder only, with its own script (`scripts/publish-supabase-dev.sh`),
+and never touches `VERSION.txt`, `versions.json` or the GitHub release. Everything about it, including the number it gets and how the owner switches it
+on, is in [release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
+
 ## Publishing the official game
 
 The official game shows at the top of the launcher's Play page. Players click

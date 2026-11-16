@@ -2669,28 +2669,11 @@ int main(int argc, char** argv) {
             for (const auto& up : scene.Objects()) {
                 auto* tr = up->GetComponent<TextRenderer>();
                 if (!tr || !up->active || tr->screenSpace || UIHidden(up.get())) continue;
-                float op = UIOpacity(up.get());   // canvas master fade
-                SDL_Color col{(Uint8)(tr->color.r * 255), (Uint8)(tr->color.g * 255),
-                              (Uint8)(tr->color.b * 255), (Uint8)(tr->color.a * 255 * op)};
-                SDL_Color sh{(Uint8)(tr->shadowColor.r * 255), (Uint8)(tr->shadowColor.g * 255),
-                             (Uint8)(tr->shadowColor.b * 255), (Uint8)(tr->shadowColor.a * 255 * op)};
-                SDL_Color ol{(Uint8)(tr->outlineColor.r * 255), (Uint8)(tr->outlineColor.g * 255),
-                             (Uint8)(tr->outlineColor.b * 255), (Uint8)(tr->outlineColor.a * 255 * op)};
-                SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
-                float px = tr->EffectivePixelSize() * scale;
-                okay::TtfFont* fnt = tr->Font();
-                if (tr->shadow)
-                    DrawText(renderer, tr->text, o.x + tr->shadowOffset.x * px,
-                             o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                const float fo = fnt ? 1.0f : px;   // TTF: ~1 screen px, not a whole font pixel
-                if (tr->outline) {
-                    DrawText(renderer, tr->text, o.x - fo, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x + fo, o.y, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x, o.y - fo, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                    DrawText(renderer, tr->text, o.x, o.y + fo, px, ol, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                }
-                DrawText(renderer, tr->text, (float)o.x, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
-                if (tr->bold) DrawText(renderer, tr->text, (float)o.x + fo, (float)o.y, px, col, 0, 0, false, false, SDL_Color{0,0,0,0}, fnt);
+                // Shadow, outline, bold, italic and (with Rich Text on) the colour / bold / italic / size tags: the
+                // engine's shared world-text drawing (okay/UI/UIRenderer.hpp).
+                const float op = UIOpacity(up.get());   // canvas master fade
+                const SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
+                ui2d::DrawWorldText(*renderer, *tr, (float)o.x, (float)o.y, tr->EffectivePixelSize() * scale, op);
             }
         }
 

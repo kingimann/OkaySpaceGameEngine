@@ -20,6 +20,8 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+    # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release_channels.md "Test builds").
+    add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
     # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -797,6 +799,23 @@ target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${C
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
 add_test(NAME example_scenes COMMAND test_example_scenes)
 
+# Every project template is proven to work (docs/templates_check.md): the launcher's flow (CreateProject into a temp folder,
+# the version gate, reopen), one Main Camera, a stable save, the Problems model, 120 Play frames, and the family's own
+# interaction with simulated keys and mouse. Links the ImGui-free EditorState and the version gate, like test_example_scenes.
+add_executable(test_templates_work test_templates_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_templates_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_templates_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_TEST_ENGINE_VERSION="${PROJECT_VERSION}")
+target_link_libraries(test_templates_work PRIVATE okay::engine)
+add_test(NAME templates_work COMMAND test_templates_work)
+
+# Every example scene in examples/ (from a copy) and every File > Examples entry loads, has no Problems error, shows
+# something to the camera and plays 60 frames; the Windows release carries the folders the menu needs.
+add_executable(test_examples_work test_examples_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(test_examples_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_examples_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_examples_work PRIVATE okay::engine)
+add_test(NAME examples_work COMMAND test_examples_work)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)
@@ -894,6 +913,26 @@ add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
+# The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
+add_executable(test_project_context_model test_project_context_model.cpp)
+target_compile_features(test_project_context_model PRIVATE cxx_std_17)
+target_include_directories(test_project_context_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME project_context_model COMMAND test_project_context_model)
+
+# What the new Project panel menu items do on real folders: the dialogue / quest / behavior tree / cutscene files the Create menu makes (read back and validated, written safely), Reimport All in Folder, folder numbers for Properties, Duplicate and Paste on a selection, and Move to... (the picker's rule and Browser::Move agree).
+add_executable(test_project_menu_ops test_project_menu_ops.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_menu_ops PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_menu_ops PRIVATE okay::engine)
+add_test(NAME project_menu_ops COMMAND test_project_menu_ops)
+
+# The editor's launcher (editor/LaunchFile.cpp: Open with Default App, Open in External Editor, Show in Explorer) with fake programs on PATH: a hostile file name arrives as one argument, a name that starts with "-" is not an option, programs and scripts are refused, nothing goes through a shell. Linux only (fork + execv); the Windows half uses ShellExecuteW and is only compile-checked.
+if(NOT WIN32)
+    add_executable(test_launch_file test_launch_file.cpp ${PROJECT_SOURCE_DIR}/editor/LaunchFile.cpp)
+    target_compile_features(test_launch_file PRIVATE cxx_std_17)
+    target_include_directories(test_launch_file PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+    add_test(NAME launch_file COMMAND test_launch_file)
+endif()
 
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
@@ -1729,6 +1768,31 @@ add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
 
+# Crash reports in detail (docs/crash_reports.md): the context the handler keeps and the text it writes, the handler itself (a child
+# process really faults: POSIX only; the Windows half is compiled by the Windows build but cannot run here), and the scrubber.
+add_executable(test_crash_context test_crash_context.cpp)
+target_include_directories(test_crash_context PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_context COMMAND test_crash_context)
+
+add_executable(test_crash_upload test_crash_upload.cpp)
+target_include_directories(test_crash_upload PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_upload COMMAND test_crash_upload)
+
+add_executable(test_crash_scrub test_crash_scrub.cpp)
+target_include_directories(test_crash_scrub PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_scrub COMMAND test_crash_scrub)
+
+if(NOT WIN32 AND NOT EMSCRIPTEN AND NOT OKAY_SANITIZE)   # (a sanitizer installs its own fault handlers and reports the null write itself)
+    find_package(Threads REQUIRED)
+    add_executable(test_crash_handler test_crash_handler.cpp)
+    target_include_directories(test_crash_handler PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_crash_handler PRIVATE Threads::Threads)   # (the test starts a second thread that faults too)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+        target_link_options(test_crash_handler PRIVATE -rdynamic)   # so backtrace_symbols names the faulting functions
+    endif()
+    add_test(NAME crash_handler COMMAND test_crash_handler)
+endif()
+
 # The launcher's "Delete project" safety checks (shared/ProjectDelete.hpp).
 add_executable(test_project_delete test_project_delete.cpp)
 target_compile_features(test_project_delete PRIVATE cxx_std_17)
@@ -1807,6 +1871,16 @@ target_link_libraries(test_update_signature PRIVATE okay::crypto)   # shared/Ant
 target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
+
+# Test builds (the dev channel; shared/TestBuild.hpp, LoadDevIndex in launcher/VersionsManager.cpp, scripts/dev_index.py): the order of a four-number version, the
+# real list and VERSION.txt ignoring such versions, the dev list read from dev/ only and signed like the real one, ChooseTarget (what the update check installs),
+# the "Get test builds" setting (off by default, nothing written when off) and the same install rules. No window, no network; python3 is run when it is there.
+add_executable(test_dev_channel test_dev_channel.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_dev_channel PRIVATE cxx_std_17)
+target_include_directories(test_dev_channel PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_dev_channel PRIVATE okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed lists)
+target_compile_definitions(test_dev_channel PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME dev_channel COMMAND test_dev_channel)
 find_program(OKAY_BASH bash)
 find_program(OKAY_PYTHON3 python3)
 if(OKAY_PYTHON3 AND NOT WIN32)
@@ -1815,6 +1889,11 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
+    add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
+    # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
+    add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
+    set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -2130,6 +2209,15 @@ if(SDL2_FOUND)
     target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
+
+    # Pictures of the nameplate, the rich-text sign and the shipped sample scene (examples/ui_text), drawn headless
+    # through the same UI pass as the game. They are written to OKAY_SHOT_DIR (or argv[1]) and checked for what they show.
+    add_executable(test_ui_text_shots test_ui_text_shots.cpp)
+    target_link_libraries(test_ui_text_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_text_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_text_shots COMMAND test_ui_text_shots)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -3592,6 +3680,20 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+add_executable(test_ui_nameplate_bound test_ui_nameplate_bound.cpp)
+target_link_libraries(test_ui_nameplate_bound PRIVATE okay::engine)
+add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)
+
+add_executable(test_world_text_rich test_world_text_rich.cpp)
+target_link_libraries(test_world_text_rich PRIVATE okay::engine)
+add_test(NAME world_text_rich COMMAND test_world_text_rich)
+
+# The shipped sample scene (examples/ui_text): two characters with bound nameplates and a rich-text world sign
+add_executable(test_ui_text_example test_ui_text_example.cpp)
+target_link_libraries(test_ui_text_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_text_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_text_example COMMAND test_ui_text_example)
 
 # The editor's main menu bar and the Hierarchy menus as data (editor/MenuBarModel.hpp, editor/HierarchyContextModel.hpp; no ImGui, header-only):
 # the menu order, nothing listed twice, every greyed-out item says why, shortcuts that work, plural labels, and that every item of the old menus still has a home.

@@ -3,6 +3,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/ActionList.hpp"
+#include "okay/Components/UIOwnerData.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Scene/GameObject.hpp"
 
@@ -41,7 +42,9 @@ std::string UITextBind::ResolveKey(const std::string& key) {
     return "";
 }
 
-std::string UITextBind::Resolve(const std::string& format) {
+std::string UITextBind::Resolve(const std::string& format) { return Resolve(format, nullptr); }
+
+std::string UITextBind::Resolve(const std::string& format, const GameObject* self) {
     std::string out;
     out.reserve(format.size());
     for (std::size_t i = 0; i < format.size(); ++i) {
@@ -56,7 +59,14 @@ std::string UITextBind::Resolve(const std::string& format) {
             std::string fallback;
             std::size_t bar = key.find('|');
             if (bar != std::string::npos) { fallback = key.substr(bar + 1); key.erase(bar); }
-            std::string v = ResolveKey(key);
+            std::string v;
+            if (uiowner::IsOwnerKey(key)) {
+                float n = 0.0f; bool isNum = false;
+                // An owner that lacks this data leaves it empty (the default after '|' shows); only with no owner at
+                // all does the key fall back to the global variable of that name (the player's).
+                if (self && uiowner::Find(self)) uiowner::Lookup(self, key, v, n, isNum);
+                else v = ResolveKey(key.substr(6));
+            } else v = ResolveKey(key);
             out += (v.empty() && bar != std::string::npos) ? fallback : v;
             i = end;
         } else if (c == '}') {
@@ -71,7 +81,7 @@ std::string UITextBind::Resolve(const std::string& format) {
 
 void UITextBind::Apply() {
     if (!gameObject) return;
-    std::string v = Resolve(format);
+    std::string v = Resolve(format, gameObject);
     // Bind whichever text-bearing widget is on this object.
     if (auto* tr = gameObject->GetComponent<TextRenderer>())      tr->text = v;
     else if (auto* bt = gameObject->GetComponent<UIButton>())     bt->label = v;

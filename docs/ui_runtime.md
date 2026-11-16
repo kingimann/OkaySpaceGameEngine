@@ -75,7 +75,7 @@ widgets; nothing moves.
 | Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). The window carries its own Canvas one step above the page, so it and its contents draw above the page and take clicks first; dragging a window brings it in front of other windows. |
 | Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
-| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level and a health bar. The bar follows the Health Stat (the player's health); the name and level are text you edit. The "in the world" version is a 3D object that faces the camera: make it a child of a character. |
+| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level pill and a health bar, bound to the character it belongs to. Make the "in the world" version (a World Space UI object that faces the camera) a child of a character (with a character selected, the menu item does it for you and puts the plate above its head): it shows that character's object name, its Stats level (level 1 without Stats) and its health (Health Stat, Stats, Survival Stats or NPC Controller), live. With no such parent it is a preview: "Goblin", "Lv 1" and the player's published health. The bindings are ordinary UI Text Bind / UI Bar Bind keys (`{owner.name}`, `Lv {owner.level\|1}`, `owner.healthFrac`), so you can edit them. The plate is 220 x 62 design pixels (name 20 px, level 15 px, all inside the card with 12 px to spare). Both texts use Best Fit, so a long name or a three-digit level shrinks to fit instead of running out of the card or the pill (down to about 5 px, and no smaller than 8 px in the pixel font: a name of more than about 45 characters, or 13 in the pixel font, still overflows, there is no ellipsis). In the world it keeps this size at any distance (World Space UI **Constant size** is on, so the text stays readable far away) and hangs above the object's point, centred on it: put the plate object at the character's head. Turn Constant size off and it scales with distance like any world UI. |
 | Inventory | Prebuilt Screens > Inventory | A bag screen with a slot grid you can click. A **UI Inventory Bind** on the grid shows the real Inventory: the Player's, else the one named in **Inventory Name**, else the first in the scene. Each slot shows its item and stack size ("Potion 7"), empty places stay blank, and the grid gets as many rows as the bag has room for. `SelectedItem()` and `SelectedCount()` say what is in the clicked slot. With no Inventory in the scene the grid keeps its sample names. It shows the bag; moving items between bags is done by the Inventory itself. |
 | Rich text | Text > **Rich Text** | See below. |
 
@@ -85,15 +85,45 @@ field, scroll view with masking and scroll bars, list view, tabs, tooltip, modal
 crosshair, minimap, slot grid, layout groups, UI Frame (anchors, pivot), safe area and the Canvas scaler
 (Constant Pixel Size, Scale With Screen Size with Expand, Shrink or Match).
 
-**Rich text.** Turn on **Rich Text** on a screen-space Text (or `ui_set_rich("Label", true)`) and write tags
-in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/b]`, `[i]italic[/i]`. Colours are
+**Rich text.** Turn on **Rich Text** on a Text (in the Inspector, the **Rich Text** checkbox in the Text section: hover it for the tags; or
+`ui_set_rich("Label", true)`) and write tags
+in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/b]`, `[i]italic[/i]`,
+`[size=150]big[/size]` (a percent of the text's size, 25 to 400; nested sizes multiply). Colours are
 `#rgb`, `#rrggbb`, `#rrggbbaa` or a name (white, black, red, green, blue, yellow, orange, gold, cyan, magenta,
 purple, pink, gray). Tags nest. A tag that is not one of these is shown as plain text, and `[[` shows a `[`.
 The tags take no room: wrapping, alignment, upper-casing and the typing effect all work on the plain text.
 On a font file (TTF) italic really slants every glyph (the quads are sheared about the baseline) and bold
 thickens the strokes with a three-tap smear; the built-in pixel font leans for italic and draws twice for bold.
-Rich Text works on **screen-space** text only: on world (3D) text the checkbox is greyed out with a note, and
-`ui_set_rich` ignores it. The tooltip's own `<b>` and `#rrggbb` tags are unchanged.
+It works on screen-space text and on **world text** (a Text with Screen Space off, which the 2D player and the
+editor's 2D Scene view draw at its place in the world): the player draws world text through
+`ui2d::DrawWorldText`, which reads the same tags, and the shadow and outline follow the runs (with the text's own
+bold and italic). With Rich Text **off**, world text looks exactly as before (italic is not drawn on world text, bold
+is a second copy one step to the right). With it **on**, the Text's own Italic now slants world text too. Limits for
+every rich text, on screen and in the world alike: text over 2,000 bytes is not parsed but shown as written, tags
+included (so a long dialogue line over 2,000 bytes shows its `[color=...]` tags; split it into shorter texts), at most
+16 tags may be open at once, and nested sizes are held to 25..400 percent. **A line is as tall as the largest size on
+it**: a sized run sits on the bottom of its line and pushes what follows to the right, the line below it starts under the
+big run (it used to start at the plain line height and the big letters climbed into the line above, and a big run on the
+first line reached above the text's top), and a line made only of small text is a small line.
+`TextRenderer::PixelHeight()` counts it, so centring and Best Fit see the real height. The Line
+Spacing setting is added once per line, never multiplied. Text with no `[size]` lays out exactly as before. The
+**width** of a line is still measured at the text's own size, so wrapping is not changed by `[size]` and a centred
+line with a big run leans right. The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui`
+(screen text), `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline, a sized run that
+must not overlap the line above or reach above the text's top, and the line heights drawn and measured). World text is
+drawn by the **flat (2D) player pass and the editor's 2D views only**:
+a 3D scene does not draw a Text whose Screen Space is off (use a Text under a World Space UI object there); the font
+is the 8x8 bitmap font unless the Text has a font file.
+
+How to try it (world text): add a Text, turn its **Screen Space** off so it is drawn in the world, turn on **Rich Text** and type
+`Hello [color=#ffcc33]gold[/color] [size=150]big[/size] [b]bold[/b]`. The Scene view and Play show the gold word, the
+bigger word sitting on the same line, and the bold one; turn Rich Text off and the tags show as written.
+
+![Rich world text as the player draws it: bold, red, italic and gold runs, a small word and a 150% word that makes its line taller instead of covering the line above](images/ui_text/after_world_text.png)
+
+(A headless render of what `ui2d::DrawWorldText` draws, made by test `ui_text_shots`; the sign in `examples/ui_text` is the same
+kind of text. Test `world_text_rich` run with `OKAY_SHOT_DIR=<folder>` paints a smaller picture of the same kind into that
+folder as `world_text_rich.png`.)
 
 **Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
 what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when
@@ -186,6 +216,28 @@ write properties by name already reach every setting. See [properties.md](proper
 `UIGallery::BuildGallery(scene, preset)` (in `okay/Scene/UIGallery.hpp`) builds the gallery into any
 scene. File > Examples > UI Gallery does that in a fresh 2D scene. The same header has
 `AddInventoryScreen`, `AddDialogueScreen`, `AddWindow`, `AddNameplate` and `ApplyThemePreset`.
+
+### Binding UI to the character it belongs to (`owner.` keys)
+
+A UI Text Bind format and a UI Bar Bind variable can start with `owner.` to read the character the UI object belongs
+to: the nearest object above it (its parent first) that has a Health Stat, Stats, Survival Stats, NPC Controller or
+Character (`okay/Components/UIOwnerData.hpp`).
+
+| Key | Value |
+|---|---|
+| `owner.name` | the character object's name |
+| `owner.level` | its Stats level (nothing without Stats) |
+| `owner.health`, `owner.maxHealth` | health and its maximum, from the first of Health Stat, Stats, Survival Stats, NPC Controller |
+| `owner.healthFrac` | health / maximum, 0 to 1 (for a bar) |
+| `owner.healthPct` | the same, 0 to 100 |
+
+With no owner at all, a key falls back to the global variable of the same name without `owner.` (so a nameplate on its
+own still follows the player's `healthFrac`). An owner that lacks the data gives nothing: a text shows its `|default`, a
+bar keeps its fill. It never shows the player's value on another character. Test: `ui_nameplate_bound`.
+
+In the editor, select the nameplate's Name label or its Level label and look at **UI Text Bind** in the Inspector (the **Format** row), or select the
+Health bar and look at **UI Bar Bind** (the **Variable** row). Hover either row for the list of keys. Under them a line says
+`Owner: <the character's name>`, or that there is none (then an owner key reads the variable without `owner.`, the player's).
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
 
@@ -205,7 +257,7 @@ once; with no project open it stays an unsaved scene.
 | UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
 | UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
-| Nameplate | UI add menu (and in the world) | health bar follows the Health Stat; the name and level are plain text | `test_runtime_ui` (Hit and Heal change the bar) | yes, with Hit / Heal buttons |
+| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health; every piece inside the card at any size | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's; what is drawn stays inside the card at five sizes and two fonts), `ui_text_example` (the shipped sample), `ui_text_shots` (pictures) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |
 
 ## Dropdown: long lists

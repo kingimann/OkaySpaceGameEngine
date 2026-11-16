@@ -144,7 +144,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     - 14.4 Node library (physics, story, build, math) [Works]. Where: graph editor palette (categories Events, Flow, Variables, Math, Logic, Input, Transform, Actions, Data...
     - 14.5 Debugger (breakpoints, step, call stack, watch) [Works]. Where: breakpoint toggle on nodes, debug bar in the Visual Script window, View > Panels > Variables (watch)
     - 14.6 Action framework [Works]. Where: Inspector "Actions" card, View > Editors & Tools > Custom Actions, the graph editor's Action / Actions nodes
-    - 14.7 Engine API nodes [Works]. Where: palette group "Engine API" (appended by 'VsWithApiDefs' in the graph editor)
+    - 14.7 Engine API nodes [Works]. Where: each engine-API node sits in the topic it belongs to (Position, Numbers, Forces & Velocity, Keyboard ...)...
     - 14.8 Converting between graphs and scripts [Works]. Where: Visual Script window preview panel; Inspector Actions card
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
   - **Known gaps:** see [docs/feature_map/14-visual-scripting.md](../feature_map/14-visual-scripting.md) (area 14, sections 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8): the Open line of each section. Not copied here so it cannot go stale.

@@ -2455,7 +2455,19 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
         const float rd = rnd();
         if (colorIsSet(Col_ChildBg)) rrect(rx, ry, rw, rh, rd, g_theme.colors[Col_ChildBg]);
         const unsigned char* bc = pick(Col_Border, g_theme.border);
-        GetWindowDrawList().AddRect(Vec2{rx, ry}, Vec2{rx + rw, ry + rh}, RGBA(bc[0], bc[1], bc[2], bc[3]), rd, 1.0f);
+        // one-pixel edges between the corners, and each corner as three short segments of its arc (a fixed table: no sine per frame)
+        const float r = std::min(rd, std::min(rw, rh) * 0.5f);
+        quad(rx + r, ry, rw - 2.0f * r, 1.0f, bc); quad(rx + r, ry + rh - 1.0f, rw - 2.0f * r, 1.0f, bc);
+        quad(rx, ry + r, 1.0f, rh - 2.0f * r, bc); quad(rx + rw - 1.0f, ry + r, 1.0f, rh - 2.0f * r, bc);
+        if (r > 0.5f) {
+            static const float k[4][2] = {{1.0f, 0.0f}, {0.8660254f, 0.5f}, {0.5f, 0.8660254f}, {0.0f, 1.0f}};   // cos, sin of 0, 30, 60, 90 degrees
+            const float a = r - 0.5f;
+            const float cx[4] = {rx + r, rx + rw - r, rx + rw - r, rx + r}, cy[4] = {ry + r, ry + r, ry + rh - r, ry + rh - r};
+            const float sx[4] = {-1.0f, 1.0f, 1.0f, -1.0f}, sy[4] = {-1.0f, -1.0f, 1.0f, 1.0f};
+            for (int q = 0; q < 4; ++q)
+                for (int i = 0; i < 3; ++i)
+                    line(cx[q] + sx[q] * a * k[i][0], cy[q] + sy[q] * a * k[i][1], cx[q] + sx[q] * a * k[i + 1][0], cy[q] + sy[q] * a * k[i + 1][1], 1.0f, bc);
+        }
     }
     PushClipRect(rx, ry, rw, rh);
 

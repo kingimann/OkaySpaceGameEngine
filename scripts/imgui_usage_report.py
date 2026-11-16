@@ -52,6 +52,9 @@ PORTED = [
     ("Problems", "editor/EditorPanelViews.cpp", "DrawProblemsBodyImGui"),
     ("Stats", "editor/EditorPanelViews.cpp", "DrawStatsBodyImGui"),
     ("History", "editor/EditorPanelViews.cpp", "DrawHistoryBodyImGui"),
+    ("Tags and Layers", "editor/EditorPanelViews.cpp", "DrawTagsLayersBodyImGui"),
+    ("Physics (Project Settings)", "editor/EditorPanelViews.cpp", "DrawPhysicsSettingsBodyImGui"),
+    ("Profiler", "editor/EditorPanelViews.cpp", "DrawProfilerBodyImGui"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

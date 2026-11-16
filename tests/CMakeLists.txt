@@ -1730,6 +1730,11 @@ add_executable(test_launcher_join test_launcher_join.cpp)
 target_link_libraries(test_launcher_join PRIVATE okay::engine)
 add_test(NAME launcher_join COMMAND test_launcher_join)
 
+add_executable(test_launcher_sidebar_layout test_launcher_sidebar_layout.cpp)   # launcher/SidebarLayout.hpp (header only)
+target_compile_features(test_launcher_sidebar_layout PRIVATE cxx_std_17)
+target_include_directories(test_launcher_sidebar_layout PRIVATE ${PROJECT_SOURCE_DIR}/launcher)
+add_test(NAME launcher_sidebar_layout COMMAND test_launcher_sidebar_layout)
+
 add_executable(test_net_authority test_net_authority.cpp)
 target_link_libraries(test_net_authority PRIVATE okay::engine)
 add_test(NAME net_authority COMMAND test_net_authority)

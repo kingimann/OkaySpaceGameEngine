@@ -14,9 +14,11 @@
 // Written for this repository from the two widgets' public APIs; no code from either library's own benchmarks or tests.
 #include "TextEditor.h"
 #include "ScriptEditorCodeEdit.hpp"
+#include "OkayUIInImGui.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include "OkayUITestKit.hpp"
+#include "JetBrainsMonoFont.h"   // the script editor's code font (JetBrains Mono, OFL), loaded the way editor/main.cpp loads it
 
 #include <SDL.h>
 
@@ -56,6 +58,9 @@ using Clock = std::chrono::steady_clock;
 double MsSince(Clock::time_point t0) { return std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); }
 
 const int kW = 1280, kH = 800;          // the frame for the benchmark
+// The script editor's code font sizes (editor/main.cpp kCodeFontBakePx, kCodeFontDispPx) and left margin (SetLeftMargin(22)).
+const float kCodeBakePx = 48.0f, kCodeDispPx = 16.0f;
+const int kLeftMargin = 22;
 const float kEdX = 40, kEdY = 40, kEdW = 1000, kEdH = 700;
 
 // ---- the script editor's language and palette (the same values as editor/main.cpp's OkayScriptLangDef and OkayScriptPalette) ----
@@ -107,6 +112,7 @@ void ConfigureOwn(scripteditor::ScriptEditorCodeEdit& s) {
     s.SetPalette(c, (int)TextEditor::PaletteIndex::Max);
     s.SetTabSize(4);
     s.SetLineSpacing(1.55f);
+    s.SetLeftMargin(kLeftMargin);   // editor/main.cpp's SetLeftMargin(22), forwarded by ScriptEditorWidget
 }
 
 // ---- a script of n lines: classes, functions, strings, numbers, comments, a block comment now and then ----
@@ -160,8 +166,16 @@ struct ImGuiRig {
         io.DisplaySize = ImVec2((float)w, (float)h);
         io.DeltaTime = 1.0f / 60.0f;
         ImGui::StyleColorsDark();
+        {   // the code font exactly as the editor loads it: JetBrains Mono baked large, shown at 16 px
+            ImFontConfig mc; mc.OversampleH = 2; mc.OversampleV = 2; mc.PixelSnapH = true;
+            io.Fonts->AddFontDefault();
+            codeFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, kCodeBakePx, &mc);
+        }
         ImGui_ImplSDLRenderer2_Init(ren);
     }
+    ImFont* codeFont = nullptr;
+    void PushCode() { if (codeFont) ImGui::PushFont(codeFont, kCodeDispPx); }
+    void PopCode() { if (codeFont) ImGui::PopFont(); }
     ~ImGuiRig() {
         ImGui_ImplSDLRenderer2_Shutdown();
         ImGui::DestroyContext(ctx);
@@ -176,7 +190,9 @@ struct ImGuiRig {
         ImGui::SetNextWindowPos(ImVec2(kEdX, kEdY));
         ImGui::SetNextWindowSize(ImVec2(kEdW, kEdH));
         ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+        PushCode();
         te.Render("##code", ImVec2(0, 0), true);
+        PopCode();
         ImGui::End();
         ImGui::Render();
         const double ms = MsSince(t0);
@@ -217,6 +233,54 @@ struct OwnRig {
     }
 };
 
+// ---- ours as the editor hosts it: inside the ImGui window, drawn into its draw list (editor/ScriptEditorWidget.hpp Render) ----
+struct HostedRig {
+    ImGuiRig im;
+    okayuitest::Sim sim;
+    OkayUI::CapturedGeometry geo;
+    float x = kEdX, y = kEdY, w = kEdW, h = kEdH;
+    HostedRig(int W, int H) : im(W, H), sim((float)W, (float)H) { okayuitest::Reset(); OkayUI::UseLauncherLook(true); }
+    ~HostedRig() { OkayUI::UseLauncherLook(false); }
+    // The same steps as ScriptEditorWidget::Render's OkayUI branch (at 100 % UI scale and zoom).
+    void Host(scripteditor::ScriptEditorCodeEdit& se) {
+        ImVec2 a = ImGui::GetContentRegionAvail();
+        a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##code", a);
+        okayimgui::StyleLikeImGuiChild(se.Edit(), ImGui::GetStyle());
+        OkayUI::PushTextScale(1.0f);
+        okayimgui::DrawOkayUIHere("##code", p, a, [&] { se.Edit().Draw("##codeedit", a.x, a.y); }, okayimgui::SdlRendererTextures(im.ren), geo);
+        OkayUI::PopTextScale();
+        const ImGuiStyle& st = ImGui::GetStyle();
+        ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
+                                            st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
+    }
+    double Frame(scripteditor::ScriptEditorCodeEdit& se, bool present = false) {
+        ImGui_ImplSDLRenderer2_NewFrame();
+        const auto t0 = Clock::now();
+        sim.Frame([&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(x, y));
+            ImGui::SetNextWindowSize(ImVec2(w, h));
+            ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            Host(se);
+            ImGui::End();
+            ImGui::Render();
+        });
+        const double ms = MsSince(t0);
+        ImDrawData* dd = ImGui::GetDrawData();
+        if (present) {
+            SDL_SetRenderDrawColor(im.ren, 20, 20, 24, 255);
+            SDL_RenderClear(im.ren);
+            ImGui_ImplSDLRenderer2_RenderDrawData(dd, im.ren);
+            SDL_RenderFlush(im.ren);
+        } else if (dd && dd->Textures) {
+            for (ImTextureData* tx : *dd->Textures) if (tx->Status != ImTextureStatus_OK) ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+        }
+        return ms;
+    }
+};
+
 struct Stats { double mean = 0, p95 = 0, max = 0; };
 Stats Summarise(std::vector<double> v) {
     Stats s;
@@ -245,6 +309,7 @@ Result BenchImGui(const std::string& text) {
         te.SetTabSize(4);
         te.SetLineSpacing(1.55f);
         te.SetShowWhitespaces(false);   // as the script editor sets it
+        te.SetLeftMargin(kLeftMargin);
         auto t0 = Clock::now();
         te.SetText(text);
         r.setText = MsSince(t0);
@@ -314,6 +379,43 @@ Result BenchOwn(const std::string& text, bool launcher) {
     return r;
 }
 
+Result BenchHosted(const std::string& text) {
+    Result r;
+    HostedRig rig(kW, kH);
+    { scripteditor::ScriptEditorCodeEdit warm; for (int i = 0; i < 3; ++i) rig.Frame(warm); }
+    const long long before = g_live.load();
+    {
+        scripteditor::ScriptEditorCodeEdit se;
+        ConfigureOwn(se);
+        auto t0 = Clock::now();
+        se.SetText(text);
+        r.setText = MsSince(t0);
+        r.firstFrame = rig.Frame(se);
+        std::vector<double> v;
+        for (int i = 0; i < kWarm; ++i) rig.Frame(se);
+        for (int i = 0; i < kFrames; ++i) v.push_back(rig.Frame(se));
+        r.idle = Summarise(v);
+        r.bytes = g_live.load() - before;
+        rig.sim.Move(kEdX + 300, kEdY + 100);
+        rig.Frame(se);
+        rig.sim.Down(); rig.Frame(se);
+        rig.sim.Up(); rig.Frame(se);
+        const int mid = se.GetTotalLines() / 2;
+        se.SetCursorPosition(scripteditor::Coord(mid, 4));
+        rig.Frame(se);
+        v.clear();
+        for (int i = 0; i < kFrames; ++i) { rig.sim.Type(std::string(1, (char)('a' + i % 26))); v.push_back(rig.Frame(se)); }
+        r.typing = Summarise(v);
+        if (se.GetText().find("abcdefghij") == std::string::npos) std::fprintf(stderr, "warning: hosted OkayUI typing did not land\n");
+        se.SetCursorPosition(scripteditor::Coord(0, 0));
+        rig.Frame(se);
+        v.clear();
+        for (int i = 0; i < kFrames; ++i) { rig.sim.wheel = -1.0f; v.push_back(rig.Frame(se)); }
+        r.scrolling = Summarise(v);
+    }
+    return r;
+}
+
 int Bench(const std::vector<int>& sizes) {
     std::printf("| Lines | Editor | SetText ms | first frame ms | idle frame ms (mean / p95) | typing frame ms (mean / p95) | scrolling frame ms (mean / p95) | memory MB |\n");
     std::printf("|---|---|---|---|---|---|---|---|\n");
@@ -322,6 +424,7 @@ int Bench(const std::vector<int>& sizes) {
         const Result a = BenchImGui(text);
         const Result b = BenchOwn(text, false);
         const Result c = BenchOwn(text, true);
+        const Result d = BenchHosted(text);
         OkayUI::UseLauncherLook(false);
         auto row = [&](const char* name, const Result& r) {
             std::printf("| %d | %s | %.2f | %.2f | %.3f / %.3f | %.3f / %.3f | %.3f / %.3f | %.1f |\n", n, name, r.setText, r.firstFrame,
@@ -329,7 +432,8 @@ int Bench(const std::vector<int>& sizes) {
         };
         row("ImGuiColorTextEdit", a);
         row("OkayUI::CodeEdit, 8x8 font", b);
-        row("OkayUI::CodeEdit, launcher look (as in the editor)", c);
+        row("OkayUI::CodeEdit, launcher look, OkayUI frame only", c);
+        row("OkayUI::CodeEdit hosted in the ImGui window (as in the editor)", d);
         std::fflush(stdout);
     }
     return 0;
@@ -354,7 +458,8 @@ const char* kShotScript =
     "    }\n"
     "}\n";
 
-int Shots(const std::string& dir) {
+int Shots(const std::string& dir, const std::string& suffix) {
+    const std::string prefix = "codeedit-";
     const int W = 760, H = 400;
     const float x = 10, y = 10, w = 740, h = 380;
     const std::map<int, std::string> marks{{10, "unknown name 'labl' (did you mean 'label'?)"}};
@@ -367,6 +472,7 @@ int Shots(const std::string& dir) {
         te.SetTabSize(4);
         te.SetLineSpacing(1.55f);
         te.SetShowWhitespaces(false);   // as the script editor sets it
+        te.SetLeftMargin(kLeftMargin);
         te.SetText(kShotScript);
         te.SetErrorMarkers(marks);
         te.SetBreakpoints({14});
@@ -378,7 +484,9 @@ int Shots(const std::string& dir) {
             ImGui::SetNextWindowSize(ImVec2(w, h));
             ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
             if (i == 0) ImGui::SetNextWindowFocus();
+            rig.PushCode();
             te.Render("##code", ImVec2(0, 0), true);
+            rig.PopCode();
             ImGui::End();
             ImGui::Render();
             SDL_SetRenderDrawColor(rig.ren, 20, 20, 24, 255);
@@ -386,11 +494,27 @@ int Shots(const std::string& dir) {
             ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), rig.ren);
             SDL_RenderFlush(rig.ren);
         }
-        ok = rig.Save(dir + "/codeedit-imgui.png") && ok;
+        std::printf("ImGuiColorTextEdit: row height %.3f, character width %.3f, text starts %.1f px right of the content origin\n",
+                    te.RowHeight(), te.CharWidth(), te.TextStartX() - te.ContentOrigin().x);
+        ok = rig.Save(dir + "/" + prefix + "imgui" + suffix + ".png") && ok;
     }
-    for (int look = 0; look < 2; ++look) {
+    {   // ours as the editor shows it: launcher look, hosted in the ImGui window (drawn into its draw list)
+        HostedRig rig(W, H);
+        rig.x = x; rig.y = y; rig.w = w; rig.h = h;
+        scripteditor::ScriptEditorCodeEdit se;
+        ConfigureOwn(se);
+        se.SetText(std::string(kShotScript).substr(0, std::strlen(kShotScript) - 1));
+        se.SetErrorMarkers(marks);
+        se.SetBreakpoints({14});
+        se.Edit().Focus();
+        se.SetCursorPosition(scripteditor::Coord(6, 12));
+        for (int i = 0; i < 4; ++i) rig.Frame(se, true);
+        std::printf("OkayUI::CodeEdit (launcher look, hosted in ImGui): row height %.3f, character width %.3f, text starts %.1f px right of the content origin\n",
+                    se.RowHeight(), se.CharWidth(), se.TextStartX() - se.ContentOrigin().x);
+        ok = rig.im.Save(dir + "/" + prefix + "own" + suffix + ".png") && ok;
+    }
+    for (int look = 1; look < 2; ++look) {
         okayuitest::Reset();
-        if (look == 0) OkayUI::UseLauncherLook(true);
         okayuitest::Sim sim((float)W, (float)H);
         scripteditor::ScriptEditorCodeEdit se;
         ConfigureOwn(se);
@@ -406,14 +530,36 @@ int Shots(const std::string& dir) {
                 OkayUI::End();
             });
         const okayuitest::Bitmap& b = sim.Draw(20, 20, 24);
-        ok = okayuitest::WritePng(dir + (look == 0 ? "/codeedit-own.png" : "/codeedit-own-classic.png"), b) && ok;
+        std::printf("OkayUI::CodeEdit (%s): row height %.3f, character width %.3f, text starts %.1f px right of the content origin\n",
+                    look == 0 ? "launcher look" : "8x8 font", se.RowHeight(), se.CharWidth(), se.TextStartX() - se.ContentOrigin().x);
+        ok = okayuitest::WritePng(dir + "/" + prefix + (look == 0 ? "own" : "own-classic") + suffix + ".png", b) && ok;
         OkayUI::UseLauncherLook(false);
     }
-    std::printf(ok ? "wrote %s/codeedit-imgui.png, codeedit-own.png, codeedit-own-classic.png\n" : "failed to write into %s\n", dir.c_str());
+    std::printf(ok ? "wrote %s/codeedit-{imgui,own,own-classic}%s.png\n" : "failed to write into %s%s\n", dir.c_str(), suffix.c_str());
     return ok ? 0 : 1;
 }
 
 } // namespace
+
+// A simple pixel difference between two screenshots of the same size: the mean absolute difference per channel (0..255, RGB),
+// the share of pixels where any channel differs by more than 32, and (optional) a picture of the difference (brighter = more).
+int Diff(const std::string& a, const std::string& b, const std::string& out) {
+    const okayuitest::Png pa = okayuitest::ReadPng(a), pb = okayuitest::ReadPng(b);
+    if (!pa.ok || !pb.ok || pa.w != pb.w || pa.h != pb.h) { std::fprintf(stderr, "cannot compare %s and %s\n", a.c_str(), b.c_str()); return 1; }
+    double sum = 0; long long far = 0;
+    okayuitest::Bitmap d(pa.w, pa.h);
+    for (int i = 0; i < pa.w * pa.h; ++i) {
+        int m = 0;
+        for (int c = 0; c < 3; ++c) { const int v = std::abs((int)pa.rgba[(size_t)i * 4 + c] - (int)pb.rgba[(size_t)i * 4 + c]); sum += v; m = std::max(m, v); }
+        if (m > 32) ++far;
+        for (int c = 0; c < 3; ++c) d.rgba[(size_t)i * 4 + c] = (unsigned char)std::min(255, m * 2);
+        d.rgba[(size_t)i * 4 + 3] = 255;
+    }
+    const double n = (double)pa.w * pa.h;
+    std::printf("mean absolute difference %.2f / 255 per channel; %.1f%% of pixels differ by more than 32\n", sum / (n * 3.0), 100.0 * (double)far / n);
+    if (!out.empty()) okayuitest::WritePng(out, d);
+    return 0;
+}
 
 // For a profiler: only idle frames of one editor ("idle own 100000 2000", "idle imgui 100000 2000"); "empty" draws the same window
 // with no editor in it, the frame cost both toolkits pay anyway.
@@ -463,7 +609,8 @@ int Idle(const std::string& which, int lines, int frames, bool launcher) {
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "bench";
-    if (mode == "shots") return Shots(argc > 2 ? argv[2] : ".");
+    if (mode == "shots") return Shots(argc > 2 ? argv[2] : ".", argc > 3 ? argv[3] : "");
+    if (mode == "diff" && argc > 3) return Diff(argv[2], argv[3], argc > 4 ? argv[4] : "");
     if (mode == "idle") return Idle(argc > 2 ? argv[2] : "own", argc > 3 ? std::atoi(argv[3]) : 100000, argc > 4 ? std::atoi(argv[4]) : 1000,
                                     argc > 5 && std::string(argv[5]) == "launcher");
     std::vector<int> sizes;

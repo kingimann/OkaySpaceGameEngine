@@ -964,6 +964,9 @@ void ExtraTests() {
 // ---------------------------------------------------------------------------------------------
 // What is drawn
 // ---------------------------------------------------------------------------------------------
+int ChR(unsigned c) { return (int)(c >> 24); }
+int ChG(unsigned c) { return (int)((c >> 16) & 255); }
+int ChB(unsigned c) { return (int)((c >> 8) & 255); }
 unsigned C32(UI::Color32 c) { return Rgba((int)(c & 255), (int)((c >> 8) & 255), (int)((c >> 16) & 255), (int)((c >> 24) & 255)); }
 
 const char* kSample =
@@ -984,7 +987,7 @@ void DrawTests() {
     r.ce.SetLanguage(UI::OkayScriptLanguage());
     r.ce.SetText(kSample);
     r.ce.SetBreakpoints({2});
-    r.ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}});
+    r.ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}, UI::CodeMarker{8, 0, -1, "extra brace", 0}});
     r.ce.SetFind("speed");
     r.Frames(2);
     ClickPos(r, P(5, 12));                                                      // in the "{" of the if: caret next to a bracket
@@ -997,13 +1000,30 @@ void DrawTests() {
     const UI::Rect it = r.ce.ItemRect(), vr = r.ce.ViewRect();
     const float lh = r.ce.LineHeight();
     auto rowY = [&](int l) { return r.ce.PosToScreen(P(l, 0)).y; };
-    // breakpoint dot: centre pixel is exactly the palette colour
-    CHECK(PixelAt(bmp, (int)(it.x + lh * 0.5f), (int)(rowY(2) + lh * 0.5f)) == C32(pal.breakpoint));
-    CHECK(PixelAt(bmp, (int)(it.x + lh * 0.5f), (int)(rowY(1) + lh * 0.5f)) == C32(pal.gutter));
-    // the error mark in the gutter, and the wash over the line
-    CHECK(PixelAt(bmp, (int)(vr.x - 2), (int)(rowY(4) + 4)) == C32(pal.errorUnderline));
-    CHECK(PixelAt(bmp, (int)(vr.x - 2), (int)(rowY(5) + 4)) == C32(pal.gutter));
+    // a breakpoint washes its whole row, the gutter included (as ImGuiColorTextEdit fills the line); no dot
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(2) + lh * 0.5f)) != C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(1) + lh * 0.5f)) == C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(2) + 1)) != PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(1) + 1)));
+    // an error washes its whole row too, gutter included
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(4) + 2)) != C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(5) + 2)) == C32(pal.gutter));
     CHECK(PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(4) + 2)) != PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(6) + 2)));
+    {   // the error's message is written after the end of the line, four characters on, in the error colour (clipped to the view)
+        const float mx0 = r.ce.PosToScreen(P(8, (int)r.ce.Line(8).size())).x + 4.0f * r.ce.CharWidth();
+        int red = 0, before = 0;
+        for (int y = (int)rowY(8); y < (int)(rowY(8) + lh); ++y) {
+            for (int x = (int)mx0; x < (int)(vr.x + vr.w); ++x) {
+                const unsigned c = PixelAt(bmp, x, y);
+                if (ChR(c) > ChG(c) + 40) ++red;
+            }
+            for (int x = (int)(mx0 - 3.0f * r.ce.CharWidth()); x < (int)mx0 - 1; ++x) {
+                const unsigned c = PixelAt(bmp, x, y);
+                if (ChR(c) > ChG(c) + 40) ++before;
+            }
+        }
+        CHECK(red > 10);
+        CHECK(before == 0);   // nothing between the end of the code and the message
+    }
     // line numbers are drawn
     CHECK(CountNot(bmp, (int)(it.x + lh), (int)rowY(0), (int)vr.x - 4, (int)(rowY(0) + lh), C32(pal.gutter)) > 5);
     // the selection tints empty space after the end of line 2 (the newline is selected) but not after line 1... (line 1 is not selected)
@@ -1134,12 +1154,210 @@ void PerfTests() {
     CHECK(tUndo < 3000 * slack);
 }
 
+
+// The code font (launcher look): JetBrains Mono, the font the script editor's ImGui widget uses. Every character advances the
+// same whole number of pixels, the text is drawn in runs (no per-character centring), each glyph lies in its own column, and
+// the row is the font height times the spacing without rounding (as ImGuiColorTextEdit). At 16 px JetBrains Mono's advance
+// (600 of 1320 units of ascent minus descent) is 7.27 px, drawn as 7: the same 7 px ImGui draws with PixelSnapH.
+void CodeFontTests() {
+    Rig r;
+    UI::UseLauncherLook(true);
+    r.ce.SetHighlighter(nullptr);
+    r.ce.SetLineSpacing(1.55f);
+    r.ce.SetText("iiiiWWWW\nmlmlmlml\n0123456789");
+    r.Frame();
+    CHECK(r.ce.MonospaceFont());
+    CHECK(r.ce.CharWidth() == 7.0f);                                  // 16 px text (launcher look's text scale 2 x 8)
+    CHECK(std::fabs(r.ce.LineHeight() - 16.0f * 1.55f) < 1e-4f);      // 24.8, not rounded
+    UI::PushCodeFont();
+    CHECK(UI::CodeFontActive());
+    CHECK(UI::CalcTextSize("iiiiWWWW").x == UI::CalcTextSize("mlmlmlml").x);   // fixed width while pushed
+    UI::PopCodeFont();
+    CHECK(!UI::CodeFontActive());
+    CHECK(UI::CalcTextSize("iiii").x != UI::CalcTextSize("WWWW").x);           // the UI font again
+    const UI::DrawData data = UI::GetDrawData();
+    const auto* v = static_cast<const UI::DrawVertex*>(data.vertices);
+    const float top = r.ce.PosToScreen(P(0, 0)).y, x0 = r.ce.PosToScreen(P(0, 0)).x, cw = r.ce.CharWidth(), lh = r.ce.LineHeight();
+    for (int line = 0; line < 3; ++line) {
+        std::vector<float> centres;
+        const float y0 = top + line * lh, y1 = y0 + lh;
+        for (int c = 0; c < data.cmdCount; ++c) {
+            const UI::DrawCmd& cmd = data.cmds[c];
+            if (cmd.texture != data.atlasTexture) continue;
+            for (int i = cmd.idxOffset; i + 5 < cmd.idxOffset + cmd.idxCount; i += 6) {
+                float mnx = 1e9f, mxx = -1e9f, mny = 1e9f, mxy = -1e9f;
+                for (int k = 0; k < 6; ++k) {
+                    const UI::DrawVertex& q = v[data.indices[i + k]];
+                    mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y);
+                }
+                const float cy = (mny + mxy) * 0.5f;
+                const bool glyph = mxx - mnx >= 2.0f && mxx - mnx < cw * 2.0f && mnx < x0 + 20.0f * cw;   // not the row's 1 px box
+                if (glyph && cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
+            }
+        }
+        std::sort(centres.begin(), centres.end());
+        const size_t want = line == 2 ? 10 : 8;
+        CHECK(centres.size() == want);
+        bool inCells = centres.size() == want;
+        for (size_t k = 0; k < centres.size() && k < want; ++k)
+            if (!(centres[k] >= x0 + (float)k * cw && centres[k] < x0 + (float)(k + 1) * cw)) inCells = false;
+        CHECK(inCells);
+    }
+    // the gutter: " N " in characters plus the margin (one row tall with breakpoints shown); the numbers end two characters left of the text
+    CHECK(std::fabs(r.ce.GutterWidth() - (std::floor(lh + 0.5f) + 3.0f * cw)) < 1e-3f);
+    r.ce.SetLeftMargin(22.0f);
+    r.ce.SetPadding(8.0f, 8.0f);
+    r.Frame();
+    CHECK(std::fabs(r.ce.GutterWidth() - (8.0f + 22.0f + 3.0f * cw)) < 1e-3f);
+    CHECK(r.ce.ViewRect().y == r.ce.ItemRect().y + 8.0f);
+    CHECK(r.ce.PosToScreen(P(0, 0)).x == r.ce.ViewRect().x);
+    // no code font: the UI font as before (rounded rows)
+    r.ce.SetUseCodeFont(false);
+    r.Frame();
+    CHECK(!r.ce.MonospaceFont());
+    CHECK(r.ce.LineHeight() == std::floor(r.ce.LineHeight()));
+    UI::UseLauncherLook(false);
+    r.Frame();
+    CHECK(r.ce.MonospaceFont());
+    CHECK(r.ce.LineHeight() == std::floor(r.ce.LineHeight()));        // the 8x8 font: whole pixels
+}
+
+// The current line: a fill and a 1 px box across the whole row (gutter included) whenever there is no selection, dimmer
+// without the keyboard; a warning marker uses the warning colours and has no underline.
+void RowLookTests() {
+    Rig r(560, 340);
+    r.w = 520; r.h = 300;
+    UI::CodePalette pal = UI::DefaultCodePalette();
+    pal.currentLine = UI::RGBA(255, 255, 255, 40); pal.currentLineInactive = UI::RGBA(255, 255, 255, 20);
+    pal.currentLineEdge = UI::RGBA(255, 0, 255, 255);
+    r.ce.SetPalette(pal);
+    r.ce.SetHighlighter(nullptr);
+    r.ce.SetText("one\ntwo\nthree\nfour");
+    UI::CodeMarker warn; warn.line = 3; warn.message = "careful"; warn.warning = true; warn.underline = false;
+    r.ce.SetMarkers({warn});
+    r.Frame();
+    ClickPos(r, P(1, 1));
+    const UI::Rect it = r.ce.ItemRect();
+    const float y1 = r.ce.PosToScreen(P(1, 0)).y, lh = r.ce.LineHeight();
+    const unsigned edge = C32(pal.currentLineEdge);
+    unsigned focusedFill = 0;
+    {
+        const Bitmap& bmp = r.sim.Draw(12, 14, 20);
+        int edgeTop = 0;
+        for (int x = (int)it.x; x < (int)(it.x + 40); ++x) if (PixelAt(bmp, x, (int)y1) == edge) ++edgeTop;
+        CHECK(edgeTop > 30);                                          // the box runs through the gutter
+        CHECK(PixelAt(bmp, (int)(it.x + 3), (int)(y1 + lh * 0.5f)) != PixelAt(bmp, (int)(it.x + 3), (int)(r.ce.PosToScreen(P(2, 0)).y + lh * 0.5f)));
+        focusedFill = PixelAt(bmp, (int)(it.x + 5), (int)(y1 + lh * 0.5f));
+    }
+    ClickAt(r, 5, 330);                                               // away: no keyboard
+    {
+        const Bitmap& b2 = r.sim.Draw(12, 14, 20);
+        CHECK(PixelAt(b2, (int)it.x + 3, (int)y1) == edge);           // still boxed
+        CHECK(PixelAt(b2, (int)(it.x + 5), (int)(y1 + lh * 0.5f)) != focusedFill);   // a dimmer fill
+    }
+    // a selection: no current-line box
+    r.ce.SetSelection(P(0, 0), P(1, 2));
+    r.Frame();
+    const Bitmap& b3 = r.sim.Draw(12, 14, 20);
+    CHECK(PixelAt(b3, (int)it.x + 3, (int)y1) != edge);
+    // the warning: an amber message after the line
+    const float y3 = r.ce.PosToScreen(P(3, 0)).y;
+    const float mx0 = r.ce.PosToScreen(P(3, 4)).x + 4.0f * r.ce.CharWidth();
+    int amber = 0, red = 0;
+    for (int y = (int)y3; y < (int)(y3 + lh); ++y) for (int x = (int)mx0; x < (int)(mx0 + 60); ++x) {
+        const unsigned c = PixelAt(b3, x, y);
+        const int R = ChR(c), G = ChG(c), B = ChB(c);
+        if (R > B + 40 && G > B + 20) ++amber;
+        if (R > G + 60) ++red;
+    }
+    CHECK(amber > 10);
+    CHECK(red == 0);
+    // no underline under the warning's text
+    int under = 0;
+    const float x3 = r.ce.PosToScreen(P(3, 0)).x;
+    for (int y = (int)(y3 + lh - 4); y < (int)(y3 + lh); ++y) for (int x = (int)x3; x < (int)(x3 + 4 * r.ce.CharWidth()); ++x) {
+        const unsigned c = PixelAt(b3, x, y);
+        if (ChR(c) > ChG(c) + 60) ++under;
+    }
+    CHECK(under == 0);
+}
+
+
+// Geometry capture (OkayUI::BeginGeometryCapture / EndGeometryCapture): what a CodeEdit draws is taken out of the frame whole.
+// Drawn back from the capture it gives the same pixels as the frame drawn normally; the frame keeps what came before and after.
+void CaptureTests() {
+    for (int look = 0; look < 2; ++look) {
+        Reset();
+        if (look == 1) UI::UseLauncherLook(true);
+        Sim sim(500, 300);
+        CodeEdit ce;
+        ce.SetLanguage(UI::OkayScriptLanguage());
+        ce.SetText(kSample);
+        ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}});
+        UI::CapturedGeometry geo;
+        bool capture = false;
+        auto ui = [&] {
+            UI::BareNextWindow();                                                        // a window before, in the main batch
+            if (UI::Begin("before", 0, 0, 10, 10)) UI::GetWindowDrawList().AddRectFilled(UI::Vec2{0, 0}, UI::Vec2{8, 8}, UI::RGBA(255, 0, 0));
+            UI::End();
+            if (capture) UI::BeginGeometryCapture();
+            UI::BareNextWindow();
+            if (UI::Begin("code", 20, 20, 460, 260)) ce.Draw("ed", 460, 260);
+            UI::End();
+            if (capture) UI::EndGeometryCapture(geo);
+            UI::BareNextWindow();                                                        // and one after
+            if (UI::Begin("after", 490, 290, 10, 10)) UI::GetWindowDrawList().AddRectFilled(UI::Vec2{492, 292}, UI::Vec2{500, 300}, UI::RGBA(0, 255, 0));
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        const Bitmap normal = sim.Draw(0, 0, 0);
+        const int fullIdx = UI::GetDrawData().indexCount;
+        capture = true;
+        sim.Frame(ui);
+        const UI::DrawData left = UI::GetDrawData();
+        CHECK(!geo.indices.empty() && !geo.cmds.empty());
+        CHECK(left.indexCount + (int)geo.indices.size() == fullIdx);   // moved out, nothing lost or doubled
+        int sum = 0; bool inRange = true;
+        for (const UI::DrawCmd& c : geo.cmds) { sum += c.idxCount; if (c.idxOffset < 0 || c.idxOffset + c.idxCount > (int)geo.indices.size()) inRange = false; }
+        for (int ix : geo.indices) if (ix < 0 || ix >= (int)geo.vertices.size()) inRange = false;
+        CHECK(sum == (int)geo.indices.size() && inRange);
+        if (look == 1) {   // the launcher look's text samples the atlas
+            bool atlas = false;
+            for (const UI::DrawCmd& c : geo.cmds) if (c.texture && c.texture == left.atlasTexture) atlas = true;
+            CHECK(atlas);
+        }
+        // what is left: the two corner squares, and no code
+        Bitmap rest(500, 300); rest.Clear(0, 0, 0);
+        UI::soft::Render(left, rest);
+        CHECK(PixelAt(rest, 2, 2) == Rgba(255, 0, 0) && PixelAt(rest, 497, 297) == Rgba(0, 255, 0));
+        CHECK(CountNot(rest, 20, 20, 480, 280, Rgba(0, 0, 0)) == 0);
+        // the capture drawn after what was left gives the normal frame's pixels inside the code's rectangle
+        UI::DrawData cd = left;
+        cd.vertices = geo.vertices.data(); cd.vertexCount = (int)geo.vertices.size();
+        cd.indices = geo.indices.data(); cd.indexCount = (int)geo.indices.size();
+        cd.cmds = geo.cmds.data(); cd.cmdCount = (int)geo.cmds.size();
+        UI::soft::Render(cd, rest);
+        int differ = 0;
+        for (int y = 20; y < 280; ++y) for (int x = 20; x < 480; ++x) if (PixelAt(rest, x, y) != PixelAt(normal, x, y)) ++differ;
+        CHECK(differ == 0);
+        // input still reaches the editor while it is captured: a click focuses it
+        sim.Click(200, 100, ui);
+        CHECK(ce.Focused());
+        // an EndGeometryCapture without a Begin gives nothing and takes nothing
+        capture = false;
+        sim.Frame([&] { ui(); UI::EndGeometryCapture(geo); });
+        CHECK(geo.indices.empty() && UI::GetDrawData().indexCount > 0);
+        UI::UseLauncherLook(false);
+    }
+}
+
 // A proportional font (the launcher look's Roboto): every glyph lands in its own cell, so the caret and selection line up.
 // Also overwrite mode's caret and the hover help on the bare widget.
 void ProportionalAndOverwriteTests() {
     {
         Rig r;
         UI::UseLauncherLook(true);
+        r.ce.SetUseCodeFont(false);                   // the launcher look's own Roboto, not the code font
         r.ce.SetHighlighter(nullptr);
         r.ce.SetText("iiiiWWWW\nmlmlmlml");
         r.Frame();
@@ -1163,7 +1381,8 @@ void ProportionalAndOverwriteTests() {
                         mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y);
                     }
                     const float cy = (mny + mxy) * 0.5f;
-                    if (cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
+                    const bool glyph = mxx - mnx >= 2.0f && mxx - mnx < cw * 2.0f && mnx < x0 + 20.0f * cw;   // not the row's 1 px box
+                    if (glyph && cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
                 }
             }
             std::sort(centres.begin(), centres.end());
@@ -1256,6 +1475,9 @@ int main() {
     ExtraTests();
     DrawTests();
     ProportionalAndOverwriteTests();
+    CodeFontTests();
+    RowLookTests();
+    CaptureTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

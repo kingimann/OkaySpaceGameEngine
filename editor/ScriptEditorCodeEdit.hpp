@@ -84,7 +84,8 @@ public:
     void SetOverwrite(bool on) { ed_.SetOverwrite(on); }
     bool IsOverwrite() const { return ed_.Overwrite(); }
     void SetUserTypes(const std::unordered_set<std::string>& types);
-    /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
+    /// Error markers by 1-based line, as TextEditor::ErrorMarkers: a message starting "warning: " is a warning (amber, the prefix
+    /// not shown), anything else an error; the line is washed and the message written after it, with no underline.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
     /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
     void SetBreakpoints(const std::unordered_set<int>& lines);
@@ -92,6 +93,8 @@ public:
     void SetReadOnly(bool on) { ed_.SetReadOnly(on); }
     void SetTabSize(int n) { ed_.SetTabSize(n); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
+    /// The space left of the line numbers in pixels, as TextEditor::SetLeftMargin (the breakpoint column).
+    void SetLeftMargin(int px) { ed_.SetLeftMargin((float)px); }
 
     // ---- geometry of the last Draw (screen pixels) ----
     float RowHeight() const { return ed_.LineHeight(); }

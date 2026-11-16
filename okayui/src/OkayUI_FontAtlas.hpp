@@ -3,6 +3,9 @@
 // launcher's own font (Roboto Medium, shared/RobotoFont.h) is baked once at a few
 // pixel sizes into one RGBA atlas (white, coverage in alpha) with a solid white
 // patch, so flat shapes and text share a single texture and draw in one batch.
+// The code font (JetBrains Mono, shared/JetBrainsMonoFontOwn.h: the face the
+// script editor's ImGui widget uses) is baked into the same atlas, at the same
+// sizes, for OkayUI::PushCodeFont (the code editor widget).
 
 struct SDL_Renderer;
 struct SDL_Texture;
@@ -33,9 +36,13 @@ struct Atlas {
     float whiteU = 0, whiteV = 0;    // a fully opaque texel
     int   nsizes = 0;
     Size  sizes[6];
+    int   ncode = 0;     // the code font's sizes (0: it could not be baked; the UI font stands in)
+    Size  code[6];
     /// The baked size to draw `pixelHeight` text with (the smallest that's >= it,
     /// else the largest).
     const Size& Pick(float pixelHeight) const;
+    /// The same for the code font (the UI font's size when the code font is missing).
+    const Size& PickCode(float pixelHeight) const;
 };
 
 /// Build (once) and return the atlas; ok == false if the font couldn't be baked.
@@ -48,7 +55,7 @@ unsigned NextCodepoint(const char** s);
 /// the engine font okay::FontForText picks for it (the language's font, the built-in
 /// UI font, an installed one; each switch logged once). nullptr when the atlas has
 /// every character.
-okay::TtfFont* FallbackFont(const char* s);
+okay::TtfFont* FallbackFont(const char* s, bool code = false);   // code: checked against the code font
 /// That font's glyph atlas as a texture on `r` (uploaded again when it grows).
 SDL_Texture* FallbackTexture(SDL_Renderer* r, okay::TtfFont* f);
 

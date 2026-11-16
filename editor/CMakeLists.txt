@@ -140,6 +140,16 @@ if(OKAY_BUILD_TESTS AND TARGET okay_ui_render)
     add_executable(codeedit_bench tools/codeedit_bench.cpp vendor/TextEditor.cpp ScriptEditorCodeEdit.cpp)
     target_link_libraries(codeedit_bench PRIVATE okay_imgui okay_ui_render)
     target_include_directories(codeedit_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-        ${CMAKE_SOURCE_DIR}/okayui/tests ${CMAKE_SOURCE_DIR}/okayui/soft)
+        ${CMAKE_SOURCE_DIR}/okayui/tests ${CMAKE_SOURCE_DIR}/okayui/soft ${CMAKE_SOURCE_DIR}/shared)
     set_target_properties(codeedit_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+# Our code editor hosted in an ImGui window the way the script editor hosts it (editor/OkayUIInImGui.hpp): ImGui popups opened over
+# the code are drawn on top of it. Named okayui_* so `ctest -R okayui` runs it with the other OkayUI tests.
+if(OKAY_BUILD_TESTS AND OKAY_BUILD_OKAYUI_TESTS AND TARGET okay_ui_render)
+    add_executable(test_okayui_codeedit_imgui ${CMAKE_SOURCE_DIR}/okayui/tests/test_okayui_codeedit_imgui.cpp ScriptEditorCodeEdit.cpp)
+    target_link_libraries(test_okayui_codeedit_imgui PRIVATE okay_imgui okay_ui_render)
+    target_include_directories(test_okayui_codeedit_imgui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests
+        ${CMAKE_SOURCE_DIR}/okayui/tests ${CMAKE_SOURCE_DIR}/okayui/soft)
+    add_test(NAME okayui_codeedit_imgui COMMAND test_okayui_codeedit_imgui)
+    set_tests_properties(okayui_codeedit_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

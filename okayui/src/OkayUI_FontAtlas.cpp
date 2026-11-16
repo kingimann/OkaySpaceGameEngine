@@ -2,6 +2,8 @@
 #include "okay/Graphics/TtfRaster.hpp"   // our own TrueType reader / rasterizer
 #include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher's font (Roboto)
 #include "okay/UI/UIPainterSDL.hpp"    // SDLFontAtlas
+#include "OkfDecode.hpp"               // our own font container (shared/)
+#include "JetBrainsMonoFontOwn.h"      // the code font, JetBrains Mono (OFL; docs/THIRD_PARTY.md)
 
 #include <algorithm>
 #include <cstdlib>
@@ -26,55 +28,44 @@ int BuildCodepoints(int* out) {
 Atlas g_atlas;
 bool  g_built = false;
 
-void Build() {
-    g_built = true;
-    static std::vector<unsigned char> bytes;   // the Face reads the font in place: keep it alive
-    if (!okay::EmbeddedUIFontData(bytes)) return;
+// One face to bake: its glyphs (code point and glyph id, ascending code points) and the atlas sizes it gets.
+struct FaceBake {
     okay::ttf::Face face;
-    if (!face.Load(bytes.data(), bytes.size(), 0)) return;
-
-    int all[256]; const int nall = BuildCodepoints(all);
-    int cps[256]; int glyphIds[256]; int n = 0;
-    for (int k = 0; k < nall; ++k) {
-        const int gi = face.FindGlyph((std::uint32_t)all[k]);
-        if (gi) { cps[n] = all[k]; glyphIds[n] = gi; ++n; }
-    }
-
-    const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
-    const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
-    const int W = 1024, H = 1024, packH = H - 4;   // bottom rows: solid white patch
-    std::vector<unsigned char> alpha((std::size_t)W * H, 0);
-
-    // Every (size, glyph) bitmap goes into one atlas, tallest first so the shelves stay tight.
-    struct Item { int s, k, h; };
-    std::vector<Item> items;
-    float scales[6];
-    for (int s = 0; s < nsizes; ++s) {
-        scales[s] = face.ScaleForPixelHeight(sizes[s]);
-        for (int k = 0; k < n; ++k) {
-            int x0, y0, x1, y1;
-            face.GlyphBox(glyphIds[k], scales[s], x0, y0, x1, y1);
-            items.push_back({s, k, y1 - y0});
+    int cps[256] = {}, ids[256] = {}, n = 0;
+    float scales[6] = {};
+    std::vector<okay::ttf::BakedGlyph> baked;
+    bool Prepare(const std::vector<unsigned char>& bytes, const float* sizes, int nsizes) {
+        if (bytes.empty() || !face.Load(bytes.data(), bytes.size(), 0)) return false;
+        int all[256]; const int nall = BuildCodepoints(all);
+        n = 0;
+        for (int k = 0; k < nall; ++k) {
+            const int gi = face.FindGlyph((std::uint32_t)all[k]);
+            if (gi) { cps[n] = all[k]; ids[n] = gi; ++n; }
         }
+        for (int s = 0; s < nsizes; ++s) scales[s] = face.ScaleForPixelHeight(sizes[s]);
+        baked.assign((std::size_t)nsizes * n, okay::ttf::BakedGlyph());
+        return n > 0;
     }
-    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.h > b.h; });
-
-    std::vector<okay::ttf::BakedGlyph> baked((std::size_t)nsizes * n);
-    okay::ttf::ShelfPacker packer(W, packH, 1);
-    bool ok = true;
-    for (const Item& it : items)
-        if (!okay::ttf::BakeGlyph(face, glyphIds[it.k], scales[it.s], packer, alpha.data(), baked[(std::size_t)it.s * n + it.k])) {
-            ok = false; break;
-        }
-    if (ok) {
-        for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
+    // Pack every (size, glyph), tallest first so the shelves stay tight. False when the atlas is full.
+    bool Pack(okay::ttf::ShelfPacker& packer, unsigned char* alpha, int nsizes) {
+        struct Item { int s, k, h; };
+        std::vector<Item> items;
+        for (int s = 0; s < nsizes; ++s)
+            for (int k = 0; k < n; ++k) {
+                int x0, y0, x1, y1;
+                face.GlyphBox(ids[k], scales[s], x0, y0, x1, y1);
+                items.push_back({s, k, y1 - y0});
+            }
+        std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.h > b.h; });
+        for (const Item& it : items)
+            if (!okay::ttf::BakeGlyph(face, ids[it.k], scales[it.s], packer, alpha, baked[(std::size_t)it.s * n + it.k])) return false;
+        return true;
+    }
+    void Fill(Size* out, const float* sizes, int nsizes, int W, int H) const {
         int asc = 0, desc = 0, gap = 0;
         face.VMetrics(asc, desc, gap);
-        Atlas& a = g_atlas;
-        a.w = W; a.h = H; a.nsizes = nsizes;
-        a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
         for (int s = 0; s < nsizes; ++s) {
-            Size& sz = a.sizes[s];
+            Size& sz = out[s];
             sz.px = sizes[s];
             sz.ascent = asc * scales[s];
             sz.count = n;
@@ -87,6 +78,40 @@ void Build() {
                 g.advance = b.xadvance;
             }
         }
+    }
+};
+
+void Build() {
+    g_built = true;
+    static std::vector<unsigned char> bytes;   // the Face reads the font in place: keep it alive
+    if (!okay::EmbeddedUIFontData(bytes)) return;
+    static std::vector<unsigned char> codeBytes;
+    {
+        std::vector<std::uint8_t> b;
+        if (okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, b)) codeBytes.assign(b.begin(), b.end());
+    }
+    const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
+    const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
+    static FaceBake ui, code;   // static: a Face is large and keeps pointers into its bytes
+    if (!ui.Prepare(bytes, sizes, nsizes)) return;
+    const bool haveCode = code.Prepare(codeBytes, sizes, nsizes);
+
+    // The UI font is packed first, exactly as before the code font was added, so its glyphs keep their places; the code font
+    // goes into the space left. When it does not fit, the atlas is made twice as tall (the UI font still packs the same way).
+    for (int H = 1024; H <= 2048; H *= 2) {
+        const int W = 1024, packH = H - 4;   // bottom rows: solid white patch
+        std::vector<unsigned char> alpha((std::size_t)W * H, 0);
+        okay::ttf::ShelfPacker packer(W, packH, 1);
+        if (!ui.Pack(packer, alpha.data(), nsizes)) return;
+        const bool codeOk = haveCode && code.Pack(packer, alpha.data(), nsizes);
+        if (haveCode && !codeOk && H < 2048) continue;
+        for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
+        Atlas& a = g_atlas;
+        a.w = W; a.h = H; a.nsizes = nsizes;
+        a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
+        ui.Fill(a.sizes, sizes, nsizes, W, H);
+        a.ncode = 0;
+        if (codeOk) { code.Fill(a.code, sizes, nsizes, W, H); a.ncode = nsizes; }
         a.rgba = (unsigned char*)std::malloc((size_t)W * H * 4);
         if (a.rgba) {
             for (int p = 0; p < W * H; ++p) {
@@ -94,6 +119,7 @@ void Build() {
             }
             a.ok = true;
         }
+        return;
     }
 }
 
@@ -114,15 +140,21 @@ const Size& Atlas::Pick(float pixelHeight) const {
     return sizes[nsizes > 0 ? nsizes - 1 : 0];
 }
 
+const Size& Atlas::PickCode(float pixelHeight) const {
+    if (ncode <= 0) return Pick(pixelHeight);
+    for (int s = 0; s < ncode; ++s) if (code[s].px >= pixelHeight - 0.5f) return code[s];
+    return code[ncode - 1];
+}
+
 const Atlas& Get() {
     if (!g_built) Build();
     return g_atlas;
 }
 
-okay::TtfFont* FallbackFont(const char* s) {
+okay::TtfFont* FallbackFont(const char* s, bool code) {
     const Atlas& a = Get();
     if (!a.ok || !s) return nullptr;
-    const Size& z = a.Pick(16.0f);
+    const Size& z = code ? a.PickCode(16.0f) : a.Pick(16.0f);
     bool lacks = false;
     for (const char* p = s; *p && !lacks;) {
         const unsigned cp = NextCodepoint(&p);

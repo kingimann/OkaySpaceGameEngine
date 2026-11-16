@@ -94,13 +94,15 @@ void ScriptEditorCodeEdit::SetPalette(const std::uint32_t* c, int n) {
     p.text[CodeColor_String] = c[3];    p.text[CodeColor_Char] = c[4];    p.text[CodeColor_Punct] = c[5];
     p.text[CodeColor_Preproc] = c[6];   p.text[CodeColor_Known] = c[8];   p.text[CodeColor_Comment] = c[10];
     p.background = c[12];
+    p.gutter = c[12];                        // the library draws the numbers on the background
     p.caret = c[13];
     p.selection = c[14];
     p.selectionInactive = (c[14] & 0x00ffffffu) | (((c[14] >> 24) / 2u) << 24);
     p.errorLine = c[15];
-    p.breakpoint = c[16] | 0xff000000u;      // the library washes the line with it; here it is a dot in the gutter, so opaque
+    p.breakpoint = c[16];                    // a wash over the whole line, as the library draws it
     p.lineNumber = c[17];
     p.currentLine = c[18];
+    p.currentLineInactive = c[19];
     p.currentLineEdge = c[20];
     if (n > 21) p.text[CodeColor_Type] = c[21];
     if (n > 22) p.text[CodeColor_Function] = c[22];
@@ -119,8 +121,13 @@ void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& mar
         if (m.first < 1) continue;
         OkayUI::CodeMarker cm;
         cm.line = m.first - 1;
-        cm.colStart = 0; cm.colEnd = -1;                // the whole line's text, like the library's red line
-        cm.message = m.second;
+        cm.colStart = 0; cm.colEnd = -1;
+        cm.underline = false;                           // like the library: a wash and the message; the script editor draws its
+                                                        // own squiggle under the token the diagnostic names
+        // "warning: ..." is a warning (amber), as the library reads it; the prefix is not shown
+        static const char kWarn[] = "warning: ";
+        cm.warning = m.second.compare(0, sizeof(kWarn) - 1, kWarn) == 0;
+        cm.message = cm.warning ? m.second.substr(sizeof(kWarn) - 1) : m.second;
         out.push_back(std::move(cm));
     }
     ed_.SetMarkers(out);
@@ -135,7 +142,7 @@ void ScriptEditorCodeEdit::SetBreakpoints(const std::unordered_set<int>& lines) 
 
 OkayUI::Vec2 ScriptEditorCodeEdit::ContentOrigin() const {
     const OkayUI::Vec2 p = ed_.PosToScreen(OkayUI::CodePos{0, 0});
-    return OkayUI::Vec2{p.x - ed_.GutterWidth(), p.y};
+    return OkayUI::Vec2{p.x - ed_.GutterWidth() + ed_.PaddingX(), p.y};   // inside the padding, like ImGui's child content origin
 }
 
 } // namespace scripteditor

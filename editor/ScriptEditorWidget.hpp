@@ -23,6 +23,8 @@
 
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
+#include "OkayUIInImGui.hpp"
+extern SDL_Renderer* g_sdlRenderer;   // main.cpp: the renderer ImGui and OkayUI draw with
 #endif
 
 class ScriptEditorWidget {
@@ -59,7 +61,7 @@ public:
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
-    void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); }
+    void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); okay_.SetLeftMargin(m); }
 
     // ---- text ----
     void SetText(const std::string& t) { if (Okay()) okay_.SetText(t); else imgui_.SetText(t); }
@@ -105,6 +107,8 @@ public:
     bool UsingOkayUI() { return Okay(); }
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
+    /// Ours is drawn INTO this ImGui window's draw list (okayimgui::DrawOkayUIHere), at ImGui's layer, so the autocomplete
+    /// list, the hover help and any ImGui popup or window opened over the code later in the frame are drawn on top of it.
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {
         if (!Okay()) { imgui_.Render(id, size, border); return; }
 #ifdef OKAY_HAVE_OKAYUI
@@ -116,11 +120,16 @@ public:
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        OkayUI::PushTextScale(oked::g_uiScale * zoom_);
-        OkayUI::BareNextWindow();
-        if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
-        OkayUI::End();
+        okayimgui::StyleLikeImGuiChild(okay_.Edit(), ImGui::GetStyle());   // sits in the rectangle as the ImGui editor's child does
+        OkayUI::PushTextScale(oked::g_uiScale * zoom_);         // 16 px code at 100 %, the ImGui editor's kCodeFontDispPx x zoom
+        okayimgui::DrawOkayUIHere(id, p, a, [&] { okay_.Edit().Draw("##codeedit", a.x, a.y); },
+                                  okayimgui::SdlRendererTextures(g_sdlRenderer), geo_);
         OkayUI::PopTextScale();
+        if (border) {                                           // the child window's border the ImGui editor has
+            const ImGuiStyle& st = ImGui::GetStyle();
+            ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
+                                                st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
+        }
         okayFocused_ = okay_.Edit().Focused();
 #endif
     }
@@ -162,4 +171,7 @@ private:
     bool lastOkay_ = false;
     bool okayFocused_ = false;
     float zoom_ = 1.0f;
+#ifdef OKAY_HAVE_OKAYUI
+    OkayUI::CapturedGeometry geo_;   // the code area's geometry of this frame, on its way into ImGui's draw list
+#endif
 };

@@ -127,6 +127,10 @@ int main() {
         s.SetBreakpoints({3, 1, 0, -2});
         CHECK((s.Edit().Breakpoints() == std::vector<int>{0, 2}));
         CHECK(s.Edit().HasBreakpoint(0) && s.Edit().HasBreakpoint(2) && !s.Edit().HasBreakpoint(1));
+        CHECK(!m[0].warning && !m[0].underline);
+        s.SetErrorMarkers({{2, "warning: unused 'x'"}});
+        CHECK(s.Edit().Markers().size() == 1 && s.Edit().Markers()[0].warning && s.Edit().Markers()[0].message == "unused 'x'");
+        s.SetLeftMargin(22);
         s.SetErrorMarkers({});
         CHECK(s.Edit().Markers().empty());
     }
@@ -207,8 +211,9 @@ int main() {
         CHECK(p.text[UI::CodeColor_Type] == c[21] && p.text[UI::CodeColor_Function] == c[22] && p.text[UI::CodeColor_Member] == c[23]);
         CHECK(p.background == c[12] && p.caret == c[13] && p.selection == c[14] && p.lineNumber == c[17]);
         CHECK(p.selectionInactive == 0x40112233u);    // half the selection's alpha
-        CHECK(p.breakpoint == 0xff445566u);           // a dot: opaque
-        CHECK(p.errorLine == c[15] && p.currentLine == c[18] && p.currentLineEdge == c[20]);
+        CHECK(p.breakpoint == c[16]);                 // the line wash, as given
+        CHECK(p.errorLine == c[15] && p.currentLine == c[18] && p.currentLineInactive == c[19] && p.currentLineEdge == c[20]);
+        CHECK(p.gutter == c[12]);                     // no gutter colour of its own
         const UI::CodePalette before = s.Edit().Palette();
         s.SetPalette(c, 10);                          // too short: ignored
         CHECK(s.Edit().Palette().background == before.background);

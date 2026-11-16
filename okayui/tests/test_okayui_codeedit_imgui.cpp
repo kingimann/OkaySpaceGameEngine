@@ -1,0 +1,208 @@
+// Our code editor hosted in a Dear ImGui window the way the script editor hosts it (editor/OkayUIInImGui.hpp,
+// editor/ScriptEditorWidget.hpp): its geometry goes into the ImGui window's draw list, so an ImGui popup opened over the code
+// later in the frame is drawn AFTER the code, on top of it. Before this, OkayUI drew its whole frame after ImGui and covered
+// the script editor's autocomplete list and hover help.
+//
+// Headless: Dear ImGui with its SDL_Renderer backend on SDL's software renderer (a surface, no window), OkayUI in the launcher
+// look driven by okayuitest::Sim. Checked: the draw lists' order, the pixels under the popup, that OkayUI's own frame no longer
+// holds the code, the texture lookup, and that clicks still reach the editor.
+#include "test_framework.hpp"
+#include "OkayUITestKit.hpp"
+#include "OkayUIInImGui.hpp"
+#include "ScriptEditorCodeEdit.hpp"
+#include "imgui.h"
+#include "imgui_impl_sdlrenderer2.h"
+
+#include <SDL.h>
+
+#include <cstring>
+#include <string>
+
+namespace {
+
+const int W = 480, H = 320;
+const ImU32 kPopup = IM_COL32(255, 0, 255, 255);
+
+struct Rig {
+    SDL_Surface* surf = nullptr;
+    SDL_Renderer* ren = nullptr;
+    ImGuiContext* ctx = nullptr;
+    okayuitest::Sim sim{(float)W, (float)H};
+    OkayUI::CapturedGeometry geo;
+    scripteditor::ScriptEditorCodeEdit se;
+    bool popup = true, hosted = true;
+    ImVec2 codeMin, codeMax, popMin, popMax;
+    Rig() {
+        surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
+        ren = SDL_CreateSoftwareRenderer(surf);
+        ctx = ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.DisplaySize = ImVec2((float)W, (float)H);
+        io.DeltaTime = 1.0f / 60.0f;
+        ImGui::StyleColorsDark();
+        ImGui_ImplSDLRenderer2_Init(ren);
+        okayuitest::Reset();
+        OkayUI::UseLauncherLook(true);
+        se.SetText("class Mover {\n    var speed = 4.5;\n    func update(dt) { print(\"idle\"); }\n}");
+        se.SetErrorMarkers({{3, "unknown name 'x'"}});
+    }
+    ~Rig() {
+        OkayUI::UseLauncherLook(false);
+        ImGui_ImplSDLRenderer2_Shutdown();
+        ImGui::DestroyContext(ctx);
+        SDL_DestroyRenderer(ren);
+        SDL_FreeSurface(surf);
+    }
+    void Frame() {
+        ImGui_ImplSDLRenderer2_NewFrame();
+        sim.Frame([&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(10, 10));
+            ImGui::SetNextWindowSize(ImVec2(460, 300));
+            ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            const ImVec2 a = ImGui::GetContentRegionAvail(), p = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##code", a);
+            codeMin = p; codeMax = ImVec2(p.x + a.x, p.y + a.y);
+            okayimgui::StyleLikeImGuiChild(se.Edit(), ImGui::GetStyle());
+            if (hosted) {
+                okayimgui::DrawOkayUIHere("##code", p, a, [&] { se.Edit().Draw("##codeedit", a.x, a.y); }, okayimgui::SdlRendererTextures(ren), geo);
+            } else {   // the old way: drawn by OkayUI's own frame, after ImGui
+                OkayUI::BareNextWindow();
+                if (OkayUI::Begin("##code", p.x, p.y, a.x, a.y)) se.Edit().Draw("##codeedit", a.x, a.y);
+                OkayUI::End();
+            }
+            if (popup) {   // the autocomplete list: an ImGui popup over the code, opened after the code was laid out
+                ImGui::OpenPopup("autocomplete");
+                ImGui::SetNextWindowPos(ImVec2(120, 90));
+                if (ImGui::BeginPopup("autocomplete")) {
+                    ImGui::Dummy(ImVec2(120, 60));
+                    popMin = ImGui::GetWindowPos();
+                    popMax = ImVec2(popMin.x + ImGui::GetWindowSize().x, popMin.y + ImGui::GetWindowSize().y);
+                    ImGui::GetWindowDrawList()->AddRectFilled(popMin, popMax, kPopup);
+                    ImGui::EndPopup();
+                }
+            }
+            ImGui::End();
+            ImGui::Render();
+        });
+    }
+    // ImGui's picture, then (as the editor does at the end of a frame) whatever is left in OkayUI's frame on top.
+    void Present() {
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
+        OkayUI::EndFrame(ren);
+        SDL_RenderFlush(ren);
+    }
+    unsigned Pixel(int x, int y) {
+        SDL_LockSurface(surf);
+        const unsigned char* q = (const unsigned char*)surf->pixels + (size_t)y * surf->pitch + (size_t)x * 4;
+        const unsigned v = ((unsigned)q[0] << 24) | ((unsigned)q[1] << 16) | ((unsigned)q[2] << 8) | q[3];
+        SDL_UnlockSurface(surf);
+        return v;
+    }
+    // Which draw list (in ImGui's draw order) holds the most vertices inside `r`, and which one holds the popup's colour.
+    int ListWithCode() {
+        const ImDrawData* dd = ImGui::GetDrawData();
+        int best = -1, bestN = 0;
+        for (int i = 0; i < dd->CmdListsCount; ++i) {
+            int n = 0;
+            for (const ImDrawVert& v : dd->CmdLists[i]->VtxBuffer)
+                if (v.pos.x > codeMin.x + 20 && v.pos.x < codeMax.x - 20 && v.pos.y > codeMin.y + 20 && v.pos.y < codeMax.y - 20) ++n;
+            if (n > bestN) { bestN = n; best = i; }
+        }
+        return best;
+    }
+    int ListWithPopup() {
+        const ImDrawData* dd = ImGui::GetDrawData();
+        for (int i = 0; i < dd->CmdListsCount; ++i)
+            for (const ImDrawVert& v : dd->CmdLists[i]->VtxBuffer) if (v.col == kPopup) return i;
+        return -1;
+    }
+};
+
+void DrawOrderTests() {
+    Rig r;
+    for (int i = 0; i < 3; ++i) r.Frame();
+    const int codeList = r.ListWithCode(), popList = r.ListWithPopup();
+    CHECK(codeList >= 0 && popList >= 0);
+    CHECK(popList > codeList);                                   // the popup's rectangle is drawn after the code
+    CHECK(r.geo.indices.size() > 300);                           // the code went through the capture (text, washes, numbers)
+    if (r.geo.indices.size() <= 300) std::cerr << "  captured indices: " << r.geo.indices.size() << "\n";
+    CHECK(OkayUI::GetDrawData().indexCount < 60);                // and is no longer in OkayUI's own frame
+    r.Present();
+    const int px = (int)((r.popMin.x + r.popMax.x) * 0.5f), py = (int)((r.popMin.y + r.popMax.y) * 0.5f);
+    CHECK(r.Pixel(px, py) == 0xff00ffffu);                       // the popup is on top of the code
+    // the code is drawn around the popup: its background, not the cleared black
+    const unsigned codeBg = r.Pixel((int)r.codeMax.x - 30, (int)r.codeMax.y - 30);
+    CHECK(codeBg != 0x000000ffu);
+    // the atlas went through the SDL_Renderer texture lookup: text pixels exist in the code rectangle (not just flat fills)
+    int distinct = 0; unsigned last = 0;
+    for (int x = (int)r.codeMin.x + 60; x < (int)r.codeMin.x + 200; ++x) { const unsigned c = r.Pixel(x, (int)r.codeMin.y + 14); if (c != last) ++distinct; last = c; }
+    CHECK(distinct > 6);
+    // clicks still reach the editor (input is OkayUI's; only the drawing moved)
+    r.popup = false;
+    r.sim.Move(r.codeMin.x + 150, r.codeMin.y + 40); r.Frame();
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(r.se.Edit().Focused());
+
+    // The old way, for contrast: OkayUI's own frame drawn after ImGui covers the popup.
+    r.hosted = false; r.popup = true;
+    for (int i = 0; i < 2; ++i) r.Frame();
+    r.Present();
+    CHECK(r.Pixel(px, py) != 0xff00ffffu);
+}
+
+void AppendTests() {
+    // AppendGeometry on its own: commands whose texture cannot be given are skipped, flat geometry samples ImGui's white pixel,
+    // clip rectangles are pushed, and a large mesh is split under 16-bit indices.
+    Rig r;   // ImGui with the SDL_Renderer backend (16-bit indices, vertex offsets allowed as in the editor)
+    CHECK((ImGui::GetIO().BackendFlags & ImGuiBackendFlags_RendererHasVtxOffset) != 0);
+    ImGui_ImplSDLRenderer2_NewFrame();
+    ImGui::NewFrame();
+    ImGui::Begin("w");
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    OkayUI::CapturedGeometry g;
+    auto quad = [&](float x, float y, unsigned char r) {
+        const int b = (int)g.vertices.size();
+        g.vertices.push_back({x, y, r, 0, 0, 255, 0, 0});
+        g.vertices.push_back({x + 2, y, r, 0, 0, 255, 1, 0});
+        g.vertices.push_back({x + 2, y + 2, r, 0, 0, 255, 1, 1});
+        g.vertices.push_back({x, y + 2, r, 0, 0, 255, 0, 1});
+        for (int k : {0, 1, 2, 0, 2, 3}) g.indices.push_back(b + k);
+    };
+    for (int i = 0; i < 20000; ++i) quad((float)(i % 400), (float)(i / 400), 200);   // 80,000 vertices
+    OkayUI::DrawCmd flat; flat.idxOffset = 0; flat.idxCount = (int)g.indices.size() - 6; flat.clipOn = true; flat.clipX = 1; flat.clipY = 2; flat.clipW = 300; flat.clipH = 200;
+    OkayUI::DrawCmd tex; tex.idxOffset = (int)g.indices.size() - 6; tex.idxCount = 6; tex.texture = (const void*)&g;   // nobody knows it
+    g.cmds = {flat, tex};
+    const int vtx0 = dl->VtxBuffer.Size, idx0 = dl->IdxBuffer.Size;
+    okayimgui::AppendGeometry(dl, g, [](const void*) { return ImTextureID_Invalid; });
+    CHECK(dl->IdxBuffer.Size - idx0 == flat.idxCount);           // the unknown texture's quad is skipped
+    CHECK(dl->VtxBuffer.Size - vtx0 >= 80000 - 4);
+    const ImVec2 white = ImGui::GetFontTexUvWhitePixel();
+    CHECK(dl->VtxBuffer[vtx0].uv.x == white.x && dl->VtxBuffer[vtx0].uv.y == white.y);
+    CHECK(dl->VtxBuffer[vtx0].col == IM_COL32(200, 0, 0, 255));
+    bool clipped = false;
+    for (const ImDrawCmd& c : dl->CmdBuffer) if (c.ElemCount > 0 && c.ClipRect.z <= 301.0f && c.ClipRect.w <= 202.0f) clipped = true;   // within the asked rectangle
+    CHECK(clipped);
+    bool inRange = true;   // with 16-bit indices every index stays under 65536 relative to its command's vertex offset
+    for (const ImDrawCmd& c : dl->CmdBuffer)
+        for (unsigned k = c.IdxOffset; k < c.IdxOffset + c.ElemCount; ++k)
+            if ((unsigned)dl->IdxBuffer[(int)k] + c.VtxOffset >= (unsigned)dl->VtxBuffer.Size) inRange = false;
+    CHECK(inRange);
+    ImGui::End();
+    ImGui::EndFrame();
+}
+
+} // namespace
+
+int main() {
+    if (SDL_Init(0) != 0) { std::cerr << "SDL_Init failed\n"; return 1; }
+    std::cout << "[suite] code editor hosted in ImGui\n";
+    DrawOrderTests();
+    AppendTests();
+    std::cout << okaytest::g_checks << " checks, " << okaytest::g_failures << " failures\n";
+    SDL_Quit();
+    return okaytest::g_failures == 0 ? 0 : 1;
+}

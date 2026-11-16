@@ -16,6 +16,8 @@
 //     OkayUI::EndFrame(renderer);                       // flush — AFTER ImGui draws,
 //                                                       // so OkayUI sits on top
 // ---------------------------------------------------------------------------
+#include <vector>
+
 struct SDL_Renderer;
 struct SDL_Texture;
 namespace okay { class TtfFont; }
@@ -234,6 +236,25 @@ DrawData GetDrawData();
 okay::TtfFont* FallbackFontOf(const void* texture);
 /// The same count as DrawData::dropped, for the frame being built or the last one finished.
 int DroppedGeometry();
+
+/// Geometry taken out of the frame (BeginGeometryCapture .. EndGeometryCapture): the vertices, the indices (into `vertices`)
+/// and the commands (index ranges into `indices`, with their clip rectangle and texture as in DrawData). A host that draws
+/// with another toolkit puts it into that toolkit's draw list, at that toolkit's layer: the script editor puts its OkayUI
+/// code area into the ImGui window's draw list, so ImGui popups opened later in the frame are drawn over the code.
+struct CapturedGeometry {
+    std::vector<DrawVertex> vertices;
+    std::vector<int>        indices;
+    std::vector<DrawCmd>    cmds;
+    void Clear() { vertices.clear(); indices.clear(); cmds.clear(); }
+};
+/// Everything drawn into the main batch from here (windows included) until EndGeometryCapture is moved out of the frame
+/// into `out`: EndFrame does not draw it. Tooltips and popups (the overlay batch) are not captured and stay on top.
+/// Input, hit testing and widget state are not affected. Captures do not nest; call both in the same frame.
+void BeginGeometryCapture();
+void EndGeometryCapture(CapturedGeometry& out);
+/// The SDL texture a DrawCmd::texture stands for on `renderer`: the launcher look's atlas (made on the renderer when it is
+/// first asked for), a fallback font's atlas, or the texture itself. nullptr for untextured geometry.
+SDL_Texture* TextureForRenderer(SDL_Renderer* renderer, const void* texture);
 
 /// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
 /// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).
@@ -752,6 +773,13 @@ void Toast(const char* text, int kind = 0, float seconds = 3.0f);
 /// Scale the text of the following widgets (1 = normal) until PopTextScale().
 void PushTextScale(float scale);
 void PopTextScale();
+/// The code font: until PopCodeFont() the launcher look draws and measures text with JetBrains Mono (the font the script
+/// editor's code uses), each character advancing a whole number of pixels, so every character of a line sits in a column of
+/// the same width. Nests. In the classic look (the 8x8 bitmap font, already fixed width) it changes nothing.
+void PushCodeFont();
+void PopCodeFont();
+/// True while PushCodeFont is in force and the code font could be baked (the launcher look).
+bool CodeFontActive();
 
 // ---- Drag and drop -------------------------------------------------------------
 // Lightweight int-payload drag & drop (e.g. reorder a list by dragging item indices).

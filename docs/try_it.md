@@ -422,6 +422,39 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: slots, dropdowns and "Required" on more nodes (branch `claude2/vs-node-fields`, not merged or released yet)
+
+Issue #888 finding 34, part A. Nodes that took a typed prefab, clip, tag, layer, graph file, object or variable name now
+get the same slot or dropdown as the node that already did it right, and the ones that cannot run empty say so.
+
+1. Open the editor (`Tools\OkayEngine.exe`), open or create a scene, then **View > Editors & Tools > Visual Script**.
+2. Right-click the canvas (or press **Space**) and add **Spawn Projectile**. Its box is now a slot that says
+   **Pre None**, and the header shows the orange **Missing** badge with **Required: prefab**. The toolbar's problems
+   button counts it, and its list says "Required: prefab. Drop a prefab file on the slot, or pick one."
+3. Drag a `.okayprefab` from the Project window onto the slot (or click it and pick one). The slot shows the file name,
+   the badge turns green (**Ready**) and the warning goes away. Save the graph and open the `.okayvs` in a text editor:
+   the line reads `node N SpawnProjectile Assets/...okayprefab`, the same text the old typed box held (no `@prefab:`).
+   **Spawn Every Few Seconds** and **Take From Pool** work the same way.
+4. Add **Crossfade Animation**. It starts empty with **Required: clip name**, like Play Clip, and its box is a clip
+   list. Select an object with a Character or a model animator first to see that object's clips at the top.
+5. Add **Set Object Var**. Its box is a variable list. Click it: the box at the top of the list takes typed text, so
+   a new name still goes in; the rows under it are this graph's variables.
+6. Add **On Tag Enter**, **Count Nearby** (its **Tag** pin) or **Count Objects With Tag**: a tag list (tags in the scene,
+   then the project's tags). **Tween Move** and **Kill Tweens With Tag** list the tween tags this graph already uses.
+   **Sphere Cast** and **Raycast All 3D** get the layer list.
+7. Add **Switch Camera** (Required: camera) and **Start Dialogue** (shows **Self** when empty, which means this
+   object's Dialogue Runner, so it is not required). Drag an object from the Hierarchy onto either slot: it shows the
+   object's name, and the file stores the name. **Camera Follow**'s Object name pin takes a dropped object too.
+8. Add **Run Another Graph**: a graph slot (Required: graph file). Pick a `.okayvs`. To run one event, click the slot,
+   type `file.okayvs|MyEvent` in Search and pick **Use "file.okayvs|MyEvent"**; picking another file later keeps `|MyEvent`.
+9. Add **Play Sequence** with nothing typed: **Required: sequence name**.
+10. Old graphs: open a graph you made before this change that uses these nodes, save it, and compare the file: no line
+    changes (typed names stay names, typed paths stay paths).
+
+**Status.** `tests/test_vs_node_fields.cpp` checks every field kind, the required list in the editor and in the checker,
+and that the saved text round-trips byte for byte. See the report on the branch for what was run; the editor drawing
+was only checked in a headless screenshot on Linux, never on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

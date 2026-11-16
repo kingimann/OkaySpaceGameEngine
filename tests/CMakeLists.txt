@@ -1433,6 +1433,12 @@ target_include_directories(test_vs_choices PRIVATE ${CMAKE_SOURCE_DIR}/editor ${
 target_link_libraries(test_vs_choices PRIVATE okay::engine)
 add_test(NAME vs_choices COMMAND test_vs_choices)
 
+# Visual Script node fields: slots, dropdowns and required inputs (#888 finding 34).
+add_executable(test_vs_node_fields test_vs_node_fields.cpp)
+target_include_directories(test_vs_node_fields PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_node_fields PRIVATE okay::engine)
+add_test(NAME vs_node_fields COMMAND test_vs_node_fields)
+
 # C# / OkayScript: classes, generics, lambdas, coroutines, components.
 add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)

@@ -52,6 +52,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
+| Visual Script node checks (#888 finding 34), parts B and C | Not started | Part A is done on `claude2/vs-node-fields` (slots, dropdowns and one required list for the editor and Check Graph; `docs/visual_scripting.md` "Node fields"). Still open: **B**, 32 action nodes (Add Item, Music Play, Anim Trigger, Nav Move To, Particle Play, Set Text, Play Clip, Start Dialogue, Play Sequence and others) do nothing at Play with no Console line when the object or its Target lacks the component; **C**, 1,407 `Fn.*` nodes only say "Calls this text-script builtin" and name their pins First to Fourth |
 
 ## Own cryptography: no hired review, libsodium stays
 

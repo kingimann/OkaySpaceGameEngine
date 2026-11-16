@@ -1,6 +1,8 @@
 #pragma once
 // Named choices, required inputs, and which conversion is safe to insert.
 // No ImGui: the editor draws these, and tests check the rules directly.
+#include "okay/VisualScript/VsRequired.hpp"
+#include <cctype>
 #include <string>
 #include <utility>
 #include <vector>
@@ -8,29 +10,56 @@
 namespace okay::editor::vsed {
 
 enum class VsChoiceKind {
-    None, Clip, AnimState, AnimParam, Tag, Layer, Scene, Variable, Event, Sound
+    None, Clip, AnimState, AnimParam, Tag, Layer, Scene, Variable, Event, Sound,
+    TweenTag,   // a tween's own label (Tween Move's setting, Kill / Pause / Play Tweens With Tag)
+    StoryVar,   // a Story State variable (Set / Get Story Var)
+    LocalVar    // a name a function remembers (Set / Get Local)
 };
 
 enum class VsReady { Ready, Missing, Error };
 
 /// What a node's text field is a name of, or None when it is free text.
 inline VsChoiceKind VsArgChoice(const std::string& type) {
-    if (type == "PlayClip") return VsChoiceKind::Clip;
+    if (type == "PlayClip" || type == "CrossfadeClip") return VsChoiceKind::Clip;
     if (type == "AnimTrigger" || type == "AnimSetFloat" || type == "AnimSetBool") return VsChoiceKind::AnimParam;
-    if (type == "FindWithTag" || type == "CountWithTag" || type == "NearestWithTag" || type == "AllWithTag")
+    if (type == "FindWithTag" || type == "CountWithTag" || type == "NearestWithTag" || type == "AllWithTag" ||
+        type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag" ||
+        type == "FindByTag")
         return VsChoiceKind::Tag;
+    if (type == "TweenMove" || type == "TweenMoveSpeed" || type == "TweenKillTag" || type == "TweenPauseTag" ||
+        type == "TweenPlayTag")
+        return VsChoiceKind::TweenTag;
     if (type == "LoadScene") return VsChoiceKind::Scene;
     if (type == "GetVar" || type == "SetVar" || type == "AddVar" || type == "Toggle" || type == "HasVar" ||
         type == "OnVarChanged" || type == "GetSceneVar" || type == "SetSceneVar" || type == "AddSceneVar" ||
         type == "OnSceneVarChanged" || type == "GetGlobalVar" || type == "SetGlobalVar" || type == "AddGlobalVar" ||
-        type == "OnGlobalVarChanged")
+        type == "OnGlobalVarChanged" || type == "SetObjectVar" || type == "GetObjectVar")
         return VsChoiceKind::Variable;
+    if (type == "SetStoryVar" || type == "GetStoryVar") return VsChoiceKind::StoryVar;
+    if (type == "SetLocal" || type == "GetLocal") return VsChoiceKind::LocalVar;
     if (type == "OnEvent" || type == "SendEvent" || type == "BroadcastEvent") return VsChoiceKind::Event;
     if (type == "MusicPlay") return VsChoiceKind::Sound;
     if (type == "Raycast" || type == "Raycast3D" || type == "OverlapBox" || type == "OverlapSphere" ||
         type == "OverlapBox3D" || type == "OverlapSphere3D" || type == "BoxCast2D" ||
-        type == "CapsuleCast2D" || type == "OverlapBox2D" || type == "OverlapCapsule2D")
+        type == "CapsuleCast2D" || type == "OverlapBox2D" || type == "OverlapCapsule2D" ||
+        type == "SphereCast3D" || type == "RaycastAll3D")
         return VsChoiceKind::Layer;
+    return VsChoiceKind::None;
+}
+
+inline bool VsLabelIs(const char* label, const char* want) {
+    if (!label || !want) return false;
+    std::size_t i = 0;
+    for (; label[i] && want[i]; ++i)
+        if (std::tolower((unsigned char)label[i]) != std::tolower((unsigned char)want[i])) return false;
+    return !label[i] && !want[i];
+}
+
+/// What a node's input pin is a name of, or None. A text pin labelled "Tag"
+/// (Count Nearby, Count Objects With Tag...) gets the tag list, like Find With
+/// Tag's text field. `pinType` is the pin's okay::vs::PinType letter ('T' = text).
+inline VsChoiceKind VsPinChoice(const std::string& /*type*/, int /*pin*/, char pinType, const char* label) {
+    if (pinType == 'T' && VsLabelIs(label, "tag")) return VsChoiceKind::Tag;
     return VsChoiceKind::None;
 }
 
@@ -45,6 +74,9 @@ inline const char* VsChoiceKindName(VsChoiceKind k) {
         case VsChoiceKind::Variable: return "variable";
         case VsChoiceKind::Event: return "event";
         case VsChoiceKind::Sound: return "sound";
+        case VsChoiceKind::TweenTag: return "tween tag";
+        case VsChoiceKind::StoryVar: return "story variable";
+        case VsChoiceKind::LocalVar: return "local variable";
         default: return "value";
     }
 }
@@ -100,14 +132,11 @@ inline bool VsChoiceMissing(const std::string& value, const std::vector<std::str
 
 /// A pin (or the node's text field, pin -1) the node cannot run without.
 /// Empty when that input is optional.
+/// The text field's list is okay::vs::VsRequiredArgFor, which Check Graph reads too.
 inline const char* VsRequiredWhat(const std::string& type, int pin) {
     if (pin < 0) {
-        if (type == "PlayClip") return "clip name";
-        if (type == "Spawn" || type == "NetSpawnOwned") return "prefab";
-        if (type == "LoadScene") return "scene";
-        if (type == "GetVar" || type == "SetVar" || type == "AddVar" || type == "HasVar") return "variable name";
-        if (type == "SendEvent" || type == "BroadcastEvent" || type == "OnEvent") return "event name";
-        return nullptr;
+        const okay::vs::VsRequiredArg* r = okay::vs::VsRequiredArgFor(type);
+        return r ? r->what : nullptr;
     }
     if (type == "Branch" && pin == 0) return "condition";
     if (type == "MoveTowards" && pin == 1) return "object to move toward";

@@ -2,6 +2,8 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsBuiltins.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
+#include "okay/VisualScript/VsRequired.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1203,17 +1205,28 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             issues.push_back({1, kv.first, "Required: " + std::string(t == "LoadScene" ? "scene" : "variable name") + "."});
     }
 
+    // 4d) Every other text field a node can't run without, from the list the editor's
+    //     "Missing" badge reads too (VsRequired.hpp): Spawn's prefab, Spawn Projectile,
+    //     Pool Get, Crossfade Animation, Run Graph, Switch Camera, Play Sequence...
+    for (const auto& kv : nodes) {
+        const std::string& t = kv.second.type;
+        if (!kv.second.arg.empty() || t == "PlayClip" || t == "LoadScene" || t == "GetVar" || t == "SetVar") continue;   // 4c
+        if (const VsRequiredArg* r = VsRequiredArgFor(t))
+            issues.push_back({1, kv.first, std::string("Required: ") + r->what + ". " + r->how});
+    }
+
     // 5) Prefabs that aren't there.
     if (!baseDir.empty())
         for (const auto& kv : nodes)
             if (kv.second.type == "Spawn" || kv.second.type == "NetSpawnOwned") {
                 namespace fs = std::filesystem;
                 std::error_code ec;
-                fs::path p(kv.second.arg);
-                if (kv.second.arg.empty())
-                    issues.push_back({0, kv.first, "no prefab file is set"});
-                else if (!fs::exists(p, ec) && !fs::exists(fs::path(baseDir) / p, ec))
-                    issues.push_back({0, kv.first, "prefab file '" + kv.second.arg + "' doesn't exist"});
+                const std::string file = VsBareAsset(kv.second.arg);   // a prefab dropped on the slot is "@prefab:<path>"
+                fs::path p(file);
+                if (file.empty())
+                    continue;   // 4d says "Required: prefab"
+                if (!fs::exists(p, ec) && !fs::exists(fs::path(baseDir) / p, ec))
+                    issues.push_back({0, kv.first, "prefab file '" + file + "' doesn't exist"});
             }
     return issues;
 }

@@ -558,6 +558,38 @@ For games where players build (see [build_mode.md](build_mode.md)).
 | Set Build Palette | Replace what players can place: `Name=prefab, Name=prefab\|icon.png, ...` (the icon is optional) |
 | Save Creation / Load Creation | Save / load everything players placed under a name. **Saved** / **Loaded** says whether it worked. |
 
+## Node fields: slots, dropdowns and required inputs
+
+A node's text box is a **slot** when it names an object or a file, and a **dropdown** when it names one of a known
+list. Each one stores the same text the plain box stored, so graphs made before keep loading and saving byte for byte
+the same (`tests/test_vs_node_fields.cpp` checks every node below).
+
+| Node | Field | Becomes |
+|---|---|---|
+| Spawn Projectile, Spawn Every Few Seconds, Take From Pool | prefab | Prefab slot, like Spawn. Stores the project path (`Assets/bullet.okayprefab`), not `@prefab:` |
+| Crossfade Animation | clip name | Clip list, like Play Clip |
+| Run Another Graph | `file.okayvs` or `file.okayvs\|Event` | Graph slot, like Run Tree. Picking a new file keeps the `\|Event` part |
+| Switch Camera, Start Dialogue | camera / object name | Object slot that stores the object's **name** (these nodes find the object by name). Start Dialogue empty shows Self: this object's Dialogue Runner |
+| Camera Follow, UITheme.ApplyTo, IK.SetLimbTarget (two-text form) | the Object Name pin | Object slot that stores the name |
+| On Tag Enter / Stay / Exit, On Collision With Tag, Get Object by Tag | tag | Tag list: tags in this scene, then the project's tag list |
+| Count Nearby, Get Nearest / Farthest Object, the gameplay-library tag nodes (Count Objects With Tag, Set Tag on Object...) | the Tag pin | Tag list |
+| Tween Move, Tween Move By Speed, Kill / Pause / Play Tweens With Tag | tag | Tween tag list: the tween tags this graph already uses (a tween's tag is not an object tag) |
+| Sphere Cast, Raycast All 3D | layers | Layer list, like Raycast 3D |
+| Set / Get Object Var | variable | Variable list, like Set Var |
+| Set / Get Story Var | variable | Story variable list (names this graph already uses) |
+| Set / Get Local | name | Local name list (names this graph already uses) |
+
+Every dropdown starts with a box you can type into, so a name that is not listed yet (a new tag, `Default, Enemy` for
+several layers, a new variable) still goes in exactly as typed. A name slot (the ones that store a name or a path) has
+the same: type in its Search box and pick **Use "..."**.
+
+**Required.** A node that cannot run with its text box empty shows the orange **Missing** badge and a "Required: ..."
+line in its header, and **Check Graph** gives the same warning. One list (`okay/VisualScript/VsRequired.hpp`) feeds
+both, so they cannot disagree: Play Clip and Crossfade Animation (clip name), Spawn, Spawn Projectile, Spawn Every Few
+Seconds, Take From Pool and Net Spawn Owned (prefab), Run Another Graph (graph file), Switch Camera (camera), Play Sequence (sequence name),
+Load Scene (scene), Get / Set / Add / Has Var (variable name), and Send Event, Broadcast Event and On Message
+(event name). Start Dialogue is not on it: empty means this object's own Dialogue Runner.
+
 ## When a graph goes wrong
 
 Graphs never freeze the game and never fail silently:

@@ -1067,7 +1067,7 @@ public:
             {"FollowPath", "0,0,0; 2,0,0"}, {"Patrol", "0,0,0; 3,0,0; 3,0,3"},
             {"OnTagEnter", "Player"}, {"OnTagStay", "Player"}, {"OnTagExit", "Player"}, {"OnCollisionTag", "Player"},
             {"OnAction", "interact"}, {"OnActionUp", "interact"}, {"OnActionHeld", "interact"},
-            {"Countdown", "5"}, {"Ammo", "6"}, {"CrossfadeClip", "Idle"}, {"TweenPosition", "inout"},
+            {"Countdown", "5"}, {"Ammo", "6"}, {"TweenPosition", "inout"},
             {"TweenRotation", "inout"}, {"TweenScale", "inout"}, {"TweenColor", "inout"},
             {"Condition", "always"}, {"Actions", "log Hello"},
             {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
@@ -3163,14 +3163,25 @@ inline okay::vs::VsRefKind VsArgKind(const std::string& type) {
         type == "DistanceTo" || type == "LookAt" || type == "MoveTowards" ||
         type == "SetActive" || type == "SetText" || type == "Teleport" ||
         type == "ShowUI" || type == "HideUI") return okay::vs::VsRefKind::Object;
+    if (type == "SwitchCamera" || type == "StartDialogue") return okay::vs::VsRefKind::Object;
     if (type == "Spawn" || type == "NetSpawnOwned") return okay::vs::VsRefKind::Prefab;
+    if (type == "SpawnProjectile" || type == "SpawnEvery" || type == "PoolGet") return okay::vs::VsRefKind::Prefab;
     if (type == "LoadScene") return okay::vs::VsRefKind::Scene;
     if (type == "MusicPlay") return okay::vs::VsRefKind::Audio;
-    if (type == "BtRun") return okay::vs::VsRefKind::Graph;
+    if (type == "BtRun" || type == "RunGraph") return okay::vs::VsRefKind::Graph;
     return okay::vs::VsRefKind::None;
 }
+// Slots on nodes whose runtime reads the plain name or path, as it was typed
+// (Switch Camera finds the object by name, Pool Get keys its pool by the text).
+// Their slot writes exactly that string, never @guid: or @prefab:, and opening
+// an old graph leaves it alone, so the saved text stays byte for byte the same.
+inline bool VsArgPlainRef(const std::string& type) {
+    return type == "SpawnProjectile" || type == "SpawnEvery" || type == "PoolGet" || type == "RunGraph" ||
+           type == "SwitchCamera" || type == "StartDialogue";
+}
 inline bool VsArgDefaultsSelf(const std::string& type) {
-    return type == "Teleport" || type == "ShowUI" || type == "HideUI" || type == "SetActive" || type == "ObjectPosition";
+    return type == "Teleport" || type == "ShowUI" || type == "HideUI" || type == "SetActive" || type == "ObjectPosition" ||
+           type == "StartDialogue";   // empty = this object's Dialogue Runner
 }
 inline okay::vs::VsRefKind VsKindFromWords(const char* words) {
     if (!words || !words[0]) return okay::vs::VsRefKind::None;
@@ -3187,20 +3198,44 @@ inline okay::vs::VsRefKind VsKindFromWords(const char* words) {
 }
 inline okay::vs::VsRefKind VsPinKind(const std::string& type, int pin, okay::vs::PinType pt, const char* label) {
     if (pt == okay::vs::PinType::Object) return okay::vs::VsRefKind::Object;
+    // A text pin that takes an object's name (Camera Follow, UITheme.ApplyTo...).
+    if (pt == okay::vs::PinType::Text && VsLabelIs(label, "object name")) return okay::vs::VsRefKind::Object;
     (void)type; (void)pin;
     return VsKindFromWords(label);
+}
+// A pin slot that writes the plain name (see VsArgPlainRef): a text pin holds a
+// name, so a dropped object becomes its name.
+inline bool VsPinPlainRef(const std::string& type, int pin, okay::vs::PinType pt, const char* label) {
+    return pt == okay::vs::PinType::Text && VsPinKind(type, pin, pt, label) == okay::vs::VsRefKind::Object;
+}
+// What a slot stores for a picked or dropped object: its guid (found again after
+// a rename), or its name for a plain slot.
+inline std::string VsSlotObjectValue(okay::GameObject& go, bool plain) {
+    if (plain || go.Guid().empty()) return go.name;
+    return okay::vs::VsGuidRef(go.Guid());
+}
+// What a slot stores for a project file (`rel`, project-relative): a typed
+// reference, or the path itself for a plain slot. Run Graph's "file|Event" keeps
+// the event after the bar when the file changes.
+inline std::string VsSlotFileValue(okay::vs::VsRefKind kind, const std::string& rel, const std::string& old, bool plain) {
+    if (!plain) return okay::vs::VsAssetRef(kind, rel);
+    const auto bar = old.find('|');
+    return bar == std::string::npos ? rel : rel + old.substr(bar);
 }
 inline bool VsUpgradeGraph(VsEditGraph& g, okay::Scene& scene) {
     bool changed = false;
     for (auto& n : g.nodes) {
         const okay::vs::VsRefKind ak = VsArgKind(n.type);
-        if (ak != okay::vs::VsRefKind::None && okay::vs::VsUpgradeRefString(n.arg, ak, &scene)) changed = true;
+        if (ak != okay::vs::VsRefKind::None && !VsArgPlainRef(n.type) && okay::vs::VsUpgradeRefString(n.arg, ak, &scene))
+            changed = true;
         const VsDef* d = FindDef(n.type);
         if (!d) continue;
         for (auto it = n.pinDefault.begin(); it != n.pinDefault.end(); ++it) {
             const char* label = (it->first >= 0 && it->first < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)it->first] : "";
-            const okay::vs::VsRefKind pk = VsPinKind(n.type, it->first, okay::vs::InputType(n.type, it->first), label);
-            if (pk != okay::vs::VsRefKind::None && okay::vs::VsUpgradeRefString(it->second, pk, &scene)) changed = true;
+            const okay::vs::PinType pt = okay::vs::InputType(n.type, it->first);
+            const okay::vs::VsRefKind pk = VsPinKind(n.type, it->first, pt, label);
+            if (pk != okay::vs::VsRefKind::None && !VsPinPlainRef(n.type, it->first, pt, label) &&
+                okay::vs::VsUpgradeRefString(it->second, pk, &scene)) changed = true;
         }
     }
     return changed;
@@ -3229,9 +3264,16 @@ inline std::string VsRefLabel(const std::string& value, okay::vs::VsRefKind kind
         if (okay::GameObject* o = scene.Find(value)) return o->name;
         return value;
     }
-    const std::string bare = okay::vs::VsBareAsset(value);
+    std::string bare = okay::vs::VsBareAsset(value);
+    std::string event;
+    if (kind == okay::vs::VsRefKind::Graph) {   // Run Graph: "file.okayvs|Event"
+        const auto bar = bare.find('|');
+        if (bar != std::string::npos) { event = bare.substr(bar + 1); bare = bare.substr(0, bar); }
+    }
     if (bare.empty()) return "None";
-    return std::filesystem::path(bare).filename().string();
+    std::string shown = std::filesystem::path(bare).filename().string();
+    if (!event.empty()) shown += " | " + event;
+    return shown;
 }
 inline const char* VsRefIcon(okay::vs::VsRefKind kind) {
     switch (kind) {
@@ -3247,13 +3289,14 @@ inline const char* VsRefIcon(okay::vs::VsRefKind kind) {
 }
 // Read a Hierarchy / Scene object or a Project file dropped on a slot.
 // True when `value` changed. A wrong type sets st.refHint and leaves `value`.
-inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind kind, std::string& value) {
+// `plain`: write the object's name or the file's path as typed (VsArgPlainRef).
+inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind kind, std::string& value, bool plain = false) {
     using okay::vs::VsRefKind;
     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
         okay::GameObject* go = p->Data ? *(okay::GameObject**)p->Data : nullptr;
         if (kind != VsRefKind::Object) { st.refHint = "That is an object. This slot wants a file from the Project window."; return false; }
         if (!go) return false;
-        value = go->Guid().empty() ? go->name : okay::vs::VsGuidRef(go->Guid());
+        value = VsSlotObjectValue(*go, plain);
         st.refHint.clear();
         return true;
     }
@@ -3264,7 +3307,7 @@ inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind ki
             st.refHint = std::string("Wrong file. This slot wants ") + okay::vs::VsRefKindName(kind) + ".";
             return false;
         }
-        value = okay::vs::VsAssetRef(kind, VsProjectRelative(path, ed.projectDir()));
+        value = VsSlotFileValue(kind, VsProjectRelative(path, ed.projectDir()), value, plain);
         st.refHint.clear();
         return true;
     }
@@ -3272,8 +3315,10 @@ inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind ki
 }
 
 // One reference slot: name, picker, clear, and drag-drop. True when `value` changed.
+// `plain` (VsArgPlainRef): it stores names and paths as typed, and its picker
+// also takes typed text ("Use ..."), for a name that is not in the list.
 inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, okay::vs::VsRefKind kind,
-                          bool defaultSelf, float width, const char* id) {
+                          bool defaultSelf, float width, const char* id, bool plain = false) {
     using okay::vs::VsRefKind;
     bool changed = false;
     const std::string label = VsRefLabel(value, kind, defaultSelf, ed.scene());
@@ -3287,7 +3332,7 @@ inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, 
             ? "Drag an object from the Hierarchy or the Scene view, or click to pick.\nSelf is this object."
             : "Drag a file from the Project window, or click to pick.");
     if (ImGui::BeginDragDropTarget()) {
-        if (VsApplyDrop(ed, st, kind, value)) changed = true;
+        if (VsApplyDrop(ed, st, kind, value, plain)) changed = true;
         ImGui::EndDragDropTarget();
     }
     ImGui::SameLine(0, 4);
@@ -3305,7 +3350,18 @@ inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, 
             if (!needle.empty() && h.find(needle) == std::string::npos) return;
             if (ImGui::Selectable(name)) { value = stored; changed = true; ImGui::CloseCurrentPopup(); }
         };
-        if (kind == VsRefKind::Object) {
+        if (plain && q[0]) {   // the typed text itself: a graph name, "file|Event", a new name
+            const std::string typed = q;
+            if (ImGui::Selectable(("Use \"" + typed + "\"").c_str())) {
+                value = typed; changed = true; q[0] = 0; ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Store exactly what you typed.");
+            ImGui::Separator();
+        }
+        if (kind == VsRefKind::Object && plain) {   // found by name at Play
+            if (defaultSelf) row("Self", std::string());
+            for (const auto& up : ed.scene().Objects()) if (up) row(up->name.c_str(), up->name);
+        } else if (kind == VsRefKind::Object) {
             row("Self", "@self");
             row("Other", "@other");
             for (const auto& up : ed.scene().Objects()) if (up) row(up->name.c_str(), okay::vs::VsGuidRef(up->Guid()));
@@ -3319,7 +3375,7 @@ inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, 
                     const std::string full = it->path().string();
                     if (!okay::vs::VsExtOk(kind, full)) continue;
                     const std::string rel = VsProjectRelative(full, ed.projectDir());
-                    row(rel.c_str(), okay::vs::VsAssetRef(kind, rel));
+                    row(rel.c_str(), VsSlotFileValue(kind, rel, value, plain));
                     if (++shownN > 400) break;
                 }
             if (!shownN) ImGui::TextDisabled("Nothing of that type in Assets.");
@@ -3374,9 +3430,17 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
             for (const auto& n : g.nodes)
                 if (n.type == "AnimTrigger" || n.type == "AnimSetFloat" || n.type == "AnimSetBool") addFall(n.arg);
             break;
-        case VsChoiceKind::Tag:
+        case VsChoiceKind::Tag:   // tags in this scene first, then the project's tag list
             for (const auto& up : ed.scene().Objects())
                 if (up && !up->tag.empty()) addTarget(up->tag);
+            for (const auto& t : okay::Tags::Builtin()) addFall(t);
+            for (const auto& t : okay::Tags::Custom()) addFall(t);
+            break;
+        case VsChoiceKind::TweenTag:   // a tween's label: the ones this graph already gives
+        case VsChoiceKind::StoryVar:   // story variables this graph sets or reads
+        case VsChoiceKind::LocalVar:   // names Set Local / Get Local use in this graph
+            for (const auto& n : g.nodes)
+                if (VsArgChoice(n.type) == kind) addTarget(n.arg);
             break;
         case VsChoiceKind::Layer:
             for (int i = 0; i < okay::Layers::kCount; ++i) {
@@ -3405,7 +3469,12 @@ inline VsChoiceLists VsGatherChoices(EditorState& ed, const VsEditGraph& g, VsCh
     return lists;
 }
 
-inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& value, VsChoiceKind kind, float width) {
+// A dropdown of names. The box at the top of the list takes typed text too, so
+// a name that is not listed yet (a new tag, "Default, Enemy" for layers) still
+// goes in exactly as the old text field took it. `noteBelow`: write "Not in the
+// list" under the box (a pin row has no room; its text turns red instead).
+inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& value, VsChoiceKind kind, float width,
+                         bool noteBelow = true) {
     const VsChoiceLists lists = VsGatherChoices(ed, g, kind);
     const std::vector<std::string> rows = VsChoiceRows(kind, lists);
     const bool missing = VsChoiceMissing(value, rows);
@@ -3416,6 +3485,20 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
     bool colorPushed = missing;
     if (ImGui::BeginCombo("##choice", preview.c_str())) {
         if (colorPushed) { ImGui::PopStyleColor(); colorPushed = false; }   // the open list uses the normal text colour
+        {
+            char tb[256];
+            std::snprintf(tb, sizeof(tb), "%s", value.c_str());
+            ImGui::SetNextItemWidth(std::max(180.0f, width));
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            // Every key goes straight in, the way the old text field took it.
+            if (ImGui::InputTextWithHint("##typed", "type a name, or pick one", tb, sizeof(tb), ImGuiInputTextFlags_AutoSelectAll)) {
+                value = tb; changed = true;
+            }
+            if (ImGui::IsItemDeactivated() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))
+                ImGui::CloseCurrentPopup();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Type any name (Enter closes the list), or pick one below.");
+            ImGui::Separator();
+        }
         auto section = [&](const char* title, const std::vector<std::string>& items) {
             if (items.empty()) return;
             ImGui::TextDisabled("%s", title);
@@ -3451,7 +3534,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
         }
         ImGui::EndDragDropTarget();
     }
-    if (missing) {   // drawn on the canvas under the box (a widget here would land at the window's left edge)
+    if (missing && noteBelow) {   // drawn on the canvas under the box (a widget here would land at the window's left edge)
         const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
         ImGui::GetWindowDrawList()->AddText(ImVec2(r0.x, r1.y + 1.0f), IM_COL32(255, 140, 115, 255), "Not in the list");
     }
@@ -4596,11 +4679,19 @@ inline void Draw(EditorState& ed, bool* open) {
                 const float boxH = fs + 6 * z;
                 ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
                 const okay::vs::VsRefKind rk = VsPinKind(n.type, i, pt, d->dataIn[i]);
+                const VsChoiceKind pc = VsPinChoice(n.type, i, (char)pt, d->dataIn[i]);
                 std::string& dv = n.pinDefault[i];
                 if (rk != okay::vs::VsRefKind::None) {
                     const bool selfDefault = okay::vs::TargetPinFor(n.type) == i;
                     char bid[16]; std::snprintf(bid, sizeof(bid), "pd%d", i);
-                    if (VsDrawRefSlot(ed, st, dv, rk, selfDefault, BOX_W, bid)) g.dirty = true;
+                    if (VsDrawRefSlot(ed, st, dv, rk, selfDefault, BOX_W, bid, VsPinPlainRef(n.type, i, pt, d->dataIn[i])))
+                        g.dirty = true;
+                    if (dv.empty()) n.pinDefault.erase(i);
+                } else if (pc != VsChoiceKind::None) {   // a "Tag" text pin: the tag list, like Find With Tag
+                    char bid[16]; std::snprintf(bid, sizeof(bid), "pc%d", i);
+                    ImGui::PushID(bid);
+                    if (VsDrawChoice(ed, g, dv, pc, BOX_W, false)) g.dirty = true;
+                    ImGui::PopID();
                     if (dv.empty()) n.pinDefault.erase(i);
                 } else {
                     ImGui::SetNextItemWidth(BOX_W);
@@ -4802,7 +4893,7 @@ inline void Draw(EditorState& ed, bool* open) {
             } else if (VsChoiceKind ck = VsArgChoice(n.type); ck != VsChoiceKind::None) {
                 if (VsDrawChoice(ed, g, n.arg, ck, NODE_W - PAD * 2)) g.dirty = true;
             } else if (okay::vs::VsRefKind ak = VsArgKind(n.type); ak != okay::vs::VsRefKind::None) {
-                if (VsDrawRefSlot(ed, st, n.arg, ak, VsArgDefaultsSelf(n.type), NODE_W - PAD * 2, "argref"))
+                if (VsDrawRefSlot(ed, st, n.arg, ak, VsArgDefaultsSelf(n.type), NODE_W - PAD * 2, "argref", VsArgPlainRef(n.type)))
                     g.dirty = true;
             } else {
                 if (ImGui::InputTextWithHint("##arg", d->paramHint ? d->paramHint : "", buf, sizeof(buf)))
@@ -4851,10 +4942,11 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (kind == 1 && side == 0 && ImGui::BeginDragDropTarget()) {
                 const char* label = (idx >= 0 && idx < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)idx] : "";
-                const okay::vs::VsRefKind rk = VsPinKind(n.type, idx, VsInPinType(g, n.id, idx), label);
+                const okay::vs::PinType ipt = VsInPinType(g, n.id, idx);
+                const okay::vs::VsRefKind rk = VsPinKind(n.type, idx, ipt, label);
                 if (rk != okay::vs::VsRefKind::None) {
                     std::string slot = n.pinDefault.count(idx) ? n.pinDefault[idx] : std::string();
-                    if (VsApplyDrop(ed, st, rk, slot)) {
+                    if (VsApplyDrop(ed, st, rk, slot, VsPinPlainRef(n.type, idx, ipt, label))) {
                         g.unlinkPin(n.id, 1, 0, idx);
                         n.pinDefault[idx] = slot;
                         g.dirty = true;

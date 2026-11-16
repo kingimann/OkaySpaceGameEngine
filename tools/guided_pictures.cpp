@@ -402,6 +402,29 @@ int main(int argc, char** argv) {
         std::ofstream(ex + "/guided_vehicles.okayscene", std::ios::binary) << veh;
         std::printf("wrote %d vehicle models\n", vtotal);
 
+        {   // Car body styles side by side at the same size, so only the shape differs.
+            std::string cs = scene.substr(0, scene.find("gameobject 1 ")) +
+                "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 20 -0.5 0 0 0 0 1 80 1 40\n"
+                "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+            cs.replace(cs.find("name \"Guided fences\""), 21, "name \"Guided car styles\"");
+            const Template& C = *Registry::Instance().Find("car");
+            int cid = 2, ci = 0;
+            for (const char* st : {"sedan", "hatchback", "coupe", "suv", "pickup", "sports", "van"}) {
+                Recipe r = DefaultRecipe(C, st);
+                r.params["length"] = 4.4; r.params["height"] = 1.45; r.params["width"] = 1.8; r.params["groundClear"] = 0.18; r.params["wheelbase"] = 2.7; r.params["wheelRadius"] = 0.33;
+                const std::string base = std::string("carstyle_") + st;
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 0 0 0 0 1 1 1 1\n", (double)ci * 6.0);
+                cs += "gameobject " + std::to_string(cid++) + " \"Car " + st + "\"\n  active 1\n  parent -1\n" + tr +
+                      "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++ci;
+            }
+            std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
+            std::printf("wrote the car styles example\n");
+        }
+
         // The character examples: every start design of human, robot and creature.
         std::string chr = scene.substr(0, scene.find("gameobject 1 ")) +
             "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 10 -0.5 10 0 0 0 1 100 1 100\n"

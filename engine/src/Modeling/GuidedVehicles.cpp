@@ -595,74 +595,339 @@ void GenerateBus(const Recipe& r, std::vector<GeneratedPart>& parts) {
 }
 
 // ---- Motorcycle ------------------------------------------------------------------------------------------------
+// A round rod from a to b (frame tubes, fork legs, bars, pipes).
+PolyMesh Rod(Vec3 a, Vec3 b, float r, int sides) {
+    const Vec3 d = b - a;
+    const float len = d.Magnitude();
+    if (len < 1e-4f) return PolyMesh();
+    Frame f;
+    f.u = d / len;
+    const Vec3 ref = std::fabs(f.u.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+    f.t = Vec3::Cross(ref, f.u).Normalized();
+    f.n = Vec3::Cross(f.t, f.u);
+    f.origin = a; f.sx = r * 2; f.sz = r * 2; f.sy = len;
+    return shapes::Prism(f, sides);
+}
+void MakeCcw(Poly& p) {   // a side profile must run counter-clockwise
+    double a = 0;
+    for (size_t i = 0; i < p.size(); ++i) { const Vec2& u = p[i]; const Vec2& v = p[(i + 1) % p.size()]; a += (double)u.x * v.y - (double)v.x * u.y; }
+    if (a < 0) std::reverse(p.begin(), p.end());
+}
+PolyMesh SmoothSide(Poly p, float z0, float z1) {
+    MakeCcw(p);
+    const int it = std::min(3, (int)std::lround(shapes::DetailF()));
+    if (it > 0) p = Chaikin(p, it, true);
+    return Side(p, z0, z1);
+}
+
 void GenerateBike(const Recipe& r, std::vector<GeneratedPart>& parts) {
     Out o{r, parts};
     const float wb = Pf(r, "wheelbase"), fr = Pf(r, "frontWheelRadius"), rr = Pf(r, "rearWheelRadius"), ww = Pf(r, "wheelWidth");
-    const float seatH = Pf(r, "seatHeight"), tankLen = Pf(r, "tankLength");
+    const float seatH = Pf(r, "seatHeight");
+    const float rake = Pf(r, "rake") * kPi / 180.0f, forkLen = Pf(r, "forkLength");
+    const int sd = std::max(4, shapes::Scale(8, 4));
     const float xf = wb / 2, xr = -wb / 2;
-    // wheels (a front and a rear; their radii differ)
+    const Vec3 axF{xf, fr, 0}, axR{xr, rr, 0};
+    const Vec3 dir{-std::sin(rake), std::cos(rake), 0};   // up the steering axis: it leans back
+    auto onFork = [&](float t) { return axF + dir * (forkLen * t); };
+    const Vec3 H = onFork(1.0f);                          // the top of the fork: the steering head
+    const float zf = std::max(0.09f, ww * 0.5f + 0.035f);  // fork legs stand just outside the front tyre
+    const float zr = ww * 0.5f + 0.018f;                   // swingarm arms just outside the rear tyre
+    const std::string engD = r.DesignFor("engine", "engine/0"), frameD = r.DesignFor("frame", "frame/0");
+    const bool unit = engD == "unit";
+    const float ey = std::max(std::max(fr, rr) * 0.62f, 0.16f);
+    const Vec3 P = unit ? Vec3{xr + wb * 0.30f, rr + 0.02f, 0} : Vec3{xr + wb * 0.30f, std::max(std::max(rr * 0.9f, ey + 0.12f), 0.22f), 0};   // swingarm pivot
+
+    // seat and tank positions along the bike
+    const float sx0 = xr + 0.14f;
+    const float tx1 = H.x - 0.06f;
+    const float tankLen = std::max(0.12f, std::min(Pf(r, "tankLength"), tx1 - (sx0 + 0.3f)));
+    const float tx0 = tx1 - tankLen, sx1 = tx0 + 0.05f;
+    const float ty0 = seatH - 0.06f, ty1 = seatH + 0.2f;
+    const Vec3 Hl = onFork(0.74f);                         // where the headlight sits
+    float ex0 = P.x + 0.06f;
+    float eW = engD == "twin" ? 0.42f : engD == "inline" ? 0.36f : 0.30f;
+    eW = std::max(0.2f, std::min(eW, (xf - 0.32f) - ex0));
+    const float ex1 = ex0 + eW;
+
+    // wheels
     Wheel(o, "wheel/0", xf, 0, fr, ww);
     Wheel(o, "wheel/1", xr, 0, rr, ww);
-    // fork and mudguards
+
+    // fork: two legs along the steering axis, a crown at the top and the front axle
     {
-        Frame f = FrameAA({xf - 0.35f, fr, -0.1f}, {xf, seatH + 0.25f, 0.1f});
-        o.Add("fork/0", "fork", f, [&](const std::string&) {
+        Frame f = FrameAA({xf - forkLen * std::sin(rake) - 0.05f, fr, -zf - 0.03f}, {xf + 0.05f, H.y, zf + 0.03f});
+        o.Add("fork/0", "fork", f, [&](const std::string& d) {
             PolyMesh m;
-            for (int s = 0; s < 2; ++s) {
-                const float z = s ? 0.09f : -0.09f;
-                shapes::Append(m, Side({{xf - 0.02f, fr}, {xf + 0.02f, fr}, {xf - 0.17f, seatH + 0.28f}, {xf - 0.22f, seatH + 0.28f}}, z - 0.015f, z + 0.015f));
+            const float rl = d == "inverted" ? 0.022f : 0.02f, ru = d == "inverted" ? 0.036f : 0.027f;
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const float z = zf * (float)sgn;
+                if (d == "springer") {   // leading rails with a spring in front of the head
+                    const Vec3 a{xf, fr, z}, top{H.x + 0.02f, H.y - 0.02f, z};
+                    shapes::Append(m, Rod(a, top, 0.016f, sd));
+                    shapes::Append(m, Rod({a.x + 0.05f, a.y + 0.05f, z}, {top.x + 0.05f, top.y - 0.05f, z}, 0.026f, sd));
+                } else {
+                    const Vec3 mid = onFork(0.5f);
+                    shapes::Append(m, Rod({xf, fr, z}, {mid.x, mid.y, z}, d == "inverted" ? ru : rl, sd));
+                    shapes::Append(m, Rod({mid.x - dir.x * 0.01f, mid.y - dir.y * 0.01f, z}, {H.x, H.y, z}, d == "inverted" ? rl : ru, sd));
+                }
+            }
+            shapes::Append(m, Rod({H.x, H.y, -zf - 0.02f}, {H.x, H.y, zf + 0.02f}, 0.03f, sd));                     // crown
+            shapes::Append(m, Rod({xf, fr, -zf - 0.02f}, {xf, fr, zf + 0.02f}, 0.016f, sd));                         // front axle
+            return m;
+        });
+    }
+
+    // frame
+    {
+        Frame ff = FrameAA({xr, 0.1f, -0.15f}, {H.x + 0.05f, H.y + 0.05f, 0.15f});
+        o.Add("frame/0", "frame", ff, [&](const std::string& d) {
+            PolyMesh m;
+            const Vec3 hA = onFork(0.8f), hB = H + dir * 0.05f;
+            shapes::Append(m, Rod(hA, hB, 0.036f, sd));                                         // head tube
+            const Vec3 c{sx0 + 0.05f, seatH - 0.14f, 0};
+            shapes::Append(m, Rod({P.x - 0.02f, P.y, -0.11f}, {P.x - 0.02f, P.y, 0.11f}, 0.036f, sd));   // pivot cross tube
+            if (d == "step") {   // a step-through frame: one tube down the leg shield, a floor, rails to the tail
+                const float fl0 = std::min(H.x - 0.22f, P.x - 0.2f);
+                const Vec3 fb{fl0, 0.3f, 0};
+                shapes::Append(m, Rod(onFork(0.74f), fb, 0.034f, sd));
+                shapes::Append(m, BoxAA({fl0 - 0.12f, 0.22f, -0.2f}, {P.x + 0.04f, 0.27f, 0.2f}));
+                const Vec3 fe{P.x + 0.06f, 0.26f, 0};
+                shapes::Append(m, Rod(fe, {P.x - 0.02f, P.y + 0.02f, 0}, 0.03f, sd));
+                for (int sgn = -1; sgn <= 1; sgn += 2) shapes::Append(m, Rod({fe.x, fe.y + 0.02f, 0.1f * (float)sgn}, {c.x, c.y, 0.08f * (float)sgn}, 0.026f, sd));
+            } else if (d == "spar") {   // twin beams straight from the head to the pivot (a sports frame)
+                for (int sgn = -1; sgn <= 1; sgn += 2) {
+                    const float z = 0.1f * (float)sgn;
+                    const Vec3 a{hA.x, hA.y, z}, b{P.x, P.y + 0.1f, z};
+                    shapes::Append(m, Rod(a, b, 0.036f, sd));
+                    const float tt = (P.x + 0.25f - a.x) / (b.x - a.x);
+                    const Vec3 on{P.x + 0.25f, a.y + (b.y - a.y) * tt, z};
+                    shapes::Append(m, Rod(on, {c.x, c.y, 0.08f * (float)sgn}, 0.024f, sd));
+                }
+                shapes::Append(m, Rod({hA.x, hA.y, -0.1f}, {hA.x, hA.y, 0.1f}, 0.03f, sd));
+                shapes::Append(m, Rod({tx0 + 0.04f, seatH - 0.12f, -0.08f}, {tx0 + 0.04f, seatH - 0.12f, 0.08f}, 0.024f, sd));
+            } else {   // a tube frame: top tube, down tube, a cradle under the engine, seat rails
+                const Vec3 b{tx0 + 0.05f, seatH - 0.12f, 0};
+                shapes::Append(m, Rod(onFork(0.9f), b, 0.028f, sd));
+                shapes::Append(m, Rod(b, c, 0.026f, sd));
+                for (int sgn = -1; sgn <= 1; sgn += 2) shapes::Append(m, Rod({c.x, c.y, 0.07f * (float)sgn}, {P.x, P.y, 0.09f * (float)sgn}, 0.02f, sd));
+                const Vec3 e0{ex0 + 0.05f, ey + 0.06f, 0};
+                shapes::Append(m, Rod(onFork(0.82f), e0, 0.03f, sd));
+                shapes::Append(m, Rod(e0, {P.x, P.y, 0.0f}, 0.026f, sd));
             }
             return m;
         });
     }
-    // frame / engine block
-    const float ey = std::max(fr, rr) * 0.35f;
-    Frame fe = FrameAA({-0.3f, ey, -0.17f}, {0.3f, ey + 0.38f, 0.17f});
-    o.Add("engine/0", "engine", fe, [&](const std::string& d) {
-        if (d == "twin") { PolyMesh m = BoxAA({-0.3f, ey, -0.17f}, {0.3f, ey + 0.3f, 0.17f}); shapes::Append(m, BoxAA({-0.25f, ey + 0.31f, -0.16f}, {-0.02f, ey + 0.5f, 0.16f})); shapes::Append(m, BoxAA({0.02f, ey + 0.31f, -0.16f}, {0.25f, ey + 0.5f, 0.16f})); return m; }
-        return BoxAA({-0.3f, ey, -0.17f}, {0.3f, ey + 0.38f, 0.17f});
-    });
-    Frame ff = FrameAA({xr, seatH - 0.2f, -0.05f}, {xf - 0.1f, seatH - 0.1f, 0.05f});
-    o.Add("frame/0", "frame", ff, [&](const std::string&) {
-        PolyMesh m = BoxAA({xr + 0.05f, seatH - 0.22f, -0.04f}, {xf - 0.25f, seatH - 0.12f, 0.04f});
-        shapes::Append(m, Side({{xr, rr}, {xr + 0.07f, rr}, {xr + 0.45f, std::max(seatH - 0.2f, rr + 0.1f)}, {xr + 0.35f, std::max(seatH - 0.2f, rr + 0.1f)}}, -0.04f, 0.04f));
-        return m;
-    });
-    // tank, seat, handlebar
-    const float tx0 = 0.05f, tx1 = tx0 + tankLen;
-    Frame ft = FrameAA({tx0, seatH - 0.05f, -0.17f}, {tx1, seatH + 0.22f, 0.17f});
-    o.Add("tank/0", "tank", ft, [&](const std::string& d) {
-        if (d == "round") return shapes::Ball(ft, 5, 10);
-        return BoxAA({tx0, seatH - 0.05f, -0.17f}, {tx1, seatH + 0.22f, 0.17f});
-    });
-    Frame fs = FrameAA({xr + 0.2f, seatH - 0.1f, -0.15f}, {tx0 - 0.02f, seatH + 0.08f, 0.15f});
-    o.Add("seat/0", "seat", fs, [&](const std::string& d) {
-        if (d == "stepped") { PolyMesh m = BoxAA({xr + 0.2f, seatH - 0.1f, -0.15f}, {xr + 0.55f, seatH + 0.12f, 0.15f}); shapes::Append(m, BoxAA({xr + 0.5f, seatH - 0.1f, -0.15f}, {tx0 - 0.02f, seatH + 0.04f, 0.15f})); return m; }
-        return BoxAA({xr + 0.2f, seatH - 0.1f, -0.15f}, {tx0 - 0.02f, seatH + 0.08f, 0.15f});
-    });
-    const float hx = xf - 0.3f, hy = seatH + 0.3f;
-    Frame fh = FrameAA({hx - 0.05f, hy, -0.4f}, {hx + 0.05f, hy + 0.2f, 0.4f});
-    o.Add("handlebar/0", "handlebar", fh, [&](const std::string& d) {
-        PolyMesh m = CylZ(-0.38f, 0.38f, hx, hy, 0.03f, 8);
-        if (d == "cruiser") {
-            for (int s = 0; s < 2; ++s) shapes::Append(m, BoxAA({hx - 0.02f, hy, s ? 0.34f : -0.38f}, {hx + 0.02f, hy + 0.2f, s ? 0.38f : -0.34f}));
-        }
-        return m;
-    });
-    Headlight(o, "headlight/0", xf - 0.15f, hy - 0.05f, 0, Pf(r, "lightSize"));
-    Taillight(o, "taillight/0", xr + 0.2f, seatH - 0.02f, 0, 0.1f);
+
+    // swingarm (not on a scooter, whose engine swings with the wheel)
+    {
+        Frame fs = FrameAA({xr, std::min(rr, P.y) - 0.05f, -zr - 0.03f}, {P.x + 0.03f, std::max(rr, P.y) + 0.05f, zr + 0.03f});
+        o.Add("swingarm/0", "swingarm", fs, [&](const std::string& d) {
+            PolyMesh m;
+            if (d == "single") {
+                shapes::Append(m, Rod({P.x, P.y, 0.07f}, {xr, rr, zr + 0.02f}, 0.045f, sd));
+                shapes::Append(m, Rod({xr, rr, -0.01f}, {xr, rr, zr + 0.05f}, 0.03f, sd));
+            } else {
+                for (int sgn = -1; sgn <= 1; sgn += 2) shapes::Append(m, Rod({P.x, P.y, 0.1f * (float)sgn}, {xr, rr, zr * (float)sgn}, 0.022f, sd));
+                shapes::Append(m, Rod({xr, rr, -zr - 0.03f}, {xr, rr, zr + 0.03f}, 0.016f, sd));
+                shapes::Append(m, Rod({P.x + 0.01f, P.y, -0.1f}, {P.x + 0.01f, P.y, 0.1f}, 0.02f, sd));   // brace
+            }
+            return m;
+        });
+    }
+
+    // rear suspension
+    {
+        const Vec3 lo = Vec3{P.x + (xr - P.x) * 0.45f, P.y + (rr - P.y) * 0.45f + 0.03f, 0};
+        const Vec3 up{std::min(P.x + 0.1f, sx1 - 0.05f), seatH - 0.14f, 0};
+        Frame fk = FrameAA({std::min(lo.x, up.x) - 0.05f, lo.y, -0.13f}, {std::max(lo.x, up.x) + 0.05f, up.y, 0.13f});
+        o.Add("shock/0", "shock", fk, [&](const std::string& d) {
+            PolyMesh m;
+            if (d == "dual") {
+                const Vec3 l2 = Vec3{P.x + (xr - P.x) * 0.8f, P.y + (rr - P.y) * 0.8f + 0.04f, 0};
+                for (int sgn = -1; sgn <= 1; sgn += 2) {
+                    const float z = (zr + 0.01f) * (float)sgn;
+                    const Vec3 a{l2.x, l2.y, z}, b{l2.x + 0.12f, seatH - 0.14f, z * 0.8f};
+                    shapes::Append(m, Rod(a, b, 0.016f, sd));
+                    shapes::Append(m, Rod(a + (b - a) * 0.2f, a + (b - a) * 0.8f, 0.03f, sd));
+                }
+            } else {
+                shapes::Append(m, Rod(lo, up, 0.017f, sd));
+                shapes::Append(m, Rod(lo + (up - lo) * 0.22f, lo + (up - lo) * 0.82f, 0.034f, sd));
+            }
+            return m;
+        });
+    }
+
+    // engine
+    {
+        Frame fe = FrameAA({ex0, ey, -0.19f}, {ex1, ey + 0.5f, 0.19f});
+        o.Add("engine/0", "engine", fe, [&](const std::string& d) {
+            PolyMesh m;
+            if (d == "unit") {   // a scooter's engine and drive: one block that swings with the rear wheel, on one side of the wheel
+                m = SmoothSide({{xr - 0.03f, rr - 0.11f}, {P.x + 0.2f, rr - 0.13f}, {P.x + 0.24f, rr + 0.16f}, {xr + 0.1f, rr + 0.18f}}, ww * 0.5f + 0.012f, ww * 0.5f + 0.17f);
+                shapes::Append(m, Rod({P.x - 0.03f, P.y, -0.07f}, {P.x - 0.03f, P.y, ww * 0.5f + 0.13f}, 0.03f, sd));
+                shapes::Append(m, Rod({xr, rr, ww * 0.5f - 0.02f}, {xr, rr, ww * 0.5f + 0.15f}, 0.035f, sd));
+                return m;
+            }
+            const float cx = (ex0 + ex1) * 0.5f;
+            m = BoxAA({ex0, ey, -0.14f}, {ex1, ey + 0.3f, 0.14f});   // crankcase
+            if (d == "twin") {       // a V: two cylinders leaning out front and back
+                for (int sgn = -1; sgn <= 1; sgn += 2) {
+                    const float a = 0.55f * (float)sgn;
+                    const Vec3 b{cx, ey + 0.26f, 0}, t{cx + std::sin(a) * 0.3f, ey + 0.26f + std::cos(a) * 0.3f, 0};
+                    shapes::Append(m, Rod(b, t, 0.075f, sd));
+                    shapes::Append(m, Rod({t.x - std::sin(a) * 0.02f, t.y - std::cos(a) * 0.02f, 0}, {t.x + std::sin(a) * 0.04f, t.y + std::cos(a) * 0.04f, 0}, 0.09f, sd));
+                }
+            } else if (d == "inline") {   // four cylinders across the frame
+                shapes::Append(m, BoxAA({ex0 + 0.02f, ey + 0.3f, -0.19f}, {ex1 - 0.02f, ey + 0.52f, 0.19f}));
+                shapes::Append(m, BoxAA({ex0 + 0.0f, ey + 0.52f, -0.17f}, {ex1 - 0.0f, ey + 0.58f, 0.17f}));
+            } else {   // single
+                shapes::Append(m, BoxAA({cx - 0.1f, ey + 0.3f, -0.08f}, {cx + 0.1f, ey + 0.55f, 0.08f}));
+                if (shapes::DetailF() >= 1.5f)
+                    for (int k = 0; k < 4; ++k) shapes::Append(m, BoxAA({cx - 0.12f, ey + 0.33f + 0.05f * (float)k, -0.1f}, {cx + 0.12f, ey + 0.35f + 0.05f * (float)k, 0.1f}));
+            }
+            return m;
+        });
+    }
+
+    // tank
+    {
+        Frame ft = FrameAA({tx0, ty0, -0.17f}, {tx1, ty1, 0.17f});
+        o.Add("tank/0", "tank", ft, [&](const std::string& d) {
+            if (d == "round") return shapes::Ball(ft, 5, 10);
+            if (d == "teardrop") return SmoothSide({{tx0, ty0 + 0.05f}, {tx0 + 0.12f, ty0}, {tx1 - 0.05f, ty0 + 0.02f}, {tx1, ty0 + 0.12f}, {tx1 - 0.02f, ty1 - 0.04f}, {tx0 + tankLen * 0.55f, ty1}, {tx0 + 0.1f, ty1 - 0.07f}, {tx0, ty0 + 0.12f}}, -0.16f, 0.16f);
+            if (d == "slim") return SmoothSide({{tx0, ty0 + 0.06f}, {tx1, ty0 + 0.03f}, {tx1, ty1 - 0.08f}, {tx0 + 0.15f, ty0 + 0.17f}}, -0.12f, 0.12f);
+            return BoxAA({tx0, ty0, -0.17f}, {tx1, ty1, 0.17f});
+        });
+    }
+    // seat
+    {
+        Frame fs = FrameAA({sx0, seatH - 0.1f, -0.15f}, {sx1, seatH + 0.16f, 0.15f});
+        o.Add("seat/0", "seat", fs, [&](const std::string& d) {
+            const float len = sx1 - sx0;
+            if (d == "stepped") { PolyMesh m = BoxAA({sx0, seatH - 0.1f, -0.15f}, {sx0 + len * 0.4f, seatH + 0.12f, 0.15f}); shapes::Append(m, BoxAA({sx0 + len * 0.35f, seatH - 0.1f, -0.15f}, {sx1, seatH + 0.04f, 0.15f})); return m; }
+            if (d == "sport") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.04f}, {sx0 + len * 0.55f, seatH + 0.06f}, {sx0 + len * 0.22f, seatH + 0.17f}, {sx0, seatH + 0.15f}}, -0.13f, 0.13f);
+            if (d == "saddle") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.07f}, {sx0 + len * 0.6f, seatH - 0.02f}, {sx0 + len * 0.25f, seatH + 0.0f}, {sx0, seatH + 0.1f}}, -0.17f, 0.17f);
+            if (d == "touring") { PolyMesh m = BoxAA({sx0, seatH - 0.1f, -0.16f}, {sx1, seatH + 0.07f, 0.16f}); shapes::Append(m, BoxAA({sx0 + 0.01f, seatH + 0.06f, -0.15f}, {sx0 + 0.1f, seatH + 0.3f, 0.15f})); return m; }
+            return BoxAA({sx0, seatH - 0.1f, -0.15f}, {sx1, seatH + 0.08f, 0.15f});
+        });
+    }
+    // handlebar
+    {
+        const Vec3 B0 = H + dir * 0.04f;
+        Frame fh = FrameAA({B0.x - 0.3f, B0.y - 0.1f, -0.45f}, {B0.x + 0.15f, B0.y + 0.45f, 0.45f});
+        o.Add("handlebar/0", "handlebar", fh, [&](const std::string& d) {
+            PolyMesh m;
+            shapes::Append(m, Rod(H, B0 + Vec3{0, 0.02f, 0}, 0.026f, sd));                              // stem
+            shapes::Append(m, Rod({B0.x, B0.y, -0.1f}, {B0.x, B0.y, 0.1f}, 0.03f, sd));                  // clamp
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const float sg = (float)sgn;
+                if (d == "clipon") {   // low stubs clamped to the fork legs
+                    const Vec3 a{onFork(0.94f).x, onFork(0.94f).y, zf * sg}, e{a.x + 0.1f, a.y - 0.06f, 0.24f * sg};
+                    shapes::Append(m, Rod(a, e, 0.017f, sd));
+                    shapes::Append(m, Rod(e, {e.x + 0.02f, e.y, 0.3f * sg}, 0.024f, sd));
+                } else if (d == "ape") {   // tall risers and a level bar
+                    const Vec3 a{B0.x, B0.y, 0.1f * sg}, t{B0.x - 0.05f, B0.y + 0.38f, 0.17f * sg};
+                    shapes::Append(m, Rod(a, t, 0.02f, sd));
+                    shapes::Append(m, Rod(t, {t.x, t.y, 0.38f * sg}, 0.018f, sd));
+                    shapes::Append(m, Rod({t.x, t.y, 0.3f * sg}, {t.x, t.y, 0.4f * sg}, 0.025f, sd));
+                } else if (d == "cruiser") {   // pulled-back bars
+                    const Vec3 a{B0.x, B0.y, 0.1f * sg}, t{B0.x - 0.02f, B0.y + 0.13f, 0.18f * sg}, e{B0.x - 0.24f, B0.y + 0.2f, 0.4f * sg};
+                    shapes::Append(m, Rod(a, t, 0.02f, sd));
+                    shapes::Append(m, Rod(t, e, 0.018f, sd));
+                    shapes::Append(m, Rod({e.x, e.y, 0.32f * sg}, {e.x, e.y, 0.42f * sg}, 0.025f, sd));
+                } else if (d == "tubular") {   // wide touring bars that rise and sweep back
+                    const Vec3 a{B0.x, B0.y, 0.1f * sg}, t{B0.x - 0.06f, B0.y + 0.14f, 0.2f * sg}, e{B0.x - 0.18f, B0.y + 0.18f, 0.43f * sg};
+                    shapes::Append(m, Rod(a, t, 0.02f, sd));
+                    shapes::Append(m, Rod(t, e, 0.02f, sd));
+                } else {   // flat bar with a brace
+                    const Vec3 a{B0.x, B0.y + 0.03f, 0.1f * sg}, e{B0.x - 0.03f, B0.y + 0.1f, 0.38f * sg};
+                    shapes::Append(m, Rod(a, e, 0.016f, sd));
+                    shapes::Append(m, Rod({e.x, e.y, 0.3f * sg}, {e.x, e.y, 0.4f * sg}, 0.024f, sd));
+                }
+            }
+            return m;
+        });
+    }
+    // fairing and bodywork
+    {
+        Frame fa = FrameAA({Hl.x - 0.2f, ey, -0.2f}, {Hl.x + 0.2f, H.y + 0.3f, 0.2f});
+        o.Add("fairing/0", "fairing", fa, [&](const std::string& d) {
+            if (d == "half") return SmoothSide({{Hl.x - 0.12f, Hl.y - 0.15f}, {Hl.x + 0.14f, Hl.y - 0.13f}, {Hl.x + 0.16f, Hl.y + 0.06f}, {Hl.x + 0.04f, Hl.y + 0.2f}, {Hl.x - 0.12f, Hl.y + 0.2f}}, -0.18f, 0.18f);
+            if (d == "full") {   // nose, screen and side panels down to the engine, ending about half way along the tank
+                const float fx = std::max(tx0 + tankLen * 0.45f, Hl.x - 0.5f);
+                return SmoothSide({{Hl.x + 0.17f, Hl.y - 0.02f}, {Hl.x + 0.05f, ey + 0.3f}, {fx, ey + 0.3f}, {fx, ty1 - 0.02f}, {Hl.x - 0.14f, Hl.y + 0.3f}, {Hl.x + 0.0f, Hl.y + 0.24f}}, -0.18f, 0.18f);
+            }
+            if (d == "screen") return Side({{Hl.x - 0.02f, Hl.y + 0.1f}, {Hl.x + 0.0f, Hl.y + 0.1f}, {Hl.x - 0.12f, Hl.y + 0.36f}, {Hl.x - 0.14f, Hl.y + 0.36f}}, -0.14f, 0.14f);
+            PolyMesh m;
+            if (d == "legshield") m = SmoothSide({{H.x + 0.06f, H.y + 0.02f}, {H.x + 0.0f, H.y + 0.02f}, {H.x - 0.17f, 0.27f}, {H.x - 0.11f, 0.25f}}, -0.2f, 0.2f);
+            if (d == "legshield" || d == "bodywork") {   // a panel under and behind the seat (a scooter has both)
+                const float by = std::max(seatH - 0.4f, 2.0f * rr + 0.05f);
+                shapes::Append(m, SmoothSide({{xr + 0.04f, seatH - 0.12f}, {xr + 0.1f, by}, {sx1 - 0.15f, by}, {sx1 + 0.04f, by + 0.1f}, {sx1 + 0.04f, seatH - 0.12f}}, -0.2f, 0.2f));
+            }
+            return m;
+        });
+    }
+    // luggage
+    {
+        const float lx1 = xr + 0.62f, ly0 = rr * 0.85f;
+        Frame fl = FrameAA({xr - 0.1f, ly0, -ww * 0.5f - 0.3f}, {lx1, seatH + 0.4f, ww * 0.5f + 0.3f});
+        o.Add("luggage/0", "luggage", fl, [&](const std::string& d) {
+            PolyMesh m;
+            if (d == "panniers" || d == "both") for (int sgn = -1; sgn <= 1; sgn += 2) {
+                const float z0 = ww * 0.5f + 0.01f, z1 = z0 + 0.22f;
+                shapes::Append(m, BoxAA({xr - 0.12f, ly0, sgn > 0 ? z0 : -z1}, {lx1, ly0 + 0.3f, sgn > 0 ? z1 : -z0}));
+            }
+            if (d == "topbox" || d == "both") shapes::Append(m, BoxAA({xr - 0.08f, seatH + 0.05f, -0.2f}, {xr + 0.42f, seatH + 0.38f, 0.2f}));
+            return m;
+        });
+    }
+    // lights
+    Headlight(o, "headlight/0", Hl.x + 0.05f, Hl.y, 0, Pf(r, "lightSize"));
+    Taillight(o, "taillight/0", sx0 + 0.01f, seatH - 0.02f, 0, 0.1f);
     // exhaust
-    Frame fx = FrameAA({xr - 0.1f, ey, 0.17f}, {0.2f, ey + 0.1f, 0.3f});
-    o.Add("exhaust/0", "exhaust", fx, [&](const std::string& d) {
-        PolyMesh m = CylX(xr - 0.1f, 0.2f, ey + 0.05f, 0.24f, 0.1f, 0.1f, 10);
-        if (d == "dual") shapes::Append(m, CylX(xr - 0.1f, 0.2f, ey + 0.05f, -0.24f, 0.1f, 0.1f, 10));
-        return m;
-    });
-    // mudguards
+    {
+        const float zE = 0.2f;
+        Frame fx = FrameAA({xr - 0.15f, ey, -zE - 0.06f}, {ex1, seatH, zE + 0.06f});
+        o.Add("exhaust/0", "exhaust", fx, [&](const std::string& d) {
+            PolyMesh m;
+            for (int sgn = -1; sgn <= 1; sgn += 2) {
+                if (d != "dual" && sgn < 0) continue;
+                const float z = zE * (float)sgn;
+                const Vec3 h0{ex0 + 0.12f, ey + 0.28f, 0.1f * (float)sgn}, h1{ex0 + 0.04f, ey + 0.07f, z};
+                shapes::Append(m, Rod(h0, h1, 0.026f, sd));
+                if (d == "stub") {
+                    const Vec3 m0{P.x - 0.04f, ey + 0.07f, z}, m1{xr + 0.25f, ey + 0.2f, z};
+                    shapes::Append(m, Rod(h1, m0, 0.026f, sd));
+                    shapes::Append(m, Rod(m0, m1, 0.062f, sd));
+                } else if (d == "upswept") {
+                    const Vec3 m0{P.x - 0.02f, ey + 0.08f, z}, m1{xr + 0.05f, std::min(seatH - 0.08f, ey + 0.55f), z};
+                    shapes::Append(m, Rod(h1, m0, 0.026f, sd));
+                    shapes::Append(m, Rod(m0, m1, 0.05f, sd));
+                } else {
+                    const Vec3 m0{xr + 0.45f, ey + 0.1f, z}, m1{xr - 0.12f, ey + 0.16f, z};
+                    shapes::Append(m, Rod(h1, m0, 0.026f, sd));
+                    shapes::Append(m, Rod(m0, m1, 0.055f, sd));
+                }
+            }
+            return m;
+        });
+    }
+    // mudguards: an arc over each wheel
     for (int s = 0; s < 2; ++s) {
         const float R = s ? rr : fr, X = s ? xr : xf;
-        Frame fm = FrameAA({X - R * 0.9f, R * 2 + 0.03f, -ww * 0.6f}, {X + R * 0.9f, R * 2 + 0.07f, ww * 0.6f});
-        o.Add("fender/" + std::to_string(s), "fender", fm, [&](const std::string&) { return BoxAA({X - R * 0.9f, R * 2 + 0.03f, -ww * 0.6f}, {X + R * 0.9f, R * 2 + 0.07f, ww * 0.6f}); });
+        const float hz = std::max(ww * 0.6f + 0.02f, s ? zr : zf);
+        const float a0 = s ? 65.0f : 20.0f, a1 = s ? 155.0f : 110.0f;
+        Frame fm = FrameAA({X - R * 1.1f, R * 1.4f, -hz}, {X + R * 1.1f, R * 2 + 0.05f, hz});
+        o.Add("fender/" + std::to_string(s), "fender", fm, [&](const std::string&) {
+            Poly poly;
+            const int seg = std::max(4, shapes::Scale(6, 3));
+            for (int k = 0; k <= seg; ++k) { const float t = (a0 + (a1 - a0) * (float)k / (float)seg) * kPi / 180.0f; poly.push_back({X + std::cos(t) * (R + 0.045f), R + std::sin(t) * (R + 0.045f)}); }
+            for (int k = seg; k >= 0; --k) { const float t = (a0 + (a1 - a0) * (float)k / (float)seg) * kPi / 180.0f; poly.push_back({X + std::cos(t) * (R + 0.02f), R + std::sin(t) * (R + 0.02f)}); }
+            MakeCcw(poly);
+            return Side(poly, -hz, hz);
+        });
     }
 }
 
@@ -875,37 +1140,53 @@ Template MakeBus() {
 
 Template MakeBike() {
     B b;
-    b.t.id = "motorcycle"; b.t.name = "Motorcycle"; b.t.category = "Vehicles"; b.t.version = 1;
-    b.t.description = "A motorcycle: two wheels (different sizes), fork, frame, engine, tank, seat, handlebar, headlight, exhaust and mudguards.";
-    b.P("wheelbase", "Wheelbase", 1.5, 0.9, 2.4, "Body", "Distance between the wheels.");
+    b.t.id = "motorcycle"; b.t.name = "Motorcycle"; b.t.category = "Vehicles"; b.t.version = 2;
+    b.t.description = "A motorcycle: frame, fork (with rake), swingarm, shock, engine, tank, seat, handlebar, fairing, luggage, exhaust, lights, mudguards and two wheels, each a part you can change.";
+    b.P("wheelbase", "Wheelbase", 1.45, 0.9, 2.4, "Body", "Distance between the wheels.");
     b.P("seatHeight", "Seat height", 0.8, 0.5, 1.2, "Body", "Height of the seat.");
     b.P("tankLength", "Tank length", 0.5, 0.25, 0.9, "Body", "Length of the fuel tank.");
-    b.P("frontWheelRadius", "Front wheel radius", 0.32, 0.18, 0.5, "Wheels", "Radius of the front wheel.");
-    b.P("rearWheelRadius", "Rear wheel radius", 0.34, 0.18, 0.5, "Wheels", "Radius of the rear wheel.");
+    b.P("rake", "Rake", 27, 18, 40, "Frame", "How far the steering leans back, in degrees. More rake is a calmer, longer bike (cruisers); less is quicker steering (sports). Trail follows from rake and the front wheel size.");
+    b.P("forkLength", "Fork length", 0.68, 0.45, 1.0, "Frame", "Length of the fork legs. Long for a dirt bike, short for a scooter.");
+    b.P("frontWheelRadius", "Front wheel radius", 0.32, 0.14, 0.5, "Wheels", "Radius of the front wheel.");
+    b.P("rearWheelRadius", "Rear wheel radius", 0.34, 0.14, 0.5, "Wheels", "Radius of the rear wheel.");
     b.P("wheelWidth", "Wheel width", 0.14, 0.06, 0.35, "Wheels", "Tyre width.");
     b.P("lightSize", "Headlight size", 0.2, 0.1, 0.4, "Lights", "Size of the headlight.");
     b.S("wheel", "Wheels", WheelDesigns(), kBlack, 1);
-    b.S("frame", "Frame", {{"tube", "Tube frame"}}, kGrey, 0);
-    b.S("fork", "Fork", {{"telescopic", "Telescopic"}}, kChrome, 2);
-    b.S("engine", "Engine", {{"single", "Single"}, {"twin", "Twin"}}, kGrey, 3);
-    b.S("tank", "Tank", {{"box", "Box"}, {"round", "Rounded"}}, kRed, 4);
-    b.S("seat", "Seat", {{"flat", "Flat"}, {"stepped", "Stepped"}}, kBlack, 5);
-    b.S("handlebar", "Handlebar", {{"straight", "Straight"}, {"cruiser", "Cruiser"}}, kChrome, 6);
+    b.S("frame", "Frame", {{"tube", "Tube frame"}, {"spar", "Twin spar"}, {"step", "Step-through"}}, kGrey, 0);
+    b.S("fork", "Fork", {{"telescopic", "Telescopic"}, {"inverted", "Upside-down"}, {"springer", "Springer"}}, kChrome, 2);
+    b.S("swingarm", "Swingarm", {{"dual", "Two arms"}, {"single", "Single-sided"}, {"none", "None (scooter unit)"}}, kGrey, 11);
+    b.S("shock", "Rear shock", {{"mono", "Mono shock"}, {"dual", "Two shocks"}, {"none", "None"}}, kChrome, 12);
+    b.S("engine", "Engine", {{"single", "Single"}, {"twin", "V-twin"}, {"inline", "Inline four"}, {"unit", "Scooter unit"}}, kGrey, 3);
+    b.S("tank", "Tank", {{"box", "Box"}, {"round", "Rounded"}, {"teardrop", "Teardrop"}, {"slim", "Slim"}, {"none", "None"}}, kRed, 4);
+    b.S("seat", "Seat", {{"flat", "Flat"}, {"stepped", "Stepped"}, {"sport", "Sport"}, {"saddle", "Saddle"}, {"touring", "Touring"}}, kBlack, 5);
+    b.S("handlebar", "Handlebar", {{"straight", "Flat bar"}, {"cruiser", "Pull-back"}, {"ape", "Ape hanger"}, {"clipon", "Clip-ons"}, {"tubular", "Touring bar"}}, kChrome, 6);
+    b.S("fairing", "Fairing", {{"none", "None"}, {"half", "Headlight cowl"}, {"full", "Full fairing"}, {"screen", "Windscreen"}, {"legshield", "Leg shield and body"}, {"bodywork", "Body panel"}}, kRed, 13);
+    b.S("luggage", "Luggage", {{"none", "None"}, {"panniers", "Panniers"}, {"topbox", "Top box"}, {"both", "Both"}}, kGrey, 14);
     b.S("headlight", "Headlight", HeadDesigns(), kLight, 7);
     b.S("taillight", "Tail light", TailDesigns(), kTail, 8);
-    b.S("exhaust", "Exhaust", {{"single", "Single"}, {"dual", "Dual"}, {"none", "None"}}, kChrome, 9);
+    b.S("exhaust", "Exhaust", {{"single", "Single"}, {"dual", "Dual"}, {"upswept", "Upswept"}, {"stub", "Short underseat"}, {"none", "None"}}, kChrome, 9);
     b.S("fender", "Mudguards", {{"short", "Short"}, {"none", "None"}}, kRed, 10);
-    b.St("standard", "Standard", "A middleweight road bike.", {}, {{"wheel", "rim"}, {"engine", "single"}, {"tank", "box"}, {"seat", "flat"}, {"handlebar", "straight"}, {"headlight", "round"}, {"exhaust", "single"}}, {{"tank", kRed}});
-    b.St("cruiser", "Cruiser", "Long and low with a rounded tank and wide bars.", {{"wheelbase", 1.8}, {"seatHeight", 0.7}, {"tankLength", 0.55}, {"wheelWidth", 0.17}},
-         {{"wheel", "spoke"}, {"engine", "twin"}, {"tank", "round"}, {"seat", "stepped"}, {"handlebar", "cruiser"}, {"headlight", "round"}, {"exhaust", "dual"}}, {{"tank", kBlack}});
-    b.St("sport", "Sport", "Short and tall at the tail, with a slim light.", {{"wheelbase", 1.35}, {"seatHeight", 0.85}, {"rearWheelRadius", 0.32}, {"tankLength", 0.45}},
-         {{"wheel", "rim"}, {"engine", "twin"}, {"tank", "box"}, {"seat", "stepped"}, {"handlebar", "straight"}, {"headlight", "slim"}, {"taillight", "strip"}, {"exhaust", "dual"}}, {{"tank", kBlue}});
-    b.St("scooter", "Scooter", "Small wheels and a low seat.", {{"wheelbase", 1.2}, {"seatHeight", 0.7}, {"frontWheelRadius", 0.2}, {"rearWheelRadius", 0.2}, {"wheelWidth", 0.1}, {"tankLength", 0.3}},
-         {{"wheel", "steel"}, {"engine", "single"}, {"tank", "round"}, {"seat", "flat"}, {"handlebar", "straight"}, {"headlight", "square"}, {"exhaust", "none"}}, {{"tank", kWhite}});
-    b.St("dirt", "Dirt bike", "Tall, light, with a long fork and spoked wheels.", {{"wheelbase", 1.45f}, {"seatHeight", 0.95f}, {"frontWheelRadius", 0.36f}, {"rearWheelRadius", 0.34f}, {"wheelWidth", 0.09f}, {"tankLength", 0.32f}},
-         {{"wheel", "mesh"}, {"engine", "single"}, {"tank", "box"}, {"seat", "flat"}, {"handlebar", "straight"}, {"headlight", "square"}, {"exhaust", "single"}, {"fender", "none"}}, {{"tank", kYellow}});
-    b.St("touring", "Touring bike", "A big round tank, a deep seat, wide bars and dual pipes.", {{"wheelbase", 1.7f}, {"seatHeight", 0.82f}, {"tankLength", 0.65f}, {"wheelWidth", 0.19f}},
-         {{"wheel", "steel"}, {"engine", "twin"}, {"tank", "round"}, {"seat", "stepped"}, {"handlebar", "cruiser"}, {"headlight", "twin"}, {"exhaust", "dual"}}, {{"tank", kGreen}});
+    b.St("standard", "Standard", "A middleweight road bike.", {},
+         {{"wheel", "rim"}, {"frame", "tube"}, {"fork", "telescopic"}, {"swingarm", "dual"}, {"shock", "mono"}, {"engine", "single"}, {"tank", "box"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "round"}, {"exhaust", "single"}}, {{"tank", kRed}, {"fairing", kRed}});
+    b.St("cruiser", "Cruiser", "Long and low with a V-twin, a teardrop tank and swept-back bars.", {{"wheelbase", 1.75}, {"seatHeight", 0.68}, {"tankLength", 0.55}, {"wheelWidth", 0.17}, {"rake", 35}, {"forkLength", 0.78}, {"frontWheelRadius", 0.34}, {"rearWheelRadius", 0.31}},
+         {{"wheel", "spoke"}, {"frame", "tube"}, {"fork", "springer"}, {"swingarm", "dual"}, {"shock", "dual"}, {"engine", "twin"}, {"tank", "teardrop"}, {"seat", "saddle"}, {"handlebar", "cruiser"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "round"}, {"exhaust", "dual"}}, {{"tank", kBlack}});
+    b.St("sport", "Sport", "Short and tight: steep rake, twin spar frame, clip-ons, a fairing and a short pipe.", {{"wheelbase", 1.38}, {"seatHeight", 0.82}, {"rearWheelRadius", 0.32}, {"frontWheelRadius", 0.31}, {"tankLength", 0.45}, {"rake", 23}, {"forkLength", 0.62}, {"wheelWidth", 0.17}},
+         {{"wheel", "mesh"}, {"frame", "spar"}, {"fork", "inverted"}, {"swingarm", "single"}, {"shock", "mono"}, {"engine", "inline"}, {"tank", "slim"}, {"seat", "sport"}, {"handlebar", "clipon"}, {"fairing", "full"}, {"luggage", "none"}, {"headlight", "slim"}, {"taillight", "strip"}, {"exhaust", "stub"}}, {{"tank", kBlue}, {"fairing", kBlue}});
+    b.St("scooter", "Scooter", "Small wheels, a step-through frame, a swinging engine unit and body panels.", {{"wheelbase", 1.2}, {"seatHeight", 0.74}, {"frontWheelRadius", 0.17}, {"rearWheelRadius", 0.17}, {"wheelWidth", 0.1}, {"rake", 26}, {"forkLength", 0.5}, {"tankLength", 0.15}},
+         {{"wheel", "steel"}, {"frame", "step"}, {"fork", "telescopic"}, {"swingarm", "none"}, {"shock", "dual"}, {"engine", "unit"}, {"tank", "none"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "legshield"}, {"luggage", "none"}, {"headlight", "square"}, {"exhaust", "none"}}, {{"fairing", kWhite}, {"tank", kWhite}});
+    b.St("dirt", "Dirt bike", "Tall and light, with a long upside-down fork, a flat bar, a slim tank and an upswept pipe.", {{"wheelbase", 1.46}, {"seatHeight", 0.96}, {"frontWheelRadius", 0.36}, {"rearWheelRadius", 0.33}, {"wheelWidth", 0.09}, {"tankLength", 0.32}, {"rake", 28}, {"forkLength", 0.92}},
+         {{"wheel", "mesh"}, {"frame", "tube"}, {"fork", "inverted"}, {"swingarm", "dual"}, {"shock", "mono"}, {"engine", "single"}, {"tank", "slim"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "square"}, {"exhaust", "upswept"}, {"fender", "none"}}, {{"tank", kYellow}});
+    b.St("touring", "Touring bike", "A long bike with a big tank, a touring seat, wide bars, a screen and panniers.", {{"wheelbase", 1.68}, {"seatHeight", 0.8}, {"tankLength", 0.65}, {"wheelWidth", 0.19}, {"rake", 30}, {"forkLength", 0.72}},
+         {{"wheel", "steel"}, {"frame", "tube"}, {"fork", "telescopic"}, {"swingarm", "dual"}, {"shock", "dual"}, {"engine", "twin"}, {"tank", "round"}, {"seat", "touring"}, {"handlebar", "tubular"}, {"fairing", "screen"}, {"luggage", "both"}, {"headlight", "twin"}, {"exhaust", "dual"}}, {{"tank", kGreen}, {"fairing", kGreen}});
+    // compatibility: a scooter unit swings with the wheel (no swingarm); every other engine needs one
+    b.t.constrain = [](Recipe& r) {
+        auto get = [&](const char* k) { auto it = r.slotDesign.find(k); return it == r.slotDesign.end() ? std::string() : it->second; };
+        if (get("engine") == "unit") r.slotDesign["swingarm"] = "none";
+        else if (get("swingarm") == "none") r.slotDesign["swingarm"] = "dual";
+        if (get("fairing") == "full" && get("handlebar") != "clipon") r.slotDesign["handlebar"] = "clipon";
+        if (get("fairing") == "full" && get("fork") == "springer") r.slotDesign["fork"] = "telescopic";
+        if (get("fairing") == "legshield" && get("engine") != "unit") r.slotDesign["fairing"] = "half";
+    };
     b.t.generate = GenerateBike;
     return b.t;
 }

@@ -296,8 +296,9 @@ zip has no Setup). Take care with step 4: it deletes real data when you tick the
    `start /wait "" OkaySpace-Setup.exe /S /D=C:\Windows\System32\OkaySpaceTest` and then `echo %errorlevel%`. You should see **11**, no new shortcuts, no
    entry in Settings > Apps, and the log says `FAILED: Setup cannot write to C:\Windows\System32...`. (`start /wait` is needed: Setup is a window program, so
    a plain command returns at once and `%errorlevel%` would show 0.) Without `/S`, typing that folder on the folder page and pressing Install gives the
-   same message in a box and stays on the page.
-3. **Setup with OkaySpace open.** Open the launcher, then run Setup again (Next, Install). A box says `OkaySpace is still running: OkaySpace.exe`
+   same message in a box and stays on the page. (If you ran this in an administrator window, Setup can write there and installs; uninstall it again and
+   pick a folder that is read-only for you instead.)
+3. **Setup with OkaySpace open.** Open the launcher, then run Setup again (press Next; an update does not ask for a folder). A box says `OkaySpace is still running: OkaySpace.exe`
    with Retry and Cancel. Cancel: nothing changed. Try again with the editor (`Tools\OkayEngine.exe`) and the relay (`Tools\okayspace-relay.exe`) open: each
    is named. With the launcher open, `start /wait "" OkaySpace-Setup.exe /S` and `echo %errorlevel%` give **10**. Close it, run Setup again: it updates.
    (An older `OkaySpace-Setup.exe` from an earlier release over this install asks `A newer OkaySpace ... Install the older version anyway?`, default No;

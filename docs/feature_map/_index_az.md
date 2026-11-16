@@ -3041,6 +3041,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own XGL / ZGL reader (side by side, off by default) (3.6.33)
 - Own-stack dogfood switch and startup line (41.11)
 - owner (1.2)
+- Owner keys (12.13.6)
 - Ownership gating (16.2.7)
 - oxygen (11.4)
 

@@ -2557,6 +2557,16 @@ bool Button(const char* label) {
     return Button(hashLabel(label), x, y, w, h, label);
 }
 
+// A size from ImGui-style arguments: 0 or less (or not a number) in either axis keeps the automatic value.
+static float sizeOr(float v, float automatic) { return (v > 0.0f && std::isfinite(v)) ? std::min(v, 1.0e6f) : automatic; }
+
+bool Button(const char* label, Vec2 size) {
+    if (!g_lay.active) return false;
+    const float w = sizeOr(size.x, labelW(label) + 24.0f), h = sizeOr(size.y, rowH());
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
 bool SmallButton(const char* label) {
     if (!g_lay.active) return false;
     const float w = labelW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
@@ -3914,8 +3924,9 @@ void EndCombo() { EndPopup(); }
 bool BeginPopupContextItem(const char* id) {
     const int pid = hashLabel(id);
     // Right-click on the last-issued widget opens the popup at the cursor.
-    if (g_lay.active && g_rPressed && !g_in.blocked &&
-        pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
+    // hit() is the test a left click on that widget passes: inside it, inside the clip (not scrolled out of its child), not
+    // under a window in front, not in a disabled block, not under an open overlay.
+    if (g_lay.active && g_rPressed && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
         PopupSlot* p = popupSlot(pid, true);
         if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
     }
@@ -4635,10 +4646,8 @@ void TextWrapped(const char* text) {
     wrapLines(text, availW(), g_theme.text);
 }
 
-bool PrimaryButton(const char* label) {
-    if (!g_lay.active || !label) return false;
+static bool primaryButtonAt(const char* label, float w, float h) {
     const int id = hashLabel(label);
-    const float w = labelW(label) + 40.0f, h = rowH();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -4652,6 +4661,16 @@ bool PrimaryButton(const char* label) {
     const unsigned char white[4] = {255, 255, 255, 255};
     drawText(x + (w - labelW(label)) * 0.5f, y + (h - textH()) * 0.5f, label, g_theme.textScale, white);
     return clicked;
+}
+
+bool PrimaryButton(const char* label) {
+    if (!g_lay.active || !label) return false;
+    return primaryButtonAt(label, labelW(label) + 40.0f, rowH());
+}
+
+bool PrimaryButton(const char* label, Vec2 size) {
+    if (!g_lay.active || !label) return false;
+    return primaryButtonAt(label, sizeOr(size.x, labelW(label) + 40.0f), sizeOr(size.y, rowH()));
 }
 
 void Badge(const char* text, unsigned char r, unsigned char g, unsigned char b) {

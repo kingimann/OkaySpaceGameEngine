@@ -354,6 +354,9 @@ void SeparatorText(const char* label);
 // hashed from the label). The explicit-coordinate versions above still work for
 // free-form placement.
 bool Button(const char* label);
+/// A button of a given size (ImGui's Button(label, size)): a size.x or size.y of 0 or less keeps the automatic width or
+/// height, so Vec2{200, 0} is a 200-pixel wide button of the normal row height. Non-finite sizes fall back to automatic.
+bool Button(const char* label, Vec2 size);
 /// A compact button (tight padding, no full-line height) — for inline actions.
 bool SmallButton(const char* label);
 /// A row of tabs: clicking a tab sets *current to its index. Draw the selected
@@ -598,7 +601,8 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 si
 /// Request the named popup to open at the cursor (call once on the triggering event).
 void OpenPopup(const char* id);
 /// Open a popup when the LAST widget is right-clicked; returns true while it's open
-/// (then add items; clicking one should call CloseCurrentPopup()).
+/// (then add items; clicking one should call CloseCurrentPopup()). The right click counts only where a left click on that
+/// widget would: not on the part scrolled out of its child or clipped away, not under a window in front, not while disabled.
 bool BeginPopupContextItem(const char* id);
 /// Returns true while the named popup (opened via OpenPopup) is showing.
 bool BeginPopup(const char* id);
@@ -733,6 +737,8 @@ void Caption(const char* text, unsigned char r = 115, unsigned char g = 209, uns
 void TextWrapped(const char* text);
 /// An accent-filled call-to-action button (Play, Join, Confirm).
 bool PrimaryButton(const char* label);
+/// The same at a given size (0 or less in either axis: automatic, as for Button(label, size)); the label stays centred.
+bool PrimaryButton(const char* label, Vec2 size);
 /// A rounded pill with short text (counts, tags, "NEW"). r=g=b=0: the accent colour.
 void Badge(const char* text, unsigned char r = 0, unsigned char g = 0, unsigned char b = 0);
 /// A circle with the name's initial, coloured per name. size 0 = one row tall.

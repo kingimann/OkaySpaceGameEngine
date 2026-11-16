@@ -107,6 +107,26 @@ const char* Strict(const Mesh& m) {
     for (const auto& sm : m.seams) if (sm.first < 0 || sm.second < 0 || sm.first >= (int)nv || sm.second >= (int)nv) return "seam index out of range";
     return nullptr;
 }
+PolyMesh RichPoly(const Mesh& base) {
+    PolyMesh pm = PolyMesh::FromMesh(base);
+    for (PolyFace& f : pm.faces) {
+        f.material = 2; f.hasColor = true; f.color = Color{0.2f, 0.4f, 0.6f, 1};
+        f.uvs.clear(); for (int i = 0; i < f.Size(); ++i) f.uvs.push_back(Vec2{F(0, 1), F(0, 1)});
+    }
+    return pm;
+}
+// Every face's per-corner UVs are empty or one per corner and finite, the slot is not negative, and (when `uniform`) every
+// face still carries the slot and colour all of them started with: a new face takes them from the face it came from.
+const char* PolyAttrs(const PolyMesh& p, bool uniform) {
+    for (const PolyFace& f : p.faces) {
+        if (!f.uvs.empty() && (int)f.uvs.size() != f.Size()) return "corner UVs out of step";
+        for (const Vec2& u : f.uvs) if (!std::isfinite(u.x) || !std::isfinite(u.y)) return "non-finite corner UV";
+        if (f.material < 0) return "negative slot";
+        if (uniform && f.material != 2) return "a face lost its slot";
+        if (uniform && (!f.hasColor || f.color.r != 0.2f)) return "a face lost its colour";
+    }
+    return nullptr;
+}
 const char* SanePoly(const PolyMesh& p) {
     for (const Vec3& v : p.verts) if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) return "non-finite vertex";
     for (const PolyFace& f : p.faces) for (int v : f.verts) if (v < 0 || v >= (int)p.verts.size()) return "face index out of range";
@@ -218,6 +238,23 @@ int main() {
     POLYOP("CompactVerts", CompactVerts(pm));
     POLYOP("Creased CatmullClark", { for (const auto& ed : pm.Edges()) if (R(2)) pm.SetCrease(ed.a, ed.b, F(0.0f, 3.0f)); pm = CatmullClark(pm, R(3)); });
     POLYOP("KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
+    RUN_SUITE("fuzz: polygon tools keep slots, colours and corner UVs");
+#define RPOLYOP(name, call) Op(name, N, [&]() -> const char* { Mesh base = RandomMesh(); PolyMesh pm = RichPoly(base); const bool had = !pm.faces.empty(); const auto e = RandomEdges(base); EdgeList el(e.begin(), e.end()); const auto t = RandomTris(base); const auto v = RandomVerts(base); const float a = RandomAmount(); (void)el; (void)t; (void)v; (void)a; std::string err; (void)err; call; if (const char* bad = SanePoly(pm)) return bad; return PolyAttrs(pm, had); })
+    RPOLYOP("rich LoopCut", LoopCut(pm, R(8), R(8), 1 + R(4), a));
+    RPOLYOP("rich BevelEdges", BevelEdges(pm, el, a, &err, R(6) - 1, a));
+    RPOLYOP("rich DissolveEdges", DissolveEdges(pm, el, R(2) == 0));
+    RPOLYOP("rich DissolveVerts", DissolveVerts(pm, v));
+    RPOLYOP("rich SplitEdge", SplitEdge(pm, R(8), R(8), a));
+    RPOLYOP("rich SplitFace", SplitFace(pm, R(8), R(4), R(4)));
+    RPOLYOP("rich MergeVerts", MergeVerts(pm, v, Vec3{a, 0, 0}));
+    RPOLYOP("rich BridgeEdgeLoops", BridgeEdgeLoops(pm, el, &err));
+    RPOLYOP("rich FillFaces", FillFaces(pm, el, &err));
+    RPOLYOP("rich GridFill", GridFill(pm, el, R(8) - 1, &err));
+    RPOLYOP("rich EdgeSlide", EdgeSlide(pm, el, a));
+    RPOLYOP("rich CatmullClark", pm = CatmullClark(pm, R(3)));
+    RPOLYOP("rich SpinEdges", SpinEdges(pm, el, Vec3{a, 0, 0}, Vec3{0, 1, 0}, a * 180.0f, R(40) - 2, &err));
+    RPOLYOP("rich ExtrudeAlongPath", ExtrudeAlongPath(pm, t, std::vector<Vec3>{Vec3{0, 0, 0}, Vec3{a, 1, 0}, Vec3{0, 2, a}}, &err));
+    RPOLYOP("rich KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
     RUN_SUITE("fuzz: selection, recipes, modifiers");
     MESHOP("Shrinkwrap", Shrinkwrap(m, v, RandomMesh(), R(2) ? WrapMode::Nearest : WrapMode::Project, a, a, Vec3{a, 1, 0}));
     MESHOP("SetCrease", { for (const auto& ed : e) m.SetCrease(ed.first, ed.second, a); });

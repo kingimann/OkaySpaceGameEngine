@@ -48,6 +48,8 @@ struct WeldMap {
             if (std::memcmp(&keys[(std::size_t)s * N], k, sizeof(std::uint32_t) * N) == 0) { added = false; return vals[(std::size_t)s]; }
         }
     }
+    // Frees everything (the map is then empty).
+    void clear() { std::vector<std::uint32_t>().swap(keys); std::vector<int>().swap(vals); std::vector<int>().swap(slot); }
     void Rehash(std::size_t cap) {   // cap: a power of two, more than twice the count
         slot.assign(cap, -1);
         const std::size_t mask = cap - 1;

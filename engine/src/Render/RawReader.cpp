@@ -23,13 +23,11 @@ namespace raw {
 constexpr std::size_t kMaxFileBytes = 256u * 1024u * 1024u;
 constexpr std::size_t kMaxTris = 500000, kMaxGroups = 100000, kMaxOutVerts = 4000000, kMaxLineTokens = 64;
 
-struct Key { std::uint32_t a, b, c; bool operator==(const Key& o) const { return a == o.a && b == o.b && c == o.c; } };
-struct KeyHash { std::size_t operator()(const Key& k) const { std::uint64_t h = k.a * 0x9E3779B97F4A7C15ull; h ^= (k.b + 0x7F4A7C15ull + (h << 6) + (h >> 2)); h ^= (k.c + 0x9E3779B9ull + (h << 6) + (h >> 2)); return (std::size_t)h; } };
 
 struct Group {
     std::string name;
     detail::rc::Soup soup;
-    std::unordered_map<Key, std::uint32_t, KeyHash> weld;
+    detail::WeldMap<3> weld;   // position bits (-0 as 0) -> soup position
 };
 
 std::uint32_t Bits(float f) { if (f == 0.0f) f = 0.0f; std::uint32_t u; std::memcpy(&u, &f, 4); return u; }
@@ -83,37 +81,36 @@ bool ReadRawBuffer(const std::string& input, ImportedModel& out, std::string* er
         std::size_t b = b0;
         while (b < e && Ws(text[b])) ++b;
         if (b >= e || text[b] == '#') continue;
-        // first token
-        std::size_t q = b;
-        while (q < e && !Ws(text[q])) ++q;
-        double probe;
-        if (!detail::rc::ParseNumber(text.data() + b, text.data() + q, probe)) {   // a group name: the whole line, trimmed
+        // first token, read as a number in one pass (ScanNumber: ParseNumber of the token)
+        double v[12];
+        const char* sp = text.data() + b;
+        const char* const se = text.data() + e;
+        if (!detail::rc::ScanNumber(sp, se, v[0])) {   // a group name: the whole line, trimmed
             std::size_t te = e;
             while (te > b && Ws(text[te - 1])) --te;
             if (te - b > 256) te = b + 256;
             if (!groupFor(text.substr(b, te - b))) return Fail(err, "more than " + std::to_string(kMaxGroups) + " groups");
             continue;
         }
-        // tokens of a number line: pointers into the text
-        const char* tb[kMaxLineTokens + 1];
-        const char* te_[kMaxLineTokens + 1];
-        std::size_t nt = 0;
-        for (std::size_t t = b; t < e;) {
-            while (t < e && Ws(text[t])) ++t;
-            if (t >= e) break;
-            std::size_t u = t;
-            while (u < e && !Ws(text[u])) ++u;
+        // the other tokens: the leading ones read as numbers (at most 12), in the same pass that counts them
+        std::size_t nt = 1, k = 1;
+        bool numbers = true;
+        const char* tb9 = nullptr;
+        const char* te9 = nullptr;
+        for (;;) {
+            while (sp < se && Ws(*sp)) ++sp;
+            if (sp >= se) break;
             if (nt >= kMaxLineTokens) return Fail(err, "line " + std::to_string(lineNo) + " has more than " + std::to_string(kMaxLineTokens) + " values");
-            tb[nt] = text.data() + t; te_[nt] = text.data() + u; ++nt;
-            t = u;
+            const char* const t0 = sp;
+            if (numbers && k < 12 && detail::rc::ScanNumber(sp, se, v[k])) ++k;
+            else { numbers = false; while (sp < se && !Ws(*sp)) ++sp; }
+            if (nt == 9) { tb9 = t0; te9 = sp; }
+            ++nt;
         }
-        double v[12];
-        std::size_t k = 0;
-        while (k < nt && k < 12 && detail::rc::ParseNumber(tb[k], te_[k], v[k])) ++k;
         std::string tex;
         std::size_t first = 0;
         if (k == 9 && nt == 9) first = 0;
-        else if (k == 9 && nt == 10) { tex.assign(tb[9], (std::size_t)(te_[9] - tb[9])); if (tex.size() > 256) tex.resize(256); first = 0; }
+        else if (k == 9 && nt == 10) { tex.assign(tb9, (std::size_t)(te9 - tb9)); if (tex.size() > 256) tex.resize(256); first = 0; }
         else if (k == 12 && nt == 12) { first = 3; ++colourLines; }
         else return Fail(err, "line " + std::to_string(lineNo) + " is not a triangle: nine numbers (optionally a colour before or a texture name after) are needed, " + std::to_string(k) + " found");
         if (++tris > kMaxTris) return Fail(err, "over the budget of " + std::to_string(kMaxTris) + " triangles for one file");
@@ -122,10 +119,11 @@ bool ReadRawBuffer(const std::string& input, ImportedModel& out, std::string* er
         Group& g = groups[cur];
         for (int c = 0; c < 3; ++c) {
             const Vec3 p{(float)v[first + (std::size_t)c * 3], (float)v[first + (std::size_t)c * 3 + 1], (float)v[first + (std::size_t)c * 3 + 2]};
-            const Key key{Bits(p.x), Bits(p.y), Bits(p.z)};
-            auto it = g.weld.find(key);
-            if (it == g.weld.end()) { it = g.weld.emplace(key, (std::uint32_t)g.soup.pos.size()).first; g.soup.pos.push_back(p); }
-            g.soup.ci.push_back(it->second);
+            const std::uint32_t key[3] = {Bits(p.x), Bits(p.y), Bits(p.z)};
+            bool added = false;
+            const int vi = g.weld.Get(key, (int)g.soup.pos.size(), added);
+            if (added) g.soup.pos.push_back(p);
+            g.soup.ci.push_back((std::uint32_t)vi);
         }
     }
     if (tris == 0) return Fail(err, "the file holds no triangles");
@@ -139,10 +137,10 @@ bool ReadRawBuffer(const std::string& input, ImportedModel& out, std::string* er
         if (g.soup.ci.empty()) continue;
         ImportedPart part;
         detail::rc::BuildStats st;
+        g.weld.clear();   // not needed to build the mesh: freed first, for a lower peak
         if (!detail::rc::BuildMesh(g.soup, 60.0, part.mesh, &st, kMaxOutVerts - std::min(outVerts, kMaxOutVerts))) return Fail(err, "over the budget of " + std::to_string(kMaxOutVerts) + " vertices for one file");
         degenerate += st.degenerate;
         g.soup = detail::rc::Soup{};
-        g.weld.clear();
         if (part.mesh.triangles.empty()) continue;
         outVerts += part.mesh.vertices.size();
         if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");

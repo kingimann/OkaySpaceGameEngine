@@ -60,7 +60,8 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
-    OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
+    OkayPanels.cpp                                                     # Crash Log, Audio Mixer, Problems, Stats, History hosted by OkayUI (opt-in backend)
+    EditorPanelViews.cpp                                               # the Dear ImGui bodies of Problems, Stats and History (models in shared/EditorPanelModels.hpp)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window

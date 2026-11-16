@@ -89,7 +89,8 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
-#include "OkayPanels.hpp"                // Crash Log and Audio Mixer drawn by OkayUI (opt-in backend)
+#include "OkayPanels.hpp"                // Crash Log, Audio Mixer, Problems, Stats, History drawn by OkayUI (opt-in backend)
+#include "EditorPanelViews.hpp"          // the Dear ImGui bodies of Problems, Stats and History (models: shared/EditorPanelModels.hpp)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -8133,79 +8134,25 @@ void DrawCrashLog() {
 // click any step to jump straight there (applies that many undos/redos).
 void DrawHistory(EditorState& ed) {
     if (!g_showHistory) return;
-    if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
     ed.CommitUndo();
-    const std::vector<std::string> histUndo = ed.UndoNames(200), histRedo = ed.RedoNames(200);
-    ImGui::BeginDisabled(!ed.CanUndo());
-    if (ImGui::Button("Undo##hist")) ed.Undo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Z");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!ed.CanRedo());
-    if (ImGui::Button("Redo##hist")) ed.Redo();
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Ctrl+Y");
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d behind  \xE2\x80\xA2  %d ahead", ed.UndoDepth(), ed.RedoDepth());
-    ImGui::Separator();
-    ImGui::BeginChild("##histlist");
-    if (!ed.CanUndo() && !ed.CanRedo()) {
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextDisabled("No edits yet — changes will appear here.");
-        ImGui::EndChild(); ImGui::End(); return;
+    // The model both versions draw (shared/EditorPanelModels.hpp): the two stacks, newest first.
+    okaypanels::HistoryModel m;
+    m.undoNames = ed.UndoNames(200); m.redoNames = ed.RedoNames(200);
+    m.undoDepth = ed.CanUndo() ? std::max(ed.UndoDepth(), 1) : 0;
+    m.redoDepth = ed.CanRedo() ? std::max(ed.RedoDepth(), 1) : 0;
+    okaypanels::HistoryIntent intent;
+    if (!(UseOkayUIBackend() && DrawHistoryOkayUI(&g_showHistory, m, intent))) {   // the opt-in OkayUI port (editor/OkayPanels.cpp)
+        if (!ImGui::Begin("History", &g_showHistory)) { ImGui::End(); return; }
+        intent = DrawHistoryBodyImGui(m, PanelViewHooks());   // editor/EditorPanelViews.cpp
+        ImGui::End();
     }
-    // Timeline rail down the left: a node per state, the current one filled
-    // with the accent color, future (redo) states hollow and dimmed.
-    ImDrawList* hdl = ImGui::GetWindowDrawList();
-    const float railX = ImGui::GetCursorScreenPos().x + 9.0f;
-    const float railTopY = ImGui::GetCursorScreenPos().y;
-    {
-        int rows = ed.RedoDepth() + 1 + ed.UndoDepth();
-        float rowH = ImGui::GetTextLineHeightWithSpacing();
-        hdl->AddLine(ImVec2(railX, railTopY + 4.0f),
-                     ImVec2(railX, railTopY + rows * rowH - 4.0f),
-                     ImGui::GetColorU32(ImGuiCol_Border), 1.0f);
+    // Undo / Redo, or a jump to a row: that many steps.
+    for (int k = 0; k < intent.undo && ed.CanUndo(); ++k) ed.Undo();
+    for (int k = 0; k < intent.redo && ed.CanRedo(); ++k) ed.Redo();
+    if (intent.copy >= 0) {
+        const std::vector<okaypanels::HistoryRow> rows = okaypanels::HistoryRows(m);
+        if (intent.copy < (int)rows.size()) ImGui::SetClipboardText(rows[(std::size_t)intent.copy].label.c_str());
     }
-    auto histRow = [&](const char* lbl, bool current, bool ahead) {
-        char pad[220]; std::snprintf(pad, sizeof(pad), "     %s", lbl);
-        bool hit = ImGui::Selectable(pad, current);
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        float cy = (mn.y + mx.y) * 0.5f;
-        if (current) {
-            hdl->AddCircleFilled(ImVec2(railX, cy), 4.0f,
-                                 ImGui::GetColorU32(ImGuiCol_CheckMark), 12);
-        } else {
-            ImU32 col = ahead ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
-                              : ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
-            hdl->AddCircle(ImVec2(railX, cy), 3.0f, col, 12, 1.5f);
-        }
-        return hit;
-    };
-    // Future (redo) states first, newest-forward at the top; then the current
-    // state; then the past, most recent first. Click any row to jump there.
-    bool jumped = false;
-    for (int i = ed.RedoDepth(); i >= 1 && !jumped; --i) {
-        char lbl[160]; std::snprintf(lbl, sizeof(lbl), "After: %s##hr%d", (size_t)i <= histRedo.size() ? histRedo[(size_t)i - 1].c_str() : "Edit", i);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        bool hit = histRow(lbl, false, true);
-        ImGui::PopStyleColor();
-        if (hit) {
-            for (int k = 0; k < i && ed.CanRedo(); ++k) ed.Redo();
-            jumped = true;
-        }
-    }
-    if (!jumped) {
-        histRow("Current state", true, false);
-        for (int i = 1; i <= ed.UndoDepth() && !jumped; ++i) {
-            char lbl[160]; std::snprintf(lbl, sizeof(lbl), "Before: %s##hu%d", (size_t)i <= histUndo.size() ? histUndo[(size_t)i - 1].c_str() : "Edit", i);
-            if (histRow(lbl, false, false)) {
-                for (int k = 0; k < i && ed.CanUndo(); ++k) ed.Undo();
-                jumped = true;
-            }
-        }
-    }
-    ImGui::EndChild();
-    ImGui::End();
 }
 
 // Lowercase a copy of a string (for case-insensitive compares).
@@ -12357,108 +12304,55 @@ void DrawMaterialEditor(EditorState& ed) {
 }
 
 void DrawStats(EditorState& ed) {
-    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
-    ImGuiIO& io = ImGui::GetIO();
-    static float hist[120] = {0};
-    static int hi = 0;
-    hist[hi] = io.Framerate; hi = (hi + 1) % 120;
-    // Big FPS readout + frame time, then an auto-scaled plot with a 60 FPS guide.
-    float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
-    for (float v : hist) if (v > 0.0f) { fmin = std::min(fmin, v); fmax = std::max(fmax, v); fsum += v; ++fcnt; }
-    float fscale = fmax * 1.2f < 75.0f ? 75.0f : fmax * 1.2f;
-    {
-        ImVec4 fpsCol = io.Framerate >= 55.0f ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-                      : io.Framerate >= 30.0f ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)
-                                              : ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
-        if (g_headingFont) ImGui::PushFont(g_headingFont);
-        ImGui::TextColored(fpsCol, "%.0f", io.Framerate);
-        if (g_headingFont) ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("FPS   %.2f ms", io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f);
-        char mm[48]; std::snprintf(mm, sizeof(mm), "avg %.0f  min %.0f", fcnt ? fsum / fcnt : 0.0f, fcnt ? fmin : 0.0f);
-        SameLineRight(ImGui::CalcTextSize(mm).x);
-        ImGui::TextDisabled("%s", mm);
-    }
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
-    ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 48));
-    ImGui::PopStyleColor();
-    {   // 60 FPS guide line over the plot
-        ImVec2 gmn = ImGui::GetItemRectMin(), gmx = ImGui::GetItemRectMax();
-        if (fscale > 60.0f) {
-            float gy = gmx.y - (60.0f / fscale) * (gmx.y - gmn.y);
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(gmn.x, gy), ImVec2(gmx.x, gy),
-                                                IM_COL32(110, 220, 130, 110), 1.0f);
+    static okaypanels::FpsHistory hist;
+    // The model both versions draw (shared/EditorPanelModels.hpp): the frame-rate history, the scene census and the switches.
+    // Filled only while the window is visible (a hidden tab does not count the scene).
+    auto fill = [&](okaypanels::StatsModel& m) {
+        const float fps = ImGui::GetIO().Framerate;
+        hist.Push(fps);
+        int stTris = 0, stParts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
+            if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
         }
-    }
-    ImGui::Spacing();
-    // Scene census as a tidy two-column grid; zero counts are dimmed so the
-    // numbers that matter stand out.
-    int stTris = 0, stParts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
-    }
-    struct StatRow { const char* name; int v; };
-    const StatRow rows[] = {
-        {"Objects",    (int)ed.scene().Objects().size()},
-        {"Triangles",  stTris},
-        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
-        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
-        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
-        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
-        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
-        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
-        {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
-        {"Culled",     okay::LastCullCounters().culled},
-        {"Occluded",   okay::LastCullCounters().occluded},
-        {"LOD culled", okay::LastCullCounters().lodCulled},
-        {"LOD0",       okay::LastCullCounters().lod0},
-        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
-        {"Batches",    okay::LastCullCounters().batches},
-        {"Draws saved", okay::LastCullCounters().drawsSaved},
+        const auto& cull = okay::LastCullCounters();   // last frame, after culling and batching
+        m.framerate = fps;
+        m.history = &hist;
+        m.counters = {
+            {"Objects",    (int)ed.scene().Objects().size()},
+            {"Triangles",  stTris},
+            {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+            {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+            {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+            {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+            {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+            {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+            {"Particles",  stParts},
+            {"Drawn",      cull.drawn},
+            {"Culled",     cull.culled},
+            {"Occluded",   cull.occluded},
+            {"LOD culled", cull.lodCulled},
+            {"LOD0",       cull.lod0},
+            {"LOD1+",      cull.lod1 + cull.lod2 + cull.lod3},
+            {"Batches",    cull.batches},
+            {"Draws saved", cull.drawsSaved},
+        };
+        m.frustumCulling = &okay::FrustumCullingEnabled();
+        m.occlusionCulling = &okay::visibility::OcclusionCullingEnabled();
+        m.staticBatching = &okay::visibility::StaticBatchingEnabled();
+        m.dynamicBatching = &okay::visibility::DynamicBatchingEnabled();
+        m.gpuSkinning = okay::SkinnedMesh::GpuSkinning();
     };
-    if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        ImGui::TableSetupColumn("n2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        for (int i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
-            if (i % 2 == 0) ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", rows[i].name);
-            ImGui::TableNextColumn();
-            char num[24];
-            if (rows[i].v >= 1000000)   std::snprintf(num, sizeof(num), "%.1fM", rows[i].v / 1e6);
-            else if (rows[i].v >= 10000) std::snprintf(num, sizeof(num), "%.1fk", rows[i].v / 1e3);
-            else                         std::snprintf(num, sizeof(num), "%d", rows[i].v);
-            if (rows[i].v == 0) ImGui::TextDisabled("%s", num);
-            else                ImGui::TextUnformatted(num);
-        }
-        ImGui::EndTable();
-    }
-    ImGui::Spacing();
-    ImGui::Checkbox("Frustum culling", &okay::FrustumCullingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Occlusion", &okay::visibility::OcclusionCullingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes hidden behind an Occluder. Off, or with no Occluder\n"
-                          "in the scene, nothing extra is hidden.");
-    ImGui::Checkbox("Static batching", &okay::visibility::StaticBatchingEnabled());
-    ImGui::SameLine();
-    ImGui::Checkbox("Dynamic batching", &okay::visibility::DynamicBatchingEnabled());
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Skip meshes the camera (or the sun's shadow map) can't see.\n"
-                          "Turn off only to check whether culling hides something it shouldn't.");
-    ImGui::SameLine();
-    ImGui::TextDisabled("| skinning: %s", okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU");
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("Sky, lighting, post FX and debug view moved to the Lighting tab.");
-    ImGui::PopStyleColor();
+    if (UseOkayUIBackend() && DrawStatsOkayUI(&g_showStats, fill)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
+    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
+    okaypanels::StatsModel m;
+    fill(m);
+    PanelViewHooks hooks;
+    hooks.headingFont = g_headingFont;
+    const okaypanels::StatsIntent intent = DrawStatsBodyImGui(m, hooks);   // editor/EditorPanelViews.cpp
     ImGui::End();
+    if (intent.copy) ImGui::SetClipboardText(okaypanels::StatsCopyText(m).c_str());
 }
 
 // Apply a look preset (Atmosphere.hpp) to the scene, aiming the first directional

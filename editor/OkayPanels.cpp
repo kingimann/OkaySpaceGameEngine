@@ -7,6 +7,7 @@
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"
 #include "OkayUIPanels.hpp"
+#include "OkayUIEditorPanels.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 
 #include <algorithm>
@@ -70,11 +71,43 @@ bool DrawAudioMixerOkayUI(bool* open) {
     });
 }
 
+// The Problems, Stats and History panels: the editor's 18-pixel text on top of the UI scale (the Dear ImGui versions draw at that size).
+bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
+                        okaypanels::ProblemsIntent& intent) {
+    return HostWindow(title, open, "##okayui_problems", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawProblems(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
+bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill) {
+    return HostWindow("Stats", open, "##okayui_stats", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::StatsModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        const okaypanels::StatsIntent intent = okayuiscreens::DrawStats(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        if (intent.copy) ImGui::SetClipboardText(okaypanels::StatsCopyText(model).c_str());
+    });
+}
+
+bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypanels::HistoryIntent& intent) {
+    return HostWindow("History", open, "##okayui_history", [&](ImVec2 p, ImVec2 a) {
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+    });
+}
+
 } // namespace oked
 
 #else
 namespace oked {
 bool DrawCrashLogOkayUI(bool*, const std::string&, const std::string&, std::uint64_t, const CrashLogActions&) { return false; }
 bool DrawAudioMixerOkayUI(bool*) { return false; }
+bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&) { return false; }
+bool DrawStatsOkayUI(bool*, const std::function<void(okaypanels::StatsModel&)>&) { return false; }
+bool DrawHistoryOkayUI(bool*, const okaypanels::HistoryModel&, okaypanels::HistoryIntent&) { return false; }
 }
 #endif

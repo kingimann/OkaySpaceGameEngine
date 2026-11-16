@@ -43,7 +43,7 @@ SECRET_PATTERNS = [
     ("Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{20,}")),
 ]
 ENTROPY_RE = re.compile(r"(?i)(key|token|secret|passw(?:or)?d)[^\n]{0,40}?[\"'=:\s]([A-Fa-f0-9]{40,}|[A-Za-z0-9+/_-]{40,}={0,2})[\"'\s;,)]*$")
-ENTROPY_SKIP_DIRS = ("tests/", "docs/", "engine/src/Crypto/", "engine/include/okay/Crypto/", "supabase/", "examples/", "assets/")
+ENTROPY_SKIP_DIRS = ("config/", "tests/", "docs/", "engine/src/Crypto/", "engine/include/okay/Crypto/", "supabase/", "examples/", "assets/")
 
 
 def added_lines(root, base, head, rev=None):

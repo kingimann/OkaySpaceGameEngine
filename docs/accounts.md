@@ -53,22 +53,23 @@ hosted auth backend — nothing to run yourself).
                -DOKAY_DEFAULT_ACCOUNT_KEY=YOUR-ANON-PUBLIC-KEY
      ```
 
-### Where the server address and key come from (nothing is in the code)
+### Where the server address and key come from
 
-The project address and the publishable (anon) key are **not stored in the repository**. They are filled in when the
-programs are built:
+They live in ONE plain file in the repository: **`config/public-account.json`** (`url` and `key`; see
+`config/README.md`). The key is the Supabase *publishable* (anon) key: public by design, it ends up inside every
+program. Supabase row-level security is what protects the data, so keep those policies correct.
 
-| Where | How |
+| Who | Where it reads the values |
 |---|---|
-| GitHub (releases, test builds, the reset page) | **Settings > Secrets and variables > Actions > Variables**: add the repository variables `OKAY_DEFAULT_ACCOUNT_URL` (for example `https://<project>.supabase.co`) and `OKAY_DEFAULT_ACCOUNT_KEY` (the publishable key). `release.yml`, `dev-build.yml` and `pages.yml` read them. They are variables, not secrets, because the key is public by design (it ends up inside every program); the build masks it in logs. |
-| A local build | `cmake -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...`, or export the same two environment variables before `scripts/build-windows-dist.sh` |
-| Publishing by hand | `scripts/publish-supabase.sh` needs `SUPABASE_URL` (or `OKAY_DEFAULT_ACCOUNT_URL`) in the environment |
+| CMake (every build, including CI releases and test builds) | `cmake -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...` wins, then the environment variables of the same names, then `config/public-account.json` |
+| `scripts/build-windows-dist.sh`, the publish scripts, `crash_to_issue.py`, the numbering step of `dev-build.yml`, the Pages workflow | the same variables if set, else the file |
+| GitHub repository variables `OKAY_DEFAULT_ACCOUNT_URL`, `OKAY_DEFAULT_ACCOUNT_KEY` | **optional** override only; leave them unset to use the file |
 
-A release or test build in CI **stops with a clear error** if either variable is missing, so nothing ships offline by
-mistake. A build with neither (a normal developer build, and every unit test) works: it has no online features until
-`OKAY_ACCOUNT_SERVER` / `OKAY_ACCOUNT_API_KEY` or `account_server.txt` / `account_apikey.txt` give it a server, and the
-launcher prints a line saying so on startup. The key that used to be in `CMakeLists.txt` is still in git history: rotate
-it in the Supabase dashboard (Project Settings > API) and put the new one in the variable.
+To change the server or rotate the key: edit `config/public-account.json` and commit. If the file is missing or empty (and
+nothing overrides it) the build still works, with no online features until `OKAY_ACCOUNT_SERVER` / `OKAY_ACCOUNT_API_KEY` or
+`account_server.txt` / `account_apikey.txt` give it a server; the launcher prints a line saying so. Release and test builds in CI
+stop with a clear error in that case, so nothing ships offline by mistake. The configure output says "Account server baked
+in: yes (from ...)" and never prints a value; in GitHub Actions the key is masked in logs.
 
 With Supabase the identifier is the player's **email**. The anon key is meant to
 be public (it's safe to ship); real protection comes from Supabase's Row Level

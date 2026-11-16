@@ -813,10 +813,17 @@ class GitHub:
 
 
 def default_supabase_url(root, env=None):
-    """The project URL: OKAY_DEFAULT_ACCOUNT_URL from the environment (the repository variable the build bakes in). It is no longer stored in
-    CMakeLists.txt, so there is nothing to read from the checkout; `root` is kept so callers do not change."""
+    """The project URL: OKAY_DEFAULT_ACCOUNT_URL from the environment (optional override), else config/public-account.json
+    (the one place the address lives; the launcher is built with it)."""
     env = os.environ if env is None else env
-    return (env.get("OKAY_DEFAULT_ACCOUNT_URL") or "").strip()
+    url = (env.get("OKAY_DEFAULT_ACCOUNT_URL") or "").strip()
+    if url:
+        return url
+    try:
+        with open(os.path.join(root, "config", "public-account.json"), encoding="utf-8") as f:
+            return str(json.load(f).get("url", "")).strip()
+    except (OSError, ValueError, AttributeError):
+        return ""
 
 
 def check_supabase_url(url, allow_any=False):

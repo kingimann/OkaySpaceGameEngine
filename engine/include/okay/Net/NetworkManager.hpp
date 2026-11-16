@@ -3,6 +3,7 @@
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Net/AntiCheat.hpp"
+#include "okay/Net/AntiCheatLog.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Net/NetDelta.hpp"
@@ -511,6 +512,8 @@ public:
     void SetVar(const std::string& key, const std::string& value);
     /// Read the local copy of a synced variable ("" if unset).
     std::string GetVar(const std::string& key) const;
+    /// Every shared variable (a read-only view, for tests and tools: how many, and how big).
+    const std::unordered_map<std::string, std::string>& SyncVars() const { return m_syncVars; }
     /// Called when a new remote peer appears; return a GameObject to represent
     /// it (its Transform will be driven by incoming snapshots).
     void SetRemoteFactory(std::function<GameObject*(std::uint32_t id, char glyph)> f) {
@@ -817,6 +820,8 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        int   pktCount = 0;      // every packet of any type this second (anti-cheat packet ceiling)
+        bool  pktReported = false;   // ...reported once a second at most
         std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
         int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
@@ -1176,6 +1181,17 @@ private:
     void CountJoinAttempt(const net::Endpoint& from, int cost);
     // Server: accounts and addresses the anti-cheat kicked, refused until `until`
     // (m_serverTime); each repeat doubles the wait, up to an hour.
+    // The ban list file and the audit log (settings banFile / auditLog), opened on first use.
+    BanList m_banList;
+    AuditLog m_audit;
+    std::string m_banPath, m_auditPath;
+    bool m_acFilesReady = false;
+    std::unordered_map<std::string, int> m_acKickCounts;   // anti-cheat kicks per identity this run (capped)
+    void AcFilesSync();
+    void AcAudit(const std::string& event, const std::string& ident, const std::string& detail);
+    std::string IdentOfPeer(std::uint32_t peer) const;
+    /// True (and `why` filled) when `ident` is on the ban list now.
+    bool BannedByList(const std::string& ident, std::string& why);
     struct KickBan { float until = 0.0f; int strikes = 0; };
     std::unordered_map<std::string, KickBan> m_kickBans;
     float KickBanLeft(const std::string& ident) const;

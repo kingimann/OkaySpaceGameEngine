@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **124** rows that are Partial or Planned.
+The feature map currently has **125** rows that are Partial or Planned.
 
 ## Audits
 
@@ -119,7 +119,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches
 - Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
 - Scene Manager window in the editor
-- Full UI component library (essential, game, app, layout, data-driven)
+- Full UI component library (essential, game, app, layout, data-driven): slice 1 built (range slider, input validation, aspect-ratio box, example `examples/ui_library`); slices 2 (game parts, data-driven) and 3 (app parts) open, see [ui_component_audit.md](ui_component_audit.md)
 - Blocky character's arms in first person: the owner's complaint ("fix the first person hand so it looks normal to others and to us") is addressed on `claude/fp-hand-fix` (presets, always-visible arm with forearm, click swing, example scene, see [fp_hand.md](fp_hand.md)); still open: a real two-arm stance (Both arms preset only changes two-handed items), no fingers, a finer arm pose than a block, the first-person pose is not sent over the network, owner sign-off on the default look
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials, the rest (renderer submeshes): material slots with a colour each are built (see [modeling.md](modeling.md), Material slots); slots can also carry a picture in the software renderer; OpenGL, Direct3D 11 and Direct3D 12 now draw one range per slot with its picture (written, compile-checked, never run on a GPU); per-slot shaders are not built
@@ -210,7 +210,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [19.4](feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
-| [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363... |
+| [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the "Now" table is dated 2026-10-26; the hardening list is now ticked from the code (`docs/anticheat_hardening_status.md`)... |
 
 ### 20. Asset management (Critical)
 
@@ -371,6 +371,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [39.4](feature_map/39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) | Client integrity: signed manifest and launch check | Partial | set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games... |
 | [39.5](feature_map/39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) | Runtime checks and the clock heartbeat | Partial | no kernel driver, memory scanning or obfuscation (by design); older clients never answer the heartbeat, so turn `maxClockDrift`... |
 | [39.11](feature_map/39-security-anticheat.md#3911-account-backend-and-updater-hardening) | Account, backend and updater hardening | Partial | possible weaknesses: the local password hash is a hand-made chain of SHA-256 rather than a standard KDF, and its salt comes from... |
+| [39.13](feature_map/39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) | Cheat simulator and hardening audit | Partial | the `macro` step feeds the detector directly; packets are plain, so encryption is not exercised; never run on Windows or a real network; bans of anonymous players are by address; edits to the ban file are read at the next restart |
 
 ### 40. OkayUI standalone library
 

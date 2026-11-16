@@ -51,8 +51,10 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 
 ---
 
@@ -320,7 +322,67 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+## 7d. Add Node menu: 70 topics instead of 19
 
+**What it is.** The panel that opens when you add a node to a visual script (right-click the canvas, press Space, press
+Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70
+specific topics in 14 sections, and every node is in the topic you would look in. Nothing was removed and your saved
+graphs are unchanged (a graph stores a node's type, never its topic). Code: `editor/VisualScriptCategories.hpp`,
+`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](visual_scripting_naming.md),
+every node under its topic in [visual_scripting_topics.md](visual_scripting_topics.md), and the before-and-after
+measurement in [visual_script_category_audit.md](visual_script_category_audit.md).
+
+**How to reach it.**
+
+1. Open the editor (`Tools\OkayEngine.exe`, or the launcher), make or open any project, select an object (for example
+   the cube of a new project) and add a **Visual Script** component in the Inspector.
+2. In the Inspector's Visual Script section press **Open in node editor** (or open **View > Editors & Tools > Visual
+   Script**).
+3. Right-click the empty canvas, or press **Space**. The Add Node panel opens.
+
+**What you should see.**
+
+1. On the left, under Starter, Recently used, All and Favourites, the topics in small groups under grey headings:
+   Events, Flow, Variables / Lists & Saving, Math, Text, Objects, Movement & Physics, Gameplay, Characters & AI,
+   Sound / Camera & Screen, Scenes & Environment, Input, Online, Debugging. Each topic shows how many nodes it holds.
+   **Click a heading to fold its topics** (click again to open them). Hover a topic for a one-line description.
+2. Click a topic with many nodes (for example Numbers, Tweens or Multiplayer): the subcategories appear under it
+   (Rounding & Snapping, Limits & Wrapping, ... ). Hover one for its description. Click one to see only its nodes.
+3. Twelve nodes and where to find each (the name on the node, then topic / subcategory):
+
+   | Node | Where it is |
+   |---|---|
+   | On Start, On Every Frame | Game Events |
+   | On Key Pressed | Input Events (it used to be under Input / Keys) |
+   | On Collision Start | Collision & Trigger Events |
+   | Wait Seconds | Waiting & Timers |
+   | Spawn | Create & Destroy |
+   | Move Towards | Move & Follow |
+   | Add Force | Forces & Velocity |
+   | Set Weather | Weather & Fog (it used to be under Scene / Atmosphere) |
+   | Play Sound | Sound Effects |
+   | Start Quest | Quests & Dialogue / Quests |
+   | Host Game | Multiplayer / Hosting & Joining |
+
+4. **Search still finds everything.** Type `weather`: Set Weather and its twin Weather Set are at the top, and both sit in
+   Weather & Fog. Type `scene` or
+   `atmosphere`: the nodes that used to be under Scene (Set Weather, Set Fog, Set Post Effect, ...) are in the list too,
+   because the old topic name is kept as a search word. Type `advanced`: the text-script functions that used to be in
+   the Advanced bucket are listed.
+5. **Favourites keep working.** Click the star on On Key Pressed, close the panel and open it again: the star is still
+   there (it is stored by node name in `okay_vsnodes.txt`, never by topic).
+
+Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
+the font and window frame differ from the editor):
+
+* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
+* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
+* [The Events section folded away](images/vs_palette_folded_section.png)
+
+Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
+names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
+counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
+how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
 
 ## Switches that are off by default (own code)
 
@@ -368,7 +430,8 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
   that works.
 * **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
-  (COLLADA). Tiny hand-written files from our tests, no outside source.
+  (COLLADA), `cube_gzip.blend` (gzip `.blend`) and `cube_compressed_arrays.fbx` (FBX with zlib arrays). Tiny files from our
+  tests (the last two written by our own `scripts/gen_blend_fixtures.py` and `scripts/gen_fbx_fixtures.py`), no outside source.
 * **Steps.**
   1. Start the editor with `set OKAY_OWN_OFF=1` (or `OKAY_OWN_STACK=1`), open **Help > About OkaySpace**. It should say
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
@@ -429,6 +492,41 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
+
+**What it is.** Compressed data in PNG pictures, gzip `.blend` files, `.x` MSZIP, `.zgl`, 3MF/AMF zip packages, the arrays
+in binary FBX files and gzip answers from our own HTTP client used to be decoded by three separate copies of the same
+decoder. Now there is one (`engine/include/okay/Core/Inflate.hpp`) and the others call it. Nothing should look different:
+this change is about having less code to get wrong. Plain words: if every picture and model that worked before still
+loads, it worked.
+
+**Steps.**
+1. **PNG (always on).** In the editor, **File > Import Model...** and choose `examples\obj_texture_paths\cube_ok.obj`. The
+   cube shows the grid texture. That texture is `grid.png`, a PNG, and every PNG goes through the shared decoder. Any
+   other PNG you drop in as a texture does the same.
+2. **gzip `.blend`.** `set OKAY_OWN_BLEND=1` (or `OKAY_OWN_STACK=1`), start the editor, **File > Import Model...**,
+   choose `examples\own_readers\cube_gzip.blend` (a Blender file saved with "Compress File", our own test file). A small model
+   appears (the `blend_reader` test checks its numbers). (Without Assimp in the build this reader is the only way a `.blend` loads at all.)
+3. **FBX with compressed arrays.** `set OKAY_OWN_FBX=1`, start the editor, import
+   `examples\own_readers\cube_compressed_arrays.fbx` (a binary FBX 7.4 whose vertex and index arrays are zlib packed).
+   A cube should appear. (The About popup should then list `fbx` among the own readers.)
+4. **Not shipped as samples:** `.x` with MSZIP, `.zgl`, 3MF and AMF. Their files are only built inside the tests
+   (`x_reader`, `xgl_reader`, `3mf_reader`, `amf_reader`). If you have your own `.x` (MSZIP), `.zgl` or `.3mf` file,
+   import it with `OKAY_OWN_X=1`, `OKAY_OWN_XGL=1` or `OKAY_OWN_3MF=1`.
+5. **gzip HTTP answers.** Only our own HTTP client uses this, and it cannot be tried on Windows (see 10). On Linux:
+   build with `-DOKAY_OWN_HTTP=ON`, run with `OKAY_OWN_HTTP=1`, and fetch a URL whose server sends
+   `Content-Encoding: gzip`; the program must get the plain bytes (the tests `own_http` and `own_http_net` do this).
+
+**How you know it worked.** There is no log line that names the decoder (it is a function, not a switch). What you can
+see: the grid texture on the cube (step 1), the cube from each file (steps 2 and 3), and, on a machine with a
+build, the test run `ctest -R inflate_differential` (and `ctest -R png_hint`), which prints how many damaged and valid
+streams it compared with an independent slow decoder and ends with `ok:`.
+
+**Status.** Verified here (Linux, headless): `inflate_differential` (about 67,000 streams, ASan and UBSan clean),
+`own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
+`fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
+real editor window), anything on Windows, real-world files other than our own samples.
 
 ---
 
@@ -517,9 +615,9 @@ missing everywhere logs one line.
 
 1. Open a project in the editor (`Tools\OkayEngine.exe`, or Open from the launcher). Copy any PNG into the project's
    `Assets` folder, for example `examples\obj_texture_paths\grid.png` to `<project>\Assets\grid.png`.
-2. **GameObject > 3D Object > Cube**. Select the cube. In the Inspector, under **Mesh Renderer**, click the **Texture**
-   box, type `Assets/grid.png` and press Enter. Type it: dragging the picture from the Project panel stores the full
-   `C:\...` path, which works on your own PC even without this fix, so it would not show the bug.
+2. **GameObject > 3D Object > Cube**. Select the cube. In the Inspector, under **Mesh Renderer**, drag `grid.png` from
+   the Project panel onto the **Texture** box (it is stored as `Assets/grid.png`, see the next section), or click the
+   box, type `Assets/grid.png` and press Enter.
 3. The cube in the Scene view should show the grid (also new: the editor now finds a project-relative path even when it
    was not started from the project folder). Save the scene (**File > Save Scene**, Ctrl+S).
 4. **File > Build Settings...** (Ctrl+B). Tick **Development build** if you want a log file. Press **Build** and note the
@@ -527,9 +625,8 @@ missing everywhere logs one line.
 5. Open the output folder in Explorer and double-click `<Name>.exe`.
 6. You should see: the cube with the grid. Before this fix it was plain white, and the development log (`<Name>.log`
    beside the exe) had `[asset] cannot load image 'Assets/grid.png': cannot open file`.
-7. Fonts **cannot be tried from the editor today**, for two other reasons: the Text component's **Font** slot only takes a
-   font dragged from the Project panel, which stores the full `C:\...` path (so the game finds it on your PC anyway), and
-   Build Game does not copy fonts named by a Text yet (#888 finding 41, a separate bug). The font part is covered by the
+7. Fonts **cannot be tried end to end from the editor today**: a font dropped from the Project panel is now stored as
+   `Assets/...` (next section), but Build Game does not copy fonts named by a Text yet (#888 finding 41, a separate bug). The font part is covered by the
    headless test only. By hand it would be: in the saved `.okayscene`, change the Text's font to `Assets/MyFont.ttf`,
    copy the `.ttf` into `<Name>_Data\Assets\`, double-click the exe; the text uses the font (before: the built-in font,
    and `[ttf] cannot open Assets/MyFont.ttf` in the log).
@@ -544,6 +641,30 @@ layout under a virtual display, logged no image warning with `Assets/checker.png
 screenshot was taken; the folder was laid out by hand, not by Build Game (the editor was not built here); the editor
 change is compiled through the `editor_hooks` test but the editor was not run; nothing was run on Windows. The menu
 names above were read from the code.
+
+## Dropped pictures and fonts are stored project-relative (bug fix, branch `claude2/drag-paths-relative-v2`, not merged or released yet)
+
+Before: dragging a texture or font from the Project panel onto an Inspector slot stored the full path
+(`C:\Users\<you>\...\Assets\a.png`). Build Game warned, and the built game still looked on your PC.
+
+1. Open a project in the editor (`Tools\OkayEngine.exe` or Open from the launcher). Put a `.png` in its `Assets\`
+   folder (or use one that is there).
+2. Select an object with a **Mesh Renderer** (for example **GameObject > 3D Object > Cube**). Drag the picture from the
+   Project panel onto the Mesh Renderer's **Texture** slot. The cube shows the picture.
+3. **File > Save**. Open the `.okayscene` file in Notepad and search for `.png`. The path starts with `Assets/`
+   (forward slashes), with no drive letter and no user folder.
+4. Close and reopen the editor, open the scene: the cube still shows the picture.
+5. The same for a font: drop a `.ttf` from the Project panel onto a Text object in the Scene view, save, and the
+   `fontPath` in the file starts with `Assets/`.
+6. **File > Build Settings > Build**: the report has no "absolute asset path" warning for that picture. Run the built
+   game: the cube shows the picture (it is read from `<Name>_Data\Assets\...`).
+
+A file dropped from outside the project folder keeps its full path (and Build Game still warns about it). Sounds,
+models, scripts and data files still store the full path; only pictures and fonts changed.
+
+**Status.** The path logic and "a stored relative path opens with the project as asset folder" are tested headless
+(`test_drop_path_relative`, run on Linux). The editor and player changes were syntax-checked only, not run; steps 2 to 6
+are unverified until you try them on Windows.
 
 ## Team tooling (not part of the Windows release)
 

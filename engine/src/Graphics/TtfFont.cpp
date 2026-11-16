@@ -235,7 +235,7 @@ TtfFont* GetFont(const std::string& path) {
     auto it = cache.find(path);
     if (it != cache.end()) return it->second.get();    // may be a cached failure (nullptr-valued)
     auto font = std::make_unique<TtfFont>();
-    if (!font->LoadFromFile(path)) {
+    if (!font->LoadFromFile(path)) {   // LoadFromFile finds a project-relative path under the asset folder too
         cache[path] = nullptr;   // remember the failure so we don't re-read every frame
         return nullptr;
     }

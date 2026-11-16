@@ -832,7 +832,7 @@ inline Image* GetCachedTexture(const std::string& path) {
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)
         else
-            img.Load(path);                    // leaves the image empty on failure
+            img.Load(path);                    // leaves the image empty on failure (Image::Load finds a project-relative path)
         ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
         it = cache.emplace(path, std::move(img)).first;
     }

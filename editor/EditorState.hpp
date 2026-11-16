@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Render/TexturePath.hpp"
+#include "okay/Core/Paths.hpp"
 #include <cstdint>
 #include <functional>
 #include <Okay.hpp>

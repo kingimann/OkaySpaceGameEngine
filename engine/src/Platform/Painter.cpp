@@ -23,7 +23,7 @@ ui2d::Tex Painter::LoadTexture(const std::string& path) {
     auto it = m_cache.find(path);
     if (it != m_cache.end()) return it->second;
     okay::Image img;
-    if (!img.Load(path) && !img.Load(m_baseDir + path)) {
+    if (!img.Load(path) && !img.Load(m_baseDir + path)) {   // as written or under the asset folder (Image::Load), else under the base dir
         m_cache[path] = nullptr;   // remember the miss so a bad path is not decoded every frame
         return nullptr;
     }

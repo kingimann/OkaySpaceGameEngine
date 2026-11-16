@@ -1,6 +1,7 @@
 #include "UIRuntimeTools.hpp"
 #include "ConsolePanel.hpp"
 #include "ExampleScenes.hpp"
+#include "ProjectRelativePath.hpp"   // StoredDropPath
 #include "imgui.h"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -95,7 +96,7 @@ bool DrawProps(Component& c, EditorState& ed) {
                 }
                 if (d.type == PropertyType::AssetPath && ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                        nv = PropertyValue::MakeAssetPath((const char*)p->Data);
+                        nv = PropertyValue::MakeAssetPath(StoredDropPath(ed.projectDir(), (const char*)p->Data));   // project-relative for a picture or font
                         changed = true;
                     }
                     ImGui::EndDragDropTarget();

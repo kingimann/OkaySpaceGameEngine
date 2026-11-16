@@ -1,6 +1,7 @@
 #include "okay/Core/Paths.hpp"
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
 #include <utility>
 #include <vector>
 

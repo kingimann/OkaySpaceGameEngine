@@ -63,7 +63,7 @@ Status words: **Done** (code and a test that runs), **Partial** (works for the c
 
 Details of #850:
 
-- `OwnHttpInflate.hpp`: gzip and zlib decoder of our own (compression, not cryptography), wired behind `acceptGzip` and `Limits::allowGzip`; off unless asked for, so every existing test and caller behaves as before.
+- `OwnHttpInflate.hpp`: the thin string wrapper over the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`, since the merge of the three copies; see `docs/own_fbx_reader.md` and `docs/provenance_audit.md` row 11). gzip and zlib decoder of our own (compression, not cryptography), wired behind `acceptGzip` and `Limits::allowGzip`; off unless asked for, so every existing test and caller behaves as before.
 - Range handling in `Fetch`: strict `Content-Range` checks, `FetchResult::partial/rangeStart/rangeTotal`.
 - `FetchHooks::onProgress`, `NetOptions::cancel`, `NetOptions::resolveMs`, a resolver on a helper thread.
 - `okay::http::RequestEx` (progress, cancel, resume, size cap, timeouts, gzip) and a `timeoutMs` argument on `okay::http::Request`; the account layer passes its per-call timeout to it (before, only the curl fallback honoured it, so with the own client on, the join-time ticket call could wait up to 15 minutes). On Windows (WinHTTP) the argument is ignored; Windows keeps its session timeouts. A timeout on the own client no longer leads to a second send of a POST by curl (`Result::maybeSent`).

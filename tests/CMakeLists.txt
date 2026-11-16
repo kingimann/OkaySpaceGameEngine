@@ -842,6 +842,13 @@ target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
+# A file dropped from the Project panel is stored project-relative (editor/ProjectRelativePath.hpp; ImGui-free) and still opens
+# with the project as the asset folder (okay::Paths::FindFile), whatever the working directory.
+add_executable(test_drop_path_relative test_drop_path_relative.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_drop_path_relative PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_drop_path_relative PRIVATE okay::engine)
+add_test(NAME drop_path_relative COMMAND test_drop_path_relative)
+
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
 add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
@@ -1345,6 +1352,13 @@ target_include_directories(test_vs_palette_categories PRIVATE ${CMAKE_SOURCE_DIR
 target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
+
+# Where every node sits in the Add Node menu: one place each, no catch-all, no oversized topic, old topic names still search.
+add_executable(test_vs_categories test_vs_categories.cpp)
+target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_categories COMMAND test_vs_categories)
 
 add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
 target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
@@ -3456,6 +3470,21 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_own_http_inflate PRIVATE Threads::Threads)
 add_test(NAME own_http_inflate COMMAND test_own_http_inflate)
 set_tests_properties(own_http_inflate PROPERTIES TIMEOUT 240)
+# The ONE inflate (engine/include/okay/Core/Inflate.hpp) against a slow reference written fresh from the RFCs
+# (tests/inflate_reference_slow.hpp): same accept/refuse and same bytes on every valid, bit-flipped, truncated and spliced stream,
+# in lenient, PNG and strict mode. About 7 s optimised and about 1 minute under ASan+UBSan of CPU time (limit 600 s).
+# python3 optional (SKIPs the Python-made corpus with a message); OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure.
+add_executable(test_inflate_differential test_inflate_differential.cpp)
+target_include_directories(test_inflate_differential PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME inflate_differential COMMAND test_inflate_differential)
+set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
+# A PNG header that claims a huge size with a few bytes of data is refused without allocating the claimed size (peak heap
+# measured with a counting operator new). Standalone: the image decoder sources only.
+add_executable(test_png_hint test_png_hint.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_png_hint PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME png_hint COMMAND test_png_hint)
 if(UNIX AND NOT APPLE)
     add_executable(test_own_http_net test_own_http_net.cpp)
     target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)

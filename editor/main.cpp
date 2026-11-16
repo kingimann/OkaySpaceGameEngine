@@ -72,6 +72,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "ProjectRelativePath.hpp"      // StoredDropPath: a dropped picture or font is stored project-relative
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
@@ -1466,7 +1467,7 @@ SDL_Texture* GetThumb(const std::string& path) {
     SDL_Texture* tex = nullptr;
     okay::Image img;
     if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
-    else img.Load(path);
+    else img.Load(path);   // Image::Load finds a project-relative path under the project folder too
     if (g_sdlRenderer && img.Width() > 0) {
         tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
                                 SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
@@ -1478,6 +1479,10 @@ SDL_Texture* GetThumb(const std::string& path) {
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
 }
+// What a drop from the Project panel stores: a picture or font inside the project as a project-relative path
+// ("Assets/a.png"), so the scene works on any PC and in the built game; anything else as dragged. The asset folder
+// (okay::Paths::AssetBaseDir) is the open project: EditorState::setProjectDir sets it.
+static std::string DropPath(const std::string& dragged) { return oked::StoredDropPath(okay::Paths::AssetBaseDir(), dragged); }
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
 static SDL_Texture* ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
 
@@ -7968,7 +7973,7 @@ static bool AssetSlot(const char* id, std::string& field, const char* kind,
             std::string ap((const char*)p->Data), al = Lower(ap);
             for (const char* e : exts) {
                 std::string es = e;
-                if (al.size() >= es.size() && al.compare(al.size() - es.size(), es.size(), es) == 0) { field = ap; changed = true; break; }
+                if (al.size() >= es.size() && al.compare(al.size() - es.size(), es.size(), es) == 0) { field = DropPath(ap); changed = true; break; }
             }
         }
         ImGui::EndDragDropTarget();
@@ -11692,7 +11697,7 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::SetNextItemWidth(210);
     if (ImGui::InputText("##mattex", tex, sizeof(tex))) mat.texture = tex;
     if (ImGui::BeginDragDropTarget()) {   // drop an image from the Project panel
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = (const char*)p->Data;
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) mat.texture = DropPath((const char*)p->Data);
         ImGui::EndDragDropTarget();
     }
     ImGui::SameLine(0, 4);
@@ -19620,7 +19625,7 @@ static GameObject* HierInstantiateAsset(EditorState& ed, const std::string& path
         }
     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         placed = ed.CreateSprite(std::filesystem::path(path).stem().string());   // takes its own undo step
-        if (placed) if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+        if (placed) if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = DropPath(path);
     }
     if (placed) { ed.dirty = true; ConsoleLog("Added " + placed->name); }
     return placed;
@@ -20282,17 +20287,17 @@ void DrawHierarchy(EditorState& ed) {
                         } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
                     } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
                         ed.PushUndo();
-                        if (auto* im = node->GetComponent<UIImage>())             im->texture = path;
-                        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
-                        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
+                        if (auto* im = node->GetComponent<UIImage>())             im->texture = DropPath(path);
+                        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = DropPath(path);
+                        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = DropPath(path);
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
                     } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script
                         AttachScriptAsset(ed, node, path);
                         ed.Select(node);
                     } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
                         ed.PushUndo();
-                        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
-                        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
+                        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = DropPath(path);
+                        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = DropPath(path);
                         ed.dirty = true; ConsoleLog("Set font on " + node->name);
                     } else if (ext == ".okayscene") {      // MERGE the scene into this one
                         MergeSceneIntoCurrent(ed, path);
@@ -26340,7 +26345,7 @@ static bool AcceptAssetPathField(std::string& field) {
     oked::HighlightAssetDrop();                    // outline while a file from the Project panel is dragged over
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-            field = std::string((const char*)p->Data);
+            field = DropPath(std::string((const char*)p->Data));
             changed = true;
         }
         ImGui::EndDragDropTarget();
@@ -28936,8 +28941,8 @@ void DrawInspector(EditorState& ed) {
                 }
             } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
                 ed.PushUndo();
-                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
-                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
+                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = DropPath(path);
+                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = DropPath(path);
                 ed.dirty = true; ConsoleLog("Set texture");
             }
         }
@@ -39722,7 +39727,7 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Icon##ic");
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-                        tb->SetIcon(i, (const char*)p->Data); ed.dirty = true;
+                        tb->SetIcon(i, DropPath((const char*)p->Data)); ed.dirty = true;
                     }
                     ImGui::EndDragDropTarget();
                 }
@@ -45688,7 +45693,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 ed.PushUndo();
                 std::filesystem::path fp(path);
                 placed = ed.CreateSprite(fp.stem().string());
-                if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = path;
+                if (auto* sr = placed->GetComponent<SpriteRenderer>()) sr->texture = DropPath(path);   // project-relative inside the project
             } else if (const char* kind = ImportKindLabel(ext); kind && std::strcmp(kind, "model") == 0) {
                 // Any importable model format (.obj/.fbx/.gltf/.dae/...): full scene
                 // import — multi-node hierarchies, textures, auto size normalization.

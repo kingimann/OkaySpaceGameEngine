@@ -445,6 +445,7 @@ Template MakeFence() {
 
 void RegisterArchitectureTemplates();
 void RegisterVehicleTemplates();
+void RegisterCharacterTemplates();
 
 void RegisterBuiltinTemplates() {
     static bool done = false;
@@ -453,6 +454,7 @@ void RegisterBuiltinTemplates() {
     Registry::Instance().Register(MakeFence());
     RegisterArchitectureTemplates();
     RegisterVehicleTemplates();
+    RegisterCharacterTemplates();
 }
 
 } // namespace okay::modeling::guided

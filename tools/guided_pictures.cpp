@@ -280,11 +280,27 @@ int main(int argc, char** argv) {
         }
         Save(dir, std::string("vehicles_") + id + ".png", sheet);
     }
+    // 6b. Characters: a contact sheet per template, and one picture per design (seen from the front-left).
+    for (const char* id : {"human", "robot", "creature"}) {
+        const Template& A = *Registry::Instance().Find(id);
+        const int cols = 4, tw = 300, th = 340;
+        const int rows = ((int)A.starts.size() + cols - 1) / cols;
+        Img sheet(cols * tw, rows * th);
+        sheet.Clear(40, 42, 48);
+        for (int i = 0; i < (int)A.starts.size(); ++i) {
+            const PolyMesh m = Create(DefaultRecipe(A, A.starts[i].id));
+            Scene(sheet, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.5f);
+            Img one(480, 540);
+            Scene(one, m, 0, 0, 480, 540, 0.5f);
+            Save(dir, std::string("character_") + id + "_" + A.starts[i].id + ".png", one);
+        }
+        Save(dir, std::string("characters_") + id + ".png", sheet);
+    }
     // 7. Detail levels: the same model at Low, Medium, High and Ultra, with the triangle count.
     {
         struct Item { const char* tpl; const char* start; const char* name; float yaw; };
         for (const Item& it : {Item{"car", "sports", "car", 0.8f}, Item{"fence", "wrought_iron", "fence", 0.55f}, Item{"building", "townhouse", "building", 0.6f},
-                               Item{"motorcycle", "cruiser", "motorcycle", 0.9f}}) {
+                               Item{"motorcycle", "cruiser", "motorcycle", 0.9f}, Item{"human", "adventurer", "human", 0.5f}}) {
             const Template& A = *Registry::Instance().Find(it.tpl);
             Img im(1600, 360);
             im.Clear(0, 0, 0);
@@ -379,6 +395,30 @@ int main(int argc, char** argv) {
         }
         std::ofstream(ex + "/guided_vehicles.okayscene", std::ios::binary) << veh;
         std::printf("wrote %d vehicle models\n", vtotal);
+
+        // The character examples: every start design of human, robot and creature.
+        std::string chr = scene.substr(0, scene.find("gameobject 1 ")) +
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 10 -0.5 10 0 0 0 1 100 1 100\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        chr.replace(chr.find("name \"Guided fences\""), 21, "name \"Guided characters\"");
+        int cid = 2, crow = 0, ctotal = 0;
+        for (const char* tid : {"human", "robot", "creature"}) {
+            const Template& A = *Registry::Instance().Find(tid);
+            for (size_t i = 0; i < A.starts.size(); ++i) {
+                const std::string base = std::string(tid) + "_" + A.starts[i].id;
+                const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * 4.0, (double)crow * 5.0);
+                chr += "gameobject " + std::to_string(cid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                       "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++ctotal;
+            }
+            ++crow;
+        }
+        std::ofstream(ex + "/guided_characters.okayscene", std::ios::binary) << chr;
+        std::printf("wrote %d character models\n", ctotal);
         std::printf("wrote %d architecture models\n", total);
     }
     return 0;

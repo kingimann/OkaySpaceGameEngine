@@ -76,6 +76,7 @@ release job or the installer build for this change.
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 
@@ -918,6 +919,34 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 **Not done / unverified.** Wheel arches, doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
 Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
 The editor's Detail control and smooth shading were never seen in a window.
+
+---
+
+## 7zk. Guided characters
+
+**What it is.** Characters on the Modeling window's **Guided** page, same rules as 7zg to 7zj, including the **Detail** level (Low to Ultra).
+
+**Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
+setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
+was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+`character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
+The characters are blocky and rough (no skin weights, no skeleton, no animation; they are static meshes), spiders and insects have crude legs.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_characters** (26 characters: humans, robots and creatures in rows, 4 m apart). Click one in the
+   Hierarchy, open Modeling > Guided.
+2. **Proportions**: drag Height, Shoulder width, Head size, Leg length, Limb thickness; **Pose**: Arm angle, Elbow bend, Leg spread.
+3. **Parts and materials**: change Hair, Hat, Glasses, Top, Bottoms, Hands, Feet, Backpack, Belt, Cape, Shoulder pads; change a colour.
+4. **Each part > Hands**: give one hand its own design (Select jumps to it in Edit Mesh; move it with G, return: "[edited by you]"; change the
+   Hands design for all: it asks first). Add your own geometry in Edit Mesh: it stays when you change settings.
+5. **Creatures**: pick the Dragon, change **Wing span**, **Tail** and **Horns**; pick a Dog and change **Ears**; **Body plan** switches the layout.
+6. **Detail**: Low, Medium, High, Ultra (triangle counts shown). Collision: Exact (mesh) / None.
+7. To make your own: Modeling > Guided with nothing selected, Characters, pick a design card, Create. Select faces and **Save selection as part**
+   to keep a hat or hand of your own as a design.
+
+**Not done / unverified.** No rig, no skinning, no animation or facial expressions; clothes are shells around the body, not cloth; hands have
+no individual finger joints; the page's Detail control and smooth shading were never seen in a window.
 
 ---
 

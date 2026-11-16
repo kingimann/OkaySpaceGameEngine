@@ -288,6 +288,7 @@ add_library(okay_engine
     src/Modeling/GuidedFence.cpp
     src/Modeling/GuidedArchitecture.cpp
     src/Modeling/GuidedVehicles.cpp
+    src/Modeling/GuidedCharacters.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp

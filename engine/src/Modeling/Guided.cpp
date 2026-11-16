@@ -874,6 +874,75 @@ RegenResult Regenerate(const PolyMesh& current, const Recipe& stored, const Reci
 }
 
 // =====================================================================================================
+// Validation and variation
+// =====================================================================================================
+ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVolume) {
+    ValidationReport rep;
+    rep.parts = (int)parts.size();
+    std::vector<Vec3> lo(parts.size()), hi(parts.size());
+    for (size_t i = 0; i < parts.size(); ++i) {
+        const PolyMesh& m = parts[i].mesh;
+        bool finite = true;
+        lo[i] = {1e30f, 1e30f, 1e30f}; hi[i] = {-1e30f, -1e30f, -1e30f};
+        for (const Vec3& v : m.verts) {
+            if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) { finite = false; continue; }
+            lo[i] = {std::min(lo[i].x, v.x), std::min(lo[i].y, v.y), std::min(lo[i].z, v.z)};
+            hi[i] = {std::max(hi[i].x, v.x), std::max(hi[i].y, v.y), std::max(hi[i].z, v.z)};
+        }
+        if (!finite) { ++rep.nonFinite; rep.problems.push_back(parts[i].id + ": a position is not a number"); continue; }
+        const PolyMesh::Report r = m.Check();
+        if (r.badIndices) { ++rep.badIndices; rep.problems.push_back(parts[i].id + ": a face uses a missing vertex"); }
+        if (r.degenerateFaces) { rep.degenerate += r.degenerateFaces; rep.problems.push_back(parts[i].id + ": " + std::to_string(r.degenerateFaces) + " degenerate faces"); }
+        if (!r.Closed()) { ++rep.openParts; rep.problems.push_back(parts[i].id + ": not watertight (" + std::to_string(r.boundaryEdges) + " open edges, " + std::to_string(r.nonManifoldEdges) + " non-manifold)"); }
+        if (checkVolume) {
+            double vol = 0;
+            for (int f = 0; f < (int)m.faces.size(); ++f) {
+                const std::vector<int> tri = m.TriangulateFace(f);
+                for (size_t k = 0; k + 2 < tri.size(); k += 3) {
+                    const Vec3& a = m.verts[m.faces[f].verts[tri[k]]];
+                    const Vec3& b = m.verts[m.faces[f].verts[tri[k + 1]]];
+                    const Vec3& c = m.verts[m.faces[f].verts[tri[k + 2]]];
+                    vol += (double)Vec3::Dot(a, Vec3::Cross(b, c)) / 6.0;
+                }
+            }
+            if (!(vol > 0)) { ++rep.invertedParts; rep.problems.push_back(parts[i].id + ": faces point inward (volume " + std::to_string(vol) + ")"); }
+        }
+    }
+    // connected groups: parts whose boxes touch (a small margin) are one group
+    DSU dsu(std::max((int)parts.size(), 1));
+    const float mg = 0.03f;
+    for (size_t i = 0; i < parts.size(); ++i)
+        for (size_t j = i + 1; j < parts.size(); ++j)
+            if (lo[i].x <= hi[j].x + mg && lo[j].x <= hi[i].x + mg && lo[i].y <= hi[j].y + mg && lo[j].y <= hi[i].y + mg && lo[i].z <= hi[j].z + mg && lo[j].z <= hi[i].z + mg)
+                dsu.Union((int)i, (int)j);
+    std::set<int> roots;
+    for (size_t i = 0; i < parts.size(); ++i) roots.insert(dsu.Find((int)i));
+    rep.components = (int)roots.size();
+    return rep;
+}
+
+Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength) {
+    Recipe r = Normalize(t, base);
+    uint32_t s = seed * 2654435761u + 977u;
+    auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (float)((s >> 8) & 0xffff) / 65535.0f; };
+    for (const ParamDef& p : t.params) {
+        if (p.id == kDetailParam || p.id == "length" && t.usesPath) continue;   // the detail level and a path's length are the user's
+        if (p.id == "seed") { r.params[p.id] = (double)(seed % 1000); continue; }
+        if (p.kind == ParamDef::Kind::Bool || p.kind == ParamDef::Kind::Choice) continue;   // structure stays with the style
+        const double span = (p.max - p.min) * strength;
+        double v = r.Param(p.id, p.def) + ((double)rnd() * 2.0 - 1.0) * span;
+        r.params[p.id] = std::min(std::max(v, p.min), p.max);
+    }
+    for (const SlotDef& sd : t.slots) {
+        if (sd.designs.size() < 2 || rnd() > 0.35f) continue;
+        const std::string pick = sd.designs[(size_t)(rnd() * (float)sd.designs.size()) % sd.designs.size()].id;
+        r.slotDesign[sd.id] = pick;
+    }
+    if (t.constrain) t.constrain(r);
+    return Normalize(t, r);
+}
+
+// =====================================================================================================
 // Files
 // =====================================================================================================
 std::string SidecarPath(const std::string& meshPath) {

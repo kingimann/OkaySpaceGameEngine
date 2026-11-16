@@ -182,20 +182,21 @@ void Taillight(Out& o, const std::string& id, float x, float y, float z, float s
 }
 void Bumper(Out& o, const std::string& id, bool front, float xFace, float y0, float width, float h) {
     const float s = front ? 1.0f : -1.0f;
-    const float xa = xFace - s * 0.03f, xb = xFace + s * 0.13f;
+    const float xa = xFace - s * 0.2f, xb = xFace + s * 0.13f;   // reaches back into the (smoothed) nose so it is joined
     Frame f = FrameAA({std::min(xa, xb), y0, -width / 2}, {std::max(xa, xb), y0 + h, width / 2});
     o.Add(id, "bumper", f, [&](const std::string& d) {
-        if (d == "chrome") return CylZ(-width / 2 - 0.02f, width / 2 + 0.02f, xFace + s * 0.1f, y0 + h * 0.5f, h * 0.55f, 10);
+        if (d == "chrome") return CylZ(-width / 2 - 0.02f, width / 2 + 0.02f, xFace + s * 0.02f, y0 + h * 0.5f, h * 0.55f, 10);
         if (d == "sport") { PolyMesh m = BoxAA({std::min(xa, xb), y0, -width / 2}, {std::max(xa, xb) - s * 0.03f, y0 + h * 0.7f, width / 2}); shapes::Append(m, BoxAA({std::min(xa, xb + s * 0.1f), y0 - h * 0.15f, -width / 2 * 0.8f}, {std::max(xa, xb + s * 0.1f), y0 + h * 0.2f, width / 2 * 0.8f})); return m; }
         if (d == "heavy") return BoxAA({std::min(xa, xb + s * 0.07f), y0 - h * 0.2f, -width / 2 - 0.03f}, {std::max(xa, xb + s * 0.07f), y0 + h * 1.4f, width / 2 + 0.03f});
         return BoxAA({std::min(xa, xb), y0, -width / 2}, {std::max(xa, xb), y0 + h, width / 2});
     });
 }
-void Mirror(Out& o, const std::string& id, float x, float y, float zOuter, int side) {
+void Mirror(Out& o, const std::string& id, float x, float y, float zOuter, int side, float zIn = 1e9f) {   // zIn: where the arm starts (the cabin side)
     const float s = (float)side;
+    if (zIn > 1e8f) zIn = zOuter - s * 0.02f;
     Frame f = FrameAA({x - 0.07f, y, std::min(zOuter, zOuter + s * 0.2f)}, {x + 0.07f, y + 0.14f, std::max(zOuter, zOuter + s * 0.2f)});
     o.Add(id, "mirror", f, [&](const std::string& d) {
-        PolyMesh m = BoxAA({x - 0.02f, y - 0.01f, std::min(zOuter - s * 0.02f, zOuter + s * 0.1f)}, {x + 0.02f, y + 0.03f, std::max(zOuter - s * 0.02f, zOuter + s * 0.1f)});   // arm
+        PolyMesh m = BoxAA({x - 0.02f, y - 0.01f, std::min(zIn, zOuter + s * 0.1f)}, {x + 0.02f, y + 0.03f, std::max(zIn, zOuter + s * 0.1f)});   // arm
         const float z0 = zOuter + s * 0.08f, z1 = zOuter + s * 0.2f;
         if (d == "round") {
             Frame b = FrameAA({x - 0.08f, y, std::min(z0, z1)}, {x + 0.08f, y + 0.16f, std::max(z0, z1)});
@@ -221,76 +222,139 @@ void Grille(Out& o, const std::string& id, float x, float y0, float y1, float wi
 }
 
 // ---- Car -------------------------------------------------------------------------------------------------------
-struct CarShape { float b0, b1, t0, t1; bool bed; };   // cabin base and top, as fractions of the length
-CarShape ShapeOf(const std::string& d) {
-    if (d == "hatchback") return {-0.38f, 0.10f, -0.34f, 0.0f, false};
-    if (d == "coupe") return {-0.24f, 0.08f, -0.10f, -0.02f, false};
-    if (d == "suv") return {-0.44f, 0.14f, -0.42f, 0.06f, false};
-    if (d == "pickup") return {-0.10f, 0.14f, -0.04f, 0.05f, true};
-    if (d == "sports") return {-0.22f, 0.10f, -0.08f, -0.02f, false};
-    if (d == "van") return {-0.46f, 0.14f, -0.46f, 0.10f, false};
-    return {-0.28f, 0.10f, -0.17f, 0.0f, false};   // sedan
+// A car body style: the side silhouette as control points, as fractions along the length (0 tail, 1 nose) and of the height above
+// the ground clearance. Each style has its own hood height, belt line, trunk deck, cabin position and roof shape.
+struct CarStyle { float nose, belt, deck, cabRear, cabFront, roofRear, roofFront; bool bed; };
+CarStyle StyleOf(const std::string& d) {
+    //                   nose  belt  deck  cabR  cabF  roofR roofF
+    if (d == "hatchback") return {0.34f, 0.50f, 0.50f, 0.06f, 0.72f, 0.12f, 0.62f, false};
+    if (d == "coupe")     return {0.25f, 0.40f, 0.42f, 0.22f, 0.64f, 0.40f, 0.52f, false};
+    if (d == "suv")       return {0.42f, 0.56f, 0.56f, 0.04f, 0.76f, 0.06f, 0.66f, false};
+    if (d == "pickup")    return {0.40f, 0.56f, 0.34f, 0.44f, 0.76f, 0.46f, 0.66f, true};
+    if (d == "sports")    return {0.22f, 0.34f, 0.38f, 0.30f, 0.66f, 0.40f, 0.50f, false};
+    if (d == "van")       return {0.48f, 0.62f, 0.62f, 0.02f, 0.86f, 0.03f, 0.80f, false};
+    return {0.30f, 0.46f, 0.44f, 0.17f, 0.70f, 0.30f, 0.56f, false};   // sedan
+}
+using Poly = std::vector<Vec2>;
+// Corner cutting (Chaikin): each pass replaces every corner by two points a quarter in, so a polyline becomes a smooth spline.
+Poly Chaikin(const Poly& p, int iters, bool closed) {
+    Poly q = p;
+    for (int it = 0; it < iters; ++it) {
+        Poly n;
+        const int m = (int)q.size();
+        if (!closed) n.push_back(q.front());
+        for (int i = 0; i < (closed ? m : m - 1); ++i) {
+            const Vec2 a = q[i], b = q[(i + 1) % m];
+            if (!closed && i == 0) { n.push_back({a.x * 0.5f + b.x * 0.5f, a.y * 0.5f + b.y * 0.5f}); continue; }
+            n.push_back({a.x * 0.75f + b.x * 0.25f, a.y * 0.75f + b.y * 0.25f});
+            if (!closed && i == m - 2) { n.push_back(b); continue; }
+            n.push_back({a.x * 0.25f + b.x * 0.75f, a.y * 0.25f + b.y * 0.75f});
+        }
+        q = n;
+    }
+    return q;
 }
 
 void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
     Out o{r, parts};
     const float L = Pf(r, "length"), W = Pf(r, "width"), H = Pf(r, "height"), gc = Pf(r, "groundClear");
-    const float wr = Pf(r, "wheelRadius"), ww = Pf(r, "wheelWidth");
+    const float wr = std::min(Pf(r, "wheelRadius"), L * 0.2f), ww = Pf(r, "wheelWidth");
     const float wheelbase = std::min(Pf(r, "wheelbase"), L * 0.8f), shift = Pf(r, "axleShift") * L;
-    const std::string body = r.DesignFor("body", "body/0");
-    const bool userBody = body.rfind("user:", 0) == 0;
-    const CarShape sh = ShapeOf(userBody ? "sedan" : body);
-    const float cabinScale = Pf(r, "cabinScale"), cabinShift = Pf(r, "cabinShift") * L;
-    const float Wb = W * 0.9f, Wc = Wb * 0.86f;
-    const float hb = gc + (H - gc) * 0.46f;
-    const float yf = gc + (hb - gc) * 0.62f;
-    const float xhood = std::min(L * sh.b1 + 0.02f + cabinShift, L * 0.5f - 0.15f);
-    // lower body (a user body replaces body and cabin: it fills the whole height)
-    {
-        const std::vector<Vec2> prof = {{-L / 2, gc}, {L / 2, gc}, {L / 2, yf}, {xhood, hb}, {-L / 2, hb}};
-        Frame fr = userBody ? FrameAA({-L / 2, gc, -Wb / 2}, {L / 2, H, Wb / 2}) : FrameAA({-L / 2, gc, -Wb / 2}, {L / 2, hb, Wb / 2});
-        o.Add("body/0", "body", fr, [&](const std::string&) { return Side(prof, -Wb / 2, Wb / 2); });
+    const std::string bodyD = r.DesignFor("body", "body/0");
+    const bool userBody = bodyD.rfind("user:", 0) == 0;
+    const CarStyle st = StyleOf(userBody ? "sedan" : bodyD);
+    const float cabinScale = Pf(r, "cabinScale"), cabinShift = Pf(r, "cabinShift");
+    const float Wb = W * 0.9f, Wc = Wb * 0.86f, x0 = -L / 2;
+    const int smooth = std::min(3, (int)std::lround(shapes::DetailF()));   // corner-cutting passes: 0 blocky, 1 rounded, 2 smooth, 3 finest
+    auto X = [&](float f) { return x0 + f * L; };
+    const float span = H - gc;
+    const float beltY = std::max(gc + st.belt * span, gc + wr * 2.25f + 0.06f);   // high enough that the wheel arch stays inside the body
+    auto Y = [&](float f) { return std::max(gc + f * span, gc + 0.05f); };
+    const float noseY = std::min(Y(st.nose), beltY), deckY = std::min(Y(st.deck), beltY);
+    const float roof = std::max(H, beltY + 0.3f);   // a cabin always has some height, even with tall wheels or a low roof setting
+    // cabin key x (shifted and scaled about its middle)
+    const float cmid = 0.5f * (st.cabRear + st.cabFront);
+    auto cx = [&](float f) { return X(std::min(std::max(cmid + (f - cmid) * cabinScale + cabinShift, 0.02f), 0.97f)); };
+    const float bx0 = cx(st.cabRear), bx1 = cx(st.cabFront), tx0 = cx(st.roofRear), tx1 = cx(st.roofFront);
+    const float mid = 0.5f * (bx0 + bx1);
+    // axles (the arches and the wheels are centred on them)
+    const float arch = wr * 1.16f;
+    float xf = wheelbase / 2 + shift, xrr = -wheelbase / 2 + shift;
+    {   // keep the two arches apart and inside the body, whatever the sliders say
+        if (xf - xrr < 2 * arch + 0.1f) { const float m = 0.5f * (xf + xrr); xf = m + arch + 0.05f; xrr = m - arch - 0.05f; }
+        if (xf + arch > L / 2 - 0.05f) { const float d = xf + arch - (L / 2 - 0.05f); xf -= d; xrr -= d; }
+        if (xrr - arch < x0 + 0.05f) { const float d = (x0 + 0.05f) - (xrr - arch); xf += d; xrr += d; }
     }
-    // cabin (greenhouse) and glass
-    const float cx0 = L * sh.b0 + cabinShift, cx1 = std::min(L * sh.b1 + cabinShift, L * 0.5f - 0.3f);
-    const float mid = 0.5f * (cx0 + cx1);
-    const float hw0 = (cx1 - cx0) * 0.5f * cabinScale, hwTop0 = hw0 * 0.0f;
-    (void)hwTop0;
-    const float bx0 = mid - hw0, bx1 = mid + hw0;
-    const float tx0 = bx0 + (L * (sh.t0 - sh.b0)) * cabinScale, tx1 = bx1 - (L * (sh.b1 - sh.t1)) * cabinScale;
-    const float roof = H;
+
+    // lower body: tail to nose over the top, then back along the bottom with a round arch cut at each axle
+    {
+        Poly top;   // from the tail bottom up and over to the nose bottom
+        top.push_back({x0, gc});
+        top.push_back({x0, deckY});
+        if (st.bed) { top.push_back({bx0, deckY}); top.push_back({bx0, beltY}); }
+        else { top.push_back({std::min(bx0, X(0.12f) + 0.0f), deckY}); top.push_back({bx0, beltY}); }
+        top.push_back({bx1, beltY});
+        top.push_back({L / 2, noseY});
+        top.push_back({L / 2, gc});
+        Poly sm = top;
+        if (smooth > 0) {
+            // smooth only the top outline, keep the bottom corners square so the body still sits flat
+            Poly mid3(top.begin() + 1, top.end() - 1);
+            mid3 = Chaikin(mid3, smooth, false);
+            sm.clear(); sm.push_back(top.front()); for (const Vec2& v : mid3) sm.push_back(v); sm.push_back(top.back());
+        }
+        Poly bottom;   // nose to tail, with arches
+        std::vector<float> ax = {xf, xrr};
+        std::sort(ax.begin(), ax.end(), std::greater<float>());
+        for (float a : ax) {
+            bottom.push_back({a + arch, gc});
+            bottom.push_back({a + arch, wr});
+            const int seg = shapes::Scale(8, 4);
+            for (int k = 1; k < seg; ++k) { const float t = kPi * (float)k / (float)seg; bottom.push_back({a + std::cos(t) * arch, wr + std::sin(t) * arch}); }
+            bottom.push_back({a - arch, wr});
+            bottom.push_back({a - arch, gc});
+        }
+        Poly full = sm;
+        for (const Vec2& v : bottom) full.push_back(v);
+        std::reverse(full.begin(), full.end());   // counter-clockwise: along the bottom first
+        Frame fr = userBody ? FrameAA({x0, gc, -Wb / 2}, {L / 2, H, Wb / 2}) : FrameAA({x0, gc, -Wb / 2}, {L / 2, beltY, Wb / 2});
+        o.Add("body/0", "body", fr, [&](const std::string&) { return Side(full, -Wb / 2, Wb / 2); });
+    }
     if (!userBody) {
-        const std::vector<Vec2> cab = {{bx0, hb - 0.02f}, {bx1, hb - 0.02f}, {tx1, roof}, {tx0, roof}};
-        Frame fr = FrameAA({bx0, hb, -Wc / 2}, {bx1, roof, Wc / 2});
-        o.Add("cabin/0", "cabin", fr, [&](const std::string&) {
+        // cabin: the greenhouse, a rounded roof line when smoothed
+        Poly cab = {{bx0, beltY - 0.02f}, {bx1, beltY - 0.02f}, {tx1, roof}, {tx0, roof}};
+        if (smooth > 0) cab = Chaikin(cab, smooth, true);
+        Frame fc = FrameAA({bx0, beltY, -Wc / 2}, {bx1, roof, Wc / 2});
+        o.Add("cabin/0", "cabin", fc, [&](const std::string&) {
             PolyMesh m = Side(cab, -Wc / 2, Wc / 2);
             if (shapes::Detail() >= 2) {   // door seams and handles on both sides (High and up)
                 const float xm = (bx0 + bx1) * 0.5f;
                 for (int s = -1; s <= 1; s += 2) {
                     const float zo = s * Wc / 2;
                     const float za = std::min(zo - s * 0.002f, zo + s * 0.006f), zb = std::max(zo - s * 0.002f, zo + s * 0.006f);
-                    shapes::Append(m, BoxAA({xm - 0.004f, hb + 0.02f, za}, {xm + 0.004f, hb + (roof - hb) * 0.85f, zb}));
-                    shapes::Append(m, BoxAA({bx0 + (bx1 - bx0) * 0.2f, hb + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {bx0 + (bx1 - bx0) * 0.2f + 0.002f * 0 + 0.1f, hb + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
-                    shapes::Append(m, BoxAA({xm + 0.15f, hb + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {xm + 0.25f, hb + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
+                    shapes::Append(m, BoxAA({xm - 0.004f, beltY + 0.02f, za}, {xm + 0.004f, beltY + (roof - beltY) * 0.85f, zb}));
+                    shapes::Append(m, BoxAA({bx0 + (bx1 - bx0) * 0.2f, beltY + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {bx0 + (bx1 - bx0) * 0.2f + 0.1f, beltY + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
+                    shapes::Append(m, BoxAA({xm + 0.15f, beltY + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {xm + 0.25f, beltY + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
                 }
             }
             return m;
         });
-        // side glass: the cabin side shrunk inwards
-        const float yb = hb + 0.07f, yt = roof - 0.08f;
+        // side glass: the cabin side shrunk inwards, leaving the pillars
+        const float yb = beltY + 0.07f, yt = roof - 0.08f;
         auto xAt = [&](float y, bool front) {
-            const float t = (y - (hb - 0.02f)) / std::max(roof - (hb - 0.02f), 1e-3f);
+            const float t = (y - (beltY - 0.02f)) / std::max(roof - (beltY - 0.02f), 1e-3f);
             return front ? bx1 + (tx1 - bx1) * t : bx0 + (tx0 - bx0) * t;
         };
         auto inset = [&](float y, bool front) { const float xa = xAt(y, false), xb = xAt(y, true); const float ins = std::min(0.12f, (xb - xa) * 0.2f); return front ? xb - ins : xa + ins; };
-        const std::vector<Vec2> gl = {{inset(yb, false), yb}, {inset(yb, true), yb}, {inset(yt, true), yt}, {inset(yt, false), yt}};
+        Poly gl = {{inset(yb, false), yb}, {inset(yb, true), yb}, {inset(yt, true), yt}, {inset(yt, false), yt}};
+        if (smooth > 0) gl = Chaikin(gl, std::min(smooth, 2), true);
         for (int side = 0; side < 2; ++side) {
             const float zs = side ? Wc / 2 : -Wc / 2, sg = side ? 1.0f : -1.0f;
             const float za = zs - sg * 0.012f, zb = zs + sg * 0.01f;
             Frame f2 = FrameAA({bx0, yb, std::min(za, zb)}, {bx1, yt, std::max(za, zb)});
             o.Add("glass/side/" + std::to_string(side), "glass", f2, [&](const std::string&) { return Side(gl, std::min(za, zb), std::max(za, zb)); });
         }
-        const Vec3 centre{mid, (hb + roof) * 0.5f, 0};
+        const Vec3 centre{mid, (beltY + roof) * 0.5f, 0};
         auto outwardOf = [&](Vec3 a, Vec3 b) {
             Vec3 d = b - a; d = d / d.Magnitude();
             Vec3 n{-d.y, d.x, 0};
@@ -298,47 +362,52 @@ void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
             return Vec3::Dot(n, m - centre) >= 0 ? n : -n;
         };
         {   // windscreen
-            const Vec3 a{bx1 - 0.02f, hb + 0.04f, 0}, b{tx1 - 0.02f, roof - 0.05f, 0};
-            Frame f3 = FrameAA({tx1 - 0.1f, hb, -Wc * 0.44f}, {bx1 + 0.1f, roof, Wc * 0.44f});
+            const Vec3 a{bx1 - 0.02f, beltY + 0.04f, 0}, b{tx1 - 0.02f, roof - 0.05f, 0};
+            Frame f3 = FrameAA({std::min(tx1, bx1) - 0.1f, beltY, -Wc * 0.44f}, {std::max(tx1, bx1) + 0.1f, roof, Wc * 0.44f});
             o.Add("glass/front", "glass", f3, [&](const std::string&) { return Slab(a, b, Wc * 0.88f, 0.02f, outwardOf(a, b)); });
         }
         {   // rear glass
-            const Vec3 a{bx0 + 0.02f, hb + 0.04f, 0}, b{tx0 + 0.02f, roof - 0.05f, 0};
-            Frame f3 = FrameAA({bx0 - 0.1f, hb, -Wc * 0.44f}, {tx0 + 0.1f, roof, Wc * 0.44f});
+            const Vec3 a{bx0 + 0.02f, beltY + 0.04f, 0}, b{tx0 + 0.02f, roof - 0.05f, 0};
+            Frame f3 = FrameAA({std::min(tx0, bx0) - 0.1f, beltY, -Wc * 0.44f}, {std::max(tx0, bx0) + 0.1f, roof, Wc * 0.44f});
             o.Add("glass/rear", "glass", f3, [&](const std::string&) { return Slab(a, b, Wc * 0.88f, 0.02f, outwardOf(a, b)); });
         }
-        // mirrors at the front of the cabin, on the sides
         for (int side = 0; side < 2; ++side)
-            Mirror(o, "mirror/" + std::to_string(side), bx1 - 0.15f, hb + 0.08f, (side ? 1.0f : -1.0f) * Wb / 2, side ? 1 : -1);
+            Mirror(o, "mirror/" + std::to_string(side), bx1 - 0.15f, beltY + 0.08f, (side ? 1.0f : -1.0f) * Wb / 2, side ? 1 : -1, (side ? 1.0f : -1.0f) * (Wc / 2 - 0.03f));
     }
-    if (sh.bed && !userBody) {   // pickup bed: floor and three walls behind the cabin
-        const float bx = bx0 - 0.1f, xe = -L / 2 + 0.02f, wt = 0.06f, top = hb + 0.32f;
+    if (st.bed && !userBody) {   // pickup bed: floor and three walls behind the cabin
+        const float bxe = bx0 - 0.1f, xe = x0 + 0.02f, wt = 0.06f, topW = beltY + 0.26f, floorY = deckY - 0.02f;
         PolyMesh bedm;
-        shapes::Append(bedm, BoxAA({xe, hb - 0.02f, -Wb / 2 + 0.05f}, {bx, hb + 0.04f, Wb / 2 - 0.05f}));
-        shapes::Append(bedm, BoxAA({xe, hb + 0.03f, -Wb / 2 + 0.01f}, {bx, top, -Wb / 2 + 0.01f + wt}));
-        shapes::Append(bedm, BoxAA({xe, hb + 0.03f, Wb / 2 - 0.01f - wt}, {bx, top, Wb / 2 - 0.01f}));
-        shapes::Append(bedm, BoxAA({xe, hb + 0.03f, -Wb / 2 + 0.08f}, {xe + wt, top, Wb / 2 - 0.08f}));
-        Frame fr = FrameAA({xe, hb, -Wb / 2}, {bx, top, Wb / 2});
-        o.Add("bed/0", "bed", fr, [&](const std::string&) { return bedm; });
+        shapes::Append(bedm, BoxAA({xe, floorY, -Wb / 2 + 0.05f}, {bxe, floorY + 0.08f, Wb / 2 - 0.05f}));
+        shapes::Append(bedm, BoxAA({xe, floorY + 0.07f, -Wb / 2 + 0.01f}, {bxe, topW, -Wb / 2 + 0.01f + wt}));
+        shapes::Append(bedm, BoxAA({xe, floorY + 0.07f, Wb / 2 - 0.01f - wt}, {bxe, topW, Wb / 2 - 0.01f}));
+        shapes::Append(bedm, BoxAA({xe, floorY + 0.07f, -Wb / 2 + 0.08f}, {xe + wt, topW, Wb / 2 - 0.08f}));
+        Frame fb = FrameAA({xe, floorY, -Wb / 2}, {bxe, topW, Wb / 2});
+        o.Add("bed/0", "bed", fb, [&](const std::string&) { return bedm; });
     }
-    // wheels
+    // axles join each pair of wheels through the body, so no wheel floats
+    for (int a = 0; a < 2; ++a) {
+        const float ax = (a ? xrr : xf) + 0.003f * (float)a;
+        const float tr2 = (W - ww) * 0.5f;
+        Frame fa = FrameAA({ax - 0.04f, wr - 0.04f, -tr2}, {ax + 0.04f, wr + 0.04f, tr2});
+        o.Add("axle/" + std::to_string(a), "axle", fa, [&](const std::string&) { return BoxAA({ax - 0.04f, wr - 0.04f, -tr2}, {ax + 0.04f, wr + 0.04f, tr2}); });
+    }
+    // wheels, centred in the arches
     const float track = W - ww;
-    const float xf = wheelbase / 2 + shift, xr = -wheelbase / 2 + shift;
     int wi = 0;
-    for (float x : {xf, xr})
+    for (float x : {xf, xrr})
         for (int side = 0; side < 2; ++side) Wheel(o, "wheel/" + std::to_string(wi++), x, (side ? 1.0f : -1.0f) * track / 2, wr, ww);
-    // lights, bumpers, grille
-    const float ly = gc + (yf - gc) * 0.62f + 0.05f;
+    // lights, bumpers, grille on the nose and tail
+    const float ly = gc + (noseY - gc) * 0.62f + 0.05f;
     Headlight(o, "headlight/0", L / 2, ly, -Wb * 0.33f, Pf(r, "lightSize"));
     Headlight(o, "headlight/1", L / 2, ly, Wb * 0.33f, Pf(r, "lightSize"));
-    Taillight(o, "taillight/0", -L / 2, ly + 0.1f, -Wb * 0.36f, Pf(r, "lightSize") * 0.8f);
-    Taillight(o, "taillight/1", -L / 2, ly + 0.1f, Wb * 0.36f, Pf(r, "lightSize") * 0.8f);
+    Taillight(o, "taillight/0", x0, deckY - 0.1f, -Wb * 0.36f, Pf(r, "lightSize") * 0.8f);
+    Taillight(o, "taillight/1", x0, deckY - 0.1f, Wb * 0.36f, Pf(r, "lightSize") * 0.8f);
     Bumper(o, "bumper/0", true, L / 2, gc + 0.02f, Wb, 0.22f);
-    Bumper(o, "bumper/1", false, -L / 2, gc + 0.02f, Wb, 0.22f);
-    Grille(o, "grille/0", L / 2, ly - 0.1f, yf - 0.02f, Wb * 0.34f);
+    Bumper(o, "bumper/1", false, x0, gc + 0.02f, Wb, 0.22f);
+    Grille(o, "grille/0", L / 2, std::max(gc + 0.12f, ly - 0.1f), noseY - 0.02f, Wb * 0.34f);
     // spoiler on the tail, roof fitting, tail pipes
     {
-        const float sx0 = -L / 2 - 0.02f, sx1 = -L / 2 + 0.3f, sy = hb;
+        const float sx0 = x0 - 0.02f, sx1 = x0 + 0.3f, sy = deckY;
         Frame f = FrameAA({sx0, sy, -Wb * 0.4f}, {sx1, sy + 0.3f, Wb * 0.4f});
         o.Add("spoiler/0", "spoiler", f, [&](const std::string& d) {
             if (d == "wing") {
@@ -358,13 +427,12 @@ void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
                 for (int k = 0; k < 3; ++k) shapes::Append(m, BoxAA({rx - 0.45f + 0.45f * (float)k, H + 0.05f, -0.34f * Wc}, {rx - 0.4f + 0.45f * (float)k, H + 0.1f, 0.34f * Wc}));
                 return m;
             }
-            PolyMesh m = BoxAA({rx - 0.2f, H - 0.01f, -rw}, {rx + 0.2f, H + 0.14f, rw});   // light bar: two lamps on a base
-            return m;
+            return BoxAA({rx - 0.2f, H - 0.01f, -rw}, {rx + 0.2f, H + 0.14f, rw});   // light bar
         });
-        Frame fx = FrameAA({-L / 2 - 0.1f, gc + 0.03f, Wb * 0.24f}, {-L / 2 + 0.3f, gc + 0.13f, Wb * 0.32f});
+        Frame fx = FrameAA({x0 - 0.1f, gc + 0.03f, Wb * 0.24f}, {x0 + 0.3f, gc + 0.13f, Wb * 0.32f});
         o.Add("exhaust/0", "exhaust", fx, [&](const std::string& d) {
-            PolyMesh m = CylX(-L / 2 - 0.1f, -L / 2 + 0.3f, gc + 0.08f, Wb * 0.28f, 0.1f, 0.1f, 10);
-            if (d == "dual") shapes::Append(m, CylX(-L / 2 - 0.1f, -L / 2 + 0.3f, gc + 0.08f, -Wb * 0.28f, 0.1f, 0.1f, 10));
+            PolyMesh m = CylX(x0 - 0.1f, x0 + 0.3f, gc + 0.08f, Wb * 0.28f, 0.1f, 0.1f, 10);
+            if (d == "dual") shapes::Append(m, CylX(x0 - 0.1f, x0 + 0.3f, gc + 0.08f, -Wb * 0.28f, 0.1f, 0.1f, 10));
             return m;
         });
     }
@@ -712,6 +780,7 @@ Template MakeCar() {
     b.S("cabin", "Cabin", {{"standard", "Standard"}}, kRed, 0);
     b.S("glass", "Glass", {{"clear", "Glass"}}, kGlassC, 7);
     b.S("bed", "Pickup bed", {{"open", "Open bed"}}, kGrey, 8);
+    b.S("axle", "Axles", {{"bar", "Axle bar"}, {"none", "None"}}, kBlack, 12);
     b.S("spoiler", "Spoiler", {{"none", "None"}, {"lip", "Boot lip"}, {"wing", "Wing"}}, kBlack, 9);
     b.S("roof", "Roof fitting", {{"none", "None"}, {"lightbar", "Light bar"}, {"sign", "Taxi sign"}, {"rack", "Roof rack"}}, kGrey, 10);
     b.S("exhaust", "Exhaust", {{"none", "None"}, {"single", "Single pipe"}, {"dual", "Dual pipes"}}, kChrome, 11);
@@ -731,6 +800,11 @@ Template MakeCar() {
          {{"body", "van"}, {"wheel", "steel"}, {"headlight", "square"}, {"bumper", "plain"}, {"mirror", "box"}, {"grille", "plate"}}, {{"body", kWhite}, {"cabin", kWhite}});
     b.St("taxi", "Taxi", "A yellow sedan with a roof sign.", {}, {{"body", "sedan"}, {"wheel", "steel"}, {"headlight", "round"}, {"bumper", "plain"}, {"mirror", "box"}, {"grille", "slats"}, {"roof", "sign"}}, {{"body", kYellow}, {"cabin", kYellow}, {"roof", kWhite}});
     b.St("police", "Patrol car", "A white sedan with a light bar and a heavy front bumper.", {}, {{"body", "sedan"}, {"wheel", "dish"}, {"headlight", "twin"}, {"bumper", "heavy"}, {"mirror", "box"}, {"grille", "slats"}, {"roof", "lightbar"}}, {{"body", kWhite}, {"cabin", kWhite}, {"roof", kBlue}});
+    b.t.constrain = [](Recipe& r) {   // compatibility: no wing on a utility body, no taxi sign on a pickup
+        const std::string body = r.slotDesign.count("body") ? r.slotDesign["body"] : "sedan";
+        if (r.slotDesign["spoiler"] == "wing" && (body == "pickup" || body == "suv" || body == "van")) r.slotDesign["spoiler"] = "lip";
+        if (r.slotDesign["roof"] == "sign" && body == "pickup") r.slotDesign["roof"] = "rack";
+    };
     b.t.generate = GenerateCar;
     return b.t;
 }

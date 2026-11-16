@@ -1340,6 +1340,13 @@ target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
 
+# Where every node sits in the Add Node menu: one place each, no catch-all, no oversized topic, old topic names still search.
+add_executable(test_vs_categories test_vs_categories.cpp)
+target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_categories COMMAND test_vs_categories)
+
 add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
 target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_palette_levels PRIVATE okay::engine)
@@ -3475,6 +3482,21 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_own_http_inflate PRIVATE Threads::Threads)
 add_test(NAME own_http_inflate COMMAND test_own_http_inflate)
 set_tests_properties(own_http_inflate PROPERTIES TIMEOUT 240)
+# The ONE inflate (engine/include/okay/Core/Inflate.hpp) against a slow reference written fresh from the RFCs
+# (tests/inflate_reference_slow.hpp): same accept/refuse and same bytes on every valid, bit-flipped, truncated and spliced stream,
+# in lenient, PNG and strict mode. About 7 s optimised and about 1 minute under ASan+UBSan of CPU time (limit 600 s).
+# python3 optional (SKIPs the Python-made corpus with a message); OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure.
+add_executable(test_inflate_differential test_inflate_differential.cpp)
+target_include_directories(test_inflate_differential PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME inflate_differential COMMAND test_inflate_differential)
+set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
+# A PNG header that claims a huge size with a few bytes of data is refused without allocating the claimed size (peak heap
+# measured with a counting operator new). Standalone: the image decoder sources only.
+add_executable(test_png_hint test_png_hint.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_png_hint PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME png_hint COMMAND test_png_hint)
 if(UNIX AND NOT APPLE)
     add_executable(test_own_http_net test_own_http_net.cpp)
     target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)

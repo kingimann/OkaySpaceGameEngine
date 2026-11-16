@@ -1,6 +1,6 @@
 // Speed and memory of our own WAV decoder (okay::wav) against SDL_LoadWAV, on the same files.
 //
-// Run:  bench_wav_decoder [--runs N] [--gen DIR] [--digest] [--only WHAT] [file.wav | directory] ...
+// Run:  bench_wav_decoder [--runs N] [--gen DIR] [--digest] [--stream] [--only WHAT] [file.wav | directory] ...
 //       With no file argument it reads the repository's WAV files (tests/data/audio/wav_ffmpeg, examples/) and the
 //       generated set in DIR (default: <temp>/okay_wav_bench), writing that set first if a file is missing.
 //
@@ -29,11 +29,18 @@
 // bit for bit, with its warnings) and of our playback bytes (DecodeForPlayback and LoadForPlayback), so a speed change
 // can be shown not to change the output (run before and after, compare the lines). `--only own-raw|sdl-raw|own-final|
 // sdl-final` runs just that, once per file, for a profiler (valgrind --tool=callgrind).
+// `--stream` measures streamed playback instead (AudioStream, what a Music Player or a streamed Audio Source uses): open
+// the file and read every frame in 2048-frame pieces, as the mixer's Pump does, with OKAY_OWN_WAV=1 (our WavStream) and
+// OKAY_OWN_WAV=0 (the old streamed reader), plus our WavStream alone on a file source. SDL has no streamed WAV reader,
+// so there is no SDL column. "same" says whether the two streams gave identical floats (the old reader is only right
+// for PCM 8/16/24/32 and float32).
 // Written for this project; the counting allocator, the WAV writer and the statistics are our own.
 #include <SDL.h>
 #include "okay/Audio/WavDecoder.hpp"
 #include "okay/Audio/WavPlayback.hpp"
 #include "WavPlayback.hpp"   // shared/WavPlayback.hpp: the launcher's seam
+#include "okay/Audio/AudioByteSource.hpp"
+#include "okay/Audio/AudioStream.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -412,6 +419,49 @@ std::string Ratio(const Measure& a, const Measure& b, bool mem) {
     char s[32]; std::snprintf(s, sizeof(s), "%.2f", x / y); return s;
 }
 
+// ---- streaming (--stream) ---------------------------------------------------------------------------------------------
+bool StreamAll(const std::string& path, bool own, std::vector<float>* keep) {
+    setenv("OKAY_OWN_WAV", own ? "1" : "0", 1);
+    auto st = okay::AudioStream::OpenFile(path);
+    if (!st) return false;
+    const std::size_t ch = (std::size_t)st->Channels();
+    std::vector<float> buf(2048 * ch);
+    if (keep) keep->clear();
+    while (std::size_t r = st->Read(buf.data(), 2048)) {
+        if (keep) keep->insert(keep->end(), buf.begin(), buf.begin() + (std::ptrdiff_t)(r * ch));
+    }
+    return true;
+}
+bool WavStreamAll(const std::string& path) {
+    okay::wav::WavStream w;
+    auto src = okay::AudioByteSource::FromFile(path);
+    if (!src || !w.Open(src)) return false;
+    std::vector<float> buf(2048 * (std::size_t)w.Channels());
+    while (w.Read(buf.data(), 2048)) {}
+    return true;
+}
+int StreamTable(int runs, const std::vector<std::string>& files) {
+    std::printf("Streamed playback: open + every frame in 2048-frame pieces. Median ms over >= %d runs; peak heap MiB. Ratio = own / old.\n\n", runs);
+    std::printf("| File | MiB on disk | own stream ms | old stream ms | time ratio | own MiB | old MiB | WavStream alone ms | same output |\n");
+    std::printf("|---|---|---|---|---|---|---|---|---|\n");
+    for (const std::string& f : files) {
+        std::error_code ec;
+        const auto bytes = (long long)fs::file_size(f, ec);
+        const Measure own = Run(runs, [&] { return StreamAll(f, true, nullptr); });
+        const Measure old = Run(runs, [&] { return StreamAll(f, false, nullptr); });
+        const Measure alone = Run(runs, [&] { return WavStreamAll(f); });
+        std::vector<float> a, b;
+        const bool same = StreamAll(f, true, &a) && StreamAll(f, false, &b) && a.size() == b.size() &&
+                          (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
+        std::printf("| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", fs::path(f).filename().string().c_str(), Mb(bytes).c_str(),
+                    Ms(own).c_str(), Ms(old).c_str(), Ratio(own, old, false).c_str(),
+                    own.ok ? Mb(own.peak).c_str() : "-", old.ok ? Mb(old.peak).c_str() : "-", Ms(alone).c_str(), same ? "yes" : "no");
+        std::fflush(stdout);
+    }
+    unsetenv("OKAY_OWN_WAV");
+    return 0;
+}
+
 void Collect(const fs::path& p, std::vector<std::string>& out) {
     std::error_code ec;
     if (fs::is_directory(p, ec)) {
@@ -433,7 +483,7 @@ void Collect(const fs::path& p, std::vector<std::string>& out) {
 
 int main(int argc, char** argv) {
     int runs = 7;
-    bool digest = false;
+    bool digest = false, stream = false;
     std::string only;
     fs::path genDir = fs::temp_directory_path() / "okay_wav_bench";
     std::vector<std::string> files;
@@ -442,6 +492,7 @@ int main(int argc, char** argv) {
         if (a == "--runs" && i + 1 < argc) runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--gen" && i + 1 < argc) genDir = argv[++i];
         else if (a == "--digest") digest = true;
+        else if (a == "--stream") stream = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else Collect(a, files);
     }
@@ -462,6 +513,7 @@ int main(int argc, char** argv) {
         }
     }
     if (digest) { for (const std::string& f : files) PrintDigest(f); return 0; }
+    if (stream) return StreamTable(runs, files);
     if (!only.empty()) {
         for (const std::string& f : files) {
             bool ok = false;

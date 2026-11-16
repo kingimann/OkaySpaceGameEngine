@@ -13,6 +13,11 @@ Unreleased (next version)
     for this release, and tell us which file. The old reader is removed in
     the release after this one.
     Try it: examples/own_wav (open own_wav_test.okayscene and press Play).
+  - Streamed sounds (a Music Player, or an Audio Source with Stream ticked)
+    now use our own reader too, so streamed A-law, mu-law and ADPCM files
+    play right instead of as noise, and streaming is about two to three
+    times faster. The launcher writes which reader it used to
+    okay_launcher.log. Try it: examples/own_wav/stream_test.okayscene.
 
 v2.879.0
   Modeling

@@ -8,7 +8,7 @@ and its groups, music, the player's volume settings, and scripting.
 
 An AudioSource plays a **WAV, OGG, MP3 or FLAC** file. Set its file in the Inspector
 
-(WAV files load with our own decoder by default since 2026-11-16; it also reads MS ADPCM, IMA ADPCM, A-law, mu-law, 64-bit float and extensible files and refuses oversized or damaged ones. `OKAY_OWN_WAV=0` goes back to the old reader for this one release; see `docs/own_wav_decoder.md`.)
+(WAV files load with our own decoder by default since 2026-11-16, whole or streamed; it also reads MS ADPCM, IMA ADPCM, A-law, mu-law, 64-bit float and extensible files and refuses oversized or damaged ones. `OKAY_OWN_WAV=0` goes back to the old reader for this one release; see `docs/own_wav_decoder.md`.)
 (Browse or type a path relative to the project). Files are decoded once when Play
 starts, resampled to the output rate, and shared between every source that uses
 them: sources on the same file hold the one decoded clip (`AudioSource::UseSharedClip`,
@@ -67,7 +67,9 @@ short effects off, since a stream is read from the file as it plays and a
 one-shot of the source's own clip (`PlayOneShot()`) needs the clip in memory.
 
 How it works, for the curious: each streaming source owns an `AudioStream`
-(WAV is read directly; MP3 goes through `Mp3Stream`, our own decoder one frame at a
+(WAV goes through `okay::wav::WavStream`, our own WAV decoder a piece at a time, which gives exactly the samples a
+whole-file load gives, for every WAV encoding it reads; `OKAY_OWN_WAV=0` falls back to the old streamed reader, PCM and
+float32 only, for this one release; MP3 goes through `Mp3Stream`, our own decoder one frame at a
 time; OGG through `VorbisStream`, our own Vorbis decoder reading Ogg pages on demand;
 FLAC through `FlacStream`, our own decoder one frame at a time). Decoded audio waits in a
 ring of 32,768 frames. The mixer's buffer fill starts by topping the ring up (the

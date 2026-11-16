@@ -463,10 +463,12 @@ How it was checked: `tests/test_editor_theme.cpp` (no blue in any palette colour
 3:1 against every surface in both looks, Light is the inverse of Dark, the old saved values map to Dark or Light) and
 `scripts/find_blue_ui.py --check`, both run on Linux. The editor was compiled on Linux and run in a virtual display (Xvfb, SDL
 software renderer, 1600x900): both looks, the Theme menu, an old settings file (`theme 2` and `accent 7` opened as Dark and
-was saved back as `theme 0` with no `accent` line). Nothing was run on Windows. **Not compiled or screenshotted:** the last small
-fix for the Light look while the game plays (the pause and speed icons and the "Playing" note in the Inspector were nearly
-invisible on Light) came after the last editor build here; the editor build is queued behind other builds, so CI is the first
-to compile it. On Light, check those three while playing.
+was saved back as `theme 0` with no `accent` line). Nothing was run on Windows. **Not built or run after these two changes:** (1) the last small fix for the Light look while the game plays (the pause and
+speed icons and the "Playing" note in the Inspector were nearly invisible on Light), and (2) the merge with main's menu bar
+clean-up (the Theme menu moved from View > Appearance to Edit > Preferences; the two-item Theme menu was ported there). Both
+were checked with `g++ -fsyntax-only` on every touched editor file with the real flags (no errors), not linked and not run,
+so the Theme screenshots below show the old menu path. On Light, check the pause / speed icons and the Playing note while
+the game plays.
 
 Screenshots of the real editor (taken in that virtual display) are in `docs/images/editor-two-themes/`:
 `dark_sel.png` / `light_sel.png` (Hierarchy selection and Inspector), `theme_menu_dark.png` / `theme_menu_light.png` (the Theme menu: only Dark and Light, no Accent color; these were taken

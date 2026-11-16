@@ -55,7 +55,7 @@ release job or the installer build for this change.
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
-| 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
+| 9 | Own WAV decoder (**the default** since 2026-11-16) | nothing to set; `OKAY_OWN_WAV=0` for the old one; `examples\own_wav` | Console line says which reader ran; Windows sound unverified |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
@@ -1116,23 +1116,32 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
 
-### 9. Own WAV decoder
+### 9. Own WAV decoder (the default now)
 
-* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). It is **not** part of `OKAY_OWN_STACK=1` and **not** in
-  the startup line; it is only in the engine's `AudioClip::LoadWAV` (whole-file loads; streamed large files still use
-  the old parser).
+* **What changed.** Since the owner's approval of 2026-11-16 ("Switch, but keep improving it") every WAV file loads with
+  our own reader by default: sounds in the editor and in exported games (`AudioClip::LoadWAV`, whole-file loads) and the
+  launcher's voice clips. Nothing to set. Streamed large files still use the old parser.
+* **Going back (this release only).** `set OKAY_OWN_WAV=0` in a Command Prompt, then start the editor (or launcher)
+  from that same window. `OKAY_OWN_WAV=1` forces ours. The next release deletes the old one.
+* **How to tell which one ran.** The first WAV load of a run writes one line to the log and the editor's **Console**:
+  `audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)`, or
+  `audio: WAV files load with the OLD reader (...)`. The launcher's voice clips write no line.
 * **Sample file.** `examples\own_wav\mulaw_tone.wav` (2 s of a 440 Hz sine, 8-bit mu-law, 22,050 Hz; we generated it
   from our own signal, no outside source) and the scene `own_wav_test.okayscene` that plays it.
-* **Steps.**
-  1. Start the editor with no variable. **File > Open...** `examples\own_wav\own_wav_test.okayscene`, Play. The old
-     decoder does not read the format tag: it treats the bytes as plain 8-bit samples, so you should hear the same
-     note but **distorted and buzzy**, at a different loudness (worked out by computing what the old code does to
-     these bytes: its output is nowhere near the sine, error 1.09 on a 0.5 amplitude signal; not heard).
-  2. Close the editor, `set OKAY_OWN_WAV=1`, start it again, open the same scene, Play. You should hear a **clean, soft
-     steady tone** (about A, 440 Hz). That difference is the proof the own decoder is in use.
-* **Verified here:** `okay::wav::DecodeWav` (compiled on its own) reads this file as 22,050 Hz mono, 44,100 frames,
-  mu-law, peak 0.512, and every sample within 0.016 of an ideal 440 Hz sine of amplitude 0.5. The
-  `own_wav` test covers mu-law. **Unverified:** what you hear on Windows.
+* **Compare the two.**
+  1. Start the editor normally (no variable). **File > Open...** `examples\own_wav\own_wav_test.okayscene`, Play. You
+     should hear a **clean, soft steady tone** (about A, 440 Hz), and the Console shows the "our own reader" line.
+  2. Close the editor. In a Command Prompt: `set OKAY_OWN_WAV=0`, then start `OkayEngine.exe` from that window, open
+     the same scene, Play. The old reader does not read the format tag: it treats the bytes as plain 8-bit samples, so
+     you should hear the same note but **distorted and buzzy**, at a different loudness (worked out by computing what
+     the old code does to these bytes: error 1.09 on a 0.5 amplitude signal; not heard), and the Console shows the
+     "OLD reader" line.
+  3. For an ordinary 16-bit WAV of your own the two sound the same (the samples are equal bit for bit). For 8, 24 and
+     32-bit files ours rounds to the nearest 16-bit step where the old launcher path cut toward zero: at most 2 steps
+     out of 32,768 apart, not audible.
+* **Verified here (Linux):** `okay::wav::DecodeWav` reads this file as 22,050 Hz mono, 44,100 frames, mu-law, peak
+  0.512, every sample within 0.016 of an ideal 440 Hz sine of amplitude 0.5; the WAV and audio tests pass with the new
+  default and with `OKAY_OWN_WAV=0`. **Unverified:** what you hear on Windows, and the Console line on Windows.
 
 ### 10. Own HTTP client
 
@@ -1183,7 +1192,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
-| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| WAV (the default now) | nothing (`OKAY_OWN_WAV=0` = old, this release only) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: own = a clean 440 Hz tone, old = buzzy; Console line `audio: WAV files load with our own reader ...` | no startup word |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
 | Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
 | OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |

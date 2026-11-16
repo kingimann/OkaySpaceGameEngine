@@ -223,7 +223,16 @@ static void TestSdlSeam() {
             if (!ok) CHECK(out.empty());
         }
     }
+    // No variable: the build default decides which path the launcher's seam takes (ours since 2026-11-16). An 8-bit
+    // file tells them apart: SDL_LoadWAV hands back unsigned 8-bit, ours 16-bit.
     unsetenv("OKAY_OWN_WAV");
+    {
+        Put(Wav(1, 1, 8000, 8, Bytes{0x80, 0xC0, 0x40}));
+        SDL_AudioSpec s{}; std::vector<Uint8> out;
+        CHECK(wav::LoadWavForSdl(kPath, s, out));
+        if (OKAY_EXPECT_OWN_WAV_DEFAULT) CHECK(s.format == AUDIO_S16SYS && out.size() == 6);
+        else CHECK(s.format == AUDIO_U8 && out.size() == 3);
+    }
 }
 #endif
 

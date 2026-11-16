@@ -50,10 +50,10 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
 - **Where:** Command Prompt, then editor
 - **Needs:** a release that ships the `examples` folder (PR #887, not merged when this was written)
 - **Steps:**
-  1. Start the editor with no variable, open `examples/own_wav/own_wav_test.okayscene` and press Play.
-  2. Close it, run `set OKAY_OWN_WAV=1`, start the editor, open the same scene and press Play.
-- **See:** the old decoder gives a distorted, buzzy note; the own decoder gives a clean steady tone (about 440 Hz, A). Neither was heard by us.
-- **Partial:** not part of `OKAY_OWN_STACK=1`; no startup-line entry; streamed large files still use the old parser. The release may not ship the example (PR #887).
+  1. Start the editor with no variable (our decoder is the default since 2026-11-16), open `examples/own_wav/own_wav_test.okayscene` and press Play.
+  2. Close it, run `set OKAY_OWN_WAV=0` (the old decoder, kept for one release), start the editor from that window, open the same scene and press Play.
+- **See:** step 1 (own, the default) gives a clean steady tone (about 440 Hz, A) and the Console line `audio: WAV files load with our own reader ...`; step 2 (old) gives a distorted, buzzy note and `... with the OLD reader ...`. Neither was heard by us.
+- **Partial:** not part of `OKAY_OWN_STACK=1` (it is the default now); no startup-line entry, only the Console line; streamed large files still use the old parser. The release may not ship the example (PR #887).
 - **Link:** [../../own_wav_decoder.md](../../own_wav_decoder.md)
 
 ### V-OC-006 Own HTTP client

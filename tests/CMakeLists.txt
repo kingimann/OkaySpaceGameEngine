@@ -86,6 +86,29 @@ add_executable(test_own_wav test_own_wav.cpp)
 target_link_libraries(test_own_wav PRIVATE okay::engine)
 add_test(NAME own_wav COMMAND test_own_wav WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(own_wav PROPERTIES TIMEOUT 240)
+# What this build's WAV default should be (ON since the owner's approval of 2026-11-16; -DOKAY_OWN_WAV=OFF keeps the
+# old path as the default for one more release). own_wav and wav_playback check the unset-variable case against it.
+if(OKAY_OWN_WAV)
+    set(OKAY_EXPECT_OWN_WAV_DEFAULT 1)
+else()
+    set(OKAY_EXPECT_OWN_WAV_DEFAULT 0)
+endif()
+target_compile_definitions(test_own_wav PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=${OKAY_EXPECT_OWN_WAV_DEFAULT})
+# Both build-time settings, in every build: the decoder's two sources compiled on their own, once as an ON build
+# (no define) and once as an OFF build (OKAY_OWN_WAV_DEFAULT_OFF, what engine/CMakeLists.txt sets for
+# -DOKAY_OWN_WAV=OFF), each checked with the variable unset, 0, 1 and other values. No engine link, so it is cheap.
+foreach(_wd on off)
+    add_executable(test_own_wav_default_${_wd} test_own_wav_default.cpp
+        ${PROJECT_SOURCE_DIR}/engine/src/Audio/WavDecoder.cpp ${PROJECT_SOURCE_DIR}/engine/src/Audio/WavPlayback.cpp)
+    target_compile_features(test_own_wav_default_${_wd} PRIVATE cxx_std_17)
+    target_include_directories(test_own_wav_default_${_wd} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${CMAKE_CURRENT_SOURCE_DIR})
+    if(_wd STREQUAL "off")
+        target_compile_definitions(test_own_wav_default_${_wd} PRIVATE OKAY_OWN_WAV_DEFAULT_OFF OKAY_EXPECT_OWN_WAV_DEFAULT=0)
+    else()
+        target_compile_definitions(test_own_wav_default_${_wd} PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=1)
+    endif()
+    add_test(NAME own_wav_default_${_wd} COMMAND test_own_wav_default_${_wd})
+endforeach()
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)
@@ -3511,6 +3534,7 @@ add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMA
 # equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
+target_compile_definitions(test_wav_playback PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=${OKAY_EXPECT_OWN_WAV_DEFAULT})
 find_package(SDL2 QUIET)
 if(SDL2_FOUND)
     target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)

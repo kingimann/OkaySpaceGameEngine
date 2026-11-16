@@ -8,7 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
-#include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
+#include "WavPlayback.hpp"   // the one WAV loading seam (our own decoder by default; SDL_LoadWAV with OKAY_OWN_WAV=0)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report

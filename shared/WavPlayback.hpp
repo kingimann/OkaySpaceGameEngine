@@ -1,8 +1,9 @@
 #pragma once
 // The one place the launcher (and anything else) loads a WAV for playback. Include <SDL.h> first.
-//   own decoder off (the default): SDL_LoadWAV, exactly as before.
-//   own decoder on (OKAY_OWN_WAV CMake option or env OKAY_OWN_WAV=1): okay::wav (engine), converted
-//   by our own code (okay/Audio/WavPlayback.hpp): float32 stays float, everything else is 16-bit.
+//   own decoder on (the default since 2026-11-16): okay::wav (engine), converted by our own code
+//   (okay/Audio/WavPlayback.hpp): float32 stays float, everything else is 16-bit.
+//   own decoder off (env OKAY_OWN_WAV=0, or a -DOKAY_OWN_WAV=OFF build): SDL_LoadWAV, exactly as before. Kept for
+//   one release after the flip, then deleted (docs/own_code_roadmap.md, step 5).
 // This is the only file that may name SDL_LoadWAV (tests/check_wav_seam_wiring.cmake).
 #include "okay/Audio/WavDecoder.hpp"
 #include "okay/Audio/WavPlayback.hpp"

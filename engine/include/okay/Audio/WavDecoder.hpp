@@ -53,8 +53,9 @@ bool DecodeWav(const unsigned char* data, std::size_t size, WavAudio& out,
 /// nearest and clamps. Same channel count and rate as `a`.
 std::vector<std::int16_t> ToS16(const WavAudio& a);
 
-/// True when the own decoder is the one AudioClip::LoadWAV should use: the build default
-/// (CMake option OKAY_OWN_WAV, off) overridden by the environment variable OKAY_OWN_WAV=0 or 1.
+/// True when the own decoder is the one AudioClip::LoadWAV (and shared/WavPlayback.hpp) should use: the build
+/// default (CMake option OKAY_OWN_WAV, ON since 2026-11-16) overridden by the environment variable OKAY_OWN_WAV=0
+/// (the old path, kept for one release) or 1. Anything else in the variable is ignored.
 bool OwnWavEnabled();
 
 } // namespace wav

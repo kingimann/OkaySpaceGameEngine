@@ -332,6 +332,12 @@ static void TestLoadWavSwitch() {
     Bytes d; for (int i = 0; i < 12; ++i) { P16(d, unsigned((i * 1000) & 0xFFFF)); }
     Bytes w = Wav(Fmt(1, 6, 8000, 12, 16), d);
     { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(w.data()), long(w.size())); }
+    // With no variable the build default decides: ours since 2026-11-16 (OKAY_EXPECT_OWN_WAV_DEFAULT is 0 only in a
+    // -DOKAY_OWN_WAV=OFF build). A value other than 0 or 1 is ignored.
+    unsetenv("OKAY_OWN_WAV");
+    CHECK(wav::OwnWavEnabled() == bool(OKAY_EXPECT_OWN_WAV_DEFAULT));
+    setenv("OKAY_OWN_WAV", "yes", 1);
+    CHECK(wav::OwnWavEnabled() == bool(OKAY_EXPECT_OWN_WAV_DEFAULT));
     setenv("OKAY_OWN_WAV", "0", 1);
     CHECK(!wav::OwnWavEnabled());
     AudioClip oldC; CHECK(oldC.LoadWAV(path));
@@ -339,7 +345,8 @@ static void TestLoadWavSwitch() {
     CHECK(wav::OwnWavEnabled());
     AudioClip newC; CHECK(newC.LoadWAV(path));
     CHECK(oldC.channels == newC.channels && oldC.sampleRate == newC.sampleRate && oldC.samples.size() == newC.samples.size());
-    for (std::size_t i = 0; i < oldC.samples.size() && i < newC.samples.size(); ++i) CHECK_NEAR(oldC.samples[i], newC.samples[i], 1e-6);
+    // bit for bit: the mono downmix of 3+ channels uses the old reader's (and the WAV stream's) sum-then-divide
+    for (std::size_t i = 0; i < oldC.samples.size() && i < newC.samples.size(); ++i) CHECK(oldC.samples[i] == newC.samples[i]);
     // stereo kept as stereo, downmix flag halves it
     Bytes ds; P16(ds, 16384); P16(ds, 0);
     Bytes ws = Wav(Fmt(1, 2, 8000, 4, 16), ds);

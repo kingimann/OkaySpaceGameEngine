@@ -1,8 +1,10 @@
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/WavDecoder.hpp"
 #include "AudioInternal.hpp"
+#include "okay/Core/Log.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -136,7 +138,14 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
                                    std::istreambuf_iterator<char>());
-    if (wav::OwnWavEnabled()) {   // opt-in own decoder (OKAY_OWN_WAV); the code below stays the default
+    const bool own = wav::OwnWavEnabled();
+    {   // one line per run, so a person can see which WAV reader is in use (docs/try_it.md, section 9)
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true))
+            OKAY_INFO(own ? "audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)"
+                          : "audio: WAV files load with the OLD reader (OKAY_OWN_WAV=0 or a -DOKAY_OWN_WAV=OFF build)");
+    }
+    if (own) {   // our own decoder, the default; OKAY_OWN_WAV=0 runs the old code below (one more release)
         wav::WavAudio a;
         std::string e;
         if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
@@ -144,8 +153,16 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
         channels = audio_detail::KeptChannels(a.channels, downmix);
         if (channels == a.channels) samples = std::move(a.samples);
         else {
-            samples.resize(a.FrameCount());
-            audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
+            // Mono: the channels summed in order, then divided by the count, the same arithmetic as the WAV stream
+            // (AudioStream, ConvertWavFrames), so a streamed and a whole-file load of one file are equal bit for bit
+            // (test audio_stream; DownmixToMono multiplies by 1/channels, which differs in the last bit for 3, 5, 6...).
+            const std::size_t frames = a.FrameCount(), ch = static_cast<std::size_t>(a.channels);
+            samples.resize(frames);
+            for (std::size_t i = 0; i < frames; ++i) {
+                float acc = 0.0f;
+                for (std::size_t c = 0; c < ch; ++c) acc += a.samples[i * ch + c];
+                samples[i] = acc / static_cast<float>(a.channels);
+            }
         }
         return true;
     }

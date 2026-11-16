@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+Unreleased (next version)
+  Sound
+  - Sound files (.wav) now load with our own reader, everywhere: sounds in
+    the editor and in your games, and the launcher's voice clips. It is
+    faster and uses less memory than the old one (about half the memory
+    and up to five times faster in our tests), and it plays files the old
+    one got wrong: A-law and mu-law files no longer sound like loud buzzing,
+    and 64-bit float files are no longer silent. It also reads ADPCM files.
+    The editor's Console says "WAV files load with our own reader" once.
+  - If a sound plays wrong, set OKAY_OWN_WAV=0 to go back to the old reader
+    for this release, and tell us which file. The old reader is removed in
+    the release after this one.
+    Try it: examples/own_wav (open own_wav_test.okayscene and press Play).
+
 v2.879.0
   Modeling
   - Guided modeling, built into the existing 3D modeler: pick a category

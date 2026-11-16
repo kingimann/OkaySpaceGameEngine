@@ -69,11 +69,13 @@ struct Fmt {
 } // namespace
 
 bool OwnWavEnabled() {
+    // Our decoder is the default (owner's approval, 2026-11-16). A build with -DOKAY_OWN_WAV=OFF defines
+    // OKAY_OWN_WAV_DEFAULT_OFF and keeps the old path as its default for one more release.
     bool v =
-#ifdef OKAY_OWN_WAV_DEFAULT
-        true;
-#else
+#ifdef OKAY_OWN_WAV_DEFAULT_OFF
         false;
+#else
+        true;
 #endif
     if (const char* e = std::getenv("OKAY_OWN_WAV")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;

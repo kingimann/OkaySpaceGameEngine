@@ -215,5 +215,13 @@
     "launcher/**",
     "editor/**",
     "player/**"
+  ],
+  "claim_exempt": [
+    "editor/main.cpp",
+    "editor/CMakeLists.txt",
+    "launcher/main.cpp",
+    "scripts/build-windows-dist.sh",
+    "dist/CHANGELOG.txt",
+    "tests/test_save_coverage.cpp"
   ]
 }

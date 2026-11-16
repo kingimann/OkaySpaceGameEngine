@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Physics/PhysicsMaterial.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -31,13 +32,21 @@ public:
     /// Trigger filter: which collider layers set this trigger off (bit n = layer n).
     std::uint32_t triggerLayers = 0xFFFFFFFFu;
 
+    // ---- Physics material (per collider) ----
+    /// This collider's friction coefficient. -1 (the default) means "use the Rigidbody2D's friction", exactly as before.
+    float friction = -1.0f;
+    /// This collider's bounciness [0,1]. -1 means "use the Rigidbody2D's bounciness".
+    float bounciness = -1.0f;
+    /// How this collider's friction is combined with the one it touches (default: geometric mean).
+    CombineMode frictionCombine = CombineMode::Default;
+    /// How this collider's bounciness is combined with the one it touches (default: the larger).
+    CombineMode bounceCombine = CombineMode::Default;
+
     virtual Shape shape() const = 0;
 
-    /// World-space center of the collider.
-    Vec2 WorldCenter() const {
-        Vec3 p = transform ? transform->Position() : Vec3::Zero;
-        return {p.x + offset.x, p.y + offset.y};
-    }
+    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
+    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    Vec2 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec2& outMin, Vec2& outMax) const = 0;
 };

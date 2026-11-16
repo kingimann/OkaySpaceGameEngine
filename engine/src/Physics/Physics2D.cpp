@@ -311,6 +311,8 @@ bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
 
 } // namespace
 
+#include "Physics2DImproved.inl"   // the Improved step (iterated contacts, sleeping groups)
+
 void Physics2D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 

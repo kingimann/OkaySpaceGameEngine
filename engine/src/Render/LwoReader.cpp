@@ -516,10 +516,11 @@ struct Reader {
             if (L.hidden) { ++hiddenLayers; continue; }
             if (L.polys.empty() || L.pts.empty()) continue;
             // one soup per surface
-            struct SurfSoup { rc::Soup soup; std::map<std::uint32_t, std::uint32_t> pointOf; bool uv = false; };
+            struct SurfSoup { rc::Soup soup; detail::WeldMap<1> pointOf; bool uv = false; };   // pointOf: layer point -> soup position
             std::map<int, SurfSoup> soups;
             std::vector<Vec3> poly3;
             std::vector<std::array<int, 3>> tris;
+            std::vector<std::uint32_t> pv;   // a polygon's corners, reversed (reused)
             for (std::size_t pi = 0; pi < L.polys.size(); ++pi) {
                 const Layer::Poly& P = L.polys[pi];
                 if (P.v.size() < 3) { ++badPolys; continue; }
@@ -533,7 +534,7 @@ struct Reader {
                 SurfSoup& ss = soups[si];
                 // z was negated on reading (left-handed to right-handed), which turns every polygon inside out: the corners
                 // are taken in reverse order so faces keep pointing out (checked on real files: positive signed volume)
-                const std::vector<std::uint32_t> pv(P.v.rbegin(), P.v.rend());
+                pv.assign(P.v.rbegin(), P.v.rend());
                 poly3.clear();
                 for (std::uint32_t v : pv) poly3.push_back(L.pts[v]);
                 tris.clear();
@@ -553,10 +554,9 @@ struct Reader {
                     for (int k = 0; k < 3; ++k) {
                         const std::uint32_t pt = pv[(std::size_t)t[(std::size_t)k]];
                         // positions are per point and per surface (corners welded by the builder through the index)
-                        auto pit = ss.pointOf.find(pt);
-                        std::uint32_t idx;
-                        if (pit == ss.pointOf.end()) { idx = (std::uint32_t)ss.soup.pos.size(); ss.soup.pos.push_back(L.pts[pt]); ss.pointOf[pt] = idx; }
-                        else idx = pit->second;
+                        bool added = false;
+                        const std::uint32_t idx = (std::uint32_t)ss.pointOf.Get(&pt, (int)ss.soup.pos.size(), added);
+                        if (added) ss.soup.pos.push_back(L.pts[pt]);
                         ss.soup.ci.push_back(idx);
                         bool have = false;
                         Vec2 uv{0, 0};
@@ -567,6 +567,12 @@ struct Reader {
                     }
                 }
             }
+            // The layer's points, polygons and maps are all in the soups now: freed before the meshes are built (a lower peak)
+            for (auto& kv : soups) kv.second.pointOf.clear();
+            std::vector<Vec3>().swap(L.pts);
+            std::vector<Layer::Poly>().swap(L.polys);
+            L.vmap.clear();
+            L.vmad.clear();
             // Planar, cylindrical and spherical image maps: UVs from the positions of this surface's mesh, in the layer's space,
             // placed on the mesh's own bounding box (ProjectUvs above; the map's TMAP centre, size and rotation are not read yet).
             for (auto& kv : soups) {
@@ -589,6 +595,7 @@ struct Reader {
                 rc::BuildStats bs;
                 const double creaseDeg = kv.first >= 0 ? std::max(0.0, std::min(180.0, (double)surfs[(std::size_t)kv.first].crease * 180.0 / 3.14159265358979323846)) : 0.0;
                 if (!rc::BuildMesh(ss.soup, creaseDeg, part.mesh, &bs)) return Fail("too many output vertices");
+                ss.soup = rc::Soup{};   // built: freed before the next surface's mesh
                 degenerate += bs.degenerate;
                 if (part.mesh.triangles.empty()) continue;
                 if (m.parts.size() >= kMaxParts) return Fail("too many mesh parts");

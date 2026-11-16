@@ -27,7 +27,7 @@ What Improved does, in plain words:
 | A ball never stops rolling | **Rolling Resistance** on the Rigidbody 3D (default 0.03). 0 keeps the old roll-on. |
 | A plank spins as if it were a cube | A real inertia tensor per shape (box, sphere, capsule, cylinder). |
 | A table made of a top and four legs falls through | Tick **Use Child Colliders** (Compound Children) on the Rigidbody 3D: the colliders on its child objects (children that have no body of their own) are part of the body, and mass, centre of mass and inertia are worked out for the whole shape. |
-| A collider's offset ignores the object's turn and scale | In Improved the offset turns and scales with the object. |
+| A collider's offset ignores the object's turn and scale | The offset turns and scales with the object (now in Classic too: see below). |
 
 Written from: sequential impulses (projected Gauss-Seidel on the contact constraints, impulses accumulated and clamped, warm starting),
 Sutherland-Hodgman clipping of the incident box face against the reference face (C. Ericson, Real-Time Collision Detection, 2005, chapter 5),
@@ -49,6 +49,47 @@ exactly as before whichever quality is chosen.
 - Joints remember the partner they found by name until the scene's objects change; 300 joints no longer search the scene every step.
 - `OnCollisionExit` / `OnTriggerExit` arrive in the order the scene lists the colliders, the same in every run (they used to arrive in
   memory-address order).
+
+### Player audit fixes (both qualities)
+
+The player audit (`docs/player_audit.md` on the `claude/player-deep` branch) found four physics problems. Test:
+`tests/test_player_audit_physics.cpp` (each case in Classic and Improved, at the fixed 50 Hz step and at a variable step, with the
+real Player Controller and with a bare body).
+
+- **A kinematic wall no longer squeezes a body through a static wall** (case E12c). Before: a kinematic wall moving at 2 m/s pushed the
+  player 3.5 m into and past a static wall (Classic and Improved; a bare body 0.64 m in Improved). Now: 4 mm.
+- **A heavy crate dropped on the player no longer presses them into the floor** (case E13c). Before: a 50 kg crate dropped from 6 m
+  pressed the player 0.30 to 0.59 m into the floor in Classic and 0.16 m in Improved. Now: 4 to 7 mm, and the crate stays on the
+  player's head.
+- **The rule (both):** after the step's contacts are solved, a dynamic body that touches a static collider and is also pushed by
+  something else (a kinematic or a dynamic body) is moved back out of the static collider, and its speed into it is removed. Static
+  contacts win. A kinematic body still moves where it is told (nothing can stop it), so the pinned body overlaps the kinematic one
+  instead of the wall. Then a dynamic body that presses on such a held body, toward the static collider that holds it (a crate on
+  the player's head, the player on the floor), is moved out of it and stops against it, as if the held body could not move that
+  way; this goes up a stack four levels. A push across that direction (a crate thrown sideways at a player standing on the floor) is
+  left to the normal contact response, so pushing and being pushed still work. Overlap under 1 cm is left alone (the solvers' own
+  resting overlap), so stacks that already rest well are not touched. Written from the general idea of shock propagation for stacks
+  (bodies held by the ground act as immovable for the bodies above them); the code is our own (`HoldStaticContacts` in
+  `engine/src/Physics/Physics3D.cpp`). Limits: exact triangle-mesh floors, heightmap terrain and voxel terrain have their own passes
+  and are not part of this rule.
+- **A collider's offset scales and turns with the object in both qualities** (case E22). Before, Classic added the offset unscaled and
+  unturned, so a player scaled 2x floated 0.9 m above the floor and one scaled 0.5x sank 0.45 m into it. Now both stand on the floor.
+  The offset is in the object's local units, as the editor's Offset field, `FitCharacterCollider`, the crouch code and the template
+  players already assumed. `FitColliders` (Fit to mesh, Auto Fit) now writes the mesh's local centre (it wrote a world offset, which
+  Improved then scaled a second time). The clear-spawn measure uses the scaled offset too. 2D: the offset scales with the object in
+  Classic as well (Classic 2D shapes do not turn, so neither does the offset); edge and polygon points scale their offset the same way.
+  **Old Classic scenes:** a collider with an offset on an object that is scaled or turned now sits where its local offset says. Fitted
+  colliders on such objects can be re-fitted with "Fit to mesh".
+- **`OverlapSphere` / `OverlapBox` / `OverlapCapsule` and `SphereCast` / `BoxCast` / `CapsuleCast` use the cached collider list** that
+  `Raycast` uses, instead of walking every object of the scene on every call (also `ResolveSphere`). The list is rebuilt when an object
+  or a component is added or removed, so a collider added this frame is found at once. 2000 objects with 500 colliders: 54 us per
+  `OverlapSphere` before, 13 to 15 us after (Linux runs, Release).
+
+One case is not fixed here: with the Player Controller at the fixed physics step the player still dips up to 0.26 m into the static
+wall for a few frames before it is pushed back out. The cause is in the player code, not the physics step: the moving-platform ride
+(`RideMovingPlatform` in `Components/StepUp.hpp`) casts down from inside the kinematic wall, takes it for a platform and carries the
+player with it between physics steps. Ignoring a ray that starts inside a solid there brought it to 0.03 m (Classic) and 4 mm (Improved)
+in a trial; that change belongs to the player branch.
 
 ## Physics materials
 

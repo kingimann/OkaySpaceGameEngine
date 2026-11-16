@@ -61,7 +61,8 @@ inline Extents Measure(GameObject* go) {
         if (e.half.z < 0.05f) e.half.z = 0.05f;
         return e;
     }
-    e.centerOff = col->offset;
+    // (the offset is in local units: WorldCenter scales and turns it as the half extents are scaled)
+    e.centerOff = col->WorldCenter() - (go->transform ? go->transform->Position() : Vec3::Zero);
     if (e.half.x < 0.05f) e.half.x = 0.05f;
     if (e.half.y < 0.05f) e.half.y = 0.05f;
     if (e.half.z < 0.05f) e.half.z = 0.05f;

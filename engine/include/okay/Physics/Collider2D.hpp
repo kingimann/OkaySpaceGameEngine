@@ -44,8 +44,8 @@ public:
 
     virtual Shape shape() const = 0;
 
-    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
-    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    /// World-space center of the collider. The offset scales with the object in both physics qualities; with the Improved
+    /// quality it also turns with it (as a child at that local position would). Classic 2D shapes do not turn.
     Vec2 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec2& outMin, Vec2& outMax) const = 0;
@@ -154,7 +154,7 @@ public:
         Vec3 s = transform ? transform->LossyScale() : Vec3::One;
         std::vector<Vec2> out; out.reserve(points.size());
         for (const Vec2& v : points)
-            out.push_back({p.x + offset.x + v.x * s.x, p.y + offset.y + v.y * s.y});
+            out.push_back({p.x + (offset.x + v.x) * s.x, p.y + (offset.y + v.y) * s.y});   // (the offset is in local units too)
         return out;
     }
     /// True for polygons (the last vertex connects back to the first).

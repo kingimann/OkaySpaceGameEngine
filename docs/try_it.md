@@ -1086,6 +1086,27 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Physics: scaled players, a crate on the head, squeezed against a wall (player audit fixes)
+
+**Where.** The editor (any 3D scene with a player, for example a new scene from the First Person template), Play.
+
+**Steps.**
+1. Select the Player, set its Transform **Scale** to 2, 2, 2 and press Play. Expected: the player stands with its feet on the floor
+   (before: it floated 0.9 m in the air in an old Classic scene). Try 0.5, 0.5, 0.5: it stands on the floor (before: sunk 0.45 m).
+2. Stop. Add a Cube 6 m above the player's head with a Rigidbody 3D of Mass 50. Play. Expected: the crate lands on the player's head
+   and stays there; the player's feet do not sink into the floor (before: 0.3 m into it).
+3. Stop. Put a tall static Cube (a wall) next to the player and another tall Cube on its other side with a Rigidbody 3D (Body Type
+   Kinematic, Gravity Scale 0) and a **Mover** component whose Velocity is 2 toward the wall. Play. Expected: the moving wall pushes the player to the static wall and
+   the player stays out of the static wall (the moving wall passes through the player); before, the player was pushed 3.5 m through
+   the wall. Known limit: with the Player Controller you can still see the player dip into the wall for a moment (up to about 0.26 m)
+   before it is pushed back out; the cause is in the player's moving-platform code and is fixed on the player branch, not here.
+4. Project Settings > Physics > Physics quality: try both Classic and Improved. The steps above behave the same in both.
+
+**Old scenes.** A collider with an Offset on a scaled or turned object now sits where its local offset says (it used to ignore the
+scale and turn in Classic scenes). If a fitted collider looks off, press **Fit to mesh** on it.
+
+Checked on Linux by `tests/test_player_audit_physics.cpp` (headless, both qualities). Not tried in the Windows editor.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

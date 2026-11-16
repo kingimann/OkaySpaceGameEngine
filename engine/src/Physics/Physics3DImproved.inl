@@ -460,17 +460,14 @@ void Physics3D::Clear() {
 }
 
 Vec3 Collider3D::WorldCenter() const {
-    Vec3 p = transform ? transform->Position() : Vec3::Zero;
+    // The offset is in the object's local units: it turns and scales with the object, as a child at that local position
+    // would, in both physics qualities. (Classic used to add it unturned and unscaled, so a player scaled 2x floated 0.9 m
+    // above the floor and one scaled 0.5x sank 0.45 m into it: the player audit, case E22.)
+    if (!transform) return offset;
+    const Vec3 p = transform->Position();
     if (offset.x == 0.0f && offset.y == 0.0f && offset.z == 0.0f) return p;
-    if (transform && gameObject) {
-        if (const Scene* sc = gameObject->scene()) {
-            if (sc->physics3D().quality == PhysicsQuality::Improved) {
-                const Vec3 s = transform->LossyScale();
-                return p + transform->Rotation() * Vec3{offset.x * s.x, offset.y * s.y, offset.z * s.z};
-            }
-        }
-    }
-    return p + offset;
+    const Vec3 s = transform->LossyScale();
+    return p + transform->Rotation() * Vec3{offset.x * s.x, offset.y * s.y, offset.z * s.z};
 }
 
 namespace {   // (these two helpers are used by the pair loop and by the Solver methods below)

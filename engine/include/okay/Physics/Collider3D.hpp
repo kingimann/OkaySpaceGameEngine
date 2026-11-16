@@ -47,8 +47,8 @@ public:
 
     virtual Shape shape() const = 0;
 
-    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
-    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    /// World-space center of the collider: the position plus the offset turned and scaled with the object (as a child at
+    /// that local position would), in both physics qualities.
     Vec3 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec3& outMin, Vec3& outMax) const = 0;

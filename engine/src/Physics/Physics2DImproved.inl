@@ -20,5 +20,7 @@ Vec2 Collider2D::WorldCenter() const {
             }
         }
     }
-    return {p.x + offset.x, p.y + offset.y};
+    // Classic: the offset scales with the object (Classic 2D shapes do not turn, so neither does the offset).
+    const Vec3 s = transform ? transform->LossyScale() : Vec3::One;
+    return {p.x + offset.x * s.x, p.y + offset.y * s.y};
 }

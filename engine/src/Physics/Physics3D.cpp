@@ -498,6 +498,166 @@ void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
     if (rb->sleeping) rb->WakeUp();
 }
 
+// ---- Static contacts hold (both qualities) ----
+// A body caught between something that pushes (a kinematic wall, a heavy crate) and something that cannot move (a static
+// wall, the floor) cannot be in both places. The contact step treats each pair on its own, so the push could win: a
+// kinematic wall squeezed a player 3.5 m through a static wall, and a 50 kg crate dropped on a player's head pressed the
+// player 0.3 m into the floor (the player audit, cases E12c and E13c). After the step's contacts are solved this pass makes
+// the static side win:
+//   1. a dynamic body that touches a static collider AND something that can push it is moved back out of the static
+//      collider, and its speed into it is removed (a kinematic body still moves where it is told: it overlaps the pinned
+//      body instead, as nothing can stop it);
+//   2. a dynamic body that rests on such a held body (pushing it toward the static collider that holds it) is moved out of
+//      it and stops against it, as if the held body could not move that way. That repeats up a stack, so a crate on a crate
+//      on a player is held by the floor too. A push across the held direction (a crate thrown sideways at a player standing
+//      on the floor) is left to the normal contact response.
+// Written from the general idea of "shock propagation" for stacks (bodies supported by the ground act as immovable for the
+// bodies above them), in our own form; no other engine's code was used.
+
+/// One solid pair the step touched (both colliders, and the body each belongs to; nullptr = a static collider).
+struct TouchRec { Collider3D* a; Collider3D* b; Rigidbody3D* ra; Rigidbody3D* rb; };
+
+inline bool FixedBody(const Rigidbody3D* r) { return !r || r->bodyType == Rigidbody3D::BodyType::Static; }
+inline bool AwakeDynamic(const Rigidbody3D* r) {
+    return r && r->bodyType == Rigidbody3D::BodyType::Dynamic && !r->sleeping && r->enabled && r->transform;
+}
+
+/// Move a body by `d` in world space, except along the axes it has frozen.
+void NudgeBody(Rigidbody3D* r, Vec3 d) {
+    if (r->freezeX) d.x = 0.0f;
+    if (r->freezeY) d.y = 0.0f;
+    if (r->freezeZ) d.z = 0.0f;
+    if (d.SqrMagnitude() > 0.0f) MoveBodyWorld(r->transform, d);
+}
+
+/// Remove the part of `r`'s speed, measured against `ref`, that goes along -n (back into what it was pushed out of).
+void StopInto(Rigidbody3D* r, const Vec3& n, const Vec3& ref) {
+    const float vn = Vec3::Dot(r->velocity - ref, n);
+    if (vn < 0.0f) r->velocity = r->velocity - n * vn;
+}
+
+/// The static colliders a body pushed by a kinematic body may have been pushed into: the step's pairs only show the ones
+/// it touched when its pair was tested, which can be before the push (a wall moved by a script pushes by position alone).
+struct StaticScan {
+    const std::vector<Collider3D*>* colliders = nullptr;   // the step's colliders
+    const std::vector<Vec3>* mn = nullptr;                  // their bounds at the start of the step (static ones do not move)
+    const std::vector<Vec3>* mx = nullptr;
+    std::vector<std::size_t> statics;                       // indices of the static, solid, enabled ones
+    const Physics3D* phys = nullptr;                        // (layer matrix)
+};
+
+/// The pass described above. `tolerance`: overlap left alone (the solvers' own resting overlap); a corrected body is left
+/// `keep` deep, so it still touches next step. `scan` (may be null): the step's static colliders, looked through for a body
+/// pushed by a kinematic body.
+void HoldStaticContacts(const std::vector<TouchRec>& recs, const Scene::RemovalWatch& gone, float tolerance, float keep,
+                        const StaticScan* scan) {
+    struct Held {
+        Rigidbody3D* body = nullptr;
+        std::vector<std::pair<Collider3D*, Collider3D*>> statics;   // (own collider, static collider)
+        std::vector<Vec3> dirs;                                     // directions it cannot be pushed against (out of a static)
+        bool pushed = false;                                        // touched by something that is not static
+        std::vector<Collider3D*> kinSelf;                           // own colliders that touched a kinematic body
+    };
+    std::vector<Held> held;                                          // in the order the step met the pairs (deterministic)
+    std::unordered_map<Rigidbody3D*, std::size_t> slot;
+    auto infoOf = [&](Rigidbody3D* r) -> Held& {
+        auto it = slot.find(r);
+        if (it != slot.end()) return held[it->second];
+        slot[r] = held.size();
+        held.push_back(Held{});
+        held.back().body = r;
+        return held.back();
+    };
+    auto dead = [&](const TouchRec& t) {
+        return gone.Gone(t.a) || gone.Gone(t.b) || (t.ra && gone.Gone(t.ra)) || (t.rb && gone.Gone(t.rb)) ||
+               !Alive(t.a) || !Alive(t.b);
+    };
+    bool anyStaticAndPush = false;
+    for (const TouchRec& t : recs) {
+        if (dead(t)) continue;
+        for (int side = 0; side < 2; ++side) {
+            Rigidbody3D* me = side ? t.rb : t.ra;
+            Rigidbody3D* other = side ? t.ra : t.rb;
+            if (!AwakeDynamic(me)) continue;
+            Held& h = infoOf(me);
+            Collider3D* mine = side ? t.b : t.a;
+            if (FixedBody(other)) h.statics.push_back(side ? std::make_pair(t.b, t.a) : std::make_pair(t.a, t.b));
+            else {
+                h.pushed = true;
+                if (other->bodyType == Rigidbody3D::BodyType::Kinematic &&
+                    std::find(h.kinSelf.begin(), h.kinSelf.end(), mine) == h.kinSelf.end()) h.kinSelf.push_back(mine);
+            }
+            if (!h.statics.empty() && h.pushed) anyStaticAndPush = true;
+        }
+    }
+    // A body pushed by a kinematic body: add the static colliders its bounds now reach.
+    if (scan && scan->colliders) {
+        for (Held& h : held) {
+            for (Collider3D* mine : h.kinSelf) {
+                if (gone.Gone(mine) || !Alive(mine)) continue;
+                Vec3 bmn, bmx; mine->WorldAABB(bmn, bmx);
+                for (std::size_t k : scan->statics) {
+                    Collider3D* st = (*scan->colliders)[k];
+                    if (gone.Gone(st) || st->gameObject == mine->gameObject) continue;
+                    const Vec3 &smn = (*scan->mn)[k], &smx = (*scan->mx)[k];
+                    if (bmx.x < smn.x || bmn.x > smx.x || bmx.y < smn.y || bmn.y > smx.y || bmx.z < smn.z || bmn.z > smx.z) continue;
+                    if (scan->phys && !scan->phys->LayersCollide(mine->layer, st->layer)) continue;
+                    const auto pr = std::make_pair(mine, st);
+                    if (std::find(h.statics.begin(), h.statics.end(), pr) == h.statics.end()) h.statics.push_back(pr);
+                }
+            }
+            if (!h.statics.empty() && h.pushed) anyStaticAndPush = true;
+        }
+    }
+    if (!anyStaticAndPush) return;   // (the common case: nothing is pinned)
+
+    // 1. Pinned bodies leave the static colliders they were pushed into (twice: a corner has two walls).
+    for (Held& h : held) {
+        if (!h.pushed || h.statics.empty()) continue;
+        for (int pass = 0; pass < 2; ++pass) {
+            for (const auto& sc : h.statics) {
+                Contact c = TestColliders(sc.second, sc.first);   // normal: from the static collider toward the body
+                if (!c.hit) continue;
+                if (pass == 0) h.dirs.push_back(c.normal);
+                if (c.penetration > tolerance) {
+                    NudgeBody(h.body, c.normal * (c.penetration - keep));
+                    StopInto(h.body, c.normal, Vec3::Zero);
+                }
+            }
+        }
+    }
+
+    // 2. Bodies pressing on a held body, against the direction it is held in, stop against it (up a stack: four levels).
+    auto opposes = [](const std::vector<Vec3>& dirs, const Vec3& n, float minDot) {
+        for (const Vec3& d : dirs) if (Vec3::Dot(d, n) > minDot) return true;
+        return false;
+    };
+    for (int level = 0; level < 4; ++level) {
+        bool moved = false;
+        for (const TouchRec& t : recs) {
+            if (dead(t) || !AwakeDynamic(t.ra) || !AwakeDynamic(t.rb)) continue;
+            for (int side = 0; side < 2; ++side) {
+                Rigidbody3D* x = side ? t.rb : t.ra;                // the held body
+                Rigidbody3D* y = side ? t.ra : t.rb;                // the one pressing on it
+                auto fx = slot.find(x), fy = slot.find(y);
+                if (fx == slot.end() || fy == slot.end()) continue;
+                const std::size_t xi = fx->second, yi = fy->second;
+                if (held[xi].dirs.empty()) continue;
+                Contact c = side ? TestColliders(t.b, t.a) : TestColliders(t.a, t.b);   // normal: from x toward y
+                if (!c.hit || c.penetration <= tolerance) continue;
+                // y pushes x along -n; the static holds x if it pushes x back along +n.
+                if (!opposes(held[xi].dirs, c.normal, 0.5f)) continue;
+                if (opposes(held[yi].dirs, c.normal * -1.0f, 0.5f)) continue;   // y is held the other way: squeezed, leave it
+                NudgeBody(y, c.normal * (c.penetration - keep));
+                StopInto(y, c.normal, x->velocity);
+                if (!opposes(held[yi].dirs, c.normal, 0.99f)) held[yi].dirs.push_back(c.normal);
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+}
+
 } // namespace
 
 #include "Physics3DImproved.inl"   // the Improved step (iterated contacts, sleeping groups, swept fast bodies)
@@ -585,6 +745,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 2) Broad + narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider3D>();
     std::set<Pair> current;
+    std::vector<TouchRec> touches;   // solid pairs with a dynamic side (HoldStaticContacts)
     ++m_restStep;   // (Classic) m_restContacts: sleeping bodies resting on something without overlapping it; entries found this step carry this number
     // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
     // them at once); every raw pointer held across a callback is checked first.
@@ -676,6 +837,9 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (improved && c.penetration < 0.0f) c.penetration = 0.0f;   // inside the skin: touching, not overlapping
 
             current.insert({a, b});
+            // (a sleeping side counts too: something may wake it later in this loop)
+            if (!trigger && ((ra && ra->bodyType == Rigidbody3D::BodyType::Dynamic) ||
+                             (rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic))) touches.push_back({a, b, ra, rb});
 
             // Relative velocity before the solver changes it (for impact speed).
             const Vec3 relVelBA = (rb ? rb->velocity : Vec3::Zero) - (ra ? ra->velocity : Vec3::Zero);
@@ -819,6 +983,23 @@ void Physics3D::Step(Scene& scene, float dt) {
         for (const auto& m : m_solver->manifolds) m_stats.contacts += m.count;
         m_stats.warmStarted = m_solver->warmCount;
         m_stats.sweeps = sweeps;
+    }
+    // A body pinned between a pusher and a static collider stays out of the static one (see HoldStaticContacts).
+    {
+        StaticScan scan;
+        bool kinematicPush = false;
+        for (const TouchRec& t : touches)
+            if ((t.ra && t.ra->bodyType == Rigidbody3D::BodyType::Kinematic) || (t.rb && t.rb->bodyType == Rigidbody3D::BodyType::Kinematic)) { kinematicPush = true; break; }
+        if (kinematicPush) {   // (only then: the list costs a look at every collider)
+            scan.colliders = &colliders; scan.mn = &aabbMin; scan.mx = &aabbMax; scan.phys = this;
+            for (std::size_t i = 0; i < colliders.size(); ++i) {
+                Collider3D* c = colliders[i];
+                if (gone.Gone(c) || !Alive(c) || c->isTrigger || !finite[i]) continue;
+                Rigidbody3D* r = improved ? BodyOfCollider(c) : c->gameObject->GetComponent<Rigidbody3D>();
+                if (FixedBody(r)) scan.statics.push_back(i);
+            }
+        }
+        HoldStaticContacts(touches, gone, 0.01f, 0.004f, kinematicPush ? &scan : nullptr);
     }
 
     // 5) Fire exit messages for contacts that ended. They go out in the order the scene lists the colliders (the contacts are
@@ -1849,10 +2030,11 @@ bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
     return false;
 }
 
-std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_t mask,
+// `list`: the colliders to test (the cached scene list, Physics3D::QueryLists), not a fresh walk of the scene per call.
+std::vector<Collider3D*> Overlap(const std::vector<Collider3D*>& list, const QueryShape& q, std::uint32_t mask,
                                  bool queryTriggers, GameObject* ignore) {
     std::vector<Collider3D*> out;
-    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
+    for (Collider3D* c : list) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         Vec3 n, p;
         if (ShapeTouch(c, q, n, p)) out.push_back(c);
@@ -1867,18 +2049,16 @@ std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_
 // `skipStartOverlaps` ignores colliders already touching at the start (as
 // casts usually do; continuous collision needs it so a body resting on the floor can
 // still slide along it).
-RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float maxDist,
+// `list`: the colliders to test (the cached scene list, or the step's list of non-dynamic colliders).
+RaycastHit3D Sweep(const std::vector<Collider3D*>& list, const QueryShape& q, const Vec3& dir, float maxDist,
                    GameObject* ignore, std::uint32_t mask, bool queryTriggers,
-                   bool skipStartOverlaps, bool skipTriMeshes = false,
-                   const std::vector<Collider3D*>* only = nullptr) {
+                   bool skipStartOverlaps, bool skipTriMeshes = false) {
     RaycastHit3D best;
     struct Cand { Collider3D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
     float lo = 1e30f, hi = -1e30f;
-    std::vector<Collider3D*> everything;
-    if (!only) everything = scene.FindObjectsOfType<Collider3D>();
-    for (Collider3D* c : (only ? *only : everything)) {
+    for (Collider3D* c : list) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         if (skipTriMeshes && MeshHasTris(c)) continue;
         Vec3 mn, mx; c->WorldAABB(mn, mx);
@@ -1949,19 +2129,19 @@ QueryShape CapsuleShape(const Vec3& a, const Vec3& b, float r) {
 std::vector<Collider3D*> Physics3D::OverlapSphere(Scene& scene, const Vec3& center, float radius,
                                                   std::uint32_t layerMask, bool queryTriggers,
                                                   GameObject* ignore) {
-    return Overlap(scene, SphereShape(center, radius), layerMask, queryTriggers, ignore);
+    return Overlap(QueryLists(scene).colliders, SphereShape(center, radius), layerMask, queryTriggers, ignore);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapBox(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                                const Quat& rotation, std::uint32_t layerMask,
                                                bool queryTriggers, GameObject* ignore) {
-    return Overlap(scene, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore);
+    return Overlap(QueryLists(scene).colliders, BoxShape(center, halfExtents, rotation), layerMask, queryTriggers, ignore);
 }
 
 std::vector<Collider3D*> Physics3D::OverlapCapsule(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                                    std::uint32_t layerMask, bool queryTriggers,
                                                    GameObject* ignore) {
-    return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
+    return Overlap(QueryLists(scene).colliders, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
 }
 
 Physics3D::IgnoreHierarchy::IgnoreHierarchy(const GameObject* root) : m_prev(g_ignoreTree) { g_ignoreTree = root; }
@@ -1972,21 +2152,21 @@ RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3&
                                    std::uint32_t layerMask, bool queryTriggers) {
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
-    return Sweep(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
+    return Sweep(QueryLists(scene).colliders, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,
                  queryTriggers, /*skipStartOverlaps*/ false);
 }
 
 RaycastHit3D Physics3D::BoxCast(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                 const Vec3& direction, const Quat& rotation, float maxDistance,
                                 GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
-    return Sweep(scene, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
+    return Sweep(QueryLists(scene).colliders, BoxShape(center, halfExtents, rotation), direction.Normalized(), maxDistance,
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
 }
 
 RaycastHit3D Physics3D::CapsuleCast(Scene& scene, const Vec3& a, const Vec3& b, float radius,
                                     const Vec3& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
-    return Sweep(scene, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
+    return Sweep(QueryLists(scene).colliders, CapsuleShape(a, b, radius), direction.Normalized(), maxDistance,
                  ignore, layerMask, queryTriggers, /*skipStartOverlaps*/ false);
 }
 
@@ -2024,9 +2204,9 @@ void Physics3D::SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, b
     }
     // (A compound body's own child colliders never block it.)
     const IgnoreHierarchy own(quality == PhysicsQuality::Improved && rb->compoundChildren ? rb->gameObject : nullptr);
-    RaycastHit3D h = Sweep(scene, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
+    RaycastHit3D h = Sweep(*list, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
                            m_layerMask[self->layer & 31], /*queryTriggers*/ false,
-                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ false, list);
+                           /*skipStartOverlaps*/ true, /*skipTriMeshes*/ false);
     float travel = len;
     // Stop just inside the surface so this step's narrow phase sees the contact
     // and bounces / stops the body as usual.
@@ -2056,7 +2236,7 @@ void Physics3D::RecordQueryRay(const Vec3& origin, const Vec3& direction, float 
 Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore, int iterations) {
     for (int it = 0; it < iterations; ++it) {
         bool moved = false;
-        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        for (Collider3D* col : QueryLists(scene).colliders) {
             if (!Alive(col)) continue;
             if (ignore && col->gameObject == ignore) continue;
             if (col->isTrigger) continue;                 // triggers never block

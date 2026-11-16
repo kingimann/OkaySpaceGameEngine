@@ -48,14 +48,9 @@ inline void FitColliders(GameObject* go, bool onlyAuto = false) {
                   Mathf::Max(hi.y - lo.y, 0.01f),
                   Mathf::Max(hi.z - lo.z, 0.01f)};
         Vec3 center{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
-        // A collider's `offset` is applied in WORLD space (WorldCenter = position +
-        // offset), so convert the mesh's local centre through the Transform. Using the
-        // raw local centre put the collider in the wrong place once the mesh was no
-        // longer centred (e.g. after an extrude) or whenever the object was scaled /
-        // rotated — which reads as "the collider stopped working".
+        // A collider's `offset` is in the object's LOCAL units (WorldCenter turns and scales
+        // it with the object), so the mesh's local centre is the offset as it is.
         Vec3 offs = center;
-        if (go->transform)
-            offs = go->transform->LocalToWorldMatrix().MultiplyPoint(center) - go->transform->Position();
         float maxXZ = Mathf::Max(size.x, size.z);
         float maxXYZ = Mathf::Max(size.x, Mathf::Max(size.y, size.z));
         for (auto* c : cols) {

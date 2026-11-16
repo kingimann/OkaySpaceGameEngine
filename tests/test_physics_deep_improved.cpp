@@ -202,7 +202,7 @@ int main() {
         CHECK(Tilt(table) < 3.0f);
         CHECK(P(table).y > 0.4f && P(table).y < 1.1f);
     }
-    // ---- An offset collider turns with its object (Classic leaves the offset where it was).
+    // ---- An offset collider turns with its object (since the player audit fixes Classic turns and scales it too).
     {
         World w;
         GameObject* o = w.s.CreateGameObject("O");
@@ -215,7 +215,8 @@ int main() {
         GameObject* o2 = k.s.CreateGameObject("O");
         o2->transform->localRotation = Quat::Euler(0, 0, 90);
         auto* c2 = o2->AddComponent<BoxCollider3D>(); c2->offset = {0, 1, 0};
-        CHECK_NEAR(c2->WorldCenter().y, 1.0f, 1e-4);          // Classic: as it always was
+        CHECK_NEAR(c2->WorldCenter().x, -1.0f, 1e-4);         // Classic: turned as well (it used to stay at y = 1)
+        CHECK_NEAR(c2->WorldCenter().y, 0.0f, 1e-4);
     }
     // ---- Per-collider materials: a floor made icy by its own collider (no Rigidbody) lets a crate slide much farther.
     {

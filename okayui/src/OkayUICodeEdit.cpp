@@ -740,7 +740,7 @@ void CodeEdit::Move(CodeMove m, bool extend) {
 // ================================================================================================
 // Highlighter state cache
 // ================================================================================================
-void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); validTo_ = 0; haveLanguage_ = false; }
+void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); validTo_ = 0; haveLanguage_ = false; ++hlGen_; }
 void CodeEdit::SetLanguage(const CodeLanguage& lang) { SetHighlighter(MakeCLikeHighlighter(lang)); language_ = lang; haveLanguage_ = true; }
 void CodeEdit::SetUserTypes(const std::vector<std::string>& names) {
     if (!haveLanguage_) return;
@@ -748,6 +748,7 @@ void CodeEdit::SetUserTypes(const std::vector<std::string>& names) {
     for (const std::string& n : names) l.types.insert(n);
     highlighter_ = MakeCLikeHighlighter(l);
     validTo_ = 0;
+    ++hlGen_;
 }
 
 void CodeEdit::ensureStates(int line) {
@@ -760,6 +761,19 @@ void CodeEdit::ensureStates(int line) {
         stateIn_[(size_t)validTo_ + 1] = highlighter_(s.c_str(), (int)s.size(), stateIn_[(size_t)validTo_], scratch_);
         ++validTo_;
     }
+}
+
+// The colour tokens of a line drawn this frame. Kept from frame to frame (a line drawn last frame is usually drawn again: idle,
+// scrolling a few rows) until the text or the highlighter changes; a slot per line number modulo the cache size.
+const std::vector<CodeToken>& CodeEdit::drawnTokens(int l) {
+    if (tokSlots_.empty()) tokSlots_.resize(kTokSlots);
+    if (tokVersion_ != version_ || tokHlGen_ != hlGen_) {
+        for (TokSlot& t : tokSlots_) t.line = -1;
+        tokVersion_ = version_; tokHlGen_ = hlGen_;
+    }
+    TokSlot& t = tokSlots_[(size_t)l & (kTokSlots - 1)];
+    if (t.line != l) { LineTokens(l, t.toks); t.line = l; }
+    return t.toks;
 }
 
 void CodeEdit::LineTokens(int i, std::vector<CodeToken>& out) {
@@ -1265,7 +1279,6 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     CodePos ba, bb; const bool haveBracket = focused && MatchBracket(ba, bb);
     const int c0 = std::max(0, SafeInt(std::floor(scrollX_ / charW_)) - 1), c1 = c0 + SafeInt(view_.w / charW_) + 4;
     auto xOf = [&](int col) { return textLeft_ + (float)col * charW_ - scrollX_; };
-    std::vector<CodeToken> toks;
     std::string run;
     bool markerTip = false;
     for (int l = first; l <= last; ++l) {
@@ -1292,7 +1305,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             }
         }
         // the text, in runs of one colour
-        LineTokens(l, toks);
+        const std::vector<CodeToken>& toks = drawnTokens(l);
         size_t ti = 0; int col = 0, runStart = 0, runCells = 0; Color32 runColor = 0; bool inRun = false;
         // composing: the preedit goes where the selection starts, in place of the selected part of this line; the rest moves right
         const bool compHere = comp_.active && focused && l == sa.line;

@@ -101,6 +101,10 @@ TextEditor::LanguageDefinition Language() {
 }
 
 // The same words and colours for ours, mapped the way editor/ScriptEditorWidget.hpp maps them.
+// The script's own class names, which editor/main.cpp passes to the widget every frame (SetUserTypes); none of them is in the
+// generated script, so the colours do not change.
+const std::unordered_set<std::string> kUserTypes = {"EnemyAI", "PlayerState"};
+
 void ConfigureOwn(scripteditor::ScriptEditorCodeEdit& s) {
     const TextEditor::LanguageDefinition d = Language();
     std::unordered_set<std::string> kw(d.mKeywords.begin(), d.mKeywords.end()), types(d.mTypeNames.begin(), d.mTypeNames.end()), known;
@@ -192,6 +196,8 @@ struct ImGuiRig {
         ImGui::SetNextWindowSize(ImVec2(kEdW, kEdH));
         ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
         PushCode();
+        te.SetColorizerEnable(true);           // what editor/main.cpp sets on the widget every frame, before Render
+        te.SetUserTypes(kUserTypes);
         te.Render("##code", ImVec2(0, 0), true);
         PopCode();
         ImGui::End();
@@ -245,6 +251,8 @@ struct HostedRig {
     // The same steps as ScriptEditorWidget::Render's OkayUI branch (at 100 % UI scale and zoom), step 30's included: the keyboard
     // claim, the wheel step, the cursor, the hover help as an ImGui tooltip.
     void Host(scripteditor::ScriptEditorCodeEdit& se) {
+        se.SetColorizerEnable(true);           // what editor/main.cpp sets on the widget every frame, before Render
+        se.SetUserTypes(kUserTypes);
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -580,15 +588,19 @@ int Diff(const std::string& a, const std::string& b, const std::string& out) {
 
 // For a profiler: only idle frames of one editor ("idle own 100000 2000", "idle imgui 100000 2000", "idle hosted 1000 2000": ours in
 // the ImGui window as the editor runs it); "empty" draws the same window with no editor in it, the frame cost both toolkits pay anyway.
+// "imgui-scroll" and "hosted-scroll": the same with one wheel step down per frame (instruction counts under callgrind are steadier
+// than wall time on a busy machine).
 int Idle(const std::string& which, int lines, int frames, bool launcher) {
     const std::string text = MakeScript(lines);
     std::vector<double> v;
-    if (which == "imgui") {
+    if (which == "imgui" || which == "imgui-scroll") {   // -scroll: one wheel step down per frame, the pointer over the code
         ImGuiRig rig(kW, kH);
         TextEditor te;
         te.SetLanguageDefinition(Language()); te.SetPalette(Palette()); te.SetShowWhitespaces(false);
         te.SetText(text);
-        for (int i = 0; i < frames; ++i) v.push_back(rig.Frame(te));
+        const bool scroll = which == "imgui-scroll";
+        if (scroll) { ImGui::GetIO().AddMousePosEvent(kEdX + 300, kEdY + 100); rig.Frame(te); }
+        for (int i = 0; i < frames; ++i) { if (scroll) ImGui::GetIO().AddMouseWheelEvent(0.0f, -1.0f); v.push_back(rig.Frame(te)); }
     } else if (which == "imgui-empty") {
         ImGuiRig rig(kW, kH);
         for (int i = 0; i < frames; ++i) {
@@ -603,12 +615,14 @@ int Idle(const std::string& which, int lines, int frames, bool launcher) {
             ImDrawData* dd = ImGui::GetDrawData();
             if (dd && dd->Textures) for (ImTextureData* tx : *dd->Textures) if (tx->Status != ImTextureStatus_OK) ImGui_ImplSDLRenderer2_UpdateTexture(tx);
         }
-    } else if (which == "hosted") {   // ours inside the ImGui window, as the editor runs it
+    } else if (which == "hosted" || which == "hosted-scroll") {   // ours inside the ImGui window, as the editor runs it
         HostedRig rig(kW, kH);
         scripteditor::ScriptEditorCodeEdit se;
         ConfigureOwn(se);
         se.SetText(text);
-        for (int i = 0; i < frames; ++i) v.push_back(rig.Frame(se));
+        const bool scroll = which == "hosted-scroll";
+        if (scroll) { rig.sim.Move(kEdX + 300, kEdY + 100); rig.Frame(se); }
+        for (int i = 0; i < frames; ++i) { if (scroll) rig.sim.wheel = -1.0f; v.push_back(rig.Frame(se)); }
     } else {
         OwnRig rig(kW, kH);
         if (launcher) OkayUI::UseLauncherLook(true);

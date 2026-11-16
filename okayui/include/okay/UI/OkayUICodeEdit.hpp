@@ -375,6 +375,12 @@ private:
     int wid_ = 0; bool wantFocus_ = false, handleKeys_ = true;
     Composition comp_; int compCells_ = 0, compCaretCells_ = 0; Rect imeCaret_, imeComp_;
     CodeLanguage language_; bool haveLanguage_ = false;
+    // colour tokens of the lines drawn (drawnTokens)
+    struct TokSlot { int line = -1; std::vector<CodeToken> toks; };
+    static constexpr int kTokSlots = 256;   // a power of two, more than the rows a view shows
+    std::vector<TokSlot> tokSlots_;
+    unsigned tokVersion_ = 0, tokHlGen_ = 0, hlGen_ = 1;
+    const std::vector<CodeToken>& drawnTokens(int l);
     // bracket cache
     unsigned bVersion_ = 0; CodePos bCaret_{-1, -1}; bool bOk_ = false; CodePos bA_, bB_;
 };

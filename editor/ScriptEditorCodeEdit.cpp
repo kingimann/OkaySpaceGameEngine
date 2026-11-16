@@ -71,8 +71,13 @@ void ScriptEditorCodeEdit::SetSelection(Coord start, Coord end) {
 void ScriptEditorCodeEdit::SetColorizerEnable(bool on) {
     if (on == colorize_) return;
     colorize_ = on;
-    if (on) ed_.SetLanguage(lang_);
+    if (on) applyLanguage();
     else ed_.SetHighlighter(nullptr);
+}
+
+void ScriptEditorCodeEdit::applyLanguage() {
+    ed_.SetLanguage(lang_);
+    if (!userTypes_.empty()) ed_.SetUserTypes(std::vector<std::string>(userTypes_.begin(), userTypes_.end()));   // kept, as the ImGui editor keeps them
 }
 
 void ScriptEditorCodeEdit::SetLanguageWords(const std::unordered_set<std::string>& keywords, const std::unordered_set<std::string>& types,
@@ -83,7 +88,7 @@ void ScriptEditorCodeEdit::SetLanguageWords(const std::unordered_set<std::string
     l.known.clear();
     for (const std::string& k : known) if (!l.keywords.count(k) && !l.types.count(k)) l.known.insert(k);
     lang_ = std::move(l);
-    if (colorize_) ed_.SetLanguage(lang_);
+    if (colorize_) applyLanguage();
     ed_.SetWordInfo(std::move(info));
 }
 
@@ -115,8 +120,11 @@ void ScriptEditorCodeEdit::SetPalette(const std::uint32_t* c, int n) {
 }
 
 void ScriptEditorCodeEdit::SetUserTypes(const std::unordered_set<std::string>& types) {
-    if (!colorize_) return;
-    ed_.SetUserTypes(std::vector<std::string>(types.begin(), types.end()));
+    // The script editor calls this every frame. Like TextEditor::SetUserTypes, only a change re-colours: a new highlighter
+    // re-reads the text from the top, which on a long script scrolled down costs a frame's worth of time every frame.
+    if (types == userTypes_) return;
+    userTypes_ = types;
+    if (colorize_) ed_.SetUserTypes(std::vector<std::string>(userTypes_.begin(), userTypes_.end()));
 }
 
 void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& markers) {

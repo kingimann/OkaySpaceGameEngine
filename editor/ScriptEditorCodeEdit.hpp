@@ -111,6 +111,8 @@ private:
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
     OkayUI::CodeLanguage lang_;        // what SetColorizerEnable(true) puts back
+    std::unordered_set<std::string> userTypes_;   // the last SetUserTypes (re-colour only when it changes)
+    void applyLanguage();              // lang_ plus the user types
 };
 
 } // namespace scripteditor

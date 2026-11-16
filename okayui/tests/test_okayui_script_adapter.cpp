@@ -1,6 +1,7 @@
 // The script editor's adapter over OkayUI::CodeEdit (editor/ScriptEditorCodeEdit.{hpp,cpp}): display-column coordinates,
 // byte/column conversion with tabs and multi-byte characters, 1-based markers and breakpoints, GetText with a trailing newline,
 // undoable insertion, selection helpers, change flag and the geometry after a real Draw. No window, no ImGui.
+#include <chrono>
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "ScriptEditorCodeEdit.hpp"
@@ -149,6 +150,36 @@ int main() {
         s.SetText("Enemy e;");
         s.Edit().LineTokens(0, t);
         bool ty = false; for (const auto& k : t) if (k.color == UI::CodeColor_Type && k.start == 0 && k.end == 5) ty = true;
+        CHECK(ty);
+    }
+    {   // user types survive colouring off and on (the ImGui editor keeps them), and are set while colouring is off
+        ScriptEditorCodeEdit s;
+        s.SetText("Enemy e; Boss b;");
+        std::vector<UI::CodeToken> t;
+        auto typeAt = [&](int a, int b) { s.Edit().LineTokens(0, t); for (const auto& k : t) if (k.color == UI::CodeColor_Type && k.start == a && k.end == b) return true; return false; };
+        s.SetUserTypes({"Enemy"});
+        CHECK(typeAt(0, 5));
+        s.SetColorizerEnable(false);
+        s.SetUserTypes({"Enemy", "Boss"});
+        s.SetColorizerEnable(true);
+        CHECK(typeAt(0, 5) && typeAt(9, 13));
+    }
+    {   // the script editor calls SetUserTypes every frame: the same set must not re-colour the text from the top each time
+        ScriptEditorCodeEdit s;
+        std::string big; for (int i = 0; i < 200000; ++i) big += "var x" + std::to_string(i) + " = Enemy(); // c\n";
+        s.SetText(big);
+        s.SetUserTypes({"Enemy"});
+        std::vector<UI::CodeToken> t;
+        s.Edit().LineTokens(199999, t);                    // colours every line once (the bottom of the script in view)
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 50; ++i) { s.SetUserTypes({"Enemy"}); s.Edit().LineTokens(199999, t); }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::cout << "  50 frames of SetUserTypes (same set) on a 200,000-line script scrolled to the end: " << ms << " ms\n";
+        CHECK(ms < 100.0);
+        s.SetUserTypes({"Enemy", "Boss"});                 // a change still re-colours
+        s.SetText("Boss b;");
+        s.Edit().LineTokens(0, t);
+        bool ty = false; for (const auto& k : t) if (k.color == UI::CodeColor_Type && k.start == 0 && k.end == 4) ty = true;
         CHECK(ty);
     }
     {   // geometry after a real Draw: row height, char width, text start, content origin, caret popup place, hit test

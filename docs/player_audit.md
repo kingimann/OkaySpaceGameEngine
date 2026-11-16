@@ -170,3 +170,26 @@ now pins them. Pictures of the course: `docs/images/player_course/`.
 * No ledge slide-off for the box body (E08). The Scene-view gizmo and the F3 lines were never seen on a real screen.
 * Unverified: everything on Windows, the editor panels (only compiled in the sense of "read"; `editor/main.cpp` was not
   built here), the F3 lines on screen, any picture, real game feel with a keyboard and mouse.
+
+## Busy scene (branch `claude/player-feel`)
+
+`tests/bench_busy.cpp` (not in CMake): 2154 objects: 100 NPCs, 2000 static box colliders, 50 animated characters, a voxel terrain,
+one first-person player; 800 frames after a warm-up, release build, one core, a shared machine (so read the ratio, not the
+absolute number). Scene::Update median, with `OKAY_OLD_SCENE_QUERIES=1` (old) and without (new); two runs each:
+
+| | old | new |
+|---|---|---|
+| median, run 1 | 16 583 us | 15 732 us |
+| median, run 2 | 16 453 us | 15 456 us |
+
+Wall-clock on this shared machine is noisy (20.8 / 20.9 / 21.1 ms old against 16.0 / 20.0 / 23.9 ms new in a later set of runs), so
+the stable number is instructions counted by callgrind over 20 frames of `Scene::Update`: **9 150 M old, 8 298 M new (-9.3%)**, with
+both fixes below.
+Where the frame goes (profiler rows): Physics 15.0 ms, Scripts 0.4 ms, Animation 0.45 ms,
+everything else 0. A callgrind run (20 frames) puts 84% of all instructions inside `Physics3D::Step` itself (the broad phase and
+contact work on 2000 colliders), 3.4% in `BoxCollider3D::WorldAABB`, 2.4% in `dynamic_cast`, 0.8% in `Scene::Find` called by each
+NPC every frame. The two fixes made: `Scene::FindObjectsOfType<T>` keeps its answer per type until the scene changes (a pointer
+list copy instead of a walk with `dynamic_cast` over every object; the editor, the player and `Physics3D::Overlap*` all use it),
+and `NPCController` finds its target by name once per scene change instead of every frame. **The biggest waste, `Physics3D::Step`, was
+not touched** (`Physics3D.cpp` is a physics lane file): it should be looked at first (static colliders should not be tested against
+each other, and a grid or tree should replace the all-pairs pass). Third waste not done.

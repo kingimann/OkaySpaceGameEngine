@@ -77,7 +77,7 @@ write them again and print the table.
    ImGui's loader does (measured); with plain rounding the text sat one pixel higher at 14, 17, 18 and 32 px.
 3. **OkayUI drew 1:1 glyphs at fractional positions.** At the baked size OkayUI kept the pen's fraction for every
    glyph, so linear filtering blurred most letters by up to half a pixel. Each glyph quad now lands on the whole pixel
-   nearest its pen (the pen keeps its fraction, so spacing is unchanged). Together with kerning this changed the text pixels of 17
+   nearest its pen (the pen keeps its fraction, so spacing is unchanged). Together with kerning this changed the text pixels of 18
    OkayUI golden images (`okayui/tests/golden/`, launcher look only); they were regenerated with
    `OKAYUI_UPDATE_GOLDEN=1` after looking at them side by side (only letter spacing and edge sharpness differ).
 4. **Speed** (section 5): the outline is now read once per glyph, not two or three times.

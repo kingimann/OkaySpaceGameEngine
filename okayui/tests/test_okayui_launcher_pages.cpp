@@ -461,8 +461,10 @@ int main() {
                     raster.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - r0).count());
                 }
             }
-            std::printf("  [speed] %-14s OkayUI build median %.1f us over 300 frames (software raster median %.0f us, not used by the launcher)\n",
-                        name, MedianUs(build), MedianUs(raster));
+            const UI::DrawData dd = UI::GetDrawData();
+            std::printf("  [speed] %-14s OkayUI build median %.1f us over 300 frames; %d vertices, %d indices, %d draw commands "
+                        "(software raster median %.0f us, not used by the launcher)\n",
+                        name, MedianUs(build), dd.vertexCount, dd.indexCount, dd.cmdCount, MedianUs(raster));
             UI::UseLauncherLook(false);
         };
         const S::DownloadsModel dm = Downloads();

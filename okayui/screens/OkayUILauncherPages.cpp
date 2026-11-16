@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 
 namespace UI = OkayUI;
 
@@ -39,9 +40,25 @@ void Centered(const char* s, float width, bool dim) {
 }
 
 // ---- icons ----
+// The icons are drawn every frame, so their arcs come from unit-circle points worked out once per (start, end, count) instead
+// of a sine and a cosine per point per frame. ArcTo adds the points of an arc to the current path.
+const UI::Vec2* UnitArc(float a0, float a1, int n) {
+    struct Entry { float a0, a1; int n; std::vector<UI::Vec2> p; };
+    static std::deque<Entry> cache;   // a deque keeps the returned pointers valid as it grows
+    for (const Entry& e : cache) if (e.a0 == a0 && e.a1 == a1 && e.n == n) return e.p.data();
+    Entry e{a0, a1, n, {}};
+    for (int i = 0; i <= n; ++i) { const float a = a0 + (a1 - a0) * (float)i / (float)n; e.p.push_back(V(std::cos(a), std::sin(a))); }
+    cache.push_back(std::move(e));
+    return cache.back().p.data();
+}
+void ArcTo(const UI::DrawList& dl, UI::Vec2 c, float r, float a0, float a1, int n) {
+    const UI::Vec2* u = UnitArc(a0, a1, n);
+    for (int i = 0; i <= n; ++i) dl.PathLineTo(V(c.x + u[i].x * r, c.y + u[i].y * r));
+}
+
 void DrawBell(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
     dl.PathClear();
-    dl.PathArcTo(V(c.x, c.y - 1.5f * s), 5.0f * s, kPi, 2.0f * kPi, 12);   // the dome, left to right over the top
+    ArcTo(dl, V(c.x, c.y - 1.5f * s), 5.0f * s, kPi, 2.0f * kPi, 12);   // the dome, left to right over the top
     dl.PathLineTo(V(c.x + 6.5f * s, c.y + 4.5f * s));
     dl.PathLineTo(V(c.x - 6.5f * s, c.y + 4.5f * s));
     dl.PathFillConvex(col);
@@ -51,7 +68,7 @@ void DrawBell(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
 void DrawPerson(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
     dl.AddCircleFilled(V(c.x, c.y - 3.0f * s), 3.4f * s, col, 14);
     dl.PathClear();
-    dl.PathArcTo(V(c.x, c.y + 7.0f * s), 6.2f * s, kPi, 2.0f * kPi, 14);
+    ArcTo(dl, V(c.x, c.y + 7.0f * s), 6.2f * s, kPi, 2.0f * kPi, 14);
     dl.PathFillConvex(col);
 }
 void DrawBubble(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
@@ -60,7 +77,7 @@ void DrawBubble(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
 }
 void DrawCycle(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
     dl.PathClear();
-    dl.PathArcTo(c, 5.5f * s, -0.35f * kPi, 1.25f * kPi, 18);
+    ArcTo(dl, c, 5.5f * s, -0.35f * kPi, 1.25f * kPi, 18);
     dl.PathStroke(col, false, 1.8f * s);
     const float a = -0.35f * kPi;
     const UI::Vec2 tip = V(c.x + std::cos(a) * 5.5f * s, c.y + std::sin(a) * 5.5f * s);
@@ -70,10 +87,10 @@ void DrawTrophy(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col) {
     dl.PathClear();
     dl.PathLineTo(V(c.x - 5.6f * s, c.y - 7.5f * s));
     dl.PathLineTo(V(c.x + 5.6f * s, c.y - 7.5f * s));
-    dl.PathArcTo(V(c.x, c.y - 2.6f * s), 5.6f * s, 0.0f, kPi, 14);   // right, down round the bottom, to the left
+    ArcTo(dl, V(c.x, c.y - 2.6f * s), 5.6f * s, 0.0f, kPi, 14);   // right, down round the bottom, to the left
     dl.PathFillConvex(col);
-    dl.PathClear(); dl.PathArcTo(V(c.x - 5.6f * s, c.y - 4.6f * s), 2.6f * s, kPi * 0.5f, kPi * 1.5f, 8); dl.PathStroke(col, false, 1.5f * s);
-    dl.PathClear(); dl.PathArcTo(V(c.x + 5.6f * s, c.y - 4.6f * s), 2.6f * s, -kPi * 0.5f, kPi * 0.5f, 8); dl.PathStroke(col, false, 1.5f * s);
+    dl.PathClear(); ArcTo(dl, V(c.x - 5.6f * s, c.y - 4.6f * s), 2.6f * s, kPi * 0.5f, kPi * 1.5f, 8); dl.PathStroke(col, false, 1.5f * s);
+    dl.PathClear(); ArcTo(dl, V(c.x + 5.6f * s, c.y - 4.6f * s), 2.6f * s, -kPi * 0.5f, kPi * 0.5f, 8); dl.PathStroke(col, false, 1.5f * s);
     dl.AddRectFilled(V(c.x - 1.2f * s, c.y + 2.6f * s), V(c.x + 1.2f * s, c.y + 6.0f * s), col);
     dl.AddRectFilled(V(c.x - 4.8f * s, c.y + 5.8f * s), V(c.x + 4.8f * s, c.y + 8.4f * s), col, 1.2f * s);
 }
@@ -93,7 +110,8 @@ void DrawMedal(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char 
     const float s = r / 15.0f;
     dl.AddCircleFilled(c, r + 3.0f, Rgb(rgb[0], rgb[1], rgb[2], (int)(0.14f * alpha * 255.0f)), 32);
     UI::Vec2 hex[6];
-    for (int i = 0; i < 6; ++i) hex[i] = V(c.x + std::cos(i * kPi / 3.0f) * r, c.y + std::sin(i * kPi / 3.0f) * r);
+    const UI::Vec2* u = UnitArc(0.0f, 2.0f * kPi, 6);
+    for (int i = 0; i < 6; ++i) hex[i] = V(c.x + u[i].x * r, c.y + u[i].y * r);
     const int a = (int)(alpha * 255.0f + 0.5f);
     dl.AddConvexPolyFilled(hex, 6, Rgb((int)(rgb[0] * 0.46f), (int)(rgb[1] * 0.46f), (int)(rgb[2] * 0.46f), a));
     dl.AddPolyline(hex, 6, Rgb(rgb[0], rgb[1], rgb[2], a), true, 1.8f);
@@ -300,7 +318,8 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
 
     UI::SetNextWindowPos(V(x, y));
     UI::SetNextWindowSize(V(w, h));
-    if (UI::Begin("Notifications##okayui", nullptr, UI::Window_NoTitleBar | UI::Window_NoResize | UI::Window_NoMove | UI::Window_NoCollapse | UI::Window_NoScrollbar)) {
+    if (UI::Begin("Notifications##okayui", nullptr, UI::Window_NoTitleBar | UI::Window_NoResize | UI::Window_NoMove | UI::Window_NoCollapse | UI::Window_NoScrollbar |
+                                                   (m.drawFrame ? 0 : UI::Window_NoBackground))) {
         const UI::Theme& th = UI::Style();
         const UI::Color32 cText = Col(th.text), cDim = Col(th.textDim), accLt = AccentLight();
         const UI::DrawList& dl = UI::GetWindowDrawList();
@@ -354,7 +373,7 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
             float cx = cp.x, cy = cp.y;
             for (int k = 0; k < 6; ++k) {
                 const UI::Vec2 ts = UI::CalcTextSize(kChipLabel[k]);
-                char cnt[8] = "";
+                char cnt[16] = "";
                 if (k == 1 && res.unread > 0) std::snprintf(cnt, sizeof(cnt), "%d", res.unread);
                 const UI::Vec2 cs = UI::CalcTextSize(cnt);
                 const float cwid = ts.x + 18.0f + (cnt[0] ? cs.x + 16.0f : 0.0f);
@@ -553,7 +572,8 @@ AchievementsResult DrawAchievements(const AchievementsModel& m, AchievementsStat
                 DrawMedal(dl, V(p.x + 30.0f + k * 26.0f, p.y + 32.0f), k == 0 ? 26.0f : 22.0f, m.items[(std::size_t)top[(std::size_t)k]].color, k == 0 ? 1.0f : 0.75f);
             if (heroN == 0) {
                 UI::Vec2 hex[6];
-                for (int i = 0; i < 6; ++i) hex[i] = V(p.x + 30.0f + std::cos(i * kPi / 3.0f) * 24.0f, p.y + 32.0f + std::sin(i * kPi / 3.0f) * 24.0f);
+                const UI::Vec2* u = UnitArc(0.0f, 2.0f * kPi, 6);
+                for (int i = 0; i < 6; ++i) hex[i] = V(p.x + 30.0f + u[i].x * 24.0f, p.y + 32.0f + u[i].y * 24.0f);
                 dl.AddPolyline(hex, 6, cDim, true, 1.8f);
                 DrawTrophy(dl, V(p.x + 30.0f, p.y + 32.0f), 1.0f, cDim);
             }

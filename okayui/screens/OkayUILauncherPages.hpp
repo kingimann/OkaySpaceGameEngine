@@ -65,7 +65,10 @@ struct NotifEntry {
 };
 
 /// The cleared notifications are left out by the host; `items` is the feed in the host's order.
-struct NotificationsModel { std::vector<NotifEntry> items; };
+struct NotificationsModel {
+    std::vector<NotifEntry> items;
+    bool drawFrame = true;               // the window's own background, border and shadow; false when the host's window already draws them
+};
 
 struct NotificationsState { int filter = 0; };   // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
 

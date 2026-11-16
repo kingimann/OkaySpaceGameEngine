@@ -676,30 +676,65 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
 }
 
-// A filled circle as a triangle fan of `segments` wedges.
+// The rim of a unit circle cut into n wedges: (cos, sin) of step * i for i = 1..n, worked out once per n (the same float
+// angles fillCircle always used, so the geometry is unchanged). n is 3..128.
+const float* unitCircle(int n) {
+    static float* table[129] = {};
+    if (!table[n]) {
+        float* t = new float[(std::size_t)n * 2];
+        const float step = 6.2831853f / n;
+        for (int i = 1; i <= n; ++i) { const float a = step * i; t[(i - 1) * 2] = SDL_cosf(a); t[(i - 1) * 2 + 1] = SDL_sinf(a); }
+        table[n] = t;
+    }
+    return table[n];
+}
+// A filled circle as a triangle fan of `segments` wedges that share the centre and rim vertices (the same triangles as one
+// tri() per wedge, with a third of the vertices).
 void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
     if (segments < 3) segments = 3;
-    const float step = 6.2831853f / segments;
-    float px = cx + radius, py = cy;
-    for (int i = 1; i <= segments; ++i) {
-        float a = step * i;
-        float nx = cx + radius * SDL_cosf(a), ny = cy + radius * SDL_sinf(a);
-        tri(cx, cy, px, py, nx, ny, c);
-        px = nx; py = ny;
-    }
+    if (segments > 128) segments = 128;
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
+    if (nv + segments + 2 > kMaxVerts || ni + segments * 3 > kMaxIdx) { noteDrop(); return; }
+    const float* u = unitCircle(segments);
+    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    const int base = nv;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    v.position.x = cx + radius; v.position.y = cy; V[nv++] = v;   // angle 0
+    for (int i = 0; i < segments; ++i) { v.position.x = cx + radius * u[i * 2]; v.position.y = cy + radius * u[i * 2 + 1]; V[nv++] = v; }
+    for (int i = 1; i <= segments; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
-// A filled circular arc/fan from angle a0 to a1 (radians), centered at (cx,cy).
-void arcFan(float cx, float cy, float r, float a0, float a1, const unsigned char c[4], int seg = 5) {
-    if (seg < 1) seg = 1;
-    const float step = (a1 - a0) / seg;
-    float px = cx + r * SDL_cosf(a0), py = cy + r * SDL_sinf(a0);
-    for (int i = 1; i <= seg; ++i) {
-        float a = a0 + step * i;
-        float nx = cx + r * SDL_cosf(a), ny = cy + r * SDL_sinf(a);
-        tri(cx, cy, px, py, nx, ny, c);
-        px = nx; py = ny;
+// The four quarter-circle corners of rrect, 5 wedges each: the unit-circle points are worked out once (the same float angles
+// arcFan would use, so the geometry is unchanged) instead of 12 sines and cosines per corner on every call.
+struct CornerTable {
+    float c[4][6], s[4][6];
+    CornerTable() {
+        const float PI = 3.14159265f;
+        const float a0[4] = {PI, 1.5f * PI, 0.0f, 0.5f * PI}, a1[4] = {1.5f * PI, 2.0f * PI, 0.5f * PI, PI};
+        for (int q = 0; q < 4; ++q) {
+            const float step = (a1[q] - a0[q]) / 5;
+            for (int i = 0; i <= 5; ++i) { const float a = i == 0 ? a0[q] : a0[q] + step * i; c[q][i] = SDL_cosf(a); s[q][i] = SDL_sinf(a); }
+        }
     }
+};
+// One corner as a fan that shares its centre and rim points (7 vertices, 5 triangles): the same triangles arcFan emits.
+void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
+    static const CornerTable T;
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
+    if (nv + 7 > kMaxVerts || ni + 15 > kMaxIdx) { noteDrop(); return; }
+    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    const int base = nv;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    for (int i = 0; i <= 5; ++i) { v.position.x = cx + r * T.c[q][i]; v.position.y = cy + r * T.s[q][i]; V[nv++] = v; }
+    for (int i = 1; i <= 5; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
 // A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
@@ -708,14 +743,13 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
     if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
     if (rad > w * 0.5f) rad = w * 0.5f;
     if (rad > h * 0.5f) rad = h * 0.5f;
-    const float PI = 3.14159265f;
     quad(x, y + rad, w, h - 2 * rad, c);            // middle band (full width)
     quad(x + rad, y, w - 2 * rad, rad, c);          // top strip
     quad(x + rad, y + h - rad, w - 2 * rad, rad, c);// bottom strip
-    arcFan(x + rad,     y + rad,     rad, PI,          1.5f * PI, c);  // top-left
-    arcFan(x + w - rad, y + rad,     rad, 1.5f * PI,   2.0f * PI, c);  // top-right
-    arcFan(x + w - rad, y + h - rad, rad, 0.0f,        0.5f * PI, c);  // bottom-right
-    arcFan(x + rad,     y + h - rad, rad, 0.5f * PI,   PI,        c);  // bottom-left
+    cornerFan(x + rad,     y + rad,     rad, 0, c);  // top-left
+    cornerFan(x + w - rad, y + rad,     rad, 1, c);  // top-right
+    cornerFan(x + w - rad, y + h - rad, rad, 2, c);  // bottom-right
+    cornerFan(x + rad,     y + h - rad, rad, 3, c);  // bottom-left
 }
 inline float rnd() { return g_theme.rounding; }
 

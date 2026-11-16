@@ -981,5 +981,21 @@ int main() {
         CHECK(okay::optimize::SimplifyMesh(tiny, o).mesh.TriangleCount() >= 4);
         CHECK(okay::optimize::SimplifyMesh(Mesh{}, o).mesh.TriangleCount() == 0);
     }
+    RUN_SUITE("slot groups (what the OpenGL renderer draws one range per slot from)");
+    {
+        Mesh m = Mesh::Cube();
+        m.AssignSlot({0, 5, 7}, 2); m.AssignSlot({1, 2}, 1);
+        const Mesh::SlotGroups g = m.GroupBySlot();
+        CHECK(g.order.size() == 12 && g.groups.size() == 3);
+        CHECK(g.groups[0][0] == 0 && g.groups[0][2] == 7 && g.groups[1][0] == 1 && g.groups[1][2] == 2 && g.groups[2][0] == 2 && g.groups[2][2] == 3);
+        CHECK(g.groups[1][1] == 7 && g.groups[2][1] == 9);                       // each group starts where the last one ended
+        std::set<int> seen(g.order.begin(), g.order.end());
+        CHECK(seen.size() == 12);                                                // every triangle exactly once
+        CHECK(g.order[7] == 1 && g.order[8] == 2 && g.order[9] == 0 && g.order[10] == 5 && g.order[11] == 7);   // stable inside a slot
+        for (const auto& gr : g.groups) for (int i = 0; i < gr[2]; ++i) CHECK(m.triSlot[g.order[gr[1] + i]] == gr[0]);
+        const Mesh::SlotGroups none = Mesh::Cube().GroupBySlot();
+        CHECK(none.groups.size() == 1 && none.groups[0][2] == 12 && none.order[5] == 5);
+        CHECK(Mesh{}.GroupBySlot().groups.empty());
+    }
     TEST_MAIN_RESULT();
 }

@@ -5,6 +5,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Render/TexturePath.hpp"
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -284,6 +285,24 @@ struct Mesh {
         for (int t : tris)
             if (t >= 0 && t < TriangleCount() && triSlot[t] != slot) { triSlot[t] = slot; ++n; }
         return n;
+    }
+    /// The triangles grouped by material slot (stable: within a slot they keep their order): `order` lists the triangle
+    /// numbers slot by slot, `groups` has {slot, first position in `order`, count} for each slot present, smallest slot
+    /// first. Without slots there is one group (slot 0) holding every triangle. The OpenGL renderer draws one range per
+    /// group so each slot can have its own picture.
+    struct SlotGroups { std::vector<int> order; std::vector<std::array<int, 3>> groups; };
+    SlotGroups GroupBySlot() const {
+        SlotGroups g;
+        const int nt = TriangleCount();
+        g.order.resize((std::size_t)nt);
+        for (int t = 0; t < nt; ++t) g.order[t] = t;
+        if (HasSlots()) std::stable_sort(g.order.begin(), g.order.end(), [&](int x, int y) { return triSlot[x] < triSlot[y]; });
+        for (int i = 0; i < nt; ++i) {
+            const int slot = HasSlots() ? triSlot[g.order[i]] : 0;
+            if (g.groups.empty() || g.groups.back()[0] != slot) g.groups.push_back({slot, i, 0});
+            ++g.groups.back()[2];
+        }
+        return g;
     }
     /// Triangles in `slot`.
     std::vector<int> TrianglesInSlot(int slot) const {

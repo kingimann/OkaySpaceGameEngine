@@ -43,4 +43,4 @@ retarget and the model importer). A clip that targets those node names plays on 
 * **Not verified:** real Mixamo files (none was used), how the deformation looks (the test checks numbers, not looks), the
   editor's "Animated copy" button in a real window, Windows.
 
-How to try it: [try_it.md](try_it.md) (7zo).
+How to try it: [try_it.md](try_it.md) (7zq).

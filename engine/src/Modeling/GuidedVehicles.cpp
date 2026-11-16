@@ -643,7 +643,7 @@ void GenerateTruck(const Recipe& r, std::vector<GeneratedPart>& parts) {
             shapes::Append(m, BoxAA({cx0, cy + wt - 0.01f, -Wb / 2 + wt - 0.004f}, {cx0 + wt, cy + h, Wb / 2 - wt + 0.004f}));
             shapes::Append(m, BoxAA({cx1 - wt, cy + wt - 0.01f, -Wb / 2 + wt - 0.004f}, {cx1, cy + h + 0.3f, Wb / 2 - wt + 0.004f}));
             const float ang = 14.0f * kPi / 180.0f, c = std::cos(ang), s = std::sin(ang);
-            for (Vec3& v : m.verts) { const float dx = v.x - cx0, dy = v.y - cy; v.x = cx0 + dx * c - dy * s; v.y = cy + 0.05f + dx * s + dy * c; }
+            for (Vec3& v : m.verts) { const float dx = v.x - cx0, dy = v.y - cy; v.x = cx0 + dx * c - dy * s; v.y = cy + dx * s + dy * c; }   // hinged on the chassis at the rear: the bed touches it there
             return m;
         }
         return BoxAA({cx0, cy, -Wb / 2}, {cx1, cy + cargoH, Wb / 2});

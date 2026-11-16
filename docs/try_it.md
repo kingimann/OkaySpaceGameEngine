@@ -74,6 +74,7 @@ release job or the installer build for this change.
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
+| 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
@@ -81,8 +82,8 @@ release job or the installer build for this change.
 | 7zl | Guided environment: trees (9 species), rocks and cliffs, roads (path-drawn), bridges, hedges, plants, street lamps | Modeling > **Guided** > Environment; File > Examples > Guided modeling > `guided_environment`; `examples\modeling\guided_environment.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
-| 7zo | Guided humans, rebuilt: human proportions, a smooth body at every Detail level, fingers, a face, 13 hair styles, hats, glasses, Build and Muscle sliders, 13 start designs (slim, athletic, heavy, child, elder, woman, man ...) and a rig with Mixamo bone names | Modeling > **Guided** > Characters > Human; File > Examples > Guided modeling > `guided_characters` and `guided_humans_high`; `examples\modeling\guided_humans_high.okayscene` | New in this change; engine tested on Linux, pictures are headless renders, panel never opened in a real window (unverified) |
-| 7zp | Six more Guided templates: aircraft, boat, weapon, tower, lamp, tent (43 start designs) | Modeling > **Guided** > Vehicles (aircraft, boat), Props (weapon, lamp), Architecture (tower), Environment (tent); File > Examples > Guided modeling > `guided_more`; `examples\modeling\guided_more.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
+| 7zq | Guided humans, rebuilt: human proportions, a smooth body at every Detail level, fingers, a face, 13 hair styles, hats, glasses, Build and Muscle sliders, 13 start designs (slim, athletic, heavy, child, elder, woman, man ...) and a rig with Mixamo bone names | Modeling > **Guided** > Characters > Human; File > Examples > Guided modeling > `guided_characters` and `guided_humans_high`; `examples\modeling\guided_humans_high.okayscene` | New in this change; engine tested on Linux, pictures are headless renders, panel never opened in a real window (unverified) |
+| 7zr | Six more Guided templates: aircraft, boat, weapon, tower, lamp, tent (43 start designs) | Modeling > **Guided** > Vehicles (aircraft, boat), Props (weapon, lamp), Architecture (tower), Environment (tent); File > Examples > Guided modeling > `guided_more`; `examples\modeling\guided_more.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
@@ -756,7 +757,7 @@ headless software render of it.
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
 editor window (the editor code was only syntax-checked, the snapping ring and the buttons in steps 1 to 9 are unseen), run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
-## 7zo. Guided humans (rebuilt) and 7zp. six more Guided templates
+## 7zq. Guided humans (rebuilt) and 7zr. six more Guided templates
 
 **What it is.** The Guided human is now a smooth person at every Detail level (Low about 3 thousand triangles, Medium 8
 thousand, High 21 thousand, Ultra 44 thousand). It has human proportions (about 7.5 heads tall), a torso with chest, waist
@@ -1108,6 +1109,32 @@ clicked in a real window (unverified).
    ("edited by you", "faces of your own"). Open **My parts and templates**, name it and press **Save as template**: it shows with the starting designs.
 
 **Not done / unverified.** Randomise has compatibility rules only for cars so far.
+
+---
+
+## 7zo. Guided: changing settings no longer lags
+
+**What it is.** The Guided page used to freeze for a moment (a second or more on a car or a person at Ultra) when you moved a slider, picked a design or
+changed Detail, and it cost a little on every frame just by being open. It is fixed: sliders show a cheap live preview while you drag, the real model is built
+once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/guided_perf.md`.
+
+**Status.** The engine side is tested on Linux (`ctest -R guided_perf`, about 1,240 checks, plus the existing guided tests). The panel changes
+(`editor/GuidedPanel.cpp`) compile but nobody has opened them in a real window yet (unverified). Nothing here ran on Windows.
+
+**Try it.**
+
+1. Open **File > Examples > Guided modeling > guided_vehicles**, click a car, open **View > Editors & Tools > Modeling** and press **Guided**.
+2. Under **Detail** press **Ultra** (about 100,000 triangles). Under the Undo buttons you now see a line like
+   `Last change: 300 ms (build 40, mesh 40, save 190) ... 107272 triangles`. That is the real cost of the change.
+3. Open **Size** and drag a slider such as **Length**. While you hold the mouse the car follows at Medium detail (the line shows `Drag preview: 1 ms`).
+   Let go: the car is rebuilt at Ultra once. **Undo guided step** goes back one step for the whole drag, not one per tick.
+4. Leave the panel open and do nothing: the editor should stay smooth (before, a big model cost several milliseconds every frame).
+5. Hand edits: in Edit Mesh move one wheel, go back to Guided and drag a slider. There is no preview for a model with hand edits (it cannot keep them); it is
+   rebuilt when you let go and keeps your edit. The time line then says it did the full check.
+6. Buses, trucks and buildings at Ultra no longer come apart (the windows used to float off the body); the tipper truck bed now sits on the chassis.
+
+**Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
+a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
 
 ---
 

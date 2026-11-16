@@ -259,7 +259,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Code:** `Modeling/Guided`, `Modeling/GuidedFence`, `editor/GuidedPanel`, `editor/main.cpp` (DrawModeling page 7)
 - **API:** `guided::Recipe`, `Template`, `Registry`, `Generate`, `Create`, `Analyze`, `Regenerate`, `DetachPart`, `ConvertToRegular`, `MakeUserPart`, `GuidedHistory`
 - **Editor:** Modeling window > Guided
-- **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg, 7zo, 7zp), `docs/guided_vs_mixamo.md`
+- **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg, 7zq, 7zr), `docs/guided_vs_mixamo.md`
 - **Tests:** `guided_modeling`, `guided_architecture`, `guided_vehicles`, `guided_characters`, `guided_detail`, `guided_human`, `guided_animation`
 - **Status:** Partial - the engine side (generation, rules, files) is tested headlessly; the editor page compiles but has not been opened in a real window or on Windows
 - **Open:** Architecture, vehicles, characters and the fence exist (with a shared Detail level); environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)

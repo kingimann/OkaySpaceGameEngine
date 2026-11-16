@@ -1226,5 +1226,32 @@ int main() {
         SnapHit b = SnapToGeometry(q, Vec3{0.0f, -0.95f, 0.0f}, SnapTarget::Edge, 0.3f);
         CHECK(b.found && b.a == 0 && b.b == 1);                         // the border still snaps
     }
+    RUN_SUITE("selection and snapping speed on a 240k-triangle mesh (times are printed)");
+    {
+        Mesh big = Mesh::Sphere(1, 300, 400);
+        const int nt = big.TriangleCount();
+        std::vector<int> some; for (int t = 0; t < nt; t += 50) some.push_back(t);
+        auto timeIt = [&](const char* what, auto&& fn) {
+            const auto t0 = std::chrono::steady_clock::now(); fn();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("  PERF select %-22s %8.1f ms\n", what, ms); return ms; };
+        std::vector<double> all;
+        all.push_back(timeIt("GrowFaces", [&] { (void)GrowFaces(big, some); }));
+        all.push_back(timeIt("ShrinkFaces", [&] { (void)ShrinkFaces(big, some); }));
+        all.push_back(timeIt("SelectSimilar(area)", [&] { (void)SelectSimilar(big, {0}, SimilarKind::Area, 0.1f); }));
+        all.push_back(timeIt("SelectByNormal", [&] { (void)SelectByNormal(big, Vec3{0, 1, 0}, 20.0f); }));
+        all.push_back(timeIt("SelectByArea", [&] { (void)SelectByArea(big, 0.0f, 1.0f); }));
+        all.push_back(timeIt("LooseParts", [&] { (void)LooseParts(big); }));
+        std::vector<ScreenPoint> proj(big.vertices.size());
+        for (size_t i = 0; i < proj.size(); ++i) { proj[i].x = big.vertices[i].x * 300 + 400; proj[i].y = big.vertices[i].y * 300 + 400; proj[i].ok = true; }
+        const SelectShape box = SelectShape::Box(Vec2{200, 200}, Vec2{500, 500});
+        const Vec3 eye{0, 0, 10};
+        all.push_back(timeIt("SelectVerticesIn", [&] { (void)SelectVerticesIn(big, proj, box, false, eye); }));
+        all.push_back(timeIt("SelectFacesIn", [&] { (void)SelectFacesIn(big, proj, box, false, eye); }));
+        all.push_back(timeIt("SnapToGeometry vertex", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Vertex, 0.05f); }));
+        all.push_back(timeIt("SnapToGeometry edge", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Edge, 0.05f); }));
+        all.push_back(timeIt("SnapToGeometry face", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Face, 0.05f); }));
+        for (double ms : all) CHECK(ms < 5000.0);
+    }
     TEST_MAIN_RESULT();
 }

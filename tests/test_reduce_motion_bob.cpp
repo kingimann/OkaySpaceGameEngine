@@ -116,8 +116,11 @@ int main() {
     {   // a fresh controller that starts with reduce motion on never bobs
         Accessibility::SetReduceMotion(true);
         Rig r(0.2f);
-        for (int i = 0; i < 20; ++i) r.scene.Update(kDt);
+        // 60 frames, not 20: the 0.2 m drop to the floor counts as a step down for the ground sensing, so the eye eases down over
+        // about half a second (eyeStepSmoothing). That is not a bob; let it finish before measuring.
+        for (int i = 0; i < 60; ++i) r.scene.Update(kDt);
         const Walk w = WalkFor(r, 80, 0);
+        std::printf("  fresh, reduce motion on: bob %.5f (player y %.3f)\n", w.bob, r.player->transform->Position().y);
         CHECK(w.bob < 0.001f);
         CHECK(w.steps >= 2);
     }

@@ -12,4 +12,10 @@ bool SetResources(const char* text);
 bool SplitIntoTwoMonitors(int splitX, bool rightPrimary);
 /// Remove the two monitors again.
 bool RemoveMonitors();
+/// Add a RandR mode of w x h at `hz` (a whole number of hertz: the mode's timings are made so that pixel clock /
+/// (horizontal total x vertical total) is exactly `hz`) to screen 0's first output, what a monitor that offers more modes
+/// does. Xvfb offers only its screen size. False without RandR or when the server refused.
+bool AddOutputMode(int w, int h, int hz);
+/// What the X server shows now: the size of screen 0's first lit CRTC and the size of the screen. False without RandR.
+bool CrtcAndScreen(int& crtcW, int& crtcH, int& screenW, int& screenH);
 } // namespace fakedisplay

@@ -5,7 +5,7 @@
 // Kept in its own translation unit (the X11 headers define global names that clash with okay::platform). libX11 and
 // libXrandr are opened with dlopen, so the test links no X library. Written from the Xlib manual (XChangeProperty,
 // XDeleteProperty), the RandR 1.5 protocol / library documentation (XRRGetMonitors, XRRSetMonitor, XRRDeleteMonitor,
-// XRRAllocateMonitor) and the EWMH property names.
+// XRRAllocateMonitor, XRRCreateMode, XRRAddOutputMode, XRRGetScreenResourcesCurrent, XRRGetCrtcInfo) and the EWMH property names.
 #include "platform_fakedisplay.hpp"
 
 #if defined(__linux__) && defined(__has_include)
@@ -15,6 +15,7 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/Xrandr.h>
 #include <dlfcn.h>
+#include <cstdio>
 #include <cstring>
 #endif
 #endif
@@ -38,6 +39,13 @@ struct Conn {
     XRRMonitorInfo* (*rrAlloc)(Display*, int) = nullptr;
     void (*rrSet)(Display*, ::Window, XRRMonitorInfo*) = nullptr;
     void (*rrDelete)(Display*, ::Window, Atom) = nullptr;
+    XRRScreenResources* (*rrRes)(Display*, ::Window) = nullptr;
+    void (*rrFreeRes)(XRRScreenResources*) = nullptr;
+    XRRCrtcInfo* (*rrCrtc)(Display*, XRRScreenResources*, RRCrtc) = nullptr;
+    void (*rrFreeCrtc)(XRRCrtcInfo*) = nullptr;
+    RRMode (*rrCreateMode)(Display*, ::Window, XRRModeInfo*) = nullptr;
+    void (*rrAddOutputMode)(Display*, RROutput, RRMode) = nullptr;
+    Status (*getGeometry)(Display*, Drawable, ::Window*, int*, int*, unsigned*, unsigned*, unsigned*, unsigned*) = nullptr;
     Conn() {
         void* x = dlopen("libX11.so.6", RTLD_NOW | RTLD_GLOBAL);
         if (!x) return;
@@ -47,6 +55,7 @@ struct Conn {
         change = reinterpret_cast<decltype(change)>(dlsym(x, "XChangeProperty"));
         del = reinterpret_cast<decltype(del)>(dlsym(x, "XDeleteProperty"));
         sync = reinterpret_cast<decltype(sync)>(dlsym(x, "XSync"));
+        getGeometry = reinterpret_cast<decltype(getGeometry)>(dlsym(x, "XGetGeometry"));
         if (void* r = dlopen("libXrandr.so.2", RTLD_NOW)) {
             rrVersion = reinterpret_cast<decltype(rrVersion)>(dlsym(r, "XRRQueryVersion"));
             rrGet = reinterpret_cast<decltype(rrGet)>(dlsym(r, "XRRGetMonitors"));
@@ -54,6 +63,12 @@ struct Conn {
             rrAlloc = reinterpret_cast<decltype(rrAlloc)>(dlsym(r, "XRRAllocateMonitor"));
             rrSet = reinterpret_cast<decltype(rrSet)>(dlsym(r, "XRRSetMonitor"));
             rrDelete = reinterpret_cast<decltype(rrDelete)>(dlsym(r, "XRRDeleteMonitor"));
+            rrRes = reinterpret_cast<decltype(rrRes)>(dlsym(r, "XRRGetScreenResourcesCurrent"));
+            rrFreeRes = reinterpret_cast<decltype(rrFreeRes)>(dlsym(r, "XRRFreeScreenResources"));
+            rrCrtc = reinterpret_cast<decltype(rrCrtc)>(dlsym(r, "XRRGetCrtcInfo"));
+            rrFreeCrtc = reinterpret_cast<decltype(rrFreeCrtc)>(dlsym(r, "XRRFreeCrtcInfo"));
+            rrCreateMode = reinterpret_cast<decltype(rrCreateMode)>(dlsym(r, "XRRCreateMode"));
+            rrAddOutputMode = reinterpret_cast<decltype(rrAddOutputMode)>(dlsym(r, "XRRAddOutputMode"));
         }
         if (open && close && intern && change && del && sync) dpy = open(nullptr);
     }
@@ -150,6 +165,54 @@ bool RemoveMonitors() {
     return true;
 #else
     return false;
+#endif
+}
+
+bool AddOutputMode(int w, int h, int hz) {
+#ifdef OKAY_FAKEDISPLAY_XLIB
+    Conn& c = C();
+    if (!c.dpy || !c.rrRes || !c.rrFreeRes || !c.rrCreateMode || !c.rrAddOutputMode || w <= 0 || h <= 0 || hz <= 0) return false;
+    XRRScreenResources* res = c.rrRes(c.dpy, c.Root());
+    if (!res || res->noutput < 1) { if (res) c.rrFreeRes(res); return false; }
+    // Blanking of 160 pixels and 30 lines (any numbers do for Xvfb); the clock is then exactly hz x totals.
+    XRRModeInfo mi;
+    std::memset(&mi, 0, sizeof(mi));
+    mi.width = (unsigned)w; mi.height = (unsigned)h;
+    mi.hSyncStart = (unsigned)w + 40; mi.hSyncEnd = (unsigned)w + 80; mi.hTotal = (unsigned)w + 160;
+    mi.vSyncStart = (unsigned)h + 3; mi.vSyncEnd = (unsigned)h + 8; mi.vTotal = (unsigned)h + 30;
+    mi.dotClock = (unsigned long)hz * mi.hTotal * mi.vTotal;
+    char name[64];
+    std::snprintf(name, sizeof(name), "okay-%dx%d@%d", w, h, hz);
+    mi.name = name; mi.nameLength = (unsigned)std::strlen(name);
+    const RRMode m = c.rrCreateMode(c.dpy, c.Root(), &mi);
+    if (m) c.rrAddOutputMode(c.dpy, res->outputs[0], m);
+    c.rrFreeRes(res);
+    c.sync(c.dpy, False);
+    return m != 0;
+#else
+    (void)w; (void)h; (void)hz; return false;
+#endif
+}
+
+bool CrtcAndScreen(int& crtcW, int& crtcH, int& screenW, int& screenH) {
+#ifdef OKAY_FAKEDISPLAY_XLIB
+    Conn& c = C();
+    crtcW = crtcH = screenW = screenH = 0;
+    if (!c.dpy || !c.rrRes || !c.rrFreeRes || !c.rrCrtc || !c.rrFreeCrtc || !c.getGeometry) return false;
+    ::Window root = 0; int x = 0, y = 0; unsigned w = 0, h = 0, bw = 0, depth = 0;
+    if (c.getGeometry(c.dpy, c.Root(), &root, &x, &y, &w, &h, &bw, &depth)) { screenW = (int)w; screenH = (int)h; }
+    XRRScreenResources* res = c.rrRes(c.dpy, c.Root());
+    if (!res) return false;
+    for (int i = 0; i < res->ncrtc && !crtcW; ++i) {
+        XRRCrtcInfo* ci = c.rrCrtc(c.dpy, res, res->crtcs[i]);
+        if (!ci) continue;
+        if (ci->mode) { crtcW = (int)ci->width; crtcH = (int)ci->height; }
+        c.rrFreeCrtc(ci);
+    }
+    c.rrFreeRes(res);
+    return crtcW > 0;
+#else
+    crtcW = crtcH = screenW = screenH = 0; return false;
 #endif
 }
 

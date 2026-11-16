@@ -3066,6 +3066,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_tests_properties(platform_display_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}")
     endforeach()
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_display_modes_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> modes-${_okay_pb})
+        set_tests_properties(platform_display_modes_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
     add_test(NAME platform_display_own_xinerama
              COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> own-xinerama 2)
     set_tests_properties(platform_display_own_xinerama PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120

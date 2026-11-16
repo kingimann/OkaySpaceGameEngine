@@ -126,9 +126,12 @@ const Atlas& Get() {
 okay::TtfFont* FallbackFont(const char* s) {
     const Atlas& a = Get();
     if (!a.ok || !s) return nullptr;
+    const char* q = s;
+    while (*q && (unsigned char)*q < 0x80) ++q;   // plain ASCII: the atlas has every character
+    if (!*q) return nullptr;
     const Size& z = a.Pick(16.0f);
     bool lacks = false;
-    for (const char* p = s; *p && !lacks;) {
+    for (const char* p = q; *p && !lacks;) {
         const unsigned cp = NextCodepoint(&p);
         lacks = cp >= 0x80 && !z.Find(cp);
     }

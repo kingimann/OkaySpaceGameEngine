@@ -479,8 +479,8 @@ inline float fMeasure(const char* s) {
             const bool exact = k > 0.97f && k < 1.03f;
             float w = 0.0f;
             for (const char* p = s; *p;) {
-                const unsigned cp = fontatlas::NextCodepoint(&p);
-                const fontatlas::Glyph* g = zp.Find(cp); if (!g) g = zp.Find('?');
+                const unsigned cp = fontatlas::NextCp(&p);
+                const fontatlas::Glyph* g = zp.FindFast(cp); if (!g) g = zp.FindFast('?');
                 if (g) w += exact ? std::floor(g->advance * k + 0.5f) : g->advance * k;
             }
             return w / g_theme.textScale;
@@ -488,8 +488,8 @@ inline float fMeasure(const char* s) {
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
         float w = 0.0f;
         for (const char* p = s; *p;) {
-            const unsigned cp = fontatlas::NextCodepoint(&p);
-            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            const unsigned cp = fontatlas::NextCp(&p);
+            const fontatlas::Glyph* g = z.FindFast(cp); if (!g) g = z.FindFast('?');
             if (g) w += g->advance;
         }
         return w * 8.0f / z.px;
@@ -675,7 +675,7 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
     float dx = x1 - x0, dy = y1 - y0;
     float len = dx * dx + dy * dy;
     if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
-    len = 1.0f / SDL_sqrtf(len);
+    len = 1.0f / std::sqrt(len);
     // Perpendicular unit vector * half thickness.
     float px = -dy * len * th * 0.5f, py = dx * len * th * 0.5f;
     quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
@@ -858,7 +858,7 @@ int polyNormals(const Vec2* in, int n, Vec2* p, Vec2* nrm) {
     Vec2 e[256];
     for (int i = 0; i < m; ++i) {
         const int j = i + 1 < m ? i + 1 : 0;
-        const float dx = p[j].x - p[i].x, dy = p[j].y - p[i].y, l = sgn / SDL_sqrtf(dx * dx + dy * dy);
+        const float dx = p[j].x - p[i].x, dy = p[j].y - p[i].y, l = sgn / std::sqrt(dx * dx + dy * dy);
         e[i] = Vec2{ dy * l, -dx * l };
     }
     for (int i = 0; i < m; ++i) {
@@ -886,7 +886,7 @@ void triAA(float ax, float ay, float bx, float by, float cx, float cy, const uns
 void lineAA(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
     const float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
     if (l2 <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
-    const float l = 1.0f / SDL_sqrtf(l2);
+    const float l = 1.0f / std::sqrt(l2);
     const Vec2 p[2] = { Vec2{x0, y0}, Vec2{x1, y1} }, mu[2] = { Vec2{-dy * l, dx * l}, Vec2{-dy * l, dx * l} };
     aaStroke(p, mu, 2, false, th, c);
 }
@@ -959,7 +959,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     bindTexture(tex);
     float pen = x;
     for (const char* p = str; *p;) {
-        const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
+        const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCp(&p));
         if (!g) continue;
         if (g->x1 > g->x0 && g->y1 > g->y0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
         if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
@@ -1001,8 +1001,8 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         int&        ni = g_toOverlay ? g_oni : g_ni;
         const SDL_Color sc = toColor(c);
         for (const char* p = str; *p;) {
-            const unsigned cp = fontatlas::NextCodepoint(&p);
-            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            const unsigned cp = fontatlas::NextCp(&p);
+            const fontatlas::Glyph* g = z.FindFast(cp); if (!g) g = z.FindFast('?');
             if (!g) continue;
             if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
@@ -5158,15 +5158,18 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
     Vec2 off[kMaxPath];
     auto segNormal = [&](int a, int b) {
         float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
-        const float l = SDL_sqrtf(dx * dx + dy * dy);
+        const float l = std::sqrt(dx * dx + dy * dy);
         return Vec2{ -dy / l, dx / l };
     };
+    Vec2 sn[kMaxPath];   // each segment's unit normal, worked out once (segment i runs from point i to point i + 1)
+    const int nseg = closed ? m : m - 1;
+    for (int i = 0; i < nseg; ++i) sn[i] = segNormal(i, i + 1 < m ? i + 1 : 0);
     for (int i = 0; i < m; ++i) {
         const bool hasPrev = closed || i > 0, hasNext = closed || i < m - 1;
-        const Vec2 nb = hasNext ? segNormal(i, (i + 1) % m) : segNormal(i - 1, i);
-        const Vec2 na = hasPrev ? segNormal((i + m - 1) % m, i) : nb;
+        const Vec2 nb = hasNext ? sn[i] : sn[i - 1];
+        const Vec2 na = hasPrev ? sn[i > 0 ? i - 1 : m - 1] : nb;
         float mx = na.x + nb.x, my = na.y + nb.y;
-        const float ml = SDL_sqrtf(mx * mx + my * my);
+        const float ml = std::sqrt(mx * mx + my * my);
         if (ml < 1.0e-4f) { off[i] = Vec2{ na.x * half, na.y * half }; continue; }   // a U-turn: no mitre
         mx /= ml; my /= ml;
         float k = mx * na.x + my * na.y;                  // cos of half the turn angle

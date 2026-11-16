@@ -25,6 +25,8 @@ struct Size {
     Glyph glyphs[256];
     short ascii[128] = {};   // index into glyphs + 1 for code points below 128 (0 = not baked): text is mostly ASCII
     const Glyph* Find(unsigned cp) const;   // the ASCII table, else a binary search; nullptr if not baked
+    /// Find with the ASCII table inline (the text paths call this once per character).
+    const Glyph* FindFast(unsigned cp) const { return cp < 128 ? (ascii[cp] > 0 ? &glyphs[ascii[cp] - 1] : nullptr) : Find(cp); }
 };
 
 struct Atlas {
@@ -44,6 +46,12 @@ const Atlas& Get();
 
 /// Next code point from UTF-8 (advances *s; returns 0 at the end).
 unsigned NextCodepoint(const char** s);
+/// The same with ASCII decoded inline (most text is ASCII).
+inline unsigned NextCp(const char** s) {
+    const unsigned char c = (unsigned char)**s;
+    if (c != 0 && c < 0x80) { ++*s; return c; }
+    return NextCodepoint(s);
+}
 
 /// A string with characters the atlas lacks (Cyrillic, Greek, CJK...) is drawn with
 /// the engine font okay::FontForText picks for it (the language's font, the built-in

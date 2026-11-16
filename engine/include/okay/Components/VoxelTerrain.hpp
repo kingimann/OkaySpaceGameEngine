@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <functional>
 #include <string>
 
 namespace okay {
@@ -235,6 +236,15 @@ public:
     void Apply();
     void Start() override { Apply(); }
     void Update(float dt) override;
+    /// World-edge catch (OFF by default). A rigid body that has fallen more than `catchMargin` below the bottom of the grid
+    /// (it left the side of the world, where nothing holds it) is put back on the ground at the nearest point inside the
+    /// grid with its speed cleared. `onFall` is a respawn hook: when set it is called instead and does the moving itself.
+    bool  catchFalling = false;
+    float catchMargin  = 4.0f;
+    std::function<void(GameObject&)> onFall;
+    int   caughtCount  = 0;     ///< bodies caught so far
+    /// Do the catch once now (Update does it every few frames when `catchFalling` is on).
+    int   CatchFallers();
     void OnDestroy() override;
     void ReleaseUnstarted() override;
 
@@ -315,6 +325,7 @@ private:
     struct StrokeCell { int idx; float density; unsigned char material; };
     std::vector<StrokeCell> strokeLog_;
     std::vector<unsigned char> strokeSeen_;
+    unsigned catchTick_ = 0;
     unsigned matRev_ = 0;                            ///< changes when the material table does
     void LogStroke(int idx);
 

@@ -1404,6 +1404,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
+        if (v->catchFalling) out << "  voxelcatch " << v->catchMargin << "\n";
         // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
         if (v->UseMaterials()) {
             out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
@@ -1424,7 +1425,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
-            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << "\n";
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7471,11 +7472,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> col >> nm >> cr >> vd->addMaterial >> vd->power >> vd->hardnessScale >> shp >> vd->depthLimit >> vd->protectBelow
                            >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
                         vd->hudTarget = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) { in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses)); }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
                         vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));
                         vd->slump = sl != 0; vd->collapse = co != 0; vd->giveItems = gi != 0;
                     }
+                } else if (field == "voxelcatch") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) { v->catchFalling = true; in >> v->catchMargin; }
                 } else if (field == "voxelmats") {
                     if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
                         std::size_t n = 0; std::string blob; in >> n >> blob;

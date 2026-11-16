@@ -3171,6 +3171,7 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
+int   g_voxSeed    = 2024;            // voxel generate: seed (the same seed gives the same ground)
 float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
@@ -30206,8 +30207,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
             ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
             ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+            ImGui::InputInt("Seed##vox", &g_voxSeed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
-                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
+                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed);
                 v->Apply(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -30218,7 +30224,7 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Materials");
             if (!v->UseMaterials()) {
                 ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
-                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)(ImGui::GetTime() * 1000.0)); v->Apply(); ed.dirty = true; }
+                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed); v->Apply(); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
                 ImGui::SameLine();
                 if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
@@ -30250,11 +30256,14 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
-                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)(ImGui::GetTime() * 1000.0)); v->Apply(); ed.dirty = true; }
+                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed); v->Apply(); ed.dirty = true; }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
                 ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
             }
+            if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
+            if (v->catchFalling && ImGui::DragFloat("Catch Depth##vox", &v->catchMargin, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
                 const auto& st = v->lastStats;
                 if (v->UsesChunkObjects())
@@ -30324,6 +30333,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
+                if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
+                if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");

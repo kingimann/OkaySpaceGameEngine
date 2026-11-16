@@ -4,6 +4,7 @@
 #include "okay/Components/Occluder.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -1225,7 +1226,28 @@ int VoxelTerrain::ChunkObjectCount() const {
     return n;
 }
 
+int VoxelTerrain::CatchFallers() {
+    Scene* sc = gameObject ? gameObject->scene() : nullptr;
+    if (!sc || !gameObject->transform) return 0;
+    Transform* tt = gameObject->transform;
+    int n = 0;
+    for (Rigidbody3D* rb : sc->FindObjectsOfType<Rigidbody3D>()) {
+        if (!rb->gameObject || !rb->gameObject->transform || rb->gameObject == gameObject) continue;
+        const Vec3 l = tt->InverseTransformPoint(rb->gameObject->transform->Position());
+        if (!std::isfinite(l.x) || !std::isfinite(l.y) || !std::isfinite(l.z) || l.y >= -catchMargin * voxelSize) continue;
+        ++n; ++caughtCount;
+        if (onFall) { onFall(*rb->gameObject); continue; }
+        Vec3 in{std::max(-HalfX(), std::min(HalfX(), l.x)), 0.0f, std::max(-HalfZ(), std::min(HalfZ(), l.z))};
+        float sy = 0.0f;
+        in.y = (SurfaceY(in.x, in.z, sy) ? sy : SizeY() * 0.5f) + 2.0f * voxelSize;
+        rb->gameObject->transform->SetPosition(tt->TransformPoint(in));
+        rb->velocity = Vec3::Zero;
+    }
+    return n;
+}
+
 void VoxelTerrain::Update(float) {
+    if (catchFalling && ((++catchTick_) % 6) == 0) CatchFallers();
     if (!chunked_ || !gameObject) return;
     MeshRenderer* mr = gameObject->GetComponent<MeshRenderer>();
     if (!mr) return;

@@ -16,7 +16,7 @@ namespace okay {
 /// A loose piece of dug ground: a small rigid body that carries a volume of one material. It falls, bounces and lies
 /// where it lands. When it settles (or its life runs out, or the player walks up to it) the volume is not lost: it is
 /// put back into the terrain where it lies, or into the digger's store (`toStore`). Spawned by the Voxel Digger.
-/// Terrain at the origin of the world without rotation or scale is assumed for the landing spot.
+/// The landing spot is worked out in the terrain's own space, so a terrain that is moved, turned or scaled works.
 class VoxelDebris : public Behaviour {
 public:
     std::uint64_t terrainId = 0;      ///< GameObject id of the VoxelTerrain
@@ -59,7 +59,7 @@ public:
         if (toStore && onStore) onStore(material, volume);
         else if (GameObject* tg = GameObject::FromInstanceId(terrainId)) {
             if (auto* t = tg->GetComponent<VoxelTerrain>(); t && tg->transform) {
-                const Vec3 p = gameObject->transform->Position() - tg->transform->Position();
+                const Vec3 p = tg->transform->InverseTransformPoint(gameObject->transform->Position());   // terrain may be moved, turned or scaled
                 // settle it a little above its centre so it merges with the ground it rests on
                 const double got = t->AddVolume({p.x, p.y, p.z}, volume, material, 0.8f);
                 (void)got;

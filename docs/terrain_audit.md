@@ -54,6 +54,18 @@ and a few probes ran against an `-O0` library, said where). No GPU, no Windows. 
 | Edited terrain | an unloaded cell is destroyed | **BUG** | a dug voxel cell came back whole after walking away and returning | a cell whose terrain was edited (`VoxelTerrain::editCount`) is kept loaded |
 | Hitches | cells load synchronously, all new ones in one frame | LIMIT | by reading: a ring of 5 new cells in one frame | listed |
 
+## Second pass (real-life digging and a moved terrain)
+
+| Area | What it does | Verdict | Seen | Done |
+|---|---|---|---|---|
+| Voxel Digger aim | the ray was turned into the terrain's space by subtracting its position only | **BUG** | by reading: a terrain that is rotated or scaled was dug at the wrong place, the brush marker and the dust too | the aim, the marker, the dust and the debris spawn use the terrain's own transform (`tests/test_voxel_more.cpp`, three moved, turned and scaled terrains) |
+| Debris landing | the landing spot was the debris position minus the terrain position | **BUG** | same: volume was built back in the wrong place on a turned or scaled terrain | worked out with `InverseTransformPoint`; debris also takes the terrain's rotation and scale |
+| World edge | a body past the side of the grid falls for ever | **BUG** (was a listed limit) | y = -106 m after 5 s | option `VoxelTerrain::catchFalling` puts it back on the ground, or calls `onFall`; off by default |
+| Debris cap | counted at the first frame of a piece, so a frame could go over the cap | **BUG** | peak 51 with a cap of 48 | counted when the piece is made |
+| Piece colliders | one box per piece | LIMIT | by reading | listed |
+| Foliage ray cost on voxel meshes | 1.1 ms per ray single, 0.32 ms chunked | LIMIT | measured earlier | listed |
+| Network | dig edits are local only: in multiplayer each player's terrain would differ | LIMIT | by reading: `VoxelTerrain` has no replication, edits are not sent | listed (the host would have to own the field and send `Edit` calls) |
+
 ## What is not covered
 
 Physics core (another lane), the player controller (another lane), vegetation placement quality, heightmap terrain save size, Direct3D 12.

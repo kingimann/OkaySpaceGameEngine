@@ -490,7 +490,8 @@ public:
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
                        const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
-                       bool receiveShadows = true) {
+                       bool receiveShadows = true,
+                       const float* vcol = nullptr) {   // vcol: r g b of each corner's vertex colour (9 floats), or null
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -659,6 +660,7 @@ public:
                     }
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
+                if (vcol) { br *= a0 * vcol[0] + a1 * vcol[3] + a2 * vcol[6]; bg *= a0 * vcol[1] + a1 * vcol[4] + a2 * vcol[7]; bb2 *= a0 * vcol[2] + a1 * vcol[5] + a2 * vcol[8]; }
                 if (textured && triplanar) {
                     // Triplanar: blend three world-axis projections by |normal|, so the
                     // texture wraps cliffs/terrain with no UV seams or stretching.
@@ -2035,7 +2037,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp, vr, vg, vb; };   // vr/vg/vb: the vertex colour (white without one)
         // Once per mesh. Doing this inside the triangle loop made a plain scene
         // about twice as slow (every band, every triangle, a component lookup).
         float lodR = 1, lodG = 1, lodB = 1;
@@ -2161,8 +2163,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float nh = Vec3::Dot(nk, hv);
                     if (nh > 0.0f) spk = std::pow(nh, faceShine) * faceSpec;
                 }
+                const Color vcc = drawMesh.HasVertexColors() ? drawMesh.vertexColors[idx[k]] : Color{1, 1, 1, 1};
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
-                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
+                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk, vcc.r, vcc.g, vcc.b};
             }
 
             // Per-triangle world-space tangent (from edges + UV deltas) for normal
@@ -2204,7 +2207,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                   A.nx + (B.nx - A.nx) * tt, A.ny + (B.ny - A.ny) * tt,
                                   A.nz + (B.nz - A.nz) * tt, A.wx + (B.wx - A.wx) * tt,
                                   A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt,
-                                  A.fo + (B.fo - A.fo) * tt, A.sp + (B.sp - A.sp) * tt};
+                                  A.fo + (B.fo - A.fo) * tt, A.sp + (B.sp - A.sp) * tt,
+                                  A.vr + (B.vr - A.vr) * tt, A.vg + (B.vg - A.vg) * tt, A.vb + (B.vb - A.vb) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -2226,9 +2230,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // outfit / hair); otherwise the renderer's albedo, including LOD tint.
             const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
             const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
-            float cr = base.r * lit.x * metalK + spec + faceEr;
-            float cg = base.g * lit.y * metalK + spec + faceEg;
-            float cb = base.b * lit.z * metalK + spec + faceEb;
+            // (the flat path only: smooth, textured and per-pixel paths blend the vertex colours across the face)
+            const float vAvgR = (in[0].vr + in[1].vr + in[2].vr) * (1.0f / 3.0f), vAvgG = (in[0].vg + in[1].vg + in[2].vg) * (1.0f / 3.0f), vAvgB = (in[0].vb + in[1].vb + in[2].vb) * (1.0f / 3.0f);
+            float cr = base.r * vAvgR * lit.x * metalK + spec + faceEr;
+            float cg = base.g * vAvgG * lit.y * metalK + spec + faceEg;
+            float cb = base.b * vAvgB * lit.z * metalK + spec + faceEb;
             // Distance fog: blend the color toward the fog color by how far the
             // triangle is, between fogStart and fogEnd (per-tri factor).
             float fogF = 0.0f;
@@ -2287,6 +2293,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float wx[3] = {tri[0]->wx, tri[1]->wx, tri[2]->wx};
                     float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
                     float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
+                    const float vc9[9] = {tri[0]->vr, tri[0]->vg, tri[0]->vb, tri[1]->vr, tri[1]->vg, tri[1]->vb, tri[2]->vr, tri[2]->vg, tri[2]->vb};
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
                                     triTex, base, shaded, eye, faceShine, faceSpec,
                                     faceEr, faceEg, faceEb,
@@ -2298,18 +2305,19 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
-                                    aoMips, mr->aoStrength, mr->receiveShadows);
+                                    aoMips, mr->aoStrength, mr->receiveShadows,
+                                    drawMesh.HasVertexColors() ? vc9 : nullptr);
                 } else if (triTex) {
-                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
-                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
-                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
+                    float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
+                    float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};
+                    float lb[3] = {tri[0]->lb * tri[0]->vb, tri[1]->lb * tri[1]->vb, tri[2]->lb * tri[2]->vb};
                     r.TriangleTex(sx, sy, sd, iw, uu, vv, *triTex, shaded, lr, lg, lb, sp3,
                                   faceEr, faceEg, faceEb,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
-                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
-                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
-                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
+                    float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
+                    float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};
+                    float lb[3] = {tri[0]->lb * tri[0]->vb, tri[1]->lb * tri[1]->vb, tri[2]->lb * tri[2]->vb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, sp3,
                                      faceEr, faceEg, faceEb,
                                      fo, fogR, fogG, fogB, bandY0, bandY1);

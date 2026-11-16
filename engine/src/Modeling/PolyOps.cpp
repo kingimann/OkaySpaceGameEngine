@@ -30,6 +30,13 @@ Vec2 UVOf(const PolyFace& f, int v) {
 }
 Vec2 Lerp2(const Vec2& a, const Vec2& b, float t) { return Vec2{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t}; }
 Vec3 Lerp3(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
+// Edges whose two ends are real, different vertices (a hand-built or stale selection can name ones that are not).
+EdgeList ValidEdges(const PolyMesh& pm, const EdgeList& in) {
+    EdgeList out;
+    for (const auto& e : in) if (e.first >= 0 && e.second >= 0 && e.first < (int)pm.verts.size() && e.second < (int)pm.verts.size() && e.first != e.second) out.push_back(e);
+    return out;
+}
+
 
 // Remove repeated corners and back-and-forth spikes (x v x) left by merging faces.
 void CleanFace(PolyFace& f) {
@@ -274,6 +281,7 @@ std::vector<EdgeChain> OrderChains(const EdgeList& edges) {
 
 // ---------------------------------------------------------------------------
 EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
+    if (!std::isfinite(position)) return {};
     if (cuts < 1) cuts = 1;
     PolyTopology T(pm);
     const Ring r = RingWalk(pm, T, a, b);
@@ -344,6 +352,7 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
 
 // ---------------------------------------------------------------------------
 int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vector<Vec3>* from) {
+    if (!std::isfinite(amount)) return 0;
     const std::vector<Vec3> start = from ? *from : pm.verts;
     if (start.size() < pm.verts.size()) return 0;
     const float t = std::clamp(std::fabs(amount), 0.0f, 1.0f);
@@ -510,7 +519,7 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     PolyTopology T(pm);
     for (const auto& e : edges)
         if (!T.IsBoundary(e.first, e.second)) return fail("Bridge needs edges on an open border of the mesh (select the rims of two holes or tube ends).");
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.size() != 2) return fail("Select exactly two separate edge loops to bridge.");
     EdgeChain A = chains[0], B = chains[1];
     if (A.closed != B.closed) return fail("Both loops need to be closed, or both open.");
@@ -547,11 +556,18 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
 
 // ---------------------------------------------------------------------------
 int SplitEdge(PolyMesh& pm, int a, int b, float t) {
+    if (!std::isfinite(t)) return -1;
     bool any = false;
     for (const PolyFace& f : pm.faces) if (Runs(f, a, b) || Runs(f, b, a)) any = true;
     if (!any) return -1;
     const int nv = (int)pm.verts.size();
     pm.verts.push_back(Lerp3(pm.verts[a], pm.verts[b], t));
+    if (!pm.vertColors.empty()) {                       // the new vertex blends its two neighbours' colours
+        pm.vertColors.resize(nv, Color{1, 1, 1, 1});
+        const Color ca = a < (int)pm.vertColors.size() ? pm.vertColors[a] : Color{1, 1, 1, 1};
+        const Color cb = b < (int)pm.vertColors.size() ? pm.vertColors[b] : Color{1, 1, 1, 1};
+        pm.vertColors.push_back(Color{ca.r + (cb.r - ca.r) * t, ca.g + (cb.g - ca.g) * t, ca.b + (cb.b - ca.b) * t, ca.a + (cb.a - ca.a) * t});
+    }
     if (pm.IsSeam(a, b)) { pm.SetSeam(a, b, false); pm.SetSeam(a, nv, true); pm.SetSeam(nv, b, true); }
     for (PolyFace& f : pm.faces) {
         const bool ab = Runs(f, a, b), ba = Runs(f, b, a);
@@ -930,7 +946,7 @@ void OrientAgainstNeighbours(const PolyMesh& pm, std::vector<int>& vs) {
 int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     auto fail = [&](const char* why) { if (error) *error = why; return 0; };
     PolyTopology T(pm);
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.empty()) return fail("Select the edges round a hole (or a chain of three or more vertices).");
     const bool uv = MeshHasUV(pm);
     int made = 0;
@@ -956,7 +972,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
 int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
     PolyTopology T(pm);
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.size() != 1 || !chains[0].closed) return fail("Grid Fill needs one closed loop of edges round a hole.");
     std::vector<int> L = chains[0].verts;
     const int n = (int)L.size();
@@ -1022,7 +1038,7 @@ int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) 
 }
 
 int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at) {
-    if (verts.size() < 2) return 0;
+    if (verts.size() < 2 || !std::isfinite(at.x + at.y + at.z)) return 0;
     const int keep = verts[0];
     if (keep < 0 || keep >= (int)pm.verts.size()) return 0;
     std::set<int> gone(verts.begin() + 1, verts.end());
@@ -1047,6 +1063,11 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
     for (std::size_t i = 0; i < pm.verts.size(); ++i)
         if (used[i]) { remap[i] = (int)kept.size(); kept.push_back(pm.verts[i]); }
     pm.verts = std::move(kept);
+    if (!pm.vertColors.empty()) {                       // the colours follow their vertices
+        std::vector<Color> vc;
+        for (std::size_t i = 0; i < used.size(); ++i) if (used[i]) vc.push_back(i < pm.vertColors.size() ? pm.vertColors[i] : Color{1, 1, 1, 1});
+        pm.vertColors = std::move(vc);
+    }
     for (PolyFace& f : pm.faces) for (int& v : f.verts) v = remap[v];
     std::vector<std::pair<int, int>> seams;
     for (const auto& e : pm.seams) {
@@ -1137,14 +1158,27 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
     PolyMesh out;
     out.verts = vertPt;
     out.slotColors = pm.slotColors;
+    const bool vcol = !pm.vertColors.empty();
+    auto vcOf = [&](int v) { return v < (int)pm.vertColors.size() ? pm.vertColors[v] : Color{1, 1, 1, 1}; };
+    if (vcol) { out.vertColors.assign(out.verts.size(), Color{1, 1, 1, 1}); for (int v = 0; v < nv; ++v) out.vertColors[v] = vcOf(v); }
     const int edgeBase = (int)out.verts.size();
     out.verts.insert(out.verts.end(), edgePt.begin(), edgePt.end());
+    if (vcol) for (const auto& ed : edges) {            // an edge point is halfway between its ends' colours
+        const Color a = vcOf(ed.a), b = vcOf(ed.b);
+        out.vertColors.push_back(Color{(a.r + b.r) * 0.5f, (a.g + b.g) * 0.5f, (a.b + b.b) * 0.5f, (a.a + b.a) * 0.5f});
+    }
     const int faceBase = (int)out.verts.size();
     std::vector<int> faceIdx(pm.faces.size(), -1);
     for (int f = 0; f < (int)pm.faces.size(); ++f) {
         if (!faceOk[f]) continue;
         faceIdx[f] = (int)out.verts.size();
         out.verts.push_back(facePt[f]);
+        if (vcol) {                                      // a face point takes the average colour of its corners
+            float r = 0, g = 0, b = 0, a = 0;
+            for (int v : pm.faces[f].verts) { const Color c = vcOf(v); r += c.r; g += c.g; b += c.b; a += c.a; }
+            const float k = 1.0f / (float)pm.faces[f].verts.size();
+            out.vertColors.push_back(Color{r * k, g * k, b * k, a * k});
+        }
     }
     (void)faceBase;
     auto edgeIndex = [&](int a, int b) {
@@ -1190,6 +1224,7 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
     if (edges.empty()) return fail("Select some edges to spin first.");
     if (!(axis.SqrMagnitude() > 1e-12f) || !std::isfinite(axis.x + axis.y + axis.z)) return fail("The spin axis has no direction.");
     if (!std::isfinite(angleDegrees) || std::fabs(angleDegrees) < 1e-3f) return fail("The angle is zero.");
+    if (!std::isfinite(center.x + center.y + center.z)) return fail("The spin centre is not a number.");
     steps = std::clamp(steps, 1, 512);
     const int nv = (int)pm.verts.size();
     std::vector<int> used;                            // the vertices the edges touch, in order
@@ -1241,6 +1276,7 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
 int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path, std::string* error) {
     auto fail = [&](const char* why) { if (error) *error = why; return 0; };
     if (path.size() < 2) return fail("The path needs at least two points.");
+    for (const Vec3& q : path) if (!std::isfinite(q.x + q.y + q.z)) return fail("A point of the path is not a number.");
     std::vector<int> sel;
     for (int f : faces) if (f >= 0 && f < (int)pm.faces.size() && std::find(sel.begin(), sel.end(), f) == sel.end()) sel.push_back(f);
     if (sel.empty()) return fail("Select some faces to extrude first.");

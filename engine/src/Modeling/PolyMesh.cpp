@@ -220,6 +220,11 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         pm.verts = mesh.vertices;
         for (int i = 0; i < nv; ++i) remap[i] = i;
     }
+    if (mesh.HasVertexColors()) {                       // the first vertex at a position gives the polygon vertex its colour
+        pm.vertColors.assign(pm.verts.size(), Color{1, 1, 1, 1});
+        std::vector<char> set(pm.verts.size(), 0);
+        for (int i = 0; i < nv; ++i) if (!set[remap[i]]) { set[remap[i]] = 1; pm.vertColors[remap[i]] = mesh.vertexColors[i]; }
+    }
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
@@ -390,6 +395,7 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
         const int id = (int)m.vertices.size();
         m.vertices.push_back(verts[pv]);
         if (anyUV) m.uvs.push_back(uv);
+        if (!vertColors.empty()) m.vertexColors.push_back(pv < (int)vertColors.size() ? vertColors[pv] : Color{1, 1, 1, 1});
         slot.emplace(key, id);
         return id;
     };
@@ -463,6 +469,11 @@ std::string PolyMesh::Serialize() const {
     }
     for (std::size_t i = 0; i < slotColors.size(); ++i)
         o << "slot " << i << " " << slotColors[i].r << " " << slotColors[i].g << " " << slotColors[i].b << " " << slotColors[i].a << "\n";
+    for (std::size_t i = 0; i < vertColors.size() && i < verts.size(); ++i) {
+        const Color& c = vertColors[i];
+        if (c.r == 1 && c.g == 1 && c.b == 1 && c.a == 1) continue;     // white is the default: only the painted vertices are written
+        o << "vcolor " << i << " " << c.r << " " << c.g << " " << c.b << " " << c.a << "\n";
+    }
     for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
 }
@@ -526,6 +537,12 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "vcolor") {
+            int idx = -1; Color c;
+            if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0) return fail(lineNo, "vcolor needs a vertex number and r g b a");
+            if (idx > (1 << 24)) return fail(lineNo, "vcolor vertex number is too large");
+            if ((int)pm.vertColors.size() <= idx) pm.vertColors.resize(idx + 1, Color{1, 1, 1, 1});
+            pm.vertColors[idx] = c;
         } else if (tag == "slot") {
             int idx = -1; Color c;
             if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0 || idx > 255) return fail(lineNo, "a slot needs a number (0-255) and r g b a");
@@ -544,6 +561,7 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
         for (int v : pm.faces[i].verts)
             if (v < 0 || v >= (int)pm.verts.size())
                 return fail(lineNo, "face " + std::to_string(i) + " uses vertex " + std::to_string(v) + ", which doesn't exist");
+    if (pm.vertColors.size() > pm.verts.size()) return fail(lineNo, "a vcolor uses vertex " + std::to_string(pm.vertColors.size() - 1) + ", which doesn't exist");
     for (const auto& e : pm.seams)
         if (e.second >= (int)pm.verts.size())
             return fail(lineNo, "a seam uses vertex " + std::to_string(e.second) + ", which doesn't exist");

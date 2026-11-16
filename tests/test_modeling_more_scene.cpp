@@ -8,6 +8,7 @@
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -230,6 +231,64 @@ int main() {
         bool listed = false;
         for (const auto& a : SceneSerializer::CollectAssetPaths(s)) if (a == "Assets/brick.png") listed = true;
         CHECK(listed);                                        // packaged with the game
+    }
+    RUN_SUITE("vertex colours: scene, asset, software renderer");
+    {
+        Scene s("vc");
+        auto* mr = s.CreateGameObject("Strip")->AddComponent<MeshRenderer>();
+        // A flat strip facing the camera, red on the left edge and blue on the right edge, 8 quads wide.
+        Mesh m;
+        const int N = 8;
+        for (int i = 0; i <= N; ++i) { const float x = -2.0f + 4.0f * (float)i / N; m.vertices.push_back({x, -0.5f, 0}); m.vertices.push_back({x, 0.5f, 0}); }
+        for (int i = 0; i < N; ++i) { const int a = i * 2; m.triangles.insert(m.triangles.end(), {a, a + 2, a + 3, a, a + 3, a + 1}); }
+        for (int i = 0; i <= N; ++i) { const float t = (float)i / N; for (int k = 0; k < 2; ++k) m.vertexColors.push_back(Color{1 - t, 0, t, 1}); }
+        mr->mesh = m; mr->mesh.name = "";
+        const std::string p = (dir / "vc.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(s, p));
+        { std::ifstream f(p); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("meshvcolors 18") != std::string::npos); }
+        Scene r("x");
+        CHECK(SceneSerializer::LoadFromFile(r, p));
+        const Mesh& lm = r.Find("Strip")->GetComponent<MeshRenderer>()->mesh;
+        CHECK(lm.HasVertexColors() && lm.vertexColors.size() == 18 && lm.vertexColors[0].r == 1 && std::fabs(lm.vertexColors[17].b - 1.0f) < 1e-6f);
+        Scene none("n"); none.CreateGameObject("C")->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        const std::string pn = (dir / "vcn.okayscene").string(); CHECK(SceneSerializer::SaveToFile(none, pn));
+        { std::ifstream f(pn); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("meshvcolors") == std::string::npos); }
+        // A wrongly sized colour list is ignored (the mesh just draws without it), never trusted.
+        { std::ifstream f(p); std::stringstream ss; ss << f.rdbuf(); std::string t = ss.str();
+          const std::size_t at = t.find("meshvcolors 18"); t.replace(at, 14, "meshvcolors 3 ");
+          std::ofstream o((dir / "vcbad.okayscene").string()); o << t; }
+        Scene bad("b"); std::string err;
+        SceneSerializer::LoadFromFile(bad, (dir / "vcbad.okayscene").string(), &err);
+        if (auto* bo = bad.Find("Strip")) CHECK(!bo->GetComponent<MeshRenderer>()->mesh.HasVertexColors());
+        // As a mesh asset.
+        const std::string asset = (dir / "vc.okaymesh").string();
+        CHECK(SaveMeshAsset(asset, m, &err));
+        Mesh loaded; CHECK(LoadMeshAsset(asset, loaded, nullptr, &err) && loaded.HasVertexColors());
+        // Draw it, lit (per-pixel and per-vertex paths) and unlit: the left is red, the right blue, the middle both.
+        for (int mode = 0; mode < 3; ++mode) {
+            Scene t("draw");
+            GameObject* cam = t.CreateGameObject("Cam"); cam->transform->localPosition = {0, 0, 5};
+            cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
+            auto* tm = t.CreateGameObject("Strip")->AddComponent<MeshRenderer>();
+            tm->mesh = m; tm->mesh.name = ""; tm->doubleSided = true;
+            if (mode == 2) tm->unlit = true;
+            t.CreateGameObject("Sun")->AddComponent<Light>();
+            t.Start();
+            const Vec3 eye{0, 0, 5};
+            const Mat4 vp = Mat4::Perspective(40.0f, 4.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0, 0, 0}, Vec3::Up);
+            ApplySceneLight(t);
+            const bool before = PerPixelLighting();
+            PerPixelLighting() = (mode == 1);
+            Raster rr; rr.Resize(400, 100); rr.Clear(0xFF202020u);
+            RenderMeshes(rr, t, vp, eye);
+            PerPixelLighting() = before;
+            auto px = [&](int x) { const std::uint32_t c = rr.color[50 * 400 + x]; return std::array<int, 3>{(int)(c & 255), (int)((c >> 8) & 255), (int)((c >> 16) & 255)}; };
+            const auto L = px(70), Mi = px(200), R = px(330);
+            CHECK(L[0] > L[2] * 2 && L[0] > 40);                 // left: red dominates
+            CHECK(R[2] > R[0] * 2 && R[2] > 40);                 // right: blue dominates
+            CHECK(Mi[0] > 20 && Mi[2] > 20);                     // middle: a mix of both
+            CHECK(px(120)[0] > px(280)[0] && px(280)[2] > px(120)[2]);   // red fades left to right, blue grows
+        }
     }
     RUN_SUITE("hidden faces survive save, load and a mesh asset");
     {

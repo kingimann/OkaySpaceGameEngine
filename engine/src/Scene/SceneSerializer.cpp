@@ -981,6 +981,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Per-vertex colours (smooth painting): optional record, follows the geometry so the count lines up.
+        if (mr->mesh.HasVertexColors() && !generated) {
+            out << "  meshvcolors " << mr->mesh.vertexColors.size();
+            for (const Color& c : mr->mesh.vertexColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
         // Hidden faces (Hide / Isolate in edit mode): kept with the mesh so a saved scene still has them to reveal.
         if (mr->mesh.HasHidden() && mr->mesh.HiddenConsistent() && !generated) {
             const int hn = mr->mesh.HiddenTriangleCount();
@@ -4717,6 +4723,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sl = 0; in >> sl;
                         mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
                     }
+                } else if (field == "meshvcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int vc = 0; in >> vc;
+                    if (!in || vc < 0 || !countOk(vc, 4)) return bad("meshvcolors: bad count");
+                    mr->mesh.vertexColors.clear();
+                    mr->mesh.vertexColors.reserve((std::size_t)vc);
+                    for (int i = 0; i < vc && in; ++i) { Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.vertexColors.push_back(c); }
                 } else if (field == "meshhidden") {
                     auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();

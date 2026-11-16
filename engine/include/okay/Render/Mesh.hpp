@@ -46,6 +46,9 @@ struct Mesh {
     std::vector<std::pair<int, int>> seams;  // UV seam edges (vertex index pairs): unwrapping
                                   // cuts the surface open along them. A pair that isn't an
                                   // edge of the mesh is ignored.
+    std::vector<Color> vertexColors; // optional per-vertex colours (parallel to vertices); the renderers blend them smoothly
+                                  // across each face and multiply them with the face colour and material colour.
+                                  // Ignored when its size doesn't match the vertex count.
     std::vector<int>  triSlot;    // optional per-triangle material slot (parallel to faces).
                                   // Ignored when its size doesn't match the triangle count.
     std::vector<Color> slotColors;// the colour of each material slot (slot i -> slotColors[i]).
@@ -65,6 +68,70 @@ struct Mesh {
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    bool HasVertexColors() const { return !vertexColors.empty() && vertexColors.size() == vertices.size(); }
+    /// Colour of corner vertex `v` (white without vertex colours).
+    Color VertexColorOf(int v) const {
+        return (HasVertexColors() && v >= 0 && v < (int)vertexColors.size()) ? vertexColors[v] : Color{1, 1, 1, 1};
+    }
+    /// Paint vertex colours: every vertex within `radius` of `centre` blends toward `c` by `strength` (0..1)
+    /// times a smooth falloff (1 at the centre, 0 at the edge; `hardness` 0..1 keeps the centre solid longer).
+    /// Creates the colour list (white) on first use. Returns how many vertices changed.
+    int PaintVertices(const Vec3& centre, float radius, const Color& c, float strength, float hardness = 0.0f) {
+        if (!(radius > 0.0f) || !std::isfinite(radius + centre.x + centre.y + centre.z) || !(strength > 0.0f) || vertices.empty()) return 0;
+        strength = std::min(strength, 1.0f); hardness = std::clamp(hardness, 0.0f, 0.99f);
+        if (!HasVertexColors()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        int n = 0;
+        const float r2 = radius * radius;
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const float d2 = (vertices[i] - centre).SqrMagnitude();
+            if (d2 > r2) continue;
+            float t = 1.0f - std::sqrt(d2) / radius;                       // 1 at the centre
+            t = hardness > 0.0f ? std::min(1.0f, t / (1.0f - hardness)) : t;
+            const float w = strength * t * t * (3.0f - 2.0f * t);          // smoothstep
+            Color& o = vertexColors[i];
+            o.r += (c.r - o.r) * w; o.g += (c.g - o.g) * w; o.b += (c.b - o.b) * w; o.a += (c.a - o.a) * w;
+            ++n;
+        }
+        return n;
+    }
+    /// After a tool added vertices (extrude, inset ...) the colour list is shorter than the vertex list: pad it with white so the
+    /// paint is not thrown away. A list that is LONGER (vertices were removed or renumbered) cannot be matched up and is dropped.
+    /// Returns true if the list was changed.
+    bool SyncVertexColors() {
+        if (vertexColors.empty() || vertexColors.size() == vertices.size()) return false;
+        if (vertexColors.size() < vertices.size()) vertexColors.resize(vertices.size(), Color{1, 1, 1, 1});
+        else vertexColors.clear();
+        return true;
+    }
+    /// Set the given vertices to exactly `c`. Returns how many were set.
+    int FillVertexColors(const std::vector<int>& verts, const Color& c) {
+        if (vertices.empty()) return 0;
+        if (!HasVertexColors()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        int n = 0;
+        for (int v : verts) if (v >= 0 && v < (int)vertices.size()) { vertexColors[v] = c; ++n; }
+        return n;
+    }
+    /// Blend every vertex colour toward the average of the vertices it shares a triangle with, `passes` times.
+    void SmoothVertexColors(int passes = 1) {
+        if (!HasVertexColors()) return;
+        for (int p = 0; p < std::clamp(passes, 0, 20); ++p) {
+            std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0}); std::vector<float> asum(vertices.size(), 0.0f); std::vector<int> cnt(vertices.size(), 0);
+            for (int t = 0; t < TriangleCount(); ++t) {
+                const int a = triangles[t * 3], b = triangles[t * 3 + 1], c = triangles[t * 3 + 2];
+                if (a < 0 || b < 0 || c < 0 || a >= (int)vertices.size() || b >= (int)vertices.size() || c >= (int)vertices.size()) continue;
+                const int idx[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) for (int j = 0; j < 3; ++j) if (j != k) {
+                    const Color& o = vertexColors[idx[j]];
+                    sum[idx[k]] += Vec3{o.r, o.g, o.b}; asum[idx[k]] += o.a; ++cnt[idx[k]];
+                }
+            }
+            for (std::size_t i = 0; i < vertices.size(); ++i) if (cnt[i]) {
+                Color& o = vertexColors[i];
+                o.r = (o.r + sum[i].x / (float)cnt[i]) * 0.5f; o.g = (o.g + sum[i].y / (float)cnt[i]) * 0.5f;
+                o.b = (o.b + sum[i].z / (float)cnt[i]) * 0.5f; o.a = (o.a + asum[i] / (float)cnt[i]) * 0.5f;
+            }
+        }
+    }
     int HiddenTriangleCount() const { return (int)(hiddenPos.size() / 3); }
     bool HasHidden() const { return !hiddenPos.empty(); }
     /// True when the hidden lists are consistent with each other (a damaged file could break that).
@@ -149,6 +216,7 @@ struct Mesh {
         if (!uvv && !uvs.empty()) uvs.clear();
         const bool padUV = uvv;                               // new vertices need a UV entry too
         const bool padNrm = HasNormals();
+        const bool padVC = HasVertexColors();
         const int firstNew = TriangleCount();
         std::map<int, int> polyMap;                            // hidden polygon id -> id in this mesh
         const bool anyHiddenPoly = std::any_of(hiddenPoly.begin(), hiddenPoly.end(), [](int p) { return p >= 0; });
@@ -162,6 +230,7 @@ struct Mesh {
                     vertices.push_back(p);
                     if (padUV) uvs.push_back(hasHidUV ? hiddenUV[t * 3 + k] : Vec2{0, 0});
                     if (padNrm) normals.push_back(Vec3{0, 1, 0});
+                    if (padVC) vertexColors.push_back(Color{1, 1, 1, 1});
                     at.emplace(key(p), v);
                 } else v = it->second;
                 triangles.push_back(v);
@@ -266,6 +335,7 @@ struct Mesh {
                 m.vertices.push_back(vertices[v]);
                 m.uvs.push_back(t);
                 if (nrm) m.normals.push_back(normals[v]);
+                if (HasVertexColors()) m.vertexColors.push_back(vertexColors[v]);
             }
             m.triangles[i] = it->second;
         }
@@ -2003,9 +2073,16 @@ public:
             const int need = slotOffset + std::max(1, other.SlotCount());
             while ((int)tbl.size() < need) tbl.push_back(Color{1, 1, 1, 1});
         }
+        std::vector<Color> vc;
+        if (HasVertexColors() || other.HasVertexColors()) {
+            vc = HasVertexColors() ? vertexColors : std::vector<Color>(vertices.size(), Color{1, 1, 1, 1});
+            if (other.HasVertexColors()) vc.insert(vc.end(), other.vertexColors.begin(), other.vertexColors.end());
+            else vc.insert(vc.end(), other.vertices.size(), Color{1, 1, 1, 1});
+        }
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
         for (int t : other.triangles) triangles.push_back(t + base);
+        vertexColors = std::move(vc);
         triColors = std::move(col);
         triSlot = std::move(slot);
         slotColors = std::move(tbl);
@@ -2113,6 +2190,7 @@ public:
     /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
     /// soften a blocky shape. The sphere radius is the average vertex distance.
     void Spherify(float amount = 1.0f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
@@ -2139,6 +2217,7 @@ public:
     /// `degreesPerUnit` × (its distance along the axis from the mesh centre) — the
     /// classic "wring the model" deformer. axis: 0 = X, 1 = Y, 2 = Z.
     void Twist(float degreesPerUnit, int axis = 1) {
+        if (!std::isfinite(degreesPerUnit)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float mid = ((&lo.x)[axis] + (&hi.x)[axis]) * 0.5f;
@@ -2160,6 +2239,7 @@ public:
     /// bottom (min of `axis`) to `endScale` at the top — turn a cylinder into a cone
     /// or a box into a frustum/wedge. axis: 0 = X, 1 = Y, 2 = Z.
     void Taper(int axis = 1, float endScale = 0.5f) {
+        if (!std::isfinite(endScale)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], range = a1 - a0;
@@ -2180,6 +2260,7 @@ public:
     /// `degrees` total over its length along `axis` (0 = X, 1 = Y, 2 = Z). The bend
     /// happens in the plane of `axis` and the next axis. 0 leaves it straight.
     void Bend(float degrees, int axis = 0) {
+        if (!std::isfinite(degrees)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2 || std::fabs(degrees) < 1e-4f) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], len = a1 - a0;
@@ -2205,6 +2286,7 @@ public:
     /// the (smooth) vertex normals by `thickness`, and flip it so the shell reads
     /// solid from both sides — turn a plane/curved sheet into a slab/bowl wall.
     void Solidify(float thickness = 0.1f) {
+        if (!std::isfinite(thickness)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || triangles.empty()) return;
         Mesh src = *this;
         if (!src.HasNormals()) src.ComputeSmoothNormals();
@@ -2291,7 +2373,8 @@ public:
         // texture coordinates (previously the stale uvs array was silently dropped,
         // un-texturing the mesh). The kept vertex's UV wins at a merged seam.
         const bool hadUV = uvs.size() == vertices.size();
-        std::vector<Vec2> uniqueUV;
+        const bool hadVC = HasVertexColors();
+        std::vector<Vec2> uniqueUV; std::vector<Color> uniqueVC;
         if (!(epsilon > 0.0f)) epsilon = 0.0f;   // negative or NaN distance: merge exact repeats only
         float e2 = epsilon * epsilon;
         // A grid of cells as wide as the distance finds the near vertices without comparing
@@ -2317,6 +2400,7 @@ public:
                 found = (int)unique.size(); unique.push_back(vertices[i]);
                 grid[c].push_back(found);
                 if (hadUV) uniqueUV.push_back(uvs[i]);
+                if (hadVC) uniqueVC.push_back(vertexColors[i]);
             }
             remap[i] = found;
         }
@@ -2352,6 +2436,7 @@ public:
         vertices = std::move(unique);
         triangles = std::move(tris);
         if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();
+        if (hadVC) vertexColors = std::move(uniqueVC); else vertexColors.clear();
         if (hadFC) triColors = std::move(fc); else triColors.clear();
         if (hadPF) polyFace = std::move(pf); else polyFace.clear();
         if (hadSlots) triSlot = std::move(sl); else triSlot.clear();
@@ -2493,6 +2578,7 @@ public:
     /// from (negative) the average of its edge-connected neighbours. Coincident
     /// vertices are treated as one so seams between welded parts/faces round too.
     void Smooth(float amount = 0.5f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (amount == 0.0f || vertices.empty()) return;
         const std::size_t n = vertices.size();
         // Group coincident vertices (cube faces, joined parts) so smoothing
@@ -2578,6 +2664,7 @@ public:
     /// of its distance to the nearest selected vertex — Blender's proportional
     /// editing. radius <= 0 behaves exactly like MoveVertices.
     void MoveVerticesSoft(const std::vector<int>& verts, const Vec3& delta, float radius) {
+        if (!std::isfinite(radius + delta.x + delta.y + delta.z)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (radius <= 1e-6f) { MoveVertices(verts, delta); return; }
         std::vector<Vec3> anchors;
         anchors.reserve(verts.size());
@@ -2603,6 +2690,7 @@ public:
     /// Laplacian-relax ONLY the listed vertices (the rest stay put) — evens out
     /// a lumpy patch without melting the whole mesh like Smooth() would.
     void SmoothVertices(const std::vector<int>& verts, float amount = 0.5f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (verts.empty() || amount == 0.0f || vertices.empty()) return;
         std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0});
         std::vector<int>  cnt(vertices.size(), 0);
@@ -2693,6 +2781,7 @@ public:
                     nv = (int)out.vertices.size(); remap[v] = nv;
                     out.vertices.push_back(vertices[v]);
                     if (hadUV) out.uvs.push_back(uvs[v]);
+                    if (HasVertexColors()) out.vertexColors.push_back(vertexColors[v]);
                 } else nv = it->second;
                 out.triangles.push_back(nv);
             }
@@ -2864,6 +2953,7 @@ public:
     /// editable centre point); positive spikes it, negative dimples it. Blender's
     /// Poke Faces. Face colors of the poked triangle carry to its three children.
     void PokeFaces(const std::vector<int>& faces, float height = 0.0f) {
+        if (!std::isfinite(height)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (faces.empty()) return;
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
@@ -3449,6 +3539,8 @@ public:
     /// bark). `frequency` sets the noise scale, `seed` picks the pattern; both are
     /// deterministic. Subdivide first for finer detail.
     void Displace(float amount, float frequency = 1.0f, int seed = 0) {
+        if (!std::isfinite(amount + frequency)) return;   // a NaN or infinite amount would turn every vertex into NaN
+        amount = std::clamp(amount, -1e6f, 1e6f); frequency = std::clamp(frequency, -1e4f, 1e4f);   // (and absurd ones overflow the noise)
         if (vertices.empty()) return;
         ComputeSmoothNormals();
         Vec3 ctr{0, 0, 0};
@@ -3489,6 +3581,7 @@ public:
     /// Stretch/squash along one axis (0=X,1=Y,2=Z) about the mesh centre. factor > 1
     /// stretches, < 1 squashes, < 0 mirrors. A cheap Simple-Deform stretch.
     void Stretch(int axis, float factor) {
+        if (!std::isfinite(factor)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         float c = 0.0f;
         for (const Vec3& v : vertices) c += (&v.x)[axis];
@@ -4075,6 +4168,7 @@ public:
     /// Quantize vertices to a grid of `step` (empty `verts` = whole mesh) — clean
     /// up hand-moved points, make modular kit pieces line up exactly.
     void SnapToGrid(float step, const std::vector<int>& verts = {}) {
+        if (!std::isfinite(step)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (step <= 1e-6f || vertices.empty()) return;
         auto snap = [&](int v) {
             vertices[v] = {std::lround(vertices[v].x / step) * step,
@@ -4151,6 +4245,7 @@ public:
     /// along every edge that meets it and the opening is capped with a flat facet —
     /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.
     void BevelVertices(const std::vector<int>& sel, float amount) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (sel.empty() || amount <= 1e-6f || triangles.empty()) return;
         std::set<int> S;
         for (int v : sel) if (v >= 0 && v < (int)vertices.size()) S.insert(v);

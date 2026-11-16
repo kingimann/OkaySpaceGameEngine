@@ -1082,9 +1082,11 @@ static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
     return meshhash::Bytes(data, nbytes, seed);
 }
 static std::uint64_t MeshSampleHash(const Mesh& m) {
-    std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
-                             m.uvs.size(), m.triColors.size() };
+    std::size_t sizes[6] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size() };
     std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;     // a stroke of vertex paint shows at once
+      for (std::size_t i = 0; i < cn; i += cstep) h = FnvBytes(&m.vertexColors[i], sizeof(Color), h); }
     const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
     // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
     // and a scene can show hundreds of them every frame).
@@ -1102,6 +1104,7 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
     if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
     if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
     if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    if (!m.vertexColors.empty()) h = FnvBytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
     return h;
 }
 
@@ -1132,6 +1135,7 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
     const bool hasN = mesh.HasNormals();
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
     const bool faceCols = mesh.HasFaceColors();
+    const bool vcols = mesh.HasVertexColors();   // per-vertex colours blend smoothly across each face
     const int nv = (int)V.size();
     verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
     float* out = verts.data();
@@ -1165,6 +1169,7 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
             out[3] = nrm.x; out[4] = nrm.y; out[5] = nrm.z;
             out[6] = uu[k]; out[7] = vv[k];
             out[8] = cr;    out[9] = cg;    out[10] = cb2;
+            if (vcols) { const Color& vc = mesh.vertexColors[idx[k]]; out[8] *= vc.r; out[9] *= vc.g; out[10] *= vc.b; }
             out[11] = tan.x; out[12] = tan.y; out[13] = tan.z;
             out += 14;
         }

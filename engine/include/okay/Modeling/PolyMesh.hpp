@@ -45,6 +45,8 @@ public:
     /// Colour of each material slot (PolyFace::material indexes it). Empty = no slot table.
     /// Saved in the .okaymesh as "slot N r g b a" lines; older files simply have none.
     std::vector<Color> slotColors;
+    /// Colour per vertex (parallel to `verts`; may be shorter: missing ones are white). Saved as "vcolor i r g b a" lines.
+    std::vector<Color> vertColors;
     /// UV seams: edges (a < b) the unwrapper cuts the surface open along.
     std::vector<std::pair<int, int>> seams;
     bool IsSeam(int a, int b) const;

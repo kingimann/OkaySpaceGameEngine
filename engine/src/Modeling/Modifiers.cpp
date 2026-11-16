@@ -89,6 +89,7 @@ Mesh ArrayCopies(const Mesh& in, int count, const Vec3& step) {
         const int base = (int)out.vertices.size();
         for (const Vec3& v : in.vertices) out.vertices.push_back(v + step * (float)c);
         if (uv) out.uvs.insert(out.uvs.end(), in.uvs.begin(), in.uvs.end());
+        if (in.HasVertexColors()) out.vertexColors.insert(out.vertexColors.end(), in.vertexColors.begin(), in.vertexColors.end());
         if (nrm) out.normals.insert(out.normals.end(), in.normals.begin(), in.normals.end());
         for (int t : in.triangles) out.triangles.push_back(t + base);
         if (fc) out.triColors.insert(out.triColors.end(), in.triColors.begin(), in.triColors.end());
@@ -119,6 +120,7 @@ template <class Xf> Mesh CopiesWith(const Mesh& in, int count, Xf xf) {
         for (const Vec3& v : in.vertices) out.vertices.push_back(pos + rot * v);
         if (uv) out.uvs.insert(out.uvs.end(), in.uvs.begin(), in.uvs.end());
         if (nrm) for (const Vec3& n : in.normals) out.normals.push_back(rot * n);
+        if (in.HasVertexColors()) out.vertexColors.insert(out.vertexColors.end(), in.vertexColors.begin(), in.vertexColors.end());
         for (int t : in.triangles) out.triangles.push_back(t + base);
         if (fc) out.triColors.insert(out.triColors.end(), in.triColors.begin(), in.triColors.end());
         if (sl) out.triSlot.insert(out.triSlot.end(), in.triSlot.begin(), in.triSlot.end());
@@ -168,6 +170,7 @@ void HashMesh(std::uint64_t& h, const Mesh& m) {
     if (!m.polyFace.empty()) HashBytes(h, m.polyFace.data(), m.polyFace.size() * sizeof(int));
     if (!m.cornerUVs.empty()) HashBytes(h, m.cornerUVs.data(), m.cornerUVs.size() * sizeof(m.cornerUVs[0]));
     if (!m.triColors.empty()) HashBytes(h, m.triColors.data(), m.triColors.size() * sizeof(m.triColors[0]));
+    if (!m.vertexColors.empty()) HashBytes(h, m.vertexColors.data(), m.vertexColors.size() * sizeof(m.vertexColors[0]));
     if (!m.triSlot.empty()) HashBytes(h, m.triSlot.data(), m.triSlot.size() * sizeof(int));
     if (!m.slotColors.empty()) HashBytes(h, m.slotColors.data(), m.slotColors.size() * sizeof(m.slotColors[0]));
     std::size_t nn = m.normals.size(); HashBytes(h, &nn, sizeof nn);
@@ -179,6 +182,12 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                    Mesh& out, std::string* error) {
     using T = MeshModifier::Type;
     out = in;
+    // A setting that is NaN or infinite (a hand-edited scene can hold one) would turn the whole mesh into NaN.
+    {
+        float sum = mod.offset.x + mod.offset.y + mod.offset.z + mod.thickness + mod.width + mod.angle + mod.voxel + mod.cellSize + mod.strength + mod.frequency;
+        for (const Vec3& q : mod.path) sum += q.x + q.y + q.z;
+        if (!std::isfinite(sum)) { if (error) *error = "A setting is not a number"; return false; }
+    }
     if (in.vertices.empty() || in.triangles.empty()) return true;
     switch (mod.type) {
         case T::Mirror: {

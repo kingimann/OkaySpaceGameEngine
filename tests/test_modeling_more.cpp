@@ -719,5 +719,99 @@ int main() {
         CHECK_NEAR(MeasureMesh(m).volume, 1.5f, 1e-3);
         CHECK(m.Topology().Closed());
     }
+    RUN_SUITE("vertex colours");
+    {
+        Mesh m = Mesh::Sphere(1.0f, 12, 16);
+        CHECK(!m.HasVertexColors());
+        // A brush: full colour at the centre, nothing outside the radius, a smooth falloff between.
+        const Color red{1, 0, 0, 1};
+        int top = 0; for (int i = 0; i < (int)m.vertices.size(); ++i) if (m.vertices[i].y > m.vertices[top].y) top = i;
+        const int n = m.PaintVertices(m.vertices[top], 0.6f, red, 1.0f);
+        CHECK(n > 1 && m.HasVertexColors() && m.vertexColors.size() == m.vertices.size());
+        CHECK(m.vertexColors[top].r == 1 && m.vertexColors[top].g == 0 && m.vertexColors[top].b == 0);
+        int bottom = 0; for (int i = 0; i < (int)m.vertices.size(); ++i) if (m.vertices[i].y < m.vertices[bottom].y) bottom = i;
+        CHECK(m.vertexColors[bottom].g == 1 && m.vertexColors[bottom].r == 1);                       // untouched: white
+        bool mid = false;
+        for (int i = 0; i < (int)m.vertices.size(); ++i) {
+            const float d = (m.vertices[i] - m.vertices[top]).Magnitude();
+            if (d > 0.1f && d < 0.55f) { CHECK(m.vertexColors[i].g > 0.0f && m.vertexColors[i].g < 1.0f); mid = true; }   // in between
+            if (d >= 0.6f) CHECK(m.vertexColors[i].g == 1.0f);
+        }
+        CHECK(mid);
+        // Half strength blends halfway; a second stroke goes further. Bad input paints nothing.
+        Mesh h = Mesh::Cube(); h.PaintVertices(h.vertices[0], 5.0f, Color{0, 0, 0, 1}, 0.5f, 0.99f);
+        CHECK(h.vertexColors[0].r > 0.3f && h.vertexColors[0].r < 0.8f);
+        Mesh bad = Mesh::Cube();
+        CHECK(bad.PaintVertices({0, 0, 0}, 0.0f, red, 1) == 0 && bad.PaintVertices({0, 0, 0}, -1, red, 1) == 0 && bad.PaintVertices({0, 0, 0}, 1, red, 0) == 0 &&
+              bad.PaintVertices({std::nanf(""), 0, 0}, 1, red, 1) == 0 && !bad.HasVertexColors());
+        CHECK(Mesh{}.PaintVertices({0, 0, 0}, 1, red, 1) == 0);
+        // Fill, smooth, sync.
+        Mesh f = Mesh::Cube();
+        CHECK(f.FillVertexColors({0, 1, 99, -2}, Color{0, 1, 0, 1}) == 2 && f.vertexColors[0].g == 1 && f.vertexColors[0].r == 0 && f.vertexColors[5].r == 1);
+        f.SmoothVertexColors(3);
+        CHECK(f.vertexColors[0].r > 0.0f && f.vertexColors[0].r < 1.0f);                             // the green vertex lost some of its strength
+        Mesh sy = Mesh::Cube(); sy.FillVertexColors({0}, red);
+        sy.vertices.push_back(Vec3{9, 9, 9});                                                        // a tool added a vertex
+        CHECK(!sy.HasVertexColors() && sy.SyncVertexColors() && sy.HasVertexColors() && sy.vertexColors.back().g == 1 && sy.vertexColors[0].g == 0);
+        sy.vertices.pop_back(); sy.vertices.pop_back();                                              // vertices were removed: cannot match, dropped
+        CHECK(sy.SyncVertexColors() && sy.vertexColors.empty() && !sy.SyncVertexColors());
+        // They follow their vertices through Weld, Combine and SeparateFaces.
+        Mesh w = Mesh::Cube(); w.FillVertexColors({0}, red);
+        const Vec3 p0 = w.vertices[0];
+        w.vertices.push_back(p0); w.vertexColors.push_back(Color{1, 1, 1, 1}); w.triangles.insert(w.triangles.end(), {8, 1, 2});
+        w.WeldVertices();
+        CHECK(w.HasVertexColors() && w.vertexColors.size() == w.vertices.size() && w.vertexColors[0].g == 0);
+        Mesh c1 = Mesh::Cube(); c1.FillVertexColors({2}, red); Mesh c2 = Mesh::Cube();
+        c2.Combine(c1);
+        CHECK(c2.HasVertexColors() && c2.vertexColors.size() == 16 && c2.vertexColors[0].g == 1 && c2.vertexColors[8 + 2].g == 0);
+        Mesh sp = c1; Mesh piece = sp.SeparateFaces({0, 1});
+        CHECK(piece.HasVertexColors() && piece.vertexColors.size() == piece.vertices.size());
+        // Hide / reveal rebuilds vertices: still one colour per vertex.
+        Mesh hr = Mesh::Cube(); hr.FillVertexColors({0}, red); hr.HideTriangles({0, 1}); hr.RevealHidden();
+        CHECK(hr.vertexColors.size() == hr.vertices.size());
+        // Through the polygon mesh and the .okaymesh file; white vertices are not written; old files load with none.
+        Mesh pcm = Mesh::Cube(); pcm.FillVertexColors({0, 6}, Color{0.25f, 0.5f, 0.75f, 1});
+        PolyMesh pm = PolyMesh::FromMesh(pcm);
+        CHECK(pm.vertColors.size() == pm.verts.size());
+        const Mesh back = pm.ToMesh();
+        CHECK(back.HasVertexColors());
+        int tinted = 0; for (const Color& c : back.vertexColors) if (c.r == 0.25f && c.g == 0.5f && c.b == 0.75f) ++tinted;
+        CHECK(tinted == 2);
+        const std::string text = pm.Serialize();
+        int lines = 0; for (std::size_t at = 0; (at = text.find("vcolor ", at)) != std::string::npos; ++at) ++lines;
+        CHECK(lines == 2);
+        PolyMesh parsed; std::string err;
+        CHECK(PolyMesh::Parse(text, parsed, &err) && parsed.ToMesh().HasVertexColors());
+        PolyMesh plain = PolyMesh::FromMesh(Mesh::Cube());
+        CHECK(plain.Serialize().find("vcolor") == std::string::npos && !plain.ToMesh().HasVertexColors());
+        CHECK(!PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nvcolor 3 1 1 1 1\n", parsed, &err) && err.find("vcolor") != std::string::npos);
+        CHECK(!PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nvcolor 0 1 1\n", parsed, &err));
+        // Subdividing keeps the look: the new points between a red and a white vertex are in between, and the cube stays one colour per vertex.
+        PolyMesh cube = PolyMesh::FromMesh(Mesh::Cube());
+        cube.vertColors.assign(cube.verts.size(), Color{1, 1, 1, 1}); cube.vertColors[0] = red;
+        const PolyMesh cc = CatmullClark(cube, 1);
+        CHECK(cc.vertColors.size() == cc.verts.size());
+        bool pink = false; for (const Color& c : cc.vertColors) if (c.r == 1 && c.g > 0.3f && c.g < 0.9f) pink = true;
+        CHECK(pink);
+        // Splitting an edge blends; compacting unused vertices keeps each colour with its vertex.
+        PolyMesh se = PolyMesh::FromMesh(Mesh::Cube());
+        se.vertColors.assign(se.verts.size(), Color{0, 0, 0, 1}); se.vertColors[se.Edges()[0].b] = Color{1, 1, 1, 1};
+        const auto e0 = se.Edges()[0];
+        const int nv0 = SplitEdge(se, e0.a, e0.b, 0.5f);
+        CHECK(nv0 >= 0 && std::fabs(se.vertColors[nv0].r - 0.5f) < 1e-5f);
+        PolyMesh un = PolyMesh::FromMesh(Mesh::Cube());
+        un.vertColors.assign(un.verts.size(), Color{0, 0, 0, 1});
+        un.vertColors[7] = red; un.verts.push_back(Vec3{5, 5, 5}); un.vertColors.push_back(Color{0, 1, 0, 1});
+        const std::vector<int> remap = CompactVerts(un);
+        CHECK(un.vertColors.size() == un.verts.size() && un.vertColors[remap[7]].r == 1);
+        // Array and the modifier stack keep them too.
+        Mesh arr = Mesh::Cube(); arr.FillVertexColors({0}, red);
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Array); mod.count = 3; mod.relative = false; mod.offset = Vec3{3, 0, 0};
+        Mesh arrOut; std::string merr;
+        CHECK(ApplyModifier(arr, mod, ModifierContext(), arrOut, &merr) && arrOut.HasVertexColors() && arrOut.vertexColors.size() == arrOut.vertices.size());
+        // A stack's identity changes when only a colour changes (so it is rebuilt).
+        Mesh k1 = Mesh::Cube(), k2 = Mesh::Cube(); k1.FillVertexColors({0}, red); k2.FillVertexColors({0}, Color{0, 0, 1, 1});
+        CHECK(ModifierInputHash(k1, {}, ModifierContext()) != ModifierInputHash(k2, {}, ModifierContext()));
+    }
     TEST_MAIN_RESULT();
 }

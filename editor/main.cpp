@@ -3240,6 +3240,8 @@ float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
 bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
 bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
+float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
 int   g_selTool     = 0;              // 0 none, 1 box, 2 circle, 3 lasso (the active drag-select tool)
 float g_circleRadius = 40.0f;         // circle select radius in screen pixels (mouse wheel changes it)
@@ -29425,8 +29427,23 @@ void DrawModeling(EditorState& ed) {
                 ImGui::ColorEdit4("Color##paint", g_paintColor);
                 ImGui::DragFloat("Radius##paint", &g_paintRadius, 0.01f, 0.02f, 20.0f, "%.2f");
                 ImGui::DragFloat("Blend##paint", &g_paintBlend, 0.01f, 0.05f, 1.0f, "%.2f");
-                ImGui::TextDisabled("Drag over the mesh to color its faces.");
+                ImGui::Checkbox("Vertex colours (smooth)##paint", &g_paintVertex);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: the brush paints colours on the vertices, blended smoothly across each face (all four renderers).\nOff: it colours whole faces. Vertex and face colours multiply together.");
+                if (g_paintVertex) { ImGui::SetNextItemWidth(120); ImGui::DragFloat("Hardness##paint", &g_paintHardness, 0.01f, 0.0f, 0.95f, "%.2f"); }
+                ImGui::TextDisabled(g_paintVertex ? "Drag over the mesh to paint its vertices (radius, blend and hardness shape the brush)." : "Drag over the mesh to color its faces.");
             }
+            if (ToolButton("Fill Vertices##paint", !g_meshSelVerts.empty() || !g_meshSelFaces.empty(), "Select vertices (key 1) or faces (key 3) first.")) {
+                EditUndoPoint(ed, mr);
+                std::vector<int> vs = g_meshSelVerts;
+                for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.push_back(mr->mesh.triangles[t * 3 + k]);
+                mr->mesh.FillVertexColors(vs, {g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]});
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Set the selected vertices (or the corners of the selected faces) to exactly the brush colour.");
+            ImGui::SameLine();
+            if (ToolButton("Smooth Colours##paint", mr->mesh.HasVertexColors(), "There are no vertex colours yet.")) { EditUndoPoint(ed, mr); mr->mesh.SmoothVertexColors(2); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ToolButton("Clear Vertex Colours##paint", mr->mesh.HasVertexColors(), "There are no vertex colours yet.")) { EditUndoPoint(ed, mr); mr->mesh.vertexColors.clear(); ed.dirty = true; }
             if (ToolButton("Fill Sel##paint", !g_meshSelFaces.empty(), kNeedFaces)) {
                 EditUndoPoint(ed, mr);
                 mr->mesh.FillFacesColor(g_meshSelFaces,
@@ -45052,6 +45069,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         auto vWorld  = [&](int vi) { return M.MultiplyPoint(mesh.vertices[vi]); };
         auto vScreen = [&](int vi, ImVec2& out) { return toScreen(vp * Vec4{vWorld(vi), 1}, out); };
 
+        mesh.SyncVertexColors();   // tools that add vertices (extrude, inset) leave the paint list short: pad it
         // The vertices a transform should move: the selected verts, or (face mode)
         // the unique verts of the selected faces.
         std::set<int> affSet;
@@ -45144,9 +45162,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (bv >= 0 && best < 80.0f * 80.0f) {
                     Color pc{g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]};
                     Vec3 c = mesh.vertices[bv];
-                    mesh.PaintFaces(c, g_paintRadius, pc, g_paintBlend);
-                    if (g_meshSymX)
-                        mesh.PaintFaces(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend);
+                    if (g_paintVertex) {                          // smooth colours on the vertices
+                        mesh.PaintVertices(c, g_paintRadius, pc, g_paintBlend, g_paintHardness);
+                        if (g_meshSymX) mesh.PaintVertices(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend, g_paintHardness);
+                    } else {
+                        mesh.PaintFaces(c, g_paintRadius, pc, g_paintBlend);
+                        if (g_meshSymX)
+                            mesh.PaintFaces(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend);
+                    }
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved

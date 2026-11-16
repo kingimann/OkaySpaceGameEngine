@@ -62,6 +62,7 @@ std::uint64_t GeometryHash(const Mesh& mesh) {
     if (!mesh.uvs.empty()) mix(mesh.uvs.data(), mesh.uvs.size() * sizeof(Vec2));
     if (!mesh.triColors.empty()) mix(mesh.triColors.data(), mesh.triColors.size() * sizeof(Color));
     // Material slots only when there are some, so meshes without slots keep the hash they had.
+    if (!mesh.vertexColors.empty()) mix(mesh.vertexColors.data(), mesh.vertexColors.size() * sizeof(Color));
     if (!mesh.triSlot.empty()) mix(mesh.triSlot.data(), mesh.triSlot.size() * sizeof(int));
     if (!mesh.slotColors.empty()) mix(mesh.slotColors.data(), mesh.slotColors.size() * sizeof(Color));
     return h == 0 ? 1 : h;   // 0 means "not known" to callers

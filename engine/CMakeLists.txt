@@ -82,6 +82,8 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
     src/Net/CheatDetect.cpp
+    src/Net/AntiCheatLog.cpp
+    src/Net/CheatSim.cpp
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp

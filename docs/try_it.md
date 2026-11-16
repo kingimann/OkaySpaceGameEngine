@@ -84,6 +84,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
@@ -1387,6 +1388,36 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+
+## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
+
+What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
+network) and a fake "cheating" client, and the cheating client does eight things a modified game would do. You read what
+the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status table: `docs/anticheat_hardening_status.md`.
+
+**How to try it (Windows release).**
+
+1. Open a Command Prompt in the `Tools` folder of the release (next to `OkaySpacePlayer.exe`).
+2. Run: `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt`
+   (The Windows player has no console window, so the output goes to the file. It needs no game and no scene.)
+3. Wait about a minute. Open `cheat_sim.txt`. You should see eight blocks like
+   `[speed] the rogue moves 60 units a second where 8 is the limit` followed by `CAUGHT: ...` and
+   `the normal client next to it: untouched, still playing`.
+4. Near the end you should see the ban list (a line starting `a:2130706433`), the audit log (lines like
+   `2026-11-16T18:31:28Z ban who=3fa9c21b07 ...`; check that no name and no address appears in it) and the last line
+   `Result: 8 of 8 cheats caught, normal players left alone: YES. The server's anti-cheat works.`
+5. To run only some steps: `OkaySpacePlayer.exe --server --cheat-sim-only speed,flood --log cheat_sim.txt`, or set the
+   environment variable `OKAY_CHEAT_SIM=speed,flood` and run `OkaySpacePlayer.exe --server --log cheat_sim.txt`.
+6. The files the run wrote are in a new folder named in the first line of the log (`okay_cheatsim_...` in your temp folder).
+   `okay_bans.txt` is the ban list: delete a line to lift a ban. `okay_anticheat_audit.log` is the audit log.
+7. The same two files are kept by a real dedicated server that has the anti-cheat on
+   (`OkaySpacePlayer.exe --server --anticheat my_rules.okayac`): `okay_bans.txt` and `okay_anticheat_audit.log` appear in its
+   folder. `--no-ban-file` and `--no-audit-log` turn them off. A real cheater who gets kicked 3 times, or whose risk
+   score passes `detect.banAt`, is refused at the join with "banned from this server".
+
+**What is verified.** The test `anticheat_hard` runs the same code (all eight steps, the files, the no-personal-data check),
+on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
+detector instead of sending real input packets; the simulator's packets are not encrypted.
 
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 

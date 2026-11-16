@@ -1,5 +1,6 @@
 okayguided 1
 template door 1
+param detail 1
 param double 0
 param frameDepth 0.14999999999999999
 param frameWidth 0.080000000000000002

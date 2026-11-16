@@ -1,6 +1,7 @@
 okayguided 1
 template building 1
 param depth 7
+param detail 1
 param doorHeight 3.2000000000000002
 param doorOpen 0
 param doorWidth 2.3999999999999999

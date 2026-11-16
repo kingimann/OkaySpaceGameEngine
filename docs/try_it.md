@@ -69,6 +69,7 @@ release job or the installer build for this change.
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 
 ---
@@ -773,6 +774,34 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7zj. Guided vehicles, and the Detail level
+
+**What it is.** Vehicles on the Modeling window's **Guided** page, built on the same rules as 7zg and 7zi, plus one new setting on
+every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle count of each level next to it.
+
+**Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
+overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
+level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
+(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. The motorcycles are the roughest models.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_vehicles** (33 vehicles in rows: cars, trucks, buses, motorcycles, trailers; 16 m
+   apart). Click one in the Hierarchy, open Modeling > Guided.
+2. Change **Wheel radius**, **Wheelbase**, **Length**, **Cabin size**; under **Parts and materials** change **Wheels** to Eight spoke mesh,
+   **Headlights** to Twin lamps, **Bumpers** to Sport lip, **Spoiler** to Wing, **Roof fitting** to Light bar, **Exhaust** to Dual pipes.
+3. **Each part > Wheels**: give one wheel its own design (Select jumps to it in Edit Mesh).
+4. **Detail**: choose Low, then Ultra. The model rebuilds; the triangle count next to each level tells you the cost. High and Ultra are
+   smooth shaded. Your own additions stay; a part you edited by hand is asked about first.
+5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
+
+**Not done / unverified.** Wheel arches, doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
+Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
+The editor's Detail control and smooth shading were never seen in a window.
+
+---
 
 ## Switches that are off by default (own code)
 

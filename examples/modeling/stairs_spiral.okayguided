@@ -1,5 +1,6 @@
 okayguided 1
 template stairs 1
+param detail 1
 param gap 0.10000000000000001
 param postEvery 3
 param railHeight 0.90000000000000002

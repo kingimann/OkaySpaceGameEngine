@@ -5110,6 +5110,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - vegetation (29.2)
 - Vegetation painting (29.2)
 - vehicle (4.5)
+- Vehicle templates and Detail level (3.11.7)
 - VehicleController (4.5)
 - Vehicles (4.5)
 - VelocityChange (6.8)

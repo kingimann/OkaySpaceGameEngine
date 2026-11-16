@@ -1,6 +1,7 @@
 okayguided 1
 template roof 1
 param depth 6
+param detail 1
 param overhang 0.40000000000000002
 param pitch 15
 param thickness 0.20000000000000001

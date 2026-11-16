@@ -1,6 +1,7 @@
 okayguided 1
 template window 1
 param depth 0.12
+param detail 1
 param frameWidth 0.070000000000000007
 param height 1.3999999999999999
 param width 1.1000000000000001

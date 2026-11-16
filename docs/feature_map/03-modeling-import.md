@@ -242,14 +242,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.11.3 Fence template - `Modeling/GuidedFence` - 7 start designs, posts, caps, rails, pickets, bars, chain link, gate, path and ground slope, user parts as designs
   - 3.11.4 User parts and templates - `Modeling/Guided` - MakeUserPart / FitUserPart (`.okaypart`), UserTemplate (`.okaytemplate`), folder loaders
   - 3.11.6 Architecture templates - `Modeling/GuidedArchitecture` - Wall (path, openings), Stairs (straight, L, U, spiral), Door, Window, Roof, Building composed of swappable parts
+  - 3.11.7 Vehicle templates and Detail level - `Modeling/GuidedVehicles`, `Modeling/Guided` - Car, Truck, Bus, Motorcycle, Trailer with swappable wheels, lights, bumpers, mirrors, spoilers, exhausts; the shared Detail setting (Low to Ultra) and TriangleCount
   - 3.11.5 Guided page - `editor/GuidedPanel`, `editor/main.cpp` - categories, design browser with thumbnails, settings, parts list, decision window, undo and redo of guided steps
 - **Code:** `Modeling/Guided`, `Modeling/GuidedFence`, `editor/GuidedPanel`, `editor/main.cpp` (DrawModeling page 7)
 - **API:** `guided::Recipe`, `Template`, `Registry`, `Generate`, `Create`, `Analyze`, `Regenerate`, `DetachPart`, `ConvertToRegular`, `MakeUserPart`, `GuidedHistory`
 - **Editor:** Modeling window > Guided
 - **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg)
-- **Tests:** `guided_modeling`, `guided_architecture`
+- **Tests:** `guided_modeling`, `guided_architecture`, `guided_vehicles`, `guided_detail`
 - **Status:** Partial - the engine side (generation, rules, files) is tested headlessly; the editor page compiles but has not been opened in a real window or on Windows
-- **Open:** Architecture and the fence exist; vehicles, characters, environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)
+- **Open:** Architecture, vehicles and the fence exist (with a shared Detail level); characters, environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)
 - **Related:** 3.1, 3.5, 3.9
 - **Words:** guided, procedural, template, fence, parts, recipe, regenerate, picket, wrought iron, chain link, gate, user part, convert to regular mesh
 - **Seen as:** the Guided page asks what to do with parts you edited; a model made here still edits like any mesh; a fence changed height but one post did not

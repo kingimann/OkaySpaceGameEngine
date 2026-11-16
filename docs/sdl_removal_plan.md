@@ -94,7 +94,7 @@ The launcher logs which one draws once (`launcher: renderer ...`) and, with `own
   * `own` (`launcher/LauncherGfx.cpp`): the window is made by `okay::platform::Default()` (sdl2, or our X11 / Win32 backend with
     `OKAY_PLATFORM_BACKEND=own`), with an OpenGL context; it draws with **our OpenGL painter** (`engine/src/Platform/GlPainter.cpp`, OpenGL 1.1
     vertex arrays, entry points from the backend, no GL link) or, when the window has no GL, the software painter (`okayui/soft`).
-    ImGui is drawn by **our own renderer** (`launcher/ImGuiOwnBackend.cpp`: `ImDrawData` to `Painter::Geometry` with each command's clip
+    ImGui is drawn by **our own renderer** (`launcher/ImGuiOwnBackend.cpp`, now `shared/ImGuiOwnRenderer.cpp`: `ImDrawData` to `Painter::Geometry` with each command's clip
     and texture; ImGui 1.92's texture requests served as painter textures) and fed by **our own platform glue** (mouse, buttons, wheel,
     keys through a table from our `Key` to `ImGuiKey`, text input on only while a text field wants it, focus, window size and
     framebuffer scale, clipboard, cursor shapes through the new `Backend::SetSystemCursor`). Written from `imgui.h` and our interfaces; not
@@ -372,12 +372,86 @@ prints `editor: platform ...` once at start (stderr and the Console).
   Nothing on Windows: the WGL context next to SDL's Direct3D 11 renderer is unrun. No multi-window panels on `own`. The default stays
   `sdl` until the owner approves (rule 17).
 
+### Stage E2: the editor's drawing behind a seam, our own renderer as an opt-in (branch `claude2/sdl-editor-gfx`, on top of E1)
+
+**Status (2026-11-16): built and tested on Linux under Xvfb, without the editor; off by default; not merged; never run in a real editor
+session; Windows not run.** `OKAY_EDITOR_RENDERER=own` switches it on, **and only together with `OKAY_EDITOR_PLATFORM=own`** (the platform
+seam then makes the main window with an OpenGL context). With the sdl platform, or with no variable, or `sdl`, the editor draws as before;
+asking for `own` without the own platform is logged and ignored. The editor prints `editor: renderer ...` once at start (stderr and the
+Console), next to the `editor: platform ...` line.
+
+**The 89 `SDL_Renderer` calls of `main.cpp`, grouped by what they do** (and the 5 calls of ImGui's `SDL_Renderer` backend). Counted with
+the inventory's scanner (calls only). "Left" are the calls still in `main.cpp` after E2.
+
+| group | before | left | where they went / why they are left |
+|---|---:|---:|---|
+| textures: create, update, destroy, size (thumbnails, icons, previews, the 3D views, the splash logo, a surface turned into a texture) | 27 | 6 | the seam (`EditorGfx::CreateTexture / UpdateTexture / DestroyTexture / QueryTexture`, from RGBA pixels). Left: the Direct3D 11 render-target texture (1) and the multi-window panels' own copies of ImGui's textures (5) |
+| blend and sampling modes of textures | 16 | 4 | folded into the texture description (`TexDesc`: blended or not, linear or nearest, streaming); one sprite filter switch is `SetTextureLinear`. Left: the same two places (2 + 2) |
+| render targets | 3 | 3 | left: the Direct3D 11 "draw the views straight into SDL's texture" path (Windows, sdl only) |
+| read-back (screenshots: `OKAY_UI_SHOT`, the diagnostics shot) | 4 | 0 | `EditorGfx::ReadPixels` |
+| the frame: make the renderer, vsync, output size, scale, clear, present | 24 | 7 | the seam (`CreateEditorGfxFromEnv`, `SetVSync`, `OutputSize`, `BeginFrame`, `Present`). Left: the multi-window panels' own renderers (7) |
+| direct drawing (draw colour, a point, flush, clip, raw geometry) | 9 | 9 | left: the Direct3D 11 path's render-target probe (6) and the multi-window panels' draw-data replay (3) |
+| the Direct3D 11 device behind the renderer | 1 | 1 | left; now only asked when there is an `SDL_Renderer` (on `own` the Direct3D 11 views use their own device and read back) |
+| the renderer driver hint (`SDL_HINT_RENDER_DRIVER`) and the renderer's name (`SDL_GetRendererInfo`) | 5 | 0 | the seam's sdl side (`EditorGfxSdl.cpp`), `EditorGfx::DriverName` |
+| **all** | **89** | **30** | |
+| Dear ImGui's `SDL_Renderer` backend (`ImGui_ImplSDLRenderer2_*`) | 5 | 0 | `EditorGfx::InitImGui / ShutdownImGui / NewFrame / RenderImGui / UpdateImGuiTexture` |
+
+So what is left in `main.cpp` is exactly two blocks, both used only on the sdl renderer: the multi-window panels (`OkayVp*`, around line
+47870; they are off with the own platform anyway) and the Direct3D 11 zero-copy views (Windows; `g_d3dDirect` is never set on `own`).
+
+* **The seam** (`editor/EditorGfx.hpp`, no SDL types; modelled on the launcher's `LauncherGfx`): the painter that draws the main window
+  (an `okay::platform::Painter`), textures from RGBA pixels, the frame (scale and clear, present, vsync, output size, read-back) and Dear
+  ImGui's renderer side (init, new frame, draw, one texture request, shut-down). Every texture a panel shows is now an
+  `okay::ui2d::Tex` of that painter (ImGui's `ImTextureID`): `GetThumb`, the Project panel's pictures, primitive and prefab thumbnails,
+  the sprite editor, the TTF atlas of the UI preview, the first-person hands preview, the Scene / Game / Camera / Animation views.
+  * `sdl` (`editor/EditorGfxSdl.cpp`): `SDL_Renderer` made exactly as `main.cpp` made it (the Direct3D 11 hint on Windows unless
+    `OKAY_RENDER_DRIVER`, the fallbacks), okay::platform's sdl2 painter over it (each painter call is the SDL call `main.cpp` made:
+    `SDL_CreateTexture` in ABGR8888, `SDL_UpdateTexture`, the blend and scale modes, `SDL_RenderClear`, `SDL_RenderReadPixels`, ...),
+    and ImGui's `SDL_Renderer` backend.
+  * `own` (`editor/EditorGfx.cpp`): **our OpenGL painter** (`engine/src/Platform/GlPainter.cpp`) on the main window's own GL context and
+    **our own ImGui renderer**, moved from `launcher/ImGuiOwnBackend.cpp` to `shared/ImGuiOwnRenderer.*` so the launcher and the editor
+    share one copy (the launcher keeps its names). No `SDL_Renderer`, no ImGui `SDL_Renderer` backend. OkayUI (the Test UI overlay and
+    a playing game's `ui_*` widgets) is drawn on the painter through OkayUI's render interface, as the launcher does.
+* **The 3D views keep the copy.** They still render in their own hidden GL context (E1's `BeginViewportGL` / `EndViewportGL`), read back
+  to RGBA and upload into a painter texture. Sharing the GL texture directly would need the two contexts to share objects (made with
+  sharing on, on every backend), which is a bigger change; it was measured instead. Under Xvfb with Mesa's software GL (llvmpipe), at
+  1920 x 1080: read back about 1.6 to 1.7 ms, upload into the UI texture about 0.7 to 0.8 ms (medians of 15), the same on both sides (upload: sdl
+  0.78 ms, own 0.71 ms). That is a CPU-only GL, so it says nothing about a real GPU; on Windows the Direct3D 11 views (sdl only) avoid the copy.
+* **Other files:** `UIPreviewPainter` (the UI preview's TTF atlas and texture sizes) and `FpHandsWindow` (the hands preview) use the
+  painter (`EditorPainter()`) instead of `SDL_Renderer`; `GetThumb`, `GetSceneThumb` and the item icons return painter textures.
+  `EditorPlatform::CreateMainWindow` takes an `opengl` flag and `MainWindowBackend()` names the backend that made the window.
+* **Tests** (2026-11-16, Xvfb, Mesa llvmpipe). `editor_gfx` and `editor_gfx_own` (`tests/test_editor_gfx.cpp`, which links only the
+  two seams, the shared ImGui code, ImGui, okay::platform, the engine library for the GL painter, and SDL, not the editor):
+  * the switch: the values, `own` only with the own platform (all six combinations through `CreateEditorGfxFromEnv`, with the log line);
+  * the same editor-like frame through each side, each on its own platform seam: the views' hidden GL context draws a picture into a
+    framebuffer object and reads it back each frame, then the UI's context is current again and it goes into a streaming, linear texture;
+    a thumbnail (nearest, blended), a texture with blending off, a texture destroyed and made again at a new size, their sizes; ImGui
+    shapes with alpha, a clip rectangle, text (ImGui's font atlas through the renderer's texture requests) and the four textures as images;
+    then scale and clear, ImGui, read-back, present. **Checked at 14 known pixels on each side (exact colours), and sdl against own pixel by
+    pixel: identical** (0 of 76,800 pixels differ). `_own` runs it with the views' GL window and context from our own X11 / GLX code.
+  * A deliberate break (the views' context not handed back after use) makes every pixel check on the own side fail.
+  * 166 checks each.
+  * `editor_platform`, `editor_platform_own` still pass. The launcher after the renderer moved: `launcher_imgui_renderer`,
+    `launcher_imgui_renderer_gl`, `okayui_host`, every `platform*` suite pass; `scripts/launcher_renderer_check.sh` gives the same numbers as
+    before (the Create page differs from sdl by 4,154 pixels, the footer label; the small window and the chat window are identical; clicks,
+    typing and the IME caret reach ImGui) and `scripts/launcher_no_sdl_check.sh` passes (no SDL call with own + own).
+  * `editor/main.cpp` passes a syntax-only compile with Linux g++ and with MinGW (the MinGW check found one Windows-only line, fixed); the changed editor files compile; the new and changed files
+    pass a MinGW syntax check (with Linux SDL headers: there is no MinGW SDL here).
+* **Counts.** `editor/main.cpp` 154 to 89 SDL calls (379 to 229 words); its `SDL_Renderer` calls 89 to 30 and ImGui's
+  `SDL_Renderer` backend 5 to 0. The whole `editor/` directory 220 to 161 calls (550 to 386 words): the seam's sdl side
+  (`EditorGfxSdl.cpp`, 16 calls) is SDL on purpose and goes when SDL goes.
+* **Not done / unverified.** No real editor session: the editor is too big to build on this machine's memory, so nothing here has drawn a
+  real editor frame with `own` (only the syntax check and the test program). Nothing on Windows: our GL painter on a Windows editor window,
+  WGL next to it, and the read-back views instead of the Direct3D 11 zero-copy ones are unrun. On `own` there are no multi-window panels
+  and no Direct3D 11 zero-copy views. The main window is still an SDL window (`main.cpp` reads SDL's events: stage E3). The default stays
+  `sdl` until the owner approves (rule 17).
+
 ### What comes next for the editor
 
-* **E2. Drawing without `SDL_Renderer`.** The editor's ImGui draws through our renderer (`launcher/ImGuiOwnBackend.cpp`) on a painter,
-  and the 10 places that make `SDL_Texture`s (views, thumbnails, icons, previews) make painter textures instead. Then the main window
-  can come from `okay::platform` (our GL painter on our window) and its events from `Backend::PollEvent`. The Direct3D 11 "draw the views
-  into SDL's device" path needs its own answer (our Direct3D 11 painter, or read-back on Windows too). Large.
+* **E2 (the rest). Drawing without `SDL_Renderer` everywhere.** Stage E2 above did the frame, ImGui and every texture from pixels. Left:
+  the Direct3D 11 "draw the views into SDL's device" path (our own Direct3D 11 painter, or read-back on Windows too; on `own` it is
+  read-back today), and the multi-window panels' own renderers (with E4). Then the main window can come from `okay::platform` directly
+  (our GL painter on our own window) once its events come from `Backend::PollEvent` (E3). Medium.
 * **E3. The event loop and input through the seam.** `main.cpp`'s shortcuts, play-mode keyboard (`EditorPlayInput.hpp`), relative
   mouse, warp, cursor show / hide, touch, drops and controller events read `okay::platform::Event` instead of `SDL_Event`. Medium.
 * **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`), then the rest (`SDL_Init` / `SDL_Quit`,

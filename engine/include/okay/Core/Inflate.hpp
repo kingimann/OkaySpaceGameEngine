@@ -283,7 +283,17 @@ inline void CopyMatchFast(uint8_t* d, size_t back, size_t length) {
         return;
     }
     if (back == 1) { std::memset(d, *s, length); return; }
-    for (size_t i = 0; i < length; ++i) d[i] = s[i];
+    // back 2 to 7: the match repeats its first `back` bytes. Each 8-byte step below reads from a distance that is a
+    // whole number of periods back and writes 8 bytes of which as many as the distance are final (read from bytes that are
+    // already final); the rest is scratch that the next step overwrites (or that lies past the end of the match).
+    // First steps of one period until `stride` bytes are final, then steps of `stride`, the most whole periods that
+    // fit in 8 bytes.
+    uint64_t w0; std::memcpy(&w0, s, 8); std::memcpy(d, &w0, 8);   // the first period (all of a match no longer than it)
+    if (length <= back) return;
+    const size_t stride = back * (8 / back);
+    size_t i = back;
+    for (; i < length && i < stride; i += back) { uint64_t w; std::memcpy(&w, d + i - back, 8); std::memcpy(d + i, &w, 8); }
+    for (; i < length; i += stride) { uint64_t w; std::memcpy(&w, d + i - stride, 8); std::memcpy(d + i, &w, 8); }
 }
 
 // Decodes the symbols of one Huffman-coded block until its end-of-block symbol.
@@ -297,13 +307,15 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
         // needs to grow: the same checks in the same order as the general path, without its refill and room tests.
         // The reader and output state live in locals here (stores into the output bytes could otherwise alias them)
         // and are written back before anything else looks at them.
+        // The output cap: the vector is never larger than `limit` (OutputT::Room), and here size <= outSafe =
+        // v.size() - 266, so a literal or a match of at most 258 bytes always ends below the cap: the general path's
+        // cap tests (output too large, stopAtMax reached) cannot fire on this path and are left out.
         if (br.len - br.pos >= 8 && out.v.size() - out.size >= 258 + 8) {
             const uint8_t* const src = br.src;
             const size_t inSafe = br.len - 8;
             size_t pos = br.pos; uint64_t buf = br.buf; int cnt = br.cnt;
             uint8_t* const o = out.v.data();
-            const size_t outSafe = out.v.size() - (258 + 8), limit = out.limit;
-            const bool stop = op.stopAtMax;
+            const size_t outSafe = out.v.size() - (258 + 8);
             const uint32_t litMask = lit.mask, distMask = dist.mask;
             size_t size = out.size;
             auto save = [&] { br.pos = pos; br.buf = buf; br.cnt = cnt; out.size = size; };
@@ -322,16 +334,9 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                     if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
                 }
                 if (sym < 256) {
-                    if (size >= limit) {
-                        save();
-                        if (stop) { out.capped = true; return true; }
-                        why = kTooBig; return false;
-                    }
                     o[size++] = uint8_t(sym);
-                    if (stop && size == limit) { save(); out.capped = true; return true; }
                     // Up to two more literals straight from the table while their bits are in the buffer (no refill
-                    // needed): each is what the loop's next turn would decode. Here size <= outSafe + 1 < v.size() <=
-                    // limit, so the limit and stop tests above cannot fire for them (the output never grows past the
+                    // needed): each is what the loop's next turn would decode (size stays below outSafe + 3, under the
                     // cap); the loop's own bounds are tested again at its top.
                     for (int extra = 0; extra < 2; ++extra) {
                         const uint16_t e2 = lit.quick[buf & litMask];
@@ -359,13 +364,8 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                 const size_t back = kSym.distBase[ds] + uint32_t(buf & ((uint64_t(1) << de) - 1));
                 buf >>= de; cnt -= de;
                 if (back > size) { save(); why = "back-reference starts before the output"; return false; }
-                if (length > limit - size) {
-                    if (!stop) { save(); why = kTooBig; return false; }
-                    length = limit - size;   // keep the part that fits, then stop
-                }
-                CopyMatchFast(o + size, back, length);
+                CopyMatchFast(o + size, back, length);   // (ends below the cap: see above)
                 size += length;
-                if (stop && size == limit) { save(); out.capped = true; return true; }
             }
             save();
             continue;   // near the end of the input or of the output buffer: the general path below

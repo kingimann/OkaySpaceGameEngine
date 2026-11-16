@@ -200,7 +200,14 @@ void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, f
 
 // The launcher's line icons (DrawNavIcon in launcher/main.cpp): 1.6 px strokes in a 15 px box.
 enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
+void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
+// Drawn once per icon and colour and copied after that (DrawList::Cached), as the medals.
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
+    struct Args { const UI::DrawList* d; int id; UI::Vec2 c; UI::Color32 col; } a{&d, id, c, col};
+    const unsigned long long key = (0x69636f6eull << 32) ^ ((unsigned long long)(unsigned)id << 40) ^ (unsigned long long)col;
+    d.Cached(key, c, [](void* u) { const Args& m = *(const Args*)u; DrawNavIconNow(*m.d, m.id, m.c, m.col); }, &a);
+}
+void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
     const float r = 7.5f, t = 1.6f;
     switch (id) {
     case kIcoTrophy:
@@ -267,7 +274,18 @@ void DrawStar(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
 }
 // The achievement medal: a soft halo, a hexagon shaded from 62% of the id's colour at the top to 30% at the bottom with an
 // outline in the colour, a trophy on it (as the launcher's DrawAchMedal).
+void DrawMedalNow(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha);
+// The medal is the same picture wherever it is, so it is drawn once per size, colour and alpha and copied after that
+// (DrawList::Cached): about a third of the page's drawing work.
 void DrawMedal(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 c; float r; const unsigned char* rgb; float alpha; } a{&dl, c, r, rgb, alpha};
+    unsigned long long key = 1469598103934665603ull;   // the medal's look: its radius, colour and alpha
+    auto mixIn = [&](unsigned v) { key = (key ^ v) * 1099511628211ull; };
+    unsigned rb, ab; std::memcpy(&rb, &r, 4); std::memcpy(&ab, &alpha, 4);
+    mixIn(0x6d65646cu); mixIn(rb); mixIn(ab); mixIn((unsigned)rgb[0] | ((unsigned)rgb[1] << 8) | ((unsigned)rgb[2] << 16));
+    dl.Cached(key, c, [](void* u) { const Args& m = *(const Args*)u; DrawMedalNow(*m.dl, m.c, m.r, m.rgb, m.alpha); }, &a);
+}
+void DrawMedalNow(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha) {
     const float s = r / 15.0f;
     dl.AddCircleFilled(c, r + 3.0f, Rgb(rgb[0], rgb[1], rgb[2], (int)(0.14f * alpha * 255.0f)), 32);
     UI::Vec2 hex[6], rim[6];
@@ -435,9 +453,18 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             float iy = rp.y + padY;
             dl.AddText(V(ix, iy), Col(th.text), FitTextWidth(d.title, inW).c_str());
             iy = NextY(iy, fs);
-            char overlay[64];
-            if (d.total > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
-            else std::snprintf(overlay, sizeof(overlay), "%s", HumanBytes(d.received).c_str());
+            // "12.0 MB / 48.0 MB", formatted again only when the numbers change (a few rows remembered).
+            struct Ov { long long rec = -2, tot = -2; char text[64] = ""; };
+            static Ov ovs[16]; static int ovNext = 0;
+            const char* overlay = nullptr;
+            for (const Ov& o : ovs) if (o.rec == d.received && o.tot == d.total) { overlay = o.text; break; }
+            if (!overlay) {
+                Ov& o = ovs[ovNext]; ovNext = (ovNext + 1) % 16;
+                o.rec = d.received; o.tot = d.total;
+                if (d.total > 0) std::snprintf(o.text, sizeof(o.text), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
+                else std::snprintf(o.text, sizeof(o.text), "%s", HumanBytes(d.received).c_str());
+                overlay = o.text;
+            }
             const float barW = std::max(40.0f, inW - 220.0f);
             LauncherProgressBar(dl, ix, iy, barW, 16.0f, DownloadFraction(d), overlay);
             const char* st = DownloadStatusText(d.status);

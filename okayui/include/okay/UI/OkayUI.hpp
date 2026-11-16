@@ -957,6 +957,15 @@ struct DrawList {
     void PathArcTo(Vec2 center, float radius, float a0, float a1, int segments = 0) const;
     void PathStroke(Color32 col, bool closed = false, float thickness = 1.0f) const;
     void PathFillConvex(Color32 col) const;
+    /// Geometry drawn once and copied after that (an icon or a badge drawn many times a frame, every frame). The first call
+    /// with `key` (and the same fraction of a pixel in `origin`) runs `draw(user)`, which draws with this list around `origin`,
+    /// and keeps the triangles it made; a later call copies them, moved to the new `origin` by whole pixels, so the pixels are
+    /// the same as drawing again (up to float rounding: a colour level here and there). The key must stand for everything
+    /// the drawing depends on except where it is (sizes, colours, shape). A drawing that changes the clip or the texture is
+    /// not kept (it simply runs every time). The kept shapes are forgotten when the look or the theme's anti-aliasing
+    /// changes, on ResetState, and when the store (128 shapes, 32768 vertices) is full.
+    using DrawFn = void (*)(void* user);
+    void Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const;
 };
 const DrawList& GetWindowDrawList();
 const DrawList& GetForegroundDrawList();

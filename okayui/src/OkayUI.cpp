@@ -2199,9 +2199,11 @@ Theme SlateTheme() {
     return t;
 }
 
+void geoClear();
 void UseLauncherLook(bool on) {
     static Theme classic;
     if (on == g_look) return;
+    geoClear();
     if (on) {
         classic = g_theme;
         g_theme = SlateTheme();
@@ -5811,6 +5813,60 @@ void DrawList::PathFillConvex(Color32 col) const {
     g_pathN = 0;
 }
 
+// ---- Cached geometry (DrawList::Cached) ----------------------------------------------------------------------------------
+// A fixed store (no allocation): entries point into one vertex pool and one index pool, filled in order; when either is full
+// the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex.
+namespace {
+struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; };
+constexpr int kGeoEntries = 128, kGeoVerts = 32768, kGeoIdx = 65536;
+GeoEntry   g_geo[kGeoEntries];
+int        g_ngeo = 0;
+SDL_Vertex g_geoV[kGeoVerts];
+int        g_geoI[kGeoIdx];
+int        g_geoNv = 0, g_geoNi = 0;
+bool       g_geoAA = false, g_geoLook = false;   // the state the store was filled under
+} // namespace
+void geoClear() { g_ngeo = 0; g_geoNv = g_geoNi = 0; }
+
+void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const {
+    if (!draw || !finite2(origin)) return;
+    ListScope s(overlay);
+    if (g_geoAA != aaOn() || g_geoLook != g_look) { geoClear(); g_geoAA = aaOn(); g_geoLook = g_look; }
+    // The origin in 1/64 pixels: its whole part moves the copy, its fraction is part of what was drawn.
+    const long long qx = (long long)std::floor((double)origin.x * 64.0 + 0.5), qy = (long long)std::floor((double)origin.y * 64.0 + 0.5);
+    const int fx = (int)(qx & 63), fy = (int)(qy & 63);
+    const long long bx = (qx - fx) / 64, by = (qy - fy) / 64;
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    for (int k = 0; k < g_ngeo; ++k) {
+        const GeoEntry& e = g_geo[k];
+        if (e.key != key || e.fx != fx || e.fy != fy || e.overlay != g_toOverlay) continue;
+        if (g_cullRow && !g_toOverlay) return;
+        if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
+        const float dx = (float)(bx - e.bx), dy = (float)(by - e.by);
+        const int base = nv;
+        for (int i = 0; i < e.nv; ++i) { SDL_Vertex v = g_geoV[e.v0 + i]; v.position.x += dx; v.position.y += dy; V[nv++] = v; }
+        for (int i = 0; i < e.ni; ++i) I[ni++] = base + g_geoI[e.i0 + i];
+        return;
+    }
+    // Not kept yet: draw it, then keep it if it is a plain run of triangles in the current state.
+    const int nv0 = nv, ni0 = ni, spans0 = g_nspans, ovSpans0 = g_novSpans, drop0 = g_dropped;
+    const bool cull = g_cullRow && !g_toOverlay;
+    const SDL_Texture* tex0 = g_curTex;
+    draw(user);
+    const int dv = nv - nv0, di = ni - ni0;
+    if (cull || dv <= 0 || di <= 0 || g_nspans != spans0 || g_novSpans != ovSpans0 || g_dropped != drop0 || g_curTex != tex0) return;
+    if (dv > kGeoVerts || di > kGeoIdx) return;
+    if (g_ngeo == kGeoEntries || g_geoNv + dv > kGeoVerts || g_geoNi + di > kGeoIdx) geoClear();
+    GeoEntry& e = g_geo[g_ngeo++];
+    e.key = key; e.fx = fx; e.fy = fy; e.bx = bx; e.by = by; e.overlay = g_toOverlay;
+    e.v0 = g_geoNv; e.nv = dv; e.i0 = g_geoNi; e.ni = di;
+    std::memcpy(&g_geoV[g_geoNv], &V[nv0], sizeof(SDL_Vertex) * (std::size_t)dv); g_geoNv += dv;
+    for (int i = 0; i < di; ++i) g_geoI[g_geoNi++] = I[ni0 + i] - nv0;
+}
+
 static const DrawList g_windowList = { false };
 static const DrawList g_foregroundList = { true };
 const DrawList& GetWindowDrawList() { return g_windowList; }
@@ -5908,6 +5964,7 @@ bool IsDisabled() { return g_disCount > 0; }
 
 void ResetState() {
     UseLauncherLook(false);
+    geoClear();
     g_theme = Theme();
     g_font = &kFontDefault;
     g_in = Input();

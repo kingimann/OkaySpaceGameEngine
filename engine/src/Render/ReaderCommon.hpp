@@ -158,7 +158,7 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
     // face normals and corner angle weights
     std::vector<std::uint8_t> keep(nt, 1);
     std::vector<Vec3> fn(nt);
-    std::vector<std::array<float, 3>> ang(nt);
+    std::vector<std::array<float, 3>> ang(haveN ? 0 : nt);   // corner angles weight the made normals: not needed with explicit ones
     for (std::size_t t = 0; t < nt; ++t) {
         const Vec3 a = s.pos[s.ci[t * 3]], b = s.pos[s.ci[t * 3 + 1]], c = s.pos[s.ci[t * 3 + 2]];
         const double ux = (double)b.x - a.x, uy = (double)b.y - a.y, uz = (double)b.z - a.z;
@@ -176,24 +176,26 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             d = std::max(-1.0, std::min(1.0, d));
             return (float)std::acos(d);
         };
-        ang[t] = {angle(a, b, c), angle(b, c, a), angle(c, a, b)};
+        if (!haveN) ang[t] = {angle(a, b, c), angle(b, c, a), angle(c, a, b)};
     }
-    // per-position incident corners (CSR)
+    // per-position incident corners (CSR); only the made normals need them
     const std::size_t np = s.pos.size();
-    std::vector<std::uint32_t> start(np + 1, 0), corner;
-    for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) ++start[s.ci[t * 3 + (std::size_t)k] + 1];
-    for (std::size_t i = 0; i < np; ++i) start[i + 1] += start[i];
-    corner.resize(start[np]);
-    {
+    std::vector<std::uint32_t> start(haveN ? 0 : np + 1, 0), corner;
+    if (!haveN) {
+        for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) ++start[s.ci[t * 3 + (std::size_t)k] + 1];
+        for (std::size_t i = 0; i < np; ++i) start[i + 1] += start[i];
+        corner.resize(start[np]);
+    }
+    if (!haveN) {
         std::vector<std::uint32_t> fill(start.begin(), start.end() - 1);
         for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) corner[fill[s.ci[t * 3 + (std::size_t)k]]++] = (std::uint32_t)(t * 3 + (std::size_t)k);
     }
     const double cosCrease = creaseDeg >= 179.9 ? -2.0 : std::cos(creaseDeg * 3.14159265358979323846 / 180.0);
     constexpr int kMaxClusters = 8;
-    std::vector<std::uint8_t> cluster(nt * 3, 0);
+    std::vector<std::uint8_t> cluster(haveN ? 0 : nt * 3, 0);
     // the clusters of one position are made one after the other, so they sit side by side in one array
     std::vector<Vec3> csum;                           // summed angle-weighted normals, one per cluster
-    std::vector<std::uint32_t> cbase(np, 0);          // first cluster of each position
+    std::vector<std::uint32_t> cbase(haveN ? 0 : np, 0);   // first cluster of each position
     if (!haveN) {
         csum.reserve(corner.size() / 2 + 8);
         Vec3 rep[kMaxClusters];

@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x ac ogre xgl irr nff ter q3d lws ogrebin zae xml; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x ac ogre xgl irr nff ter q3d lws ogrebin zae xml lxo; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf / blend rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -339,6 +339,8 @@ lwo	models/LWO/LWOB/sphere_with_mat_gloss_10pc.lwo	ok	area=63.5224	meshes=1	tris
 lwo	models/LWO/LWOB/sphere_with_mat_gloss_50pc.lwo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=266	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWS/simple_cube.lwo	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/invalid/empty.lwo	FAIL	LWO: the file is too short to be an LWO file
+lxo	models/LWO/LXOB_Modo/CrazyEngine.lxo	ok	area=313.5413	meshes=1	tris=2460	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.350,-1.920,-0.000,3.460,3.640,7.352	verts=3427	tex=0	nodes=2	uv=1	nrm=1
+lxo	models/LWO/LXOB_Modo/sphereWithVertMap.lxo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=1104	tex=0	nodes=2	uv=0	nrm=1
 b3d	models-nonbsd/B3D/dwarf2.b3d	ok	area=5863.1534	meshes=4	tris=1896	bones=46	skinned=4	clips=1	dur=15.083	mat=3	bbox=-25.672,0.029,-38.355,29.573,59.054,13.795	verts=1479	tex=3	nodes=47	uv=1	nrm=1
 b3d	models-nonbsd/B3D/turtle1.b3d	ok	area=1330.5760	meshes=9	tris=640	bones=24	skinned=9	clips=1	dur=6.250	mat=1	bbox=-12.579,0.187,-16.920,12.579,11.506,13.657	verts=445	tex=1	nodes=25	uv=1	nrm=1
 b3d	models/B3D/WusonBlitz.b3d	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=0	nodes=1	uv=1	nrm=1
@@ -457,7 +459,7 @@ ogrebin	models-nonbsd/Ogre/OgreSDK/ninja.mesh	ok	area=25219.6201	meshes=2	tris=1
 ogrebin	models-nonbsd/Ogre/OgreSDK/razor.mesh	ok	area=29764.2994	meshes=1	tris=468	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-86.484,-13.859,-76.180,74.155,28.651,76.513	verts=588	tex=1	nodes=1	uv=1	nrm=1
 zae	models/Collada/duck.zae	ok	area=7.0254	meshes=1	tris=4212	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.693,0.099,-0.613,0.962,1.640,0.539	verts=2399	tex=1	nodes=4	uv=1	nrm=1
 zae	models/Collada/duck_nomanifest.zae	ok	area=7.0254	meshes=1	tris=4212	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.693,0.099,-0.613,0.962,1.640,0.539	verts=2399	tex=1	nodes=4	uv=1	nrm=1
-zae	models/Collada/human.zae	ok	area=1.6204	meshes=2	tris=28796	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.526,0.001,-0.095,0.526,1.660,0.335	verts=15593	tex=0	nodes=3	uv=1	nrm=1
+zae	models/Collada/human.zae	ok	area=1.6204	meshes=2	tris=28796	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-0.526,0.001,-0.095,0.526,1.660,0.335	verts=15593	tex=1	nodes=3	uv=1	nrm=1
 xml	models/Collada/AsXML.xml	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=6	uv=0	nrm=1
 xml	models/IRRMesh/testFormatDetection.xml	ok	area=3300000.0625	meshes=5	tris=60	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-856.311,-268.159,-55.101,98.810,248.438,1227.141	verts=180	tex=5	nodes=1	uv=1	nrm=1
 xml	models/IRRMesh/testFormatDetection_UTF16LE.xml	ok	area=3300000.0625	meshes=5	tris=60	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-856.311,-268.159,-55.101,98.810,248.438,1227.141	verts=180	tex=5	nodes=1	uv=1	nrm=1

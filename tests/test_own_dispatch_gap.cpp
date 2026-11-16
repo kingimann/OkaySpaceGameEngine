@@ -1,13 +1,16 @@
-// The import seam routes the "Assimp gap" formats to THEIR readers: .mesh (slot 43, OGRE binary), .zae (slot 44) and .xml
-// (slot 45: an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element). Each fixture (built in memory,
+// The import seam routes the "Assimp gap" formats to THEIR readers: .mesh (slot 43, OGRE binary), .zae (slot 44), .xml
+// (slot 45: an Irrlicht scene or mesh, COLLADA, XGL or OGRE XML, told apart by the root element) and .lxo (slot 46, Modo, read by
+// the LWO reader; fixture in tests/lxo_fixture.hpp). Each fixture (built in memory,
 // tests/gap_fixtures.hpp, batchc_fixtures.hpp, batchd_fixtures.hpp) goes through ImportModelData with the own backends switched on;
 // the model must say backend "own" and equal what the format's own Read*File gives directly, so a wrong arm in the dispatch chain
-// fails here. Also checked: OKAY_OWN_OGREBIN / OKAY_OWN_ZAE / OKAY_OWN_XML and SetImportBackend switch a format on and off,
-// ImportableExtensions follows, the three are off by default, and .mesh.xml still goes to the OGRE XML reader (slot 23).
+// fails here. Also checked: OKAY_OWN_OGREBIN / OKAY_OWN_ZAE / OKAY_OWN_XML / OKAY_OWN_LXO and SetImportBackend switch a format on and off,
+// ImportableExtensions follows, the four are off by default, and .mesh.xml still goes to the OGRE XML reader (slot 23).
 #include "test_framework.hpp"
 #include "batchc_fixtures.hpp"
 #include "batchd_fixtures.hpp"
 #include "gap_fixtures.hpp"
+#include "lxo_fixture.hpp"
+#include "okay/Render/LwoReader.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <cstdlib>
@@ -40,6 +43,7 @@ static bool DZae(const std::string& p, ImportedModel& m, std::string* e) { retur
 static bool DDae(const std::string& p, ImportedModel& m, std::string* e) { return ReadColladaFile(p, m, e); }
 static bool DXgl(const std::string& p, ImportedModel& m, std::string* e) { return ReadXglFile(p, m, e); }
 static bool DOgreXml(const std::string& p, ImportedModel& m, std::string* e) { return ReadOgreXmlFile(p, m, e); }
+static bool DLwo(const std::string& p, ImportedModel& m, std::string* e) { return ReadLwoFile(p, m, e); }
 static bool DIrrMesh(const std::string& p, ImportedModel& m, std::string* e) { return ReadIrrMeshFile(p, m, e); }
 
 struct Case { const char* file; const char* ext; const char* env; std::string bytes; Direct direct; };
@@ -56,6 +60,7 @@ int main() {
         {"xgl.xml", ".xml", "OKAY_OWN_XML", fx::BuildXgl(), DXgl},
         {"ogre.xml", ".xml", "OKAY_OWN_XML", fx::BuildOgreXml(), DOgreXml},
         {"irrmesh.xml", ".xml", "OKAY_OWN_XML", fx::BuildIrrMesh(), DIrrMesh},
+        {"a.lxo", ".lxo", "OKAY_OWN_LXO", fx::lxo::BuildLxo(), DLwo},
     };
     for (const Case& c : cases) {
         const std::string path = (dir / c.file).string();
@@ -120,14 +125,17 @@ int main() {
         TestSetEnv("OKAY_OWN_XML", "0");
         TestSetEnv("OKAY_OWN_OGRE", "0");
         TestSetEnv("OKAY_OWN_COLLADA", "0");
+        TestSetEnv("OKAY_OWN_LXO", "1");
+        TestSetEnv("OKAY_OWN_LWO", "0");
+        CHECK(EffectiveImportBackend(".lxo") == ImportBackend::Own && EffectiveImportBackend(".lwo") != ImportBackend::Own);   // LXO has its own switch
         CHECK(EffectiveImportBackend(".zae") == ImportBackend::Own && EffectiveImportBackend(".ZAE") == ImportBackend::Own);
         CHECK(EffectiveImportBackend(".mesh") != ImportBackend::Own && EffectiveImportBackend(".xml") != ImportBackend::Own);
         CHECK(EffectiveImportBackend(".mesh.xml") != ImportBackend::Own && EffectiveImportBackend(".dae") != ImportBackend::Own);
-        for (const char* v : {"OKAY_OWN_ZAE", "OKAY_OWN_OGREBIN", "OKAY_OWN_XML", "OKAY_OWN_OGRE", "OKAY_OWN_COLLADA"}) TestUnsetEnv(v);
+        for (const char* v : {"OKAY_OWN_ZAE", "OKAY_OWN_OGREBIN", "OKAY_OWN_XML", "OKAY_OWN_OGRE", "OKAY_OWN_COLLADA", "OKAY_OWN_LXO", "OKAY_OWN_LWO"}) TestUnsetEnv(v);
     }
     {   // the samples shipped in examples/own_readers (scripts/gen_gap_fixtures.py): a unit cube each, 12 triangles, area 6
         SetImportBackend("*", ImportBackend::Own);
-        for (const char* f : {"cube.mesh", "cube.zae", "cube_irrmesh.xml"}) {
+        for (const char* f : {"cube.mesh", "cube.zae", "cube_irrmesh.xml", "cube.lxo"}) {
             ImportedModel m; std::string err;
             const bool ok = ImportModelData(std::string(OKAY_SOURCE_DIR) + "/examples/own_readers/" + f, m, ImportBackend::Own, false, &err);
             if (!ok) std::fprintf(stderr, "  %s: %s\n", f, err.c_str());

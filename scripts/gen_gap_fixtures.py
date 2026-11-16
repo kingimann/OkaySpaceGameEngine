@@ -5,9 +5,11 @@
                    12 triangles, material "Cube/White"; read by OKAY_OWN_OGREBIN=1
   cube.zae         a ZAE archive: manifest.xml naming cube.dae (COLLADA 1.4.1, the same cube, red); read by OKAY_OWN_ZAE=1
   cube_irrmesh.xml an Irrlicht mesh saved under .xml (the same cube); read by OKAY_OWN_XML=1
+  cube.lxo         a Modo object (FORM LXOB): the same cube as 8 points and 6 quads, material tag "Blue" whose material
+                   item is blue (0.2, 0.4, 0.9) with a 40 degree smoothing angle; read by OKAY_OWN_LXO=1
 
 Every byte is written here from the format descriptions (docs/own_ogre_reader.md, docs/own_zae_reader.md,
-docs/own_xml_reader.md); nothing is copied from any other project. Run from the repository root:
+docs/own_xml_reader.md, docs/own_lwo_reader.md); nothing is copied from any other project. Run from the repository root:
     python3 scripts/gen_gap_fixtures.py
 The output is deterministic (fixed zip timestamps), so running it again gives the same bytes.
 """
@@ -118,6 +120,54 @@ def irrmesh():
     return "\n".join(out)
 
 
+def lxo():
+    """FORM LXOB, big endian. Geometry chunks as in LWO2 (TAGS, LAYR, PNTS, POLS, PTAG MATR); the material is an
+    advancedMaterial item under a mask item that selects the polygon tag "Blue" (channel names in CHNM)."""
+    def be16(v): return struct.pack(">H", v)
+    def be32(v): return struct.pack(">I", v)
+    def f(v): return struct.pack(">f", v)
+    def s0(t):
+        b = t.encode() + b"\0"
+        return b + (b"\0" if len(b) & 1 else b"")
+    def chunk(i, body): return i + be32(len(body)) + body + (b"\0" if len(body) & 1 else b"")
+    def sub(i, body): return i + be16(len(body)) + body + (b"\0" if len(body) & 1 else b"")
+    chans = ["unknown", "diffAmt", "smooth", "smAngle"]
+    def chan(name, v): return sub(b"CHAN", be16(chans.index(name)) + be16(2) + f(v))
+    def item(typ, name, ident, subs): return chunk(b"ITEM", s0(typ) + s0(name) + be32(ident) + subs)
+    link = lambda parent: sub(b"LINK", s0("parent") + be32(parent) + be32(0))
+    pts = [(x, y, z) for z in (-.5, .5) for y in (-.5, .5) for x in (-.5, .5)]   # index = x + 2y + 4z (0/1 each)
+    def at(x, y, z): return x + 2 * y + 4 * z
+    # LightWave order: clockwise seen from outside (the reader flips z and the order; checked below by the signed volume)
+    quads = [
+        [at(0, 0, 0), at(0, 1, 0), at(1, 1, 0), at(1, 0, 0)],   # z = -0.5
+        [at(0, 0, 1), at(1, 0, 1), at(1, 1, 1), at(0, 1, 1)],   # z = +0.5
+        [at(0, 0, 0), at(0, 0, 1), at(0, 1, 1), at(0, 1, 0)],   # x = -0.5
+        [at(1, 0, 0), at(1, 1, 0), at(1, 1, 1), at(1, 0, 1)],   # x = +0.5
+        [at(0, 0, 0), at(1, 0, 0), at(1, 0, 1), at(0, 0, 1)],   # y = -0.5
+        [at(0, 1, 0), at(0, 1, 1), at(1, 1, 1), at(1, 1, 0)],   # y = +0.5
+    ]
+    # what the reader makes: z negated, corners reversed, fan triangles; the volume must come out positive (faces out)
+    vol = 0.0
+    for q in quads:
+        r = [(pts[i][0], pts[i][1], -pts[i][2]) for i in reversed(q)]
+        for k in (1, 2):
+            a, b, c = r[0], r[k], r[k + 1]
+            vol += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6
+    assert abs(vol - 1.0) < 1e-9, vol
+    body = chunk(b"VRSN", be32(2) + be32(1) + s0("gen_gap_fixtures.py"))
+    body += chunk(b"TAGS", s0("Blue"))
+    body += chunk(b"CHNM", be32(len(chans)) + b"".join(s0(c) for c in chans))
+    body += chunk(b"LAYR", be16(0) + be16(5) + f(0) + f(0) + f(0) + s0("") + be16(0xFFFF))
+    body += chunk(b"PNTS", b"".join(f(c) for p in pts for c in p))
+    body += chunk(b"POLS", b"FACE" + b"".join(be16(4) + b"".join(be16(i) for i in q) for q in quads))
+    body += chunk(b"PTAG", b"MATR" + b"".join(be16(i) + be16(0) for i in range(len(quads))))
+    body += item("mask", "", 1, link(3) + sub(b"CHNS", s0("ptag") + s0("Blue")) + sub(b"CHNS", s0("ptyp") + s0("Material")))
+    col = sub(b"CHNV", s0("diffCol") + be16(2) + be16(3) + s0("R") + f(0.2) + s0("G") + f(0.4) + s0("B") + f(0.9))
+    body += item("advancedMaterial", "", 2, link(1) + col + chan("diffAmt", 1.0) + chan("smooth", 1.0) + chan("smAngle", 0.6981317))
+    body += item("polyRender", "", 3, b"")
+    return b"FORM" + be32(len(body) + 4) + b"LXOB" + body
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "cube.mesh"), "wb") as f:
@@ -125,7 +175,9 @@ def main():
     zae()
     with open(os.path.join(OUT, "cube_irrmesh.xml"), "w", newline="\n") as f:
         f.write(irrmesh())
-    for n in ("cube.mesh", "cube.zae", "cube_irrmesh.xml"):
+    with open(os.path.join(OUT, "cube.lxo"), "wb") as f:
+        f.write(lxo())
+    for n in ("cube.mesh", "cube.zae", "cube_irrmesh.xml", "cube.lxo"):
         print(n, os.path.getsize(os.path.join(OUT, n)), "bytes")
 
 

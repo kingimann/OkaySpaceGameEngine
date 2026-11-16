@@ -5,7 +5,7 @@
 //
 // Build with -DOKAY_USE_ASSIMP=ON (without Assimp only our side is measured). Not run by ctest: it prints numbers.
 //
-// Run:  bench_model_readers [--runs N] [--format F] [--quiet] [--digest | --import-digest | --compare | --only WHAT]
+// Run:  bench_model_readers [--runs N] [--format F] [--quiet] [--digest | --import-digest | --compare | --dump | --only WHAT]
 //                           <file | directory> ...
 //       (a directory is searched recursively; with no file argument it reads $OKAY_MODEL_CORPUS)
 //   --format F   only the files of one reader: the extension without the dot (dae, 3ds, x, mesh, zae, xml, ...), "ogre" for .mesh.xml, and
@@ -31,6 +31,7 @@
 //                  guids, which are random, left out)
 // --compare        per file our reader's and Assimp's ImportedModel side by side (parts, triangles, vertices, nodes,
 //                  materials, clips, bones, bounding box in world space, missing node names), "DIFF" where they disagree
+// --dump           per file, our reader's and Assimp's result in words (nodes, materials, parts, notes)
 // --only WHAT      own-read | assimp-read | import-own | import-assimp: that call once per file (for a profiler)
 //
 // Written for this project (the counting allocator follows bench_fbx_reader, which is our own code).
@@ -314,7 +315,7 @@ std::string ShortName(const std::string& path) {
 
 int main(int argc, char** argv) {
     int runs = 7;
-    bool quiet = false, digest = false, importDigest = false, compare = false;
+    bool quiet = false, digest = false, importDigest = false, compare = false, dump = false;
     std::string only, onlyFormat;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i) {
@@ -325,6 +326,7 @@ int main(int argc, char** argv) {
         else if (a == "--digest") digest = true;
         else if (a == "--import-digest") importDigest = true;
         else if (a == "--compare") compare = true;
+        else if (a == "--dump") dump = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "-h" || a == "--help") {
             std::printf("bench_model_readers [--runs N] [--format F] [--quiet] [--digest|--import-digest|--compare|--only WHAT] <file|dir> ...\n");
@@ -373,6 +375,39 @@ int main(int argc, char** argv) {
             }
             Hasher h; h.Str(text);
             std::printf("%s %s %s %016llx\n", FormatOf(path).c_str(), ShortName(path).c_str(), ownOk ? (ok ? "ok" : "fail") : "own-refused", (unsigned long long)h.h);
+        }
+        return 0;
+    }
+    if (dump) {   // per file and per backend: nodes, materials and parts in words (to see what a --compare DIFF is)
+        for (const std::string& path : files) {
+            for (ImportBackend which : {ImportBackend::Own, ImportBackend::Assimp}) {
+                if (which == ImportBackend::Assimp && (!haveAssimp || ProbeAssimp(path) == 2)) continue;
+                ImportedModel m; std::string e;
+                const char* who = which == ImportBackend::Own ? "own" : "assimp";
+                if (!ReadWith(path, which, m, &e)) { std::printf("%s %s: error: %s\n", ShortName(path).c_str(), who, e.c_str()); continue; }
+                std::printf("%s %s: %zu node(s), %zu material(s), %zu part(s)\n", ShortName(path).c_str(), who, m.nodes.size(), m.materials.size(), m.parts.size());
+                for (std::size_t i = 0; i < m.nodes.size(); ++i) std::printf("  node %zu '%s' parent %d\n", i, m.nodes[i].name.c_str(), m.nodes[i].parent);
+                for (std::size_t i = 0; i < m.materials.size(); ++i) {
+                    const ImportedMaterial& t = m.materials[i];
+                    std::printf("  material %zu '%s' diffuse %s(%.3g %.3g %.3g %.3g) shininess %.3g texture '%s'\n", i, t.name.c_str(), t.hasDiffuse ? "" : "unset ",
+                                t.diffuse.r, t.diffuse.g, t.diffuse.b, t.diffuse.a, t.shininess, t.texture.c_str());
+                }
+                for (std::size_t i = 0; i < m.parts.size(); ++i) {
+                    const Mesh& me = m.parts[i].mesh;
+                    // how many triangles wind the way their vertex normals point (a flipped winding or normal shows as a low share)
+                    std::size_t agree = 0;
+                    if (me.HasNormals())
+                        for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) {
+                            const std::size_t a = (std::size_t)me.triangles[t], b = (std::size_t)me.triangles[t + 1], c = (std::size_t)me.triangles[t + 2];
+                            const Vec3 fn = Vec3::Cross(me.vertices[b] - me.vertices[a], me.vertices[c] - me.vertices[a]);
+                            const Vec3 vn = me.normals[a] + me.normals[b] + me.normals[c];
+                            if (fn.x * vn.x + fn.y * vn.y + fn.z * vn.z > 0) ++agree;
+                        }
+                    std::printf("  part %zu node %d material %d: %zu vertices, %zu triangles, normals %s (%zu triangles wind with them), uvs %s\n", i, m.parts[i].node,
+                                m.parts[i].material, me.vertices.size(), me.TriangleCount(), me.HasNormals() ? "yes" : "no", agree, me.uvs.empty() ? "no" : "yes");
+                }
+                for (const std::string& n : m.notes) std::printf("  note: %s\n", n.c_str());
+            }
         }
         return 0;
     }

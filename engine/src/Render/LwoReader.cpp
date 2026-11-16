@@ -1,5 +1,7 @@
-// Our own LightWave object reader (LWO2 and LWO1 / LWOB). Written from the public LWO2 / LWOB format description,
-// no code from any other importer. See docs/own_lwo_reader.md.
+// Our own LightWave object reader (LWO2 and LWO1 / LWOB) and Modo object reader (LXOB, .lxo). Written from the public
+// LWO2 / LWOB format description and the public description of Modo's LXO format (an IFF FORM of type LXOB whose
+// geometry chunks, TAGS / LAYR / PNTS / POLS / PTAG / VMAP / VMAD, are LWO2's), no code from any other importer.
+// See docs/own_lwo_reader.md.
 #include "FileOpen.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -50,6 +52,44 @@ struct Cur {   // a bounds-checked big-endian cursor over [p, e)
 };
 inline std::string Id4(const unsigned char* p) { return std::string((const char*)p, 4); }
 
+// A per-point vertex map (VMAP): the values as read, then (Index) one slot per point of the layer. When a point is
+// listed twice the later value wins, as it always has.
+template <class T> struct PointMap {
+    std::vector<std::pair<std::uint32_t, T>> raw;
+    std::vector<T> val; std::vector<std::uint8_t> has; bool indexed = false;
+    void Index(std::size_t points) {
+        if (indexed) return;
+        indexed = true;
+        val.assign(points, T{}); has.assign(points, 0);
+        for (const auto& e : raw) if (e.first < points) { val[e.first] = e.second; has[e.first] = 1; }
+        std::vector<std::pair<std::uint32_t, T>>().swap(raw);
+    }
+    const T* At(std::uint32_t pt) const { return pt < has.size() && has[pt] ? &val[pt] : nullptr; }
+};
+// A per-polygon-corner vertex map (VMAD): the values as read, then (Index) grouped by polygon in reading order, so a
+// corner is found among its polygon's few entries; the later of two entries for one corner wins.
+template <class T> struct CornerMap {
+    struct E { std::uint32_t pt, poly; T v; };
+    std::vector<E> raw, byPoly; std::vector<std::uint32_t> start; bool indexed = false;
+    void Index(std::size_t polys) {
+        if (indexed) return;
+        indexed = true;
+        start.assign(polys + 1, 0);
+        for (const E& e : raw) if (e.poly < polys) ++start[e.poly + 1];
+        for (std::size_t i = 0; i < polys; ++i) start[i + 1] += start[i];
+        byPoly.resize(start[polys]);
+        std::vector<std::uint32_t> fill(start.begin(), start.end() - 1);
+        for (const E& e : raw) if (e.poly < polys) byPoly[fill[e.poly]++] = e;
+        std::vector<E>().swap(raw);
+    }
+    const T* At(std::uint32_t pt, std::size_t poly) const {
+        if (poly + 1 >= start.size()) return nullptr;
+        const T* got = nullptr;
+        for (std::uint32_t i = start[poly]; i < start[poly + 1]; ++i) if (byPoly[i].pt == pt) got = &byPoly[i].v;
+        return got;
+    }
+};
+
 struct Surf {
     std::string name, texture, uvMap;
     float col[3] = {0.78f, 0.78f, 0.78f}, diffuse = 1.0f, lum = 0, spec = 0, gloss = -1, tran = 0, crease = 0;
@@ -63,8 +103,10 @@ struct Layer {
     std::vector<Vec3> pts;
     struct Poly { std::vector<std::uint32_t> v; int surf = -1; };
     std::vector<Poly> polys;
-    std::map<std::string, std::map<std::uint32_t, Vec2>> vmap;
-    std::map<std::string, std::map<std::uint64_t, Vec2>> vmad;   // key = point << 32 | polygon
+    std::map<std::string, PointMap<Vec2>> vmap;    // UV maps by name
+    std::map<std::string, CornerMap<Vec2>> vmad;
+    PointMap<Vec3> nrm;                            // LXO: the first NORM vertex map (per point)
+    CornerMap<Vec3> nrmd;                          // LXO: the same map's per-polygon values
 };
 
 // Projected texture coordinates for a surface whose image map is planar (0), cylindrical (1) or spherical (2) about its
@@ -206,9 +248,20 @@ struct Reader {
     std::map<std::uint32_t, std::string> clips;   // clip index -> file
     std::vector<std::string> lwobSurfNames;
     bool lwob = false;
-    std::string firstUvMap;
+    bool lxo = false;              // a Modo LXOB file: LWO2 geometry chunks, materials named by MATR polygon tags, no SURF chunks
+    // LXO shader tree, only what the materials need: the channel name table (CHNM) and, per material or mask item, its
+    // parent link and the few channels read
+    struct LxoItem {
+        std::string type; std::uint32_t id = 0, parent = 0xFFFFFFFFu;
+        std::string ptag, ptyp;                         // mask: the polygon tag it selects and the tag's type
+        float col[3] = {1, 1, 1}, diffAmt = 0.8f, tranAmt = 0, smooth = 1, smAngle = 0.6981317f;   // advancedMaterial (Modo's own defaults: white, 0.8, 40 degrees)
+        bool hasCol = false;
+    };
+    std::vector<std::string> chanNames;
+    std::vector<LxoItem> lxoMats, lxoMasks;
+    std::string firstUvMap, firstNormMap;
     std::size_t chunks = 0, totalPts = 0, totalPolys = 0, totalTris = 0, uvCount = 0;
-    int envelopes = 0, procBlocks = 0, nonUvProj = 0, projApplied = 0, hiddenLayers = 0, pivots = 0, curves = 0, patches = 0, smgp = 0, badPolys = 0, badIdx = 0, noSurf = 0, colorMaps = 0, otherVmaps = 0, detailPolys = 0, badUvs = 0, degenerate = 0, otherTex = 0, unknownChunks = 0, lwo3 = 0;
+    int envelopes = 0, procBlocks = 0, nonUvProj = 0, projApplied = 0, hiddenLayers = 0, pivots = 0, curves = 0, patches = 0, smgp = 0, badPolys = 0, badIdx = 0, noSurf = 0, colorMaps = 0, otherVmaps = 0, detailPolys = 0, badUvs = 0, degenerate = 0, otherTex = 0, unknownChunks = 0, lwo3 = 0, lxoItems = 0, lxoNormals = 0;
     std::set<std::string> unknown;
 
     bool Fail(const std::string& m) { if (err.empty()) err = "LWO: " + m; return false; }
@@ -304,6 +357,73 @@ struct Reader {
         return true;
     }
 
+    // LXO ITEM: S0 type, S0 name, U4 id, then sub-chunks (ID4, U2 length). Only "advancedMaterial" and "mask" items are
+    // read: LINK "parent" (S0 name, U4 item id, U4 position), CHAN (U2 channel number in CHNM, U2 type: 1 = I4, 2 = F4,
+    // 3 = S0, then the value), CHNV (S0 name, U2 type, U2 count, then per component S0 name and value) and CHNS (S0 name,
+    // S0 value). Every other item (mesh, camera, light, transforms ...) is counted and skipped.
+    bool LxoItemChunk(Cur c) {
+        LxoItem it;
+        it.type = c.S0(); c.S0(); it.id = c.U32();
+        if (c.bad) return true;
+        const bool mat = it.type == "advancedMaterial", mask = it.type == "mask";
+        if (!mat && !mask) { ++lxoItems; return true; }
+        if (lxoMats.size() + lxoMasks.size() >= kMaxSurfaces) return Fail("too many material items");
+        while (c.Left() >= 6 && !c.bad) {
+            const std::string sid = Id4(c.p); c.Skip(4);
+            const unsigned sl = c.U16();
+            if (c.Left() < sl) break;
+            Cur sc{c.p, c.p + sl};
+            c.Skip(std::min<std::size_t>(c.Left(), (std::size_t)sl + (sl & 1u)));
+            if (sid == "LINK") { if (sc.S0() == "parent" && sc.Left() >= 4) it.parent = sc.U32(); }
+            else if (sid == "CHNS") { const std::string nm = sc.S0(); const std::string v = sc.S0(); if (sc.bad) continue; if (nm == "ptag") it.ptag = v; else if (nm == "ptyp") it.ptyp = v; }
+            else if (sid == "CHAN" && mat) {
+                const unsigned ci = sc.U16(), ty = sc.U16();
+                if (sc.bad || ty != 2 || ci >= chanNames.size()) continue;
+                const float v = sc.F32();
+                if (sc.bad || !std::isfinite(v)) continue;
+                const std::string& nm = chanNames[ci];
+                if (nm == "diffAmt") it.diffAmt = v;
+                else if (nm == "tranAmt") it.tranAmt = v;
+                else if (nm == "smooth") it.smooth = v;
+                else if (nm == "smAngle") it.smAngle = v;
+            }
+            else if (sid == "CHNV" && mat) {
+                if (sc.S0() != "diffCol") continue;
+                const unsigned ty = sc.U16(), n = sc.U16();
+                if (sc.bad || ty != 2 || n < 3) continue;
+                float rgb[3];
+                bool ok = true;
+                for (int k = 0; k < 3; ++k) { sc.S0(); rgb[k] = sc.F32(); if (sc.bad || !std::isfinite(rgb[k])) ok = false; }
+                if (ok) { for (int k = 0; k < 3; ++k) it.col[k] = rgb[k]; it.hasCol = true; }
+            }
+        }
+        (mat ? lxoMats : lxoMasks).push_back(std::move(it));
+        return true;
+    }
+
+    // The LXO material of polygon tag `tag`: the advancedMaterial under a mask that selects this material tag, else the
+    // base material (one not under a mask). Copied onto a surface of the tag's name; the smoothing angle is the crease angle.
+    void LxoApplyMaterial(Surf& sf) const {
+        const LxoItem* use = nullptr;
+        for (const LxoItem& m : lxoMasks) {
+            if (m.ptag != sf.name || !(m.ptyp.empty() || m.ptyp == "Material")) continue;
+            for (const LxoItem& a : lxoMats) if (a.parent == m.id) { use = &a; break; }
+            if (use) break;
+        }
+        if (!use) {
+            for (const LxoItem& a : lxoMats) {
+                bool underMask = false;
+                for (const LxoItem& m : lxoMasks) if (a.parent == m.id) underMask = true;
+                if (!underMask) { use = &a; break; }
+            }
+        }
+        if (!use) return;   // no material item: the surface keeps the LWO defaults
+        for (int k = 0; k < 3; ++k) sf.col[k] = use->col[k];
+        sf.diffuse = use->diffAmt;
+        sf.tran = use->tranAmt;
+        sf.crease = use->smooth > 0 ? use->smAngle : 0.0f;
+    }
+
     bool Lwo2Chunks(const unsigned char* p, const unsigned char* e) {
         while ((std::size_t)(e - p) >= 8) {
             if (++chunks > kMaxChunks) return Fail("too many chunks");
@@ -319,10 +439,10 @@ struct Reader {
             if (id == "TAGS") { while (c.Left() > 0 && !c.bad) { std::string s = c.S0(); if (c.bad) break; tags.push_back(std::move(s)); if (tags.size() > 1000000) return Fail("too many tags"); } }
             else if (id == "LAYR") {
                 if (layers.size() >= kMaxLayers) return Fail("too many layers");
-                Layer l; l.number = (int)c.U16(); const unsigned flags = c.U16(); l.hidden = flags & 1;
+                Layer l; l.number = (int)c.U16(); const unsigned flags = c.U16(); l.hidden = !lxo && (flags & 1);   // LXO: bit 0 is not "hidden" (visibility is a channel of the mesh item; both corpus files set it)
                 for (int k = 0; k < 3; ++k) l.pivot[k] = c.F32();
                 l.name = c.S0();
-                if (c.Left() >= 2) l.parent = (int)c.U16();
+                if (c.Left() >= 2) l.parent = lxo ? c.I16() : (int)c.U16();   // LXO: a signed parent, -1 = none; refinement levels, scale pivot and item reference follow (not read)
                 if (l.name.empty()) l.name = "Layer" + std::to_string(layers.size() + 1);
                 if (l.pivot[0] != 0 || l.pivot[1] != 0 || l.pivot[2] != 0) ++pivots;
                 layers.push_back(std::move(l));
@@ -346,7 +466,7 @@ struct Reader {
                 const std::string type = c.Left() >= 4 ? Id4(c.p) : std::string();
                 c.Skip(4);
                 if (type == "SMGP") { ++smgp; continue; }
-                if (type != "SURF") continue;
+                if (type != (lxo ? "MATR" : "SURF")) continue;   // LXO polygons name their material through a MATR tag
                 while (c.Left() >= 3 && !c.bad) {
                     const std::uint32_t poly = c.VX();
                     const unsigned tag = c.U16();
@@ -361,14 +481,22 @@ struct Reader {
                 c.Skip(4);
                 const unsigned dim = c.U16();
                 const std::string name = c.S0();
+                if (lxo && type == "NORM" && dim == 3) {   // Modo's vertex normals (per point, and per polygon corner in VMAD); z negated like the points
+                    if (firstNormMap.empty()) firstNormMap = name;
+                    if (name != firstNormMap) { ++otherVmaps; continue; }
+                    ++lxoNormals;
+                    if (id == "VMAP") { while (c.Left() >= 14 && !c.bad) { const std::uint32_t pt = c.VX(); Vec3 n{c.F32(), c.F32(), c.F32()}; if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many vertex map values"); n.z = -n.z; L->nrm.raw.emplace_back(pt, n); } }
+                    else { while (c.Left() >= 16 && !c.bad) { const std::uint32_t pt = c.VX(); const std::uint32_t pl = c.VX(); Vec3 n{c.F32(), c.F32(), c.F32()}; if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many vertex map values"); n.z = -n.z; L->nrmd.raw.push_back({pt, pl, n}); } }
+                    continue;
+                }
                 if (type != "TXUV" || dim != 2) { ++otherVmaps; continue; }
                 if (firstUvMap.empty()) firstUvMap = name;
                 if (id == "VMAP") {
                     auto& m = L->vmap[name];
-                    while (c.Left() >= 10 && !c.bad) { const std::uint32_t pt = c.VX(); const float u = c.F32(), v = c.F32(); if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many UV values"); m[pt] = Vec2{u, v}; }
+                    while (c.Left() >= 10 && !c.bad) { const std::uint32_t pt = c.VX(); const float u = c.F32(), v = c.F32(); if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many UV values"); m.raw.emplace_back(pt, Vec2{u, v}); }
                 } else {
                     auto& m = L->vmad[name];
-                    while (c.Left() >= 10 && !c.bad) { const std::uint32_t pt = c.VX(); const std::uint32_t pl = c.VX(); const float u = c.F32(), v = c.F32(); if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many UV values"); m[(std::uint64_t)pt << 32 | pl] = Vec2{u, v}; }
+                    while (c.Left() >= 10 && !c.bad) { const std::uint32_t pt = c.VX(); const std::uint32_t pl = c.VX(); const float u = c.F32(), v = c.F32(); if (c.bad) break; if (++uvCount > kMaxUvs) return Fail("too many UV values"); m.raw.push_back({pt, pl, Vec2{u, v}}); }
                 }
             }
             else if (id == "SURF") { if (!Lwo2Surf(c)) return false; }
@@ -383,6 +511,14 @@ struct Reader {
             }
             else if (id == "ENVL") ++envelopes;
             else if (id == "BBOX" || id == "VMPA" || id == "DESC" || id == "TEXT" || id == "ICON" || id == "CMNT" || id == "TAGS") {}
+            else if (lxo && id == "CHNM") {   // U4 count, then that many S0 channel names (CHAN refers to them by position)
+                const std::uint32_t n = c.U32();
+                chanNames.clear();
+                while (c.Left() > 0 && !c.bad && chanNames.size() < std::min<std::uint32_t>(n, 100000u)) { std::string nm = c.S0(); if (c.bad) break; chanNames.push_back(std::move(nm)); }
+            }
+            else if (lxo && id == "ITEM") { if (!LxoItemChunk(c)) return false; }
+            else if (lxo && id == "ACTN") ++lxoItems;   // actions (animation and set-up channel values)
+            else if (lxo && (id == "VRSN" || id == "CHNM" || id == "APPV" || id == "UNIQ" || id == "UCPT" || id == "THUM")) {}   // version, channel names, identifiers, thumbnail: nothing for the mesh
             else { if (unknown.size() < 12) unknown.insert(id); ++unknownChunks; }
         }
         return true;
@@ -516,11 +652,16 @@ struct Reader {
             if (L.hidden) { ++hiddenLayers; continue; }
             if (L.polys.empty() || L.pts.empty()) continue;
             // one soup per surface
-            struct SurfSoup { rc::Soup soup; detail::WeldMap<1> pointOf; bool uv = false; };   // pointOf: layer point -> soup position
+            struct SurfSoup { rc::Soup soup; detail::WeldMap<1> pointOf; bool uv = false, allN = true; };   // pointOf: layer point -> soup position; allN: every corner has an LXO normal
             std::map<int, SurfSoup> soups;
             std::vector<Vec3> poly3;
             std::vector<std::array<int, 3>> tris;
             std::vector<std::uint32_t> pv;   // a polygon's corners, reversed (reused)
+            std::string curUvName; bool mapsSet = false;
+            const bool layerUv = !L.vmap.empty() || !L.vmad.empty();
+            PointMap<Vec2>* vm = nullptr;
+            CornerMap<Vec2>* vd = nullptr;
+            if (lxo) { L.nrm.Index(L.pts.size()); L.nrmd.Index(L.polys.size()); }
             for (std::size_t pi = 0; pi < L.polys.size(); ++pi) {
                 const Layer::Poly& P = L.polys[pi];
                 if (P.v.size() < 3) { ++badPolys; continue; }
@@ -540,13 +681,20 @@ struct Reader {
                 tris.clear();
                 detail::TriangulatePolygon(poly3, tris);
                 // UVs for this polygon's corners
-                const std::string uvName = si >= 0 && !surfs[(std::size_t)si].uvMap.empty() ? surfs[(std::size_t)si].uvMap : firstUvMap;
+                const std::string& uvName = si >= 0 && !surfs[(std::size_t)si].uvMap.empty() ? surfs[(std::size_t)si].uvMap : firstUvMap;
                 const bool wantUv = si >= 0 ? (surfs[(std::size_t)si].hasTexture ? !surfs[(std::size_t)si].projNotUv : true) : true;
-                auto vm = L.vmap.find(uvName);
-                auto vd = L.vmad.find(uvName);
+                if (!mapsSet || uvName != curUvName) {   // the maps of this polygon's UV name (most polygons share the one before's)
+                    curUvName = uvName; mapsSet = true;
+                    auto mi = L.vmap.find(uvName);
+                    auto di = L.vmad.find(uvName);
+                    vm = mi == L.vmap.end() ? nullptr : &mi->second;
+                    vd = di == L.vmad.end() ? nullptr : &di->second;
+                    if (vm) vm->Index(L.pts.size());
+                    if (vd) vd->Index(L.polys.size());
+                }
                 auto uvAt = [&](std::uint32_t pt, bool& have) {
-                    if (vd != L.vmad.end()) { auto it = vd->second.find((std::uint64_t)pt << 32 | pi); if (it != vd->second.end()) { have = true; return it->second; } }
-                    if (vm != L.vmap.end()) { auto it = vm->second.find(pt); if (it != vm->second.end()) { have = true; return it->second; } }
+                    if (vd) { if (const Vec2* q = vd->At(pt, pi)) { have = true; return *q; } }
+                    if (vm) { if (const Vec2* q = vm->At(pt)) { have = true; return *q; } }
                     have = false; return Vec2{0, 0};
                 };
                 for (const auto& t : tris) {
@@ -560,10 +708,18 @@ struct Reader {
                         ss.soup.ci.push_back(idx);
                         bool have = false;
                         Vec2 uv{0, 0};
-                        if (wantUv && (vm != L.vmap.end() || vd != L.vmad.end())) uv = uvAt(pt, have);
+                        if (wantUv && (vm || vd)) uv = uvAt(pt, have);
                         if (have) ss.uv = true;
                         const float u = std::isfinite(uv.x) ? std::max(-1e15f, std::min(1e15f, uv.x)) : 0.0f, vv = std::isfinite(uv.y) ? std::max(-1e15f, std::min(1e15f, uv.y)) : 0.0f;   // a UV that is not a number is 0
-                        ss.soup.cuv.push_back(Vec2{u, 1.0f - vv});
+                        if (layerUv) ss.soup.cuv.push_back(Vec2{u, 1.0f - vv});   // a layer without UV maps keeps none (they would be dropped below)
+                        if (lxo && ss.allN) {   // Modo's own normals: the corner's per-polygon value, else the point's
+                            const Vec3* n = nullptr;
+                            n = L.nrmd.At(pt, pi);
+                            if (!n) n = L.nrm.At(pt);
+                            const double len = n ? std::sqrt((double)n->x * n->x + (double)n->y * n->y + (double)n->z * n->z) : 0.0;
+                            if (n && std::isfinite(len) && len > 1e-12) ss.soup.cnrm.push_back(Vec3{(float)(n->x / len), (float)(n->y / len), (float)(n->z / len)});
+                            else { ss.allN = false; std::vector<Vec3>().swap(ss.soup.cnrm); }
+                        }
                     }
                 }
             }
@@ -573,6 +729,8 @@ struct Reader {
             std::vector<Layer::Poly>().swap(L.polys);
             L.vmap.clear();
             L.vmad.clear();
+            L.nrm = PointMap<Vec3>{};
+            L.nrmd = CornerMap<Vec3>{};
             // Planar, cylindrical and spherical image maps: UVs from the positions of this surface's mesh, in the layer's space,
             // placed on the mesh's own bounding box (ProjectUvs above; the map's TMAP centre, size and rotation are not read yet).
             for (auto& kv : soups) {
@@ -591,6 +749,7 @@ struct Reader {
                 SurfSoup& ss = kv.second;
                 if (ss.soup.ci.empty()) continue;
                 if (!ss.uv) ss.soup.cuv.clear();
+                if (!ss.allN) ss.soup.cnrm.clear();
                 ImportedPart part;
                 rc::BuildStats bs;
                 const double creaseDeg = kv.first >= 0 ? std::max(0.0, std::min(180.0, (double)surfs[(std::size_t)kv.first].crease * 180.0 / 3.14159265358979323846)) : 0.0;
@@ -625,13 +784,24 @@ struct Reader {
         if (total < 12) return Fail("the FORM chunk is shorter than its own header");   // chunks start at byte 12: a smaller end would make the chunk loop read past it
         if (form == "LWO2" || form == "LWO3") { if (form == "LWO3") lwo3 = 1; if (!Lwo2Chunks(d + 12, d + total)) return false; }
         else if (form == "LWOB") { lwob = true; if (!LwobChunks(d + 12, d + total)) return false; }
+        else if (form == "LXOB") {
+            lxo = true;
+            if (!Lwo2Chunks(d + 12, d + total)) return false;
+            // LXO has no SURF chunks: each material tag becomes a surface of that name, with the colour, diffuse amount,
+            // transparency and smoothing angle of its material item (LxoApplyMaterial)
+            std::set<std::string> have;
+            for (const Surf& sf : surfs) have.insert(sf.name);
+            for (const std::string& t : tags) if (have.insert(t).second) { if (surfs.size() >= kMaxSurfaces) return Fail("too many surfaces"); Surf sf; sf.name = t; LxoApplyMaterial(sf); surfs.push_back(std::move(sf)); }
+        }
         else if (form == "LWLO") return Fail("LWLO (layered LWO3 variant) files are not supported");
         else return Fail("not a supported LWO file (form type '" + form + "')");
         if (release) std::string().swap(*release);   // `bytes` and `d` are not used below
         if (layers.empty()) return Fail("the file has no points or polygons");
         if (!Build()) return false;
-        auto note = [&](const std::string& s) { model.notes.push_back("LWO: " + s); };
+        auto note = [&](const std::string& s) { model.notes.push_back((lxo ? "LXO: " : "LWO: ") + s); };
         if (lwo3) note("LWO3 file: read with the LWO2 chunk rules; LWO3-only chunks are skipped");
+        if (lxo) note("Modo LXO file: geometry, UV maps, vertex normals and materials (colour, diffuse amount, transparency, smoothing angle) read; textures, specular, reflection and other shader layers are not");
+        if (lxoItems) note(std::to_string(lxoItems) + " scene item or action chunk(s) (meshes' item settings, cameras, lights, transforms, render settings) not read");
         if (envelopes) note(std::to_string(envelopes) + " animated (envelope) surface value(s) not read; the base values are used");
         if (procBlocks) note(std::to_string(procBlocks) + " shader, procedural or gradient texture block(s) not read");
         if (otherTex) note(std::to_string(otherTex) + " texture block(s) for channels other than colour, or second colour maps, not read");

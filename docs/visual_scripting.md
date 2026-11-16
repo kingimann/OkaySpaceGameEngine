@@ -576,6 +576,22 @@ Graphs never freeze the game and never fail silently:
   are dropped with an error.
 - **Missing objects.** A Target or Destroy aimed at a destroyed or unknown
   object, or a Spawn whose prefab file is missing, is reported and skipped.
+- **Missing components.** An action that needs a component its object (or its
+  wired Target) does not have says so once per node, at the first try, and
+  then stays quiet: `'Cube' has no NavMeshAgent (add one in the Inspector)`.
+  This covers the engine-API nodes and the built-in actions: Add / Remove /
+  Equip Item (Inventory, Equipment), Craft Item (Crafting), Anim Trigger /
+  Set Float / Set Bool (AnimStateMachine), Nav Move To / Stop (NavMeshAgent),
+  Grid Move To / Stop (GridPathAgent2D), Set Blackboard (BehaviorTreeRunner),
+  Particle Play / Stop / Burst (ParticleSystem), IK Look / IK Hand
+  (FullBodyIK), Set Text (TextRenderer), Set Line Points (LineRenderer), Clear
+  Trail (TrailRenderer), Play Clip (Character or ModelAnimator), Revive
+  (HealthStat or AnimStateMachine), Start Dialogue (DialogueRunner) and Add
+  Explosion Force (Rigidbody2D). The Music nodes and Stop Sequence use the
+  scene's player, so they say `the scene has no MusicPlayer` (or
+  SequencePlayer) when there is none anywhere. Loot Roll and Play Sequence
+  need nothing: Loot Roll drops what does not fit next to the object, and Play
+  Sequence adds its own Sequence Player.
 
 While playing, the Visual Script editor outlines the node that failed in red
 and shows the message on the canvas. Each distinct error is logged once; the

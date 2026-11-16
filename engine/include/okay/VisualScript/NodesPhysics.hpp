@@ -256,6 +256,7 @@ struct AddExplosionForceNode : VsNode {
         float up = In(3, g, ctx, VsValue(0.0f)).AsFloat();
         if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
             rb->AddExplosionForce(force, {c.x, c.y}, radius, up);
+        else g.MissingComponent(this, ctx, ctx.gameObject, "Rigidbody2D");
         return 0;
     }
 };

@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -376,6 +377,12 @@ public:
     const std::string& LastError() const { return m_lastError; }
     /// Report a runtime problem at node `n` (logged once per distinct message).
     void Error(const VsNode* n, VsContext& ctx, const std::string& what) { ReportError(n, ctx, what); }
+    /// Report that an action node can't act because `go` lacks `component`:
+    /// "'Cube' has no NavMeshAgent (add one in the Inspector)". With `go` null the
+    /// whole scene lacks it ("the scene has no Music Player ..."). Logged once per
+    /// node, not every frame; later repeats only count up ErrorCount. Shared by the
+    /// engine-API nodes and the built-in action nodes, so the wording is the same.
+    void MissingComponent(const VsNode* n, VsContext& ctx, const GameObject* go, const std::string& component);
     int LastErrorNode() const { return m_lastErrorNode; }
     int ErrorCount() const { return m_errorCount; }
 
@@ -417,6 +424,7 @@ private:
     std::string m_lastError;
     int m_lastErrorNode = -1;
     int m_errorCount = 0;
+    std::unordered_set<const VsNode*> m_missingReported;   // nodes that already said what they lack
     void ReportError(const VsNode* n, VsContext& ctx, const std::string& what);
     // Target swapping: while a targeted node runs, ctx.gameObject/transform are
     // its target; the graph's own object is kept here so the node's other inputs

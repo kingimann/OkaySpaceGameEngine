@@ -798,6 +798,25 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: actions say which component is missing (branch `claude2/vs-missing-component-log`, not merged or released yet)
+
+Before this, 30 action nodes (Nav Move To, Add Item, Music Play, Anim Trigger, Particle Play, Set Text and others) did
+nothing at Play, with no Console line, when their object had no matching component.
+
+1. Open the editor and make a new 3D scene. Add a **Cube** (GameObject > 3D Object > Cube). Do not add a NavMeshAgent.
+2. Add a **Visual Script** to the cube and open it. Add **On Start**, then **Nav Move To**, and wire On Start's exec
+   out to Nav Move To.
+3. Press **Play** and open **View > Console**.
+4. You should see one error line: `Visual Script on 'Cube' at node 'NavMoveTo' (#2): 'Cube' has no NavMeshAgent (add
+   one in the Inspector)`. Put the same node under **On Update** instead: still only one line, not one per frame.
+5. Stop, add a **NavMeshAgent** to the cube and press Play again: the line is gone.
+6. Wire a **Target** into Nav Move To that names another object without an agent: the line names that object.
+
+Scene-wide nodes (Music Play / Stop / Pause / Resume / Next, Stop Sequence) say `the scene has no MusicPlayer` (or
+SequencePlayer) instead. The full list is in `docs/visual_scripting.md`, "When a graph goes wrong".
+
+**Status.** Tested headless (`test_vs_missing_component`, Linux). Not tried in the Windows editor yet.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -21,11 +21,13 @@ struct StartDialogueNode : VsNode {   // arg: object name / graph name (empty = 
     std::string name;
     explicit StartDialogueNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
         DialogueRunner* r = nullptr;
         if (name.empty() && ctx.gameObject) r = ctx.gameObject->GetComponent<DialogueRunner>();
         if (!r) r = DialogueRunner::FindByName(StorySceneOf(ctx), name);
         if (r) r->StartDialogue();
+        else if (name.empty() && ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "DialogueRunner");
+        else if (ctx.gameObject) g.MissingComponent(this, ctx, nullptr, "DialogueRunner named '" + name + "'");
         return 0;
     }
 };

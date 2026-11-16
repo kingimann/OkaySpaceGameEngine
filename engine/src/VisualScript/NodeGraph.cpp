@@ -222,6 +222,13 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
     }
 }
 
+void NodeGraph::MissingComponent(const VsNode* n, VsContext& ctx, const GameObject* go, const std::string& component) {
+    if (!m_missingReported.insert(n).second) { ++m_errorCount; return; }   // said once already
+    const std::string who = go ? "'" + go->name + "'" : std::string("the scene");
+    const std::string where = go ? " (add one in the Inspector)" : " (add one to any object in the Inspector)";
+    ReportError(n, ctx, who + " has no " + component + where);
+}
+
 void NodeGraph::CancelSuspended() {
     for (int id : m_suspended)
         if (VsNode* n = Node(id)) n->OnSuspendRejected();

@@ -31,6 +31,7 @@ struct InvAddNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         const int n = (int)In(0, g, ctx, 1.0f).AsFloat();
         Inventory* inv = VsInventory(ctx);
+        if (!inv && ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "Inventory");
         left = (float)(inv ? inv->AddPartial(ItemDatabase::Get().Resolve(item), n) : n);
         return 0;
     }
@@ -47,6 +48,7 @@ struct InvRemoveNode : VsNode {
         const int n = (int)In(0, g, ctx, 1.0f).AsFloat();
         const std::string id = ItemDatabase::Get().Resolve(item);
         Inventory* inv = VsInventory(ctx);
+        if (!inv && ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "Inventory");
         ok = inv && n > 0 && inv->Count(id) >= n && inv->Remove(id, n);
         return 0;
     }
@@ -83,6 +85,8 @@ struct InvEquipNode : VsNode {
         ok = false;
         Equipment* eq = Equipment::Of(ctx.gameObject);
         Inventory* inv = VsInventory(ctx);
+        if (ctx.gameObject && !eq) g.MissingComponent(this, ctx, ctx.gameObject, "Equipment");
+        else if (ctx.gameObject && !inv) g.MissingComponent(this, ctx, ctx.gameObject, "Inventory");
         const int slot = eq ? eq->Find(In(0, g, ctx).AsString()) : -1;
         const std::string id = ItemDatabase::Get().Resolve(item);
         if (!eq || !inv || slot < 0) return 0;
@@ -101,6 +105,7 @@ struct InvCraftNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return ok; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto* c = ctx.gameObject ? ctx.gameObject->GetComponent<Crafting>() : nullptr;
+        if (!c && ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "Crafting");
         ok = c && c->Craft(ItemDatabase::Get().Resolve(item), std::max(1, (int)In(0, g, ctx, 1.0f).AsFloat()));
         return 0;
     }

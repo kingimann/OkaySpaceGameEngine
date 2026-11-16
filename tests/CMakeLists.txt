@@ -1346,6 +1346,10 @@ add_executable(test_vs_inventory test_vs_inventory.cpp)
 target_link_libraries(test_vs_inventory PRIVATE okay::engine)
 target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
+# Visual Script action nodes name the component they are missing, once (#888 finding 34).
+add_executable(test_vs_missing_component test_vs_missing_component.cpp)
+target_link_libraries(test_vs_missing_component PRIVATE okay::engine)
+add_test(NAME vs_missing_component COMMAND test_vs_missing_component)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
 # it needs the Dear ImGui headers the editor header includes, nothing linked.

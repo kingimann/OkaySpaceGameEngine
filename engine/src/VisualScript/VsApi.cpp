@@ -222,7 +222,7 @@ private:
                 GameObject* go = ctx.gameObject;
                 if (!go) { g.Error(this, ctx, "there's no object for it to act on"); return Empty(); }
                 if (t.find && !t.find(go)) {
-                    g.Error(this, ctx, "'" + go->name + "' has no " + t.name + " (add one in the Inspector)");
+                    g.MissingComponent(this, ctx, go, t.name);
                     return Empty();
                 }
                 self = Value{script::ObjRef{go->InstanceId(), m_bind.typeIndex}};

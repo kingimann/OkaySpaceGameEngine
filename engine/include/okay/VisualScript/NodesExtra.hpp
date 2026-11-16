@@ -36,6 +36,7 @@
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
+#include "okay/Components/SurvivalComponents.hpp"   // HealthStat (Revive)
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Tween.hpp"
 #include "okay/Math/Easing.hpp"
@@ -315,8 +316,10 @@ struct SetTextNode : VsNode {   // in0 = text; the named (or in1-wired) object's
     explicit SetTextNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (GameObject* o = VsPinOrName(*this, 1, g, ctx, name))
+        if (GameObject* o = VsPinOrName(*this, 1, g, ctx, name)) {
             if (auto* t = o->GetComponent<TextRenderer>()) t->text = In(0, g, ctx).AsString();
+            else g.MissingComponent(this, ctx, o, "TextRenderer");
+        }
         return 0;
     }
 };
@@ -361,6 +364,8 @@ struct AnimParamNode : VsNode {   // Animator state machine on this object, a ch
             if (op == Op::Trigger) sm->SetTrigger(param);
             else if (op == Op::SetFloat) sm->SetFloat(param, In(0, g, ctx).AsFloat());
             else sm->SetBool(param, In(0, g, ctx).AsBool());
+        } else if (ctx.gameObject) {
+            g.MissingComponent(this, ctx, ctx.gameObject, "AnimStateMachine");
         }
         return 0;
     }
@@ -374,11 +379,11 @@ struct AnimStateNode : VsNode {   // current Animator state name
 struct IkLookNode : VsNode {   // in0 = Vec3 point (Full Body IK look-at), in1 = weight
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* f = ctx.gameObject->GetComponent<FullBodyIK>()) {
-                f->lookTarget = nullptr; f->lookPosition = In(0, g, ctx).AsVec3();
-                f->lookWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); f->lookEnabled = f->lookWeight > 0.0f;
-            }
+        if (!ctx.gameObject) return 0;
+        if (auto* f = ctx.gameObject->GetComponent<FullBodyIK>()) {
+            f->lookTarget = nullptr; f->lookPosition = In(0, g, ctx).AsVec3();
+            f->lookWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); f->lookEnabled = f->lookWeight > 0.0f;
+        } else g.MissingComponent(this, ctx, ctx.gameObject, "FullBodyIK");
         return 0;
     }
 };
@@ -393,8 +398,11 @@ struct PlaySequenceNode : VsNode {   // arg = the sequence (a Sequence Player's 
 };
 struct StopSequenceNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        if (!s) return 0;
+        if (s->FindObjectsOfType<SequencePlayer>().empty()) g.MissingComponent(this, ctx, nullptr, "SequencePlayer");
+        else SequencePlayer::StopAll(*s);
         return 0;
     }
 };
@@ -469,16 +477,19 @@ struct SetPostEffectNode : VsNode {   // arg = the setting's name (PostSet); in0
 struct NavMoveToNode : VsNode {   // in0 = Vec3 destination
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->SetDestination(In(0, g, ctx).AsVec3());
+        if (!ctx.gameObject) return 0;
+        if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->SetDestination(In(0, g, ctx).AsVec3());
+        else g.MissingComponent(this, ctx, ctx.gameObject, "NavMeshAgent");
         return 0;
     }
 };
 struct NavStopNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (ctx.gameObject)
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject) {
             if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->Stop();
+            else g.MissingComponent(this, ctx, ctx.gameObject, "NavMeshAgent");
+        }
         return 0;
     }
 };
@@ -492,17 +503,20 @@ struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was r
 struct GridMoveToNode : VsNode {   // in0 = world X, in1 = world Y
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* a = ctx.gameObject->GetComponent<GridPathAgent2D>())
-                a->SetDestination(In(0, g, ctx, VsValue{0.0f}).AsFloat(), In(1, g, ctx, VsValue{0.0f}).AsFloat());
+        if (!ctx.gameObject) return 0;
+        if (auto* a = ctx.gameObject->GetComponent<GridPathAgent2D>())
+            a->SetDestination(In(0, g, ctx, VsValue{0.0f}).AsFloat(), In(1, g, ctx, VsValue{0.0f}).AsFloat());
+        else g.MissingComponent(this, ctx, ctx.gameObject, "GridPathAgent2D");
         return 0;
     }
 };
 struct GridStopNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        if (ctx.gameObject)
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject) {
             if (auto* a = ctx.gameObject->GetComponent<GridPathAgent2D>()) a->Stop();
+            else g.MissingComponent(this, ctx, ctx.gameObject, "GridPathAgent2D");
+        }
         return 0;
     }
 };
@@ -518,8 +532,9 @@ struct BtSetNode : VsNode {   // arg = blackboard key; in0 = the value
     explicit BtSetNode(std::string k) : key(std::move(k)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>()) r->blackboard.Set(key, BtValue::FromVs(In(0, g, ctx)));
+        if (!ctx.gameObject) return 0;
+        if (auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>()) r->blackboard.Set(key, BtValue::FromVs(In(0, g, ctx)));
+        else g.MissingComponent(this, ctx, ctx.gameObject, "BehaviorTreeRunner");
         return 0;
     }
 };
@@ -569,30 +584,35 @@ struct SetLinePointsNode : VsNode {   // in0 = a list of points
             std::vector<Vec3> pts;
             if (auto list = In(0, g, ctx).AsArray()) for (const VsValue& p : *list) pts.push_back(p.AsVec3());
             lr->positions = std::move(pts);
+        } else if (ctx.gameObject) {
+            g.MissingComponent(this, ctx, ctx.gameObject, "LineRenderer");
         }
         return 0;
     }
 };
 struct ClearTrailNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* tr = ctx.gameObject ? ctx.gameObject->GetComponent<TrailRenderer>() : nullptr) tr->Clear();
+        else if (ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "TrailRenderer");
         return 0;
     }
 };
 // Music: the scene's Music Player (the first one found), like the music_* script calls.
-inline MusicPlayer* VsMusicPlayer(VsContext& ctx) {
+// With no Music Player anywhere in the scene the node says so (once) through `g`.
+inline MusicPlayer* VsMusicPlayer(VsNode* n, NodeGraph& g, VsContext& ctx) {
     Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
     if (!s) return nullptr;
     auto all = s->FindObjectsOfType<MusicPlayer>();
-    return all.empty() ? nullptr : all.front();
+    if (all.empty()) { g.MissingComponent(n, ctx, nullptr, "MusicPlayer"); return nullptr; }
+    return all.front();
 }
 struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = the current track, or the first)
     std::string track;
     explicit MusicPlayNode(std::string t) : track(std::move(t)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
-        MusicPlayer* m = VsMusicPlayer(ctx);
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        MusicPlayer* m = VsMusicPlayer(this, g, ctx);
         if (!m) return 0;
         const std::string file = VsBareAsset(track);
         if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
@@ -604,21 +624,21 @@ struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = t
 struct MusicStopNode : VsNode {   // in0 = fade seconds (unwired: 1)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Stop(In(0, g, ctx, VsValue{1.0f}).AsFloat());
+        if (MusicPlayer* m = VsMusicPlayer(this, g, ctx)) m->Stop(In(0, g, ctx, VsValue{1.0f}).AsFloat());
         return 0;
     }
 };
 struct MusicPauseNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Pause(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(this, g, ctx)) m->Pause(); return 0; }
 };
 struct MusicResumeNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Resume(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(this, g, ctx)) m->Resume(); return 0; }
 };
 struct MusicNextNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Next(); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(this, g, ctx)) m->Next(); return 0; }
 };
 // Camera: the scene's main camera.
 inline Camera* VsMainCamera(VsContext& ctx) {
@@ -655,15 +675,17 @@ struct CameraFollowNode : VsNode {   // in0 = object name, in1 = smoothing (unwi
 // Particles: the Particle System on this object (or the Target).
 struct ParticlePlayNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = true;
+        else if (ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "ParticleSystem");
         return 0;
     }
 };
 struct ParticleStopNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = false;
+        else if (ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "ParticleSystem");
         return 0;
     }
 };
@@ -672,6 +694,7 @@ struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
             ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
+        else if (ctx.gameObject) g.MissingComponent(this, ctx, ctx.gameObject, "ParticleSystem");
         return 0;
     }
 };
@@ -768,12 +791,12 @@ struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = we
     explicit IkHandNode(bool l) : left(l) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.gameObject)
-            if (auto* f = ctx.gameObject->GetComponent<FullBodyIK>()) {
-                auto& e = f->effectors[left ? FullBodyIK::LeftHand : FullBodyIK::RightHand];
-                e.target = nullptr; e.position = In(0, g, ctx).AsVec3();
-                e.positionWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); e.enabled = e.positionWeight > 0.0f;
-            }
+        if (!ctx.gameObject) return 0;
+        if (auto* f = ctx.gameObject->GetComponent<FullBodyIK>()) {
+            auto& e = f->effectors[left ? FullBodyIK::LeftHand : FullBodyIK::RightHand];
+            e.target = nullptr; e.position = In(0, g, ctx).AsVec3();
+            e.positionWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); e.enabled = e.positionWeight > 0.0f;
+        } else g.MissingComponent(this, ctx, ctx.gameObject, "FullBodyIK");
         return 0;
     }
 };
@@ -1008,7 +1031,9 @@ struct DodgeNode : VsNode {
 };
 struct ReviveNode : VsNode {
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject && !ctx.gameObject->GetComponent<HealthStat>() && !FindAnimComponent<AnimStateMachine>(ctx.gameObject))
+            g.MissingComponent(this, ctx, ctx.gameObject, "HealthStat or AnimStateMachine");
         HumanoidActions::RequestRevive(ctx.gameObject);
         return 0;
     }
@@ -1097,7 +1122,11 @@ struct PlayClipNode : VsNode {
     bool warned = false;   // "no animator" is logged once per node
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph&, VsContext& ctx) override {
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject && !FindAnimComponent<Character>(ctx.gameObject) && !FindAnimComponent<ModelAnimator>(ctx.gameObject)) {
+            g.MissingComponent(this, ctx, ctx.gameObject, "Character or ModelAnimator");
+            return 0;
+        }
         PlayClipFrom(ctx.gameObject, VsClipToken(clip), warned);
         return 0;
     }

@@ -462,6 +462,7 @@ void CheckGraphs(const Scene& scene, const ProjectDiagOptions& opt, std::vector<
         for (VisualScriptComponent* vs : go.GetComponents<VisualScriptComponent>()) {
             const std::string text = vs->Source();
             if (text.empty()) continue;
+            const std::string graphFile = vs->ResolvedPath();   // the file itself (Path() may be relative to the scene)
             const std::vector<vs::VsIssue> issues = vs::ValidateGraphText(text, opt.assetRoot);
             const std::vector<NodeRec> nodes = NodesIn(text);
             auto typeOf = [&](int id) {
@@ -482,8 +483,8 @@ void CheckGraphs(const Scene& scene, const ProjectDiagOptions& opt, std::vector<
                 d.source.objectGuid = go.Guid();
                 d.source.objectPath = testing::ObjectPath(&go);
                 d.source.component = "VisualScriptComponent";
-                d.source.graphPath = vs->Path();
-                d.source.scriptPath = vs->Path();
+                d.source.graphPath = graphFile;
+                d.source.scriptPath = graphFile;
                 AddItem(out, std::move(d));
             }
             for (const NodeRec& n : nodes) {
@@ -498,7 +499,7 @@ void CheckGraphs(const Scene& scene, const ProjectDiagOptions& opt, std::vector<
                     d.source.objectPath = testing::ObjectPath(&go);
                     d.source.component = "VisualScriptComponent";
                     d.source.field = req.component;
-                    d.source.graphPath = vs->Path();
+                    d.source.graphPath = graphFile;
                     d.source.nodeId = std::to_string(n.id);
                     d.fix.kind = DiagFixKind::AddComponent;
                     d.fix.arg = req.component;

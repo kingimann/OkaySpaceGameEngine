@@ -334,7 +334,8 @@ struct Checker {
         for (VisualScriptComponent* vs : go.GetComponents<VisualScriptComponent>()) {
             const bool embedded = !vs->Source().empty();
             if (!vs->Path().empty()) {
-                if (!SceneValidator::AssetExists(vs->Path(), opt))
+                // As written (the project's folders), or where the scene's own folder finds it.
+                if (!SceneValidator::AssetExists(vs->Path(), opt) && !SceneValidator::AssetExists(vs->ResolvedPath(), opt))
                     Add(embedded ? Severity::Warning : Severity::Error, "script.missing_file", path, "VisualScriptComponent",
                         embedded ? "Visual script file '" + vs->Path() + "' is missing; the copy saved in the scene would run instead"
                                  : "References visual script file '" + vs->Path() + "' which does not exist, and no graph is saved in the scene");

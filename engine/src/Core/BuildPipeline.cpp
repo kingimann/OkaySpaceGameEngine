@@ -1,5 +1,6 @@
 #include "okay/Core/BuildPipeline.hpp"
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/DataPack.hpp"
 #include "okay/Core/ImageWrite.hpp"
 
 #include <algorithm>
@@ -361,6 +362,134 @@ std::vector<std::string> ScriptRefsInSceneText(const std::string& sceneText) {
     for (const FoundRef& f : ExtractSceneRefs(sceneText))
         if (ExtOf(f.path) == "okayvs" && std::find(out.begin(), out.end(), f.path) == out.end()) out.push_back(f.path);
     return out;
+}
+
+// ---- the scenes a build writes ---------------------------------------------------------------------
+
+namespace {
+// Where the scene record that starts at `b` ends (its '\n', or the end of the text). A quoted value may
+// hold line breaks: a quote opens at the start of a token or right after '=' (the loader's rule) and a
+// backslash inside it escapes the next character.
+std::size_t SceneRecordEnd(const std::string& t, std::size_t b) {
+    bool inQuote = false;
+    char prev = ' ';
+    for (std::size_t i = b; i < t.size(); ++i) {
+        const char c = t[i];
+        if (inQuote) {
+            if (c == '\\') { ++i; continue; }
+            if (c == '"') inQuote = false;
+            prev = c;
+            continue;
+        }
+        if (c == '\n') return i;
+        if (c == '"' && (prev == ' ' || prev == '\t' || prev == '\r' || prev == '=')) inQuote = true;
+        prev = c;
+    }
+    return t.size();
+}
+
+// The first token of a record and where the rest starts.
+std::string RecordKey(const std::string& rec, std::size_t& restAt) {
+    std::size_t k = 0;
+    while (k < rec.size() && (rec[k] == ' ' || rec[k] == '\t')) ++k;
+    std::size_t e = k;
+    while (e < rec.size() && rec[e] != ' ' && rec[e] != '\t' && rec[e] != '\r') ++e;
+    restAt = e;
+    return rec.substr(k, e - k);
+}
+
+std::string TrimBlanks(const std::string& s) {
+    std::size_t b = 0, e = s.size();
+    while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r')) ++b;
+    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r')) --e;
+    return s.substr(b, e - b);
+}
+
+// A quoted scene value without its quotes and escapes (a bare token as it is).
+std::string UnquoteValue(const std::string& v) {
+    if (v.empty() || v[0] != '"') return v;
+    std::string out;
+    for (std::size_t i = 1; i < v.size(); ++i) {
+        if (v[i] == '\\') { if (i + 1 < v.size()) out += v[++i]; continue; }
+        if (v[i] == '"') break;
+        out += v[i];
+    }
+    return out;
+}
+
+std::string QuoteValue(const std::string& s) {
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out + "\"";
+}
+} // namespace
+
+std::string ShippableSceneText(const std::string& text, bool graphFilesShip, int* changed) {
+    std::string out;
+    out.reserve(text.size());
+    int n = 0;
+    bool embedded = false;   // the `visualscript` record before this one holds a graph
+    std::size_t b = 0;
+    while (b < text.size()) {
+        const std::size_t e = SceneRecordEnd(text, b);
+        const std::size_t next = e < text.size() ? e + 1 : e;   // past its '\n'
+        const std::string rec = text.substr(b, e - b);
+        std::size_t restAt = 0;
+        const std::string key = RecordKey(rec, restAt);
+        if (key == "visualscript") {
+            const std::string v = TrimBlanks(rec.substr(restAt));
+            embedded = !v.empty() && v != "\"\"";
+        } else if (key == "visualscriptpath") {
+            const std::string path = UnquoteValue(TrimBlanks(rec.substr(restAt)));
+            if (!graphFilesShip && embedded) {   // the graph is in the scene and its file is not shipped
+                ++n;
+                b = next;
+                continue;
+            }
+            if (IsAbsolutePath(path)) {          // a path on the build machine: the name the build ships it under
+                // (DestinationFor keeps a full path's file name; this splits at a backslash on every OS too)
+                const std::size_t slash = path.find_last_of("/\\");
+                const std::size_t indent = rec.find_first_not_of(" \t");
+                out += rec.substr(0, indent == std::string::npos ? 0 : indent);
+                out += "visualscriptpath " + QuoteValue(slash == std::string::npos ? path : path.substr(slash + 1));
+                if (!rec.empty() && rec.back() == '\r') out += '\r';
+                out.append(text, e, next - e);
+                ++n;
+                b = next;
+                continue;
+            }
+        } else if (key == "gameobject" || key == "end") {
+            embedded = false;
+        }
+        out.append(text, b, next - b);
+        b = next;
+    }
+    if (changed) *changed = n;
+    return out;
+}
+
+bool MakeSceneFileShippable(const std::string& path, bool graphFilesShip, std::string* error) {
+    std::ifstream in(fs::u8path(path), std::ios::binary);
+    if (!in) { if (error) *error = "cannot read " + path; return false; }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    in.close();
+    const std::string raw = ss.str();
+    const bool packed = DataPack::IsPacked(raw);
+    const std::string text = packed ? DataPack::Unpack(raw) : raw;
+    if (packed && text.empty()) { if (error) *error = "cannot unpack " + path; return false; }
+    int changed = 0;
+    std::string shipped = ShippableSceneText(text, graphFilesShip, &changed);
+    if (changed == 0) return true;
+    if (packed) shipped = DataPack::Pack(shipped);
+    std::ofstream out(fs::u8path(path), std::ios::binary | std::ios::trunc);
+    out.write(shipped.data(), (std::streamsize)shipped.size());
+    out.close();
+    if (!out) { if (error) *error = "cannot write " + path; return false; }
+    return true;
 }
 
 std::vector<ProjectAsset> ListProjectAssets(const std::string& projectDir) {

@@ -116,6 +116,33 @@ exec 0 0 5        # OnUpdate -> Translate
 entry OnUpdate 0
 ```
 
+## Graph files in a scene (`visualscriptpath`)
+
+A scene saves each graph twice: the graph text itself (`visualscript "..."`) and the `.okayvs` file it came from
+(`visualscriptpath "blast.okayvs"`). On load the file wins, because it may have been edited since the scene was
+saved; the copy inside the scene is the fallback.
+
+- **The path stays as written.** `"blast.okayvs"` means "next to the scene". Loading finds it there, and saving
+  writes `"blast.okayvs"` back, never the full path of your machine. So a project you move, copy, zip or clone still
+  reads its graph files. (Before #888 finding 42, the first save wrote the full path, and a moved project silently
+  ran the old copy inside the scene.)
+- **Where a path is looked for.** A relative path: next to the scene, then as written, then for `"Assets/..."` in
+  each folder above the scene (the project). A full path (from an old scene): as written, then its file name next to
+  the scene, then its `Assets/...` part above the scene. So an old scene saved with `C:\Users\me\Game\Assets\x.okayvs`
+  heals when the project now lives somewhere else.
+- **Saving a full path.** The editor can store a full path (a graph you made or dropped on an object). Saving writes
+  it relative when the file is inside the scene's folder (`"graphs/x.okayvs"`) or inside the project's `Assets` folder
+  (`"Assets/scripts/x.okayvs"`). A file anywhere else keeps its full path. A brand-new scene that was never opened
+  from a file does not know its folder yet, so its first save keeps a full path; the next save after opening it again
+  writes it relative.
+- **A missing file.** When the file cannot be found, the copy inside the scene runs and the Console shows one warning
+  naming the path (none when the object has no path).
+- **Built games.** Build Game writes the open scene with every graph inside it, and drops its `visualscriptpath` lines
+  (the `.okayvs` files are not shipped for it). A scene that is copied into the build as a file keeps its paths, and a
+  full path there becomes the file name the build ships it under. No built scene carries your machine's folders.
+- In code: `VisualScriptComponent::Path()` is the path as written (show it, save it); `ResolvedPath()` is the file to
+  open, read or write; `PathToSave()` is what the scene file stores; `sceneDir` is the folder the scene was loaded from.
+
 ## ActionList — no-code triggers (Game Creator 2 style)
 
 The `ActionList` component is the simpler, designer-facing visual scripting:

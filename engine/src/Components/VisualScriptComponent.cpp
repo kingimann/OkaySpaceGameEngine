@@ -12,8 +12,12 @@
 #include "okay/VisualScript/VsVariables.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 
 namespace okay {
 
@@ -38,7 +42,7 @@ bool VisualScriptComponent::LoadFromText(const std::string& text, std::string* e
         OKAY_ERROR("VisualScript parse error: ", err);
         return false;
     }
-    graph->debugKey = m_path;
+    graph->debugKey = m_resolved;   // the file itself: breakpoints, Run Graph and Spawn look beside it
     m_source = text;
     m_error.clear();
     // Replacing a graph while one of its chains is running (paused at a breakpoint,
@@ -74,22 +78,224 @@ void VisualScriptComponent::ApplyPendingGraph() {
     if (m_pendingGraph && !(m_graph && m_graph->Running())) AdoptGraph(std::move(m_pendingGraph));
 }
 
-bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* error) {
-    std::ifstream f(path);
+bool VisualScriptComponent::ReadGraphFile(const std::string& file, std::string* error) {
+    std::ifstream f(file);
     if (!f) {
-        if (error) *error = "cannot open " + path;
-        m_error = "cannot open " + path;
+        if (error) *error = "cannot open " + file;
+        m_error = "cannot open " + file;
         return false;
     }
     std::stringstream ss;
     ss << f.rdbuf();
-    m_path = path;
     return LoadFromText(ss.str(), error);
+}
+
+bool VisualScriptComponent::LoadFromFile(const std::string& path, std::string* error) {
+    if (!std::ifstream(path)) {
+        if (error) *error = "cannot open " + path;
+        m_error = "cannot open " + path;
+        return false;
+    }
+    m_path = path;
+    m_resolved = ResolvedPath();
+    return ReadGraphFile(path, error);
 }
 
 bool VisualScriptComponent::Reload(std::string* error) {
     if (m_path.empty()) { if (error) *error = "no file"; return false; }
-    return LoadFromFile(m_path, error);
+    m_resolved = ResolvedPath();   // the path stays as written; only where it is found is looked up again
+    return ReadGraphFile(m_resolved, error);
+}
+
+// ---- Where the graph file is (#888 finding 42) ------------------------------
+// Path() is kept exactly as the scene file wrote it. These find the file it names
+// for reading (ResolvedPath) and decide what a save writes (PathToSave), so a
+// project that moves keeps finding its graph files and no machine path is saved.
+// Written from the finding's description and std::filesystem's documented behaviour.
+
+namespace {
+namespace fs = std::filesystem;
+
+// "/home/..", "\\server\..", "C:\..", "C:/..": a full path on any OS (a scene saved on
+// Windows and opened on Linux still counts its full paths as full).
+bool IsFullPath(const std::string& p) {
+    if (p.empty()) return false;
+    if (p[0] == '/' || p[0] == '\\') return true;
+    return p.size() >= 2 && p[1] == ':' && std::isalpha(static_cast<unsigned char>(p[0])) != 0;
+}
+
+bool IsFile(const std::string& p) {
+    std::error_code ec;
+    return !p.empty() && fs::is_regular_file(fs::path(p), ec);
+}
+
+// `dir` + `rel`, the way the scene loader always joined them (so the editor sees the same strings).
+std::string Join(const std::string& dir, const std::string& rel) { return (fs::path(dir) / fs::path(rel)).string(); }
+
+// The parts of a path, split at both '/' and '\', empty parts dropped.
+std::vector<std::string> PartsOf(const std::string& p) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : p) {
+        if (c == '/' || c == '\\') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
+        else cur += c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// A folder without its trailing separators ("/a/b/" -> "/a/b"; "/" stays "/").
+fs::path Folder(const std::string& dir) {
+    std::string d = dir;
+    while (d.size() > 1 && (d.back() == '/' || d.back() == '\\')) d.pop_back();
+    if (d.size() == 2 && d[1] == ':') d += '/';   // "C:" alone is not the drive's root
+    return fs::path(d);
+}
+
+// `dir` and then each folder above it, nearest first (at most 64, so a strange path cannot loop).
+std::vector<fs::path> FolderAndAbove(const std::string& dir) {
+    std::vector<fs::path> out;
+    fs::path cur = Folder(dir);
+    for (int i = 0; i < 64 && !cur.empty(); ++i) {
+        out.push_back(cur);
+        const fs::path up = cur.parent_path();
+        if (up.empty() || up == cur) break;
+        cur = up;
+    }
+    return out;
+}
+
+// Is `file` inside `dir`? Then `rel` is its path from `dir` with '/' separators.
+bool InsideFolder(const std::string& file, const std::string& dir, std::string& rel) {
+    auto inside = [&rel](const fs::path& f, const fs::path& d) {
+        if (f.empty() || d.empty()) return false;
+        const fs::path r = f.lexically_relative(d);
+        if (r.empty()) return false;
+        const std::string s = r.generic_string();
+        if (s == "." || s == ".." || s.rfind("../", 0) == 0) return false;
+        rel = s;
+        return true;
+    };
+    if (inside(fs::path(file).lexically_normal(), Folder(dir).lexically_normal())) return true;
+    // Spelled differently (a link, a "..", another letter case on Windows): compare the real folders.
+    std::error_code e1, e2;
+    const fs::path cf = fs::weakly_canonical(fs::path(file), e1);
+    const fs::path cd = fs::weakly_canonical(Folder(dir), e2);
+    return !e1 && !e2 && inside(cf, cd);
+}
+
+// The folders named "Assets" that hold `dir` (or are `dir`), deepest first: each one's project
+// is the folder above it.
+std::vector<fs::path> AssetsFoldersHolding(const std::string& dir) {
+    std::vector<fs::path> out;
+    for (const fs::path& f : FolderAndAbove(dir))
+        if (f.filename() == "Assets") out.push_back(f);
+    return out;
+}
+
+// The scene folder last seen per object guid (SceneDirForLoad).
+struct SceneDirMemory {
+    std::mutex mu;
+    std::unordered_map<std::string, std::string> byGuid;
+};
+SceneDirMemory& DirMemory() {
+    static SceneDirMemory m;
+    return m;
+}
+} // namespace
+
+void VisualScriptComponent::SetPath(const std::string& p) {
+    m_path = p;
+    m_resolved = ResolvedPath();
+    if (m_graph) m_graph->debugKey = m_resolved;
+}
+
+std::string VisualScriptComponent::ResolvedPath(bool* found) const {
+    if (found) *found = false;
+    if (m_path.empty()) return m_path;
+    auto hit = [found](const std::string& file) {
+        if (found) *found = true;
+        return file;
+    };
+    if (!IsFullPath(m_path)) {
+        if (!sceneDir.empty()) {
+            const std::string beside = Join(sceneDir, m_path);
+            if (IsFile(beside)) return hit(beside);
+        }
+        if (IsFile(m_path)) return hit(m_path);   // as written: from the working folder
+        const std::vector<std::string> parts = PartsOf(m_path);
+        if (!sceneDir.empty() && !parts.empty() && parts[0] == "Assets") {
+            // "Assets/..." is written from the project folder: one of the folders above the scene.
+            const std::vector<fs::path> folders = FolderAndAbove(sceneDir);
+            for (std::size_t i = 1; i < folders.size(); ++i) {
+                const std::string c = Join(folders[i].string(), m_path);
+                if (IsFile(c)) return hit(c);
+            }
+        }
+        // Not there: where it belongs, next to the scene (what the editor opens and writes).
+        return sceneDir.empty() ? m_path : Join(sceneDir, m_path);
+    }
+    if (IsFile(m_path)) return hit(m_path);
+    if (!sceneDir.empty()) {
+        // An old scene saved with a full path the project has since left: the file name next
+        // to the scene, then the path from its last "Assets" folder (then the one before ...)
+        // under the scene's folder and each folder above it.
+        const std::vector<std::string> parts = PartsOf(m_path);
+        if (!parts.empty()) {
+            const std::string beside = Join(sceneDir, parts.back());
+            if (IsFile(beside)) return hit(beside);
+        }
+        const std::vector<fs::path> folders = FolderAndAbove(sceneDir);
+        for (std::size_t a = parts.size(); a-- > 0;) {
+            if (parts[a] != "Assets" || a + 1 >= parts.size()) continue;
+            std::string tail;
+            for (std::size_t i = a; i < parts.size(); ++i) tail += (i > a ? "/" : "") + parts[i];
+            for (const fs::path& f : folders) {
+                const std::string c = Join(f.string(), tail);
+                if (IsFile(c)) return hit(c);
+            }
+        }
+    }
+    return m_path;
+}
+
+std::string VisualScriptComponent::PathToSave() const {
+    if (m_path.empty() || sceneDir.empty() || !IsFullPath(m_path)) return m_path;
+    bool found = false;
+    const std::string file = ResolvedPath(&found);
+    if (!found) return m_path;   // nothing better is known: keep it
+    std::string rel;
+    if (InsideFolder(file, sceneDir, rel)) return rel;
+    for (const fs::path& assets : AssetsFoldersHolding(sceneDir))
+        if (InsideFolder(file, assets.string(), rel)) return "Assets/" + rel;
+    return m_path;   // outside the scene's project: only the full path names it
+}
+
+std::string VisualScriptComponent::SceneDirForLoad(const GameObject& go, const std::string& path, const std::string& loadingDir) {
+    SceneDirMemory& m = DirMemory();
+    if (!loadingDir.empty()) {
+        // From a file: remember the folder for this object, so the same scene rebuilt from
+        // text later (the editor's Undo and Stop) still knows where it came from.
+        if (!go.Guid().empty()) {
+            std::lock_guard<std::mutex> lock(m.mu);
+            m.byGuid[go.Guid()] = loadingDir;
+        }
+        return loadingDir;
+    }
+    if (!go.Guid().empty()) {
+        std::lock_guard<std::mutex> lock(m.mu);
+        const auto it = m.byGuid.find(go.Guid());
+        if (it != m.byGuid.end()) return it->second;
+    }
+    // A copy made in memory gets a new guid; its original is in the same scene.
+    if (!path.empty())
+        if (const Scene* scene = go.scene())
+            for (const auto& up : scene->Objects()) {
+                if (!up || up.get() == &go) continue;
+                for (const VisualScriptComponent* other : up->GetComponents<VisualScriptComponent>())
+                    if (other && !other->sceneDir.empty() && other->Path() == path) return other->sceneDir;
+            }
+    return std::string();
 }
 
 vs::VsValue VisualScriptComponent::GetVariable(const std::string& name) const {
@@ -190,7 +396,7 @@ void VisualScriptComponent::Start() {
     if (!m_graph) return;
     ScanPolledEvents();
     m_started = true;
-    ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
+    ConsoleSourceScope scope(GraphLogSource(gameObject, m_resolved));
     ApplyDeclDefaults();   // declared variables' starting values, unless something already set them
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
@@ -201,7 +407,7 @@ void VisualScriptComponent::Update(float dt) {
     ApplyPendingGraph();
     if (!m_graph || !ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
-    ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
+    ConsoleSourceScope scope(GraphLogSource(gameObject, m_resolved));
     if (m_scanned != m_graph.get()) ScanPolledEvents();   // reloaded since the last frame
     m_ctx.deltaTime = dt;
     m_ctx.gameObject = gameObject;

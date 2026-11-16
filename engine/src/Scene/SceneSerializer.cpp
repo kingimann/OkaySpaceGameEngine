@@ -1976,7 +1976,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Every graph on the object (each `visualscriptpath` belongs to the graph above it).
     for (auto* vsc : go->GetComponents<VisualScriptComponent>()) {
         out << "  visualscript " << Quote(vsc->Source()) << "\n";
-        if (!vsc->Path().empty()) out << "  visualscriptpath " << Quote(vsc->Path()) << "\n";
+        // The path as written, never where this machine found the file (#888 finding 42).
+        const std::string vsPath = vsc->PathToSave();
+        if (!vsPath.empty()) out << "  visualscriptpath " << Quote(vsPath) << "\n";
     }
     for (auto* al : go->GetComponents<ActionList>()) {
         out << "  actions " << Quote(al->ToText()) << "\n";
@@ -5647,23 +5649,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* vsc = go->AddComponent<VisualScriptComponent>();
                     vsc->LoadFromText(src);
                 } else if (field == "visualscriptpath") {
-                    // Prefer the file (it may have been edited since the scene was saved).
-                    // A path written next to the scene ("movement.okayvs") is opened from
-                    // the scene's folder when it is not already an absolute file.
-                    std::string p = ReadQuoted(in);
-                    {
-                        const std::filesystem::path pp(p);
-                        if (!pp.is_absolute() && !g_loadingSceneDir.empty()) {
-                            const std::filesystem::path alt = std::filesystem::path(g_loadingSceneDir) / pp;
-                            std::error_code ec;
-                            if (std::filesystem::exists(alt, ec)) p = alt.string();
-                        }
-                    }
+                    // Prefer the file (it may have been edited since the scene was saved). The path
+                    // is kept as written, so "movement.okayvs" stays relative and a moved project
+                    // still finds it; the scene's folder is used only to find the file (#888 finding 42).
+                    const std::string p = ReadQuoted(in);
                     auto graphs = go->GetComponents<VisualScriptComponent>();
                     if (auto* vsc = graphs.empty() ? nullptr : graphs.back()) {
+                        vsc->sceneDir = VisualScriptComponent::SceneDirForLoad(*go, p, g_loadingSceneDir);
                         vsc->SetPath(p);
-                        std::ifstream probe(p);
-                        if (probe) vsc->Reload();
+                        bool found = false;
+                        vsc->ResolvedPath(&found);
+                        if (found) vsc->Reload();
+                        else if (!p.empty() && !g_loadingSceneDir.empty() && (warnings || finished))   // once: the pass whose warnings are reported
+                            Log::Warning("Visual Script on '", go->name, "': the graph file \"", p, "\" was not found (looked in ",
+                                         g_loadingSceneDir, "): ", vsc->Source().empty() ? "the scene holds no copy of it, so this object runs no graph."
+                                                                                       : "running the copy saved in the scene.");
                     }
                 } else if (field == "actions") {
                     go->AddComponent<ActionList>()->FromText(ReadQuoted(in));

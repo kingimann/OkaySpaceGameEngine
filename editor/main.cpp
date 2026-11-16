@@ -4185,6 +4185,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         const std::string label = se.src.empty() ? std::string("the open scene") : "scene " + se.src.stem().string();
         if (se.isOpen) {
             if (!SceneSerializer::SaveToFile(ed.scene(), (data / se.fn).string())) return "Failed to write " + se.fn + ".";
+            bp::MakeSceneFileShippable((data / se.fn).string(), /*graphFilesShip=*/false);   // its graphs are inside it: no machine path ships (#888 finding 42)
             for (const std::string& a : SceneSerializer::CollectAssetPaths(ed.scene())) roots.push_back({a, se.src.string()});
             // Its visual-script graphs are embedded in the scene file just written: they need not ship.
             for (const std::string& g : bp::ScriptRefsInSceneText(SceneSerializer::Serialize(ed.scene()))) {
@@ -4195,6 +4196,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         } else {
             fs::copy_file(se.src, data / se.fn, fs::copy_options::overwrite_existing, pe);
             if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
+            bp::MakeSceneFileShippable((data / se.fn).string(), /*graphFilesShip=*/true);   // a full graph path becomes the name it ships under
             { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
               for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
             se.loaded = std::make_unique<Scene>("build");
@@ -4601,6 +4603,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     fs::create_directories(data, ec);
     if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
+    okay::buildpipe::MakeSceneFileShippable((data / "game.okayscene").string(), /*graphFilesShip=*/false);   // graphs are inside it (#888 finding 42)
     { std::ofstream cf((data / "game.okayconfig").string());
       cf << "title=" << gameName << "\ncompany=" << opt.company << "\nversion=" << opt.version
          << "\nwidth=" << opt.width << "\nheight=" << opt.height << "\nstartup=game.okayscene\n"; }
@@ -6327,7 +6330,7 @@ static void OpenVsPlayground(EditorState& ed, const char* demoId) {
         for (auto* vc : up->GetComponents<okay::VisualScriptComponent>()) {
             const std::string file = std::filesystem::path(vc->Path()).filename().string();
             if (file == demo->graph) {
-                if (!host || up->name == demo->focus) { host = up.get(); graphPath = vc->Path(); }
+                if (!host || up->name == demo->focus) { host = up.get(); graphPath = vc->ResolvedPath(); }
             }
         }
     }
@@ -30200,7 +30203,7 @@ void DrawInspector(EditorState& ed) {
             else if (vsc->Graph())
                 ImGui::TextDisabled("%d nodes", vsc->Graph()->NodeCount());
             if (ImGui::SmallButton("Open in node editor##vsc")) {
-                std::string path = vsc->Path();
+                std::string path = vsc->ResolvedPath();   // Path() may be relative to the scene
                 if (path.empty()) {   // embedded only: give it a file so it can be edited
                     std::filesystem::path dir = ed.projectDir().empty() ? std::filesystem::path("Assets")
                                                                          : std::filesystem::path(ed.projectDir()) / "Assets";
@@ -30249,11 +30252,11 @@ void DrawInspector(EditorState& ed) {
                         if (okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) {
                             std::string err;
                             if (vsc->LoadFromText(src, &err)) {
-                                if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+                                if (!vsc->Path().empty()) { std::ofstream(vsc->ResolvedPath()) << vsc->Source(); }
                                 ed.dirty = true;
                                 // Keep the open graph in step, or the next Save / Play would put the old value back.
                                 auto& eg = okay::editor::vsed::State().g;
-                                const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+                                const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->ResolvedPath(), eg.path);
                                 const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
                                                              okay::editor::vsed::State().boundGuids.end(),
                                                              go->Guid()) != okay::editor::vsed::State().boundGuids.end();

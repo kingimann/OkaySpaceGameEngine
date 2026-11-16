@@ -30,11 +30,41 @@ public:
     vs::NodeGraph* Graph() const { return m_graph.get(); }
     /// The last OkayVS text loaded (retained for editing and serialization).
     const std::string& Source() const { return m_source; }
-    /// The .okayvs file this graph came from ("" = embedded text only). Saving
-    /// the graph in the editor reloads every object that uses the file.
+    /// The .okayvs file this graph came from ("" = embedded text only), exactly as
+    /// the scene file wrote it: a file next to the scene stays "movement.okayvs",
+    /// never the full path it was found at on this machine (#888 finding 42). Show
+    /// and save this one; open, read and write the file through ResolvedPath().
+    /// Saving the graph in the editor reloads every object that uses the file.
     const std::string& Path() const { return m_path; }
-    void SetPath(const std::string& p) { m_path = p; if (m_graph) m_graph->debugKey = p; }
-    /// Re-read the file (keeps variables). False if there's no file or it doesn't parse.
+    void SetPath(const std::string& p);
+    /// Folder of the scene file this graph was loaded from, with its trailing
+    /// separator (the scene loader sets it; "" = not loaded from a file). A
+    /// relative Path() is looked for there first.
+    std::string sceneDir;
+    /// The file to open for Path(). A relative path: next to the scene (sceneDir),
+    /// then as written (from the working folder), then, for "Assets/...", in each
+    /// folder above the scene (the project folder). A full path: as written, then
+    /// its file name next to the scene, then its "Assets/..." part in the scene's
+    /// folder and each folder above it (an old scene whose project has moved).
+    /// `found` says whether a file is there. When none is, a relative path comes
+    /// back where it belongs (next to the scene) and a full path as written.
+    std::string ResolvedPath(bool* found = nullptr) const;
+    /// ResolvedPath() as it was when the path was last set or the graph last
+    /// loaded, without asking the disk again: for code that runs every frame.
+    const std::string& LastResolvedPath() const { return m_resolved; }
+    /// What a scene file stores for this graph: Path(), except that a full path
+    /// to a file inside the scene's folder is written relative to it
+    /// ("graphs/movement.okayvs"), and one inside the Assets folder of the project
+    /// the scene is in as "Assets/...". Any other path is written as it is.
+    std::string PathToSave() const;
+    /// The scene loader's choice of sceneDir for a `visualscriptpath` record:
+    /// `loadingDir` when the scene comes from a file (remembered for the object);
+    /// else (a scene rebuilt from text: editor Undo and Stop) the folder remembered
+    /// for the object; else (a copy made in memory: Duplicate, a spawner) the folder
+    /// of another graph in the same scene that names the same path.
+    static std::string SceneDirForLoad(const GameObject& go, const std::string& path, const std::string& loadingDir);
+    /// Re-read the file at ResolvedPath() (keeps variables and Path()). False if
+    /// there's no file or it doesn't parse.
     bool Reload(std::string* error = nullptr);
     /// The last load error ("" = the graph loaded fine).
     const std::string& LastError() const { return m_error; }
@@ -208,7 +238,9 @@ private:
     vs::VsContext m_ctx;
     std::string m_source;
     std::string m_path;
+    std::string m_resolved;   // LastResolvedPath(): also the graph's debugKey and the Console's link
     std::string m_error;
+    bool ReadGraphFile(const std::string& file, std::string* error);
 };
 
 } // namespace okay

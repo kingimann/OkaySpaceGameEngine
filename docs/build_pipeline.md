@@ -64,6 +64,12 @@ With **Strip unused assets** on (the default) a build ships:
 3. each file's `.okaymeta` import settings;
 4. the visual-script files of scenes that are copied as files (a scene written from the editor embeds its graphs).
 
+No built scene keeps a folder of the build machine in its `visualscriptpath` lines (#888 finding 42,
+`buildpipe::MakeSceneFileShippable`). The open scene, written from the editor's memory, holds every graph and its
+`.okayvs` files are not shipped, so its `visualscriptpath` lines are dropped: the game runs the graphs inside the scene
+without looking for files. A scene copied as a file keeps its relative paths (its `.okayvs` files ship at those paths),
+and a full path in it becomes the file name the build ships the file under, next to the scenes.
+
 A reference is found as written, then under the project folder, its `Assets/` folder, the referring file's folder and
 the scenes' folders. It is stored under the path the scene writes, so the running game finds it where the scene says.
 References never climb out of the project with `..`; an absolute path is copied by file name and warned about (the game

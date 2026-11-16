@@ -2885,7 +2885,7 @@ inline bool PublishOpenGraph(EditorState& ed, bool forPlay) {
             if (!up) continue;
             const bool bound = std::find(st.boundGuids.begin(), st.boundGuids.end(), up->Guid()) != st.boundGuids.end();
             for (auto* vc : up->GetComponents<okay::VisualScriptComponent>()) {
-                const bool sameFile = !g.path.empty() && VsSamePath(vc->Path(), g.path);
+                const bool sameFile = !g.path.empty() && VsSamePath(vc->ResolvedPath(), g.path);   // Path() may be relative to the scene
                 const bool sameEmbed = vc->Path().empty() && !st.publishedText.empty() && vc->Source() == st.publishedText;
                 if (!sameFile && !bound && !sameEmbed) continue;
                 std::string err;
@@ -3592,7 +3592,7 @@ inline void Draw(EditorState& ed, bool* open) {
         int n = 0;
         for (const auto& up : ed.scene().Objects())
             for (auto* vc : up->GetComponents<VisualScriptComponent>())
-                if (!g.path.empty() && vc->Path() == g.path) ++n;
+                if (!g.path.empty() && VsSamePath(vc->ResolvedPath(), g.path)) ++n;
         Log("Saved visual script " + (g.path.empty() ? std::string("(empty)") : g.path)
             + (n ? " (updated " + std::to_string(n) + " object(s))" : std::string()));
     };
@@ -3603,7 +3603,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (!PublishOpenGraph(ed, false)) { Log("Couldn't save the graph", 2); return; }
         auto* vc = o->GetComponent<VisualScriptComponent>();
         if (!vc) vc = o->AddComponent<VisualScriptComponent>();
-        if (vc->Path() != g.path) vc->LoadFromFile(g.path);
+        if (!VsSamePath(vc->ResolvedPath(), g.path)) vc->LoadFromFile(g.path);
         ed.dirty = true;
         Log("Attached visual script to " + o->name);
     };
@@ -3960,7 +3960,7 @@ inline void Draw(EditorState& ed, bool* open) {
         auto usesThis = [&](GameObject* o) -> VisualScriptComponent* {
             if (!o) return nullptr;
             for (auto* vc : o->GetComponents<VisualScriptComponent>())
-                if (vc->Path() == g.path && vc->Graph()) return vc;
+                if (vc->LastResolvedPath() == g.path && vc->Graph()) return vc;   // every frame: no disk lookups
             return nullptr;
         };
         VisualScriptComponent* vc = usesThis(ed.selected());
@@ -4339,7 +4339,7 @@ inline void Draw(EditorState& ed, bool* open) {
         for (const auto& up : ed.scene().Objects()) {
             if (!up) continue;
             for (auto* vc : up->GetComponents<VisualScriptComponent>())
-                if (vc->Path() == g.path) {
+                if (vc->LastResolvedPath() == g.path) {   // every frame: no disk lookups
                     if (up.get() == ed.selected()) vsOwner = up.get();
                     else if (!vsOwner) vsOwner = up.get();
                 }

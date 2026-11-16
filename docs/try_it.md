@@ -53,6 +53,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 18 | Saving a scene keeps `visualscriptpath "blast.okayvs"` (no `C:\Users\...`), a moved project reads its edited graph | `examples\physics2d\casts_and_blast.okayscene`, Ctrl+S, Notepad | Bug fix (#888 finding 42), branch `claude2/vs-path-stays-relative`; see section 18 |
 
 ---
 
@@ -499,6 +500,34 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
+
+## 18. A scene keeps its graph paths relative (bug fix, #888 finding 42)
+
+Before: opening a scene and pressing Ctrl+S turned `visualscriptpath "blast.okayvs"` into the full path of the file on
+your PC (`C:\Users\<you>\...`). After a project was moved, copied or cloned, its graphs silently ran the old copy saved
+inside the scene, and Build Game put your folder names into the shipped game.
+
+1. Copy the folder `examples\physics2d` (see "Where the files are") to `Documents\vs_path_test\physics2d`.
+2. Editor (`Tools\OkayEngine.exe`): **File > Open...**, pick `Documents\vs_path_test\physics2d\casts_and_blast.okayscene`,
+   then press **Ctrl+S**.
+3. Open `casts_and_blast.okayscene` in Notepad. You should see `visualscriptpath "blast.okayvs"` (twice) and
+   `visualscriptpath "look.okayvs"`, with no `C:\` anywhere. The graph text above each line (`visualscript "...`) is the
+   copy saved in the scene; that is expected.
+4. Close the editor. Rename `Documents\vs_path_test` to `Documents\vs_path_moved`. In Notepad open
+   `physics2d\blast.okayvs`, change `default 2 1 20` to `default 2 1 200` and save.
+5. Open `Documents\vs_path_moved\physics2d\casts_and_blast.okayscene` in the editor and press **Play**. The orange
+   **Near Crate** is thrown much harder than in step 2 (the edited file is used). Before the fix it moved exactly as
+   before, because the scene ran its old saved copy.
+6. Stop, close the editor, delete `look.okayvs`, open the scene again. The Console shows one warning:
+   `Visual Script on 'Lookout': the graph file "look.okayvs" was not found ...: running the copy saved in the scene.`
+   The Lookout still works (it runs the copy).
+7. Optional: **File > Build Game** from that scene, then open `<Game>_Data\game.okayscene` in Notepad: it has no
+   `visualscriptpath` lines (the graphs are inside it) and no `C:\Users\...`.
+
+**Status.** Engine side tested headless on Linux (`test_vs_path_relative`: round trip, move, missing file, old full
+paths, text rebuilds, the build's scene text). The editor changes (the inspector's **Open in node editor**, the Node
+Playground, the Visual Script window's checks, Build Game) were **not compiled or run here**; every "you should see"
+above is unverified until you try it.
 
 ## Team tooling (not part of the Windows release)
 

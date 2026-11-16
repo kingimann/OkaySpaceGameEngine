@@ -114,6 +114,18 @@ WalkResult WalkAssets(const std::vector<AssetRef>& roots, const WalkSettings& s)
 /// editor embeds those graphs, so they need not ship; a scene copied as a file still needs them.
 std::vector<std::string> ScriptRefsInSceneText(const std::string& sceneText);
 
+/// A scene's text as a build ships it, with no folder of the build machine in its `visualscriptpath` records
+/// (#888 finding 42). `graphFilesShip` false (the open scene, written from memory: every graph is inside it and
+/// its .okayvs files are not shipped): each `visualscriptpath` that follows a graph saved in the scene is
+/// dropped, so the game runs that copy without looking for a file. Otherwise (a scene copied as a file, whose
+/// .okayvs files ship), and for a path whose graph is not in the scene: a full path becomes its file name (where
+/// the build ships it, as DestinationFor does: next to the scenes); a relative path is kept. Quoted text
+/// (a graph inside the scene) is never touched. `changed` counts the records dropped or rewritten.
+std::string ShippableSceneText(const std::string& sceneText, bool graphFilesShip, int* changed = nullptr);
+/// ShippableSceneText on a scene file the build has written, in place (a packed file stays packed). True
+/// when the file is fine as it is or was rewritten; false, with `error`, when it could not be read or written.
+bool MakeSceneFileShippable(const std::string& path, bool graphFilesShip, std::string* error = nullptr);
+
 struct ProjectAsset { std::string rel; std::string src; std::uintmax_t bytes = 0; bool editorOnly = false; bool scene = false; };
 /// Every file under <project>/Assets (not hidden folders, not .okaymeta sidecars), sorted by path.
 std::vector<ProjectAsset> ListProjectAssets(const std::string& projectDir);

@@ -1583,6 +1583,12 @@ target_link_libraries(test_vs_gameplay_library PRIVATE okay::engine)
 target_compile_definitions(test_vs_gameplay_library PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_gameplay_library COMMAND test_vs_gameplay_library)
 
+# A scene's visualscriptpath stays as written on save, is found after the project moves, and never ships a machine path (#888 finding 42).
+add_executable(test_vs_path_relative test_vs_path_relative.cpp)
+target_link_libraries(test_vs_path_relative PRIVATE okay::engine)
+target_compile_definitions(test_vs_path_relative PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_path_relative COMMAND test_vs_path_relative)
+
 add_executable(test_vs_logic_library test_vs_logic_library.cpp)
 target_link_libraries(test_vs_logic_library PRIVATE okay::engine)
 add_test(NAME vs_logic_library COMMAND test_vs_logic_library)

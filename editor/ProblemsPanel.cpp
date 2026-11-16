@@ -118,7 +118,7 @@ void OpenDiagnostic(okay::editor::EditorState& ed, const Diagnostic& d) {
             if (VisualScriptComponent* vs = go->GetComponent<VisualScriptComponent>()) {
                 if (!vs->Source().empty()) {
                     okay::editor::vsed::ShowGraphText(vs->Source(), node);
-                    if (!vs->Path().empty()) okay::editor::vsed::State().g.path = vs->Path();
+                    if (!vs->Path().empty()) okay::editor::vsed::State().g.path = vs->ResolvedPath();   // the file itself
                     opened = true;
                 }
             }

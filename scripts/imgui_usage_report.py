@@ -55,6 +55,11 @@ PORTED = [
     ("Tags and Layers", "editor/EditorPanelViews.cpp", "DrawTagsLayersBodyImGui"),
     ("Physics (Project Settings)", "editor/EditorPanelViews.cpp", "DrawPhysicsSettingsBodyImGui"),
     ("Profiler", "editor/EditorPanelViews.cpp", "DrawProfilerBodyImGui"),
+    ("Import settings (Project panel)", "editor/EditorPanelViews.cpp", "DrawImportSettingsBodyImGui"),
+    ("Import settings' combo", "editor/EditorPanelViews.cpp", "ImportCombo"),
+    ("Post-processing (Lighting)", "editor/EditorPanelViews.cpp", "DrawPostProcessBodyImGui"),
+    ("Player (Project Settings)", "editor/EditorPanelViews.cpp", "DrawPlayerSettingsBodyImGui"),
+    ("Rendering (Project Settings)", "editor/EditorPanelViews.cpp", "DrawRenderingSettingsBodyImGui"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

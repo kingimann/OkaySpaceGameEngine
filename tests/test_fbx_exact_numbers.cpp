@@ -7,7 +7,9 @@
 #include <string>
 
 // FastDecimalScan (one pass, eight digits at a time) must accept exactly the tokens FastDecimal accepts and give the
-// same double, bit for bit. Returns the number of mismatches; `checks` counts the tokens tried.
+// same double, bit for bit, and that double must be strtod's (the plain conversion both replaced; any number of digits:
+// tests/test_decimal_to_double.cpp checks the conversion itself much harder). Returns the number of mismatches;
+// `checks` counts the tokens tried.
 long FbxExactNumberChecks(long& checks) {
     using namespace okay::fbx;
     std::mt19937_64 r(42);
@@ -20,7 +22,7 @@ long FbxExactNumberChecks(long& checks) {
         else {
             char b[64];
             const double v = std::ldexp((double)(r() >> 11), (int)(r() % 80) - 60) * ((r() & 1) ? 1 : -1);
-            const int prec = 1 + (int)(r() % 18);
+            const int prec = 1 + (int)(r() % 25);
             std::snprintf(b, sizeof b, mode == 1 ? "%.*g" : mode == 2 ? "%.*f" : "%.*e", prec, v);
             t = b;
             if (t.size() > 40) t.resize(40);
@@ -32,7 +34,13 @@ long FbxExactNumberChecks(long& checks) {
         const bool old = FastDecimal(buf.data(), tl, a);
         const char* e = FastDecimalScan(buf.data(), buf.data() + buf.size(), b2);
         ++checks;
-        const bool same = e ? (old && (std::size_t)(e - buf.data()) == tl && std::memcmp(&a, &b2, 8) == 0) : !old;
+        bool same = e ? (old && (std::size_t)(e - buf.data()) == tl && std::memcmp(&a, &b2, 8) == 0) : !old;
+        if (old) {   // what the general path would have given
+            const std::string tok(buf.data(), tl);
+            char* end = nullptr;
+            const double ref = okay::detail::StrToD(tok.c_str(), &end);
+            same = same && end && *end == '\0' && std::memcmp(&a, &ref, 8) == 0;
+        }
         if (!same && bad++ < 5) std::printf("  number fast path differs on \"%s\"\n", t.c_str());
     }
     return bad;

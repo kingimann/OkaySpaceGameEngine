@@ -1,5 +1,6 @@
 // okay::fbx layer 1: inflate + binary / ASCII FBX element tree. See FbxReader.hpp.
 // Written from the public description of the format; no third-party code.
+#include "DecimalToDouble.hpp"
 #include "NumParse.hpp"
 #include "okay/Core/Inflate.hpp"
 #include "okay/Render/FbxReader.hpp"
@@ -235,55 +236,17 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
 // ============================================================================
 namespace {
 
-// Exact fast path for the plain decimal numbers that fill ASCII arrays ("12", "-0.5", "1.25e-3"). When the digits form
-// an integer below 2^53 and the power of ten is at most 22, both are exact doubles, so ONE multiplication or division
-// gives the correctly rounded result (the classic observation in W. D. Clinger, "How to read floating point numbers
-// accurately", 1990), which is the value strtod returns. Anything else (more digits, a larger exponent, "inf", hex,
-// a malformed token) returns false and the caller uses strtod as before. No locale is involved: the point is '.'.
+// Plain decimal numbers ("12", "-0.5", "1.25e-3", "0.30000000000000004"), converted exactly: the double strtod gives,
+// bit for bit, without strtod (DecimalToDouble.hpp: Clinger's fast path for short numbers, a 128-bit product with a
+// checked error bound for the rest, any number of digits). Returns false for anything else (more than a plain decimal:
+// "inf", hex, a malformed token) and for the rare inputs that method cannot decide; the caller then uses strtod as
+// before. No locale is involved: the point is '.'.
 bool FastDecimal(const char* p, std::size_t n, double& out) {
-    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
-                                      1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
-    std::size_t i = 0;
-    bool neg = false;
-    if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; ++i; }
-    std::uint64_t m = 0; int digits = 0, scale = 0; bool any = false;
-    while (i < n && p[i] >= '0' && p[i] <= '9') {
-        any = true;
-        if (m || p[i] != '0') { if (++digits > 15) return false; m = m * 10 + (std::uint64_t)(p[i] - '0'); }
-        ++i;
-    }
-    if (i < n && p[i] == '.') {
-        ++i;
-        while (i < n && p[i] >= '0' && p[i] <= '9') {
-            any = true;
-            if (m || p[i] != '0') { if (++digits > 15) return false; m = m * 10 + (std::uint64_t)(p[i] - '0'); }
-            --scale; ++i;
-        }
-    }
-    if (!any) return false;
-    if (i < n && (p[i] == 'e' || p[i] == 'E')) {
-        ++i;
-        bool eneg = false;
-        if (i < n && (p[i] == '+' || p[i] == '-')) { eneg = p[i] == '-'; ++i; }
-        if (i >= n || p[i] < '0' || p[i] > '9') return false;
-        int e = 0;
-        while (i < n && p[i] >= '0' && p[i] <= '9') { if (e > 10000) return false; e = e * 10 + (p[i] - '0'); ++i; }
-        scale += eneg ? -e : e;
-    }
-    if (i != n) return false;
-    double v = (double)m;   // exact: m < 10^15 < 2^53
-    if (m != 0) {
-        if (scale < -22 || scale > 22) return false;
-        v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
-    }
-    out = neg ? -v : v;
-    return true;
+    detail::DecimalParts d;
+    if (detail::ScanDecimal(p, p + n, d) != p + n) return false;
+    return detail::DecimalToDouble(d, out);
 }
 
-// The same conversion as FastDecimal, but it finds the end of the token itself (the first character that cannot
-// be part of a token), so an array value is read in one pass instead of a scan for its end and then a parse.
-// Returns the end of the token, or nullptr when FastDecimal would not take it (the caller then uses the general
-// path, which gives the same result as before for everything).
 inline bool IdentChar(unsigned char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '|' || c == '-' || c == '.' || c == '+';
 }
@@ -293,100 +256,16 @@ struct IdentTable {
 };
 const IdentTable kIdent;
 
-// Eight ASCII bytes at once (SWAR: plain 64-bit integer arithmetic). LeadingDigits finds the first byte that is not
-// '0'..'9' (each byte is checked to be >= '0' by a subtraction and <= '9' by an addition whose high bit would show
-// otherwise; a borrow or carry can only come from a byte that is itself flagged); EightValue turns eight digits into
-// their value, first character most significant, by combining neighbours in three multiply-and-shift steps (pairs,
-// then fours, then the eight). Worked out here; FastDecimalScan was checked against FastDecimal + strtod on millions
-// of random tokens, and the digest of every ASCII file is unchanged.
-inline std::uint64_t Load8(const char* p) { std::uint64_t w; std::memcpy(&w, p, 8); return w; }   // little endian
-inline std::uint64_t EightValue(std::uint64_t w) {
-    w -= 0x3030303030303030ull;                                    // bytes 0..9
-    w = ((w * (10 * 256 + 1)) >> 8) & 0x00FF00FF00FF00FFull;        // 4 numbers 0..99
-    w = ((w * (100 * 65536 + 1)) >> 16) & 0x0000FFFF0000FFFFull;    // 2 numbers 0..9999
-    return (w * (10000ull * 4294967296ull + 1)) >> 32;             // 0..99999999
-}
-
-// How many of the 8 bytes (first byte = lowest) are digits before the first non-digit: 0 to 8.
-inline int LeadingDigits(std::uint64_t w) {
-    const std::uint64_t nd = ((w - 0x3030303030303030ull) | (w + 0x4646464646464646ull)) & 0x8080808080808080ull;
-    if (!nd) return 8;
-    // the lowest flag is bit 8k + 7; (1 << 8k) times 0x0001020304050607 has the byte 7 - (7 - k) = k on top
-    const std::uint64_t lowest = nd & (0 - nd);
-    return (int)(((lowest >> 7) * 0x0001020304050607ull) >> 56);
-}
-// Appends k (1..8) digits held in the low k bytes of w to m: m * 10^k + their value. Returns false when the result
-// would reach `limit` (FastDecimal's 15-digit rule; also keeps the product from overflowing).
-inline bool AppendDigits(std::uint64_t& m, std::uint64_t w, int k, std::uint64_t limit) {
-    static const std::uint64_t kP[9] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
-    if (k < 8) {   // move the k digits to the top and fill the bottom with '0' bytes, which add nothing
-        const int sh = (8 - k) * 8;
-        w = (w << sh) | (0x3030303030303030ull >> (64 - sh));
-    }
-    const std::uint64_t p = kP[k];
-    if (m > limit / p) return false;   // then m * p + v >= limit
-    m = m * p + EightValue(w);
-    return m < limit;
-}
-
+// The same conversion as FastDecimal, but it finds the end of the token itself (the first character that cannot
+// be part of a token), so an array value is read in one pass instead of a scan for its end and then a parse.
+// Returns the end of the token, or nullptr when FastDecimal would not take it (the caller then uses the general
+// path, which gives the same result as before for everything).
 const char* FastDecimalScan(const char* p, const char* end, double& out) {
-    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
-                                      1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
-    // m holds the value of all digits so far (integer and fraction digits joined). FastDecimal refuses more than 15
-    // significant digits; m >= 10^15 is the same test (m has exactly as many digits as there are significant ones),
-    // and m never grows past 10^15 * 10 + 9 because the test runs after every digit.
-    const std::uint64_t kMax = 1000000000000000ull;
-    bool neg = false;
-    if (p < end && (*p == '+' || *p == '-')) { neg = *p == '-'; ++p; }
-    std::uint64_t m = 0; int scale = 0; bool any = false;
-    // Digit runs are taken up to 8 at a time while 8 bytes can be read; the last few bytes of the input one by one.
-    while (end - p >= 8) {
-        const std::uint64_t w = Load8(p);
-        const int k = LeadingDigits(w);
-        if (k == 0) break;
-        if (!AppendDigits(m, w, k, kMax)) return nullptr;
-        any = true; p += k;
-        if (k < 8) break;
-    }
-    while (p < end && (unsigned)(*p - '0') < 10u) {
-        any = true;
-        m = m * 10 + (std::uint64_t)(*p - '0'); ++p;
-        if (m >= kMax) return nullptr;
-    }
-    if (p < end && *p == '.') {
-        ++p;
-        while (end - p >= 8) {
-            const std::uint64_t w = Load8(p);
-            const int k = LeadingDigits(w);
-            if (k == 0) break;
-            if (!AppendDigits(m, w, k, kMax)) return nullptr;
-            any = true; p += k; scale -= k;
-            if (k < 8) break;
-        }
-        while (p < end && (unsigned)(*p - '0') < 10u) {
-            any = true;
-            m = m * 10 + (std::uint64_t)(*p - '0'); ++p; --scale;
-            if (m >= kMax) return nullptr;
-        }
-    }
-    if (!any) return nullptr;
-    if (p < end && (*p == 'e' || *p == 'E')) {
-        ++p;
-        bool eneg = false;
-        if (p < end && (*p == '+' || *p == '-')) { eneg = *p == '-'; ++p; }
-        if (p >= end || (unsigned)(*p - '0') >= 10u) return nullptr;
-        int e = 0;
-        while (p < end && (unsigned)(*p - '0') < 10u) { if (e > 10000) return nullptr; e = e * 10 + (*p - '0'); ++p; }
-        scale += eneg ? -e : e;
-    }
-    if (p < end && kIdent.t[(unsigned char)*p]) return nullptr;   // the token goes on: not a plain decimal
-    double v = (double)m;
-    if (m != 0) {
-        if (scale < -22 || scale > 22) return nullptr;
-        v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
-    }
-    out = neg ? -v : v;
-    return p;
+    detail::DecimalParts d;
+    const char* e = detail::ScanDecimal(p, end, d);
+    if (!e || (e < end && kIdent.t[(unsigned char)*e])) return nullptr;   // the token goes on: not a plain decimal
+    if (!detail::DecimalToDouble(d, out)) return nullptr;
+    return e;
 }
 
 struct Text {
@@ -412,7 +291,7 @@ struct Text {
         if (pos == b) return Fail("unexpected character in ASCII FBX");
         const char* t = s + b; const std::size_t len = pos - b;
         // Fast paths, with the same result as the general rule below: a plain integer of up to 18 digits (what strtoll
-        // returns), and a plain decimal with a point or an exponent that FastDecimal converts exactly (what strtod
+        // returns), and a plain decimal with a point or an exponent, which FastDecimal converts exactly (what strtod
         // returns).
         {
             std::size_t i = 0; bool neg = false;
@@ -426,6 +305,12 @@ struct Text {
             for (std::size_t k = 0; k < len; ++k) if (t[k] == '.' || t[k] == 'e' || t[k] == 'E') { pointOrExp = true; break; }
             double d;
             if (pointOrExp && FastDecimal(t, len, d)) { out.type = 'D'; out.d = d; return true; }
+        }
+        // A token that starts with a letter or '_' is an identifier whatever strtod would make of it ("inf", "nan"):
+        // the rule below requires a digit, a sign or a point first.
+        if (!(std::isdigit((unsigned char)t[0]) || t[0] == '-' || t[0] == '+' || t[0] == '.')) {
+            out.type = 'S'; out.s = std::string_view(t, len);
+            return true;
         }
         std::string tok(t, len);
         char* end = nullptr;

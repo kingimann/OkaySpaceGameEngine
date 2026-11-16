@@ -55,6 +55,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 
 ---
 
@@ -621,3 +622,26 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## 7s. Digging the voxel terrain no longer drops the frame rate
+
+**What it is.** Holding the dig (left mouse) or build (right mouse) button in a voxel terrain used to re-build and re-upload the
+whole terrain every frame. Now only the chunks you touched are. Details and numbers: `docs/voxel_edit_perf.md`.
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_big_world.okayscene`
+   (a bigger hill than the Sandbox, so the old stutter is easy to see). The normal size is `voxel_sandbox.okayscene`, or New Project >
+   Sandbox.
+2. Open **View > Panels > Profiler** and press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground (dig) and **right mouse** (build). Watch the frame rate (the Game view's stats, or **F3** in
+   the player). You should see it stay steady. In the Profiler the rows `Voxel.Edit`, `Voxel.Mesh` and `Voxel.Upload` appear while
+   you hold the button and each stays well under 1 ms.
+4. Press Stop, select the **Terrain** object: the Voxel Terrain card says "Drawn as one mesh". While Playing and after your first
+   dig it says "Drawn as N chunk objects", and the Hierarchy shows `Voxel Chunk x,y,z` children (they are never saved).
+5. To feel the old behaviour: close the editor, open a Command Prompt, run `set OKAY_VOXEL_OLD_REMESH=1`, start
+   `Tools\OkayEngine.exe` from that same window and repeat steps 2-3. The frame rate drops while you hold the button and
+   `Voxel.Mesh` plus `Voxel.Upload` are several times bigger. The Terrain card then says so.
+
+**Status.** Tests run on Linux (`ctest -R "voxel|mesh_hash|terrain_water_speed"`): 127 + 10 + 36 + 13 + 55 + 25 + 13 checks, 0
+failures. Software renderer pixels identical in both modes. CPU time per dig frame measured 3x to 16x lower; **no GPU, no Windows,
+no real editor window was available**, so the real frame rates and the Inspector and Profiler lines are unverified until you look.

@@ -30107,6 +30107,14 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
+                const auto& st = v->lastStats;
+                if (v->UsesChunkObjects())
+                    ImGui::TextDisabled("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                else
+                    ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
+            }
             if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }

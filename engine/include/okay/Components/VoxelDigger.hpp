@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Core/Profiler.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/GameInput.hpp"
@@ -46,8 +47,23 @@ public:
     VoxelTerrain* FindVoxel() const {
         if (gameObject)
             if (auto* v = gameObject->GetComponent<VoxelTerrain>()) return v;
+        // Not on this object: remember which object had one, so a scene is not searched every frame.
+        if (voxOwner_)
+            if (GameObject* g = GameObject::FromInstanceId(voxOwner_))
+                if (auto* v = g->GetComponent<VoxelTerrain>()) return v;
         Scene* s = GetScene();
-        return s ? s->FindObjectOfType<VoxelTerrain>() : nullptr;
+        VoxelTerrain* v = s ? s->FindObjectOfType<VoxelTerrain>() : nullptr;
+        voxOwner_ = (v && v->gameObject) ? v->gameObject->InstanceId() : 0;
+        return v;
+    }
+
+    /// The camera the aim ray starts from: the scene's main camera when there is one, otherwise the first
+    /// camera found (the old rule, which could pick a minimap or security camera that came first).
+    Camera* AimCamera() const {
+        Scene* s = GetScene();
+        if (!s) return nullptr;
+        if (s->mainCamera && s->mainCamera->gameObject && s->mainCamera->gameObject->transform) return s->mainCamera;
+        return s->FindObjectOfType<Camera>();
     }
 
     /// March the camera aim ray and return the local-space point where it first
@@ -55,8 +71,7 @@ public:
     /// false if the ray never finds the surface within `range`.
     bool AimAtVoxel(VoxelTerrain* vox, Vec3& outLocal) const {
         if (!vox || !vox->gameObject || !vox->gameObject->transform) return false;
-        Scene* s = GetScene();
-        Camera* cam = s ? s->FindObjectOfType<Camera>() : nullptr;
+        Camera* cam = AimCamera();
         if (!cam || !cam->gameObject || !cam->gameObject->transform) return false;
         Transform* ct = cam->gameObject->transform;
         Vec3 ro = ct->Position();
@@ -94,11 +109,13 @@ public:
         bool acting = (primary || secondary) && dt > 0.0f && aiming;
 
         if (acting) {
+            OKAY_PROFILE("Voxel.Edit");
             Mode m = mode;
             // The secondary button does the opposite carve/fill action; for Smooth it
             // stays a smooth (there's no "opposite" of smoothing).
             if (secondary && !primary && m != Mode::Smooth && m != Mode::Box) m = (mode == Mode::Add) ? Mode::Dig : Mode::Add;
-            float amt = strength * dt;
+            // A hitch (one very long frame) must not carve a crater: the brush counts at most a tenth of a second.
+            float amt = strength * std::min(dt, 0.1f);
             bool changed = false;
             if      (m == Mode::Dig)    changed = vox->Dig(local, radius, amt);
             else if (m == Mode::Add)    changed = vox->Add(local, radius, amt);
@@ -120,8 +137,14 @@ public:
         } else {
             if (m_wasActing) {
                 // Just released: sweep up any floating crumbs the dig left behind, then
-                // re-skin once. (Done on release, not every frame, so it stays cheap.)
-                if (removeFloaters > 1 && vox->RemoveFloaters(removeFloaters) > 0) vox->Apply();
+                // re-skin once. (Done on release, not every frame, so it stays cheap, and only
+                // around the cells this stroke touched.)
+                if (removeFloaters > 1) {
+                    OKAY_PROFILE("Voxel.Edit");
+                    const int cleared = VoxelTerrain::OldRemeshActive() ? vox->RemoveFloaters(removeFloaters)
+                                                                         : vox->RemoveFloatersEdited(removeFloaters);
+                    if (cleared > 0) vox->Apply();
+                }
             }
             DigSound(false);
         }
@@ -141,6 +164,7 @@ private:
     GameObject* brush_ = nullptr;
     GameObject* debris_ = nullptr;
     bool m_wasActing = false;   ///< were we digging last frame? (to clean up crumbs on release)
+    mutable std::uint64_t voxOwner_ = 0;   ///< InstanceId of the object that holds the VoxelTerrain (when it is not this one)
     bool soundHeld_ = false;
     bool soundStarted_ = false;
 

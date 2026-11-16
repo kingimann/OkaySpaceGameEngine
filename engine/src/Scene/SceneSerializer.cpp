@@ -901,7 +901,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
         }
         // A Spline Mesh builds its renderer's mesh again on load: none of it is saved.
-        const bool generated = go->GetComponent<SplineMesh>() != nullptr;
+        // (A Voxel Terrain does too: its per-face colours were 0.4 MB of every saved Sandbox scene, rebuilt on load anyway.)
+        const bool generated = go->GetComponent<SplineMesh>() != nullptr || go->GetComponent<VoxelTerrain>() != nullptr;
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>() && !generated) {
             // A mesh in edit mode is welded with its exact UVs per corner: write it

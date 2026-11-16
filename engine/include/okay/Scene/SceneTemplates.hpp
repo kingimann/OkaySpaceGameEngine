@@ -1654,7 +1654,11 @@ inline void TerrainSandbox(Scene& scene) {
 /// animated water, a first-person player with full voxel collision (you stand on
 /// the ground and in caves, not fall through), and a pause menu. Left mouse digs,
 /// right mouse fills, Space jumps, Esc pauses.
-inline void VoxelSandbox(Scene& scene) {
+/// `grid` sizes the voxel field (cells along X, Y and Z); the default 72 x 44 x 72 is the owner's Sandbox. A bigger grid
+/// is the same scene on a bigger hill (examples/voxel/voxel_big_world.okayscene is 128 x 56 x 128: the digging frame
+/// rate matters much more there).
+inline void VoxelSandbox(Scene& scene, int gridX = 72, int gridY = 44, int gridZ = 72,
+                         float hillHeight = 9.0f, unsigned seed = 2024u) {
     scene.Clear();
     scene.SetName("Sandbox");
 
@@ -1673,9 +1677,9 @@ inline void VoxelSandbox(Scene& scene) {
     // The single terrain: a voxel field with rolling hills and a cave network.
     GameObject* ground = scene.CreateGameObject("Terrain");
     auto* vox = ground->AddComponent<VoxelTerrain>();
-    vox->Resize(72, 44, 72);
+    vox->Resize(gridX, gridY, gridZ);
     vox->voxelSize = 1.5f;
-    vox->Generate(0.55f, 9.0f, 0.0f, 2024u);   // solid hills — NO pre-cut caves; dig your own
+    vox->Generate(0.55f, hillHeight, 0.0f, seed);   // solid hills — NO pre-cut caves; dig your own
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)

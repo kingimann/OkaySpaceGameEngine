@@ -2,10 +2,15 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 #include <string>
 
 namespace okay {
+
+class GameObject;
+class MeshRenderer;
 
 /// A smooth VOXEL terrain — a 3D scalar density field meshed with marching cubes,
 /// so unlike the heightmap Terrain it supports caves, tunnels and overhangs. This
@@ -100,6 +105,12 @@ public:
     /// than `minVoxels` voxels to air. Fixes the little floating chunks a dig leaves
     /// behind that the player can't reach. Returns the number of voxels cleared.
     int RemoveFloaters(int minVoxels = 8);
+    /// The same cleanup, but only around the cells edited since the last cleanup: a dig can only cut
+    /// a small piece loose next to the cells it removed, so the walk starts from the solid voxels near
+    /// the edit box and stops as soon as a piece has `minVoxels` voxels (it is attached). The very first
+    /// call (and the first one after Generate / Resize / a load) sweeps the whole field, so crumbs that
+    /// were already there still go. Returns the number of voxels cleared. What the Voxel Digger calls.
+    int RemoveFloatersEdited(int minVoxels = 8);
 
     /// Trilinear density at a local-space point (for queries / collision).
     float SampleDensity(const Vec3& local) const;
@@ -121,9 +132,55 @@ public:
     // ---- Rendering -----------------------------------------------------
     /// Marching-cubes mesh of the iso surface (smooth, with gradient normals).
     Mesh BuildMesh() const;
-    /// Rebuild the sibling MeshRenderer's mesh from the field. Call after edits.
+    /// The same surface from the ORIGINAL marching-cubes loop, kept word for word as the reference: the
+    /// tests compare BuildMesh and every incremental update against it bit for bit, and
+    /// OKAY_VOXEL_OLD_REMESH=1 meshes with it. Slow (about twice the work of BuildMesh).
+    Mesh BuildMeshReference() const;
+    /// Rebuild the surface from the field. Call after edits. Only the 16-cube chunks the edits reached are
+    /// meshed again (a vertex normal reads two cells past its cube, so the chunks beside an edit count too).
+    ///
+    /// How the surface reaches the renderer (see RenderMode): one combined mesh on the sibling MeshRenderer
+    /// while a scene is being built or edited, and one small renderer object per chunk once the running game
+    /// edits the terrain, so a dig re-uploads only the chunks it touched instead of the whole world.
     void Apply();
     void Start() override { Apply(); }
+    void Update(float dt) override;
+    void OnDestroy() override;
+    void ReleaseUnstarted() override;
+
+    /// How Apply hands the surface to the renderer.
+    ///   Auto    - one combined mesh on this object's MeshRenderer (what scenes, tests and the editor's
+    ///             Edit mode always had) until the RUNNING game edits the terrain; from then on one
+    ///             renderer object per chunk. The picture is the same either way. A terrain object that also
+    ///             has a collider, an LOD Group or an Occluder keeps the combined mesh (they read it).
+    ///   Single  - always the combined mesh (every edit rebuilds and re-uploads all of it).
+    ///   Chunked - always one object per chunk: transient children named "Voxel Chunk x,y,z" (never saved),
+    ///             with this object's MeshRenderer left empty. They copy its material settings.
+    /// The environment variable OKAY_VOXEL_OLD_REMESH=1 forces Single and the original (slower) loop, to
+    /// compare against the previous behaviour.
+    enum class RenderMode { Auto, Single, Chunked };
+    RenderMode renderMode = RenderMode::Auto;
+
+    /// What the last Apply did (also what the Profiler rows Voxel.Mesh / Voxel.Upload measure).
+    struct MeshStats {
+        int         chunksTotal = 0;       ///< chunks in the grid
+        int         chunksRemeshed = 0;    ///< chunks whose triangles were rebuilt
+        int         chunksHandedOff = 0;   ///< chunk meshes given to a renderer object (Chunked)
+        int         vertices = 0;          ///< vertices of the rebuilt chunks
+        int         triangles = 0;         ///< triangles of the rebuilt chunks
+        std::size_t bytesHandedOff = 0;    ///< bytes of mesh data the renderer has to take in again
+        double      remeshMs = 0.0;        ///< time spent in the marching-cubes loop
+        double      handoffMs = 0.0;       ///< time spent giving the result to the renderer
+        double      totalMs = 0.0;         ///< the whole Apply
+        bool        chunked = false;       ///< the surface is drawn by chunk objects
+    };
+    MeshStats lastStats;
+    /// How many renderer objects currently draw the surface (0 while it is one combined mesh).
+    int  ChunkObjectCount() const;
+    bool UsesChunkObjects() const { return chunked_; }
+    /// Test hook: -1 follows the environment variable, 0 forces the new path, 1 the old one.
+    static void ForceOldRemesh(int mode);
+    static bool OldRemeshActive();
 
     // ---- Compact (de)serialization of the field ------------------------
     /// Quantized + base64 encoding of the density field (so editor edits persist
@@ -137,43 +194,55 @@ public:
     }
 
 private:
-    struct McChunk { Mesh mesh; };
+    struct McChunk {
+        Mesh mesh;                  ///< Single: this chunk's triangles, kept so a combine only copies
+        std::uint64_t obj = 0;      ///< Chunked: InstanceId of the renderer object (0 = none yet)
+        int lastVerts = 0;          ///< vertex count of the last mesh (a size hint for the next one)
+    };
     static constexpr int kChunk = 16;
     int mcNx_ = -1, mcNy_ = -1, mcNz_ = -1;
     float mcVox_ = -1.0f;
     unsigned mcStamp_ = 0;
+    int ncx_ = 0, ncy_ = 0, ncz_ = 0;                // chunks along each axis
     std::vector<McChunk> mcChunks_;
+    std::vector<unsigned char> mcDirty_;             // per chunk: must be meshed again
+    int  mcDirtyCount_ = 0;
     bool mcAllDirty_ = true;
-    // Inclusive cube-origin range that must be remeshed. Empty when dirty1 < dirty0.
-    int dirty0_[3] = {0, 0, 0};
-    int dirty1_[3] = {-1, -1, -1};
+    bool chunked_ = false;                           // chunk objects draw the surface
+    bool builtOnce_ = false;                         // a full build has run (the Auto switch waits for it)
+    int  sealedLayers_ = -1;                         // floorLayers at the last SealFloor
+    bool floorTouched_ = false;                      // an edit reached the floor rows
+    const void* combinedPtr_ = nullptr;              // Single: where the combined vertices live, to notice a replaced mesh
+    std::size_t combinedVerts_ = 0;
+    std::uint64_t matSig_ = 0;                       // the terrain MeshRenderer's material when chunks last copied it
+    // Cells edited since the last floater cleanup (inclusive grid box).
+    bool editAny_ = false;
+    int  editMin_[3] = {0, 0, 0}, editMax_[3] = {-1, -1, -1};
+    bool floatersSwept_ = false;
 
-    /// A density write at this cell changes every cube that uses it as a corner.
-    void TouchCell(int x, int y, int z) {
-        if (mcAllDirty_) return;
-        const int a0 = x - 1, b0 = y - 1, c0 = z - 1;
-        const int a1 = x, b1 = y, c1 = z;
-        if (dirty1_[0] < dirty0_[0]) {
-            dirty0_[0] = a0; dirty0_[1] = b0; dirty0_[2] = c0;
-            dirty1_[0] = a1; dirty1_[1] = b1; dirty1_[2] = c1;
-        } else {
-            if (a0 < dirty0_[0]) dirty0_[0] = a0;
-            if (b0 < dirty0_[1]) dirty0_[1] = b0;
-            if (c0 < dirty0_[2]) dirty0_[2] = c0;
-            if (a1 > dirty1_[0]) dirty1_[0] = a1;
-            if (b1 > dirty1_[1]) dirty1_[1] = b1;
-            if (c1 > dirty1_[2]) dirty1_[2] = c1;
-        }
-    }
-    void TouchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
-        if (x0 > x1 || y0 > y1 || z0 > z1) return;
-        TouchCell(x0, y0, z0);
-        TouchCell(x1, y1, z1);
-    }
+    /// A density write at this cell changes every cube whose corner OR normal sampling reads it: a vertex
+    /// normal is a central difference half a cell either side, which reaches two cells below and one above.
+    void TouchCell(int x, int y, int z) { TouchBox(x, y, z, x, y, z); }
+    void TouchBox(int x0, int y0, int z0, int x1, int y1, int z1);
+    void MarkCubes(int a0, int b0, int c0, int a1, int b1, int c1);
     /// Fill air in the protected bottom rows so the volume has a floor.
     bool SealFloor();
     unsigned MeshStamp() const;
     void AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, int z1) const;
+    void AppendCubesReference(Mesh& m, int x0, int y0, int z0, int x1, int y1, int z1) const;
+
+    // chunk table / renderer hand-off
+    bool EnsureChunkTable();
+    void CubeRange(int cx, int cy, int cz, int& x1, int& y1, int& z1) const;
+    void CombineInto(MeshRenderer& mr);
+    void EnterChunked(MeshRenderer& parent);
+    void LeaveChunked();
+    GameObject* CreateChunkObject(int cx, int cy, int cz);
+    void HandOffChunk(int ci, int cx, int cy, int cz, Mesh&& fresh, const MeshRenderer& parent);
+    void SyncChunkMaterials(const MeshRenderer& parent);
+    void DestroyChunkObjects();
+    bool RunningGame() const;
+    bool MeshReadByOthers() const;
 };
 
 } // namespace okay

@@ -225,6 +225,11 @@ PolyMesh Ball(const Frame& f, int rings, int sectors);
 /// A flat profile (counter-clockwise corners in a,b = along t and up, within the frame's box) pushed through the frame's n size.
 PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile);
 void Append(PolyMesh& dst, const PolyMesh& src);
+/// A closed solid: `profile` (counter-clockwise in the a,b plane, positions o + a*pa + b*pb) pushed along `nrm`
+/// from -depth/2 to +depth/2. Faces are wound outward whatever the handedness of (a, b, nrm).
+PolyMesh ExtrudeAxes(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& profile, float depth);
+/// Flip faces whose normal points toward `centre` (right for convex shapes only).
+void OrientOutward(PolyMesh& m, const Vec3& centre);
 void Paint(PolyMesh& m, int material, const Color& color);
 }
 

@@ -31,8 +31,7 @@ void Paint(PolyMesh& m, int material, const Color& color) {
     for (PolyFace& f : m.faces) { f.material = material; f.hasColor = true; f.color = color; }
 }
 
-// Flip faces whose normal points toward `centre` (only right for convex shapes).
-static void OrientOutward(PolyMesh& m, const Vec3& centre) {
+void OrientOutward(PolyMesh& m, const Vec3& centre) {
     for (int i = 0; i < (int)m.faces.size(); ++i) {
         PolyFace& f = m.faces[i];
         Vec3 c{0, 0, 0};
@@ -47,7 +46,7 @@ static void OrientOutward(PolyMesh& m, const Vec3& centre) {
 
 // A closed solid: `profile` (counter-clockwise in the a,b plane) pushed along `nrm` from -depth/2 to +depth/2.
 // Positions are o + a*pa + b*pb + nrm*c.
-static PolyMesh Extrude(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& prof, float depth) {
+PolyMesh ExtrudeAxes(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& prof, float depth) {
     PolyMesh m;
     const int n = (int)prof.size();
     if (n < 3) return m;
@@ -74,7 +73,7 @@ PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile) {
     // Profile corners are in 0..1 of (x across the frame, y up): map them to the frame's box.
     std::vector<Vec2> p;
     for (const Vec2& q : profile) p.push_back({(q.x - 0.5f) * f.sx, q.y * f.sy});
-    return Extrude(f.origin, f.t, f.u, f.n, p, f.sz);
+    return ExtrudeAxes(f.origin, f.t, f.u, f.n, p, f.sz);
 }
 
 PolyMesh Box(const Frame& f) {
@@ -88,7 +87,7 @@ PolyMesh Prism(const Frame& f, int sides) {
         const float a = 6.2831853f * (float)i / (float)sides;
         p.push_back({std::cos(a) * 0.5f * f.sz, std::sin(a) * 0.5f * f.sx});   // (n, t) plane
     }
-    return Extrude(f.origin + f.u * (0.5f * f.sy), f.n, f.t, f.u, p, f.sy);
+    return ExtrudeAxes(f.origin + f.u * (0.5f * f.sy), f.n, f.t, f.u, p, f.sy);
 }
 
 PolyMesh Pyramid(const Frame& f, int sides) {
@@ -638,42 +637,61 @@ Detail AnalyzeImpl(const PolyMesh& cur, const Recipe& stored) {
         for (int c : compsOf[p]) d.compParts[c].insert(p);
     }
 
-    // Moved whole parts: a piece with no matched face that has the same rigid shape as a part with none left.
-    std::map<std::string, std::vector<int>> deletedByKey;
-    for (int p = 0; p < np; ++p)
-        if (A.parts[p].state == PartState::Deleted) {
-            const PolyMesh& pm = d.baseline[p].mesh;
-            DSU bd((int)pm.faces.size());
-            std::map<Key3, int> ff;
-            for (int f = 0; f < (int)pm.faces.size(); ++f)
-                for (int v : pm.faces[f].verts) { auto r = ff.emplace(QPos(pm.verts[v]), f); if (!r.second) bd.Union(f, r.first->second); }
-            std::set<int> roots;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) roots.insert(bd.Find(f));
-            if (roots.size() != 1) continue;   // several shells: reported Deleted
-            std::vector<int> all;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) all.push_back(f);
-            deletedByKey[ShapeKey(pm, all)].push_back(p);
-        }
+    // Moved whole parts: pieces with no matched face that have the same rigid shape as a part with none left. A part made
+    // of one shell may have been turned as well; a part of several shells (a window: frame, bars, glass) is recognised
+    // when all its shells were moved by the same offset.
+    struct Shell { std::string key; Vec3 centre; };
+    std::vector<std::string> compKey(d.comps);
+    std::vector<Vec3> compCentre(d.comps);
+    std::vector<char> free(d.comps, 0);
     for (int c = 0; c < d.comps; ++c) {
         bool anyMatch = false;
         for (int f : d.compFaces[c]) if (faceMatch[f] >= 0) anyMatch = true;
         if (anyMatch) continue;
-        auto it = deletedByKey.find(ShapeKey(cur, d.compFaces[c]));
-        if (it == deletedByKey.end() || it->second.empty()) continue;
-        const Vec3 cc = Centroid(cur, d.compFaces[c]);
-        int best = -1; float bd = 1e30f;
-        for (size_t k = 0; k < it->second.size(); ++k) {
-            std::vector<int> all;
-            const PolyMesh& pm = d.baseline[it->second[k]].mesh;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) all.push_back(f);
-            const float dist = (Centroid(pm, all) - cc).Magnitude();
-            if (dist < bd) { bd = dist; best = (int)k; }
+        free[c] = 1;
+        compKey[c] = ShapeKey(cur, d.compFaces[c]);
+        compCentre[c] = Centroid(cur, d.compFaces[c]);
+    }
+    for (int p = 0; p < np; ++p) {
+        if (A.parts[p].state != PartState::Deleted) continue;
+        const PolyMesh& pm = d.baseline[p].mesh;
+        DSU bd((int)pm.faces.size());
+        std::map<Key3, int> ff;
+        for (int f = 0; f < (int)pm.faces.size(); ++f)
+            for (int v : pm.faces[f].verts) { auto r = ff.emplace(QPos(pm.verts[v]), f); if (!r.second) bd.Union(f, r.first->second); }
+        std::map<int, std::vector<int>> groups;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) groups[bd.Find(f)].push_back(f);
+        std::vector<Shell> shells;
+        for (const auto& g : groups) shells.push_back({ShapeKey(pm, g.second), Centroid(pm, g.second)});
+        std::vector<int> claim;
+        if (shells.size() == 1) {
+            int best = -1; float bdist = 1e30f;
+            for (int c = 0; c < d.comps; ++c)
+                if (free[c] && compKey[c] == shells[0].key) {
+                    const float dist = (compCentre[c] - shells[0].centre).Magnitude();
+                    if (dist < bdist) { bdist = dist; best = c; }
+                }
+            if (best >= 0) claim.push_back(best);
+        } else {
+            for (int c0 = 0; c0 < d.comps && claim.empty(); ++c0) {
+                if (!free[c0] || compKey[c0] != shells[0].key) continue;
+                const Vec3 off = compCentre[c0] - shells[0].centre;
+                std::vector<int> got = {c0};
+                for (size_t k = 1; k < shells.size(); ++k) {
+                    int found = -1;
+                    for (int c = 0; c < d.comps && found < 0; ++c)
+                        if (free[c] && compKey[c] == shells[k].key && std::find(got.begin(), got.end(), c) == got.end() &&
+                            (compCentre[c] - shells[k].centre - off).Magnitude() < 0.01f) found = c;
+                    if (found < 0) break;
+                    got.push_back(found);
+                }
+                if (got.size() == shells.size()) claim = got;
+            }
         }
-        const int p = it->second[best];
-        it->second.erase(it->second.begin() + best);
+        if (claim.empty()) continue;
+        for (int c : claim) { free[c] = 0; d.compParts[c].insert(p); }
         A.parts[p].state = PartState::Edited;
-        A.parts[p].why = "it was moved or turned (its shape is unchanged)";
-        d.compParts[c].insert(p);
+        A.parts[p].why = "it was moved (its shape is unchanged)";
     }
 
     A.faceOwner.assign(nf, "");

@@ -1016,8 +1016,9 @@ struct Builder {
             if (total > opt.limits.maxCorners - std::min(cornersBuilt, opt.limits.maxCorners)) return Fail("mesh too large");
         }
         // Each part keeps its distinct corners and an index list. Equal corners (byte for byte) are found with an
-        // open-addressing table of vertex numbers (power-of-two size, at most half full, linear probing).
-        struct PartBuild { Part part; std::vector<std::uint32_t> table; };
+        // open-addressing table of vertex numbers (power-of-two size, at most two thirds full, linear probing; the size
+        // changes only the work, never which vertex a corner finds).
+        struct PartBuild { Part part; std::vector<std::uint32_t> table; std::uint32_t no = 0xFFFFFFFFu; };   // no: index in partList
         const std::uint32_t kEmpty = 0xFFFFFFFFu;
         std::map<int, PartBuild> parts;
         for (const auto& kv : cornersOfSlot) {
@@ -1027,7 +1028,7 @@ struct Builder {
             const std::size_t guess = std::min(kv.second, ncp + 16);   // distinct corners: usually about the vertex count
             pb.part.vertices.reserve(guess);
             std::size_t cap = 64;
-            while (cap < guess * 2) cap <<= 1;
+            while (cap * 2 < guess * 3) cap <<= 1;
             pb.table.assign(cap, kEmpty);
         }
         auto hashCorner = [](const Corner& c) {   // six 64-bit words and the last 32 bits, each times its own odd constant
@@ -1041,7 +1042,7 @@ struct Builder {
         };
         auto addCorner = [&](PartBuild& pb, const Corner& c) {
             std::vector<Corner>& vs = pb.part.vertices;
-            if ((vs.size() + 1) * 2 > pb.table.size()) {   // keep the table at most half full: double it and re-insert
+            if ((vs.size() + 1) * 3 > pb.table.size() * 2) {   // keep the table at most 2/3 full: double it and re-insert
                 pb.table.assign(pb.table.size() * 2, kEmpty);
                 const std::size_t mask = pb.table.size() - 1;
                 for (std::size_t v = 0; v < vs.size(); ++v) {
@@ -1064,11 +1065,13 @@ struct Builder {
         // Corners are made in batches and then looked up in the tables: measured about a third faster on big meshes
         // than looking each one up as it is made (the lookups then do not compete with the reading of the layer arrays).
         const std::size_t kBatch = 2048;
-        std::vector<std::pair<PartBuild*, Corner>> pending;
+        struct Pending { Corner c; std::uint32_t part; };   // 56 bytes (a pointer next to the corner would make it 64)
+        std::vector<Pending> pending;
+        std::vector<PartBuild*> partList;   // `part` above indexes this
         {
             std::size_t total = 0;
             for (const auto& kv : cornersOfSlot) total += kv.second;
-            pending.reserve(std::min(total, kBatch + 512));
+            pending.reserve(std::min(total, kBatch));   // flushed as soon as it reaches kBatch
         }
         const bool ok = forEachPolygon([&](std::size_t fi, std::size_t start, std::size_t count, bool good) {
             if (count < 3 || !good) return true;
@@ -1091,6 +1094,8 @@ struct Builder {
             if (cornersBuilt + tris.size() > opt.limits.maxCorners) return Fail("mesh too large");
             cornersBuilt += tris.size();
             PartBuild& part = parts[slot]; part.part.slot = slot;
+            if (part.no == 0xFFFFFFFFu) { part.no = (std::uint32_t)partList.size(); partList.push_back(&part); }
+            const std::uint32_t partNo = part.no;
             for (int t : tris) {
                 const std::size_t k = (std::size_t)t, pv = start + k;
                 const std::size_t cp = (std::size_t)cpOf(pv);
@@ -1106,12 +1111,12 @@ struct Builder {
                 if (lu.Ok() && Fetch(lu, pv, fi, cp, edgeOfCorner, uv)) { c.uv[0] = (float)uv[0]; c.uv[1] = (float)uv[1]; }
                 double col[4];
                 if (lc.Ok() && Fetch(lc, pv, fi, cp, edgeOfCorner, col)) for (int a = 0; a < 4; ++a) c.color[a] = (float)col[a];
-                pending.push_back({&part, c});
-                if (pending.size() >= kBatch) { for (auto& pc : pending) addCorner(*pc.first, pc.second); pending.clear(); }
+                pending.push_back({c, partNo});
+                if (pending.size() >= kBatch) { for (auto& pc : pending) addCorner(*partList[pc.part], pc.c); pending.clear(); }
             }
             return true;
         });
-        for (auto& pc : pending) addCorner(*pc.first, pc.second);   // (in the order they were made: the numbering is the same)
+        for (auto& pc : pending) addCorner(*partList[pc.part], pc.c);   // (in the order they were made: the numbering is the same)
         if (!ok) return false;
         for (auto& kv : parts) if (!kv.second.part.indices.empty()) m.parts.push_back(std::move(kv.second.part));
 

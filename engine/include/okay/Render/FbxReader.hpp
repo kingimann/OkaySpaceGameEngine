@@ -146,7 +146,7 @@ struct Document {
     std::vector<Elem> elems;
     std::vector<Prop> props;
     std::vector<std::vector<std::uint8_t>> inflated;   ///< decoded zlib arrays
-    std::vector<std::vector<double>> numbers;          ///< ASCII arrays
+    std::vector<std::vector<double>> numbers;          ///< ASCII arrays (doubles, or int32 / float32 values packed in)
     Document() = default;
     Document(Document&&) = default;
     Document& operator=(Document&&) = default;

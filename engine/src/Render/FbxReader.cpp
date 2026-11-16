@@ -386,8 +386,32 @@ struct Text {
             if (nv > cap) return Fail("arrays exceed the size limit");
         }
         vals.resize(nv);
-        arrayBytes += vals.size() * 8;
-        out.SetArray('d', (std::uint32_t)vals.size(), (const std::uint8_t*)vals.data());
+        arrayBytes += nv * 8;   // the limit counts 8 bytes a value, whatever the storage below
+        // Smaller storage when it changes no value: an array whose values are all 32-bit integers (index arrays) is
+        // kept as int32, one whose values are all exact floats as float32. Array::operator[] gives (double)value,
+        // which is the same double bit for bit (checked per value; -0 stays a double), and the readers' type-specific
+        // paths (int32 indices, double vectors) give the same numbers as their general paths.
+        bool allInt = true, allFloat = true;
+        for (std::size_t k = 0; k < nv && (allInt || allFloat); ++k) {
+            const double v = vals[k];
+            if (allInt) {
+                if (!(v >= -2147483648.0 && v <= 2147483647.0)) allInt = false;
+                else { const double b = (double)(std::int32_t)v; allInt = std::memcmp(&b, &v, 8) == 0; }
+            }
+            if (allFloat) {
+                if (std::fabs(v) > 3.4028234663852886e38 && !std::isinf(v)) allFloat = false;   // beyond the largest float
+                else { const double b = (double)(float)v; allFloat = std::memcmp(&b, &v, 8) == 0; }
+            }
+        }
+        char type = 'd';
+        if (nv && (allInt || allFloat)) {
+            std::vector<double> packed((nv * 4 + 7) / 8);   // 4 bytes a value, in a buffer of doubles (the storage type)
+            std::uint8_t* q = (std::uint8_t*)packed.data();
+            if (allInt) { type = 'i'; for (std::size_t k = 0; k < nv; ++k) { const std::int32_t x = (std::int32_t)vals[k]; std::memcpy(q + k * 4, &x, 4); } }
+            else { type = 'f'; for (std::size_t k = 0; k < nv; ++k) { const float x = (float)vals[k]; std::memcpy(q + k * 4, &x, 4); } }
+            vals.swap(packed);
+        }
+        out.SetArray(type, (std::uint32_t)nv, (const std::uint8_t*)vals.data());
         doc->numbers.push_back(std::move(vals));   // the buffer stays where it is
         return true;
     }
@@ -467,6 +491,9 @@ bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::
         if (!t.ReadElem(idx, 1)) { ok = false; break; }
         link.Link(kNone, last, idx);
     }
+    // The two flat arrays grew by doubling (the text gives no counts up front): give back the slack before the scene
+    // is built, which is when memory peaks. They hold indices until Fixup, so moving them is safe here.
+    out.elems.shrink_to_fit(); out.props.shrink_to_fit();
     Fixup(out);
     if (!ok) return fail(t.err);
     return true;

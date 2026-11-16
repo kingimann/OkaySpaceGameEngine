@@ -1720,6 +1720,19 @@ int main() {
             g.Open(sceneOf(p), [&] { ++go; });
             CHECK(go == 1 && !g.Busy() && Snap(p.root) == before);
         }
+        {   // "Open with" an editor older than the project (--keep-version) and "open anyway": the newer question is skipped and the backup is still made
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.860.0");
+            ProjectGate g(env);
+            int go = 0;
+            g.NoteKeepRequest(sceneOf(p));
+            g.NotePreAnswer(sceneOf(p), PreAnswer::OpenAnyway);
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(g.prompt().kind == PromptKind::Working && g.prompt().backupOnly && go == 0);
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Done && BackupCount(p) == 1 && okayver::ReadProjectVersion(p.root.string()) == "2.860.0");
+            g.Answer(Choice::Continue);
+            CHECK(go == 1 && !g.Busy());
+        }
         {   // a development build never asks and never upgrades, answer or not
             TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
             const Tree before = Snap(p.root);

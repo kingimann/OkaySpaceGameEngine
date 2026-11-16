@@ -229,6 +229,23 @@ public:
     }
     void SetGodMode(bool on) { godMode = on; }
 
+    /// Respawns left (with `lives` > 0), where a respawn puts the object, and the time
+    /// until a dead object comes back.
+    int   LivesLeft() const { return m_livesLeft; }
+    Vec3  RespawnPoint() const { return m_start; }
+    float RespawnTimeLeft() const { return m_respawnTimer; }
+    /// Save games: put back what Start reset (SaveGame does this on load). A dead object
+    /// stays dead; with `respawn` it comes back when `respawnLeft` has run out.
+    void RestoreSaved(float h, bool isDead, int livesLeft, const Vec3& start, float respawnLeft) {
+        if (std::isfinite(h)) health = Mathf::Clamp(h, 0.0f, maxHealth + Mathf::Max(0.0f, overhealMax));
+        m_livesLeft = livesLeft > 0 ? livesLeft : 0;
+        if (std::isfinite(start.x) && std::isfinite(start.y) && std::isfinite(start.z)) m_start = start;
+        dead = isDead;
+        if (dead) { health = 0.0f; m_respawnTimer = std::isfinite(respawnLeft) ? Mathf::Max(0.0f, respawnLeft) : respawnDelay; }
+        lowHealth = !dead && health <= lowThreshold;
+        Publish();
+    }
+
 private:
     void OnDeath() {
         health = 0.0f; dead = true;

@@ -66,6 +66,17 @@ public:
         else if (gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
     }
 
+    /// Picked up and hidden, waiting to respawn.
+    bool  Taken() const { return m_taken; }
+    float RespawnTimeLeft() const { return m_timer; }
+    /// Save games: this respawning item was picked up when the game was saved. Hides it
+    /// again and lets the rest of the respawn time run.
+    void RestoreTaken(float timeLeft) {
+        m_taken = true;
+        m_timer = std::isfinite(timeLeft) ? timeLeft : respawnDelay;
+        SetVisible(false);
+    }
+
     void Update(float dt) override {
         if (!m_taken) return;                      // only ticks while hidden (respawn mode)
         m_timer -= dt;

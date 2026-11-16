@@ -52,6 +52,18 @@ public:
     void StopWaves()  { m_running = false; }
     bool Running()   const { return m_running; }
     int  WavesDone() const { return m_wavesDone; }
+    int   LeftInWave() const { return m_left; }   // spawns still to come in the current wave
+    float Timer() const { return m_timer; }       // seconds until the next spawn try
+
+    /// Save games: put back a run's progress after Start (SaveGame does this on load, so a
+    /// finished arena stays finished and one part-way through carries on).
+    void RestoreProgress(int spawned, int wavesDone, int leftInWave, float timer, bool running) {
+        m_total = spawned > 0 ? spawned : 0;
+        m_wavesDone = wavesDone > 0 ? wavesDone : 0;
+        m_left = leftInWave > 0 ? leftInWave : (count > 0 ? count : 1);
+        if (std::isfinite(timer)) m_timer = timer;
+        m_running = running;
+    }
 
     void Start() override {
         m_timer = startDelay;

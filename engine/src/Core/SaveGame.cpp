@@ -10,8 +10,13 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/Spawner.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/NoCode.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -279,6 +284,111 @@ bool ReadSave(const std::string& slot, Parsed& out, std::string* error) {
     return false;
 }
 
+// Game progress kept on components but not in the scene file (it is reset by Start):
+// Spawner runs, HealthStat, the survival meters and picked-up Collectibles. One state line
+// each; a slot without them (older saves) leaves the authored values Start gave.
+//   spawner  <path> <nth> <spawned> <wavesDone> <leftInWave> <timer> <running>
+//   health   <path> <nth> <health> <dead> <livesLeft> <startX> <startY> <startZ> <respawnTimer>
+//   meter    <path> <name> <value>          (hunger thirst stamina oxygen warmth energy sanity)
+//   survival <path> <nth> <health> <hunger> <thirst> <stamina> <oxygen> <warmth> <dead>
+//   collect  <path> <nth> <respawnTimeLeft> (only while picked up and hidden)
+void WriteProgress(std::ostream& out, GameObject* g, const std::function<const std::string&()>& pathOf) {
+    std::size_t k = 0;
+    for (auto* sp : g->GetComponents<Spawner>()) {
+        out << "spawner\t" << pathOf() << "\t" << k++ << "\t" << sp->Spawned() << " " << sp->WavesDone() << " "
+            << sp->LeftInWave() << " " << Num(sp->Timer()) << " " << (sp->Running() ? 1 : 0) << "\n";
+    }
+    k = 0;
+    for (auto* hp : g->GetComponents<HealthStat>()) {
+        const Vec3 st = hp->RespawnPoint();
+        out << "health\t" << pathOf() << "\t" << k++ << "\t" << Num(hp->health) << " " << (hp->dead ? 1 : 0) << " "
+            << hp->LivesLeft() << " " << Num(st.x) << " " << Num(st.y) << " " << Num(st.z) << " "
+            << Num(hp->RespawnTimeLeft()) << "\n";
+    }
+    auto meter = [&](const char* name, float v) { out << "meter\t" << pathOf() << "\t" << name << "\t" << Num(v) << "\n"; };
+    if (auto* m = g->GetComponent<HungerStat>()) meter("hunger", m->hunger);
+    if (auto* m = g->GetComponent<ThirstStat>()) meter("thirst", m->thirst);
+    if (auto* m = g->GetComponent<StaminaStat>()) meter("stamina", m->stamina);
+    if (auto* m = g->GetComponent<OxygenStat>()) meter("oxygen", m->oxygen);
+    if (auto* m = g->GetComponent<TemperatureStat>()) meter("warmth", m->warmth);
+    if (auto* m = g->GetComponent<SleepStat>()) meter("energy", m->energy);
+    if (auto* m = g->GetComponent<SanityStat>()) meter("sanity", m->sanity);
+    k = 0;
+    for (auto* ss : g->GetComponents<SurvivalStats>()) {
+        out << "survival\t" << pathOf() << "\t" << k++ << "\t" << Num(ss->health) << " " << Num(ss->hunger) << " "
+            << Num(ss->thirst) << " " << Num(ss->stamina) << " " << Num(ss->oxygen) << " " << Num(ss->warmth) << " "
+            << (ss->dead ? 1 : 0) << "\n";
+    }
+    k = 0;
+    for (auto* co : g->GetComponents<Collectible>()) {
+        if (co->Taken()) out << "collect\t" << pathOf() << "\t" << k << "\t" << Num(co->RespawnTimeLeft()) << "\n";
+        ++k;
+    }
+}
+
+// A meter value from a save: finite, not below 0 and not above `cap`.
+float ClampMeter(float v, float current, float cap) {
+    if (!std::isfinite(v)) return current;
+    return std::max(0.0f, std::min(v, std::max(0.0f, cap)));
+}
+float SavedMeter(const std::string& text, float current, float cap) {
+    float v = current;
+    ParseFloats(text, &v, 1);
+    return ClampMeter(v, current, cap);
+}
+
+template <typename T>
+T* NthComponent(GameObject* g, const std::string& text) {
+    const std::size_t nth = (std::size_t)std::max(0, std::atoi(text.c_str()));
+    auto all = g->GetComponents<T>();
+    return nth < all.size() ? all[nth] : nullptr;
+}
+
+void ApplyProgress(GameObject* g, const std::vector<std::string>& c) {
+    const std::string& kind = c[0];
+    if (kind == "spawner" && c.size() >= 4) {
+        if (auto* sp = NthComponent<Spawner>(g, c[2])) {
+            float v[5] = {(float)sp->Spawned(), (float)sp->WavesDone(), (float)sp->LeftInWave(), sp->Timer(), sp->Running() ? 1.0f : 0.0f};
+            ParseFloats(c[3], v, 5);
+            sp->RestoreProgress((int)v[0], (int)v[1], (int)v[2], v[3], v[4] != 0.0f);
+        }
+    } else if (kind == "health" && c.size() >= 4) {
+        if (auto* hp = NthComponent<HealthStat>(g, c[2])) {
+            const Vec3 st = hp->RespawnPoint();
+            float v[7] = {hp->health, hp->dead ? 1.0f : 0.0f, (float)hp->LivesLeft(), st.x, st.y, st.z, hp->RespawnTimeLeft()};
+            ParseFloats(c[3], v, 7);
+            hp->RestoreSaved(v[0], v[1] != 0.0f, (int)v[2], Vec3{v[3], v[4], v[5]}, v[6]);
+        }
+    } else if (kind == "meter" && c.size() >= 4) {
+        const std::string& n = c[2];
+        if (n == "hunger") { if (auto* m = g->GetComponent<HungerStat>()) m->hunger = SavedMeter(c[3], m->hunger, m->maxHunger + std::max(0.0f, m->overeatMax)); }
+        else if (n == "thirst") { if (auto* m = g->GetComponent<ThirstStat>()) m->thirst = SavedMeter(c[3], m->thirst, m->maxThirst + std::max(0.0f, m->overdrinkMax)); }
+        else if (n == "stamina") { if (auto* m = g->GetComponent<StaminaStat>()) m->stamina = SavedMeter(c[3], m->stamina, m->maxStamina); }
+        else if (n == "oxygen") { if (auto* m = g->GetComponent<OxygenStat>()) m->oxygen = SavedMeter(c[3], m->oxygen, m->maxOxygen); }
+        else if (n == "warmth") { if (auto* m = g->GetComponent<TemperatureStat>()) m->warmth = SavedMeter(c[3], m->warmth, m->maxWarmth); }
+        else if (n == "energy") { if (auto* m = g->GetComponent<SleepStat>()) m->energy = SavedMeter(c[3], m->energy, m->maxEnergy); }
+        else if (n == "sanity") { if (auto* m = g->GetComponent<SanityStat>()) m->sanity = SavedMeter(c[3], m->sanity, m->maxSanity); }
+    } else if (kind == "survival" && c.size() >= 4) {
+        if (auto* ss = NthComponent<SurvivalStats>(g, c[2])) {
+            float v[7] = {ss->health, ss->hunger, ss->thirst, ss->stamina, ss->oxygen, ss->warmth, ss->dead ? 1.0f : 0.0f};
+            ParseFloats(c[3], v, 7);
+            ss->health  = ClampMeter(v[0], ss->health,  ss->maxHealth);
+            ss->hunger  = ClampMeter(v[1], ss->hunger,  ss->maxHunger);
+            ss->thirst  = ClampMeter(v[2], ss->thirst,  ss->maxThirst);
+            ss->stamina = ClampMeter(v[3], ss->stamina, ss->maxStamina);
+            ss->oxygen  = ClampMeter(v[4], ss->oxygen,  ss->maxOxygen);
+            ss->warmth  = ClampMeter(v[5], ss->warmth,  ss->maxWarmth);
+            ss->dead = v[6] != 0.0f;
+        }
+    } else if (kind == "collect" && c.size() >= 4) {
+        if (auto* co = NthComponent<Collectible>(g, c[2])) {
+            float t = co->respawnDelay;
+            ParseFloats(c[3], &t, 1);
+            co->RestoreTaken(t);
+        }
+    }
+}
+
 // Put back what the scene text doesn't hold, after the loaded objects started.
 void ApplyState(Scene& scene, const Parsed& p) {
     const auto index = PathIndex(scene);
@@ -314,6 +424,8 @@ void ApplyState(Scene& scene, const Parsed& p) {
                 auto graphs = g->GetComponents<VisualScriptComponent>();
                 if (nth < graphs.size()) graphs[nth]->SetVariable(c[3], v);
             }
+        } else if (c.size() >= 3) {
+            if (GameObject* g = find(c[1])) ApplyProgress(g, c);
         }
     }
     // The slot was checked whole when it was read, so replacing the game's keys is safe here.
@@ -391,6 +503,7 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& op
             }
             ++k;
         }
+        WriteProgress(out, g, pathOf);
     }
     for (const auto& kv : Save::File(Save::DefaultFile()).Raw())
         out << "kv\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";

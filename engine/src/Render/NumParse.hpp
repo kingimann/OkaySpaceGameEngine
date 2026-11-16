@@ -64,8 +64,15 @@ inline bool FastDecimal(const char* p, const char* e, double& out) {
 
 // Four ASCII digits at q (q + 4 must be readable) as their value, or -1 when one of the four bytes is not a digit. Little
 // endian only (the first character is the lowest byte); elsewhere it always says -1 and the callers go digit by digit.
+// OKAY_NUMPARSE_NO_FOUR_DIGITS forces that other path on any machine: the test reader_numparse_portable is built with it and
+// checks that ScanDecimal gives the same answers both ways. OKAY_NUMPARSE_FOUR_DIGITS says which path this build has.
+#if !defined(OKAY_NUMPARSE_NO_FOUR_DIGITS) && ((defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER))
+#define OKAY_NUMPARSE_FOUR_DIGITS 1
+#else
+#define OKAY_NUMPARSE_FOUR_DIGITS 0
+#endif
 inline int FourDigits(const char* q) {
-#if (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
+#if OKAY_NUMPARSE_FOUR_DIGITS
     std::uint32_t x;
     std::memcpy(&x, q, 4);
     // every byte in '0'..'9': its high nibble is 3, and adding 6 does not carry it out of 3 (no byte passes the first test

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -162,6 +163,75 @@ bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string bytes;
     if (!detail::txt::ReadFileCapped(path, raw::kMaxFileBytes, bytes, err)) return false;
     return ReadRawBuffer(bytes, out, err);
+}
+
+// A guard for the import seam, not part of reading. Assimp 5.4.3's RAW importer builds a broken node list when two or more
+// groups hold triangles: the root says it has one child per such group, but only its first child pointer is ever set (each
+// group's node is written over the one before) and the others stay null, so whoever walks the nodes crashes (our scene walk
+// in ModelImportAssimp.cpp did, on the corpus files WithColor.raw and WithTexture.raw and on the own_dispatch_e2 fixture).
+// Found by running it on small files and from the crash's backtrace. The rule that decides "a group" here follows what the
+// importer does with lines (a line whose first non-blank character is not a digit, '+' or '-' starts or selects a group; the
+// text ends at the first NUL; a line ends at CR, LF or form feed), and it errs on the side of "unsafe": a line that starts
+// like a number counts as a triangle even when it would be refused, and a group name is only taken as "the same group again"
+// when the whole rest of the line is exactly that name. Also called unsafe: a line of 4,000 characters or more (the importer
+// copies a line into a fixed 4,096-byte buffer), UTF-16 text (converted before parsing; not modelled here) and more than 1,000
+// group names (to keep this check linear). Our RAW reader reads all of these.
+bool RawFileUnsafeForAssimp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;   // nothing to read: Assimp will say so itself
+    std::vector<std::string> names{"<default>"};
+    std::vector<char> filled{0};
+    std::size_t cur = 0, filledCount = 0, lineLen = 0;
+    enum class St { Start, Name, Skip } st = St::Start;
+    std::string name;   // the whole rest of a name line (leading blanks skipped)
+    bool bomChecked = false;
+    char buf[65536];
+    auto endName = [&]() -> bool {
+        const std::size_t sp = name.find_first_of(" \t");
+        const std::string token = name.substr(0, sp);
+        std::size_t found = names.size();
+        for (std::size_t i = 0; i < names.size(); ++i) if (names[i] == name) { found = i; break; }
+        if (found == names.size()) { names.push_back(token); filled.push_back(0); }
+        cur = found;
+        name.clear();
+        return names.size() > 1000;   // many group names: say unsafe rather than compare them all (our reader reads such a file)
+    };
+    for (;;) {
+        f.read(buf, sizeof buf);
+        const std::size_t n = (std::size_t)f.gcount();
+        if (n == 0) break;
+        std::size_t i = 0;
+        if (!bomChecked) {
+            bomChecked = true;
+            const unsigned char b0 = (unsigned char)buf[0], b1 = n > 1 ? (unsigned char)buf[1] : 0, b2 = n > 2 ? (unsigned char)buf[2] : 0;
+            if ((b0 == 0xFF && b1 == 0xFE) || (b0 == 0xFE && b1 == 0xFF)) return true;
+            if (b0 == 0xEF && b1 == 0xBB && b2 == 0xBF) i = 3;
+        }
+        for (; i < n; ++i) {
+            const char c = buf[i];
+            if (c == '\0') return (st == St::Name && endName()) || filledCount >= 2;
+            const bool eol = c == '\r' || c == '\n' || c == '\f';
+            if (eol) {
+                if (st == St::Name && endName()) return true;
+                st = St::Start; lineLen = 0;
+                continue;
+            }
+            if (++lineLen >= 4000) return true;
+            switch (st) {
+            case St::Start:
+                if (c == ' ' || c == '\t') break;
+                if ((c >= '0' && c <= '9') || c == '+' || c == '-') {
+                    if (!filled[cur]) { filled[cur] = 1; if (++filledCount >= 2) return true; }
+                    st = St::Skip;
+                } else { st = St::Name; name.assign(1, c); }
+                break;
+            case St::Name: name += c; break;
+            default: break;
+            }
+        }
+    }
+    if (st == St::Name && endName()) return true;
+    return filledCount >= 2;
 }
 
 } // namespace okay

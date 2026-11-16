@@ -170,6 +170,16 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
     int pivots = 0, badPivots = 0;
     int longPaths = 0, badKeys = 0, nonLinear = 0, longLines = 0, ignoredLines = 0, strayChannels = 0, strayParents = 0, badParentLines = 0, behaviors = 0, unclosedEnv = 0, strayKeys = 0;
     double fps = 30;
+    // The older motion layout (scene versions 1 and 2; the corpus file move_x_oldformat_56.lws, which is move_x.lws saved in it):
+    // "ObjectMotion (unnamed)" (or LightMotion / CameraMotion / BoneMotion), a line with the channel count, then for each channel
+    // a line with its key count and one line per key of six numbers: value, time in seconds, then three numbers of the span's
+    // shape (read as linear). Angles are degrees in it (the same light is 45 there and 0.785398 in the version 5 file), so
+    // channels 3 to 5 are turned to radians. A block that does not keep to this layout is dropped for its item (counted).
+    // Read only when the line after the motion command is a single number; in versions 3 and up it is "NumChannels n".
+    int oldMot = 0, oldN = 0, oldCh = 0, oldItem = -1;   // oldMot: 1 channel count next, 2 a key count next, 3 keys
+    std::size_t oldLeft = 0;
+    int oldKeys = 0, oldBlocks = 0, oldDropped = 0;
+    auto dropOld = [&]() { if (oldItem >= 0) for (auto& c : items[(std::size_t)oldItem].ch) c.clear(); ++oldDropped; oldMot = 0; };
     auto isItemCmd = [&](const Tk& t) { return Is(line, t, "LoadObject") || Is(line, t, "LoadObjectLayer") || Is(line, t, "AddNullObject") || Is(line, t, "AddCamera") || Is(line, t, "AddLight") || Is(line, t, "AddBone") || Is(line, t, "Channel") || Is(line, t, "ParentItem"); };
 
     while (lines.Next(line)) {
@@ -191,6 +201,33 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
                 double c;
                 if (n == 1 && Num(line, tk[0], c) && c >= 0) { envDeclared = (std::size_t)std::min(c, 1e18); if (envDeclared > kMaxKeys) return Fail(err, "an envelope declares " + std::to_string(envDeclared) + " keys (the limit is " + std::to_string(kMaxKeys) + ") (budget)"); }
                 continue;
+            }
+        }
+        if (oldMot) {
+            double c;
+            const bool oneNum = n == 1 && Num(line, tk[0], c) && c >= 0 && c == std::floor(c);
+            if (oldMot == 1) {
+                if (oneNum && c >= 1 && c <= 100) { oldN = (int)c; oldCh = 0; oldMot = 2; ++oldBlocks; for (auto& ch : items[(std::size_t)oldItem].ch) ch.clear(); continue; }
+                oldMot = 0;   // not the older layout: the line is read as usual below
+            } else if (oldMot == 2) {
+                if (oneNum) {
+                    if (c > (double)kMaxKeys) return Fail(err, "an envelope declares more than " + std::to_string(kMaxKeys) + " keys (budget)");
+                    oldLeft = (std::size_t)c;
+                    if (oldLeft) oldMot = 3; else if (++oldCh >= oldN) oldMot = 0;
+                    continue;
+                }
+                dropOld();
+            } else {
+                double v, t;
+                if (n == 6 && Num(line, tk[0], v) && Num(line, tk[1], t)) {
+                    if (++totalKeys > kMaxKeys) return Fail(err, "more than " + std::to_string(kMaxKeys) + " envelope keys (budget)");
+                    ++oldKeys;
+                    if (std::fabs(t) > kMaxTime) ++badKeys;
+                    else if (oldCh < 9) items[(std::size_t)oldItem].ch[oldCh].push_back(Key{t, oldCh >= 3 && oldCh <= 5 ? v * (3.14159265358979323846 / 180.0) : v});
+                    if (--oldLeft == 0 && ++oldCh >= oldN) oldMot = 0; else if (oldLeft == 0) oldMot = 2;
+                    continue;
+                }
+                dropOld();
             }
         }
         if (Is(line, tk[0], "{")) {
@@ -268,6 +305,12 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
             } else ++badPivots;
             continue;
         }
+        if (cur >= 0 && !isMotion && (Is(line, tk[0], "ObjectMotion") || Is(line, tk[0], "LightMotion") || Is(line, tk[0], "CameraMotion") || Is(line, tk[0], "BoneMotion"))) {
+            oldMot = 1; oldItem = cur;
+            ++ignoredLines;   // counted as before; the lines after it decide whether it starts an older-layout block
+            continue;
+        }
+        if (oldBlocks && Is(line, tk[0], "Pre/PostBehavior")) { ++behaviors; continue; }
         if (Is(line, tk[0], "FramesPerSecond") && n >= 2) { double v; if (Num(line, tk[1], v) && v > 0 && v <= 100000) fps = v; continue; }
         if (cur >= 0 && n >= 2 && (Is(line, tk[0], "CameraName") || Is(line, tk[0], "LightName") || Is(line, tk[0], "BoneName") || Is(line, tk[0], "ObjectName"))) {
             Item& it = items[(std::size_t)cur];
@@ -278,6 +321,7 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
         }
         ++ignoredLines;
     }
+    if (oldMot >= 2) dropOld();   // the file ends inside an older-layout motion block
     if (inEnv) return Fail(err, "the file ends inside an envelope (truncated)");
     if (items.empty()) return Fail(err, "the scene has no object, camera, light or bone");
 
@@ -436,7 +480,9 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
     if (fromParent) note(std::to_string(fromParent) + " object path(s) read from the folder above the scene (one leading ../, LightWave objects only: LightWave's usual content directory)");
     if (pivots) note(std::to_string(pivots) + " item pivot(s) applied (PivotPosition: the item turns and scales about it, and its object and children are placed relative to it)");
     if (badPivots) note(std::to_string(badPivots) + " PivotPosition line(s) that are not three numbers skipped");
-    if (version < 3) note("version " + std::to_string(version) + " scene: read with the version 3 layout (unchecked)");
+    if (version < 3) note("version " + std::to_string(version) + " scene: read with the version 3 layout where it is the same (unchecked)");
+    if (oldBlocks) note(std::to_string(oldBlocks) + " motion block(s) in the older layout (channel count, then per channel a key count and lines of value, time and span): " + std::to_string(oldKeys) + " key(s), angles read as degrees, spans read as linear between keys");
+    if (oldDropped) note(std::to_string(oldDropped) + " older-layout motion block(s) that do not keep to that layout dropped (the item keeps no motion from them)");
     if (refused) note(std::to_string(refused) + " object file(s) refused: a scene may only name files inside its own folder (no absolute path, no .. out of it, no link out of it)");
     if (sceneRefs) note(std::to_string(sceneRefs) + " object reference(s) to a scene file refused: a scene may not load another scene");
     if (unreadable) note(std::to_string(unreadable) + " object(s) whose file could not be read, first: " + firstMissing);

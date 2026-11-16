@@ -3789,6 +3789,16 @@ foreach(_e_t IN ITEMS batche2_hostile batche2_budget)
     set_tests_properties(${_e_t} PROPERTIES TIMEOUT 600)
 endforeach()
 
+# The number scanner of the text model readers (engine/src/Render/NumParse.hpp), built twice: with the build's own path (four
+# digits at a time on little-endian machines) and with OKAY_NUMPARSE_NO_FOUR_DIGITS, the digit-by-digit path a big-endian machine
+# takes. Both check every token against FastDecimal, so they give identical values (with OKAY_MODEL_CORPUS set, on every number
+# of the corpus text files too). No engine library.
+foreach(_np IN ITEMS reader_numparse reader_numparse_portable)
+    add_executable(test_${_np} test_reader_numparse.cpp)
+    add_test(NAME ${_np} COMMAND test_${_np} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+target_compile_definitions(test_reader_numparse_portable PRIVATE OKAY_NUMPARSE_NO_FOUR_DIGITS)
+
 # The import seam routes the batch-E formats (slots 31 and 33) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_e2 test_own_dispatch_e2.cpp)
 target_link_libraries(test_own_dispatch_e2 PRIVATE okay::engine)

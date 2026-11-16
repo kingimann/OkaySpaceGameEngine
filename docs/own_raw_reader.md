@@ -13,6 +13,41 @@ The "raw triangle" text format (for example the output of POV-Ray tools): one tr
 | `tests/test_raw_reader.cpp`, `tests/batche2_fixtures.hpp` | Hand-computed checks (`raw_reader`) |
 | `tests/test_batche2_hostile.cpp`, `tests/test_batche2_budget.cpp`, `tests/test_own_dispatch_e2.cpp` | Hostile input, budgets and memory, the seam |
 
+## Files Assimp is not given (2026-11-16)
+
+Assimp 5.4.3's RAW importer builds a broken scene when a file has **two or more groups that hold triangles**: the root node says
+it has one child per such group, but only the first child pointer is set and the others are null. Our scene walk then crashed
+(the corpus files `WithColor.raw` and `WithTexture.raw`, and the test fixture of `own_dispatch_e2`, crashed every build with
+`OKAY_USE_ASSIMP=ON`, which includes the shipped Windows build; not tried on Windows). Found from the crash's backtrace and by
+running Assimp on small files.
+
+`RawFileUnsafeForAssimp(path)` (`RawReader.cpp`, declared in `ModelData.hpp`) says whether a file is such a file. It reads the
+file once, line by line, the way the importer splits it into groups, and errs on the side of "unsafe": UTF-16 text, a line of
+4,000 characters or more (the importer copies lines into a 4,096-byte buffer) and more than 1,000 group names also count.
+The import seam (`ImportModelData`) uses it whenever the choice for `.raw` is Assimp:
+
+- default choice, or the per-format switch set to Assimp (`OKAY_OWN_RAW=0`, `SetImportBackend(".raw", Assimp)`): **our RAW
+  reader reads the file instead** and the log says so (`... cannot read safely; reading it with our own RAW reader`); if ours
+  refuses it, Assimp is not tried;
+- an explicit `ImportModelData(path, ..., ImportBackend::Assimp)` (the bench, tests that compare the two): refused with the
+  message "RAW: this file has more than one group of triangles, which crashes Assimp 5.4.3's RAW importer ...".
+
+A file with one group (`Wuson.raw`) still goes to Assimp by default. The Assimp scene walk also skips null children and mesh
+indexes past the mesh list now, as a second guard. Checked: the 11 small cases in `own_dispatch_e2` were each run through
+Assimp itself (a scratch program that reads the file and looks for null children) and the guard agrees with it on every one,
+and on the 3 corpus files.
+
+**How to try it** (Windows release, which has Assimp): import a `.raw` file with two groups, for example
+
+```
+first
+0 0 0  1 0 0  0 1 0
+second
+0 0 1  1 0 1  0 1 1
+```
+
+saved as `two.raw`. Before this change the editor crashed; now it imports two parts and the log has the line above.
+
 ## What it reads
 
 - A line of nine numbers is a triangle. Twelve numbers: a red green blue colour first, then the nine (the colour is not imported). Nine numbers and a name after them (the texture-name variant): the triangle goes to the group of that name.

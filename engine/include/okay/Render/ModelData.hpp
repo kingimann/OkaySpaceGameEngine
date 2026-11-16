@@ -372,6 +372,10 @@ bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
 bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// True when Assimp 5.4.3's RAW importer would build a broken node list for this file (two or more groups with triangles, which
+/// crashed the import), or the file is one the check does not model (UTF-16, very long lines). The import seam then reads the
+/// file with our RAW reader instead of handing it to Assimp. Errs on the side of true.
+bool RawFileUnsafeForAssimp(const std::string& path);
 bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is a .lws scene or a .mot motion file.
 bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);

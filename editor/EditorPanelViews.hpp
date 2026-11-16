@@ -1,6 +1,6 @@
 #pragma once
-// The Dear ImGui bodies of the Problems, Stats, History, Tags and Layers, Physics and Profiler panels, drawn from the models in
-// shared/EditorPanelModels.hpp.
+// The Dear ImGui bodies of the Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and
+// Rendering panels and sections, drawn from the models in shared/EditorPanelModels.hpp.
 // The editor opens the window (title, dock tab, close box) and calls a body inside it; the headless comparison test calls
 // the same body in a bare window, with no editor around it. Only Dear ImGui and the model header: no EditorState.
 #include "EditorPanelModels.hpp"
@@ -30,5 +30,13 @@ okaypanels::TagsLayersIntent DrawTagsLayersBodyImGui(const okaypanels::TagsLayer
 okaypanels::PhysicsSettingsIntent DrawPhysicsSettingsBodyImGui(okaypanels::PhysicsSettingsModel& m, const PanelViewHooks& hooks);
 /// The Profiler window's body.
 okaypanels::ProfilerIntent DrawProfilerBodyImGui(okaypanels::ProfilerModel& m, const PanelViewHooks& hooks);
+/// The Project panel's import settings for the selected texture, model or sound.
+okaypanels::ImportSettingsIntent DrawImportSettingsBodyImGui(okaypanels::ImportSettingsModel& m, okaypanels::ImportSettingsState& st,
+                                                             const PanelViewHooks& hooks);
+/// Lighting > Post-processing (inside its collapsing header).
+okaypanels::PostProcessIntent DrawPostProcessBodyImGui(okaypanels::PostProcessModel& m, const PanelViewHooks& hooks);
+/// Project Settings > Player and > Rendering (each inside its collapsing header).
+okaypanels::PlayerSettingsIntent DrawPlayerSettingsBodyImGui(okaypanels::PlayerSettingsModel& m, const PanelViewHooks& hooks);
+okaypanels::RenderingSettingsIntent DrawRenderingSettingsBodyImGui(okaypanels::RenderingSettingsModel& m, const PanelViewHooks& hooks);
 
 } // namespace oked

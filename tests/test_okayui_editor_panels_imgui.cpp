@@ -1,8 +1,8 @@
-// The editor's Problems, Stats, History, Tags and Layers, Physics and Profiler panels, Dear ImGui version against OkayUI port,
-// headless and side by side.
+// The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering
+// panels and sections, Dear ImGui version against OkayUI port, headless and side by side.
 //
 // Both draw the same model (shared/EditorPanelModels.hpp, sample data in okayui/tests/EditorPanelFixtures.hpp) into the same
-// rectangle: a 560 x 420 canvas (560 x 780 for the two tall ones, Tags and Layers and the Profiler) in the editor's panel colour, the panel's content inside the editor window's padding (16, 12).
+// rectangle: a 560 x 420 canvas (560 x 780 for Tags and Layers and the Profiler, 560 x 1240 for Post-processing) in the editor's panel colour, the panel's content inside the editor window's padding (16, 12).
 // Dear ImGui runs with the editor's look (Roboto Medium 18 px, the Slate theme and spacing from editor/main.cpp ApplyTheme), the
 // body is editor/EditorPanelViews.cpp, the one the editor itself calls. OkayUI runs with the launcher look the editor uses.
 // Both pictures go through the same rasteriser (OkayUI's software render backend; Dear ImGui's vertices are handed to it as they
@@ -301,6 +301,7 @@ static int Profile(const char* spec) {
     const std::string s = spec;
     const bool im = s.find(":imgui") != std::string::npos;
     if (s.rfind("tags", 0) == 0 || s.rfind("profiler", 0) == 0) kH = 780;
+    if (s.rfind("post", 0) == 0) kH = 1240;
     ImGuiRig imr; OkayRig ok;
     const float bx = kPadX, by = kPadY, bw = kW - 2 * kPadX, bh = kH - 2 * kPadY;
     oked::PanelViewHooks hooks{nullptr, nullptr};
@@ -309,12 +310,17 @@ static int Profile(const char* spec) {
     panelfix::StatsData sd; P::HistoryModel hm = panelfix::History();
     const P::TagsLayersModel tm = panelfix::TagsLayers(); P::TagsLayersState tst;
     panelfix::PhysicsData phd; panelfix::ProfilerData prd;
+    panelfix::ImportData imd; panelfix::PostData pod; panelfix::PlayerData pld; panelfix::RenderingData rnd;
     std::function<void()> imBody, okBody;
     if (s.rfind("problems", 0) == 0) { imBody = [&] { oked::DrawProblemsBodyImGui(pm, pst, hooks); }; okBody = [&] { okayuiscreens::DrawProblems(pm, pst, bx, by, bw, bh); }; }
     else if (s.rfind("stats", 0) == 0) { imBody = [&] { oked::DrawStatsBodyImGui(sd.model, hooks); }; okBody = [&] { okayuiscreens::DrawStats(sd.model, bx, by, bw, bh); }; }
     else if (s.rfind("tags", 0) == 0) { imBody = [&] { oked::DrawTagsLayersBodyImGui(tm, tst, hooks); }; okBody = [&] { okayuiscreens::DrawTagsLayers(tm, tst, bx, by, bw, bh); }; }
     else if (s.rfind("physics", 0) == 0) { imBody = [&] { oked::DrawPhysicsSettingsBodyImGui(phd.model, hooks); }; okBody = [&] { okayuiscreens::DrawPhysicsSettings(phd.model, bx, by, bw, bh); }; }
     else if (s.rfind("profiler", 0) == 0) { imBody = [&] { oked::DrawProfilerBodyImGui(prd.model, hooks); }; okBody = [&] { okayuiscreens::DrawProfiler(prd.model, bx, by, bw, bh); }; }
+    else if (s.rfind("import", 0) == 0) { imBody = [&] { oked::DrawImportSettingsBodyImGui(imd.model, imd.state, hooks); }; okBody = [&] { okayuiscreens::DrawImportSettings(imd.model, imd.state, bx, by, bw, bh); }; }
+    else if (s.rfind("post", 0) == 0) { imBody = [&] { oked::DrawPostProcessBodyImGui(pod.model, hooks); }; okBody = [&] { okayuiscreens::DrawPostProcess(pod.model, bx, by, bw, bh); }; }
+    else if (s.rfind("player", 0) == 0) { imBody = [&] { oked::DrawPlayerSettingsBodyImGui(pld.model, hooks); }; okBody = [&] { okayuiscreens::DrawPlayerSettings(pld.model, bx, by, bw, bh); }; }
+    else if (s.rfind("rendering", 0) == 0) { imBody = [&] { oked::DrawRenderingSettingsBodyImGui(rnd.model, hooks); }; okBody = [&] { okayuiscreens::DrawRenderingSettings(rnd.model, bx, by, bw, bh); }; }
     else { imBody = [&] { oked::DrawHistoryBodyImGui(hm, hooks); }; okBody = [&] { okayuiscreens::DrawHistory(hm, bx, by, bw, bh); }; }
     for (int i = 0; i < 10; ++i) { if (im) imr.Frame(imBody); else ok.Frame(okBody); }   // warm up: atlases, tables, layouts
     if (im) ProfiledFrames([&] { imr.Frame(imBody); }); else ProfiledFrames([&] { ok.Frame(okBody); });
@@ -493,6 +499,118 @@ int main() {
         for (int i = 0; i < 2; ++i) { im.Frame(imBody); ok.Frame(okBody); }
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("profiler", imPic, okPic, t);
+    }
+
+    // ================= Import settings (a model; then a texture's and a sound's, pictures only) =================
+    kH = 420; bh = kH - 2 * kPadY;
+    {
+        panelfix::ImportData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::ImportSettingsResult okRes;
+        bool imApply = false, okApply = false;
+        auto imBody = [&] { if (oked::DrawImportSettingsBodyImGui(imD.model, imD.state, hooks).apply) imApply = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawImportSettings(okD.model, okD.state, bx, by, bw, bh); if (okRes.intent.apply) okApply = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.smoothing.w > 0 && okRes.animations.w > 0 && !okRes.enabled);
+        // the same click on "Import animations" turns it off in both; Apply is then enabled in both and the same click asks for it
+        const UI::Rect a = okRes.animations;
+        ok.sim.Move(a.x + 12.0f, a.y + a.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(a.x + 12.0f, a.y + a.h * 0.5f, imBody);
+        CHECK(!okD.edit.importAnimations && !imD.edit.importAnimations);
+        ok.Frame(okBody);
+        const UI::Rect ap = okRes.apply;
+        ok.sim.Move(ap.x + ap.w * 0.5f, ap.y + ap.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(ap.x + ap.w * 0.5f, ap.y + ap.h * 0.5f, imBody);
+        CHECK(okApply && imApply);
+        imD.edit.importAnimations = okD.edit.importAnimations = true;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("import", imPic, okPic, t);
+    }
+    for (int kind : {P::ImportTexture, P::ImportAudio}) {
+        panelfix::ImportData imD(kind), okD(kind);
+        ImGuiRig im; OkayRig ok; Raster ras;
+        auto imBody = [&] { oked::DrawImportSettingsBodyImGui(imD.model, imD.state, hooks); };
+        auto okBody = [&] { okayuiscreens::DrawImportSettings(okD.model, okD.state, bx, by, bw, bh); };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        Report(kind == P::ImportTexture ? "import-texture" : "import-audio", imPic, okPic, Timing{});
+    }
+
+    // ================= Post-processing (the tallest canvas) =================
+    kH = 1240; bh = kH - 2 * kPadY;
+    {
+        panelfix::PostData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::PostProcessResult okRes;
+        auto imBody = [&] { oked::DrawPostProcessBodyImGui(imD.model, hooks); };
+        auto okBody = [&] { okRes = okayuiscreens::DrawPostProcess(okD.model, bx, by, bw, bh); };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.lift.w > 0 && okRes.note.w > 0 && okRes.contentHeight < bh);
+        // the same click on the Bloom box turns bloom off in both; a click on the exposure slider's left end sets both near 0.1
+        const UI::Rect b = okRes.bloom;
+        ok.sim.Move(b.x + 12.0f, b.y + b.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(b.x + 12.0f, b.y + b.h * 0.5f, imBody);
+        CHECK(!okD.v.bloom && !imD.v.bloom);
+        const UI::Rect e = okRes.exposure;
+        ok.sim.Move(e.x + 3.0f, e.y + e.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(e.x + 3.0f, e.y + e.h * 0.5f, imBody);
+        CHECK(okD.v.exposure < 0.2f && imD.v.exposure < 0.2f);
+        imD.v.bloom = okD.v.bloom = true; imD.v.exposure = okD.v.exposure = 1.25f;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        for (int i = 0; i < 2; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("post", imPic, okPic, t);
+    }
+
+    // ================= Player and Rendering (Project Settings) =================
+    kH = 420; bh = kH - 2 * kPadY;
+    {
+        panelfix::PlayerData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::PlayerSettingsResult okRes;
+        auto imBody = [&] { oked::DrawPlayerSettingsBodyImGui(imD.model, hooks); };
+        auto okBody = [&] { okRes = okayuiscreens::DrawPlayerSettings(okD.model, bx, by, bw, bh); };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.width.w > 0 && okRes.height.x > okRes.width.x + okRes.width.w);
+        // the same click on the Width "+" (the field's right end less the label and a step button) steps both by one
+        const UI::Rect wp = okRes.widthPlus;
+        ok.sim.Move(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f, imBody);
+        if (okD.width != 1281 || imD.width != 1281) std::printf("width +: okayui %d imgui %d\n", okD.width, imD.width);
+        CHECK(okD.width == 1281 && imD.width == 1281);
+        imD.width = okD.width = 1280;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("player", imPic, okPic, t);
+    }
+    {
+        panelfix::RenderingData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::RenderingSettingsResult okRes;
+        bool imApply = false, okApply = false;
+        auto imBody = [&] { if (oked::DrawRenderingSettingsBodyImGui(imD.model, hooks).apply) imApply = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawRenderingSettings(okD.model, bx, by, bw, bh); if (okRes.intent.apply) okApply = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        const UI::Rect a = okRes.apply, sk = okRes.skybox;
+        ok.sim.Move(a.x + a.w * 0.5f, a.y + a.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(a.x + a.w * 0.5f, a.y + a.h * 0.5f, imBody);
+        ok.sim.Move(sk.x + 12.0f, sk.y + sk.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(sk.x + 12.0f, sk.y + sk.h * 0.5f, imBody);
+        CHECK(okApply && imApply && !okD.skybox && !imD.skybox);
+        imD.skybox = okD.skybox = true;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("rendering", imPic, okPic, t);
     }
 
     // ================= the tables =================

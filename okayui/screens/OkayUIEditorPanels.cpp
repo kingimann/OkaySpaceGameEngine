@@ -1,4 +1,5 @@
-// The editor's Problems, Stats, History, Tags and Layers, Physics and Profiler panels drawn with OkayUI. Written from what the
+// The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering panels
+// and sections drawn with OkayUI. Written from what the
 // editor's own Dear ImGui panels show and do (editor/EditorPanelViews.cpp draws the same models) and from Dear ImGui's documented
 // behaviour where the look had to match; no code from any other project.
 #include "OkayUIEditorPanels.hpp"
@@ -20,16 +21,23 @@ namespace {
 unsigned char B(float v) { return (unsigned char)std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f); }
 UI::Color32 C32(const float c[3], float a = 1.0f) { return UI::RGBA(B(c[0]), B(c[1]), B(c[2]), B(a)); }
 
-// Dear ImGui's spacing in the editor (12 across, 8 down), its frames (a text line and 8 pixels above and below), its text rows (a
-// text line is one line tall, not a frame tall) and its framed children (16 and 12 pixels of padding), for as long as the panel draws.
+// Dear ImGui's spacing in the editor (12 across, 8 down), its frames (a text line and 8 pixels above and below, the text 12 in), its
+// text rows (a text line is one line tall, not a frame tall), its framed children (16 and 12 pixels of padding), its 14-pixel scroll
+// bars with a faint grab, its dim text colour, and its check boxes and combos (a frame with a tick; a field with a square arrow button),
+// for as long as the panel draws.
 struct EditorRows {
     EditorRows() {
         UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
         UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());
         UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
         UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
+        UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 14.0f);
+        UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+        UI::PushStyleColor(UI::Col_ScrollbarGrab, UI::RGBA(255, 255, 255, 31));          // white at 0.12
+        UI::PushStyleColor(UI::Col_ScrollbarGrabHovered, UI::RGBA(255, 255, 255, 61));   // white at 0.24
+        UI::PushStyleColor(UI::Col_TextDisabled, UI::RGBA(179, 189, 209));               // the editor's brighter dim text (0.70, 0.74, 0.82)
     }
-    ~EditorRows() { UI::PopStyleVar(4); }
+    ~EditorRows() { UI::PopStyleColor(3); UI::PopStyleVar(6); }
     EditorRows(const EditorRows&) = delete;
     EditorRows& operator=(const EditorRows&) = delete;
 };
@@ -96,8 +104,10 @@ struct FieldColors {
         UI::PushStyleColor(UI::Col_FrameBgActive, kFieldActive);
         UI::PushStyleColor(UI::Col_SliderGrab, kAccent);
         UI::PushStyleColor(UI::Col_SliderGrabActive, kAccentLit);
+        UI::PushStyleColor(UI::Col_CheckMark, kAccentLit);
+        UI::PushStyleColor(UI::Col_Accent, kAccent);   // a ticked box's frame (the accent at 45%) and a focused field's edge
     }
-    ~FieldColors() { UI::PopStyleColor(5); }
+    ~FieldColors() { UI::PopStyleColor(7); }
     FieldColors(const FieldColors&) = delete;
     FieldColors& operator=(const FieldColors&) = delete;
 };
@@ -220,7 +230,11 @@ StatsResult DrawStats(StatsModel& m, float x, float y, float w, float h) {
     UI::BareNextWindow();
     if (UI::Begin("Stats##okayui", x, y, w, h)) {
         EditorRows rows_;
-        UI::BeginChild("##statsbody", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_None);   // a short panel scrolls instead of cutting off
+        FieldColors fields_;
+        // A short panel scrolls instead of cutting off. Its bar stays OkayUI's narrow one: the editor's window puts its 14-pixel bar in the
+        // window's right padding, outside the area a host hands to OkayUI, and its table keeps the whole width.
+        UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 0.0f);
+        UI::BeginChild("##statsbody", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_None);
         {   // the big FPS number, the frame time, average and minimum at the right: one frame-tall row, as in the editor
             UI::PushStyleVar(UI::StyleVar_TextRowHeight, 0.0f);
             float c[3]; FpsColor(m.framerate, c);
@@ -319,6 +333,7 @@ StatsResult DrawStats(StatsModel& m, float x, float y, float w, float h) {
         UI::PopTextWrapPos();
         res.footer = UI::GetItemRect();
         UI::EndChild();
+        UI::PopStyleVar();
     }
     UI::End();
     return res;
@@ -447,6 +462,7 @@ TagsLayersResult DrawTagsLayers(const TagsLayersModel& m, TagsLayersState& st, f
             UI::BeginChild("##pstags", UI::Vec2{0.0f, listH}, UI::ChildFlags_Borders);
             res.tagList = UI::Rect{UI::GetItemRectMin().x, UI::GetItemRectMin().y, 0.0f, 0.0f};
             const float right = UI::GetCursorPosX() + UI::GetContentRegionAvail().x;
+            const float rowsTop = UI::GetCursorScreenPos().y;
             for (std::size_t i = 0; i < m.custom.size(); ++i) {
                 const TagRow& t = m.custom[i];
                 UI::PushID((int)i);
@@ -489,6 +505,10 @@ TagsLayersResult DrawTagsLayers(const TagsLayersModel& m, TagsLayersState& st, f
                 if (UI::IsItemHovered()) UI::SetTooltip("%s", kRemoveTagTip);
                 UI::PopID();
             }
+            // The editor's version steps its list clipper by rowH, so its content ends n rows of rowH below the top (2 pixels a row more
+            // than the rows take): four rows overflow the list by a few pixels there and it shows its scroll bar. The same here.
+            const float short_ = rowsTop + rowH * (float)m.custom.size() - UI::GetCursorScreenPos().y;
+            if (short_ > 0.0f) UI::Dummy(1.0f, short_);
             UI::EndChild();
             res.tagList = UI::GetItemRect();
         }
@@ -733,7 +753,7 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
         if (UI::BeginTable("profrows", 7, UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_BordersOuter | UI::Table_ScrollY | UI::Table_NoResize,
                            UI::Vec2{0.0f, 220.0f})) {
             // What Dear ImGui's proportional sizing gives here (measured against it): the number columns as wide as their header or
-            // widest cell plus the cell padding, the section names the rest.
+            // widest cell plus the cell padding on both sides (10 and 10), the section names the rest.
             float cw[7] = {0, 0, 0, 0, 0, 0, 0};
             for (int c = 1; c < 7; ++c) cw[c] = UI::CalcTextWidth(kProfilerColumns[c]);
             for (int r : order) {
@@ -741,7 +761,7 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
                 for (int c = 0; c < 6; ++c) cw[c + 1] = std::max(cw[c + 1], UI::CalcTextWidth(cells[c]));
             }
             UI::TableSetupColumn(kProfilerColumns[0], UI::Col_None, 1.0f);
-            for (int c = 1; c < 7; ++c) UI::TableSetupColumn(kProfilerColumns[c], UI::Col_WidthFixed, cw[c] + 14.0f);
+            for (int c = 1; c < 7; ++c) UI::TableSetupColumn(kProfilerColumns[c], UI::Col_WidthFixed, cw[c] + 20.0f);
             UI::TableSetupScrollFreeze(0, 1);
             UI::TableHeadersRow();
             for (int r : order) {
@@ -764,6 +784,302 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
         UI::PopStyleColor(4);
         if (m.sections.empty()) { UI::TextDisabled(ProfilerEmptyText(m)); res.empty = true; }
         UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Import settings (the Project panel) ----------------------------------------------------------------------------------------
+
+namespace {
+// The import panel's combo: a 160-pixel field and the label after it.
+bool ImportCombo(const char* label, int& value, const char* const* items, int count, UI::Rect& rect) {
+    UI::SetNextItemWidth(WithLabel(160.0f, label));
+    int v = value >= 0 && value < count ? value : -1;
+    const bool ch = UI::Combo(label, items, count, &v);
+    rect = UI::GetItemRect();
+    if (ch && v >= 0 && v < count && v != value) { value = v; return true; }
+    return false;
+}
+} // namespace
+
+ImportSettingsResult DrawImportSettings(ImportSettingsModel& m, ImportSettingsState& st, float x, float y, float w, float h) {
+    ImportSettingsResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("ImportSettings##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        const float top = UI::GetCursorScreenPos().y;
+        bool body = m.edit != nullptr;
+        if (body) UI::TextDisabled(kImportHeading);
+        if (body && m.newer) { UI::TextDisabled(kImportNewerNote); body = false; }
+        ImportFields* e = body ? m.edit : nullptr;
+        if (e) switch (e->kind) {
+            case ImportTexture: {
+                int si = ImportSizeIndex(e->maxSize);
+                if (ImportCombo("Largest side", si, kImportSizeNames, 11, res.sizeCombo)) { e->maxSize = kImportSizes[si]; res.intent.changed = true; }
+                UI::TextDisabled("Bigger pictures are made smaller when loaded.");
+                if (m.showSampler) {
+                    if (ImportCombo("Filter", e->filter, kImportFilterNames, 3, res.filterCombo)) res.intent.changed = true;
+                    UI::TextDisabled("Point keeps hard pixel edges.");
+                    if (ImportCombo("Wrap", e->wrap, kImportWrapNames, 3, res.wrapCombo)) res.intent.changed = true;
+                    UI::TextDisabled("What is drawn past the picture's edge.");
+                    if (UI::Checkbox("Mipmaps", &e->mipmaps)) res.intent.changed = true;
+                    res.mipmaps = UI::GetItemRect();
+                    UI::TextDisabled("Smaller copies for far away. Off: always full size.");
+                    UI::TextDisabled("Applies in the editor view and OpenGL / software games.");
+                }
+                break;
+            }
+            case ImportModel: {
+                UI::SetNextItemWidth(WithLabel(160.0f, "Scale"));
+                if (UI::DragFloat("Scale", &e->scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) res.intent.changed = true;
+                res.scale = UI::GetItemRect();
+                UI::TextDisabled("Multiplies its size when you add it to a scene.");
+                if (ImportCombo("Normals", e->normals, kImportNormalsNames, 3, res.normalsCombo)) res.intent.changed = true;
+                if (e->normals == 1) {
+                    UI::SetNextItemWidth(WithLabel(160.0f, "Smoothing angle"));
+                    if (UI::DragFloat("Smoothing angle", &e->smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) res.intent.changed = true;
+                    res.smoothing = UI::GetItemRect();
+                    UI::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                } else if (e->normals == 2) {
+                    UI::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                }
+                if (UI::Checkbox("Import animations", &e->importAnimations)) res.intent.changed = true;
+                res.animations = UI::GetItemRect();
+                UI::TextDisabled("Off: no clips, rest pose.");
+                UI::TextDisabled("Used when the model is next added to a scene.");
+                break;
+            }
+            case ImportAudio: {
+                if (ImportCombo("Loading", e->loadMode, kImportLoadNames, 2, res.loadCombo)) res.intent.changed = true;
+                UI::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+                if (UI::Checkbox("Mix down to one channel", &e->forceMono)) res.intent.changed = true;
+                res.mono = UI::GetItemRect();
+                UI::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
+                UI::TextDisabled("Used the next time the file is loaded.");
+                break;
+            }
+            default: e = nullptr; break;
+        }
+        if (e) {
+            res.enabled = !ImportSame(*e, m.original);
+            UI::BeginDisabled(!res.enabled);
+            if (UI::Button("Apply")) res.intent.apply = true;
+            res.apply = UI::GetItemRect();
+            UI::SameLine();
+            if (UI::Button("Revert")) res.intent.revert = true;
+            res.revert = UI::GetItemRect();
+            UI::EndDisabled();
+            UI::SameLine();
+            UI::TextDisabled(kImportSavedNote);
+            if (st.showFail) { UI::OpenPopup("##impfail"); st.showFail = false; }
+            MenuLook look_(UI::CalcTextWidth(st.failMsg.c_str()) - UI::GetFontSize() - 2.0f);
+            if (UI::BeginPopup("##impfail")) {
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                UI::TextUnformatted(st.failMsg.c_str());
+                res.popup = UI::Rect{p0.x - 10.0f, p0.y - 8.0f, UI::CalcTextWidth(st.failMsg.c_str()) + 32.0f, UI::GetCursorScreenPos().y - p0.y + 16.0f};
+                UI::EndPopup();
+            }
+        }
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Post-processing (Lighting) -------------------------------------------------------------------------------------------------
+
+PostProcessResult DrawPostProcess(PostProcessModel& m, float x, float y, float w, float h) {
+    PostProcessResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("PostProcess##okayui", x, y, w, h) && m.v) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        const float top = UI::GetCursorScreenPos().y;
+        const float itemW = DefaultItemWidth(w);
+        PostValues& p = *m.v;
+        bool& ch = res.intent.changed;
+        auto tip = [](const char* t) { if (UI::IsItemHovered()) UI::SetTooltip("%s", t); };
+        auto slider = [&](const char* label, float* v, float lo, float hi, const char* fmt, UI::Rect* rect = nullptr) {
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::SliderFloat(label, v, lo, hi, fmt)) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        auto slider3 = [&](const char* label, float* v, float lo, float hi, UI::Rect* rect = nullptr) {
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::SliderFloat3(label, v, lo, hi, "%.2f")) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        auto box = [&](const char* label, bool* v, UI::Rect* rect = nullptr) {
+            if (UI::Checkbox(label, v)) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        auto note = [](const std::string& n) {
+            if (n.empty()) return;
+            UI::PushTextWrapPos(0.0f);
+            UI::TextDisabled(n.c_str());
+            UI::PopTextWrapPos();
+        };
+        {   // the look presets: a list to choose from (the box always says "Choose..."), then Reset
+            MenuLook look_(itemW - 32.0f - UI::GetFontSize() - 2.0f);   // the list as wide as the box
+            UI::SetNextItemWidth(WithLabel(itemW, "Look Preset"));
+            if (UI::BeginCombo("Look Preset", "Choose...")) {
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                for (int i = 0; i < (int)m.presets.size(); ++i)
+                    if (MenuRow(m.presets[(std::size_t)i].c_str())) res.intent.preset = i;
+                res.popup = UI::Rect{p0.x - 10.0f, p0.y - 8.0f, itemW, UI::GetCursorScreenPos().y - p0.y + 16.0f};
+                UI::EndCombo();
+            }
+        }
+        res.preset = UI::GetItemRect();
+        tip(kLookPresetTip);
+        UI::SameLine();
+        if (UI::Button("Reset##look")) res.intent.reset = true;
+        res.reset = UI::GetItemRect();
+        tip(kLookResetTip);
+        UI::TextDisabled(PostChainText(m.chainActive));
+
+        box("Filmic Rendering (linear lighting + tonemap)", &p.filmic, &res.filmic);
+        tip(kFilmicTip);
+        slider("Exposure", &p.exposure, 0.1f, 4.0f, "%.2f", &res.exposure);
+        {
+            int t = p.tonemap >= 0 && p.tonemap < 3 ? p.tonemap : -1;
+            UI::SetNextItemWidth(WithLabel(itemW, "Tonemap"));
+            if (UI::Combo("Tonemap", kTonemapNames, 3, &t) && t != p.tonemap) { p.tonemap = t; ch = true; }
+            res.tonemap = UI::GetItemRect();
+            tip(kTonemapTip);
+        }
+        box("Bloom", &p.bloom, &res.bloom);
+        if (p.bloom) {
+            slider("Threshold##bloom", &p.bloomThreshold, 0.0f, 3.0f, "%.2f");
+            tip(kBloomThresholdTip);
+            slider("Intensity##bloom", &p.bloomIntensity, 0.0f, 3.0f, "%.2f");
+            slider("Radius##bloom", &p.bloomRadius, 0.25f, 3.0f, "%.2f");
+            slider("Softness##bloom", &p.bloomSoftness, 0.0f, 1.0f, "%.2f");
+            tip(kBloomSoftnessTip);
+        }
+        box("Colour Grading", &p.grading, &res.grading);
+        if (p.grading) {
+            slider("Temperature", &p.temperature, -1.0f, 1.0f, "%.2f");
+            tip(kTemperatureTip);
+            slider("Tint", &p.tint, -1.0f, 1.0f, "%.2f");
+            slider("Saturation", &p.saturation, 0.0f, 2.0f, "%.2f");
+            slider("Contrast", &p.contrast, 0.5f, 2.0f, "%.2f");
+            slider3("Lift", p.lift, -0.5f, 0.5f, &res.lift);
+            tip(kLiftTip);
+            slider3("Gamma", p.gamma, -1.0f, 1.0f);
+            tip(kGammaTip);
+            slider3("Gain", p.gain, -0.5f, 0.5f);
+            tip(kGainTip);
+        }
+        slider("Vignette", &p.vignette, 0.0f, 1.0f, "%.2f", &res.vignette);
+        tip(kVignetteTip);
+        if (p.vignette > 0.0f) {
+            slider("Vignette Smoothness", &p.vignetteSmooth, 0.05f, 1.0f, "%.2f");
+            note(m.vignetteNote);
+        }
+        box("Anti-aliasing (FXAA)", &p.fxaa, &res.fxaa);
+        box("Ambient Occlusion (SSAO)", &p.ssao, &res.ssao);
+        note(m.ssaoNote);
+        if (p.ssao) {
+            slider("Radius##ssao", &p.ssaoRadius, 0.05f, 3.0f, "%.2f");
+            slider("Intensity##ssao", &p.ssaoIntensity, 0.0f, 2.0f, "%.2f");
+            slider("Power##ssao", &p.ssaoPower, 0.25f, 4.0f, "%.2f");
+            tip(kSsaoPowerTip);
+        }
+        box("Depth of Field", &p.dof, &res.dof);
+        note(m.dofNote);
+        if (p.dof) {
+            UI::SetNextItemWidth(WithLabel(itemW, "Focus Distance"));
+            if (UI::DragFloat("Focus Distance", &p.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ch = true;
+            res.focus = UI::GetItemRect();
+            UI::SetNextItemWidth(WithLabel(itemW, "Focus Range"));
+            if (UI::DragFloat("Focus Range", &p.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ch = true;
+            tip(kDofRangeTip);
+        }
+        UI::Spacing(0.0f);
+        UI::PushTextWrapPos(0.0f);
+        UI::TextDisabled(kPostRendererNote);
+        UI::PopTextWrapPos();
+        res.note = UI::GetItemRect();
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Player and Rendering (Project Settings) -------------------------------------------------------------------------------------
+
+PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y, float w, float h) {
+    PlayerSettingsResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("PlayerSettings##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        const float top = UI::GetCursorScreenPos().y;
+        if (m.company && m.companySize > 0) {
+            m.company[m.companySize - 1] = '\0';
+            UI::SetNextItemWidth(WithLabel(DefaultItemWidth(w), "Company"));
+            if (UI::InputText("Company##ps", m.company, (int)std::min<std::size_t>(m.companySize, 1u << 20))) res.intent.changed = true;
+            res.company = UI::GetItemRect();
+        }
+        if (m.version && m.versionSize > 0) {
+            m.version[m.versionSize - 1] = '\0';
+            UI::SetNextItemWidth(WithLabel(160.0f, "Version"));
+            if (UI::InputText("Version##ps", m.version, (int)std::min<std::size_t>(m.versionSize, 1u << 20))) res.intent.changed = true;
+            res.version = UI::GetItemRect();
+        }
+        if (m.width && m.height) {
+            UI::SetNextItemWidth(WithLabel(110.0f, "Width"));
+            // the step buttons: two squares a frame tall before the label, 8 pixels apart (the framed InputInt)
+            auto steps = [](const UI::Rect& r, const char* label, UI::Rect& minus, UI::Rect& plus) {
+                const float right = r.x + r.w - (UI::CalcTextWidth(label) + 8.0f);
+                plus = UI::Rect{right - r.h, r.y, r.h, r.h};
+                minus = UI::Rect{plus.x - 8.0f - r.h, r.y, r.h, r.h};
+            };
+            if (UI::InputInt("Width##ps", m.width)) res.intent.changed = true;
+            res.width = UI::GetItemRect();
+            steps(res.width, "Width", res.widthMinus, res.widthPlus);
+            UI::SameLine();
+            UI::SetNextItemWidth(WithLabel(110.0f, "Height"));
+            if (UI::InputInt("Height##ps", m.height)) res.intent.changed = true;
+            res.height = UI::GetItemRect();
+            steps(res.height, "Height", res.heightMinus, res.heightPlus);
+        }
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+RenderingSettingsResult DrawRenderingSettings(RenderingSettingsModel& m, float x, float y, float w, float h) {
+    RenderingSettingsResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("RenderingSettings##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        const float top = UI::GetCursorScreenPos().y;
+        if (m.ambient) {
+            UI::SetNextItemWidth(WithLabel(DefaultItemWidth(w), "Ambient"));
+            if (UI::SliderFloat("Ambient##ps", m.ambient, 0.0f, 1.0f, "%.3f")) res.intent.changed = true;
+            res.ambient = UI::GetItemRect();
+        }
+        if (m.skybox) {
+            if (UI::Checkbox("Skybox##ps", m.skybox)) res.intent.changed = true;
+            res.skybox = UI::GetItemRect();
+        }
+        if (UI::Button("Apply to current scene##rend")) res.intent.apply = true;
+        res.apply = UI::GetItemRect();
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
     }
     UI::End();
     return res;

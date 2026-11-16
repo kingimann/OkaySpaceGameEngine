@@ -119,4 +119,55 @@ struct ProfilerData {
     ProfilerData(const ProfilerData&) = delete;
 };
 
+// The import settings of a model with calculated normals (the most rows), unchanged since the last Apply; a texture's and a sound's.
+struct ImportData {
+    ImportFields edit;
+    ImportSettingsModel model;
+    ImportSettingsState state;
+    explicit ImportData(int kind = ImportModel) {
+        edit.kind = kind;
+        if (kind == ImportModel) { edit.scale = 0.01f; edit.normals = 1; edit.smoothingAngle = 60.0f; edit.importAnimations = true; }
+        if (kind == ImportTexture) edit.maxSize = 1024;
+        if (kind == ImportAudio) { edit.loadMode = 1; edit.forceMono = false; }
+        model.edit = &edit; model.original = edit;
+    }
+    ImportData(const ImportData&) = delete;
+};
+
+// Post-processing with bloom, colour grading, a vignette and SSAO on (most of the rows), depth of field off.
+struct PostData {
+    PostValues v;
+    PostProcessModel model;
+    PostData() {
+        v.filmic = true; v.exposure = 1.25f; v.tonemap = 1;
+        v.bloom = true; v.bloomThreshold = 1.0f; v.bloomIntensity = 0.8f; v.bloomRadius = 1.2f; v.bloomSoftness = 0.5f;
+        v.grading = true; v.temperature = 0.15f; v.tint = -0.05f; v.saturation = 1.1f; v.contrast = 1.05f;
+        v.lift[0] = 0.02f; v.gamma[1] = -0.1f; v.gain[2] = 0.05f;
+        v.vignette = 0.25f; v.vignetteSmooth = 0.6f; v.fxaa = true;
+        v.ssao = true; v.ssaoRadius = 0.5f; v.ssaoIntensity = 1.0f; v.ssaoPower = 1.5f;
+        model.v = &v;
+        model.presets = {"Default", "Sunset", "Night", "Foggy morning", "Storm"};
+        model.chainActive = true;
+        model.ssaoNote = "Ambient occlusion is not drawn on the software renderer.";
+    }
+    PostData(const PostData&) = delete;
+};
+
+struct PlayerData {
+    char company[kProjectTextSize] = "Okay Games";
+    char version[kProjectTextSize] = "1.4.2";
+    int width = 1280, height = 720;
+    PlayerSettingsModel model;
+    PlayerData() { model.company = company; model.version = version; model.width = &width; model.height = &height; }
+    PlayerData(const PlayerData&) = delete;
+};
+
+struct RenderingData {
+    float ambient = 0.35f;
+    bool skybox = true;
+    RenderingSettingsModel model;
+    RenderingData() { model.ambient = &ambient; model.skybox = &skybox; }
+    RenderingData(const RenderingData&) = delete;
+};
+
 } // namespace panelfix

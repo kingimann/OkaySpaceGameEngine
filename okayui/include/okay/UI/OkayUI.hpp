@@ -507,6 +507,9 @@ bool DragFloat3(const char* label, float v[3], float speed, float minV, float ma
 /// Ctrl+click types a number. The plain SliderInt / SliderFloat keep OkayUI's groove-and-knob look.
 bool SliderInt(const char* label, int* value, int minV, int maxV, const char* format);
 bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format);
+/// Two or three framed sliders in a row sharing one label (each a frame, a grab and its value in `format`), ItemInnerSpacing (x) apart.
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* format);
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* format);
 /// The editor's search field: a text field with a magnifier drawn at the left (the text starts after it), `hint` while it is empty, and a
 /// clear button (a cross) at the right while it has text. A click on the cross empties the buffer, gives up the keyboard and returns true.
 /// `width` > 0 is the width; 0 or less fills the width left minus |width|. At least three rows wide. True on any frame the text changed.
@@ -1028,7 +1031,7 @@ bool IsKeyReleased(KeyId key);
 /// then ends the row without its item spacing; by default a row ends after the last item's spacing), FramePadding (y only: every
 /// frame, button, field and row is a text line plus twice y tall, and the box of Checkbox and RadioButton too; by default a frame is a
 /// text line plus 15 (12 without the launcher look) and a box a text line plus 6). The others are accepted and do
-/// nothing, so ported code compiles: SelectableTextAlign, ScrollbarSize, Alpha.
+/// nothing, so ported code compiles: SelectableTextAlign, Alpha.
 /// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
 /// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
 /// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
@@ -1036,11 +1039,18 @@ bool IsKeyReleased(KeyId key);
 /// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
 /// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the
 /// last item), as in Dear ImGui. ItemInnerSpacing (x only) is the gap inside the formatted drag rows and before their label.
+/// FramePadding's x is read by framed combos only (where their text starts; see FramedWidgets).
+/// ScrollbarSize sets the width of the scroll bars of children (the flags form of BeginChild) and the vertical bar of scrolling tables (default: OkayUI's
+/// own 10-pixel bar); with a pushed size the bar sits inside a framed child's or a bordered table's one-pixel outline and its grab is 2
+/// pixels inside the bar on every side and fully rounded, Dear ImGui's proportions.
+/// FramedWidgets is OkayUI's own (0 off, the default; anything else on): Checkbox draws Dear ImGui's box (a rounded frame in Col_FrameBg, or
+/// the accent at 45% once ticked, and a tick in Col_CheckMark), and Combo and BeginCombo draw a field in Col_FrameBg with a square arrow
+/// button at its right end (Col_Button, a filled triangle in the text colour) and the text FramePadding.x in.
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
     StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_TextRowHeight, StyleVar_CellPadding, StyleVar_PopupPadding,
-    StyleVar_PopupWidth, StyleVar_COUNT
+    StyleVar_PopupWidth, StyleVar_FramedWidgets, StyleVar_COUNT
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);

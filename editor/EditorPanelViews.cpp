@@ -447,4 +447,190 @@ ProfilerIntent DrawProfilerBodyImGui(ProfilerModel& m, const PanelViewHooks&) {
     return out;
 }
 
+// ---- Import settings (the Project panel) -----------------------------------------------------------------------------------
+
+namespace {
+// The import panel's combo: 160 pixels, the label after it (BeginCombo and a Selectable per entry, as the editor drew it).
+bool ImportCombo(const char* label, int& value, const char* const* items, int count) {
+    bool changed = false;
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::BeginCombo(label, value >= 0 && value < count ? items[value] : "")) {
+        for (int i = 0; i < count; ++i)
+            if (ImGui::Selectable(items[i], value == i)) { value = i; changed = true; }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+} // namespace
+
+ImportSettingsIntent DrawImportSettingsBodyImGui(ImportSettingsModel& m, ImportSettingsState& st, const PanelViewHooks&) {
+    ImportSettingsIntent out;
+    if (!m.edit) return out;
+    ImportFields& e = *m.edit;
+    ImGui::TextDisabled("%s", kImportHeading);
+    if (m.newer) { ImGui::TextDisabled("%s", kImportNewerNote); return out; }
+    switch (e.kind) {
+        case ImportTexture: {
+            int si = ImportSizeIndex(e.maxSize);
+            if (ImportCombo("Largest side", si, kImportSizeNames, 11)) { e.maxSize = kImportSizes[si]; out.changed = true; }
+            ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            if (m.showSampler) {
+                if (ImportCombo("Filter", e.filter, kImportFilterNames, 3)) out.changed = true;
+                ImGui::TextDisabled("Point keeps hard pixel edges.");
+                if (ImportCombo("Wrap", e.wrap, kImportWrapNames, 3)) out.changed = true;
+                ImGui::TextDisabled("What is drawn past the picture's edge.");
+                if (ImGui::Checkbox("Mipmaps", &e.mipmaps)) out.changed = true;
+                ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
+                ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+            }
+            break;
+        }
+        case ImportModel: {
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::DragFloat("Scale", &e.scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) out.changed = true;
+            ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
+            if (ImportCombo("Normals", e.normals, kImportNormalsNames, 3)) out.changed = true;
+            if (e.normals == 1) {
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::DragFloat("Smoothing angle", &e.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) out.changed = true;
+                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+            } else if (e.normals == 2) {
+                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
+            }
+            if (ImGui::Checkbox("Import animations", &e.importAnimations)) out.changed = true;
+            ImGui::TextDisabled("Off: no clips, rest pose.");
+            ImGui::TextDisabled("Used when the model is next added to a scene.");
+            break;
+        }
+        case ImportAudio: {
+            if (ImportCombo("Loading", e.loadMode, kImportLoadNames, 2)) out.changed = true;
+            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            if (ImGui::Checkbox("Mix down to one channel", &e.forceMono)) out.changed = true;
+            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
+            ImGui::TextDisabled("Used the next time the file is loaded.");
+            break;
+        }
+        default: return out;
+    }
+    const bool dirty = !ImportSame(e, m.original);
+    ImGui::BeginDisabled(!dirty);
+    if (ImGui::Button("Apply")) out.apply = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")) out.revert = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", kImportSavedNote);
+    if (st.showFail) { ImGui::OpenPopup("##impfail"); st.showFail = false; }
+    if (ImGui::BeginPopup("##impfail")) { ImGui::TextUnformatted(st.failMsg.c_str()); ImGui::EndPopup(); }
+    return out;
+}
+
+// ---- Post-processing (Lighting) -----------------------------------------------------------------------------------------------
+
+PostProcessIntent DrawPostProcessBodyImGui(PostProcessModel& m, const PanelViewHooks&) {
+    PostProcessIntent out;
+    if (!m.v) return out;
+    PostValues& p = *m.v;
+    auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
+    bool& ch = out.changed;
+    // Look presets fill sky / fog / post / weather in one go; Reset puts them back.
+    if (ImGui::BeginCombo("Look Preset", "Choose...")) {
+        for (int i = 0; i < (int)m.presets.size(); ++i)
+            if (ImGui::Selectable(m.presets[(std::size_t)i].c_str())) out.preset = i;
+        ImGui::EndCombo();
+    }
+    tip(kLookPresetTip);
+    ImGui::SameLine();
+    if (ImGui::Button("Reset##look")) out.reset = true;
+    tip(kLookResetTip);
+    ImGui::TextDisabled("%s", PostChainText(m.chainActive));
+
+    if (ImGui::Checkbox("Filmic Rendering (linear lighting + tonemap)", &p.filmic)) ch = true;
+    tip(kFilmicTip);
+    if (ImGui::SliderFloat("Exposure", &p.exposure, 0.1f, 4.0f, "%.2f")) ch = true;
+    if (ImGui::Combo("Tonemap", &p.tonemap, kTonemapNames, 3)) ch = true;
+    tip(kTonemapTip);
+    if (ImGui::Checkbox("Bloom", &p.bloom)) ch = true;
+    if (p.bloom) {
+        if (ImGui::SliderFloat("Threshold##bloom", &p.bloomThreshold, 0.0f, 3.0f, "%.2f")) ch = true;
+        tip(kBloomThresholdTip);
+        if (ImGui::SliderFloat("Intensity##bloom", &p.bloomIntensity, 0.0f, 3.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Radius##bloom", &p.bloomRadius, 0.25f, 3.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Softness##bloom", &p.bloomSoftness, 0.0f, 1.0f, "%.2f")) ch = true;
+        tip(kBloomSoftnessTip);
+    }
+    if (ImGui::Checkbox("Colour Grading", &p.grading)) ch = true;
+    if (p.grading) {
+        if (ImGui::SliderFloat("Temperature", &p.temperature, -1.0f, 1.0f, "%.2f")) ch = true;
+        tip(kTemperatureTip);
+        if (ImGui::SliderFloat("Tint", &p.tint, -1.0f, 1.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Saturation", &p.saturation, 0.0f, 2.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Contrast", &p.contrast, 0.5f, 2.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat3("Lift", p.lift, -0.5f, 0.5f, "%.2f")) ch = true;
+        tip(kLiftTip);
+        if (ImGui::SliderFloat3("Gamma", p.gamma, -1.0f, 1.0f, "%.2f")) ch = true;
+        tip(kGammaTip);
+        if (ImGui::SliderFloat3("Gain", p.gain, -0.5f, 0.5f, "%.2f")) ch = true;
+        tip(kGainTip);
+    }
+    if (ImGui::SliderFloat("Vignette", &p.vignette, 0.0f, 1.0f, "%.2f")) ch = true;
+    tip(kVignetteTip);
+    auto note = [](const std::string& n) {
+        if (n.empty()) return;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", n.c_str());
+        ImGui::PopTextWrapPos();
+    };
+    if (p.vignette > 0.0f) {
+        if (ImGui::SliderFloat("Vignette Smoothness", &p.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ch = true;
+        note(m.vignetteNote);
+    }
+    if (ImGui::Checkbox("Anti-aliasing (FXAA)", &p.fxaa)) ch = true;
+    if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &p.ssao)) ch = true;
+    note(m.ssaoNote);
+    if (p.ssao) {
+        if (ImGui::SliderFloat("Radius##ssao", &p.ssaoRadius, 0.05f, 3.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Intensity##ssao", &p.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ch = true;
+        if (ImGui::SliderFloat("Power##ssao", &p.ssaoPower, 0.25f, 4.0f, "%.2f")) ch = true;
+        tip(kSsaoPowerTip);
+    }
+    if (ImGui::Checkbox("Depth of Field", &p.dof)) ch = true;
+    note(m.dofNote);
+    if (p.dof) {
+        if (ImGui::DragFloat("Focus Distance", &p.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ch = true;
+        if (ImGui::DragFloat("Focus Range", &p.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ch = true;
+        tip(kDofRangeTip);
+    }
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", kPostRendererNote);
+    ImGui::PopTextWrapPos();
+    return out;
+}
+
+// ---- Player and Rendering (Project Settings) --------------------------------------------------------------------------------
+
+PlayerSettingsIntent DrawPlayerSettingsBodyImGui(PlayerSettingsModel& m, const PanelViewHooks&) {
+    PlayerSettingsIntent out;
+    if (m.company && ImGui::InputText("Company##ps", m.company, m.companySize)) out.changed = true;
+    if (m.version) {
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::InputText("Version##ps", m.version, m.versionSize)) out.changed = true;
+    }
+    if (m.width && m.height) {
+        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Width##ps", m.width)) out.changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Height##ps", m.height)) out.changed = true;
+    }
+    return out;
+}
+
+RenderingSettingsIntent DrawRenderingSettingsBodyImGui(RenderingSettingsModel& m, const PanelViewHooks&) {
+    RenderingSettingsIntent out;
+    if (m.ambient && ImGui::SliderFloat("Ambient##ps", m.ambient, 0.0f, 1.0f)) out.changed = true;
+    if (m.skybox && ImGui::Checkbox("Skybox##ps", m.skybox)) out.changed = true;
+    if (ImGui::Button("Apply to current scene##rend")) out.apply = true;
+    return out;
+}
+
 } // namespace oked

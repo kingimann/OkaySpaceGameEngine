@@ -1,5 +1,6 @@
-// The editor's Problems, Stats, History, Tags and Layers, Physics and Profiler panels drawn with OkayUI
-// (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9 and 10). Driven headless the way
+// The editor's Problems, Stats, History, Tags and Layers, Physics, Profiler, Import settings, Post-processing, Player and Rendering
+// panels drawn with OkayUI (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9
+// to 11). Driven headless the way
 // the editor drives them: every control is found by its rectangle in the result and used with synthetic input (clicks, typing,
 // the wheel, right-click menus); golden images (launcher look) pin what is drawn. The Dear ImGui versions are compared against
 // these in tests/test_okayui_editor_panels_imgui.cpp.
@@ -9,6 +10,7 @@
 #include "EditorPanelFixtures.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -780,6 +782,310 @@ int main() {
         r.Frames(2);
         CHECK(res.empty && res.rows.empty() && res.pauseBox.w == 0 && UI::DroppedGeometry() == 0);
         CHECK(P::ProfilerDiagnosis(m) == "Waiting for frames..." && std::string(P::ProfilerEmptyText(m)).find("Press Play") == 0);
+    }
+
+    // ================= section 11: the toolkit pieces (framed check boxes and combos, scroll bar size, framed InputInt and SliderFloat3,
+    // fields outside the clip) =================
+    {   // a framed check box: the frame in Col_FrameBg, the accent at 45% once ticked, the tick in Col_CheckMark; a click toggles
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(300, 120);
+        bool on = false, ch = false;
+        UI::Rect box;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("fw", 0, 0, 300, 120);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+            UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_FrameRounding, 0.0f);
+            UI::PushStyleColor(UI::Col_FrameBg, UI::RGBA(41, 46, 59));
+            UI::PushStyleColor(UI::Col_CheckMark, UI::RGBA(115, 159, 218));
+            UI::PushStyleColor(UI::Col_Accent, UI::RGBA(60, 121, 204));
+            if (UI::Checkbox("Tick##fw", &on)) ch = true;
+            box = UI::GetItemRect();
+            UI::PopStyleColor(3); UI::PopStyleVar(3);
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        const float sz = box.h;
+        sim.Move(250, 100); sim.Frame(ui);
+        CHECK(PixelAt(sim.Draw(30, 33, 41), (int)(box.x + 3), (int)(box.y + 3)) == Rgba(41, 46, 59));   // unticked: the field colour, no tick
+        sim.Click(box.x + 8.0f, CY(box), ui);
+        CHECK(on && ch);
+        sim.Move(250, 100); sim.Frame(ui);
+        const Bitmap& b = sim.Draw(30, 33, 41);
+        CHECK(PixelAt(b, (int)(box.x + 3), (int)(box.y + 3)) != Rgba(41, 46, 59));    // ticked: the tinted frame
+        int tick = 0;
+        for (int y = (int)box.y; y < (int)(box.y + sz); ++y)
+            for (int x = (int)box.x; x < (int)(box.x + sz); ++x) if (PixelAt(b, x, y) == Rgba(115, 159, 218)) ++tick;
+        CHECK(tick > (int)(sz * 2.0f));                                                 // a tick in the check-mark colour
+        UI::UseLauncherLook(false);
+    }
+    {   // a framed combo: a field, a square arrow button in Col_Button with a triangle in the text colour; the list still opens and picks
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 300);
+        const char* items[3] = {"One", "Two", "Three"};
+        int cur = 0;
+        UI::Rect r;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("fc", 0, 0, 400, 300);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+            UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleColor(UI::Col_FrameBg, UI::RGBA(41, 46, 59));
+            UI::PushStyleColor(UI::Col_Button, UI::RGBA(51, 56, 71));
+            UI::SetNextItemWidth(200.0f);
+            UI::Combo("Pick##fc", items, 3, &cur);
+            r = UI::GetItemRect();
+            UI::PopStyleColor(2); UI::PopStyleVar(2);
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        sim.Move(390, 290); sim.Frame(ui);
+        const float boxW = 200.0f - (UI::CalcTextWidth("Pick") + 8.0f);
+        const Bitmap& b = sim.Draw(0, 0, 0);
+        CHECK(PixelAt(b, (int)(r.x + boxW - r.h + 3.0f), (int)(r.y + r.h - 4.0f)) == Rgba(51, 56, 71));   // the arrow button
+        CHECK(PixelAt(b, (int)(r.x + 4.0f), (int)(r.y + r.h - 4.0f)) == Rgba(41, 46, 59));               // the field
+        const unsigned arrow = PixelAt(b, (int)(r.x + boxW - r.h * 0.5f), (int)(r.y + r.h * 0.5f - 3.0f));
+        CHECK(arrow != Rgba(51, 56, 71) && ((arrow >> 24) & 255) > 150);                                 // the light triangle
+        sim.Click(r.x + 20.0f, CY(r), ui);
+        sim.Click(r.x + 20.0f, r.y + r.h * 3.5f, ui);   // the third row of the list under the box
+        CHECK(cur == 2);
+        UI::UseLauncherLook(false);
+    }
+    {   // ScrollbarSize: a framed child's bar that wide and inside its outline, only while the content overflows; OkayUI's 10 without it
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 400);
+        int rows = 20;
+        float sb = 14.0f, availIn = 0.0f;
+        UI::Rect child;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("sb", 0, 0, 400, 400);
+            UI::PushStyleVar(UI::StyleVar_ScrollbarSize, sb);
+            UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
+            UI::BeginChild("##list", UI::Vec2{300.0f, 200.0f}, UI::ChildFlags_Borders);
+            availIn = UI::GetContentRegionAvail().x;
+            for (int i = 0; i < rows; ++i) { char t[16]; std::snprintf(t, sizeof t, "row %d", i); UI::Text(t); }
+            UI::EndChild();
+            child = UI::GetItemRect();
+            UI::PopStyleVar(2);
+            UI::End();
+        };
+        sim.Frames(3, ui);
+        CHECK(std::abs(availIn - (300.0f - 32.0f - 14.0f)) < 0.5f);
+        const Bitmap& b = sim.Draw(0, 0, 0);
+        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 7.0f), (int)(child.y + 20.0f)) != Rgba(0, 0, 0));   // the grab, inside the outline
+        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 1.0f), (int)(child.y + 20.0f)) == Rgba(0, 0, 0));   // 2 pixels of bar either side
+        rows = 2; sim.Frames(3, ui);
+        CHECK(std::abs(availIn - (300.0f - 32.0f)) < 0.5f);                                                      // no overflow: no bar
+        rows = 20; sb = 0.0f; sim.Frames(3, ui);
+        CHECK(std::abs(availIn - (300.0f - 32.0f - 10.0f)) < 0.5f);                                              // not pushed: OkayUI's 10
+        UI::UseLauncherLook(false);
+    }
+    {   // a framed InputInt: the label without its "##" part, the steppers, the number cut at the field's edge; SliderFloat3 with a format
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(500, 200);
+        int n = 1280;
+        float v3[3] = {0.0f, 0.5f, 1.0f};
+        bool ch3 = false;
+        UI::Rect ri, rs;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("ii", 0, 0, 500, 200);
+            UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
+            UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+            UI::SetNextItemWidth(110.0f + 8.0f + UI::CalcTextWidth("Width"));
+            UI::InputInt("Width##ii", &n);
+            ri = UI::GetItemRect();
+            UI::SetNextItemWidth(400.0f);
+            if (UI::SliderFloat3("Lift##ii", v3, -1.0f, 1.0f, "%.2f")) ch3 = true;
+            rs = UI::GetItemRect();
+            UI::PopStyleVar(2);
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        const float labelX = ri.x + ri.w - UI::CalcTextWidth("Width");
+        CHECK(CountNot(sim.Draw(0, 0, 0), (int)(labelX + UI::CalcTextWidth("Width") + 2.0f), (int)ri.y, (int)(ri.x + ri.w + 60.0f), (int)(ri.y + ri.h), Rgba(0, 0, 0)) == 0);   // no "##ii" drawn
+        const float plusX = labelX - 8.0f - ri.h * 0.5f;
+        sim.Click(plusX, CY(ri), ui);           CHECK(n == 1281);
+        sim.Click(plusX - ri.h - 8.0f, CY(ri), ui); CHECK(n == 1280);
+        const float cw = (rs.w - UI::CalcTextWidth("Lift") - 8.0f - 16.0f) / 3.0f;
+        CHECK(rs.w == 400.0f);
+        sim.Click(rs.x + cw + 8.0f + 2.0f, CY(rs), ui);   // the second cell's left end
+        CHECK(ch3 && v3[1] == -1.0f && v3[0] == 0.0f && v3[2] == 1.0f);
+        UI::UseLauncherLook(false);
+    }
+    {   // a field scrolled out of a child's view costs nothing but still takes the keyboard while it has it
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 300);
+        static char bufs[40][16];
+        for (int i = 0; i < 40; ++i) std::snprintf(bufs[i], sizeof bufs[i], "f%d", i);
+        UI::Rect first;
+        int dropped = 0;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("oc", 0, 0, 400, 300);
+            UI::BeginChild("##fields", UI::Vec2{300.0f, 200.0f}, UI::ChildFlags_Borders);
+            for (int i = 0; i < 40; ++i) { UI::PushID(i); UI::InputText("##f", bufs[i], 16); if (i == 0) first = UI::GetItemRect(); UI::PopID(); }
+            UI::EndChild();
+            UI::End();
+            dropped = UI::DroppedGeometry();
+        };
+        sim.Frames(2, ui);
+        sim.Click(first.x + 40.0f, CY(first), ui);
+        sim.Move(100, 100); sim.wheel = -30.0f; sim.Frame(ui); sim.wheel = 0.0f; sim.Frames(2, ui);
+        CHECK(first.y + first.h < 0.0f + 50.0f);                       // scrolled up out of the view
+        sim.Type("!"); sim.Frame(ui);
+        CHECK(std::strcmp(bufs[0], "f0!") == 0 && dropped == 0);
+        UI::UseLauncherLook(false);
+    }
+
+    // ================= Import settings =================
+    {   // the rules
+        P::ImportFields a, b;
+        a.kind = b.kind = P::ImportModel;
+        CHECK(P::ImportSame(a, b));
+        b.maxSize = 64; CHECK(P::ImportSame(a, b));             // a texture field does not count for a model
+        b.scale = 2.0f; CHECK(!P::ImportSame(a, b));
+        b = a; b.kind = P::ImportAudio; CHECK(!P::ImportSame(a, b));
+        CHECK(P::ImportSizeIndex(0) == 0 && P::ImportSizeIndex(512) == 5 && P::ImportSizeIndex(777) == 7);
+    }
+    {   // a model: golden; Import animations, Apply only while changed, Revert, the normals list, the failure popup
+        panelfix::ImportData d;
+        S::ImportSettingsResult res;
+        P::ImportSettingsIntent seen;
+        auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) {
+            res = S::DrawImportSettings(d.model, d.state, x, y, w, h);
+            if (res.intent.changed) seen.changed = true;
+            if (res.intent.apply) seen.apply = true;
+            if (res.intent.revert) seen.revert = true;
+        });
+        r.Frames(3);
+        CHECK(res.scale.w > 0 && res.normalsCombo.w > 0 && res.smoothing.w > 0 && res.animations.w > 0 && !res.enabled);
+        CHECK(res.contentHeight > 250.0f && UI::DroppedGeometry() == 0);
+        Check("editorpanels_import", r.Draw());
+        r.Click(res.apply); CHECK(!seen.apply);                     // disabled while nothing changed
+        r.Click(res.animations); CHECK(seen.changed && !d.edit.importAnimations);
+        r.Frames(1); CHECK(res.enabled);
+        r.Click(res.apply); CHECK(seen.apply);
+        r.Click(res.revert); CHECK(seen.revert);
+        // the normals list: Flat hides the smoothing angle
+        seen = P::ImportSettingsIntent();
+        r.Click(UI::Rect{res.normalsCombo.x, res.normalsCombo.y, 60.0f, res.normalsCombo.h});
+        r.Click(UI::Rect{res.normalsCombo.x, res.normalsCombo.y + res.normalsCombo.h * 3.0f, 60.0f, res.normalsCombo.h});
+        CHECK(seen.changed && d.edit.normals == 2);
+        r.Frames(1); CHECK(res.smoothing.w == 0);
+        // a scale drag: 0.01 a pixel, Dear ImGui's speed
+        const float sx = res.scale.x + 40.0f, sy = CY(res.scale);
+        r.sim.Move(sx, sy); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(sx + 10.0f, sy); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(std::abs(d.edit.scale - 0.11f) < 1e-4f);
+        // the host could not save: the popup says why
+        d.state.failMsg = "The settings could not be saved."; d.state.showFail = true;
+        r.Frames(2);
+        CHECK(res.popup.w > 0 && !d.state.showFail);
+        Check("editorpanels_import_fail", r.Draw());
+    }
+    {   // a texture with the sampler rows, a sound, a newer file, no edit
+        panelfix::ImportData t(P::ImportTexture), a(P::ImportAudio), n(P::ImportModel);
+        n.model.newer = true;
+        t.model.showSampler = true;
+        S::ImportSettingsResult rt, ra, rn, r0;
+        P::ImportSettingsModel none;
+        P::ImportSettingsState st0;
+        auto r = MakeRig(560, 600, [&](float x, float y, float w, float h) {
+            rt = S::DrawImportSettings(t.model, t.state, x, y, w, h);
+        });
+        r.Frames(2);
+        CHECK(rt.sizeCombo.w > 0 && rt.filterCombo.w > 0 && rt.wrapCombo.w > 0 && rt.mipmaps.w > 0);
+        r.Click(UI::Rect{rt.sizeCombo.x, rt.sizeCombo.y, 60.0f, rt.sizeCombo.h});
+        r.Click(UI::Rect{rt.sizeCombo.x, rt.sizeCombo.y + rt.sizeCombo.h * 6.0f, 60.0f, rt.sizeCombo.h});   // the sixth entry: 512
+        CHECK(t.edit.maxSize == 512);
+        r.Click(rt.mipmaps); CHECK(!t.edit.mipmaps);
+        Check("editorpanels_import_texture", r.Draw());
+        auto r2 = MakeRig(560, 420, [&](float x, float y, float w, float h) {
+            ra = S::DrawImportSettings(a.model, a.state, x, y, w, h);
+            rn = S::DrawImportSettings(n.model, n.state, x, y + 200.0f, w, 100.0f);
+            r0 = S::DrawImportSettings(none, st0, x, y + 320.0f, w, 60.0f);
+        });
+        r2.Frames(2);
+        r2.Click(ra.mono); CHECK(a.edit.forceMono && ra.loadCombo.w > 0);
+        CHECK(rn.scale.w == 0 && rn.apply.w == 0 && rn.contentHeight > 0.0f);   // the note only
+        CHECK(r0.apply.w == 0 && r0.contentHeight == 0.0f);
+    }
+
+    // ================= Post-processing =================
+    {   // the section, golden; the preset list, Reset, Bloom hiding its rows, a slider, the tonemap list, depth of field
+        panelfix::PostData d;
+        S::PostProcessResult res;
+        P::PostProcessIntent seen;
+        auto r = MakeRig(560, 1240, [&](float x, float y, float w, float h) {
+            res = S::DrawPostProcess(d.model, x, y, w, h);
+            if (res.intent.changed) seen.changed = true;
+            if (res.intent.preset >= 0) seen.preset = res.intent.preset;
+            if (res.intent.reset) seen.reset = true;
+        });
+        r.Frames(3);
+        CHECK(res.lift.w > 0 && res.focus.w == 0 && res.note.w > 0 && res.contentHeight > 1000.0f && UI::DroppedGeometry() == 0);
+        Check("editorpanels_post", r.Draw());
+        r.Click(UI::Rect{res.preset.x, res.preset.y, 80.0f, res.preset.h}); r.Frames(1);
+        CHECK(res.popup.w > 0);
+        Check("editorpanels_post_presets", r.Draw());
+        r.Click(UI::Rect{res.popup.x + 10.0f, res.popup.y + 8.0f + (UI::GetFontSize() * S::kEditorTextScale + 8.0f) * 2.0f, 80.0f, 8.0f});
+        CHECK(seen.preset == 2 && !seen.changed);
+        r.Click(res.reset); CHECK(seen.reset);
+        const float lo = res.lift.y;
+        r.Click(UI::Rect{res.bloom.x, res.bloom.y, 30.0f, res.bloom.h}); CHECK(!d.v.bloom && seen.changed);
+        r.Frames(1); CHECK(res.lift.y < lo - 100.0f);               // the four bloom rows went
+        r.sim.Move(res.exposure.x + 3.0f, CY(res.exposure)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(std::abs(d.v.exposure - 0.1f) < 1e-4f);
+        r.Click(UI::Rect{res.tonemap.x, res.tonemap.y, 60.0f, res.tonemap.h});
+        r.Click(UI::Rect{res.tonemap.x, res.tonemap.y + res.tonemap.h, 60.0f, res.tonemap.h});
+        CHECK(d.v.tonemap == 0);
+        r.Click(UI::Rect{res.dof.x, res.dof.y, 30.0f, res.dof.h}); r.Frames(1);
+        CHECK(d.v.dof && res.focus.w > 0);
+    }
+    {   // no values: nothing drawn; an empty preset list
+        P::PostProcessModel m;
+        S::PostProcessResult res;
+        auto r = MakeRig(400, 300, [&](float x, float y, float w, float h) { res = S::DrawPostProcess(m, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.preset.w == 0 && res.contentHeight == 0.0f);
+        CHECK(std::string(P::PostChainText(true)) == "GPU post chain: on");
+    }
+
+    // ================= Player and Rendering (Project Settings) =================
+    {   // the sections, golden; typing in the fields, the steppers, Ambient, Skybox, Apply
+        panelfix::PlayerData d;
+        panelfix::RenderingData rd;
+        S::PlayerSettingsResult res;
+        S::RenderingSettingsResult rres;
+        bool changed = false, apply = false;
+        auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) {
+            res = S::DrawPlayerSettings(d.model, x, y, w, 180.0f);
+            rres = S::DrawRenderingSettings(rd.model, x, y + 200.0f, w, h - 200.0f);
+            if (res.intent.changed || rres.intent.changed) changed = true;
+            if (rres.intent.apply) apply = true;
+        });
+        r.Frames(3);
+        CHECK(res.company.w > 0 && res.widthPlus.w > 0 && res.heightPlus.x > res.widthPlus.x && rres.apply.w > 0);
+        Check("editorpanels_player_rendering", r.Draw());
+        r.Click(res.version); r.sim.Press(Key_End); r.Frame(); r.sim.Type("-beta"); r.Frame();
+        CHECK(changed && std::strcmp(d.version, "1.4.2-beta") == 0);
+        r.Click(res.widthPlus);   CHECK(d.width == 1281);
+        r.Click(res.heightMinus); CHECK(d.height == 719);
+        r.sim.Move(rres.ambient.x + 3.0f, CY(rres.ambient)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(rd.ambient == 0.0f);
+        r.Click(rres.skybox); CHECK(!rd.skybox);
+        r.Click(rres.apply);  CHECK(apply);
+    }
+    {   // missing pointers and an unterminated buffer
+        char company[8]; std::memset(company, 'C', sizeof company);
+        P::PlayerSettingsModel m; m.company = company; m.companySize = sizeof company;
+        P::RenderingSettingsModel rm;
+        S::PlayerSettingsResult res;
+        S::RenderingSettingsResult rres;
+        auto r = MakeRig(400, 300, [&](float x, float y, float w, float h) {
+            res = S::DrawPlayerSettings(m, x, y, w, 100.0f);
+            rres = S::DrawRenderingSettings(rm, x, y + 120.0f, w, h - 120.0f);
+        });
+        r.Frames(2);
+        CHECK(company[7] == '\0' && res.company.w > 0 && res.version.w == 0 && res.width.w == 0);
+        CHECK(rres.ambient.w == 0 && rres.skybox.w == 0 && rres.apply.w > 0);
     }
 
     TEST_MAIN_RESULT();

@@ -8,6 +8,9 @@
 //   Tags and Layers Project Settings: the tag list, Strict tags and the 32 layer names (editor/main.cpp)
 //   Physics         Project Settings: gravity, the step rate, smoothing and the open scene's physics quality (editor/main.cpp)
 //   Profiler        the frame timeline, CPU categories, the diagnosis and the per-section table (editor/main.cpp)
+//   Import settings the selected texture's, model's or sound's import settings, Apply and Revert (editor/ProjectPanelUI.cpp)
+//   Post-processing Lighting: the look preset, tonemapping, bloom, colour grading, vignette, FXAA, SSAO, depth of field (editor/main.cpp)
+//   Player, Rendering  Project Settings: company, version and window size; ambient light and the skybox (editor/main.cpp)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
@@ -493,5 +496,148 @@ inline std::string ProfilerCsv(const ProfilerModel& m) {
 inline const char* ProfilerEmptyText(const ProfilerModel& m) {
     return m.playing ? "Collecting samples..." : "Press Play to time Scripts/Physics; the editor render is always timed.";
 }
+
+// ============================================================================================================================
+// Import settings (the Project panel's inspector for a texture, a model or a sound)
+// ============================================================================================================================
+
+enum ImportKind : int { ImportNone = 0, ImportTexture = 1, ImportModel = 2, ImportAudio = 3 };
+
+/// The values the panel edits, copied from and back to the engine's okay::ImportSettings by the host (editor/ProjectPanelUI.cpp).
+struct ImportFields {
+    int kind = ImportNone;
+    int maxSize = 2048;                  // texture: 0 (no limit) or one of kImportSizes
+    int filter = 2, wrap = 0;            // texture: Point, Bilinear, Trilinear; Repeat, Clamp, Mirror
+    bool mipmaps = true;
+    float scale = 1.0f;                  // model
+    int normals = 0;                     // model: from the file, calculated (smooth), flat
+    float smoothingAngle = 60.0f;        // model, for calculated normals
+    bool importAnimations = true;
+    int loadMode = 0;                    // audio: load the whole file, read it while it plays
+    bool forceMono = false;
+};
+
+struct ImportSettingsModel {
+    ImportFields* edit = nullptr;        // edited in place
+    ImportFields original;               // what is saved (Apply and Revert are enabled while edit differs from it)
+    bool newer = false;                  // written by a newer editor: shown, not changed
+    bool showSampler = false;            // texture filter, wrap and mipmaps (hidden while the Direct3D renderers do not read them)
+};
+
+/// What the panel keeps between frames: the message of a failed Apply. The host sets it (and showFail) when saving fails.
+struct ImportSettingsState {
+    std::string failMsg;
+    bool showFail = false;               // open the failure popup on the next frame
+};
+
+struct ImportSettingsIntent {
+    bool changed = false;                // a value changed (written through edit)
+    bool apply = false;                  // "Apply": save edit next to the asset
+    bool revert = false;                 // "Revert": edit back to original
+};
+
+inline const int kImportSizes[11] = {0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
+inline const char* const kImportSizeNames[11] = {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"};
+inline const char* const kImportFilterNames[3] = {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"};
+inline const char* const kImportWrapNames[3] = {"Repeat", "Clamp", "Mirror"};
+inline const char* const kImportNormalsNames[3] = {"From the file", "Calculate (smooth)", "Flat (faceted)"};
+inline const char* const kImportLoadNames[2] = {"Load the whole file", "Read it while it plays"};
+inline const char* kImportHeading = "IMPORT SETTINGS";
+inline const char* kImportNewerNote = "Made by a newer editor. Shown, but not changed here.";
+inline const char* kImportSavedNote = "Saved next to the asset.";
+
+/// The "Largest side" list's row for a size (an unknown size shows as 2048, the default).
+inline int ImportSizeIndex(int maxSize) {
+    for (int i = 0; i < 11; ++i) if (kImportSizes[i] == maxSize) return i;
+    return 7;
+}
+/// The same settings as far as the panel shows them (the fields of the asset's kind).
+inline bool ImportSame(const ImportFields& a, const ImportFields& b) {
+    if (a.kind != b.kind) return false;
+    switch (a.kind) {
+        case ImportTexture: return a.maxSize == b.maxSize && a.filter == b.filter && a.wrap == b.wrap && a.mipmaps == b.mipmaps;
+        case ImportModel: return a.scale == b.scale && a.normals == b.normals && a.smoothingAngle == b.smoothingAngle && a.importAnimations == b.importAnimations;
+        case ImportAudio: return a.loadMode == b.loadMode && a.forceMono == b.forceMono;
+        default: return true;
+    }
+}
+
+// ============================================================================================================================
+// Post-processing (the Lighting window's first section)
+// ============================================================================================================================
+
+/// The open scene's post-processing values (scene render settings), copied in and back by the host.
+struct PostValues {
+    bool filmic = true;                  // Filmic Rendering (linear lighting + tonemap)
+    float exposure = 1.0f;
+    int tonemap = 1;                     // None, ACES, Filmic
+    bool bloom = false;
+    float bloomThreshold = 1.0f, bloomIntensity = 0.6f, bloomRadius = 1.0f, bloomSoftness = 0.5f;
+    bool grading = false;
+    float temperature = 0.0f, tint = 0.0f, saturation = 1.0f, contrast = 1.0f;
+    float lift[3] = {0, 0, 0}, gamma[3] = {0, 0, 0}, gain[3] = {0, 0, 0};
+    float vignette = 0.0f, vignetteSmooth = 0.5f;
+    bool fxaa = false, ssao = false;
+    float ssaoRadius = 0.5f, ssaoIntensity = 1.0f, ssaoPower = 1.0f;
+    bool dof = false;
+    float dofFocus = 10.0f, dofRange = 5.0f;
+};
+
+struct PostProcessModel {
+    PostValues* v = nullptr;             // edited in place
+    std::vector<std::string> presets;    // the look presets ("Sunset", "Night", ...)
+    bool chainActive = false;            // the GPU post chain runs (okay::PostActive)
+    std::string vignetteNote, ssaoNote, dofNote;   // what the current renderer does not draw ("" = nothing to say)
+};
+
+struct PostProcessIntent {
+    bool changed = false;                // a value changed (written through v): the scene is dirty
+    int preset = -1;                     // a look preset was chosen (index into presets)
+    bool reset = false;                  // "Reset": the host pushes an undo step and resets the look
+};
+
+inline const char* kLookPresetTip = "Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).";
+inline const char* kLookResetTip = "Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.";
+inline const char* kFilmicTip = "Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).";
+inline const char* const kTonemapNames[3] = {"None", "ACES", "Filmic"};
+inline const char* kTonemapTip = "How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.";
+inline const char* kBloomThresholdTip = "Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).";
+inline const char* kBloomSoftnessTip = "Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.";
+inline const char* kTemperatureTip = "Cool (blue) to warm (orange).";
+inline const char* kLiftTip = "Raises or lowers the blacks, per channel.";
+inline const char* kGammaTip = "Brightens or darkens the mid-tones, per channel.";
+inline const char* kGainTip = "Scales the whites, per channel.";
+inline const char* kVignetteTip = "Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.";
+inline const char* kSsaoPowerTip = "Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.";
+inline const char* kDofRangeTip = "How far either side of the focus distance stays sharp.";
+inline const char* kPostRendererNote = "Linear lighting is not drawn on Direct3D 12 or the software renderer. Exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12. The vignette amount is drawn on every renderer. The software renderer also has its own switches under Rendering below; the scene settings here take effect there too.";
+inline const char* PostChainText(bool active) { return active ? "GPU post chain: on" : "GPU post chain: off (the frame is untouched)"; }
+
+// ============================================================================================================================
+// Player and Rendering (Project Settings)
+// ============================================================================================================================
+
+constexpr std::size_t kProjectTextSize = 64;   // ProjectSettings::company and ::version are char[64]
+
+struct PlayerSettingsModel {
+    char* company = nullptr;             // char[companySize], edited in place
+    std::size_t companySize = kProjectTextSize;
+    char* version = nullptr;             // char[versionSize], edited in place
+    std::size_t versionSize = kProjectTextSize;
+    int* width = nullptr;                // the default window size, edited in place
+    int* height = nullptr;
+};
+
+struct PlayerSettingsIntent { bool changed = false; };
+
+struct RenderingSettingsModel {
+    float* ambient = nullptr;            // 0..1, edited in place
+    bool* skybox = nullptr;              // edited in place
+};
+
+struct RenderingSettingsIntent {
+    bool changed = false;
+    bool apply = false;                  // "Apply to current scene"
+};
 
 } // namespace okaypanels

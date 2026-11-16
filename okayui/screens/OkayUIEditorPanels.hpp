@@ -1,6 +1,7 @@
 #pragma once
-// Editor panels drawn with OkayUI (the opt-in "OkayUI (preview)" backend, docs/own_ui_toolkit.md sections 9 and 10): Problems,
-// Stats, History, and Project Settings' Tags and Layers and Physics sections, and the Profiler. Same shape as OkayUIPanels.hpp: a plain function takes the panel's model (shared/EditorPanelModels.hpp, the
+// Editor panels drawn with OkayUI (the opt-in "OkayUI (preview)" backend, docs/own_ui_toolkit.md sections 9 to 11): Problems,
+// Stats, History, Project Settings' Tags and Layers, Physics, Player and Rendering sections, the Profiler, the Project panel's import
+// settings and the Lighting window's Post-processing section. Same shape as OkayUIPanels.hpp: a plain function takes the panel's model (shared/EditorPanelModels.hpp, the
 // same one the Dear ImGui version in editor/EditorPanelViews.cpp draws) and a rectangle, draws into a bare OkayUI window that fills
 // it, and answers with the model's intent plus the rectangles of what it drew (for the tests). No SDL, no Dear ImGui.
 #include "okay/UI/OkayUI.hpp"
@@ -92,5 +93,50 @@ struct ProfilerResult {
 };
 
 ProfilerResult DrawProfiler(okaypanels::ProfilerModel& model, float x, float y, float w, float h);
+
+// ---- Import settings (the Project panel) -------------------------------------------------------------------------------------
+
+struct ImportSettingsResult {
+    okaypanels::ImportSettingsIntent intent;
+    OkayUI::Rect sizeCombo, filterCombo, wrapCombo, mipmaps;          // texture (zero size when not shown)
+    OkayUI::Rect scale, normalsCombo, smoothing, animations;          // model
+    OkayUI::Rect loadCombo, mono;                                     // audio
+    OkayUI::Rect apply, revert, popup;                                // the buttons; the failure popup while it is open
+    bool enabled = false;                                             // Apply and Revert take clicks (the values differ from the saved ones)
+    float contentHeight = 0.0f;
+};
+
+ImportSettingsResult DrawImportSettings(okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
+                                        float x, float y, float w, float h);
+
+// ---- Post-processing (Lighting) ---------------------------------------------------------------------------------------------------
+
+struct PostProcessResult {
+    okaypanels::PostProcessIntent intent;
+    OkayUI::Rect preset, reset, filmic, exposure, tonemap, bloom, grading, lift, vignette, fxaa, ssao, dof, focus, note;
+    OkayUI::Rect popup;                                               // the preset list or the tonemap list while it is open
+    float contentHeight = 0.0f;
+};
+
+PostProcessResult DrawPostProcess(okaypanels::PostProcessModel& model, float x, float y, float w, float h);
+
+// ---- Player and Rendering (Project Settings) ------------------------------------------------------------------------------------
+
+struct PlayerSettingsResult {
+    okaypanels::PlayerSettingsIntent intent;
+    OkayUI::Rect company, version, width, height;
+    OkayUI::Rect widthMinus, widthPlus, heightMinus, heightPlus;   // the step buttons
+    float contentHeight = 0.0f;
+};
+
+PlayerSettingsResult DrawPlayerSettings(okaypanels::PlayerSettingsModel& model, float x, float y, float w, float h);
+
+struct RenderingSettingsResult {
+    okaypanels::RenderingSettingsIntent intent;
+    OkayUI::Rect ambient, skybox, apply;
+    float contentHeight = 0.0f;
+};
+
+RenderingSettingsResult DrawRenderingSettings(okaypanels::RenderingSettingsModel& model, float x, float y, float w, float h);
 
 } // namespace okayuiscreens

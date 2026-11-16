@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <set>
 #include <sstream>
 
@@ -347,6 +348,33 @@ int main() {
             }
         }
 #endif
+    }
+
+    // ---- the editor reads what the launcher writes ------------------------------------------------------------------------------------
+    {
+        // The arguments of each answer, fed to the editor's own parser (shared/ProjectAnswer.hpp): the answer, the scene and the launcher come out
+        // exactly as the launcher meant them, for the paths that are hard to quote. (The editor's parser is checked on its own in project_answer.)
+        const std::function<bool(unsigned long)> alive = [](unsigned long pid) { return pid == 4242; };
+        for (const char* nasty : {"/p/My Game/Assets/main.okayscene", "C:\\Users\\me\\Spa\xC3\x9F \"2\"\\Assets\\a.okayscene", "/p/$HOME `x` 'q'/Assets/m.okayscene", "/p/--project-answer=open-anyway/Assets/m.okayscene"}) {
+            Input in = Base();
+            in.scene = nasty;
+            in.projectVersion = "2.850.0";
+            okayver::PreAnswerRequest r = okayver::ParsePreAnswer(Resolve(in, Answer::Upgrade).launch.args, alive);
+            CHECK(r.Valid() && r.answer == okayver::PreAnswer::Upgrade && r.scene == nasty && r.launcherPid == 4242);
+            CHECK(!okayver::ParsePreAnswer(Resolve(in, Answer::OpenWithOld).launch.args, alive).Valid());      // --keep-version carries no answer
+            CHECK(!okayver::ParsePreAnswer(Proceed(in).launch.args, alive).Valid());                            // a plain open carries none either
+            in.projectVersion = "2.880.0";
+            r = okayver::ParsePreAnswer(Resolve(in, Answer::OpenAnyway).launch.args, alive);
+            CHECK(r.Valid() && r.answer == okayver::PreAnswer::OpenAnyway && r.scene == nasty && r.launcherPid == 4242);
+            in.projectVersion = "2.875.0"; in.chosenVersion = "2.860.0";
+            r = okayver::ParsePreAnswer(Resolve(in, Answer::OpenAnyway).launch.args, alive);                   // "Open with" + open anyway: both flags, one answer
+            CHECK(r.Valid() && r.answer == okayver::PreAnswer::OpenAnyway && r.scene == nasty);
+        }
+        // a launcher the editor cannot find alive: the answer is not honoured
+        Input in = Base();
+        CHECK(!okayver::ParsePreAnswer(Resolve(in, Answer::Upgrade).launch.args, [](unsigned long) { return false; }).Valid());
+        // the flag the launcher writes is the flag the editor reads
+        CHECK(okayver::PreAnswerArg(okayver::PreAnswer::Upgrade) == "--project-answer=upgrade" && okayver::PreAnswerArg(okayver::PreAnswer::OpenAnyway) == "--project-answer=open-anyway");
     }
 
     // ---- every combination, and what must hold for all of them -----------------------------------------------------------------------

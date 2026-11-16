@@ -54,7 +54,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7k | Upgrade project: which folder is the project, held opens, byte-order marks | File > Open, File > Project Upgrade..., the launcher's Open | Waiting for the next release (issue #888 review fixes) |
-| 7m | The launcher asks "Upgrade / Open with the old version / Cancel" BEFORE the editor opens | Launcher > Create page > Recent projects: an older project, press **Open** | New in this change; tested on Linux and the window drawn headless, never run on Windows (see section 7m) |
+| 7m | The launcher asks "Upgrade / Open with the old version / Cancel" BEFORE the editor opens | Launcher > Create page > your projects (the "Recent projects" list): an older project, press **Open** | New in this change; tested on Linux and the window drawn headless, never run on Windows (see section 7m) |
 
 ---
 
@@ -388,7 +388,7 @@ press **Open**, so it is always up to date). (Development builds only, other way
 the launcher and the editor it starts both then call themselves v2.855.0. In PowerShell: `$env:OKAY_DEV=1; $env:OKAY_FAKE_VERSION="2.855.0"; .\OkaySpace.exe`.)
 
 **Steps.**
-1. **Older, plain Open.** On the card of the older project press **Open**. A window appears **in the launcher** and no editor window has opened yet
+1. **Older, plain Open.** Launcher > Create page > the "Recent projects" list (your projects). On the card of the older project press **Open**. A window appears **in the launcher** and no editor window has opened yet
    (look at the taskbar; Task Manager has no `OkayEngine.exe`). It says "<Name> was made with v2.850.0. This editor is v<yours>." and has three
    buttons: **Upgrade project to v<yours>**, **Install v2.850.x** (when you have no v2.850 editor under `Versions\`, with an amber line saying so) or
    **Open with v2.850.x** (when you have one, with a green line), and **Cancel**.

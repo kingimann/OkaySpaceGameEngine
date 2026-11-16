@@ -44,7 +44,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` (a sample for every switch, see its `README.txt`) | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
@@ -363,24 +363,82 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,
   `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`,
   `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X`. Each set to `1`.
-  A variable you set to `0` wins over `OKAY_OWN_STACK=1`. The newer readers (AC3D, Ogre, XGL, Irrlicht scene, NFF, MDC,
-  HMP, CSM, Q3D, RAW, IQM, COB, NDO and others) have their own `OKAY_OWN_<NAME>` variables listed in
-  `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
-  that works.
-* **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
-  (COLLADA). Tiny hand-written files from our tests, no outside source.
-* **Steps.**
-  1. Start the editor with `set OKAY_OWN_OFF=1` (or `OKAY_OWN_STACK=1`), open **Help > About OkaySpace**. It should say
-     `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
-  2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
-  3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
-  with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
-  Assimp, so you will not see that message.
-* **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+  A variable you set to `0` wins over `OKAY_OWN_STACK=1`. The newer readers have their own variables too:
+  `OKAY_OWN_AC3D`, `OKAY_OWN_OGRE`, `OKAY_OWN_XGL`, `OKAY_OWN_IRR`, `OKAY_OWN_NFF`, `OKAY_OWN_TER`, `OKAY_OWN_MDC`,
+  `OKAY_OWN_HMP`, `OKAY_OWN_CSM`, `OKAY_OWN_Q3D`, `OKAY_OWN_RAW`, `OKAY_OWN_IQM`, `OKAY_OWN_COB`, `OKAY_OWN_PMX`,
+  `OKAY_OWN_LWS` (and `OKAY_OWN_NDO`, whose reader refuses every file). Set those one at a time: `OKAY_OWN_STACK=1` and
+  the startup line only cover the 20 above today.
+* **Sample files: one for every switch**, in `examples\own_readers` (41 files, about 85 KB). The folder's
+  `README.txt` has the same table. They are our own: copies of our test files, or written by our script
+  `scripts/gen_own_reader_samples.py` (a cube, a small hill for the terrain formats, a few moving markers for motion
+  capture, a two-bone column that bends for the rigged formats). Nothing was downloaded or made with another program.
+
+| Switch | File in `examples\own_readers` | What you should see |
+|---|---|---|
+| `OKAY_OWN_FBX` | `cube.fbx`, `rig.fbx` | a cube (12 triangles) with a small red texture inside the file; a tube on a 3-bone chain (24 triangles) with a clip |
+| `OKAY_OWN_COLLADA` | `skinned_strip.dae` | a strip on 2 bones with a clip |
+| `OKAY_OWN_3DS` | `cube.3ds` | a red cube |
+| `OKAY_OWN_BVH` | `walk.bvh` | no mesh: a skeleton of empty objects and 1 clip |
+| `OKAY_OWN_OFF` | `cube.off` | a cube |
+| `OKAY_OWN_SMD` | `rig.smd` | a small arm (3 triangles) on 4 bones, no clip |
+| `OKAY_OWN_MD5` | `rig.md5mesh` (`rig.md5anim` next to it adds the clip), `rig.md5anim` | 2 triangles on 3 joints with a clip; the `.md5anim` alone: a skeleton and 1 clip |
+| `OKAY_OWN_MS3D` | `rig.ms3d` | 4 triangles on 3 joints with a clip |
+| `OKAY_OWN_ASE` | `scene.ase` | 3 small faces and a clip, plus empty camera, light and helper objects |
+| `OKAY_OWN_BLEND` | `shapes.blend`, `rig.blend` | a square, a triangle and an L shape (Blender 4.x style file); a strip on an armature with a clip "Walk" (Blender 2.79 style file) |
+| `OKAY_OWN_3MF` | `cube.3mf` | a blue cube |
+| `OKAY_OWN_AMF` | `cube.amf` | an orange cube |
+| `OKAY_OWN_X3D` | `cube.x3d` | a green cube |
+| `OKAY_OWN_DXF` | `cube.dxf` | a cube |
+| `OKAY_OWN_LWO` | `cube.lwo` | a red-orange cube |
+| `OKAY_OWN_MD2` | `cube.md2` | a cube |
+| `OKAY_OWN_MD3` | `cube.md3` | a cube |
+| `OKAY_OWN_IRRMESH` | `cube.irrmesh` | a light blue cube |
+| `OKAY_OWN_B3D` | `rig.b3d` | a gold column on 2 bones; its clip "animation" bends the top 45 degrees and back in one second |
+| `OKAY_OWN_X` | `rig.x` | the same column; clip "Bend" |
+| `OKAY_OWN_AC3D` | `cube.ac` | a purple cube |
+| `OKAY_OWN_OGRE` | `cube.mesh.xml` | a cube |
+| `OKAY_OWN_XGL` | `cube.xgl` | a cyan cube |
+| `OKAY_OWN_IRR` | `cube.irr` | two cubes side by side: Irrlicht's built-in cube (orange) and `cube.irrmesh` (light blue) |
+| `OKAY_OWN_NFF` | `cube.nff` | a yellow cube |
+| `OKAY_OWN_TER` | `hill.ter` | a 16 m square patch of ground with a round hill |
+| `OKAY_OWN_MDC` | `cube.mdc` | a cube |
+| `OKAY_OWN_HMP` | `hill.hmp` | an 8-unit square patch with a round hill |
+| `OKAY_OWN_CSM` | `walk.csm` | no mesh: 3 markers (empty objects) and 1 clip |
+| `OKAY_OWN_Q3D` | `cube.q3o` | a red cube |
+| `OKAY_OWN_RAW` | `cube.raw` | a cube |
+| `OKAY_OWN_IQM` | `rig.iqm` | the column on 2 bones (white); clip "bend" |
+| `OKAY_OWN_COB` | `cube.cob` | a green cube |
+| `OKAY_OWN_PMX` | `rig.pmx` | the gold column on 2 bones (PMX files hold no clips) |
+| `OKAY_OWN_LWS` | `cube.lws` (it loads `cube.lwo`) | the red-orange cube, turning once round in 2 seconds (clip "scene") |
+| none yet | `cube.stl`, `cube.ply` | a cube each. Our STL and PLY readers are picked when the program is built (no switch yet), so the download reads these two the old way |
+| `OKAY_OWN_NDO` | none | nothing to try: our NDO reader recognises the file and refuses it (`docs/own_ndo_reader.md`) |
+
+* **Steps (one reader at a time).**
+  1. Open a Command Prompt.
+  2. `cd %LOCALAPPDATA%\OkaySpace` (the zip: the unzipped `OkaySpace-<version>` folder).
+  3. `set OKAY_OWN_PMX=1` (the switch from the table).
+  4. `Tools\OkayEngine.exe`
+  5. Open or make a 3D project. **File > Import Model...**, pick the file (here `examples\own_readers\rig.pmx`). The
+     **Import Model** window lists what it found: meshes and triangles, "Skeleton: N bones" or "No skeleton", and the
+     clips. Press **Import**. For `cube.irr`, `cube.lws` and `rig.md5mesh` first untick **Copy the file into the
+     project's Assets**: each names a second file next to it (`cube.irrmesh`, `cube.lwo`, `rig.md5anim`) and the copy
+     takes only the file you picked, so the copy would lose the second file.
+  6. You should see what the table says. Most shapes are 2 units across; **Resize to** in the same window makes them
+     bigger. Some copied test files name pictures that are not in the folder (`cube.3ds`, `rig.ms3d`, `scene.ase`,
+     `shapes.blend`): they still import, with plain colours. `rig.ms3d` and `scene.ase` also hold a few broken bits on
+     purpose (they were made to test the readers); our reader skips them and says so in the Console.
+* **How you can tell it is really ours.** For the 20 switches in the startup line: **Help > About OkaySpace** lists the
+  format, for example `readers=own(off)+assimp` with `OKAY_OWN_OFF=1`. For the newer ones there is no sign yet: the
+  release has Assimp, which reads most of these formats too, so a working import alone does not prove our reader ran.
+  Some of our readers write a yellow "model import '...': ..." line in the Console about parts of a file they did not
+  read; Assimp never writes those, so such a line is a sign (not every sample causes one). Honest gap: a "read with
+  our own X reader" Console line on every import does not exist yet. Without Assimp in a build, a format whose own
+  reader is off fails with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the
+  Windows release has Assimp, so you will not see that message.
+* **Tested on Linux, not on Windows:** the `own_reader_samples` test imports every file in the folder with our own
+  reader forced on and checks that every switch has a file (`tests/test_own_reader_samples.cpp`). **Unverified:**
+  everything about the editor above (the Import Model window, how the shapes and clips look, the Console lines);
+  nobody opened these files in a real editor window.
 
 ### 9. Own WAV decoder
 

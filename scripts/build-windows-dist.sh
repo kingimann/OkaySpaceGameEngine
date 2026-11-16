@@ -158,13 +158,18 @@ for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"
     for f in examples/$d/*; do
-        case "$f" in *.py|*.cpp|*.hpp|*.txt|*.pyc|*/__pycache__) continue ;; esac
+        case "$f" in */README.txt) ;; *.py|*.cpp|*.hpp|*.txt|*.pyc|*/__pycache__) continue ;; esac   # a folder's README.txt ships (it says what to try)
         [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/$d/"
     done
 done
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
+# One sample per own model reader (docs/try_it.md section 8; tests/test_own_reader_samples.cpp checks each imports).
+for f in examples/own_readers/*; do
+    [ -f "$f" ] || continue
+    [ -s "$OUT_DIR/$f" ] || { echo "error: $f did not make it into the distribution" >&2; exit 1; }
+done
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).

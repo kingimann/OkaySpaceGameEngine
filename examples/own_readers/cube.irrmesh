@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<mesh xmlns="http://irrlicht.sourceforge.net/IRRMESH_09_2007" version="1.0">
+<!-- OkaySpace sample cube -->
+<buffer>
+<material><enum name="Type" value="solid" /><color name="Diffuse" value="ff66b3ff" /><color name="Emissive" value="00000000" /><float name="Shininess" value="0" /></material>
+<vertices type="standard" vertexCount="24">
+-1 -1 -1 0 0 -1 ffffffff 0 0
+-1 1 -1 0 0 -1 ffffffff 1 0
+1 1 -1 0 0 -1 ffffffff 1 1
+1 -1 -1 0 0 -1 ffffffff 0 1
+-1 -1 1 0 0 1 ffffffff 0 0
+1 -1 1 0 0 1 ffffffff 1 0
+1 1 1 0 0 1 ffffffff 1 1
+-1 1 1 0 0 1 ffffffff 0 1
+-1 -1 -1 0 -1 0 ffffffff 0 0
+1 -1 -1 0 -1 0 ffffffff 1 0
+1 -1 1 0 -1 0 ffffffff 1 1
+-1 -1 1 0 -1 0 ffffffff 0 1
+1 1 -1 0 1 0 ffffffff 0 0
+-1 1 -1 0 1 0 ffffffff 1 0
+-1 1 1 0 1 0 ffffffff 1 1
+1 1 1 0 1 0 ffffffff 0 1
+1 -1 -1 1 0 0 ffffffff 0 0
+1 1 -1 1 0 0 ffffffff 1 0
+1 1 1 1 0 0 ffffffff 1 1
+1 -1 1 1 0 0 ffffffff 0 1
+-1 -1 -1 -1 0 0 ffffffff 0 0
+-1 -1 1 -1 0 0 ffffffff 1 0
+-1 1 1 -1 0 0 ffffffff 1 1
+-1 1 -1 -1 0 0 ffffffff 0 1
+</vertices>
+<indices indexCount="36">
+0 1 2 0 2 3 4 5 6 4 6 7 8 9 10 8 10 11 12 13 14 12 14 15 16 17 18 16 18 19 20 21 22 20 22 23
+</indices>
+</buffer>
+</mesh>

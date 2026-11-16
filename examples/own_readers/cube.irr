@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<irr_scene>
+ <attributes><string name="Name" value="root" /><int name="Id" value="-1" /></attributes>
+ <node type="cube">
+  <attributes><string name="Name" value="BuiltInCube" /><vector3d name="Position" value="-2.0, 0.0, 0.0" /><vector3d name="Rotation" value="0.0, 45.0, 0.0" /><vector3d name="Scale" value="1.0, 1.0, 1.0" /><float name="Size" value="2.0" /></attributes>
+  <materials><attributes><enum name="Type" value="solid" /><color name="Diffuse" value="ffff8020" /></attributes></materials>
+ </node>
+ <node type="mesh">
+  <attributes><string name="Name" value="MeshCube" /><vector3d name="Position" value="2.0, 0.0, 0.0" /><vector3d name="Rotation" value="0.0, 0.0, 0.0" /><vector3d name="Scale" value="1.0, 1.0, 1.0" /><string name="Mesh" value="cube.irrmesh" /></attributes>
+ </node>
+</irr_scene>

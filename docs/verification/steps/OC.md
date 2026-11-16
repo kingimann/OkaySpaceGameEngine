@@ -37,13 +37,14 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
 ### V-OC-004 Other own readers
 - **Map:** 3
 - **Where:** Command Prompt, then editor
-- **Needs:** a release that ships the `examples` folder (PR #887, not merged when this was written)
+- **Needs:** a release that ships `examples/own_readers/README.txt` (branch `claude2/own-reader-samples`, not merged when this was written)
 - **Steps:**
-  1. Set one of `OKAY_OWN_FBX`, `OKAY_OWN_COLLADA`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH` to 1 and start the editor.
-  2. Import a model of that format (`examples/own_readers/cube.3ds`, `examples/own_readers/skinned_strip.dae`).
-- **See:** the model imports; the About line lists the format under `own(...)`.
-- **Partial:** the newer readers (AC3D, Ogre, XGL, NFF, IQM, COB and others) have `OKAY_OWN_<NAME>` variables listed in docs/own_readers_remaining.md that the startup line does not show.
-- **Link:** [../../own_readers_remaining.md](../../own_readers_remaining.md)
+  1. Pick a switch from `examples/own_readers/README.txt` (one per reader, for example `OKAY_OWN_PMX`), run `set OKAY_OWN_PMX=1`, then start `Tools\OkayEngine.exe`.
+  2. Choose **File > Import Model...** and pick that switch's file (`examples/own_readers/rig.pmx`). For `cube.irr`, `cube.lws` and `rig.md5mesh` untick **Copy the file into the project's Assets** first.
+  3. Press **Import**.
+- **See:** the Import Model window lists what the README says (meshes, skeleton, clips) and the shape appears.
+- **Partial:** the startup line names only 20 of the switches; for the newer readers (AC3D to LWS) nothing shows which reader ran, and Assimp in the release reads most of these formats too. STL and PLY have no switch yet. NDO has no sample (its reader refuses every file).
+- **Link:** [../../try_it.md](../../try_it.md)
 
 ### V-OC-005 Own WAV decoder
 - **Map:** 7

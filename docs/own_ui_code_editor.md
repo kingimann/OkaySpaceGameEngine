@@ -2,7 +2,7 @@
 
 Own code. Part of the "replace every third-party library" work (`docs/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/own_ui_toolkit.md`, section 4.29).
 
-**Status: built and tested headless, not used by the editor.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui. Nothing was wired in. The widget is what the script editor's port will use once the editor itself runs on OkayUI.
+**Status: built and tested headless; wired into the script editor behind the developer-only OkayUI backend (step 27 below), never run in a real window.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/own_flip_proposal.md` section 4.
 
 ## Where it is
 

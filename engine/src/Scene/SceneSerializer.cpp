@@ -225,6 +225,8 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+// The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
+static thread_local std::string g_lastSceneDir;
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -9341,6 +9343,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
 
 bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error,
                                   std::vector<std::string>* warnings) {
+    if (g_loadingSceneDir.empty() && !g_lastSceneDir.empty()) {
+        g_loadingSceneDir = g_lastSceneDir;
+        struct Reset { ~Reset() { g_loadingSceneDir.clear(); } } reset;
+        return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
+    }
     return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
 }
 
@@ -9630,6 +9637,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
     const bool ok = Deserialize(scene, text, error, warnings);
+    if (ok && !g_loadingSceneDir.empty()) g_lastSceneDir = g_loadingSceneDir;
     g_loadingSceneDir = prevDir;
     return ok;
 }

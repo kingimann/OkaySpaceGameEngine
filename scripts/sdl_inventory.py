@@ -135,7 +135,7 @@ CAPS = [
      f"{P}: EventType::Quit / WindowClose / WindowResized / WindowFocusGained / WindowFocusLost / WindowExposed",
      r"SDL_QUIT|SDL_WINDOWEVENT[A-Z_]*"),
     ("ev.drop", "events", "PARTIAL", "file drag and drop",
-     f"{P}: EventType::DropFile (sdl2 and Win32; the own Linux backend never fires it). GAP: DropBegin / DropComplete (launcher)",
+     f"{P}: EventType::DropFile (sdl2, Win32, and X11 through XDND since editor stage E3). GAP: DropBegin / DropComplete (launcher)",
      r"SDL_DROPFILE|SDL_DROPBEGIN|SDL_DROPCOMPLETE"),
     # ---- keyboard ----
     ("kb.state", "keyboard", "HAVE", "held keys and modifiers",
@@ -164,7 +164,7 @@ CAPS = [
     ("m.global", "mouse", "GAP", "mouse position on the whole desktop",
      "GAP: no Backend::GlobalMouseState", r"SDL_GetGlobalMouseState"),
     ("m.touch", "mouse", "PARTIAL", "touch events",
-     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires). GAP: touch-device count",
+     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires), Backend::TouchDeviceCount (sdl2; own says 0). GAP: finger events on the own backends",
      r"SDL_FINGER[A-Z]+|SDL_GetNumTouchDevices"),
     # ---- gamepad ----
     ("pad", "gamepad", "HAVE", "game controllers",
@@ -219,7 +219,7 @@ CAPS = [
      "GAP: none (the engine has its own PNG writer; the one caller is the editor's --vs-shot tool)", r"SDL_SaveBMP"),
     # ---- message box ----
     ("msg", "msgbox", "PARTIAL", "message box",
-     f"{P}: Backend::ShowErrorBox (error icon; sdl2 and Win32 real, own Linux logs only). GAP: warning and information icons",
+     f"{P}: Backend::ShowErrorBox (error icon; sdl2, Win32 and, since editor stage E3, own X11 real; own Linux without X logs only). GAP: warning and information icons",
      r"SDL_ShowSimpleMessageBox|SDL_MESSAGEBOX_[A-Z]+"),
     # ---- runtime ----
     ("x.init", "runtime", "HAVE", "start and stop SDL, init flags, SDL_MAIN_HANDLED",

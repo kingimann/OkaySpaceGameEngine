@@ -48246,10 +48246,7 @@ int main(int argc, char** argv) {
               okay::editorgfx::ParseRenderer(std::getenv("OKAY_EDITOR_RENDERER")) == okay::editorgfx::RendererKind::Own &&
               okay::platform::DefaultKind() == okay::platform::BackendKind::Own &&
               okay::platform::IsCompiledIn(okay::platform::BackendKind::Own);
-    if (g_noSdl) {
-        okay::ownstack::SetIfUnset("OKAY_OWN_WAV", "1");   // sounds: our own WAV decoder (the other one is SDL_LoadWAV)
-        std::cerr << "editor: no SDL (own platform, own renderer, own platform backend)\n";
-    }
+    if (g_noSdl) std::cerr << "editor: no SDL (own platform, own renderer, own platform backend)\n";
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
@@ -48619,6 +48616,7 @@ int main(int argc, char** argv) {
     okay::editor::vsed::TemplatePicker = [](const char* id, ActionList& out) { bool d = false; return ScriptRecipePicker(id, &out, d); };
     ApplyTheme();
     g_edPlat->InitImGui(renderer);   // ImGui's platform side: ImGui's SDL2 backend (sdl) or our glue (own)
+    if (g_noSdl) ConsoleLog("editor: no SDL (own platform, own renderer, own platform backend)");
     ConsoleLog(platNote);
     g_gfx->InitImGui();              // ImGui's renderer side: ImGui's SDL_Renderer backend (sdl) or our renderer (own)
     ConsoleLog(gfxNote);
@@ -48632,6 +48630,16 @@ int main(int argc, char** argv) {
     static okay::OkayUIScriptBridge g_editorUIBridge;
     g_editorUIBridge.painter = &g_gfx->Painter();   // dialogue portraits as textures of the editor's painter
     okay::SetScriptUI(&g_editorUIBridge);
+    if (platEvents) {   // stage E3: OkayUI's text fields copy and paste through the main window's backend, not SDL's clipboard
+        OkayUI::SetSystemClipboard(
+            [](const char* text) { if (okay::platform::Backend* b = EdInput()) b->SetClipboardText(text ? text : ""); },
+            []() -> const char* {
+                static std::string s_clip;   // valid until the next call (OkayUI copies it at once)
+                okay::platform::Backend* b = EdInput();
+                s_clip = b ? b->GetClipboardText() : std::string();
+                return s_clip.c_str();
+            });
+    }
 #endif
 
     // Optional GPU (OpenGL) 3D renderer on an ISOLATED hidden context, so the GPU

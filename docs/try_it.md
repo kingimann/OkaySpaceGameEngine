@@ -63,6 +63,7 @@ release job or the installer build for this change.
 | 11c | Launcher with no SDL at all (off by default) | `OKAY_LAUNCHER_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `OkaySpace.exe` (section "Launcher with no SDL at all") | Log says `launcher: no SDL`; voice calls and voice notes use our own audio (waveOut / waveIn); Linux/Xvfb only, unverified on Windows |
 | 11d | Editor input and 3D-view OpenGL through our own code (off by default) | `OKAY_EDITOR_PLATFORM=own` (optionally also `OKAY_PLATFORM_BACKEND=own`), then `Tools\OkayEngine.exe` (section "Editor: input and the 3D views' OpenGL through our own code") | Console's first lines say `editor: platform own (...)`; the editor works as usual except that panels cannot be dragged out into their own windows; untested in a real editor run and on Windows |
 | 11e | Editor drawn by our own renderer (off by default) | `OKAY_EDITOR_PLATFORM=own` and `OKAY_EDITOR_RENDERER=own`, then `Tools\OkayEngine.exe` (section "Editor: drawing with our own renderer") | Console's first lines say `editor: renderer own (opengl painter ...)`; no multi-window panels; **untested in a real editor run and on Windows** |
+| 11f | Editor with no SDL at all (off by default) | `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe` (section "Editor with no SDL at all") | Log and Console say `editor: no SDL ...`; drag a file onto the window to import it; Linux/Xvfb only (the whole editor, with an SDL trap), **unverified on Windows** |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
@@ -1306,6 +1307,40 @@ the test machine): `editor_gfx` and `editor_gfx_own` draw the same editor-like f
 rendered in the views' own OpenGL context, a texture with blending off, a texture made again) through SDL's renderer and through ours and
 find them identical pixel for pixel. `editor/main.cpp` passes a compile check (Linux and MinGW) with the change. **Never run in a real
 editor session and never on Windows: steps 2 to 6 are unverified until you run them.**
+
+## Editor with no SDL at all (branch `claude2/sdl-editor-no-sdl`, not merged or released yet)
+
+What changed (SDL removal, editor stage E3): with the three switches below the editor's main window, its keyboard, mouse, cursor, file
+drops, window title, game display settings, clipboard and message box all come from **our own platform code**, and the editor makes no
+call into SDL at all (it does not even start SDL). It is **off by default**: with no variable nothing changes. With only the first two
+switches the window and events go through okay::platform's SDL backend (SDL still runs underneath).
+
+* **Switches.** `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, all three.
+* **How you can tell it is on.** The log (and the Console's first lines) say `editor: no SDL (own platform, own renderer, own platform
+  backend)` and `editor: platform own (...; main window and events on own)`.
+
+Steps (Windows, from the release, once this branch is in one):
+
+1. Open a Command Prompt and run: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_EDITOR_PLATFORM=own`, `set OKAY_EDITOR_RENDERER=own`,
+   `set OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe`.
+2. Expect the loading screen, then the editor. Open a project (for example the physics example). Check the Console lines above.
+3. Click around: a Hierarchy row, the Hierarchy search box (type a few letters), a Scene view object. Switch the view to 3D and fly with
+   the right mouse button held and W / A / S / D.
+4. Drag a picture or a model from Explorer onto the editor window: it is imported into the Project panel's folder.
+5. Press Ctrl+P (Play). In the Game view tick "Capture mouse", move the mouse (the pointer is hidden and held), press Esc (it comes
+   back in the middle of the Game view), then Ctrl+P again (Stop).
+6. In Play, copy and paste in a game text field (if the scene has one), and open the game's display settings (if it has them):
+   windowed, borderless and fullscreen switch the window (fullscreen is the desktop size here: no resolution change yet).
+7. Close the editor with the X: it closes normally.
+
+Known differences with the switches on (on purpose, for now): no multi-window panels; the game's resolution list shows only the
+desktop size and "fullscreen" does not change the monitor's resolution; no touch-screen input.
+
+**Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor, with a trap that stops the program on any SDL call
+(`scripts/editor_no_sdl_check.sh`): start, clicks, typing, a right-mouse fly, Play, mouse capture, Esc, Stop and closing the window
+made no SDL call, and the screens match the default editor's except for frame-rate numbers and the text caret. File drops, the
+refresh rate and the message box of our Linux code are tested on their own (`platform_editor_calls_own`). **Never run on Windows:
+steps 2 to 7 are unverified there until you run them.**
 
 ## Team tooling (not part of the Windows release)
 

@@ -15,7 +15,7 @@ All sizes are **judgement, not measurements**. "Small" = an afternoon of agent w
 |---|---|---|
 | player | 5 / 221 | almost only data types (`SDL_Rect`, `SDL_Color`, `Uint8`); the window, input, GL, audio and 2D drawing already go through `okay::platform` |
 | launcher | 743 / 1,199 in its own files | **613 are threads, mutexes and atomics (83%)**; 57 `SDL_Renderer` drawing; 14 Dear ImGui SDL backends; about 60 window, input and other platform calls |
-| editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small (stage E1, below in "Editor": `main.cpp` 194 to 154 calls, its GL context and ImGui SDL2 platform calls behind `OKAY_EDITOR_PLATFORM`) |
+| editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small (stages E1 to E3, below in "Editor": `main.cpp` 194 to 50 calls; with all three switches `own` the editor makes **no SDL call** on Linux, proved under Xvfb) |
 | engine library | 0 | outside the SDL backend files (`SdlBackend.cpp`, `SdlPainter.cpp`, `UIPainterSDL.hpp`) there is **no SDL word in code** |
 
 Three different things keep SDL2 in the two programs, and they need three different kinds of work:
@@ -441,10 +441,90 @@ So what is left in `main.cpp` is exactly two blocks, both used only on the sdl r
   `SDL_Renderer` backend 5 to 0. The whole `editor/` directory 220 to 161 calls (550 to 386 words): the seam's sdl side
   (`EditorGfxSdl.cpp`, 16 calls) is SDL on purpose and goes when SDL goes.
 * **Not done / unverified.** No real editor session: the editor is too big to build on this machine's memory, so nothing here has drawn a
-  real editor frame with `own` (only the syntax check and the test program). Nothing on Windows: our GL painter on a Windows editor window,
+  real editor frame with `own` (only the syntax check and the test program). (Since stage E3 the whole editor has run with `own` + `own` under Xvfb: see below.) Nothing on Windows: our GL painter on a Windows editor window,
   WGL next to it, and the read-back views instead of the Direct3D 11 zero-copy ones are unrun. On `own` there are no multi-window panels
   and no Direct3D 11 zero-copy views. The main window is still an SDL window (`main.cpp` reads SDL's events: stage E3). The default stays
   `sdl` until the owner approves (rule 17).
+
+### Stage E3: the main window and its events with no SDL (branch `claude2/sdl-editor-no-sdl`, on top of E2)
+
+**Status (2026-11-16): built and run as the whole editor on Linux under Xvfb (software OpenGL), with an SDL trap: no SDL call; off by
+default; not merged; Windows not run.** With `OKAY_EDITOR_PLATFORM=own` and `OKAY_EDITOR_RENDERER=own` the main window is made by
+`okay::platform::Default()` and the editor reads its events from that backend instead of SDL's queue. With `OKAY_PLATFORM_BACKEND=own` as
+well, the editor makes **no SDL call at all** (no `SDL_Init`, no `SDL_Quit`) and says `editor: no SDL (own platform, own renderer, own
+platform backend)` at start. Every other combination is unchanged; the default (no variable) makes the same SDL calls as before.
+
+* **The seam** (`editor/EditorPlatform.*`): on `own`, `CreateMainWindow(..., opengl = true)` makes the window with `Default()` (it starts
+  that backend's video when it is our own) and `EventsFromPlatform()` turns true; `ProcessEvent(const okay::platform::Event&)` feeds ImGui.
+  The views' GL context is handed back to the main window's own context (`Window::MakeCurrent`) instead of through SDL. On `own` with
+  `SDL_Renderer` (E1 / E2 with `OKAY_EDITOR_RENDERER` unset) nothing changed: SDL window, SDL queue.
+* **`main.cpp`** (every direct SDL use the own path would reach):
+  * the event loop: a second loop over `Backend::PollEvent` with the same handling as the SDL one (Esc edge, focus on click, ImGui,
+    quit and window close, controllers added and removed, focus lost, Play text, wheel and touch, OkayUI text and Backspace, file
+    drops; the drop import is one shared lambda); the editor's own test drop (`OKAY_UI_DROP`) is queued for that loop instead of
+    `SDL_PushEvent`;
+  * keyboard state for Play (`IsKeyDown`, `KeyForChar` for the layout's letters), mouse state and buttons (`MouseState`, `MouseMask`),
+    relative mouse mode, its motion and the getter (`SetRelativeMouse`, `RelativeMouseState`, `IsRelativeMouse`), cursor show / hide
+    (`ShowCursor`), warp (`WarpMouse`), text input (`StartTextInput`), pumping events on the splash (`PumpEvents`), the "no window has
+    the keyboard" focus check (`KeyboardFocusWindowId`, `MouseFocusWindowId`), touch-device count (`TouchDeviceCount`, new): all go to
+    the main window's backend (`EdInput()`, which is okay::platform's sdl2 backend on the default path: the same SDL calls as before);
+  * window: title, size, restore / raise / show and the refresh rate through `okay::platform::Window`; the icon through
+    `SetAppIconOn`; the first-run UI scale from `Backend::Displays()` (the display under the window and its scale);
+  * timers: `SDL_GetTicks64` to `okay::platform::TicksMs` (the gesture clock and "saved" time);
+  * the game's display settings in Play: the monitor list and window modes through `shared/PlatformDisplays.hpp` (new; one mode per
+    monitor, its desktop size, as okay::platform has no list of display modes yet, and exclusive fullscreen is desktop fullscreen);
+  * the Play clipboard through `shared/PlatformClipboard.hpp` (new) and OkayUI's text fields through `OkayUI::SetSystemClipboard` (new);
+  * the executable's folder (`Backend::BasePath`) and the "open it from the launcher" message box (`Backend::ShowErrorBox`);
+  * start and end: `SetPerMonitorDpiAware` and `Backend::Init` instead of `SDL_SetMainReady` / `SDL_SetHint` / `SDL_Init`; no `SDL_Quit`.
+* **New in `okay::platform`** (each with its SDL2, X11 and Win32 side):
+  * `Backend::TouchDeviceCount()`: sdl2 `SDL_GetNumTouchDevices`; own X11 and Win32 say 0, because they deliver no finger events;
+  * file drops on X11 (they were missing: the own Linux backend never sent `DropFile`): the XDND protocol, version 5, written from
+    freedesktop.org's description (XdndAware on every window; Enter / Position / Status / Leave / Drop / Finished; the file list as
+    `text/uri-list`, parsed by `own::PathsFromUriList`: local `file:` URIs, percent-decoded); sdl2 and Win32 already had drops;
+  * `Window::RefreshRateHz()` on X11 (RandR: the mode of the CRTC under the window, pixel clock / (horizontal total x vertical total))
+    and on Win32 (`EnumDisplaySettingsW` for the window's monitor); sdl2 already had it;
+  * `Backend::ShowErrorBox` on X11: a small box of our own (core X drawing on its own connection, title, lines of text, an OK button;
+    Return, Escape or the close button end it); it only logged before. sdl2 and Win32 already had real boxes.
+* **What the own path does differently** (known): display modes (the game's resolution list shows the desktop size only; exclusive
+  fullscreen is desktop fullscreen); no touch input on the own backends; the editor's "open from the launcher" box has the error look on
+  every backend; on X11 the refresh rate is whatever RandR reports (Xvfb reports none: 0, so Play's frame pacing falls back as it does
+  when SDL reports none). Still no multi-window panels (E4).
+* **Proof: `scripts/editor_no_sdl_check.sh`** (the launcher's check made for the editor). A trap library defines every function
+  libSDL2 exports (839 here); each one prints `SDL CALL: <name>` and exits with 97; it is preloaded in front of libSDL2.
+  Run on 2026-11-16 with the full editor (`-O1`), opening `examples/physics/physics_playground.okayscene` on a 1600 x 900 Xvfb:
+  1. control, the default editor under the trap: stops at its first call (`SDL_SetMainReady`), exit 97: the trap works;
+  2. own x 3, clean run: the scene opens, the editor runs 15 s, then its window gets `WM_DELETE_WINDOW` (what a close button sends):
+     **exit 0, no SDL call** from start to exit;
+  3. own x 3, busy run: a click in the Scene view, a click on a ball, a Hierarchy row, typing `crate` into the Hierarchy search, the
+     2D / 3D switch, a right-mouse-button fly with the mouse moved and W held, Ctrl+P (Play), the Game view's "Capture mouse"
+     (relative mouse mode) with the mouse moved, Esc (relative mode off, pointer parked), Ctrl+P (Stop): **no SDL call**, still running;
+  4. the default editor through the same steps, without the trap, for the pictures. Pixels that differ, default against own, on the
+     1,440,000-pixel screen: start 546, after the clicks and typing 564, before the fly 305, after the fly
+     1,063, playing 7,369, captured 55,495, stopped 3,749 (the frame-rate numbers in the menu bar and the
+     status bar, the text caret, and a playing physics scene that is a few frames apart; "captured" also has the checkbox's tooltip
+     on `own` only, where the pointer is held in the window). The fly changed about 78,000 pixels of the
+     view on both; Play changed about 720,000 on both. The pointer while captured: `own` holds it in the
+     middle of the window (640, 400: our X11 relative mode warps it back there), SDL leaves it where it was (XInput2 raw motion);
+     after Esc `own` puts it in the middle of the Game view (552, 349), as the editor asks. Under a heavy machine load (5 to 6 frames a
+     second) one run of the default editor missed the checkbox click and the Stop key: the steps are timed, not synchronised.
+     (The screenshots are kept outside the repository.)
+* **Tests** (2026-11-16, Xvfb). `platform_editor_calls` (no display: the uri-list parser, the display-settings helper on a fake window
+  in each mode, the clipboard helper, the touch default; 22 checks) and `platform_editor_calls_own` (our X11 backend: this test plays an
+  XDND drag source on its own connection and drops two files, one with a space, then a drag with no files (refused, finished empty);
+  the refresh rate against RandR's own `XRRConfigCurrentRate`; the message box shown in a child process and closed once with Return
+  and once with the close button; 14 checks). Passing after the change: `editor_platform`, `editor_platform_own`, `editor_gfx`, `editor_gfx_own`,
+  `launcher_imgui_renderer`, `launcher_imgui_renderer_gl`, `okayui_host`, `launcher_join`, `launcher_versions`, `launcher_wav_window`,
+  every `platform*` suite (25 of 25), and `scripts/launcher_no_sdl_check.sh` (ALL PASS). `editor/main.cpp`, the seam, the two new
+  headers, `OkayUI.cpp`, `SdlBackend.cpp` and `OwnWin32.cpp` pass a MinGW syntax check (with Linux SDL headers). The X11 message box was
+  also looked at in a screenshot (the editor's "open it from the launcher" text, OK button).
+* **Counts** (`scripts/sdl_inventory.py`, calls / words): `editor/main.cpp` **89 / 229 to 50 / 160**; the whole `editor/` directory
+  161 / 386 to 122 / 317. The 50 left in `main.cpp` are the default path's own SDL: the SDL event loop (kept unchanged), the start
+  and end, the base path and the message box on the SDL side, the first-run DPI on the SDL side, the multi-window panels' renderers and
+  the Direct3D 11 views (both `SDL_Renderer` only), and the self-test's keyboard.
+* **Not done / unverified.** Windows: nothing of E3 has run there (the new Win32 refresh rate and the changed files pass a MinGW syntax
+  check); our Win32 backend drawing the editor with WGL, its events and drops in a real session are unrun. A real X11 desktop (a window
+  manager, a real file manager's drag, a real monitor's refresh rate) is unrun: Xvfb has no window manager and reports no refresh rate.
+  No multi-window panels on `own` (E4). The default stays `sdl` until the owner approves (rule 17).
 
 ### What comes next for the editor
 
@@ -452,10 +532,11 @@ So what is left in `main.cpp` is exactly two blocks, both used only on the sdl r
   the Direct3D 11 "draw the views into SDL's device" path (our own Direct3D 11 painter, or read-back on Windows too; on `own` it is
   read-back today), and the multi-window panels' own renderers (with E4). Then the main window can come from `okay::platform` directly
   (our GL painter on our own window) once its events come from `Backend::PollEvent` (E3). Medium.
-* **E3. The event loop and input through the seam.** `main.cpp`'s shortcuts, play-mode keyboard (`EditorPlayInput.hpp`), relative
-  mouse, warp, cursor show / hide, touch, drops and controller events read `okay::platform::Event` instead of `SDL_Event`. Medium.
-* **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`), then the rest (`SDL_Init` / `SDL_Quit`,
-  the base path, the message box, `SdlDisplays.cpp`, `SdlClipboard.hpp`). Then `own` + `own` can be proved SDL-free like the launcher.
+* **E3. Done on its branch** (section above): with the three switches the editor makes no SDL call (Linux, Xvfb). Left for it: a run on
+  Windows and on a real X11 desktop, and display modes in `okay::platform` (the game's resolution list and exclusive fullscreen).
+* **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`). Then the default path's own SDL (its event
+  loop, `SDL_Init` / `SDL_Quit`, the base path, the message box, `SdlDisplays.cpp`, `SdlClipboard.hpp`) can go once the owner switches
+  the default.
 
 ## What can run in parallel, and the critical path
 

@@ -12303,6 +12303,35 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
+static void CollectStatRows(EditorState& ed, std::vector<std::pair<std::string, int>>& rows) {
+    int stTris = 0, stParts = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up || !up->active) continue;
+        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
+        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
+    }
+    rows = {
+        {"Objects",    (int)ed.scene().Objects().size()},
+        {"Triangles",  stTris},
+        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+        {"Particles",  stParts},
+        {"Drawn",      okay::LastCullCounters().drawn},
+        {"Culled",     okay::LastCullCounters().culled},
+        {"Occluded",   okay::LastCullCounters().occluded},
+        {"LOD culled", okay::LastCullCounters().lodCulled},
+        {"LOD0",       okay::LastCullCounters().lod0},
+        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
+        {"Batches",    okay::LastCullCounters().batches},
+        {"Draws saved", okay::LastCullCounters().drawsSaved},
+    };
+}
+
 void DrawStats(EditorState& ed) {
     static okaypanels::FpsHistory hist;
     // The model both versions draw (shared/EditorPanelModels.hpp): the frame-rate history, the scene census and the switches.
@@ -12310,34 +12339,12 @@ void DrawStats(EditorState& ed) {
     auto fill = [&](okaypanels::StatsModel& m) {
         const float fps = ImGui::GetIO().Framerate;
         hist.Push(fps);
-        int stTris = 0, stParts = 0;
-        for (const auto& up : ed.scene().Objects()) {
-            if (!up || !up->active) continue;
-            if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-            if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
-        }
-        const auto& cull = okay::LastCullCounters();   // last frame, after culling and batching
+        std::vector<std::pair<std::string, int>> rows;
+        CollectStatRows(ed, rows);   // the scene census, built once for both versions
         m.framerate = fps;
         m.history = &hist;
-        m.counters = {
-            {"Objects",    (int)ed.scene().Objects().size()},
-            {"Triangles",  stTris},
-            {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
-            {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
-            {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
-            {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
-            {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
-            {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
-            {"Particles",  stParts},
-            {"Drawn",      cull.drawn},
-            {"Culled",     cull.culled},
-            {"Occluded",   cull.occluded},
-            {"LOD culled", cull.lodCulled},
-            {"LOD0",       cull.lod0},
-            {"LOD1+",      cull.lod1 + cull.lod2 + cull.lod3},
-            {"Batches",    cull.batches},
-            {"Draws saved", cull.drawsSaved},
-        };
+        m.counters.reserve(rows.size());
+        for (const auto& r : rows) m.counters.push_back({r.first, r.second});
         m.frustumCulling = &okay::FrustumCullingEnabled();
         m.occlusionCulling = &okay::visibility::OcclusionCullingEnabled();
         m.staticBatching = &okay::visibility::StaticBatchingEnabled();

@@ -37,6 +37,7 @@ enum KeyId : int {
     KeyId_0, KeyId_1, KeyId_2, KeyId_3, KeyId_4, KeyId_5, KeyId_6, KeyId_7, KeyId_8, KeyId_9,
     KeyId_F1, KeyId_F2, KeyId_F3, KeyId_F4, KeyId_F5, KeyId_F6, KeyId_F7, KeyId_F8, KeyId_F9, KeyId_F10, KeyId_F11, KeyId_F12,
     KeyId_Ctrl, KeyId_Shift, KeyId_Alt,
+    KeyId_Slash,   // '/' (the code editor's toggle-comment key with Ctrl)
     KeyId_COUNT
 };
 
@@ -48,6 +49,7 @@ struct Input {
     float       mouseY    = 0.0f;
     bool        mouseDown = false;     // left mouse button held this frame
     bool        rightDown = false;     // right mouse button held this frame (context menus)
+    bool        middleDown = false;    // middle mouse button held this frame (IsMouseDown(2), GetMouseDragDelta(2))
     bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
     // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
@@ -295,13 +297,7 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
-/// Dear ImGui's form: `size` 0 in an axis fills what is left, a negative value leaves that many pixels free. Flags: ChildFlags_Borders
-/// draws Dear ImGui's frame (a one-pixel rounded outline in Col_Border, filled with Col_ChildBg when it is set) and pads the content
-/// (6 pixels, or a pushed StyleVar_WindowPadding); ChildFlags_AlwaysUseWindowPadding pads it without a frame; with neither the content starts
-/// at the child's edge (Dear ImGui's default); ChildFlags_AutoResizeY makes the child as tall as its content was on the last frame (one
-/// row on the first), so it never scrolls. Room for the scrollbar is taken only when the content overflowed on the last frame.
-enum ChildFlags : int { ChildFlags_None = 0, ChildFlags_Borders = 1, ChildFlags_AlwaysUseWindowPadding = 2, ChildFlags_AutoResizeY = 4 };
-bool BeginChild(const char* id, Vec2 size, int flags = ChildFlags_None);
+/// Dear ImGui's form, BeginChild(id, size, childFlags, windowFlags), and its ChildFlags are in OkayUIImCompat.hpp.
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
 /// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
@@ -707,7 +703,11 @@ enum TableFlags : int {
     Table_SortTristate = 32,  // ascending, descending, then unsorted
     Table_ScrollX      = 64,  // horizontal scrolling inside the outer size
     Table_ScrollY      = 128, // vertical scrolling inside the outer size
-    Table_BordersOuter = 256, // a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box)
+    Table_Hideable     = 256, // a right click on the header row opens a menu that shows and hides columns
+    Table_BordersOuter = 2048, // a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box)
+    // Accepted so ported tables compile: columns here are resizable unless Table_NoResize, and there is no column reordering yet.
+    Table_Resizable    = 512, Table_Reorderable = 1024, Table_BordersInnerV = 4096, Table_NoSavedSettings = 8192,
+    Table_SizingFixedFit = 16384, Table_SizingStretchProp = 32768, Table_PadOuterX = 65536,
 };
 enum TableColumnFlags : int {
     Col_None       = 0,
@@ -715,6 +715,12 @@ enum TableColumnFlags : int {
     Col_NoSort     = 2,       // a Sortable table's header click does not sort by this column
     Col_DefaultSort = 4,      // starts as a sort key
     Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
+    Col_WidthStretch = 16,    // `widthOrWeight` is a weight (the default; accepted so ported code can say it)
+    Col_NoResize     = 32,    // the borders on either side of this column cannot be dragged
+    Col_DefaultHide  = 64,    // starts hidden (a Table_Hideable table's header menu, or TableSetColumnEnabled, shows it)
+    Col_NoHide       = 128,   // cannot be hidden
+    Col_NoHeaderLabel = 256,  // the header row draws no label for this column (the sort arrow still shows)
+    Col_NoReorder = 512, Col_NoClip = 1024, Col_NoSortAscending = 2048, Col_NoSortDescending = 4096, Col_IndentEnable = 8192,   // accepted, nothing to do yet
 };
 inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
 bool BeginTable(const char* id, int columns, TableFlags flags);
@@ -745,6 +751,18 @@ void TableSetScroll(float x, float y);
 bool TableSetColumnIndex(int column);
 int  TableGetColumnIndex();   // -1 before the first cell of a row
 int  TableGetRowIndex();      // -1 before the first row
+/// Hiding columns (flag-style tables). A column starts hidden with Col_DefaultHide; a Table_Hideable table's header row opens a menu on
+/// right click (a check box per column; NoHide columns and the last visible one are locked); TableSetColumnEnabled(col, false) hides one
+/// from code (false when it cannot be hidden), taking effect next frame. The choice is remembered per table. A hidden column has no
+/// width, header or border; TableNextColumn / TableSetColumnIndex return false for it and anything drawn in its cell lands off screen.
+bool TableSetColumnEnabled(int column, bool enabled);
+bool TableGetColumnIsEnabled(int column);
+int  TableGetColumnCount();
+/// The label and the flags given to TableSetupColumn (column < 0: the current column; "" and 0 when there is none).
+const char* TableGetColumnName(int column = -1);
+int  TableGetColumnFlags(int column = -1);
+/// The visible column under the pointer while it is over the table (header and rows so far), else -1.
+int  TableGetHoveredColumn();
 /// The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
 void SetTableRowClipping(bool on);
 bool TableRowIsVisible();     // false while the current row is wholly outside the clip (the row clipper): its widgets still lay out but emit no geometry, so skip expensive cell content
@@ -898,6 +916,13 @@ struct DrawList {
     /// `rounding` is the corner radius in pixels (0 = square; clamped to half the shorter side).
     void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f, float thickness = 1.0f) const;
     void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding = 0.0f) const;
+    /// With chosen rounded corners: `drawFlags` are OkayUI::DrawFlags (OkayUIImCompat.hpp); none or all four corners = the calls above;
+    /// DrawFlags_RoundCornersNone is a square. The argument order is the usual one for ported code: (rounding, flags, thickness).
+    void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding, int drawFlags, float thickness = 1.0f) const;
+    void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding, int drawFlags) const;
+    /// A regular polygon of `segments` sides (3 to 128), the first corner pointing right.
+    void AddNgon(Vec2 center, float radius, Color32 col, int segments, float thickness = 1.0f) const;
+    void AddNgonFilled(Vec2 center, float radius, Color32 col, int segments) const;
     /// A gradient: one colour per corner (top-left, top-right, bottom-right, bottom-left).
     void AddRectFilledMultiColor(Vec2 min, Vec2 max, Color32 tl, Color32 tr, Color32 br, Color32 bl) const;
     /// `segments` 0 picks a count from the radius (12 to 64); explicit counts are clamped to 3..128.
@@ -972,11 +997,6 @@ bool IsItemVisible();
 bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
 bool IsItemActivated();      // became active this frame
 bool IsItemDeactivated();    // stopped being active this frame
-/// A text field (InputText, InputTextWithHint, SearchField, a typed number) lost the keyboard after its text changed: a click elsewhere,
-/// Escape, Tab or another field taking it. Reported on the field's next draw after the loss (the frame of the loss when the field itself
-/// let go), once. The place to commit an edit that should not apply on every keystroke. With InputText_EnterReturnsTrue an Enter that
-/// returned true already committed the text: only edits after it count.
-bool IsItemDeactivatedAfterEdit();
 bool IsItemClicked(int button = 0);   // hovered and `button` (0 left, 1 right) went down this frame
 bool IsMouseDown(int button = 0);
 bool IsMouseClicked(int button = 0);
@@ -1049,7 +1069,7 @@ MouseCursor GetMouseCursor();
 /// the UI wants the mouse (pointer over a window or a widget is active) or the keyboard (a text field has focus), so the host knows
 /// not to also give them to the game.
 struct IO {
-    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[2] = {false, false};
+    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[3] = {false, false, false};
     bool keyCtrl = false, keyShift = false, keyAlt = false;
     bool wantCaptureMouse = false, wantCaptureKeyboard = false, wantTextInput = false;
     float deltaTime = 1.0f / 60.0f;

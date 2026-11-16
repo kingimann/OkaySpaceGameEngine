@@ -4,6 +4,7 @@
 // same one the Dear ImGui version in editor/EditorPanelViews.cpp draws) and a rectangle, draws into a bare OkayUI window that fills
 // it, and answers with the model's intent plus the rectangles of what it drew (for the tests). No SDL, no Dear ImGui.
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIImCompat.hpp"   // BeginChild(id, size, childFlags) and its ChildFlags
 #include "EditorPanelModels.hpp"
 
 #include <vector>

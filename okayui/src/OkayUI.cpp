@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIImCompat.hpp"
+#include "okay/UI/OkayUIDockBuilder.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
@@ -116,6 +118,14 @@ bool  g_pressed  = false;        // mouse went down this frame
 bool  g_released = false;        // mouse went up this frame
 bool  g_rPrevDown = false;       // last frame's right-mouse (edge detection)
 bool  g_rPressed  = false;       // right button went down this frame
+bool  g_mPrevDown = false, g_mPressed = false, g_mReleased = false;   // the middle button: last frame's state, went down / went up this frame
+float g_dragOriginX[3] = {0, 0, 0}, g_dragOriginY[3] = {0, 0, 0};    // where each button went down (GetMouseDragDelta measures from here; ResetMouseDragDelta moves it)
+double g_lastMouseMove = 0.0;    // g_clock when the pointer last moved (the Stationary hover flag)
+int   g_focusAtFrameStart = 0;   // the keyboard-focused id at the start of the frame (for IsItemDeactivatedAfterEdit on text fields)
+int   g_lostFocusId = 0; bool g_lostFocusEdited = false;   // a text field lost the keyboard (and had been edited) since the last frame start
+int   g_deactEditedId = 0;        // the text field that lost the keyboard after an edit during the last frame (IsItemDeactivatedAfterEdit)
+int   g_editedId = 0;            // the item that was edited during the hold or focus in progress (0: none); see noteEdit
+int   g_editedFrameId = 0; unsigned long long g_editedFrame = 0;   // the item edited this frame (IsItemEdited)
 
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
@@ -130,11 +140,6 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
-// IsItemDeactivatedAfterEdit (text fields): the field that held the keyboard last and whether its text changed since it got it; a field
-// that lost the keyboard to another field before it was drawn again (it reports on its next draw); the field that reported this frame.
-int   g_editOwner = 0;     bool g_editOwnerEdited = false;
-int   g_lostField = 0;     bool g_lostFieldEdited = false;
-int   g_deactAfterEdit = 0;
 float g_fieldPadL = -1.0f, g_fieldPadR = -1.0f;   // a text field's inner padding at the left / right while SearchField draws one (< 0: the usual)
 int   g_nextOpen = -1;            // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
@@ -175,8 +180,15 @@ CurMenu g_curMenu;
 CurMenu g_menuStack[4];
 struct TabSel { int bar = 0; int sel = 0; };
 TabSel g_tabSel[16];
-struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0; };
+// The remembered order and widths of a Reorderable tab bar's tabs (the tabs are placed from last frame's widths, so a drag can swap them).
+struct TabOrder { int bar = 0; int n = 0; int ids[32] = {}; float w[32] = {}; unsigned long long lastFrame = 0; };
+TabOrder g_tabOrders[16];
+struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0;
+                   int flags = 0; TabOrder* ord = nullptr; int seen[32] = {}; int nSeen = 0; bool fresh = false; };
 TabBarCtx g_tabBar;
+// Hover delay tracking (IsItemHovered with the Delay / Stationary flags) and the tooltip scope.
+unsigned g_hoverKey = 0; unsigned long long g_hoverFrame = 0; double g_hoverStart = 0.0;
+bool g_inTip = false;
                           // the menus a nested BeginMenu came from (outermost first)
 int g_menuDepth = 0;
 Theme g_theme;
@@ -305,6 +317,7 @@ struct ChildSave {
     float padX;           // left and right
     bool  hovered;        // mouse over the region this frame
     float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
+    bool  trim = false;          // the child began through BeginChild(id, size, childFlags): the gap after its last item does not count as content (no scroll bar for a few pixels)
 };
 ChildSave g_childStack[8];
 int       g_childTop = 0;
@@ -369,6 +382,9 @@ struct TableState {
     float rowBgH = 0;                     // height of the band the current row's background got
     bool  rowCulled = false;              // the current row is wholly outside the visible clip: its geometry is skipped (the row clipper)
     LayoutState saved;                    // the parent layout, restored by EndTable of a scrolling box
+    unsigned hidden = 0;                  // bit i: column i is hidden (flag-style tables: Col_DefaultHide, the header menu, TableSetColumnEnabled)
+    float*   pHidden = nullptr;           // its persisted copy (a float holding the mask; negative before the first frame)
+    float    zeroW[16] = {0};             // what a hidden column's width points at, so no layout loop touches its remembered width
 };
 TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
@@ -1052,6 +1068,12 @@ constexpr int kMaxHexSlots = 16;
 
 } // namespace
 
+// An edit: a value widget changed its value, so remember which item it was (IsItemEdited, IsItemDeactivatedAfterEdit).
+static bool noteEdit(bool changed) {
+    if (changed && g_lastId != 0) { g_editedId = g_lastId; g_editedFrameId = g_lastId; g_editedFrame = g_frameCount; }
+    return changed;
+}
+
 void BeginFrame(const Input& in) {
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
@@ -1060,9 +1082,18 @@ void BeginFrame(const Input& in) {
     g_rPressed  = in.rightDown && !g_rPrevDown;
     g_rReleased = !in.rightDown && g_rPrevDown;
     g_rPrevDown = in.rightDown;
+    g_mPressed  =  in.middleDown && !g_mPrevDown;
+    g_mReleased = !in.middleDown &&  g_mPrevDown;
+    g_mPrevDown = in.middleDown;
     g_activeAtFrameStart = g_active;
+    g_focusAtFrameStart = g_focus;
+    g_deactEditedId = g_lostFocusEdited ? g_lostFocusId : 0; g_lostFocusId = 0; g_lostFocusEdited = false;
+    if (g_activeAtFrameStart == 0 && g_focusAtFrameStart == 0) g_editedId = 0;   // nothing was held: an old edit mark is stale
+    if (g_pressed)  { g_dragOriginX[0] = in.mouseX; g_dragOriginY[0] = in.mouseY; }
+    if (g_rPressed) { g_dragOriginX[1] = in.mouseX; g_dragOriginY[1] = in.mouseY; }
+    if (g_mPressed) { g_dragOriginX[2] = in.mouseX; g_dragOriginY[2] = in.mouseY; }
+
     g_lastId = 0;
-    g_deactAfterEdit = 0;
     g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
     g_popupTop = 0;
@@ -1080,7 +1111,7 @@ void BeginFrame(const Input& in) {
     g_io.mousePos = Vec2{in.mouseX, in.mouseY}; g_io.mouseDelta = Vec2{0, 0}; g_io.mouseWheel = in.wheel;
     g_io.displaySize = Vec2{in.displayW, in.displayH};
     g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
-    g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown;
+    g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown; g_io.mouseDown[2] = in.middleDown;
     g_io.wantCaptureKeyboard = g_focus != 0; g_io.wantTextInput = g_focus != 0;
     for (int k = 0; k < KeyId_COUNT; ++k) {   // named keys: keep last frame's state, take this frame's
         g_keyPrev[k] = g_keyNow[k];
@@ -1097,6 +1128,7 @@ void BeginFrame(const Input& in) {
     }
     g_mouseDX = in.mouseX - g_prevMouseX;
     g_mouseDY = in.mouseY - g_prevMouseY;
+    if (g_mouseDX != 0.0f || g_mouseDY != 0.0f) g_lastMouseMove = g_clock;
     g_prevMouseX = in.mouseX;
     g_prevMouseY = in.mouseY;
     g_hot = 0;
@@ -1514,6 +1546,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     g_lastId = id; if (inside) g_hot = id;
     const bool wasFocused = (g_focus == id);
     if (inside && g_pressed) {
+        if (g_focus != 0 && g_focus != id) { g_lostFocusId = g_focus; g_lostFocusEdited = (g_editedId == g_focus); }   // another field takes the keyboard
         g_focus = id; g_focusClaimed = true; g_active = id;
         ts->caret = ts->anchor = indexAtX(buf, len, ts->first, tx, g_in.mouseX);
         if ((flags & InputText_AutoSelectAll) && !wasFocused) { ts->anchor = 0; ts->caret = len; }
@@ -1600,7 +1633,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         if (g_in.end && !composing)   { ts->caret = len; if (!g_in.shift) ts->anchor = len; }
         if (g_in.selectAll && !composing) { ts->anchor = 0; ts->caret = len; }
         if (g_in.enter && !composing) enter = true;
-        if (g_in.escape && !composing) { g_focus = 0; focused = false; }
+        if (g_in.escape && !composing) { if (g_focus == id) { g_lostFocusId = id; g_lostFocusEdited = (g_editedId == id); } g_focus = 0; focused = false; }
     }
 
     // Rounded box (focused gets an accent border hint).
@@ -1660,22 +1693,10 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         SetImeRect(ir);
     }
     PopClipRect();
-    // IsItemDeactivatedAfterEdit: a field reports losing the keyboard (a click elsewhere, Escape, another field taking it) on its next
-    // draw, when its text changed while it had the keyboard.
-    if (focused) {
-        if (g_editOwner != id) {
-            if (g_editOwner != 0) { g_lostField = g_editOwner; g_lostFieldEdited = g_editOwnerEdited; }
-            g_editOwner = id; g_editOwnerEdited = false;
-        }
-        if (changed) g_editOwnerEdited = true;
-        if (enter && (flags & InputText_EnterReturnsTrue)) g_editOwnerEdited = false;   // Enter committed it: only later edits count
-    } else if (g_editOwner == id) {
-        if (g_editOwnerEdited) g_deactAfterEdit = id;
-        g_editOwner = 0; g_editOwnerEdited = false;
-    } else if (g_lostField == id) {
-        if (g_lostFieldEdited) g_deactAfterEdit = id;
-        g_lostField = 0; g_lostFieldEdited = false;
-    }
+    // IsItemDeactivatedAfterEdit (OkayUIImCompat.hpp): with InputText_EnterReturnsTrue, an Enter that returned true committed the text, so
+    // only edits after it count when the field later loses the keyboard.
+    if (changed) { g_editedId = id; g_editedFrameId = id; g_editedFrame = g_frameCount; }   // an edit (also when the return value is the Enter)
+    if (enter && focused && (flags & InputText_EnterReturnsTrue) && g_editedId == id) g_editedId = 0;
     return (flags & InputText_EnterReturnsTrue) ? (enter && focused) : changed;
 }
 
@@ -1701,7 +1722,7 @@ void mergeOverlay() {
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
-    if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+    if (g_pressed && !g_focusClaimed) { if (g_focus != 0) { g_lostFocusId = g_focus; g_lostFocusEdited = (g_editedId == g_focus); } g_focus = 0; }   // click on empty space drops keyboard focus
     // A floating chip follows the cursor while dragging (drawn in the overlay so it's
     // on top). Any release ends the drag (a DropTarget already consumed it if hit).
     if (g_dd.active) {
@@ -2379,12 +2400,14 @@ void SetWindowFocus(const char* title) {
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr, float padX = -1.0f, bool outline = false);
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr, float padX = -1.0f, bool outline = false, bool trim = false);
 bool BeginChild(const char* id, float w, float h, bool border) { return beginChildImpl(id, w, h, border, 6.0f, true); }
 
-bool BeginChild(const char* id, Vec2 size, int flags) {
-    if (!g_lay.active) return false;
-    const bool border = (flags & ChildFlags_Borders) != 0;
+// Dear ImGui's form (OkayUIImCompat.hpp): ChildFlags_FrameStyle draws the same frame as ChildFlags_Borders; the window flags and the other
+// child flags are accepted and ignored.
+bool BeginChild(const char* id, Vec2 size, int flags, int) {
+    if (!g_lay.active || !id) return false;
+    const bool border = (flags & (ChildFlags_Borders | ChildFlags_FrameStyle)) != 0;
     const bool padded = border || (flags & ChildFlags_AlwaysUseWindowPadding);
     const float pad = padded ? (g_childPadY >= 0.0f ? g_childPadY : 6.0f) : 0.0f;                 // above and below
     const float padX = padded ? (g_childPadY >= 0.0f ? g_theme.windowPadding : 6.0f) : 0.0f;      // left and right
@@ -2399,12 +2422,13 @@ bool BeginChild(const char* id, Vec2 size, int flags) {
         autoH = floatState(hashLabel(id) ^ 0x41755a, rowH());
         h = std::max(*autoH + 2.0f * pad, 1.0f);
     }
-    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), false, pad, false, autoH, padX, border);
+    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), false, pad, false, autoH, padX, border, true);
 }
 
 // `border`: the old form's filled frame. `outline`: Dear ImGui's bordered child (ChildFlags_Borders): a one-pixel rounded outline in
 // Col_Border, filled only when Col_ChildBg is set. `pad` is the padding above and below, `padX` left and right (< 0: the same as pad).
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH, float padX, bool outline) {
+// `trim`: the gap after the last item is not content (the flags form, as in Dear ImGui: no scroll bar for a few pixels).
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH, float padX, bool outline, bool trim) {
     if (padX < 0.0f) padX = pad;
     // Depth guard first: past the child-stack capacity the parent layout cannot
     // be saved, so the child cannot begin at all -- otherwise EndChild would pop
@@ -2414,7 +2438,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     if (!g_lay.active || g_childTop >= 8) return false;
     const int cid = hashLabel(id);
     const float rw = w > 0.0f ? w : availW();
-    const float rh = h > 0.0f ? h : rowH() * 4.0f;
+    const float rh = h > 0.0f ? h : rowH() * 4.0f;   // (an auto-height child's height comes from its slot, in BeginChild)
     float rx, ry; place(rw, rh, rx, ry);
 
     float* scroll  = floatState(cid, 0.0f);
@@ -2427,10 +2451,11 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
 
     // Frame + clip to the region.
     if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
-    if (outline) {
-        const float rd = rnd(), b = 1.0f;
-        rrect(rx, ry, rw, rh, rd, pick(Col_Border, g_theme.border));
-        rrect(rx + b, ry + b, rw - 2.0f * b, rh - 2.0f * b, rd > b ? rd - b : 0.0f, colorIsSet(Col_ChildBg) ? g_theme.colors[Col_ChildBg] : pick(Col_WindowBg, g_theme.panel));
+    if (outline) {   // a stroked outline (filling under it would cost a whole child's area twice on a CPU rasteriser)
+        const float rd = rnd();
+        if (colorIsSet(Col_ChildBg)) rrect(rx, ry, rw, rh, rd, g_theme.colors[Col_ChildBg]);
+        const unsigned char* bc = pick(Col_Border, g_theme.border);
+        GetWindowDrawList().AddRect(Vec2{rx, ry}, Vec2{rx + rw, ry + rh}, RGBA(bc[0], bc[1], bc[2], bc[3]), rd, 1.0f);
     }
     PushClipRect(rx, ry, rw, rh);
 
@@ -2438,7 +2463,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     if (g_childTop < 8) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.padX = padX; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.padX = padX; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH; c.trim = trim;
     }
     g_lay.ox = rx + padX;
     // The old form always leaves room for the scrollbar; the flags form only when the content overflowed last frame (Dear ImGui's way).
@@ -2469,8 +2494,9 @@ void EndChild() {
     ChildSave& c = g_childStack[--g_childTop];
     // Content height = how far the cursor advanced from the (scrolled) top, in
     // unscrolled space. cy currently sits at top - scroll + contentHeight.
-    const float contentH = g_lay.cy - (c.top - *c.scroll);
-    if (c.autoH) *c.autoH = std::max(0.0f, std::min(contentH - g_lay.spacingY, 1.0e6f));   // the last item's spacing is not content
+    float contentH = g_lay.cy - (c.top - *c.scroll);
+    if (c.trim) contentH = std::max(0.0f, contentH - g_lay.spacingY);   // the last item's spacing is not content
+    if (c.autoH) *c.autoH = std::max(0.0f, std::min(contentH, 1.0e6f));
     const float viewH = c.rh - 2.0f * c.pad;
     float maxScroll = contentH - viewH; if (maxScroll < 0.0f || c.autoH) maxScroll = 0.0f;   // an auto-height child never scrolls
     if (c.setScroll >= 0.0f) *c.scroll = c.setScroll;   // SetScrollY, now that the content is measured
@@ -2793,7 +2819,7 @@ int* tabSelSlot(int bar) {
 }
 } // namespace
 
-bool BeginTabBar(const char* id) {
+bool BeginTabBar(const char* id, int tabBarFlags) {
     if (!g_lay.active || !id || g_tabBar.active) return false;
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
@@ -2802,8 +2828,32 @@ bool BeginTabBar(const char* id) {
     g_tabBar.x = x; g_tabBar.y = y; g_tabBar.w = fullW(); g_tabBar.h = h;
     g_tabBar.cx = x; g_tabBar.tr = x + fullW();
     g_tabBar.sel = tabSelSlot(g_tabBar.id);
+    g_tabBar.flags = tabBarFlags;
+    if (tabBarFlags & TabBarFlags_Reorderable) {   // the order slot of this bar (or the least recently used one)
+        TabOrder* slot = nullptr; TabOrder* oldest = &g_tabOrders[0];
+        for (TabOrder& t : g_tabOrders) {
+            if (t.bar == g_tabBar.id) { slot = &t; break; }
+            if (t.lastFrame < oldest->lastFrame) oldest = &t;
+        }
+        if (!slot) { slot = oldest; *slot = TabOrder(); slot->bar = g_tabBar.id; g_tabBar.fresh = true; }
+        slot->lastFrame = g_frameCount;
+        g_tabBar.ord = slot;
+    }
     if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);   // a baseline under the whole row (classic look)
     return true;
+}
+bool BeginTabBar(const char* id) { return BeginTabBar(id, 0); }
+
+int TabDragTarget(const float* widths, int n, int from, float left, float gap, float mouseX) {
+    if (!widths || n <= 0 || from < 0 || from >= n) return from;
+    if (!std::isfinite(mouseX) || !std::isfinite(left) || !std::isfinite(gap)) return from;
+    float x = left;
+    for (int i = 0; i < n; ++i) {
+        const float w = std::isfinite(widths[i]) && widths[i] > 0.0f ? widths[i] : 0.0f;
+        if (mouseX < x + w + gap * 0.5f) return i;
+        x += w + gap;
+    }
+    return n - 1;   // past the last tab
 }
 
 bool BeginTabItem(const char* label, bool* open, int flags) {
@@ -2813,13 +2863,42 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
     const float closeW = open ? 16.0f : 0.0f;
     const float w = labelW(label) + (g_look ? 28.0f : 20.0f) + closeW, gap = g_look ? 6.0f : 2.0f;
     float x;
+    int ordIdx = -1;
     if (flags & Tab_Trailing) { tb.tr -= w; x = tb.tr; tb.tr -= gap; }
+    else if (tb.ord) {
+        TabOrder& o = *tb.ord;
+        for (int i = 0; i < o.n; ++i) if (o.ids[i] == id) { ordIdx = i; break; }
+        if (ordIdx < 0 && o.n < 32) {   // a tab the bar has not met: it goes last
+            ordIdx = o.n++; o.ids[ordIdx] = id; o.w[ordIdx] = w;
+            if ((tb.flags & TabBarFlags_AutoSelectNewTabs) && !tb.fresh) *tb.sel = id;
+        }
+        if (ordIdx >= 0) o.w[ordIdx] = w;
+        x = tb.x;
+        for (int i = 0; i < ordIdx; ++i) x += o.w[i] + gap;
+        if (ordIdx < 0) { x = tb.cx; }
+        tb.cx = x + w + gap;
+        if (tb.nSeen < 32) tb.seen[tb.nSeen++] = id;
+    }
     else { x = tb.cx; tb.cx += w + gap; }
     if (tb.firstId == 0) tb.firstId = id;
     if (*tb.sel == 0) *tb.sel = id;                  // nothing chosen yet: the first tab
     if (flags & Tab_SetSelected) *tb.sel = id;
     Tab(id, x, tb.y, w, tb.h, label, tb.sel, id);
     g_lay.prevX = x; g_lay.prevY = tb.y; g_lay.prevW = w; g_lay.prevH = tb.h;   // the item rect / hover queries that follow are about this tab's header
+    if (flags & TabItem_UnsavedDocument) {            // a small dot after the label
+        const float dx = x + w - closeW - 9.0f, dy = tb.y + tb.h * 0.5f - 2.0f;
+        quad(dx, dy, 4.0f, 4.0f, g_theme.accent);
+    }
+    if (tb.ord && ordIdx >= 0 && !(flags & (Tab_Trailing | TabItem_NoReorder)) && g_active == id && IsMouseDragging(0, 4.0f) && g_in.mouseDown) {
+        TabOrder& o = *tb.ord;   // dragging: the tab goes where the pointer is
+        const int to = TabDragTarget(o.w, o.n, ordIdx, tb.x, gap, g_in.mouseX);
+        if (to != ordIdx) {
+            const int tid = o.ids[ordIdx]; const float tw = o.w[ordIdx];
+            if (to > ordIdx) for (int i = ordIdx; i < to; ++i) { o.ids[i] = o.ids[i + 1]; o.w[i] = o.w[i + 1]; }
+            else for (int i = ordIdx; i > to; --i) { o.ids[i] = o.ids[i - 1]; o.w[i] = o.w[i - 1]; }
+            o.ids[to] = tid; o.w[to] = tw;
+        }
+    }
     bool visible = (*tb.sel == id);
     if (open) {                                       // a small x on the right closes the tab
         const float cx = x + w - closeW, cy = tb.y + (tb.h - textH()) * 0.5f;
@@ -2829,6 +2908,8 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
         if (g_active == cid) { if (g_released) { if (inside) { *open = false; } g_active = 0; } }
         else if (inside && g_pressed) g_active = cid;
         drawText(cx + 3.0f, cy, "x", g_theme.textScale, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
+        // a middle click anywhere on the tab closes it too
+        if (g_mPressed && !(flags & TabItem_NoCloseWithMiddleMouseButton) && !(tb.flags & TabBarFlags_NoCloseWithMiddleMouseButton) && hit(x, tb.y, w, tb.h)) *open = false;
         if (!*open) visible = false;
     }
     if (visible) tb.seenSel = true;
@@ -2853,6 +2934,15 @@ void EndTabBar() {
     if (!g_tabBar.active) return;
     // The chosen tab vanished (closed or removed): fall back to the first.
     if (!g_tabBar.seenSel && g_tabBar.firstId != 0) *g_tabBar.sel = g_tabBar.firstId;
+    if (g_tabBar.ord) {   // forget tabs that were not shown this frame (closed or removed), so no gap is left
+        TabOrder& o = *g_tabBar.ord; int k = 0;
+        for (int i = 0; i < o.n; ++i) {
+            bool seen = false;
+            for (int j = 0; j < g_tabBar.nSeen; ++j) if (g_tabBar.seen[j] == o.ids[i]) { seen = true; break; }
+            if (seen) { o.ids[k] = o.ids[i]; o.w[k] = o.w[i]; ++k; }
+        }
+        o.n = k;
+    }
     g_tabBar.active = false;
 }
 
@@ -2911,7 +3001,9 @@ void PopStyleVar(int count) {
     }
 }
 
-bool Checkbox(const char* label, bool* value) {
+static bool Checkbox_ed(const char* label, bool* value);
+bool Checkbox(const char* label, bool* value) { return noteEdit(Checkbox_ed(label, value)); }
+static bool Checkbox_ed(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);   // "##" and what follows only name the widget
     const float sz = boxSize(), h = std::max(rowH(), sz);
@@ -2920,7 +3012,9 @@ bool Checkbox(const char* label, bool* value) {
     return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value);
 }
 
-bool RadioButton(const char* label, int* value, int option) {
+static bool RadioButton_ed(const char* label, int* value, int option);
+bool RadioButton(const char* label, int* value, int option) { return noteEdit(RadioButton_ed(label, value, option)); }
+static bool RadioButton_ed(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);
     const float sz = boxSize(), h = std::max(rowH(), sz);
@@ -2929,7 +3023,9 @@ bool RadioButton(const char* label, int* value, int option) {
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value, option);
 }
 
-bool ToggleSwitch(const char* label, bool* value) {
+static bool ToggleSwitch_ed(const char* label, bool* value);
+bool ToggleSwitch(const char* label, bool* value) { return noteEdit(ToggleSwitch_ed(label, value)); }
+static bool ToggleSwitch_ed(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
     const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
@@ -2967,7 +3063,9 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 }
 } // namespace
 
-bool SliderFloat(const char* label, float* value, float minV, float maxV) {
+static bool SliderFloat_ed(const char* label, float* value, float minV, float maxV);
+bool SliderFloat(const char* label, float* value, float minV, float maxV) { return noteEdit(SliderFloat_ed(label, value, minV, maxV)); }
+static bool SliderFloat_ed(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);
     const float h = rowH();
@@ -2989,7 +3087,9 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     return ch;
 }
 
-bool SliderInt(const char* label, int* value, int minV, int maxV) {
+static bool SliderInt_ed(const char* label, int* value, int minV, int maxV);
+bool SliderInt(const char* label, int* value, int minV, int maxV) { return noteEdit(SliderInt_ed(label, value, minV, maxV)); }
+static bool SliderInt_ed(const char* label, int* value, int minV, int maxV) {
     if (!g_lay.active || !value) return false;
     float f = (float)*value;
     // Reuse the float slider, then snap to the nearest integer.
@@ -3001,7 +3101,9 @@ bool SliderInt(const char* label, int* value, int minV, int maxV) {
     return ch && false;   // value unchanged after snapping
 }
 
-bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) {
+static bool VSliderFloat_ed(const char* label, float w, float h, float* value, float minV, float maxV);
+bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) { return noteEdit(VSliderFloat_ed(label, w, h, value, minV, maxV)); }
+static bool VSliderFloat_ed(const char* label, float w, float h, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     if (w <= 0.0f) w = rowH();
@@ -3030,7 +3132,9 @@ bool VSliderFloat(const char* label, float w, float h, float* value, float minV,
     return changed;
 }
 
-bool Knob(const char* label, float* value, float minV, float maxV, float size) {
+static bool Knob_ed(const char* label, float* value, float minV, float maxV, float size);
+bool Knob(const char* label, float* value, float minV, float maxV, float size) { return noteEdit(Knob_ed(label, value, minV, maxV, size)); }
+static bool Knob_ed(const char* label, float* value, float minV, float maxV, float size) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float d = size > 0.0f ? size : rowH() * 2.0f;
@@ -3176,7 +3280,10 @@ bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
     return clicked;
 }
 
-bool InputText(const char* label, char* buf, int cap, unsigned flags) {
+static bool InputText_ed(const char* label, char* buf, int cap, unsigned flags);
+// With InputText_EnterReturnsTrue the return value is the Enter, not an edit: TextField marks the edits itself.
+bool InputText(const char* label, char* buf, int cap, unsigned flags) { const bool r = InputText_ed(label, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
+static bool InputText_ed(const char* label, char* buf, int cap, unsigned flags) {
     if (!g_lay.active || !buf) return false;
     const VisLabel vis(label);
     const float h = rowH();
@@ -3189,7 +3296,9 @@ bool InputText(const char* label, char* buf, int cap, unsigned flags) {
     return ch;
 }
 
-bool InputInt(const char* label, int* value, int step) {
+static bool InputInt_ed(const char* label, int* value, int step);
+bool InputInt(const char* label, int* value, int step) { return noteEdit(InputInt_ed(label, value, step)); }
+static bool InputInt_ed(const char* label, int* value, int step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
@@ -3327,12 +3436,14 @@ bool IsKeyReleased(KeyId key) { return key > 0 && key < KeyId_COUNT && !g_keyNow
 bool IsMouseDoubleClicked(int button) { return button == 0 && !g_in.blocked && g_dblClick; }
 bool IsMouseDragging(int button, float threshold) {
     if (g_in.blocked) return false;
-    if (button != 0 || !g_in.mouseDown) return false;
-    const float dx = g_in.mouseX - g_pressX, dy = g_in.mouseY - g_pressY, t = threshold >= 0.0f ? threshold : 4.0f;
+    if (button < 0 || button > 2 || !IsMouseDown(button)) return false;
+    const float dx = g_in.mouseX - g_dragOriginX[button], dy = g_in.mouseY - g_dragOriginY[button], t = threshold >= 0.0f ? threshold : 4.0f;
     return dx * dx + dy * dy > t * t;
 }
 
-bool Combo(const char* label, const char* const* items, int count, int* current) {
+static bool Combo_ed(const char* label, const char* const* items, int count, int* current);
+bool Combo(const char* label, const char* const* items, int count, int* current) { return noteEdit(Combo_ed(label, items, count, current)); }
+static bool Combo_ed(const char* label, const char* const* items, int count, int* current) {
     if (!g_lay.active || !items || !current || count <= 0) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
@@ -3404,7 +3515,9 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
 }
 } // namespace
 
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
+static bool DragFloat_ed(const char* label, float* v, float speed, float minV, float maxV);
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) { return noteEdit(DragFloat_ed(label, v, speed, minV, maxV)); }
+static bool DragFloat_ed(const char* label, float* v, float speed, float minV, float maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const VisLabel vis(label);
@@ -3436,7 +3549,9 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV)
     return changed;
 }
 
-bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
+static bool DragInt_ed(const char* label, int* v, float speed, int minV, int maxV);
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV) { return noteEdit(DragInt_ed(label, v, speed, minV, maxV)); }
+static bool DragInt_ed(const char* label, int* v, float speed, int minV, int maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const VisLabel vis(label);
@@ -3477,7 +3592,9 @@ namespace {
 // One row of `n` (1..4) drag cells side by side that share one label (the vector fields of an inspector:
 // Position, Rotation, Scale). Every cell has its own id (the label's id plus the cell number), scrubs like
 // DragFloat / DragInt, and the label is drawn once to the right of the last cell. `range` keeps cell 0 <= cell 1.
-bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) {
+static bool dragCells_ed(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range);
+bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) { return noteEdit(dragCells_ed(label, fv, iv, n, speed, minV, maxV, range)); }
+static bool dragCells_ed(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) {
     if (!g_lay.active || (!fv && !iv) || n < 1 || n > 4) return false;
     const int base = hashLabel(label);
     const VisLabel vis(label);
@@ -3545,7 +3662,9 @@ bool DragFloat4(const char* label, float v[4], float speed, float minV, float ma
 bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 2, speed, (float)minV, (float)maxV, false); }
 bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 3, speed, (float)minV, (float)maxV, false); }
 bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 4, speed, (float)minV, (float)maxV, false); }
-bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) {
+static bool DragFloatRange2_ed(const char* label, float* lo, float* hi, float speed, float minV, float maxV);
+bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) { return noteEdit(DragFloatRange2_ed(label, lo, hi, speed, minV, maxV)); }
+static bool DragFloatRange2_ed(const char* label, float* lo, float* hi, float speed, float minV, float maxV) {
     if (!lo || !hi) return false;
     float pair[2] = {*lo, *hi};
     const bool changed = dragCells(label, pair, nullptr, 2, speed, minV, maxV, true);
@@ -3553,7 +3672,9 @@ bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float
     return changed;
 }
 
-bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
+static bool InputTextWithHint_ed(const char* label, const char* hint, char* buf, int cap, unsigned flags);
+bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) { const bool r = InputTextWithHint_ed(label, hint, buf, cap, flags); return (flags & InputText_EnterReturnsTrue) ? r : noteEdit(r); }
+static bool InputTextWithHint_ed(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
     g_hintText = hint;
     const bool ch = InputText(label, buf, cap, flags);
     g_hintText = nullptr;
@@ -3565,7 +3686,9 @@ void CenterNextOnLine() { g_centerNext = true; }
 
 namespace {
 // `n` (2..4) slider cells in one row that share a label (see dragCells).
-bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
+static bool sliderCells_ed(const char* label, float* v, int n, float minV, float maxV);
+bool sliderCells(const char* label, float* v, int n, float minV, float maxV) { return noteEdit(sliderCells_ed(label, v, n, minV, maxV)); }
+static bool sliderCells_ed(const char* label, float* v, int n, float minV, float maxV) {
     if (!g_lay.active || !v || n < 2 || n > 4) return false;
     const int base = hashLabel(label);
     const float h = rowH();
@@ -3594,7 +3717,9 @@ bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { retur
 bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return sliderCells(label, v, 3, minV, maxV); }
 bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return sliderCells(label, v, 4, minV, maxV); }
 
-bool InputFloat(const char* label, float* value, float step) {
+static bool InputFloat_ed(const char* label, float* value, float step);
+bool InputFloat(const char* label, float* value, float step) { return noteEdit(InputFloat_ed(label, value, step)); }
+static bool InputFloat_ed(const char* label, float* value, float step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
@@ -3677,7 +3802,9 @@ bool ColorButton(const char* id, const float rgba[4], float size) { return Color
 
 static bool beginPopupBody(int id);
 // ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
-static bool colorEditRow(const char* label, float* c, int n, int flags) {
+static bool colorEditRow_ed(const char* label, float* c, int n, int flags);
+static bool colorEditRow(const char* label, float* c, int n, int flags) { return noteEdit(colorEditRow_ed(label, c, n, flags)); }
+static bool colorEditRow_ed(const char* label, float* c, int n, int flags) {
     if (!g_lay.active || !c) return false;
     if (n == 3 || (flags & ColorEdit_NoAlpha)) { n = 3; flags |= ColorEdit_NoAlpha; }
     const int id = hashLabel(label);
@@ -4384,12 +4511,26 @@ void tblEnterCell() {
 }
 
 // Size the columns of a flag-style table from its TableSetupColumn calls: fixed columns take their pixel width, the rest share what is left by weight.
+inline bool tblHidden(int i) { return i >= 0 && i < 16 && ((g_tbl.hidden >> i) & 1u) != 0; }
 void tblFinishSetup() {
     if (g_tbl.setupDone) return;
     g_tbl.setupDone = true;
+    {   // which columns are hidden: remembered per table; the first time, the Col_DefaultHide ones. The last visible column cannot be hidden.
+        g_tbl.pHidden = floatState(g_tbl.id ^ 0x7a00, -1.0f);
+        if (*g_tbl.pHidden < 0.0f) {
+            unsigned m = 0;
+            for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if ((g_tbl.sFlags[i] & Col_DefaultHide) && !(g_tbl.sFlags[i] & Col_NoHide)) m |= 1u << i;
+            *g_tbl.pHidden = (float)m;
+        }
+        unsigned m = (unsigned)*g_tbl.pHidden & ((1u << g_tbl.count) - 1u);
+        for (int i = 0; i < g_tbl.nSetup && i < 16; ++i) if (g_tbl.sFlags[i] & Col_NoHide) m &= ~(1u << i);
+        if (m == ((1u << g_tbl.count) - 1u)) m &= ~1u;
+        g_tbl.hidden = m; *g_tbl.pHidden = (float)m;
+    }
     const float avail = g_tbl.scrollX && g_tbl.innerWidth > 0.0f ? g_tbl.innerWidth : g_tbl.fullW;
     float fixed = 0.0f, wsum = 0.0f; int nstretch = 0;
     for (int i = 0; i < g_tbl.count; ++i) {
+        if (tblHidden(i)) continue;
         if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) fixed += g_tbl.sVal[i];
         else { wsum += (i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f; ++nstretch; }
     }
@@ -4397,11 +4538,28 @@ void tblFinishSetup() {
     float sum = 0.0f;
     for (int i = 0; i < g_tbl.count; ++i) {
         float seed;
+        if (tblHidden(i)) { g_tbl.zeroW[i] = 0.0f; g_tbl.w[i] = &g_tbl.zeroW[i]; continue; }
         if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) seed = g_tbl.sVal[i];
         else seed = rest * ((i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f) / (wsum > 0.0f ? wsum : 1.0f);
         g_tbl.w[i] = floatState(g_tbl.id ^ (0x7100 + i), seed);
         if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
         sum += *g_tbl.w[i];
+    }
+    {   // columns shown again this frame: they come back at the width they had, the others give that back (so hide and show is exact)
+        float* prevM = floatState(g_tbl.id ^ 0x7a02, -1.0f);
+        const unsigned prev = *prevM < 0.0f ? g_tbl.hidden : ((unsigned)*prevM & ((1u << g_tbl.count) - 1u));
+        const unsigned newly = prev & ~g_tbl.hidden;
+        *prevM = (float)g_tbl.hidden;
+        if (newly && !g_tbl.scrollX) {
+            float total = 0.0f, others = 0.0f;
+            for (int i = 0; i < g_tbl.count; ++i) { if (tblHidden(i)) continue; if ((newly >> i) & 1u) total += *g_tbl.w[i]; else others += *g_tbl.w[i]; }
+            if (others > 0.0f && g_tbl.fullW > total + 24.0f) {
+                const float f = (g_tbl.fullW - total) / others;
+                for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i) && !((newly >> i) & 1u)) *g_tbl.w[i] *= f;
+            }
+            sum = 0.0f;
+            for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i)) sum += *g_tbl.w[i];
+        }
     }
     if (g_tbl.scrollX) {   // a box that scrolls sideways keeps its column widths
         g_tbl.contentW = sum;
@@ -4411,7 +4569,7 @@ void tblFinishSetup() {
         for (int i = 0; i < g_tbl.freezeCols && i < g_tbl.count; ++i) g_tbl.frozenW += *g_tbl.w[i];
         if (g_tbl.frozenW > g_tbl.viewW * 0.9f) g_tbl.frozenW = 0.0f, g_tbl.freezeCols = 0;   // frozen columns that fill the box would leave nothing to scroll
     } else if (sum > 0.0f) {
-        const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) *g_tbl.w[i] *= f;
+        const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i)) *g_tbl.w[i] *= f;
     }
     // the sort keys: the DefaultSort columns the first time the table is seen
     if ((g_tbl.flags & Table_Sortable) && g_tbl.store && !g_tbl.store->inited) {
@@ -4454,6 +4612,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
     else quad(fullL, rowY, fullW2, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
     const Font* prevF = g_font; g_font = &kFontBold;
     for (int i = 0; i < g_tbl.count; ++i) {
+        if (tblHidden(i)) continue;
         const float cx = tblRealX(i), cw = *g_tbl.w[i];
         if (tblScrolls()) tblSetClip(true, tblColFrozen(i) ? 0 : 1);
         const bool sortable = interactive && (g_tbl.flags & Table_Sortable) && g_tbl.store && i < g_tbl.nSetup && !(g_tbl.sFlags[i] & Col_NoSort);
@@ -4467,7 +4626,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
             else if (hot && g_pressed) { g_active = hid; g_focusClaimed = true; down = true; }
             if (hot || down) quad(cx, rowY, cw, hh, pick(down ? Col_HeaderActive : Col_HeaderHovered, down ? g_theme.bgDown : g_theme.bgHover));
         }
-        if (labels[i] && labels[i][0])
+        if (labels[i] && labels[i][0] && !(i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoHeaderLabel)))
             drawText(cx + 4.0f, rowY + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
         if (sortable) {
             const TblStore& t = *g_tbl.store;
@@ -4616,6 +4775,68 @@ void TableHeadersRow() {
     const char* none[16] = {nullptr};
     for (int i = 0; i < g_tbl.count && i < g_tbl.nSetup; ++i) none[i] = g_tbl.sLabel[i];
     tblDrawHeader(none, true);
+    if ((g_tbl.flags & Table_Hideable) && g_tbl.pHidden && g_lay.active && !g_tbl.scrollX && !g_tbl.scrollY) {
+        // a right click on the header row opens the show / hide menu (every column with a check box; a NoHide column, and the last visible one, are locked)
+        const float hh = rowH(), rowY = g_tbl.rowTop - hh;
+        const int pid = g_tbl.id ^ 0x7a01;
+        if (g_rPressed && !g_in.blocked && hit(g_tbl.x0, rowY, g_tbl.fullW, hh)) {
+            PopupSlot* ps = popupSlot(pid, true);
+            if (ps) { ps->open = true; ps->x = g_in.mouseX; ps->y = g_in.mouseY; ps->w = 0.0f; g_openPopupThisFrame = pid; }
+        }
+        const TableState keep = g_tbl;   // the menu's widgets use the layout, not the table; the table state is restored after
+        if (beginPopupBody(pid)) {
+            int visible = 0; for (int i = 0; i < keep.count; ++i) if (!((keep.hidden >> i) & 1u)) ++visible;
+            for (int i = 0; i < keep.count; ++i) {
+                const bool on = !((keep.hidden >> i) & 1u);
+                const bool locked = (i < keep.nSetup && (keep.sFlags[i] & Col_NoHide)) || (on && visible <= 1);
+                bool v = on;
+                BeginDisabled(locked);
+                char idb[16]; std::snprintf(idb, sizeof idb, "tc%d", i);
+                PushID(idb);   // two columns may share a label: each check box gets its own id
+                if (Checkbox((i < keep.nSetup && keep.sLabel[i] && keep.sLabel[i][0]) ? keep.sLabel[i] : "(column)", &v) && v != on) { unsigned m = keep.hidden; if (v) m &= ~(1u << i); else m |= 1u << i; *keep.pHidden = (float)m; }
+                PopID();
+                EndDisabled();
+            }
+            EndPopup();
+        }
+    }
+}
+
+bool TableSetColumnEnabled(int column, bool enabled) {
+    if (!g_tbl.active || column < 0 || column >= g_tbl.count) return false;
+    tblFinishSetup();
+    if (!g_tbl.pHidden) return false;
+    if (column < g_tbl.nSetup && (g_tbl.sFlags[column] & Col_NoHide) && !enabled) return false;
+    unsigned m = (unsigned)*g_tbl.pHidden & ((1u << g_tbl.count) - 1u);   // the pending set (a change made earlier this frame counts)
+    if (enabled) m &= ~(1u << column); else m |= 1u << column;
+    if (m == ((1u << g_tbl.count) - 1u)) return false;   // never hide them all
+    *g_tbl.pHidden = (float)m;                           // takes effect next frame (this frame's widths are set)
+    return true;
+}
+bool TableGetColumnIsEnabled(int column) { return g_tbl.active && column >= 0 && column < g_tbl.count && !tblHidden(column); }
+int TableGetColumnCount() { return g_tbl.active ? g_tbl.count : 0; }
+const char* TableGetColumnName(int column) {
+    if (!g_tbl.active) return "";
+    if (column < 0) column = g_tbl.index;
+    return (column >= 0 && column < g_tbl.nSetup && g_tbl.sLabel[column]) ? g_tbl.sLabel[column] : "";
+}
+int TableGetColumnFlags(int column) {
+    if (!g_tbl.active) return 0;
+    if (column < 0) column = g_tbl.index;
+    return (column >= 0 && column < g_tbl.nSetup) ? g_tbl.sFlags[column] : 0;
+}
+int TableGetHoveredColumn() {
+    if (!g_tbl.active || g_in.blocked || g_tbl.count <= 0) return -1;
+    tblFinishSetup();                                    // the widths exist once the columns are set up
+    const float top = g_tbl.scrollX || g_tbl.scrollY ? g_tbl.oy : g_tbl.topY;
+    const float bottom = std::max(g_tbl.rowBottom, g_lay.cy);
+    if (g_in.mouseY < top || g_in.mouseY > bottom) return -1;
+    for (int i = 0; i < g_tbl.count; ++i) {
+        if (tblHidden(i)) continue;
+        const float x = tblRealX(i);
+        if (g_in.mouseX >= x && g_in.mouseX < x + *g_tbl.w[i]) return i;
+    }
+    return -1;
 }
 
 TableSortSpecs* TableGetSortSpecs() {
@@ -4683,6 +4904,7 @@ bool TableNextColumn() {
     ++g_tbl.index;
     if (g_tbl.index >= g_tbl.count) return false;
     tblEnterCell();
+    if (tblHidden(g_tbl.index)) { g_lay.ox = -30000.0f; return false; }   // a hidden column's cell lays out far off screen, so widgets drawn there are never seen or hit
     return true;
 }
 
@@ -4736,20 +4958,23 @@ void EndTable() {
         const float bTop = g_tbl.oy, bBot = g_tbl.oy + g_tbl.oh - hbar;
         PushClipRect(g_tbl.ox, bTop, g_tbl.viewW, std::max(0.0f, bBot - bTop));
         for (int i = 1; i < g_tbl.count; ++i) {
+            int pj = i - 1; while (pj >= 0 && tblHidden(pj)) --pj;
+            if (tblHidden(i) || pj < 0) continue;                                  // a hidden column has no border of its own
+            const bool noRes = (pj < g_tbl.nSetup && (g_tbl.sFlags[pj] & Col_NoResize)) || (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoResize));
             const float bx = tblColX(i) - (i > g_tbl.freezeCols || !g_tbl.scrollX ? (g_tbl.scrollX ? sx : 0.0f) : 0.0f);
             if (g_tbl.scrollX && i > g_tbl.freezeCols && (bx < g_tbl.ox + g_tbl.frozenW || bx > g_tbl.ox + g_tbl.viewW)) continue;   // scrolled under the frozen columns or out of the box
             quad(bx - 0.5f, bTop, 1.0f, std::min(bBot - bTop, std::max(0.0f, g_tbl.rowBottom - g_tbl.oy)), pick(Col_TableBorderStrong, g_theme.border));
             const int hid = g_tbl.id ^ (0x7b00 + i);
             const float grab = 4.0f;
-            const bool over = !(g_tbl.flags & Table_NoResize) && hit(bx - grab, bTop, grab * 2.0f, std::max(0.0f, bBot - bTop));
+            const bool over = !(g_tbl.flags & Table_NoResize) && !noRes && hit(bx - grab, bTop, grab * 2.0f, std::max(0.0f, bBot - bTop));
             if (over) g_hot = hid;
             if (g_active == hid) {
                 if (!g_in.mouseDown) g_active = 0;
                 else {
                     float dx = g_mouseDX;
-                    float a = *g_tbl.w[i - 1] + dx, b2 = *g_tbl.w[i] - dx;
-                    if (g_tbl.scrollX) { if (a >= 20.0f) *g_tbl.w[i - 1] = a; }   // sideways boxes just grow the column
-                    else if (a >= 20.0f && b2 >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b2; }
+                    float a = *g_tbl.w[pj] + dx, b2 = *g_tbl.w[i] - dx;
+                    if (g_tbl.scrollX) { if (a >= 20.0f) *g_tbl.w[pj] = a; }   // sideways boxes just grow the column
+                    else if (a >= 20.0f && b2 >= 20.0f) { *g_tbl.w[pj] = a; *g_tbl.w[i] = b2; }
                 }
             } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
         }
@@ -4797,18 +5022,21 @@ void EndTable() {
 
     // Column borders + draggable resize handles (applied next frame).
     for (int i = 1; i < g_tbl.count; ++i) {
+        int pj = i - 1; while (pj >= 0 && tblHidden(pj)) --pj;
+        if (tblHidden(i) || pj < 0) continue;                                      // a hidden column has no border of its own
+        const bool noRes = (pj < g_tbl.nSetup && (g_tbl.sFlags[pj] & Col_NoResize)) || (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoResize));
         float bx = tblColX(i);
         quad(bx - 0.5f, top, 1.0f, bottom - top, pick(Col_TableBorderStrong, g_theme.border));
         const int hid = g_tbl.id ^ (0x7b00 + i);
         const float grab = 4.0f;
-        const bool over = !(g_tbl.flags & Table_NoResize) && hit(bx - grab, top, grab * 2.0f, bottom - top);
+        const bool over = !(g_tbl.flags & Table_NoResize) && !noRes && hit(bx - grab, top, grab * 2.0f, bottom - top);
         if (over) g_hot = hid;
         if (g_active == hid) {
             if (!g_in.mouseDown) g_active = 0;
             else {
                 float dx = g_mouseDX;
-                float a = *g_tbl.w[i - 1] + dx, b = *g_tbl.w[i] - dx;
-                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b; }
+                float a = *g_tbl.w[pj] + dx, b = *g_tbl.w[i] - dx;
+                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[pj] = a; *g_tbl.w[i] = b; }
             }
         } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
     }
@@ -5406,14 +5634,13 @@ bool IsItemVisible() {                                                          
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
 bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
 bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }
-bool IsItemDeactivatedAfterEdit() { return g_lastId != 0 && g_deactAfterEdit == g_lastId; }   // text fields: see TextField
 bool IsItemClicked(int button) {
     if (!IsItemHovered()) return false;
-    return button == 1 ? g_rPressed : g_pressed;
+    return button == 2 ? g_mPressed : (button == 1 ? g_rPressed : g_pressed);
 }
-bool IsMouseDown(int button)     { return !g_in.blocked && (button == 1 ? g_in.rightDown : g_in.mouseDown); }
-bool IsMouseClicked(int button)  { return !g_in.blocked && (button == 1 ? g_rPressed : g_pressed); }
-bool IsMouseReleased(int button) { return button == 1 ? g_rReleased : g_released; }
+bool IsMouseDown(int button)     { return !g_in.blocked && (button == 2 ? g_in.middleDown : (button == 1 ? g_in.rightDown : g_in.mouseDown)); }
+bool IsMouseClicked(int button)  { return !g_in.blocked && (button == 2 ? g_mPressed : (button == 1 ? g_rPressed : g_pressed)); }
+bool IsMouseReleased(int button) { return button == 2 ? g_mReleased : (button == 1 ? g_rReleased : g_released); }
 Vec2 GetMousePos()   { return Vec2{ g_in.mouseX, g_in.mouseY }; }
 Vec2 GetMouseDelta() { return Vec2{ g_mouseDX, g_mouseDY }; }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx) {
@@ -5438,12 +5665,16 @@ void ResetState() {
     g_font = &kFontDefault;
     g_in = Input();
     g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
+    g_mPrevDown = g_mPressed = g_mReleased = false; g_editedId = g_editedFrameId = g_focusAtFrameStart = g_lostFocusId = g_deactEditedId = 0; g_lostFocusEdited = false; g_editedFrame = 0; g_lastMouseMove = 0.0;
+    for (int i = 0; i < 3; ++i) g_dragOriginX[i] = g_dragOriginY[i] = 0.0f;
+    g_hoverKey = 0; g_hoverFrame = 0; g_hoverStart = 0.0; g_inTip = false;
+    for (TabOrder& t : g_tabOrders) t = TabOrder();
     g_posOverride = false; g_posSameLine = false; g_centerNext = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
     for (int k = 0; k < KeyId_COUNT; ++k) { g_keyNow[k] = g_keyPrev[k] = false; g_keySince[k] = g_keyNextRepeat[k] = 0.0; }
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
-    g_editOwner = g_lostField = g_deactAfterEdit = 0; g_editOwnerEdited = g_lostFieldEdited = false; g_fieldPadL = g_fieldPadR = -1.0f;
+    g_fieldPadL = g_fieldPadR = -1.0f;
     g_popupPadX = g_popupPadY = g_popupW = g_innerX = g_childPadY = -1.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;
@@ -5460,6 +5691,7 @@ void ResetState() {
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_bareNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
+    GetDockBuilderTree().Clear();
     ColorPickerReset();
     g_ovCurN = g_ovPrevN = 0;
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
@@ -5582,16 +5814,16 @@ bool fmtSlider(const char* label, double* v, bool isInt, double minV, double max
 }
 } // namespace
 
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 1, speed, minV, maxV, format); }
-bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 2, speed, minV, maxV, format); }
-bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 3, speed, minV, maxV, format); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 1, speed, minV, maxV, format)); }
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 2, speed, minV, maxV, format)); }
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 3, speed, minV, maxV, format)); }
 bool SliderInt(const char* label, int* v, int minV, int maxV, const char* format) {
     if (!v) return false;
     double d = (double)*v;
     if (!fmtSlider(label, &d, true, (double)minV, (double)maxV, format)) return false;
     const int nv = (int)std::min((double)maxV, std::max((double)minV, d));
     if (nv == *v) return false;
-    *v = nv; return true;
+    *v = nv; return noteEdit(true);
 }
 bool SliderFloat(const char* label, float* v, float minV, float maxV, const char* format) {
     if (!v) return false;
@@ -5599,7 +5831,7 @@ bool SliderFloat(const char* label, float* v, float minV, float maxV, const char
     if (!fmtSlider(label, &d, false, (double)minV, (double)maxV, format)) return false;
     const float nv = (float)std::min((double)maxV, std::max((double)minV, d));
     if (nv == *v) return false;
-    *v = nv; return true;
+    *v = nv; return noteEdit(true);
 }
 
 bool SearchField(const char* id, const char* hint, char* buf, int cap, float width) {
@@ -5637,6 +5869,218 @@ bool SearchField(const char* id, const char* hint, char* buf, int cap, float wid
     }
     g_lastId = fid;
     return changed;
+}
+
+// ---- ImGui-shaped calls (okayui/include/okay/UI/OkayUIImCompat.hpp) ---------------------------------------------------------
+// Written from how these calls behave in toolkits of this kind (hover rules, drag deltas, edit marks, child sizing), in our own words.
+
+Vec2 GetMouseDragDelta(int button, float lockThreshold) {
+    if (button < 0 || button > 2 || g_in.blocked || !IsMouseDown(button)) return Vec2{0.0f, 0.0f};
+    const float dx = g_in.mouseX - g_dragOriginX[button], dy = g_in.mouseY - g_dragOriginY[button];
+    const float t = lockThreshold >= 0.0f ? lockThreshold : 4.0f;
+    if (dx * dx + dy * dy < t * t) return Vec2{0.0f, 0.0f};
+    return Vec2{dx, dy};
+}
+void ResetMouseDragDelta(int button) {
+    if (button < 0 || button > 2) return;
+    g_dragOriginX[button] = g_in.mouseX; g_dragOriginY[button] = g_in.mouseY;
+}
+
+namespace {
+// hit() with the exceptions the hover flags ask for.
+bool hitWithFlags(float x, float y, float w, float h, int flags) {
+    const bool rectOnly = (flags & HoveredFlags_RectOnly) == HoveredFlags_RectOnly;
+    if (g_disCount > 0 && !(flags & HoveredFlags_AllowWhenDisabled)) return false;
+    if (!hitOverlay(x, y, w, h)) return false;
+    if (g_popupTop > 0) return true;
+    if (!inClip() && !rectOnly) return false;
+    if (!(flags & HoveredFlags_AllowWhenOverlapped) && g_hitWinOn && coveredByHigher(g_in.mouseX, g_in.mouseY, g_hitWinZ, g_hitWinId)) return false;
+    if (!(flags & HoveredFlags_AllowWhenBlockedByPopup))
+        for (int i = 0; i < g_ovPrevN; ++i) {
+            const OvRect& o = g_ovPrev[i];
+            if (o.modal || pointIn(g_in.mouseX, g_in.mouseY, o.x, o.y, o.w, o.h)) return false;
+        }
+    return true;
+}
+// Delays: the thing under the pointer must have been hovered for `secs` seconds in a row (asked every frame).
+bool hoverLongEnough(unsigned key, double secs) {
+    if (key != g_hoverKey || g_hoverFrame + 1 < g_frameCount) { g_hoverKey = key; g_hoverStart = g_clock; }
+    g_hoverFrame = g_frameCount;
+    return g_clock - g_hoverStart >= secs;
+}
+bool delaysOk(unsigned key, int flags) {
+    if ((flags & HoveredFlags_ForTooltip) == HoveredFlags_ForTooltip) flags |= HoveredFlags_Stationary | HoveredFlags_DelayNormal;
+    double need = 0.0;
+    if (flags & HoveredFlags_DelayShort) need = 0.15;
+    if (flags & HoveredFlags_DelayNormal) need = 0.40;
+    if ((flags & HoveredFlags_Stationary) && g_clock - g_lastMouseMove < 0.15) return false;
+    if (need > 0.0) return hoverLongEnough(key, need);
+    return true;
+}
+}
+
+bool IsItemHovered(int flags) {
+    if (!g_lay.active) return false;
+    if (!(flags & HoveredFlags_AllowWhenBlockedByActiveItem) && g_active != 0 && g_active != g_lastId) return false;
+    if (!hitWithFlags(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH, flags)) return false;
+    unsigned key = 2166136261u;
+    const float k[4] = { g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH };
+    for (float f : k) { int v; std::memcpy(&v, &f, sizeof v); key = (key ^ (unsigned)v) * 16777619u; }
+    return delaysOk(key | 1u, flags);
+}
+bool IsWindowHovered(int flags) {
+    if (flags & HoveredFlags_AnyWindow) return !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev);
+    if (!g_curWin.valid || g_in.blocked) return false;
+    if (!(flags & HoveredFlags_AllowWhenBlockedByActiveItem) && g_active != 0) return false;
+    if (!pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)) return false;
+    if (!(flags & HoveredFlags_AllowWhenOverlapped) && coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id)) return false;
+    if (!(flags & HoveredFlags_AllowWhenBlockedByPopup))
+        for (int i = 0; i < g_ovPrevN; ++i) {
+            const OvRect& o = g_ovPrev[i];
+            if (o.modal || pointIn(g_in.mouseX, g_in.mouseY, o.x, o.y, o.w, o.h)) return false;
+        }
+    return delaysOk((unsigned)g_curWin.id | 1u, flags);
+}
+bool IsWindowFocused(int flags) {
+    if (flags & FocusedFlags_AnyWindow) return g_focusWin != 0;
+    return IsWindowFocused();
+}
+bool IsAnyItemHovered() { return g_hot != 0; }
+
+bool IsItemEdited() { return g_lastId != 0 && g_editedFrameId == g_lastId && g_editedFrame == g_frameCount; }
+bool IsItemDeactivatedAfterEdit() {
+    if (g_lastId == 0) return false;
+    if (g_deactEditedId == g_lastId) return true;                                  // a text field lost the keyboard last frame, after an edit
+    if (g_editedId != g_lastId) return false;
+    if (g_activeAtFrameStart == g_lastId && g_active != g_lastId) return true;      // let go (slider, drag, check box)
+    return g_focusAtFrameStart == g_lastId && g_focus != g_lastId && g_lostFocusId != g_lastId;   // lost the keyboard this frame (not one
+                                                                                   // reported next frame through g_deactEditedId: once only)
+}
+float CalcItemWidth() { return g_lay.active ? availW() : 0.0f; }
+
+namespace { struct TipSave { LayoutState lay; float* hSlot; float* wSlot; bool overlay; }; TipSave g_tip; }
+bool BeginTooltip() {
+    if (!g_lay.active || g_in.blocked || g_inTip) return false;
+    const int tid = hashLabel("##okayui_tooltip");
+    float* hSlot = floatState(tid ^ 0x7441, rowH());
+    float* wSlot = floatState(tid ^ 0x7442, 120.0f);
+    const float pad = g_look ? 8.0f : 6.0f;
+    const float bw = *wSlot + 2.0f * pad, bh = *hSlot + 2.0f * pad;
+    float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
+    if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);
+    if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);
+    g_tip.lay = g_lay; g_tip.hSlot = hSlot; g_tip.wSlot = wSlot; g_tip.overlay = g_toOverlay;
+    g_toOverlay = true;
+    if (g_look) {
+        const unsigned char tip[4] = {38, 42, 51, 250};
+        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
+        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
+    } else {
+        quad(bx, by, bw, bh, g_theme.border);
+        quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, pick(Col_PopupBg, g_theme.panel));
+    }
+    g_lay.active = true;
+    g_lay.ox = bx + pad; g_lay.oy = by + pad; g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
+    g_lay.contentW = *wSlot; g_lay.bottom = by + bh;
+    g_lay.indent = 0.0f; g_lay.seed = tid; g_lay.maxRight = g_lay.ox;
+    g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_inTip = true;
+    return true;
+}
+void EndTooltip() {
+    if (!g_inTip) return;
+    const float h = g_lay.cy - g_lay.oy - g_lay.spacingY, w = g_lay.maxRight - g_lay.ox;
+    *g_tip.hSlot = h > 1.0f ? h : 1.0f;
+    *g_tip.wSlot = w > 8.0f ? w : 8.0f;
+    g_lay = g_tip.lay; g_toOverlay = g_tip.overlay; g_inTip = false;
+}
+bool BeginItemTooltip(int hoverFlags) { return IsItemHovered(hoverFlags) && BeginTooltip(); }
+
+namespace {
+int popupButton(int popupFlags) { const int b = popupFlags & 3; return b == 1 ? 0 : (b == 3 ? 2 : 1); }
+bool pressedBtn(int b) { return b == 2 ? g_mPressed : (b == 1 ? g_rPressed : g_pressed); }
+}
+bool BeginPopupContextWindow(const char* id, int popupFlags) {
+    if (!g_lay.active || !g_curWin.valid) return false;
+    const int pid = id ? hashLabel(id) : (g_curWin.id ^ 0x77c1);
+    if (pressedBtn(popupButton(popupFlags)) && !g_in.blocked && IsWindowHovered(HoveredFlags_AllowWhenBlockedByActiveItem) &&
+        (!(popupFlags & PopupFlags_NoOpenOverItems) || g_hot == 0)) {
+        PopupSlot* p = popupSlot(pid, true);
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+    }
+    return beginPopupBody(pid);
+}
+bool BeginPopupContextItem(const char* id, int popupFlags) {
+    const int pid = hashLabel(id ? id : "##itemctx");
+    if (g_lay.active && pressedBtn(popupButton(popupFlags)) && !g_in.blocked &&
+        pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
+        PopupSlot* p = popupSlot(pid, true);
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+    }
+    return beginPopupBody(pid);
+}
+bool IsPopupOpen(const char* id, int popupFlags) {
+    if (popupFlags & PopupFlags_AnyPopupId) { for (const PopupSlot& p : g_popups) if (p.open) return true; return false; }
+    return IsPopupOpen(id);
+}
+
+namespace {
+// The outline of a rectangle with the chosen corners rounded (bit 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left), clockwise.
+int roundedRectPathMask(Vec2* out, float x0, float y0, float x1, float y1, float rad, int mask) {
+    const float w = x1 - x0, h = y1 - y0;
+    if (rad > w * 0.5f) rad = w * 0.5f;
+    if (rad > h * 0.5f) rad = h * 0.5f;
+    const float PI = 3.14159265f;
+    const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
+    const float px[4] = { x0, x1, x1, x0 }, py[4] = { y0, y0, y1, y1 };
+    const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+    int n = 0;
+    for (int k = 0; k < 4; ++k) {
+        if (rad <= 0.5f || !(mask & (1 << k))) { out[n++] = Vec2{ px[k], py[k] }; continue; }
+        for (int i = 0; i <= 6; ++i) {
+            const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
+            out[n++] = Vec2{ cx[k] + rad * SDL_cosf(a), cy[k] + rad * SDL_sinf(a) };
+        }
+    }
+    return n;
+}
+int cornerMask(int flags) {
+    if (flags & DrawFlags_RoundCornersNone) return 0;
+    int m = 0;
+    if (flags & DrawFlags_RoundCornersTopLeft) m |= 1;
+    if (flags & DrawFlags_RoundCornersTopRight) m |= 2;
+    if (flags & DrawFlags_RoundCornersBottomRight) m |= 4;
+    if (flags & DrawFlags_RoundCornersBottomLeft) m |= 8;
+    return m ? m : 15;
+}
+}
+void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding, int drawFlags) const {
+    const int m = cornerMask(drawFlags);
+    if (m == 15) { AddRectFilled(mn, mx, col, rounding); return; }
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    Vec2 pts[32];
+    const int n = roundedRectPathMask(pts, mn.x, mn.y, mx.x, mx.y, finite1(rounding) && rounding > 0.0f ? rounding : 0.0f, m);
+    fillConvex(pts, n, c);
+}
+void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, int drawFlags, float th) const {
+    const int m = cornerMask(drawFlags);
+    if (m == 15) { AddRect(mn, mx, col, rounding, th); return; }
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
+    const float w = mx.x - mn.x, h = mx.y - mn.y;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }
+    Vec2 pts[32];
+    const float r = finite1(rounding) && rounding > th * 0.5f ? rounding - th * 0.5f : 0.0f;
+    const int n = roundedRectPathMask(pts, mn.x + th * 0.5f, mn.y + th * 0.5f, mx.x - th * 0.5f, mx.y - th * 0.5f, r, m);
+    strokePath(pts, n, true, th, c);
+}
+void DrawList::AddNgon(Vec2 center, float radius, Color32 col, int segments, float thickness) const {
+    AddCircle(center, radius, col, segments < 3 ? 3 : (segments > 128 ? 128 : segments), thickness);
+}
+void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int segments) const {
+    AddCircleFilled(center, radius, col, segments < 3 ? 3 : (segments > 128 ? 128 : segments));
 }
 
 } // namespace OkayUI

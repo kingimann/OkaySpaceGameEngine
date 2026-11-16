@@ -146,3 +146,23 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
 - **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
+
+### 40.8 ImGui-shaped names, tabs and tables extras, dock builder, code editor line commands, Stats port
+- **What:** the next gap-closing step from the Dear ImGui usage audit: the flag and enum names code written for an ImGui-shaped toolkit expects (mouse buttons, hover and focus flags, child flags, draw flags, key names) with the calls that take them, reorderable tabs, hideable table columns, a builder that writes dock layouts as code, three code-editor line commands, and a second editor window (Stats) drawn by OkayUI behind the developer-only backend switch.
+- **Parts:**
+  - 40.8.1 Names and flagged calls - `okayui/include/okay/UI/OkayUIImCompat.hpp`, `okayui/src/OkayUI.cpp` - `MouseButton_*`, `Key_*`, `Dir_*`, `HoveredFlags_*`, `ChildFlags_*`, `DrawFlags_*`, `PopupFlags_*`; `IsItemHovered(flags)`, `IsWindowHovered(flags)`, `GetMouseDragDelta`, `BeginChild(id, size, childFlags)`, `IsItemEdited`, `IsItemDeactivatedAfterEdit`, `CalcItemWidth`, `BeginTooltip`/`EndTooltip`, `BeginPopupContextWindow`, rounded-corner `AddRect`/`AddRectFilled`, `AddNgon`
+  - 40.8.2 Tabs and tables extras - `okayui/src/OkayUI.cpp` - `BeginTabBar(id, flags)` with `TabBarFlags_Reorderable`, `TabDragTarget`; `Col_NoResize`, `Col_DefaultHide`, `Col_NoHide`, `Table_Hideable`, `TableSetColumnEnabled`, `TableGetHoveredColumn`
+  - 40.8.3 Dock builder - `okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUIDockBuilder.cpp` - `DockBuilderTree`, `DockBuilderSplitNode`, `DockBuilderDockWindow`, `DockBuilderFinish`
+  - 40.8.4 Code editor line commands - `okayui/src/OkayUICodeEdit.cpp` - `ToggleLineComment`, `MoveLines`, `DuplicateLines`, keys Ctrl+/, Alt+Up/Down, Ctrl+Shift+D
+  - 40.8.5 Stats window port - `okayui/screens/OkayUIEditorPanels.cpp`, `editor/OkayPanels.cpp`, `editor/main.cpp` - `okayuiscreens::DrawStats`, `oked::DrawStatsOkayUI` (the model-based port of `docs/own_ui_toolkit.md` section 9; the first port of step 36 was removed)
+- **Code:** `okayui/include/okay/UI/OkayUIImCompat.hpp`, `okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUIDockBuilder.cpp`, `okayui/src/OkayUICodeEdit.cpp`, `okayui/screens/OkayUIPanels.cpp`, `editor/OkayPanels.cpp`
+- **API:** namespace `OkayUI`: see the parts; `okayuiscreens::DrawStats`, `oked::DrawStatsOkayUI`
+- **Editor:** developer-only: `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, then View > (panel list) > Stats draws the OkayUI version; script editor: Ctrl+/, Alt+Up/Down, Ctrl+Shift+D with the OkayUI code widget
+- **Docs:** `docs/own_ui_toolkit.md` (sections 4.36 to 4.40), `docs/own_ui_code_editor.md`, `docs/imgui_port_report.md`, `docs/try_it.md` (section 12)
+- **Tests:** `okayui_imcompat`, `okayui_dockbuilder`, `okayui_codeedit` (line commands), `okayui_panels` (Stats, golden pictures)
+- **Status:** Works - implemented and tested headless; the editor part (Stats hosting, `CollectStatRows`) was only syntax-checked, never run in a real editor window; off by default behind the developer switch
+- **Open:** column reordering, tab overflow strip, `GetStyle`, `SetNextWindowDockID` and the editor's own dock bookkeeping, `ImRect` / `ImGuiPayload` / `ImFont` style internals, `InputTextFlags_Password` and callbacks, moved lines do not carry breakpoints
+- **Related:** 40.1, 40.7, 40.4
+- **Words:** OkayUI, ImGui compat flags, HoveredFlags, ChildFlags, DockBuilder, reorderable tabs, hide table column, toggle comment, Stats window, replace Dear ImGui
+- **Seen as:** a ported panel does not compile for a missing flag name; tabs cannot be reordered; a table has no column menu; the Stats window looks different with the OkayUI backend on
+- **Ask me like:** "work on 40.8.2, add column reordering to OkayUI tables"; "port the next editor panel to OkayUI"

@@ -1045,6 +1045,27 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: export notes are not errors (branch `claude2/vs-export-not-error`, not merged or released yet)
+
+Before, a graph that runs fine at Play showed red "Error: Cannot export node Fn.print (#2): this node has no script"
+lines in its Problems list, one per node the text export could not write (Fn.print, Get Property, Set Property, Spawn
+Projectile, Crossfade Clip ...). Now those are not errors.
+
+1. Open the editor (`Tools\OkayEngine.exe`), open the scene `examples\visual_script\playground\coverage.okayscene`,
+   select the **Host** object, and in the Inspector's Visual Script component click **Open in node editor**. The
+   Visual Script window shows `coverage.okayvs`.
+2. Look at the problems button on the right of the Visual Script toolbar. You should see no red "Cannot export"
+   lines. If the graph has nothing else wrong, the button reads "No problems (1 note)". Click it: one blue
+   "Info: N nodes can't be exported to text script: GetProperty #3, SetProperty #5, ..." line. The Fn.* builtin
+   nodes are not in it.
+3. Click **Graph > Show as OkayScript**. For a graph with only builtin calls (for example On Start > Fn.print),
+   you see `print("playground")` in the script. For the coverage graph, the panel says "This graph cannot be exported"
+   and lists each node it cannot write, one line each: that list is where per-node export problems belong.
+4. Press Play on the coverage scene: the safe chain (print, Get Property, Set Var, Set Property) runs as before.
+
+**Status.** Tested headless (`test_vs_export_not_error`). The editor window code was syntax-checked only, not run;
+the label and colours are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -429,8 +429,24 @@ File format: `node <id> Action "<op> <args>"`, `node <id> Actions "<step> ; <ste
 OkayScript export: an Action or Condition node is `run_action("...")` / `check_action("...")`.
 An Actions component exports as `actions_load("...")` with the list's own text, so every
 step and trigger runs on an Actions component (`editor/ActionExport.hpp`). A graph node
-that has no script fails the export: the Problems list and the node itself name it, and
-View as OkayScript does not offer a script that skips the node.
+that has no script fails the export: View as OkayScript names each such node and does not
+offer a script that skips it.
+
+What exports to text script: the built-in nodes the exporter knows (events, flow,
+variables, math, movement, physics, sound, UI, networking, inventory and the rest of
+`VsEmitNode` in `editor/VisualScriptEditor.hpp`), and every text-script builtin node
+`Fn.<name>`, which becomes the same call, `name(args)` (only the wired or typed-in inputs,
+in pin order, as at Play; a wired output reads the call's result). What does not export,
+and why: Get Property / Set Property (they reach any registered property by path, and text
+script has no call for that), Call Method, Get / Add Component, Send Message, Broadcast,
+Run Snippet (the coverage escape hatches), and the high-level step nodes that have no
+text-script equivalent yet (for example Spawn Projectile, Crossfade Clip, the gameplay
+library `Gl*` nodes and the logic library nodes; a check of every step node in the
+registry, November 2026, found 446 of 2035 that don't export and no `Fn.*` among them). These nodes
+run fine at Play. Not exporting is not a graph error: the Problems list shows at most one
+**Info** line for the whole graph ("N nodes can't be exported to text script: ..."), the
+button reads "No problems (1 note)" when that is all, and the per-node list is in the Script
+panel when you export.
 
 Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
 left jumps to each chain; right- or middle-drag pans; F frames the selection.

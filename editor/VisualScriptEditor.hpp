@@ -1882,7 +1882,15 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     // script equivalent (it keeps a velocity between frames), so it is reported as not translated and reads 0 here.
     if (t == "EaseCurve")      return "ease_curve(" + VsInput(g, nodeId, 0, "0") + ", " + q(lit("")) + ")";
     if (t == "TweenKillTag" || t == "TweenPauseTag" || t == "TweenPlayTag") return "_tw_" + std::to_string(nodeId);
+    // A text-script builtin (Fn.print, Fn.Mathf.Abs): its output is what its last call returned,
+    // kept in a field the call writes (VsEmitNode).
+    if (okay::vs::IsBuiltinNode(t)) return "_fn_" + std::to_string(nodeId);
     return "0";
+}
+// True when a data wire reads one of the node's outputs.
+inline bool VsOutputUsed(const VsEditGraph& g, int nodeId) {
+    for (const auto& l : g.dataLinks) if (l.producer == nodeId) return true;
+    return false;
 }
 
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
@@ -2253,6 +2261,17 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         if (fn>=0) { out += ind + "} else {\n"; VsEmitChain(g, fn, out, ind+"    ", visited); }
         out += ind + "}\n";
     }
+    else if (okay::vs::IsBuiltinNode(t)) {
+        // A text-script builtin is the same call in text: name(args). Like the node at Play, it
+        // passes only the inputs that are wired or typed in, in pin order; a wired output keeps
+        // the result in _fn_<id>.
+        std::string call = t.substr(3) + "(";
+        bool firstArg = true;
+        for (int i = 0; i < 4; ++i)
+            if (VsInputLinkedOrSet(g, nodeId, i)) { call += (firstArg ? "" : ", ") + in(i); firstArg = false; }
+        call += ")";
+        out += ind + (VsOutputUsed(g, nodeId) ? "_fn_" + std::to_string(nodeId) + " = " : std::string()) + call + "\n";
+    }
     else                 VsExportFail(nodeId, t);
 }
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
@@ -2347,6 +2366,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
             fields += "    bool _vs_wait_busy_"+std::to_string(n.id)+" = false;\n";
         }
         if (n.type=="Delay") fields += "    bool _vs_delay_busy_"+std::to_string(n.id)+" = false;\n";
+        if (okay::vs::IsBuiltinNode(n.type) && VsOutputUsed(g, n.id)) fields += "    var _fn_"+std::to_string(n.id)+" = 0;\n";
     }
     if (!fields.empty()) out += fields + "\n";
     bool first = true, anyEvent = false;
@@ -2520,6 +2540,40 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
     return fin;
 }
 
+// Severity of a line in the graph's problem list that is only a note: it does not
+// stop the graph from running (0 = error and 1 = warning, as in okay::vs::VsIssue).
+constexpr int kVsIssueInfo = 2;
+// The graph's problem list, as the editor's Problems button shows it: the graph
+// checker's findings, unchanged and in order, then at most ONE Info line naming the
+// nodes the text export can't translate. Those nodes run fine at Play; that the
+// export can't write them is a fact about the export, so it is not an error on
+// each node. The export's own per-node list goes to `exportIssues` (the Script
+// panel shows it when the user exports).
+inline std::vector<okay::vs::VsIssue> VsGraphProblems(const VsEditGraph& g, const std::string& projectDir,
+                                                      std::vector<okay::vs::VsIssue>* exportIssues = nullptr) {
+    std::vector<okay::vs::VsIssue> issues = okay::vs::ValidateGraphText(g.toText(), projectDir);
+    std::vector<okay::vs::VsIssue> exp;
+    CompileToOkayScript(g, &exp);
+    if (!exp.empty()) {
+        std::string names;
+        const std::size_t shown = std::min<std::size_t>(exp.size(), 6);
+        for (std::size_t i = 0; i < shown; ++i) {
+            const VsEditNode* n = VsFind(g, exp[i].node);
+            names += (i ? ", " : "") + (n ? n->type : std::string("node")) + " #" + std::to_string(exp[i].node);
+        }
+        if (exp.size() > shown) names += " and " + std::to_string(exp.size() - shown) + " more";
+        okay::vs::VsIssue note;
+        note.severity = kVsIssueInfo;
+        note.node = -1;
+        note.message = std::to_string(exp.size()) + (exp.size() == 1 ? " node" : " nodes") +
+                       " can't be exported to text script: " + names +
+                       ". The graph still runs them at Play; only Script (export) is affected.";
+        issues.push_back(std::move(note));
+    }
+    if (exportIssues) *exportIssues = std::move(exp);
+    return issues;
+}
+
 // ---- Interaction state -----------------------------------------------------
 struct VsEditState {
     VsEditGraph g;
@@ -2581,6 +2635,7 @@ struct VsEditState {
     bool   needsEvent = false;   // nodes but no event node: hint on the canvas
     // The graph checker's findings for the graph on screen (recomputed when it changes).
     std::string checkedText; std::vector<okay::vs::VsIssue> issues;
+    std::vector<okay::vs::VsIssue> exportIssues;   // nodes the text export can't write (the Script panel lists them)
     bool   showIssues = false;
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
     // Text last saved (or the text a new graph was created with). Dirty is true
@@ -3588,7 +3643,7 @@ inline void Draw(EditorState& ed, bool* open) {
         // Saving writes the file and reloads every object that runs this graph,
         // including ones whose path was stored differently and embedded copies.
         if (!PublishOpenGraph(ed, false)) { Log("Save failed", 2); return; }
-        if (!st.issues.empty()) st.showIssues = true;
+        for (const auto& is : st.issues) if (is.severity < kVsIssueInfo) st.showIssues = true;
         int n = 0;
         for (const auto& up : ed.scene().Objects())
             for (auto* vc : up->GetComponents<VisualScriptComponent>())
@@ -3819,33 +3874,28 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         std::string now = g.toText();
         if (now != st.checkedText) {
-            st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
-            std::vector<okay::vs::VsIssue> exp;
-            CompileToOkayScript(g, &exp);
-            if (!exp.empty()) {
-                st.issues.insert(st.issues.end(), exp.begin(), exp.end());
-                st.showIssues = true;
-            }
+            st.issues = VsGraphProblems(g, ed.projectDir(), &st.exportIssues);
             st.checkedText = std::move(now);
         }
     }
     // Right side of the one toolbar: problems, fit, zoom, the two panels.
     {
-        int nErr = 0, nWarn = 0;
-        for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
+        int nErr = 0, nWarn = 0, nInfo = 0;
+        for (const auto& is : st.issues) (is.severity == 0 ? nErr : is.severity == 1 ? nWarn : nInfo)++;
         const float rightW = 520.0f;
         const float avail = ImGui::GetWindowContentRegionMax().x;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - rightW));
         {
             char lbl[64];
-            if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "No problems##vsissues");
+            if (nErr + nWarn == 0 && nInfo > 0) std::snprintf(lbl, sizeof lbl, "No problems (%d note%s)##vsissues", nInfo, nInfo == 1 ? "" : "s");
+            else if (nErr + nWarn == 0) std::snprintf(lbl, sizeof lbl, "No problems##vsissues");
             else std::snprintf(lbl, sizeof lbl, "%d problem%s##vsissues", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
             const ImVec4 tc = nErr ? ImVec4(1.0f, 0.55f, 0.48f, 1) : nWarn ? ImVec4(0.95f, 0.78f, 0.42f, 1) : ImVec4(0.62f, 0.82f, 0.68f, 1);
             ImGui::PushStyleColor(ImGuiCol_Text, tc);
-            if (ImGui::Button(lbl) && nErr + nWarn > 0) st.showIssues = !st.showIssues;
+            if (ImGui::Button(lbl) && nErr + nWarn + nInfo > 0) st.showIssues = !st.showIssues;
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(nErr + nWarn == 0 ? "The graph checker found nothing wrong." :
+                ImGui::SetTooltip(nErr + nWarn == 0 ? (nInfo ? "The graph checker found nothing wrong. Click to read the notes." : "The graph checker found nothing wrong.") :
                                   "%d error(s), %d warning(s). Click to list them. Click a row to jump to its node.", nErr, nWarn);
             ImGui::SameLine();
         }
@@ -5324,8 +5374,9 @@ inline void Draw(EditorState& ed, bool* open) {
         for (std::size_t i = 0; i < st.issues.size(); ++i) {
             const auto& is = st.issues[i];
             ImGui::PushID((int)i);
-            ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
-            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
+            ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) :
+                                  is.severity == 1 ? ImVec4(0.95f, 0.78f, 0.4f, 1) : ImVec4(0.62f, 0.75f, 0.90f, 1));
+            std::string row = std::string(is.severity == 0 ? "Error: " : is.severity == 1 ? "Warning: " : "Info: ") + is.message;
             if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
             if (ImGui::IsItemHovered()) {   // long messages: the whole text
                 ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
@@ -5411,8 +5462,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::SameLine();
         ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
         std::vector<const okay::vs::VsIssue*> blocked;
-        for (const auto& is : st.issues)
-            if (is.severity == 0 && is.message.rfind("Cannot export node ", 0) == 0) blocked.push_back(&is);
+        for (const auto& is : st.exportIssues) blocked.push_back(&is);
         if (!blocked.empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "This graph cannot be exported.");
             ImGui::TextWrapped("These nodes have no script. The export stops instead of skipping them.");

@@ -122,6 +122,43 @@ inline std::string Hex16(std::uint64_t v) {
     char b[17]; std::snprintf(b, sizeof(b), "%016llx", (unsigned long long)v); return b;
 }
 
+/// What a save's first line says about its format (see ParseHeaderVersion).
+enum class HeaderVersion {
+    Other,     ///< the line doesn't start with the format's word: not this kind of header
+    Damaged,   ///< it starts with the word, but no clean version number follows it
+    Ok         ///< `version` holds the number
+};
+/// Read a first line like "okaysave 3" or "okaygame 2": `magic`, one space, digits. That is all the
+/// writers have ever written, so anything else after the word (a stray byte, no number, 0, a second
+/// word) is a damaged header, never an older format. A number too big for an int reads as the
+/// largest int (so it counts as "newer"). A trailing CR is ignored. `shown` (when given) gets the
+/// text after the word, trimmed and made printable, for an error message.
+inline HeaderVersion ParseHeaderVersion(const std::string& line, const char* magic, int& version, std::string* shown = nullptr) {
+    const std::size_t m = std::char_traits<char>::length(magic);
+    if (line.size() < m || line.compare(0, m, magic) != 0) return HeaderVersion::Other;
+    std::string rest = line.substr(m);
+    if (!rest.empty() && rest.back() == '\r') rest.pop_back();
+    if (shown) {
+        const std::size_t b = rest.find_first_not_of(" \t"), e = rest.find_last_not_of(" \t");
+        shown->clear();
+        if (b != std::string::npos)
+            for (std::size_t i = b; i <= e && shown->size() < 24; ++i) {
+                const unsigned char c = (unsigned char)rest[i];
+                *shown += (c < 0x20 || c >= 0x7F) ? '?' : (char)c;
+            }
+    }
+    if (rest.size() < 2 || rest[0] != ' ') return HeaderVersion::Damaged;
+    long long v = 0;
+    for (std::size_t i = 1; i < rest.size(); ++i) {
+        const char c = rest[i];
+        if (c < '0' || c > '9') return HeaderVersion::Damaged;
+        if (v <= std::numeric_limits<int>::max()) v = v * 10 + (c - '0');
+    }
+    if (v < 1) return HeaderVersion::Damaged;
+    version = v > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : (int)v;
+    return HeaderVersion::Ok;
+}
+
 /// Options for AtomicWriteChecked.
 struct WriteOptions {
     bool sync = false;        ///< flush the data to the disk before the swap (slower; survives a power cut)
@@ -200,12 +237,15 @@ inline bool ReadFileCapped(const std::string& path, std::size_t maxBytes, std::s
 ///   spawn=v:1.5,0,3
 /// A file ends with `#end` and a `#sum` checksum line (format `okaysave 3`), so a
 /// file that was cut off or damaged is noticed; the previous good file is kept as
-/// `<file>.bak` and read instead when the main one fails. Not thread safe on its
-/// own (the `Save` facade below is).
+/// `<file>.bak` and read instead when the main one fails. A file that has the `#end` /
+/// `#sum` lines is always checked, whatever its first line says (the sum covers the
+/// first line too), and a first line `okaysave` with no clean version number is damage,
+/// so a damaged first line is noticed as well. Not thread safe on its own (the `Save`
+/// facade below is).
 class SaveFile {
 public:
     /// The newest format this build writes. Files from before the end marker
-    /// (`okaysave 2`, `okaysave 1`, no header) still load.
+    /// (`okaysave 2`, `okaysave 1`, no header) still load; a higher number is refused.
     static constexpr int kFormatVersion = 3;
     /// A file bigger than this is refused when loading.
     static constexpr std::size_t kMaxFileBytes = 64u * 1024u * 1024u;
@@ -255,16 +295,21 @@ public:
     /// escaped onto a single line, keys in order so the same keys give the same bytes).
     /// The file is written aside and swapped in, so a crash or a full disk leaves the old
     /// file alone, and the old file (when it was a good one) becomes `<path>.bak`; a damaged
-    /// one with no good backup is kept as `<path>.corrupt`. `durable` also flushes the data
-    /// to the disk before the swap. `checkOld` false copies the old file to `.bak` without reading
-    /// it first (for a file this program wrote a moment ago). False if anything failed (`error` says why).
+    /// one with no good backup is kept as `<path>.corrupt`, and one from a newer format is
+    /// first copied to `<path>.newer.bak`. `durable` also flushes the data to the disk before
+    /// the swap. `checkOld` false copies the old file to `.bak` without reading it first (for a
+    /// file this program wrote a moment ago; after a Load that met a damaged or newer file the
+    /// old file is read anyway). False if anything failed (`error` says why).
     bool Save(const std::string& path, std::string* error = nullptr, bool durable = true, bool checkOld = true) const;
     /// Replace contents with `path`. A missing file leaves the store empty and
     /// returns false (so callers can tell "no save yet" from "loaded"). A file that is cut
     /// off, edited so it fails its checksum, or not a save at all is damaged: its `.bak` is
     /// read instead (true, with `LoadedFromBackup()` set and `LastError()` saying what was
-    /// wrong), and with no good backup the store is empty and the result false. Files from
-    /// before escaping (`okaysave 1`, or no header) load as plain text.
+    /// wrong), and with no good backup the store is empty and the result false. A file from a
+    /// newer format (`okaysave 4` and up) is not read at all: false, an empty store and
+    /// `LastError()` saying "saved by a newer version"; its `.bak` is not used. Files from
+    /// before escaping (`okaysave 1`, or no header) load as plain text; a file with no header
+    /// must start with a `key=value` line.
     bool Load(const std::string& path);
     /// Why the last Load or Save failed or fell back ("" when it went fine).
     const std::string& LastError() const { return m_error; }
@@ -411,7 +456,7 @@ public:
         const std::string key = Resolve(file);
         savefmt::FacadeGuard lock;
         Files().erase(key);
-        for (const char* suffix : {".bak", ".tmp", ".corrupt"}) std::remove((key + suffix).c_str());
+        for (const char* suffix : {".bak", ".tmp", ".corrupt", ".newer.bak"}) std::remove((key + suffix).c_str());
         return std::remove(key.c_str()) == 0;
     }
 

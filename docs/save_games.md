@@ -106,7 +106,8 @@ whole file and check it (use them for one slot, not a long list of big saves).
 - Each file starts with `okaygame <version>` and ends with an end marker and
   a checksum line. A file that is cut short, edited by hand or otherwise
   damaged is detected and refused rather than half loaded. Files from before
-  versioning (version 1, no checksum) still load.
+  versioning (version 1, no checksum) still load. A damaged first line is caught
+  too: see "Damaged first lines" below.
 - A file written by a **newer** version of the game is refused with a message
   ("saved by a newer version ..."); it is never half loaded. It is still listed
   (`incompatible`), and if this older build saves over that slot the newer file is
@@ -132,6 +133,49 @@ whole file and check it (use them for one slot, not a long list of big saves).
 - Saves made with the older `save_game` (`saves/<slot>.okaysave`, scene only)
   don't load with the new format. Save again to make a new one.
 
+## Damaged first lines (#888 finding 47)
+
+Before this fix, the end marker and checksum were only checked when the first line named the
+current format exactly (`okaysave 3`, or `okaygame 2` and up). A byte changed in that first line
+(a bad disk sector, a sync tool, a hand edit) made the file look like an old one: it loaded with no
+check, edited or cut-off values came back as if they were fine, and the good `.bak` was never used.
+In a test that changed one random byte of a save file 5000 times, 608 loads came back "fine" with
+wrong data; now none do (every change is caught and the backup is loaded).
+
+The rules now, for both `SaveFile` (`save("gold", 120)`) and `SaveGame` (slots):
+
+- **A file that has the end marker and checksum line is always checked**, whatever its first line
+  says (`#end` / `#sum` for `SaveFile`, `--end--` / `checksum` for slots). The checksum covers the
+  file from its first byte, so a changed first line fails it like a change anywhere else. A
+  mismatch is damage: the `.bak` is loaded instead (`LoadedFromBackup()`,
+  `SaveGame::LastLoadUsedBackup()`), and the Console says "... was damaged and its backup was
+  loaded instead".
+- **A first line that starts with `okaysave` or `okaygame` must go on with one space and a
+  number**, because that is all any version ever wrote. Anything else (`okaygame ,`,
+  `okaysavex 3`, no number, `0`) is damage, reported as "has an unknown format version '...'",
+  never "an old file".
+- **A higher number than this build knows is a newer format.** It is refused, never parsed:
+  `SaveGame` reports `Newer` (as before) and `SaveFile::Load` returns false with an empty store and
+  `LastError()` saying "was saved by a newer version of the game". Its `.bak` is not loaded
+  instead (it is most likely the same newer build's file, and an older one would quietly undo
+  what was played in the newer build). When this build saves over it, the newer file is first
+  copied to `<file>.newer.bak` (slots: `<slot>.okaygame.newer.bak`), so going back to the newer
+  build finds it. If the file has a checksum that does not match, it is damage instead (a damaged
+  digit), and the `.bak` is loaded.
+- **A `SaveFile` with no header at all** (the oldest layout: plain `key=value` lines) must start
+  with a `key=value` line. A file whose first line is neither a header nor a key is not a save
+  file, so a damaged first line on a file that was also cut short is caught as well.
+- Saving over a slot or file whose first line is damaged never makes it the `.bak`.
+- A UTF-8 byte order mark that an editor put in front of a hand-edited `SaveFile` is ignored.
+
+Old files that still load exactly as before (each is covered by `tests/test_save_header_damage.cpp`,
+built by hand in the old layout): a `SaveFile` with no header (plain lines, nothing escaped), `okaysave 1`
+(nothing escaped, also with Windows line ends), `okaysave 2` (escaped, no end marker) and `okaysave 3`;
+a slot in format 1 (`okaygame 1`, no end marker, also with Windows line ends). The only file that loads
+differently is a hand edit that changed the first line to `okaysave 2` but left the `#end` / `#sum`
+lines in: it is now checked, so the edit is refused and the backup loaded (the error says to delete
+those lines).
+
 ## What changed (hardening pass)
 
 - **One crash-safe write for everything.** `savefmt::AtomicWriteChecked` (`Core/SaveData.hpp`,
@@ -147,8 +191,10 @@ whole file and check it (use them for one slot, not a long list of big saves).
   and read when the main one fails (`SaveFile::LoadedFromBackup()`, `LastError()`); a damaged
   file with no good backup is set aside as `<file>.corrupt` instead of being overwritten.
   Older files (`okaysave 1` and `2`) load as before and are upgraded on the next save. The
-  same keys now write the same bytes (keys are sorted). Change the header to `okaysave 2` to
-  hand-edit a file.
+  same keys now write the same bytes (keys are sorted). To hand-edit a file, change its first
+  line to `okaysave 2` **and delete the `#end` and `#sum` lines**: a file that still has them is
+  checked (see "Damaged first lines" below), so an edit with them left in is refused and the
+  backup is loaded.
 - **The `Save` facade** creates the folder it writes into, takes a lock (its static calls are
   safe from several threads; a `SaveFile&` kept from `Save::File` is not), reports a failed write
   in `Save::LastError()`, has `Save::Reload(file)` and removes the backup with `DeleteFile`.

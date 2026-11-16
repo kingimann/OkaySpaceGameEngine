@@ -2282,6 +2282,14 @@ add_executable(test_save_nocode test_save_nocode.cpp)
 target_link_libraries(test_save_nocode PRIVATE okay::engine)
 add_test(NAME save_nocode COMMAND test_save_nocode)
 
+# A damaged first line is still noticed (#888 finding 47): SaveFile and SaveGame check the end marker and
+# checksum whenever a file has them, refuse a header with no clean version, refuse newer formats, and keep
+# loading the old layouts (no header, okaysave 1 / 2, okaygame 1). Includes a 5000-case single-byte fuzz.
+add_executable(test_save_header_damage test_save_header_damage.cpp)
+target_link_libraries(test_save_header_damage PRIVATE okay::engine)
+target_compile_definitions(test_save_header_damage PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME save_header_damage COMMAND test_save_header_damage)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)

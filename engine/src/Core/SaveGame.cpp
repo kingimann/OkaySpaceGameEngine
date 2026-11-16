@@ -146,12 +146,17 @@ struct Parsed {
     std::vector<std::pair<std::string, std::string>> kv;   // the game's Save keys, already unescaped and checked
 };
 
-// Where the file's `okaygame N` header says it stands. A header with no number is 1.
-bool ParseHeaderLine(const std::string& line, int& version) {
-    if (line.rfind("okaygame", 0) != 0) return false;
-    version = std::atoi(line.c_str() + 8);
-    if (version < 1) version = 1;
-    return true;
+// Where the file's `okaygame N` header says it stands. Every writer (#498 on) wrote `okaygame <number>`,
+// so a first line that starts `okaygame` with anything else after it (`okaygame ,`, `okaygamey 2`, no
+// number) is a damaged header: BadVersion, never "version 1". `shown` gets the text after the word.
+enum class HeaderLine { NotASave, BadVersion, Ok };
+HeaderLine ParseHeaderLine(const std::string& line, int& version, std::string* shown = nullptr) {
+    switch (savefmt::ParseHeaderVersion(line, "okaygame", version, shown)) {
+        case savefmt::HeaderVersion::Other: return HeaderLine::NotASave;
+        case savefmt::HeaderVersion::Damaged: return HeaderLine::BadVersion;
+        case savefmt::HeaderVersion::Ok: break;
+    }
+    return HeaderLine::Ok;
 }
 
 const char kEndLine[] = "--end--\n";
@@ -175,22 +180,37 @@ bool VerifyChecksum(const std::string& text, std::string* why) {
 enum class ReadResult { Ok, Missing, Damaged, Newer };
 
 // The header, version and checksum of a slot file's text. Ok means it is a save this build
-// reads whole; `version` is what the file says.
+// reads whole; `version` is what the file says. The end marker and checksum are checked whenever
+// the file has them, whatever its header says (the sum covers the header too), so a byte changed in
+// the first line is noticed like one anywhere else; a version 1 file (no end marker) still loads, and
+// a newer version is refused unless its checksum shows a damaged file instead.
 ReadResult ClassifyText(const std::string& text, const std::string& slot, int& version, std::string* error) {
     version = 1;
     const std::size_t nl = text.find('\n');
-    if (!ParseHeaderLine(text.substr(0, nl), version)) {
-        if (error) *error = "Slot \"" + slot + "\" isn't a save game";
+    std::string shown;
+    switch (ParseHeaderLine(text.substr(0, nl), version, &shown)) {
+        case HeaderLine::NotASave:
+            if (error) *error = "Slot \"" + slot + "\" isn't a save game";
+            return ReadResult::Damaged;
+        case HeaderLine::BadVersion:
+            if (error) *error = "Slot \"" + slot + "\" " + (shown.empty() ? std::string("has no format version on its first line (damaged)")
+                                                                          : "has an unknown format version '" + shown + "' (damaged)");
+            return ReadResult::Damaged;
+        case HeaderLine::Ok: break;
+    }
+    const bool hasEnd = text.rfind(std::string(kEndLine) + kSumKey) != std::string::npos;
+    std::string why;
+    if (hasEnd && !VerifyChecksum(text, &why)) {
+        if (error) *error = "Slot \"" + slot + "\" " + why;
         return ReadResult::Damaged;
     }
     if (version > SaveGame::kFormatVersion) {
         if (error) *error = "Slot \"" + slot + "\" was saved by a newer version of the game (save format " +
-                            std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
+                            shown + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
         return ReadResult::Newer;
     }
-    std::string why;
-    if (version >= 2 && !VerifyChecksum(text, &why)) {
-        if (error) *error = "Slot \"" + slot + "\" " + why;
+    if (version >= 2 && !hasEnd) {
+        if (error) *error = "Slot \"" + slot + "\" is cut short (no end marker)";
         return ReadResult::Damaged;
     }
     return ReadResult::Ok;
@@ -404,17 +424,18 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& op
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
     // What is there now: a good file becomes the .bak (a damaged one never replaces the last
-    // good copy); a file from a newer build is kept as .newer.bak, so going back to that build
-    // finds it.
+    // good copy, a damaged header included); a file from a newer build is kept as .newer.bak, so
+    // going back to that build finds it. The same checks as a load.
     if (fs::is_regular_file(path, ec)) {
         std::string old, why;
         int v = 1;
-        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why) && ParseHeaderLine(old.substr(0, old.find('\n')), v)) {
-            if (v > kFormatVersion) {
+        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why)) {
+            const ReadResult r = ClassifyText(old, slot, v, nullptr);
+            if (r == ReadResult::Newer) {
                 std::string kept;
                 const std::string newer = path + ".newer.bak";
                 if (!(savefmt::ReadFileCapped(newer, g_maxBytes, kept, nullptr) && kept == old)) savefmt::AtomicWrite(newer, old);
-            } else if (v < 2 || VerifyChecksum(old, &why)) {
+            } else if (r == ReadResult::Ok) {
                 savefmt::AtomicWrite(path + ".bak", old);
             }
         }
@@ -496,7 +517,7 @@ HeaderResult ReadHeaderOnly(const std::string& path, const std::string& slot, Sa
     }
     int version = 1;
     std::size_t pos = text.find('\n');
-    if (!ParseHeaderLine(text.substr(0, pos), version)) return HeaderResult::NotASave;
+    if (ParseHeaderLine(text.substr(0, pos), version) != HeaderLine::Ok) return HeaderResult::NotASave;   // a damaged header too
     info = SaveSlotInfo();
     info.slot = slot; info.exists = true; info.version = version;
     while (pos != std::string::npos && pos + 1 < text.size()) {
@@ -575,9 +596,19 @@ SaveSlotInfo SaveGame::Info(const std::string& slot, bool verify) {
     head.sizeBytes = sizeBytes;
     ResolveThumbnail(head);
     if (h == HeaderResult::Newer) {
-        head.incompatible = true;
-        head.error = NewerMessage(slot, head.version);
-        return head;
+        // With `verify`, a newer number on a file whose checksum fails is a damaged header (a load
+        // uses the backup), so it is shown like any other damaged slot below.
+        bool damaged = false;
+        if (verify) {
+            std::string text, why;
+            int v = 1;
+            damaged = savefmt::ReadFileCapped(path, g_maxBytes, text, &why) && ClassifyText(text, slot, v, nullptr) == ReadResult::Damaged;
+        }
+        if (!damaged) {
+            head.incompatible = true;
+            head.error = NewerMessage(slot, head.version);
+            return head;
+        }
     }
     if (verify) {
         std::string why;

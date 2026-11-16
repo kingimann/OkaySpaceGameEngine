@@ -202,37 +202,79 @@ namespace fs = std::filesystem;
 
 const char kTrailerTail[] = "#end\n#sum ";
 
-enum class ReadState { Ok, Missing, Damaged };
+enum class ReadState { Ok, Missing, Damaged, Newer };
 
-// Split a file's text into the keys it holds. `why` says what is wrong with a damaged one.
+// Split a file's text into the keys it holds. `why` says what is wrong with a damaged one (or that a
+// newer build wrote it).
+//
+// What is a damaged file and what is an old one, from what each writer wrote (SaveData.hpp before
+// #552: `okaysave 1` and raw lines; #552: `okaysave 2`, escaped lines; #611 on: `okaysave 3`, escaped
+// lines, `#end`, `#sum <16 hex>` over every byte before the `#sum` line):
+//  * the `#end` / `#sum` lines are checked whenever they are there, whatever the first line says, so
+//    a byte changed in the first line fails the sum like a byte anywhere else;
+//  * a first line that starts `okaysave` must go on with one space and a number (the only thing ever
+//    written there); anything else is damage, not "an older file";
+//  * a number above kFormatVersion is a newer format: never parsed (its sum is checked first, when it
+//    has one, so a damaged digit is still damage);
+//  * no header at all is the oldest layout: plain `key=value` lines, so its first line must be one.
 ReadState ParseSaveText(const std::string& raw, std::unordered_map<std::string, std::string>& out, std::string* why) {
     out.clear();
     // A raw carriage return can only come from a tool that changed the line ends (the writer
-    // escapes the ones in values), so it is dropped before the checksum and the parse.
+    // escapes the ones in values), so it is dropped before the checksum and the parse, and so is
+    // a UTF-8 byte order mark an editor put in front.
     std::string text = raw;
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
     if (text.find('\r') != std::string::npos) text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
     const std::size_t nl = text.find('\n');
     const std::string first = text.substr(0, nl);
-    const bool header = first.rfind("okaysave", 0) == 0;
     int version = 0;   // 0: no header (the oldest files)
-    if (header) {
-        version = std::atoi(first.c_str() + 8);
-        if (version < 1) version = 1;
+    std::string shown;
+    switch (savefmt::ParseHeaderVersion(first, "okaysave", version, &shown)) {
+        case savefmt::HeaderVersion::Other: version = 0; break;
+        case savefmt::HeaderVersion::Ok: break;
+        case savefmt::HeaderVersion::Damaged:
+            if (why) *why = shown.empty() ? "has no format version on its first line (damaged)"
+                                          : "has an unknown format version '" + shown + "' (damaged)";
+            return ReadState::Damaged;
     }
+    const bool header = version > 0;
     std::size_t bodyEnd = text.size();
-    if (version == SaveFile::kFormatVersion) {
-        const std::string tail = kTrailerTail;
-        const std::size_t at = text.rfind(tail);
-        if (at == std::string::npos) { if (why) *why = "is cut short (no end marker)"; return ReadState::Damaged; }
+    const std::string tail = kTrailerTail;
+    const std::size_t at = text.rfind(tail);
+    if (at != std::string::npos) {
         std::string hex = text.substr(at + tail.size());
         while (!hex.empty() && hex.back() == '\n') hex.pop_back();
         if (hex.size() != 16) { if (why) *why = "is cut short (bad checksum line)"; return ReadState::Damaged; }
         const std::size_t sumLen = at + std::strlen("#end\n");
         if (savefmt::Hex16(savefmt::Fnv1a(text.data(), sumLen)) != hex) {
-            if (why) *why = "doesn't match its checksum (damaged or edited)";
+            if (why) {
+                *why = "doesn't match its checksum (damaged or edited)";
+                if (version == 1 || version == 2)   // the documented way to edit by hand, half done
+                    *why += "; to edit a save by hand, set its first line to okaysave 2 and delete the #end and #sum lines";
+            }
             return ReadState::Damaged;
         }
         bodyEnd = at;
+    } else if (version == SaveFile::kFormatVersion) {
+        if (why) *why = "is cut short (no end marker)";
+        return ReadState::Damaged;
+    }
+    if (version > SaveFile::kFormatVersion) {
+        if (why) *why = "was saved by a newer version of the game (save format " + shown + ", this build reads up to " +
+                        std::to_string(SaveFile::kFormatVersion) + ")";
+        return ReadState::Newer;
+    }
+    if (!header) {
+        // The oldest layout is nothing but `key=value` lines. A first line that isn't one (a damaged
+        // `okaysave` line, zeros after a power cut, any other file) means this is not that layout.
+        const std::size_t s = text.find_first_not_of(" \t\n");
+        if (s != std::string::npos && s < bodyEnd) {
+            const std::size_t e = text.find('\n', s);
+            if (text.substr(s, (e == std::string::npos ? text.size() : e) - s).find('=') == std::string::npos) {
+                if (why) *why = "isn't a save file (no okaysave header, and its first line is not a key)";
+                return ReadState::Damaged;
+            }
+        }
     }
     const bool escaped = version >= 2;
     auto addLine = [&](const std::string& line) {
@@ -283,14 +325,23 @@ bool SaveFile::Load(const std::string& path) {
     ReadState st = ReadSaveFile(path, fresh, &why);
     if (st == ReadState::Ok) { m_data = std::move(fresh); return true; }
     if (st == ReadState::Missing) { m_data.clear(); return false; }
-    m_recheckOld = true;   // the file on disk is damaged: when this store is saved, check it before it becomes the backup
+    m_recheckOld = true;   // damaged or newer: when this store is saved, check the old file before it becomes the backup
+    if (st == ReadState::Newer) {
+        // Never parsed, and its .bak isn't read instead: that is most likely the same newer build's
+        // file, and an older backup would quietly undo what was played in the newer build. Save keeps
+        // the file as <path>.newer.bak before replacing it.
+        m_data.clear();
+        m_error = path + " " + why;
+        Log::Warning("Save file ", m_error);
+        return false;
+    }
     std::unordered_map<std::string, std::string> back;
     std::string backWhy;
     if (ReadSaveFile(path + ".bak", back, &backWhy) == ReadState::Ok) {
         m_data = std::move(back);
         m_fromBackup = true;
         m_error = path + " was damaged (" + why + "); loaded the backup of the previous save instead";
-        Log::Warning("Save file ", path, " was damaged; loaded its backup instead");
+        Log::Warning("Save file ", path, " was damaged and its backup was loaded instead: it ", why);
         return true;
     }
     m_data.clear();
@@ -310,11 +361,20 @@ bool SaveFile::Save(const std::string& path, std::string* error, bool durable, b
     out += "#end\n";
     out += "#sum " + savefmt::Hex16(savefmt::Fnv1a(out.data(), out.size())) + "\n";
 
-    // The file about to be replaced: a good one becomes the backup, a damaged one is set aside.
+    // The file about to be replaced: a good one becomes the backup, a damaged one is set aside,
+    // and one from a newer build is first kept as <path>.newer.bak (going back to that build finds it).
     if (checkOld || m_recheckOld) {
-        savefmt::KeepBackup(path, [](const std::string& bytes) {
+        int call = 0;   // KeepBackup looks at the file on disk first, then (when that one is bad) at the .bak
+        savefmt::KeepBackup(path, [&](const std::string& bytes) {
             std::unordered_map<std::string, std::string> parsed;
-            return ParseSaveText(bytes, parsed, nullptr) == ReadState::Ok;
+            const ReadState st = ParseSaveText(bytes, parsed, nullptr);
+            if (st == ReadState::Newer && call == 0) {
+                const std::string newer = path + ".newer.bak";
+                std::string kept;
+                if (!(savefmt::ReadFileCapped(newer, kMaxFileBytes, kept, nullptr) && kept == bytes)) savefmt::AtomicWrite(newer, bytes);
+            }
+            ++call;
+            return st == ReadState::Ok;
         });
     } else {
         savefmt::KeepBackupTrusted(path);

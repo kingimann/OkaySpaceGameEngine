@@ -500,6 +500,56 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Save file with a damaged first line loads its backup (bug fix, branch `claude2/save-header-check`, not merged or released yet)
+
+Issue #888, finding 47. Before: if the first line of a save file was damaged, the file loaded as an "old format" file
+with no check, so edited or cut-off values came back as if fine and the backup was never used. Now the file is checked
+whenever it has its `#end` / `#sum` lines, and a damaged first line is reported. Rules: `docs/save_games.md`,
+"Damaged first lines".
+
+1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) and any scene. Add an empty object, give it a
+   Script component, and put this in the script:
+
+   ```csharp
+   void Start()
+   {
+       print("coins loaded: " + load("coins", -1));
+       save("coins", 120);
+       save("coins", 50);
+   }
+   ```
+
+   Press **Play**, then **Stop**. The Console says `coins loaded: -1` (no save yet). The two `save` calls wrote
+   `save.okaysave` (coins 50) and kept the first save as `save.okaysave.bak` (coins 120).
+2. **Close the editor** (it keeps a save file in memory once it has read it, so a second Play would not read the
+   disk again). Find `save.okaysave`: in the editor, saves go into the folder the editor was started from. Started
+   from the installer's launcher that is normally `%LOCALAPPDATA%\OkaySpace\`; from the zip, the unzipped folder. If
+   it is not there, search for `save.okaysave` in Explorer. (In a built game, saves go to
+   `%APPDATA%\<Company>\<Game title>\`, from Build Settings; by default `%APPDATA%\OkaySpace\OkaySpace Game\`.)
+   Open it in Notepad. It looks like:
+
+   ```
+   okaysave 3
+   coins=f:50
+   #end
+   #sum 1a2b3c4d5e6f7a8b
+   ```
+3. Change one letter of the first line (`okaysave 3` to `okaysavX 3`) and one value (`coins=f:50` to
+   `coins=f:99`). Save in Notepad.
+4. Open the editor again, open the scene and press **Play**. You should see a yellow warning in the Console:
+   `Save file save.okaysave was damaged and its backup was loaded instead: it doesn't match its checksum (damaged or
+   edited)`, and then `coins loaded: 120` (the backup's value). Before this fix there was no warning and it said
+   `coins loaded: 99`.
+
+Extra: to edit a save by hand on purpose, change the first line to `okaysave 2` and delete the `#end` and `#sum` lines;
+then the edited value loads. If you leave those two lines in, the edit is refused and the backup is loaded (the error
+says to delete them).
+
+**Status.** Tested headless on Linux: `tests/test_save_header_damage.cpp` (the finding's tables for save files and
+save slots, the old formats, a newer format, and 5000 random one-byte changes of a save file: 0 load wrong data
+without the backup; before the fix 608 did). Nothing was run on Windows; the folder in step 2 and the Console text in
+step 4 are read from the code, not seen.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

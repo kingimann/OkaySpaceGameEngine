@@ -763,6 +763,45 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     bindTexture(g_defTex);
 }
 
+// The horizontal runs of lit pixels of every glyph of a bitmap font up to 8x8 (both built-in fonts), worked out once
+// per font instead of asking the font's pixel function 64 times per character per frame (that was most of a frame of
+// classic-look text: docs/own_ui_code_editor.md, "ImGui and ours, measured"). Two fonts are cached; a font's pixel
+// function is assumed not to change what it returns.
+struct GlyphRunCache {
+    const Font* font = nullptr;
+    bool (*pixel)(char, int, int) = nullptr;
+    int w = 0, h = 0;
+    unsigned short start[257] = {};
+    unsigned char runs[256 * 32][3] = {};   // (row, first column, length); at most 32 runs in an 8x8 glyph
+};
+GlyphRunCache g_runCache[2];
+int g_runCacheNext = 0;
+const GlyphRunCache* glyphRuns() {
+    const Font* f = g_font;
+    if (!f || !f->pixel || f->width < 1 || f->height < 1 || f->width > 8 || f->height > 8) return nullptr;
+    for (const GlyphRunCache& c : g_runCache)
+        if (c.font == f && c.pixel == f->pixel && c.w == f->width && c.h == f->height) return &c;
+    GlyphRunCache& c = g_runCache[g_runCacheNext];
+    g_runCacheNext = (g_runCacheNext + 1) % 2;
+    int n = 0;
+    for (int ch = 0; ch < 256; ++ch) {
+        c.start[ch] = (unsigned short)n;
+        for (int gy = 0; gy < f->height; ++gy) {
+            int gx = 0;
+            while (gx < f->width) {
+                if (!f->pixel((char)ch, gx, gy)) { ++gx; continue; }
+                const int g0 = gx;
+                while (gx < f->width && f->pixel((char)ch, gx, gy)) ++gx;
+                c.runs[n][0] = (unsigned char)gy; c.runs[n][1] = (unsigned char)g0; c.runs[n][2] = (unsigned char)(gx - g0);
+                ++n;
+            }
+        }
+    }
+    c.start[256] = (unsigned short)n;
+    c.font = f; c.pixel = f->pixel; c.w = f->width; c.h = f->height;
+    return &c;
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
@@ -800,6 +839,17 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         return;
     }
     float penX = x;
+    if (const GlyphRunCache* rc = glyphRuns()) {   // the same quads as below, from runs worked out once per font
+        for (const char* p = str; *p; ++p) {
+            const unsigned char ch = (unsigned char)*p;
+            for (int r = rc->start[ch]; r < rc->start[ch + 1]; ++r) {
+                const unsigned char* run = rc->runs[r];
+                quad(penX + run[1] * s, y + run[0] * s, (float)run[2] * s, s, c);
+            }
+            penX += fW() * s;
+        }
+        return;
+    }
     for (const char* p = str; *p; ++p) {
         // One quad per horizontal run of lit pixels (not per pixel): the same pixels with about a
         // third of the vertices, so a screen of classic-look text fits the fixed batch.

@@ -276,9 +276,10 @@ Result BenchImGui(const std::string& text) {
     return r;
 }
 
-Result BenchOwn(const std::string& text) {
+Result BenchOwn(const std::string& text, bool launcher) {
     Result r;
     OwnRig rig(kW, kH);
+    OkayUI::UseLauncherLook(launcher);   // the editor runs OkayUI in the launcher look (Roboto); the classic look is the 8x8 font
     { scripteditor::ScriptEditorCodeEdit warm; rig.Frame(warm); }
     const long long before = g_live.load();
     {
@@ -319,13 +320,16 @@ int Bench(const std::vector<int>& sizes) {
     for (int n : sizes) {
         const std::string text = MakeScript(n);
         const Result a = BenchImGui(text);
-        const Result b = BenchOwn(text);
+        const Result b = BenchOwn(text, false);
+        const Result c = BenchOwn(text, true);
+        OkayUI::UseLauncherLook(false);
         auto row = [&](const char* name, const Result& r) {
             std::printf("| %d | %s | %.2f | %.2f | %.3f / %.3f | %.3f / %.3f | %.3f / %.3f | %.1f |\n", n, name, r.setText, r.firstFrame,
                         r.idle.mean, r.idle.p95, r.typing.mean, r.typing.p95, r.scrolling.mean, r.scrolling.p95, (double)r.bytes / (1024.0 * 1024.0));
         };
         row("ImGuiColorTextEdit", a);
-        row("OkayUI::CodeEdit", b);
+        row("OkayUI::CodeEdit, 8x8 font", b);
+        row("OkayUI::CodeEdit, launcher look (as in the editor)", c);
         std::fflush(stdout);
     }
     return 0;
@@ -411,9 +415,57 @@ int Shots(const std::string& dir) {
 
 } // namespace
 
+// For a profiler: only idle frames of one editor ("idle own 100000 2000", "idle imgui 100000 2000"); "empty" draws the same window
+// with no editor in it, the frame cost both toolkits pay anyway.
+int Idle(const std::string& which, int lines, int frames, bool launcher) {
+    const std::string text = MakeScript(lines);
+    std::vector<double> v;
+    if (which == "imgui") {
+        ImGuiRig rig(kW, kH);
+        TextEditor te;
+        te.SetLanguageDefinition(Language()); te.SetPalette(Palette()); te.SetShowWhitespaces(false);
+        te.SetText(text);
+        for (int i = 0; i < frames; ++i) v.push_back(rig.Frame(te));
+    } else if (which == "imgui-empty") {
+        ImGuiRig rig(kW, kH);
+        for (int i = 0; i < frames; ++i) {
+            ImGui_ImplSDLRenderer2_NewFrame();
+            const auto t0 = Clock::now();
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(kEdX, kEdY)); ImGui::SetNextWindowSize(ImVec2(kEdW, kEdH));
+            ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::End();
+            ImGui::Render();
+            v.push_back(MsSince(t0));
+            ImDrawData* dd = ImGui::GetDrawData();
+            if (dd && dd->Textures) for (ImTextureData* tx : *dd->Textures) if (tx->Status != ImTextureStatus_OK) ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+        }
+    } else {
+        OwnRig rig(kW, kH);
+        if (launcher) OkayUI::UseLauncherLook(true);
+        scripteditor::ScriptEditorCodeEdit se;
+        ConfigureOwn(se);
+        se.SetText(text);
+        for (int i = 0; i < frames; ++i) {
+            if (which == "own-empty") {
+                const auto t0 = Clock::now();
+                rig.sim.Frame([&] { OkayUI::BareNextWindow(); OkayUI::Begin("Script", kEdX, kEdY, kEdW, kEdH); OkayUI::End(); });
+                v.push_back(MsSince(t0));
+            } else {
+                v.push_back(rig.Frame(se));
+            }
+        }
+    }
+    const Stats st = Summarise(std::vector<double>(v.begin() + std::min<size_t>(v.size(), 20), v.end()));
+    std::printf("%s%s %d lines: idle frame mean %.4f ms, p95 %.4f ms\n", which.c_str(), launcher ? " (launcher look)" : "", lines, st.mean, st.p95);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "bench";
     if (mode == "shots") return Shots(argc > 2 ? argv[2] : ".");
+    if (mode == "idle") return Idle(argc > 2 ? argv[2] : "own", argc > 3 ? std::atoi(argv[3]) : 100000, argc > 4 ? std::atoi(argv[4]) : 1000,
+                                    argc > 5 && std::string(argv[5]) == "launcher");
     std::vector<int> sizes;
     for (int i = 2; i < argc; ++i) sizes.push_back(std::atoi(argv[i]));
     if (sizes.empty()) sizes = {1000, 10000, 100000};

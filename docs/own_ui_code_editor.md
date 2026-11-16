@@ -136,7 +136,7 @@ Tested: `test_okayui_script_adapter` (display-column conversion with tabs and tw
 Not done, said plainly:
 - The OkayUI path of the script editor was NOT run in a real window. Only the adapter and the host input are tested headless.
 - The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor, and ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard. Both need a real window to settle.
-- The editor's own colours (`OkayScriptPalette`) and the code font (`g_codeFont`, zoom) are the ImGui editor's; the OkayUI editor uses `DefaultCodePalette()` and OkayUI's font at the editor's UI scale. `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
+- The code font (`g_codeFont`) is the ImGui editor's; the OkayUI editor uses OkayUI's font. (Step 28 passes the palette, the language words and the zoom on.) `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
 
 
@@ -183,3 +183,48 @@ for a word with help, not for one without, and the error message wins) and `test
 the palette mapping of all colours, alpha halving, short arrays ignored; the language words colour keywords, types and built-ins and survive
 colouring off and on; the tooltip in a drawn frame; overwrite through the API and through the Insert key; Ctrl+Insert, Shift+Insert,
 Shift+Delete).
+
+### ImGui and ours, measured (`codeedit_bench`)
+
+`editor/tools/codeedit_bench.cpp` (target `codeedit_bench`, built with the editor and the tests ON) runs both widgets headless on the
+same generated OkayScript (classes, functions, strings, numbers, `//`, `#` and block comments), with the script editor's language and
+palette, in a 1000 x 700 view of a 1280 x 800 frame. Timed: the widget's CPU frame, `ImGui::NewFrame` to `ImGui::Render` and
+`OkayUI::BeginFrame` to `OkayUI::EndFrameData` (rasterising is a GPU's job in the editor and is not timed). Idle: 240 frames after 60
+of warm-up. Typing: one letter per frame in the middle of the file, 240 frames. Scrolling: one wheel step per frame from the top,
+240 frames. Memory: bytes held through `operator new` after the editor was made, given the text and drawn 300 frames. Release build,
+this shared Linux machine (other jobs ran at the same time, so single numbers move by about 0.05 ms between runs; the p95 is the
+steadier one). `codeedit_bench bench 1000 10000 100000`:
+
+| Lines | Editor | SetText ms | first frame ms | idle frame ms (mean / p95) | typing frame ms (mean / p95) | scrolling frame ms (mean / p95) | memory MB |
+|---|---|---|---|---|---|---|---|
+| 1000 | ImGuiColorTextEdit | 0.67 | 1.24 | 0.100 / 0.199 | 0.537 / 0.700 | 0.054 / 0.070 | 0.5 |
+| 1000 | OkayUI::CodeEdit, 8x8 font | 0.12 | 0.28 | 0.051 / 0.064 | 0.040 / 0.063 | 0.096 / 0.136 | 0.1 |
+| 1000 | OkayUI::CodeEdit, launcher look (as in the editor) | 0.19 | 0.15 | 0.087 / 0.118 | 0.053 / 0.087 | 0.077 / 0.103 | 0.1 |
+| 10000 | ImGuiColorTextEdit | 10.65 | 14.31 | 0.223 / 0.288 | 3.578 / 4.100 | 0.126 / 0.160 | 4.9 |
+| 10000 | OkayUI::CodeEdit, 8x8 font | 0.97 | 0.13 | 0.047 / 0.061 | 0.040 / 0.059 | 0.052 / 0.079 | 0.8 |
+| 10000 | OkayUI::CodeEdit, launcher look (as in the editor) | 0.97 | 0.10 | 0.041 / 0.054 | 0.037 / 0.056 | 0.042 / 0.061 | 0.8 |
+| 100000 | ImGuiColorTextEdit | 57.12 | 38.59 | 0.143 / 0.210 | 38.271 / 60.583 | 0.123 / 0.146 | 47.9 |
+| 100000 | OkayUI::CodeEdit, 8x8 font | 9.92 | 0.30 | 0.046 / 0.056 | 0.117 / 0.169 | 0.045 / 0.054 | 7.2 |
+| 100000 | OkayUI::CodeEdit, launcher look (as in the editor) | 8.83 | 0.26 | 0.044 / 0.057 | 0.105 / 0.153 | 0.053 / 0.053 | 7.2 |
+
+**Met or not met** (ours against ImGuiColorTextEdit; "launcher look" is what the editor uses):
+
+| Measure | 1k lines | 10k lines | 100k lines |
+|---|---|---|---|
+| Set the text | met (5x faster) | met (5 to 10x) | met (6x) |
+| Idle frame | met (about equal at this size, within the noise) | met (3 to 5x faster) | met (3x) |
+| Typing frame | met (8 to 10x faster: ImGui re-colours the line with regexes) | met (about 100x) | met (about 350x: ImGui takes 38 to 42 ms a key, ours 0.1 ms) |
+| Scrolling frame | about equal (within the noise: 0.045 to 0.08 ms against 0.054 to 0.14 ms over five runs) | met (2 to 3x) | met (2 to 3x) |
+| Memory | met (0.1 MB against 0.5 MB) | met (0.8 against 4.9 MB) | met (7.2 against 47.9 MB) |
+
+**What was slow and was fixed.** The first run (before the fix) had ours slower on idle and scrolling frames at every size: 0.21 to 0.31 ms
+against ImGui's 0.09 to 0.16 ms. A profile (valgrind callgrind, `codeedit_bench idle own 10000 200`) showed 76% of the frame in OkayUI's
+8x8 text path asking the font's pixel function 64 times for every character drawn (`defGlyph`, `Font8x8::Glyph`, `drawText`); the editor
+itself was 3%. `OkayUI.cpp` now works out each bitmap font's runs of lit pixels once (`GlyphRunCache`, fonts up to 8x8, two fonts cached)
+and draws from them: the same quads, so the same pixels (the golden-image tests still pass), and 3.6x fewer instructions for the idle
+frame. What is left of the classic-look frame is the vertex writing for those quads. The launcher look (Roboto, one textured quad per
+character) never had the problem.
+
+Screenshots of the same script with colouring, an error marker on line 10 and a breakpoint on line 14, from `codeedit_bench shots <dir>`:
+`codeedit-imgui.png` (ImGuiColorTextEdit on Dear ImGui through SDL's software renderer), `codeedit-own.png` (ours, launcher look, as in the
+editor) and `codeedit-own-classic.png` (ours, 8x8 font). They are not committed (they are not golden images); run the tool to make them.

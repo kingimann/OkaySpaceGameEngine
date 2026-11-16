@@ -40,7 +40,7 @@ Audit of the navigation code before the carving work, and where each item stands
 2. Set the agent size and the limits, press **Bake**. The bake runs on a
    background thread with a progress bar; the editor stays responsive. Stats
    (polygons, links, bake time, file) appear when it is done and the Scene
-   view shows the mesh (translucent blue polygons; turn it off under Scene
+   view shows the mesh (translucent green polygons; turn it off under Scene
    View in the window).
 3. The result is written to a `.okaynav` file next to the scene
    (`Level.okayscene` -> `Level.okaynav`) and the scene file only references

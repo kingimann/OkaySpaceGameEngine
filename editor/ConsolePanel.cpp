@@ -98,10 +98,11 @@ void MergeSource(okay::ConsoleSource& src, const okay::ConsoleSource& extra) {
 
 std::string RowLabel(const okay::ConsoleRow& row) {
     const okay::ConsoleEntry& e = row.entry;
-    std::string label = "     " + ClockText(e.timeSec) + "  ";
+    // A merged row shows the time of the NEWEST message and an "x37" count badge.
+    std::string label = "     " + ClockText(row.repeat > 1 ? row.lastTimeSec : e.timeSec) + "  ";
+    if (row.repeat > 1) label += "x" + std::to_string(row.repeat) + "  ";
     if (!e.category.empty()) label += "[" + e.category + "] ";
     label += e.message;
-    if (row.repeat > 1) label += "  (" + std::to_string(row.repeat) + ")";
     return label;
 }
 
@@ -153,6 +154,7 @@ void DrawConsoleOkayUI(const char* title) {
         okayuiscreens::ConsoleHost host;
         host.clearOnPlay = &g_clearConsoleOnPlay;
         host.pauseOnError = &g_errorPause;
+        g_okayView.collapse = g_consoleCollapse;   // one shared, remembered setting for both backends
         host.copyText = [](const std::string& s) { ImGui::SetClipboardText(s.c_str()); };
         host.saveLog = [](const std::string& text) {
             std::ofstream lf("console_log.txt");
@@ -165,6 +167,7 @@ void DrawConsoleOkayUI(const char* title) {
         OkayUILookScope look;   // the editor's Dark / Light colours (not the launcher's)
         OkayUI::PushTextScale(g_uiScale);
         okayuiscreens::DrawConsole(g_model, g_okayView, host, p.x, p.y, a.x, a.y);
+        if (g_okayView.collapse != g_consoleCollapse) { g_consoleCollapse = g_okayView.collapse; SaveSettings(); }
         OkayUI::PopTextScale();
         RefreshCounts();
     }
@@ -175,7 +178,6 @@ void DrawConsoleOkayUI(const char* title) {
 void DrawConsole() {
     static char filter[96] = "";
     static bool autoScroll = true;
-    static bool collapse = false;
     static bool showInfo = true, showWarn = true, showError = true;
     static std::uint64_t selectedSeq = ~0ull;
     static int catSel = 0;
@@ -232,8 +234,9 @@ void DrawConsole() {
         float pillsW = pillW(g_consoleCounts[0]) + pillW(g_consoleCounts[1]) + pillW(g_consoleCounts[2]) +
                        cst.ItemSpacing.x * 0.5f * 2.0f;
         float moreW = ImGui::GetFrameHeight();
+        const float collapseW = ImGui::CalcTextSize("Collapse").x + cst.FramePadding.x * 2.0f;
         SearchField("##cfilter", filter, sizeof(filter), "Search log",
-                    -(pillsW + moreW + catW + cst.ItemSpacing.x * 3.0f));
+                    -(pillsW + collapseW + moreW + catW + cst.ItemSpacing.x * 4.0f));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(catW);
         if (ImGui::BeginCombo("##ccat", cats[catSel].c_str())) {
@@ -267,9 +270,16 @@ void DrawConsole() {
         ImGui::SameLine(0, cst.ItemSpacing.x * 0.5f);
         pill("##cerr",  showError, cErr,  g_consoleCounts[2], "Show / hide errors");
         ImGui::SameLine();
+        {   // Collapse: lit while on, remembered between sessions (okay_settings.txt)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(g_consoleCollapse ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(g_consoleCollapse ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+            if (ImGui::Button("Collapse##ccollapse", ImVec2(collapseW, 0))) { g_consoleCollapse = !g_consoleCollapse; SaveSettings(); }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge identical messages into one row with a count");
+        }
+        ImGui::SameLine();
         if (IconButton("##cmore", TbIcon::More, "Console options")) ImGui::OpenPopup("##conopts");
         if (ImGui::BeginPopup("##conopts")) {
-            ImGui::MenuItem("Collapse duplicates", nullptr, &collapse);
             ImGui::MenuItem("Auto-scroll", nullptr, &autoScroll);
             ImGui::MenuItem("Clear on Play", nullptr, &g_clearConsoleOnPlay);
             ImGui::MenuItem("Pause on error", nullptr, &g_errorPause);
@@ -294,7 +304,7 @@ void DrawConsole() {
         f.text = filter;
         f.category = catSel == 0 ? std::string() : cats[catSel];
         g_model.SetFilter(f);
-        g_model.SetCollapse(collapse);
+        g_model.SetCollapse(g_consoleCollapse);
         const std::vector<okay::ConsoleRow> rows = g_model.Rows();
 
         const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
@@ -356,7 +366,8 @@ void DrawConsole() {
             ImGui::PushStyleColor(ImGuiCol_Text, levelCol[lvl]);
             ImGui::TextWrapped("%s", e.message.c_str());
             ImGui::PopStyleColor();
-            std::string when = ClockText(e.timeSec);
+            std::string when = ClockText(selected->repeat > 1 ? selected->lastTimeSec : e.timeSec);
+            if (selected->repeat > 1) when += "  (" + std::to_string(selected->repeat) + " times, first at " + ClockText(e.timeSec) + ")";
             if (!e.category.empty())
                 ImGui::TextDisabled("%s  [%s]  at %s", lvl == 2 ? "Error" : lvl == 1 ? "Warning" : "Info",
                                     e.category.c_str(), when.c_str());

@@ -15,7 +15,7 @@ Open a prefab in any of three ways:
 - Right-click an object in the Hierarchy that is a prefab instance, or sits inside one > **Open Prefab**.
 - Select an instance and press **Open** in the Inspector's Prefab box.
 
-A bar appears at the top of the Scene view, the Scene view's background and frame turn blue-green, and the
+A bar appears at the top of the Scene view, the Scene view's background and frame turn green, and the
 window title shows the path (`Project / level > enemy`):
 
 - **< Back** returns one level. If the prefab has unsaved changes you are asked: Save, Don't Save, Cancel.

@@ -123,7 +123,7 @@ file, or under the project folder.
   the file the nested sequence plays.
 - The ruler: click or drag to **scrub**, wheel to zoom, middle-drag to pan.
   **Snap** rounds times to frames at the chosen fps. With **Loop** on, drag the
-  blue markers for the loop range.
+  the accent-coloured markers (light graphite on Dark, dark graphite on Light) for the loop range.
 - Entries: **double-click** a row (or its **+**) to add one at that time, **drag**
   to move, click to select and edit it on the right, **Delete** to remove. A
   transform key holds every channel keyed at that time.

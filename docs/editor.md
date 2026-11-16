@@ -66,7 +66,7 @@ cmake --build build-win-editor -j
 
 ### Self-updating
 
-The **Engine → Check for Updates** menu pulls the latest engine from GitHub
+The **Help ▸ Check for Updates...** menu pulls the latest engine from GitHub
 (`git fetch` + fast-forward `pull`) when the app is run from a source checkout,
 then prompts you to rebuild. This is the same updater the standalone launcher
 uses, built right into the engine app.
@@ -131,7 +131,7 @@ Recent additions (v2.12–2.14):
 - **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
   specular / texture / tiling, then Save or **Apply to Selection**; or drag a
   `.okaymat`/image onto an object to apply it.
-- **Save Manager** (Window ▸ Save Manager) — browse and edit `.okaysave` runtime
+- **Save Manager** (View ▸ Panels ▸ Save Manager) — browse and edit `.okaysave` runtime
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
@@ -277,9 +277,12 @@ Recent additions (v2.12–2.14):
 - **Game view** — a separate *Game* panel renders the scene through its **main
   camera** with no editor chrome (grid, gizmos, selection) — what the built game
   shows. 2D or 3D follows the camera's projection; press **Play** to make it live.
-- **GameObject menu** — create Empty / Sprite / Camera / 3D primitives, and a
-  **UI** submenu that adds each UI element (Button, Panel, Image, Text, Progress
-  Bar, Slider, Toggle) as its own GameObject.
+- **GameObject menu** — **Create Empty**, **Create Empty Child** and **Create Empty
+  Parent** (Ctrl+Shift+G), then the categories **2D Object, 3D Object, Player,
+  Light, Camera, Audio, Effects** and **UI** (each UI element is its own GameObject).
+  The same categories are in the Hierarchy's **[+]** button and right-click menus
+  and in **Create Child**. The whole menu bar, and where every item went in the
+  2026-11-15 clean-up, is in [editor_menus.md](editor_menus.md).
 - **Add Component** is grouped into sections (Rendering, Physics, Camera,
   Scripting, Audio, Gameplay, UI); the search box filters across all of them.
 - **3D meshes render solid** (flat-shaded, depth-sorted) by default in both the
@@ -300,8 +303,10 @@ Recent additions (v2.12–2.14):
   the menu), and **Find References in Scene** selects the objects that use an
   asset (texture, mesh, font, script) — the most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
-  (`.okayscene` text files), and **Build Settings…** (Ctrl+B) to export a
-  standalone, double-clickable game.
+  (`.okayscene` text files), **Examples** (one submenu), and **Build Settings…**
+  (Ctrl+B) to export a standalone, double-clickable game. **Edit** has Undo / Redo,
+  Cut / Copy / Paste / Duplicate / Delete, Select All and **Preferences** (UI scale,
+  density, theme, accent colour). Greyed-out items say why when you hover them.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame. While the game runs the toolbar also shows
@@ -430,7 +435,7 @@ MyGame/
     scene_build.txt         Scenes In Build, in order (Scene Manager)
   items.okayitems           item definitions            strings.okayloc   the string table (Localization window)
   Assets/**/*.okayloot      loot tables                 Assets/**/*.okayrecipes   crafting recipes
-                            (Window > Items, Loot & Recipes edits all three)
+                            (View > Editors & Tools > Items, Loot & Recipes edits all three)
   weapons.okayweapon        the weapon list             (View > Editors & Tools > Weapons)
 ```
 
@@ -662,7 +667,7 @@ unchanged.
   for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
   even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
   is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
-- **Theme** (View ▸ Appearance ▸ Theme): the editor has exactly two looks, **Dark** (the default) and **Light**. Both are
+- **Theme** (Edit ▸ Preferences ▸ Theme): the editor has exactly two looks, **Dark** (the default) and **Light**. Both are
   neutral greys with one neutral accent for selections, the active tab line, checks, sliders and primary buttons
   (a light graphite on Dark, a dark graphite on Light): there is no blue anywhere in the chrome and no accent colour
   menu. The choice is saved in `okay_settings.txt` (`theme 0` Dark, `theme 1` Light). An older settings file with the
@@ -673,7 +678,7 @@ unchanged.
   the accent at least 3:1 on every surface). Colours that are not chrome stay: the X red / Y green / Z blue axis
   convention, the asset label named "Blue", and the user's own colours; `python3 scripts/find_blue_ui.py` lists every
   blue colour literal and the reason for each one that was kept.
-- **Density** (View ▸ Appearance ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
+- **Density** (Edit ▸ Preferences ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
   spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
   label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the
   space above each component.
@@ -693,13 +698,17 @@ unchanged.
 
 - **Hierarchy right-click**:
   - On an object: Cut / Copy / Paste, **Select** (children, everything below,
-    parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
-    (reset position, rotation, scale or all; move to the view centre), **Order**
-    (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
-    **Delete Children** (empties a container and keeps the object; one undo
-    step), plus create, parent and prefab actions.
-  - On empty space: create objects, **Select All**, **Deselect**,
-    **Expand / Collapse All** and **Sort A-Z**.
+    parent, siblings, same name, **same type**), **Expand / Collapse All Below**,
+    **Transform** (reset position, rotation, scale or all; move to the view
+    centre), **Order** (move up, down, to top or bottom; greyed at the ends),
+    **Copy Name or Path**, **Delete Children** (empties a container and keeps the
+    object; one undo step), **Create Child** (every Create category, the same as
+    GameObject), **Add Component...** (opens the Inspector's browser) plus parent
+    and prefab actions. With several objects selected the labels count them
+    ("Delete 3 Objects"), and an item that cannot work says why when you hover it.
+    The full list and what changed: [editor_menus.md](editor_menus.md).
+  - On empty space: **Create Empty** and the Create categories, **Paste**,
+    **Select All**, **Deselect**, **Expand / Collapse All** and **Sort A-Z**.
 - **Project right-click**:
   - On an asset: **Add to Open Scene** (scenes), **Place in Scene** or **Place
     as Child of Selected** (prefabs), **Add to Favorites** (folders), and **Copy
@@ -725,7 +734,7 @@ unchanged.
   is the current state, hollow rows above are redo steps, below are undo
   steps; click any row to jump straight there.
 - **Add Component search**: results in the flat search list carry a
-  category-colored dot (blue Rendering, green Physics, teal Animation, ...),
+  category-colored dot (coral Rendering, green Physics, pink Animation, ...),
   and Enter still adds the first match.
 - **Hierarchy search**: results show a dimmed `in Parent / Child` path so
   same-named objects are tellable apart; double-click frames the object.
@@ -892,7 +901,7 @@ step, a press that changes nothing is none, and a field that already made its ow
   kept), near the top or bottom edge to place it before or after. A group of selected rows moves together in hierarchy
   order, a selected parent brings its children, and nothing can be dropped into itself or its own child. Dropping on
   empty space moves the whole selection to the top level. The row you dropped on opens so you see where things went.
-- Prefab instances read blue and have a small blue mark on the icon (lighter for objects inside an instance).
+- Prefab instances read lime green and have a small lime-green mark on the icon (lighter for objects inside an instance).
 - Drag a prefab, a model or a picture from the Project panel onto a row (child, or beside it near the edge) or onto
   empty space to add it. Each is one undo step.
 - When you click an object in the Scene view that is scrolled out of the list, the Hierarchy scrolls to it.
@@ -925,14 +934,14 @@ Everything below is wired to `PrefabTools` (nothing is a second prefab system); 
 - **Header.** An object in a prefab instance shows **Prefab: <name>** with **Open**, **Select Asset**, **Revert All**,
   **Apply All**, **Create Variant**, **Update All** and **Unpack** (an object inside the instance also has **Select Instance
   Root**). Revert All and Apply All are off, with a tooltip, when nothing differs.
-- **Per property.** A property that differs from the prefab has a blue bar at the left of its row; right-click it for
+- **Per property.** A property that differs from the prefab has a lime-green bar at the left of its row; right-click it for
   **Revert Property** / **Apply Property to Prefab**. The component's `...` menu has **Revert Component to Prefab** /
   **Apply Component to Prefab**.
 - **Changed from the prefab** lists components, fields (old -> new), components added or lost, and child objects added or
   lost, each with Revert and Apply.
 - **Apply** writes the prefab file and updates the other instances in the scene that did not change the same thing.
   Every action is one undo step that moves the prefab file back and forth with the scene.
-- **Hierarchy.** Blue mark: instance root; violet: instance of a variant; square in a square: a prefab nested in
+- **Hierarchy.** Lime-green mark: instance root; purple: instance of a variant; square in a square: a prefab nested in
   another; orange dot: differs from its prefab. Row menu > **Prefab**. Project panel: **Create Variant** on a prefab.
 - Tests: `prefab_editor` (`tests/test_prefab_editor.cpp`).
 

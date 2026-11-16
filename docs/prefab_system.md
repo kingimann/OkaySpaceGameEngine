@@ -278,16 +278,16 @@ prefab code of its own: reading and writing prefab files, overrides, nesting and
 `PrefabTools`; `PrefabEdit` adds undo, the update of other instances and the names the Inspector shows.
 
 **What you see**
-- Hierarchy: an instance root has a blue mark on its icon, an instance of a variant a violet one, a prefab nested
+- Hierarchy: an instance root has a lime-green mark on its icon, an instance of a variant a purple one, a prefab nested
   inside a bigger one a square with an inner square, and an orange dot when the instance differs from its prefab
   (hover the mark for the kind and the number of changes). The row menu has a **Prefab** submenu: Open, Select
   Asset, Revert All, Apply All, Create Variant..., Update All Instances, Unpack, Unpack Completely.
 - Inspector header **Prefab: <name>** (with "Prefab Variant of <base>" or "nested in <outer>" beside it) and the
   buttons **Open**, **Select Asset**, **Revert All**, **Apply All**, **Create Variant**, **Update All**, **Unpack**.
   An object inside an instance shows the same header with **Select Instance Root**.
-- A property that differs from the prefab has a blue bar at the left of its row. Right-click it:
+- A property that differs from the prefab has a lime-green bar at the left of its row. Right-click it:
   **Revert Property** or **Apply Property to Prefab** (a vector or colour acts on all its parts that differ).
-- A component that differs has a blue header bar and **Revert Component to Prefab** / **Apply Component to
+- A component that differs has a lime-green header bar and **Revert Component to Prefab** / **Apply Component to
   Prefab** in its `...` menu. A component added to the instance reads **Revert Added Component** (it is removed).
 - **Changed from the prefab** lists, for the selected object, each component with Revert / Apply, each field with
   its old and new value and its own Revert / Apply, components added or lost, and (on the root) child objects added

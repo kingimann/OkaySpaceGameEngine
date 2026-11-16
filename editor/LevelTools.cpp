@@ -292,7 +292,7 @@ void MeasureTool(EditorState& ed, ImDrawList* dl, const View& v, const Mat4& vp,
         if (!v.ToScreen((a + b) * 0.5f, s)) return;
         const ImVec2 ts = ImGui::CalcTextSize(text);
         const ImVec2 p0(s.x - ts.x * 0.5f - 6, s.y - ts.y - 12), p1(s.x + ts.x * 0.5f + 6, s.y - 6);
-        dl->AddRectFilled(p0, p1, IM_COL32(20, 22, 28, live ? 190 : 235), 4.0f);
+        dl->AddRectFilled(p0, p1, IM_COL32(23, 23, 23, live ? 190 : 235), 4.0f);
         dl->AddText(ImVec2(p0.x + 6, p0.y + 2), live ? IM_COL32(207, 207, 207, 255) : IM_COL32(255, 235, 120, 255), text);
     };
     const ImU32 col = IM_COL32(255, 220, 80, 255);

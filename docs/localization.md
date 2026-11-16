@@ -113,7 +113,7 @@ key, a column for its note and one per language.
   keys **missing in** one language, **placeholder mismatches** (`{0}` / `{name}`
   different from the source text), text that is **same as source**, **unused**
   keys, or **reported issues**.
-- Cells are coloured: red is missing, amber is a placeholder mismatch, blue is
+- Cells are coloured: red is missing, amber is a placeholder mismatch, grey is
   the same as the source, purple is extra text. Hover a coloured cell for the
   reason.
 - Under the filter, a line reports missing translations and placeholder

@@ -11,7 +11,7 @@ projectile leaves behind.
 
 ## Making a spline
 
-**GameObject > Spline** adds an object with three points in front of the Scene
+**GameObject > Effects > Spline** adds an object with three points in front of the Scene
 camera, dropped onto whatever is under the camera's target, and picks the
 middle point so you can drag it straight away. **Add Component > Gameplay >
 Spline** puts one on an existing object.
@@ -37,7 +37,7 @@ Points To Ground** drops every point onto the collider or terrain below it and
 
 ### Editing in the Scene view
 
-Select the object. Every spline in the scene is drawn as a thin blue curve; the
+Select the object. Every spline in the scene is drawn as a thin green curve; the
 selected one is yellow, with a dot at each point and a short green tick that
 shows its up direction (and so its roll).
 

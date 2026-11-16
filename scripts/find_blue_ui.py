@@ -37,7 +37,8 @@ DEFAULT_PATHS = ["editor", "okayui", "shared"]
 EXTS = (".cpp", ".hpp", ".h", ".inc")
 SKIP_DIRS = {"vendor", "build", ".git", "tests"}   # vendor/ is the third-party text editor (its two built-in palettes are overridden by SetPalette); tests embed golden colours
 NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?f?"
-TUP3 = r"\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*(?:,\s*(%s)\s*)?" % (NUM, NUM, NUM, NUM)
+ALPHA = r"[^,()]+(?:\([^()]*\)[^,()]*)*"   # the 4th argument may be a variable or a small expression: IM_COL32(80, 170, 255, a)
+TUP3 = r"\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*(?:,\s*(%s)\s*)?" % (NUM, NUM, NUM, ALPHA)
 
 RE_IMCOL32 = re.compile(r"IM_COL32\(" + TUP3 + r"\)")
 RE_IMVEC4 = re.compile(r"ImVec4(?:\s+\w+)?\s*[({]" + TUP3 + r"[)}]")

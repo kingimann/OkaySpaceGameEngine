@@ -50,7 +50,7 @@ exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
 
 ## Items, loot tables and recipes
 
-**Window > Items, Loot & Recipes** (also **View > Editors & Tools > Items, Loot & Recipes**) is one window with three tabs. You can list, search, add, duplicate, delete and edit:
+**View > Editors & Tools > Items, Loot & Recipes** is one window with three tabs. You can list, search, add, duplicate, delete and edit:
 
 - **Items**, saved as the project's `items.okayitems`.
 - **Loot tables** (`.okayloot`): each entry has a weight and a quantity range. **Roll** previews a drop with the same roll the game uses.
@@ -94,7 +94,7 @@ NPC stops making progress for ~0.8 s (wedged on a corner or another NPC).
 
 Selecting an NPC in the Scene view draws its **perception** too: a
 yellow sight-cone arc at eye height (Sight Range + Field Of View) and a
-blue circle for Hearing Range, so you can tune a guard's senses visually.
+orange circle for Hearing Range, so you can tune a guard's senses visually.
 That cone, the optional wall check and the hearing radius are the same
 check a behavior tree's Perception service uses, so the two agree when
 the numbers match. Each one keeps its own numbers: a new NPC starts with

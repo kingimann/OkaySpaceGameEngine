@@ -138,7 +138,7 @@ point up or down to change that channel's value on its key, sideways to move
 the key in time (Shift keeps the time); the channel checkboxes hide curves.
 
 **Onion skin** (the toolbar's ghost button, with the number of keys per side)
-draws the rig at the keys before the playhead in orange and after it in blue
+draws the rig at the keys before the playhead in orange and after it in green
 as thin lines in the Scene view, fading with distance, so an in-between pose
 can be judged against its neighbours.
 

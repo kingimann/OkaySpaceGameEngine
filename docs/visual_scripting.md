@@ -462,7 +462,7 @@ this object's 2D body away from a point; the push fades to nothing at the
 radius, and a kinematic or static body is left alone. See [physics](physics.md).
 
 **Physics debug view.** *View ▸ Scene Overlays ▸ Physics Debug* (or the **Physics**
-checkbox on the Game view toolbar) draws colliders (green solid, blue trigger,
+checkbox on the Game view toolbar) draws colliders (green solid, amber trigger,
 grey asleep), this frame's contact points with their normals (red) and, with
 *Rays cast from scripts* on, every ray / cast made by OkayScript, visual scripts
 and Actions (green to the hit with a white normal, yellow on a miss) — in the
@@ -594,8 +594,8 @@ Every data pin has a type, shown by its colour (hover a pin to see it):
 | red | Bool |
 | pink | Text |
 | yellow | Vector3 |
-| blue | Object |
-| cyan | List |
+| light grey | Object |
+| lime | List |
 | purple | Map (a struct is a map with declared fields) |
 | orange | Color |
 | grey | Any (variables, events, Select, Equals, Format...) |

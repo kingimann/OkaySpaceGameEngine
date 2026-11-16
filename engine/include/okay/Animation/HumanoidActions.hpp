@@ -97,6 +97,10 @@ bool RequestSit(GameObject* go, GameObject* seatObject, int sitType = 1);
 /// Leave Sit through StandUp and free the Seat.
 void RequestStandUp(GameObject* go);
 bool IsSitting(GameObject* go);
+/// Sit pose for a vehicle seat: the same chair sit (SitDown then Sit, sitType 0) the chair Seat uses,
+/// but with no chair Seat and no floor check. The caller carries the body. False when `go` is dead
+/// or has no humanoid animator (the body is then simply carried upright). End it with RequestStandUp.
+bool BeginVehicleSit(GameObject* go);
 /// Nearest Seat in range, else a ground sit when the floor is flat. Already
 /// sitting stands up.
 void Interact(GameObject* go);

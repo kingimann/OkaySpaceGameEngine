@@ -126,11 +126,11 @@ float FileKB(const std::string& p) {
 
 void Tip(const char* text) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text); }
 
-// The colour an area is drawn in (Scene view overlay, area table): blue ground, red blocked,
+// The colour an area is drawn in (Scene view overlay, area table): green ground, red blocked,
 // teal water, tan road, and a stable hue per custom area.
 ImU32 AreaColor(int area, int alpha) {
     switch (area) {
-        case NavArea::Walkable:    return IM_COL32(70, 150, 255, alpha);
+        case NavArea::Walkable:    return IM_COL32(90, 205, 110, alpha);
         case NavArea::NotWalkable: return IM_COL32(230, 60, 60, alpha);
         case NavArea::Water:       return IM_COL32(40, 200, 190, alpha);
         case NavArea::Road:        return IM_COL32(225, 190, 90, alpha);

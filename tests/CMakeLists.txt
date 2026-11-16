@@ -2953,11 +2953,11 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
-# The launcher's own Dear ImGui renderer (launcher/ImGuiOwnBackend.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference software
+# The launcher's own Dear ImGui renderer (shared/ImGuiOwnRenderer.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference software
 # rasterisation of the same draw data: headless on the software painter, and under Xvfb on our OpenGL painter
 # (engine/src/Platform/GlPainter.cpp) on an sdl2 and an own window. Own code, off by default; the tests only check it.
 if(TARGET launcher_imgui AND TARGET okay_ui_soft)
-    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/launcher/ImGuiOwnBackend.cpp
+    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp
         ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
     target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
     target_link_libraries(test_launcher_imgui_renderer PRIVATE launcher_imgui okay_ui_soft)
@@ -2992,6 +2992,28 @@ if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 
     set_tests_properties(editor_platform editor_platform_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     set_tests_properties(editor_platform PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
     set_tests_properties(editor_platform_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+endif()
+
+# The editor's drawing seam (editor/EditorGfx.*, OKAY_EDITOR_RENDERER=own, docs/sdl_removal_plan.md stage E2) without the editor:
+# the same editor-like frame (ImGui shapes, clip, text, a thumbnail, a 3D view rendered in the views' hidden GL context and read
+# back, a texture with blending off, a texture made again) through the sdl side (SDL_Renderer, ImGui's SDL_Renderer backend) and
+# the own side (our GL painter on the main window's GL context, our ImGui renderer, shared/ImGuiOwnRenderer.*), checked at known
+# pixels and against each other; the switch; the cost of the views' copy at 1920 x 1080. Under Xvfb; the _own entry makes the
+# views' GL window and context with our own X11 / GLX code. Own code, off by default; the test only checks it.
+if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_editor_gfx test_editor_gfx.cpp ${PROJECT_SOURCE_DIR}/editor/EditorGfx.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorGfxSdl.cpp ${PROJECT_SOURCE_DIR}/editor/EditorPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorPlatformSdl.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp)
+    target_include_directories(test_editor_gfx PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_gfx PRIVATE ${_okay_ep_imgui} okay::engine okay::platform SDL2::SDL2)   # okay::engine: the GL painter
+    add_test(NAME editor_gfx
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_gfx>)
+    add_test(NAME editor_gfx_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_gfx>)
+    set_tests_properties(editor_gfx editor_gfx_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    set_tests_properties(editor_gfx PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
+    set_tests_properties(editor_gfx_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.

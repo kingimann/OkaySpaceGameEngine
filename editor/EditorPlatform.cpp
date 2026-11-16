@@ -1,7 +1,8 @@
 // The editor platform seam: the switch, and the own side (OKAY_EDITOR_PLATFORM=own). See EditorPlatform.hpp.
 //
 // The own side, piece by piece:
-//  * Main window: okay::platform's sdl2 backend makes it (Backend::MakeWindow), because SDL_Renderer still draws it (stage E2).
+//  * Main window: okay::platform's sdl2 backend makes it (Backend::MakeWindow), because main.cpp still reads SDL's event queue for it
+//    (stage E3); with OKAY_EDITOR_RENDERER=own it gets an OpenGL context for our GL painter (stage E2, EditorGfx.hpp).
 //  * ImGui: our glue (shared/ImGuiOwnPlatform.*, the same code as the launcher's OKAY_LAUNCHER_RENDERER=own) on the sdl2 backend
 //    (the window's backend: text input, cursor shapes and the clipboard must act on that window). Events: main.cpp reads SDL's queue
 //    and each SDL_Event is turned into an okay::platform::Event (TranslateSdl2Event) before the glue sees it.
@@ -49,23 +50,25 @@ public:
     std::string Describe() const override {
         std::string s = "own (ImGui glue on okay::platform; viewport GL on ";
         s += m_glBackend ? m_glBackend->Name() : BackendName(plat::DefaultKind());
-        s += "; SDL_Renderer still draws the window)";
+        s += "; the main window is an SDL window)";
         return s;
     }
     std::string LastError() const override { return m_err; }
 
-    void* CreateMainWindow(const std::string& title, int w, int h) override {
+    void* CreateMainWindow(const std::string& title, int w, int h, bool opengl) override {
         plat::WindowDesc d;
         d.title = title;
         d.width = w; d.height = h;
         d.resizable = true;
         d.highDpi = true;
         d.hidden = true;
+        d.opengl = opengl;
         m_win = m_sdl.MakeWindow(d);
         if (!m_win) { m_err = "main window: " + m_sdl.LastError(); return nullptr; }
         return m_win->NativeHandle();   // the SDL_Window*
     }
     plat::Window* MainWindow() override { return m_win.get(); }
+    plat::Backend* MainWindowBackend() override { return &m_sdl; }
     void DestroyMainWindow() override { m_win.reset(); }
 
     bool InitImGui(void*) override {
@@ -158,7 +161,7 @@ private:
 std::unique_ptr<EditorPlatform> CreateOwnEditorPlatform(std::string* err) {
     plat::Backend* sdl = plat::Get(plat::BackendKind::Sdl2);
     if (!sdl) {
-        if (err) *err = "okay::platform has no sdl2 backend in this build (SDL_Renderer still draws the editor's window)";
+        if (err) *err = "okay::platform has no sdl2 backend in this build (the editor's main window is still an SDL window)";
         return nullptr;
     }
     return std::unique_ptr<EditorPlatform>(new OwnEditorPlatform(*sdl));

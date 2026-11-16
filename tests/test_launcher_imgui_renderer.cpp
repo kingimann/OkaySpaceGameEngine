@@ -1,4 +1,4 @@
-// The launcher's own Dear ImGui renderer (launcher/ImGuiOwnBackend.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference
+// The launcher's own Dear ImGui renderer (shared/ImGuiOwnRenderer.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference
 // software rasterisation written here, independently, from the ImDrawData contract in imgui.h:
 //   for every command: clip rectangle (minus DisplayPos, times FramebufferScale), triangles from IdxOffset relative to
 //   VtxOffset, a pixel is covered when its centre is inside (top-left rule on ties), colour and uv interpolated

@@ -32,13 +32,14 @@ public:
     std::string Describe() const override { return "sdl (SDL window, ImGui SDL2 backend, viewport GL through SDL)"; }
     std::string LastError() const override { return SDL_GetError(); }
 
-    void* CreateMainWindow(const std::string& title, int w, int h) override {
+    void* CreateMainWindow(const std::string& title, int w, int h, bool opengl) override {
         m_win = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h,
-                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN | (opengl ? SDL_WINDOW_OPENGL : 0));
         if (m_win) m_view = okay::platform::WrapSdl2Window(m_win);
         return m_win;
     }
     okay::platform::Window* MainWindow() override { return m_view.get(); }
+    okay::platform::Backend* MainWindowBackend() override { return okay::platform::Get(okay::platform::BackendKind::Sdl2); }
     void DestroyMainWindow() override {
         m_view.reset();
         if (m_win) SDL_DestroyWindow(m_win);

@@ -10,9 +10,10 @@
 //                       are made through okay::platform::Default() (sdl2, or our X11 / Win32 code with
 //                       OKAY_PLATFORM_BACKEND=own) (EditorPlatform.cpp).
 //
-// What stays SDL's in both, until stage E2: SDL_Renderer draws the main window (ImGui's draw data, every texture the panels
-// show), so the main window must be an SDL window, and the events are read from SDL's queue (main.cpp still reads the SDL_Event
-// for its own shortcuts, drops and play-mode input; `own` translates each one with okay::platform::TranslateSdl2Event for ImGui).
+// What stays SDL's in both: the main window is an SDL window (SDL_Renderer draws it by default; with the drawing seam's own
+// renderer, OKAY_EDITOR_RENDERER=own (stage E2, EditorGfx.hpp), our GL painter draws it through a GL context SDL made), and the
+// events are read from SDL's queue (main.cpp still reads the SDL_Event for its own shortcuts, drops and play-mode input; `own`
+// translates each one with okay::platform::TranslateSdl2Event for ImGui).
 // `own` has no ImGui multi-viewport windows (panels dragged out of the editor stay inside it).
 //
 // OWN CODE, NOT READY: `own` is off by default until the owner approves it (rule 17). Written from the okay::platform interfaces
@@ -45,11 +46,15 @@ public:
     virtual std::string LastError() const = 0;
 
     // ---- the main window -------------------------------------------------------------------------
-    /// The editor's main window: centred, `w` x `h`, resizable, high-DPI, created HIDDEN. Returns the SDL_Window* (SDL_Renderer
-    /// draws it in both implementations until stage E2); null on failure (see LastError).
-    virtual void* CreateMainWindow(const std::string& title, int w, int h) = 0;
+    /// The editor's main window: centred, `w` x `h`, resizable, high-DPI, created HIDDEN. Returns the SDL_Window* (it is an SDL
+    /// window in both implementations until stage E3: main.cpp reads SDL's event queue); null on failure (see LastError).
+    /// `opengl`: the window will carry an OpenGL context (the drawing seam's own renderer, OKAY_EDITOR_RENDERER=own, stage E2).
+    virtual void* CreateMainWindow(const std::string& title, int w, int h, bool opengl = false) = 0;
     /// okay::platform's view of the main window (null before CreateMainWindow).
     virtual okay::platform::Window* MainWindow() = 0;
+    /// The okay::platform backend that made the main window (its GL functions, for the own renderer): the sdl2 backend in both
+    /// implementations for now; null when okay::platform has no sdl2 backend.
+    virtual okay::platform::Backend* MainWindowBackend() = 0;
     virtual void DestroyMainWindow() = 0;
 
     // ---- Dear ImGui's platform side (the ImGui context exists and is current) ------------------------

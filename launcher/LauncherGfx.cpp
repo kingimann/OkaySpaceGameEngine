@@ -1,7 +1,7 @@
 // The own implementation of the launcher's drawing seam (LauncherGfx.hpp), the renderer switch and the frame-time log.
 // No SDL in this file: the window comes from okay::platform (whichever backend is the default), the painter is our
 // OpenGL painter (engine/src/Platform/GlPainter.cpp) or, without GL, the software painter (okayui/soft), and ImGui's
-// backends are our own (ImGuiOwnBackend.cpp).
+// backends are our own (shared/ImGuiOwnRenderer.cpp, shared/ImGuiOwnPlatform.cpp).
 #include "LauncherGfx.hpp"
 #include "ImGuiOwnBackend.hpp"
 

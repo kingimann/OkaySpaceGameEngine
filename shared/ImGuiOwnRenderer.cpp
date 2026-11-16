@@ -1,4 +1,6 @@
-// The launcher's own Dear ImGui renderer. See ImGuiOwnBackend.hpp. (The platform glue moved to shared/ImGuiOwnPlatform.cpp.)
+// Our own Dear ImGui renderer on an okay::platform::Painter, shared by the launcher (OKAY_LAUNCHER_RENDERER=own) and the editor
+// (OKAY_EDITOR_RENDERER=own). See ImGuiOwnRenderer.hpp. (Moved here from launcher/ImGuiOwnBackend.cpp, where it was written; the
+// platform glue is shared/ImGuiOwnPlatform.cpp.)
 //
 // Written from imgui.h's documented contract only:
 //  * ImDrawData: CmdLists of ImDrawList, each with VtxBuffer / IdxBuffer and CmdBuffer; a command draws ElemCount
@@ -10,16 +12,17 @@
 //    AddKeyEvent, AddInputCharactersUTF8, AddFocusEvent; DisplaySize, DisplayFramebufferScale, DeltaTime.
 //  * ImGuiPlatformIO::Platform_SetImeDataFn: called at the end of a frame with the caret position (InputPos, in ImGui's
 //    coordinates, minus the viewport's Pos) and the line height while a text field wants the input method (WantVisible).
-#include "ImGuiOwnBackend.hpp"
+#include "ImGuiOwnRenderer.hpp"
 
 #include "imgui.h"
 
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 
-namespace okay::launchergfx {
+namespace okay::imguiown {
 
 namespace plat = okay::platform;
 
@@ -161,4 +164,4 @@ void ImGuiPainterRenderer::Render(ImDrawData* dd) {
     m_p.SetClipRect(nullptr);
 }
 
-} // namespace okay::launchergfx
+} // namespace okay::imguiown

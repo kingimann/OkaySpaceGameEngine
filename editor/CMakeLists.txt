@@ -85,7 +85,9 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
     EditorPlatform.cpp EditorPlatformSdl.cpp                           # the platform seam: OKAY_EDITOR_PLATFORM=own (our ImGui glue, viewport GL via okay::platform) / sdl
+    EditorGfx.cpp EditorGfxSdl.cpp                                     # the drawing seam: OKAY_EDITOR_RENDERER=own (our GL painter, our ImGui renderer) / sdl (SDL_Renderer)
     ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp                    # our own ImGui platform glue over okay::platform (shared with the launcher)
+    ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp                    # our own ImGui renderer on an okay::platform::Painter (shared with the launcher)
     ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window

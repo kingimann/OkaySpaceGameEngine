@@ -52,7 +52,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     LauncherThreads.cpp   # threads, mutexes and atomics over our own CoreThreads (no SDL; tested by core_threads)
     LauncherGfx.cpp       # the drawing seam: OKAY_LAUNCHER_RENDERER=own (window via okay::platform, our GL painter, our ImGui backends)
     LauncherGfxSdl.cpp    # the drawing seam's sdl side: SDL_Renderer + ImGui's SDL2 backends (the default)
-    ImGuiOwnBackend.cpp   # our own ImGui renderer (on an okay::platform::Painter) (tested by launcher_imgui_renderer)
+    ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp                   # our own ImGui renderer on an okay::platform::Painter (shared with the editor; tested by launcher_imgui_renderer)
     ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp                   # our own ImGui platform glue over okay::platform (shared with the editor)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp

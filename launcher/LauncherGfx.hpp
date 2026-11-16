@@ -7,7 +7,7 @@
 //                       launcher always did, call for call (LauncherGfxSdl.cpp).
 //   own  (opt-in)       a window made through okay::platform, our OpenGL painter on its GL context (or the software
 //                       painter when the window has no GL), our own ImGui renderer and platform glue
-//                       (ImGuiOwnBackend.cpp). No SDL_Renderer, no ImGui SDL backends (LauncherGfx.cpp).
+//                       (shared/ImGuiOwnRenderer.cpp). No SDL_Renderer, no ImGui SDL backends (LauncherGfx.cpp).
 //
 // OWN CODE, NOT READY: `own` is off by default until the owner approves it (docs/sdl_removal_plan.md, stage B).
 // Header rules (MinGW): no <mutex> / <thread> here, no SDL types (they stay in LauncherGfxSdl.cpp).

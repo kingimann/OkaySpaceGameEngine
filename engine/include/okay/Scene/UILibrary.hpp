@@ -6,6 +6,7 @@
 // data-driven glue: bindings, conditions, array lists, rich text links, hot reload). Written for this engine from its own UI helpers
 // (UITemplates, UIGallery's card helpers); no other project's code or assets were used.
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/UITextBind.hpp"
@@ -39,6 +40,7 @@ inline GameObject* Note(Scene& s, GameObject* parent, const char* name, const st
 
 /// Slice 1: essentials and layout. Returns the page root.
 inline GameObject* BuildSlice1(Scene& scene) {
+    EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
     GameObject* canvas = EnsureCanvas(scene);
     if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
     GameObject* root = Group(scene, canvas, "UI Library 1");
@@ -130,11 +132,13 @@ inline GameObject* BuildSlice1(Scene& scene) {
 
 /// The markup the hot-reload demo starts with (also the content of examples/ui_library/hot_reload_demo.okayui).
 inline const char* HotReloadDemoMarkup() {
-    return "text \"HOT RELOAD: change these words in hot_reload_demo.okayui and save\" pos=20,262 size=2 color=250,200,80,255\n";
+    return "text \"HOT RELOAD: edit and save\" pos=20,254 size=1.5 color=250,200,80,255\n"
+           "text \"hot_reload_demo.okayui\" pos=20,270 size=1.5 color=250,200,80,255\n";
 }
 
 /// Slice 2: game HUD parts and the data-driven glue. Returns the page root.
 inline GameObject* BuildSlice2(Scene& scene) {
+    EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
     GameObject* canvas = EnsureCanvas(scene);
     if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
     GameObject* root = Group(scene, canvas, "UI Library 2");
@@ -142,8 +146,8 @@ inline GameObject* BuildSlice2(Scene& scene) {
     scene.Find("Backdrop")->GetComponent<UIPanel>()->borderWidth = 0.0f;
     Text(scene, root, "Title", "UI Library 2", UIAnchor::TopLeft, {32, 12}, {600, 40}, 30.0f, slate::Text(), 0, true);
     detail2::Note(scene, root, "Subtitle",
-         "Game parts and data-driven parts. Press Play, then use the buttons, the sliders and these keys: Q uses the ability, Tab moves the focus ring.",
-         {34, 50}, 820, 40);
+         "Game parts and data-driven parts. Press Play, then click the buttons and drag the sliders. Q uses the ability, Tab moves the focus ring.",
+         {34, 50}, 800, 40);
 
     // The no-code glue: a script on one object runs the quest buttons and fills the list.
     GameObject* demo = Child(scene, root, "Demo");
@@ -156,8 +160,8 @@ inline GameObject* BuildSlice2(Scene& scene) {
         "function quest_talk() { complete_objective(\"wolves\", 1); }\n"
         "function quest_bridge() { complete_objective(\"wolves\", 2); }\n"
         "function quest_again() { fail_quest(\"wolves\"); start_quest(\"wolves\"); }\n"
-        "function add_score() { run_action(\"array_push scores 55\"); }\n"
-        "function clear_scores() { run_action(\"array_clear scores\"); }\n");
+        "function more_scores() { run_action(\"array_push scores 55\"); }\n"
+        "function empty_scores() { run_action(\"array_clear scores\"); }\n");
     {
         GameObject* q = Child(scene, root, "Quests");
         auto* log = q->AddComponent<QuestLog>();
@@ -215,14 +219,16 @@ inline GameObject* BuildSlice2(Scene& scene) {
     {
         GameObject* g = Child(scene, c2, "Wheel");
         auto* w = g->AddComponent<UIRadialMenu>();
-        w->anchor = UIAnchor::TopLeft; w->position = {14, 54}; w->size = {232, 232};
-        w->items = "Attack|Defend|Heal|Run"; w->alwaysShown = true; w->holdToOpen = false; w->innerRadius = 36.0f;
+        w->anchor = UIAnchor::TopLeft; w->position = {10, 58}; w->size = {220, 220};
+        w->items = "Attack|Defend|Heal|Run"; w->alwaysShown = true; w->holdToOpen = false; w->innerRadius = 30.0f;
         w->chosenVar = "radial_pick";
-        GameObject* t = detail2::Note(scene, c2, "Picked", "You picked: {radial_pick_text|nothing yet}", {258, 64}, 120, 80);
-        t->AddComponent<UITextBind>()->format = "You picked: {radial_pick_text|nothing yet}";
-        t->GetComponent<TextRenderer>()->color = slate::Text();
-        onClick(gx::Btn(scene, c2, "NewKill", "New kill", {258, 168}, {114, 36}, 0), "KillFeed", "AddSampleKill");
-        detail2::Note(scene, c2, "WheelHint", "Point at the wheel and click a wedge. The kill feed is at the top right of the screen.", {258, 214}, 120, 80);
+        gx::Label(scene, c2, "PickedLabel", "You picked", {244, 62}, 130, slate::Dim(), 12.0f);
+        GameObject* t = Text(scene, c2, "Picked", "nothing yet", UIAnchor::TopLeft, {244, 82}, {130, 40}, 15.0f, slate::Text());
+        t->GetComponent<TextRenderer>()->wrap = true; t->GetComponent<TextRenderer>()->vcenter = false;
+        t->AddComponent<UITextBind>()->format = "{radial_pick_text|nothing yet}";
+        onClick(gx::Btn(scene, c2, "NewKill", "New kill", {244, 140}, {128, 36}, 0), "KillFeed", "AddSampleKill");
+        GameObject* hint = Text(scene, c2, "WheelHint", "Click a wedge. Kills show at the top right of the screen.", UIAnchor::TopLeft, {244, 186}, {128, 90}, 12.0f, slate::Dim());
+        hint->GetComponent<TextRenderer>()->wrap = true; hint->GetComponent<TextRenderer>()->vcenter = false;
     }
     {
         GameObject* g = Child(scene, root, "KillFeed");   // a HUD part: top right of the screen, over the cards' header row
@@ -248,7 +254,7 @@ inline GameObject* BuildSlice2(Scene& scene) {
         GameObject* sl = Child(scene, c3, "Heading");
         auto* s = sl->AddComponent<UISlider>();
         s->anchor = UIAnchor::TopLeft; s->position = {20, 240}; s->size = {352, 18};
-        s->minValue = 0; s->maxValue = 360; s->value = 20; s->showValue = true;
+        s->minValue = 0; s->maxValue = 360; s->value = 20; s->showValue = true; s->wholeNumbers = true;
         sl->AddComponent<UIBind>()->var = "compass_deg";
         GameObject* cg = Child(scene, c3, "Compass");
         auto* c = cg->AddComponent<UICompass>();
@@ -274,7 +280,7 @@ inline GameObject* BuildSlice2(Scene& scene) {
     // ---- Card 5: two-way binding and conditions -------------------------------------------------------------
     GameObject* c5 = gx::Card(scene, root, "BindCard", "Bindings and conditions", {444, 412}, {392, 292});
     {
-        gx::Label(scene, c5, "VolLabel", "Volume (slider and box are the same number)", {20, 44}, 352);
+        gx::Label(scene, c5, "VolLabel", "Volume: slider and box match", {20, 44}, 352);
         GameObject* sl = Child(scene, c5, "Volume");
         auto* s = sl->AddComponent<UISlider>();
         s->anchor = UIAnchor::TopLeft; s->position = {20, 70}; s->size = {352, 20};
@@ -282,20 +288,20 @@ inline GameObject* BuildSlice2(Scene& scene) {
         sl->AddComponent<UIBind>()->var = "volume";
         GameObject* in = Child(scene, c5, "VolumeBox");
         auto* ib = in->AddComponent<UIInputField>();
-        ib->anchor = UIAnchor::TopLeft; ib->position = {20, 110}; ib->size = {170, 36}; ib->placeholder = "type 0 to 100";
+        ib->anchor = UIAnchor::TopLeft; ib->position = {20, 110}; ib->size = {170, 36}; ib->placeholder = "0 to 100";
         ib->color = slate::Field(); ib->focusColor = slate::FieldHover(); ib->borderWidth = 1.0f;
         in->AddComponent<UIBind>()->var = "volume";
         GameObject* mute = Child(scene, c5, "Mute");
         auto* mt = mute->AddComponent<UIToggle>();
         mt->anchor = UIAnchor::TopLeft; mt->position = {212, 114}; mt->size = {28, 28}; mt->label = "Mute"; mt->on = false;
         mute->AddComponent<UIBind>()->var = "muted";
-        GameObject* now = detail2::Note(scene, c5, "VolNow", "Volume is {volume|?}", {20, 160}, 352, 20);
+        GameObject* now = detail2::Note(scene, c5, "VolNow", "Volume is 60", {20, 160}, 352, 20);
         now->AddComponent<UITextBind>()->format = "Volume is {volume|?}";
         now->GetComponent<TextRenderer>()->color = slate::Text();
         GameObject* warn = detail2::Note(scene, c5, "LowWarning", "Very quiet: turn it up", {20, 190}, 352, 20);
         warn->GetComponent<TextRenderer>()->color = slate::Danger();
         warn->AddComponent<UIVisibleIf>()->condition = "volume < 20 && !muted";
-        GameObject* muted = detail2::Note(scene, c5, "MutedNote", "Muted", {20, 190}, 352, 20);
+        GameObject* muted = detail2::Note(scene, c5, "MutedNote", "Muted", {300, 190}, 72, 20);
         muted->GetComponent<TextRenderer>()->color = slate::Accent();
         muted->AddComponent<UIVisibleIf>()->condition = "muted";
         detail2::Note(scene, c5, "BindHint", "Drag the slider, or type in the box. Slide below 20 for the warning. Turn Mute on to swap it.", {20, 224}, 352, 56);
@@ -308,18 +314,18 @@ inline GameObject* BuildSlice2(Scene& scene) {
         auto* lv = lg->AddComponent<UIListView>();
         lv->anchor = UIAnchor::TopLeft; lv->position = {20, 44}; lv->size = {352, 84}; lv->itemHeight = 26.0f; lv->spacing = 2.0f;
         lv->background = Color::FromBytes(255, 255, 255, 14);
-        GameObject* row = Text(scene, lg, "Row", "row", UIAnchor::TopLeft, {8, 0}, {336, 26}, 14.0f, slate::Text());
+        GameObject* row = Text(scene, lg, "Row", "{item}", UIAnchor::TopLeft, {8, 0}, {336, 26}, 14.0f, slate::Text());
         (void)row;
         auto* lb = lg->AddComponent<UIListBind>();
         lb->var = "scores"; lb->format = "Score {index}:  {item} points"; lb->emptyText = "No scores yet";
-        onClick(gx::Btn(scene, c6, "AddScore", "Add a score", {20, 136}, {172, 30}, 0), "Demo", "add_score");
-        onClick(gx::Btn(scene, c6, "ClearScores", "Clear", {200, 136}, {172, 30}, 1), "Demo", "clear_scores");
+        onClick(gx::Btn(scene, c6, "AddScore", "Add a score", {20, 136}, {172, 30}, 0), "Demo", "more_scores");
+        onClick(gx::Btn(scene, c6, "ClearScores", "Clear", {200, 136}, {172, 30}, 1), "Demo", "empty_scores");
         GameObject* t = Text(scene, c6, "Links", "Read the [url=manual]manual[/url], or buy [icon=Iron Sword] and [icon=Healing Potion] for 5 [icon=coin].",
                              UIAnchor::TopLeft, {20, 176}, {352, 40}, 14.0f, slate::Text());
         auto* tr = t->GetComponent<TextRenderer>();
         tr->richText = true; tr->wrap = true; tr->vcenter = false;
         t->AddComponent<UIRichLinks>();
-        GameObject* last = detail2::Note(scene, c6, "LastLink", "Link you clicked: {ui_link|none yet}", {20, 222}, 352, 20);
+        GameObject* last = detail2::Note(scene, c6, "LastLink", "Link you clicked: none yet", {20, 222}, 352, 20);
         last->AddComponent<UITextBind>()->format = "Link you clicked: {ui_link|none yet}";
         GameObject* doc = Child(scene, c6, "HotDoc");
         doc->AddComponent<UIDocument>()->markup = HotReloadDemoMarkup();

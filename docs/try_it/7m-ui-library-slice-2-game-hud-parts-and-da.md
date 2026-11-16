@@ -24,7 +24,7 @@ text, Tab order, hot reload of a UI file.
 7. Card "Bindings and conditions": drag the volume slider and type in the box (both show the same number); go below 20 for the red
    warning; tick **Mute** for the "Muted" note.
 8. Card "List, links, hot reload": **Add a score** and **Clear**; click the blue "manual" link ("Link you clicked: manual"). While the
-   game runs, edit and save `examples\ui_library\hot_reload_demo.okayui`: the yellow line changes within half a second.
+   game runs, edit and save `examples\ui_library\hot_reload_demo.okayui`: the yellow lines change within half a second.
 9. Press **Tab** (and Shift+Tab): the focus ring walks the buttons.
 10. Stop Play. **GameObject > UI > Game HUD** and **Data** add each part to your own scene; select one to see its Inspector.
 

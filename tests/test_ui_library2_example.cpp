@@ -113,10 +113,25 @@ int main() {
     UpdateUILayouts(s);
     s.Update(0.016f);
 
+    UICanvas::Set(1280.0f, 720.0f);
+    // The window host tells the widgets where everything really is on screen (a button inside a card sits at the card's place plus its own);
+    // this installs the same rectangle lookup, so a click lands on what is drawn there and the cards in front of other cards still block.
+    UIWorld().rectOf = [](GameObject* go, Vec2& o, Vec2& sz) { return GetUIScreenRect(go, 1280.0f, 720.0f, o, sz); };
+    UIWorld().screenW = 1280.0f; UIWorld().screenH = 720.0f;
+    // A real click: the pointer goes down and up over the middle of the button.
     auto press = [&](const char* name) {
         GameObject* g = s.Find(name);
         CHECK(g && g->GetComponent<UIButton>());
-        if (g && g->GetComponent<UIButton>()) g->GetComponent<UIButton>()->Press();
+        if (!g || !g->GetComponent<UIButton>()) return;
+        Vec2 o, sz;
+        CHECK(GetUIScreenRect(g, 1280.0f, 720.0f, o, sz));
+        const Vec2 c{o.x + sz.x * 0.5f, o.y + sz.y * 0.5f};
+        Input::FeedMouse(c, 0);
+        Input::FeedMouse(c, 1u << 0);
+        s.Update(0.016f);
+        Input::FeedMouse(c, 0);
+        s.Update(0.016f);
+        Input::FeedMouse({0, 0}, 0);
         UpdateUILayouts(s);
         s.Update(0.016f);
     };
@@ -161,7 +176,7 @@ int main() {
         wheel->Choose(2);
         s.Update(0.016f);
         CHECK(uivars::Read(s.Find("Wheel"), "radial_pick_text").text == "Heal");
-        CHECK(s.Find("Picked")->GetComponent<TextRenderer>()->text == "You picked: Heal");
+        CHECK(s.Find("Picked")->GetComponent<TextRenderer>()->text == "Heal");
     }
     {   // kill feed: the New kill button adds lines at the top right
         auto* feed = s.Find("KillFeed")->GetComponent<UIKillFeed>();
@@ -175,11 +190,14 @@ int main() {
         auto* tr = s.Find("Tracker")->GetComponent<UIObjectiveTracker>();
         CHECK(tr->Lines().size() == 4);                               // title + 3 objectives
         press("Wolf"); press("Wolf");
-        CHECK(tr->Lines()[1].have == 2 && tr->Lines()[1].need == 3);
+        auto ln = tr->Lines();
+        CHECK(ln.size() == 4 && ln[1].have == 2 && ln[1].need == 3);
         press("Talk");
-        CHECK(tr->Lines()[2].kind == UIObjectiveTracker::Line::Done);
+        ln = tr->Lines();
+        CHECK(ln.size() == 4 && ln[2].kind == UIObjectiveTracker::Line::Done);
         press("Again");
-        CHECK(tr->Lines().size() == 4 && tr->Lines()[1].have == 0 && tr->Lines()[2].kind == UIObjectiveTracker::Line::Objective);
+        ln = tr->Lines();
+        CHECK(ln.size() == 4 && ln[1].have == 0 && ln[2].kind == UIObjectiveTracker::Line::Objective);
     }
     {   // compass: the slider writes the heading variable, the strip follows
         auto* sl = s.Find("Heading")->GetComponent<UISlider>();
@@ -260,6 +278,7 @@ int main() {
         CHECK(doc->markup.find("HOT RELOAD") != std::string::npos);
         CHECK(!doc->Generated().empty());
     }
+    UIWorld().rectOf = nullptr;
     ActionList::ResetVars();
     TEST_MAIN_RESULT();
 }

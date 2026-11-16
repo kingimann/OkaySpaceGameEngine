@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
             GameObject* g = s.CreateGameObject("Text");
             auto* t = g->AddComponent<TextRenderer>();
             t->screenSpace = true; t->richText = true; t->anchor = UIAnchor::TopLeft; t->screenPos = {12, 12}; t->size = {456, 40};
-            t->pixelSize = 2.0f; t->color = Color::White; t->vcenter = false;
+            t->pixelSize = 2.0f; t->color = Color::White; t->vcenter = false; t->wrap = true;
             t->text = "See the [url=manual]manual[/url] or buy [icon=sword_iron] for 5 [icon=coin]";
             g->AddComponent<UIRichLinks>();
         }, [&](Scene& s) {
@@ -184,8 +184,18 @@ int main(int argc, char** argv) {
         ItemDatabase::Get().Clear();
     }
     // The whole example scene, at a desktop and a tall window size.
-    CHECK(Render(at("example2-1280x720.png"), 1280, 720, [](Scene& s) { UILibrary::BuildSlice2(s); },
-                 [](Scene& s) { UpdateUILayouts(s); }));
-    CHECK(Render(at("example2-1280x900.png"), 1280, 900, [](Scene& s) { UILibrary::BuildSlice2(s); }));
+    // The example the way it looks a moment after Play: the demo script has started the quest and filled the list, a few frames ran.
+    auto playing = [](Scene& s) {
+        UILibrary::BuildSlice2(s);
+        if (GameObject* c = s.Find("Card")) c->GetComponent<UIItemTooltipCard>()->itemsFile = std::string(OKAY_SOURCE_DIR) + "/examples/ui_library/ui_library_items.okayitems";
+        ActionList::ResetVars();
+        s.Start();
+        for (int i = 0; i < 4; ++i) { UpdateUILayouts(s); s.Update(0.016f); }
+        if (GameObject* f = s.Find("NearDoor")) f->GetComponent<UIToggle>()->Toggle();
+        if (GameObject* w = s.Find("Wheel")) w->GetComponent<UIRadialMenu>()->Choose(2);
+        for (int i = 0; i < 40; ++i) { UpdateUILayouts(s); s.Update(0.05f); }
+    };
+    CHECK(Render(at("example2-1280x720.png"), 1280, 720, playing));
+    CHECK(Render(at("example2-1280x900.png"), 1280, 900, playing));
     TEST_MAIN_RESULT();
 }

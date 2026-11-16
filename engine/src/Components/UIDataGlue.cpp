@@ -199,7 +199,7 @@ void UIListBind::FillRow(GameObject* row, int index) {
     const std::map<std::string, std::string> fields = Row(index);
     for (std::size_t k = 0; k < rowTexts.size(); ++k) {
         const std::string tplText = k < tplTexts.size() ? tplTexts[k]->text : rowTexts[k]->text;
-        const bool hole = tplText.find('{') != std::string::npos;
+        const bool hole = tplText.find('{') != std::string::npos && !(k == 0 && tplText == "{item}");   // a lone {item} in the first text means "use the format"
         if (k == 0 && !hole) rowTexts[k]->text = uivars::FillTemplate(format.empty() ? "{item}" : format, fields);
         else if (hole) rowTexts[k]->text = uivars::FillTemplate(tplText, fields);
     }

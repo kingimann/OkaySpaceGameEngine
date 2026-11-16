@@ -66,23 +66,26 @@ void DrawRadial(Painter& p, UIRadialMenu* w, const Vec2& o, const Vec2& sz, floa
     if (n == 0) { Words(p, "no items", cx - UITextW("no items", 2.0f) * 0.5f, cy - 8.0f, 2.0f, w->textColor, op); return; }
     const float span = 360.0f / (float)n;
     const float gap = n > 1 ? 1.5f : 0.0f;
+    std::size_t longest = 1;
+    for (const std::string& l : labels) longest = std::max(longest, l.size());
+    // Labels are as big as fits the width of a wedge (the ring between the dead zone and the rim), between 1 and 2 font pixels.
+    const float px = std::max(1.0f, std::min(2.0f, 0.9f * (R - inner) / ((float)longest * 8.0f)));
     for (int i = 0; i < n; ++i) {
         const float mid = UIRadialMenu::SegmentCenter(i, n);
         const bool hot = w->Hovered() == i;
         const bool picked = w->Chosen() == i && !w->IsOpen();
         Color c = hot ? w->accent : w->background;
-        if (picked) c = Color::FromBytes(60, 150, 100, 230);
+        if (picked) c = Color::FromBytes(60, 150, 100, 255);
+        c.a = 1.0f;   // opaque: the small quads of a wedge overlap on their edges and would show seams when see-through
         Sector(p, cx, cy, inner, R, mid - span * 0.5f + gap, mid + span * 0.5f - gap, Ink(c, op));
         // label at the middle of the wedge
         const Point lp = OnCircle(cx, cy, (inner + R) * 0.5f, mid);
-        const float px = 2.0f;
         const float tw = UITextW(labels[(std::size_t)i], px);
         Words(p, labels[(std::size_t)i], (float)lp.x - tw * 0.5f, (float)lp.y - TextH(px) * 0.5f, px, w->textColor, op);
     }
     MMDrawRing(p, (int)cx, (int)cy, (int)inner, 2, Ink(w->accent, op * 0.8f));
-    std::string mid = w->centerText;
-    if (mid.empty() && w->Hovered() >= 0 && w->Hovered() < n) mid = labels[(std::size_t)w->Hovered()];
-    if (!mid.empty()) Words(p, mid, cx - UITextW(mid, 2.0f) * 0.5f, cy - TextH(2.0f) * 0.5f, 2.0f, w->textColor, op);
+    const std::string& mid = w->centerText;                      // the hovered wedge is lit; the middle only shows words you set
+    if (!mid.empty()) Words(p, mid, cx - UITextW(mid, 1.5f) * 0.5f, cy - TextH(1.5f) * 0.5f, 1.5f, w->textColor, op);
 }
 
 // ---- kill feed ----
@@ -108,10 +111,12 @@ void DrawAmmo(Painter& p, UIAmmoCounter* w, const Vec2& o, const Vec2& sz, float
     const int level = s.current <= 0 ? 2 : (s.magazine > 0 && (float)s.current <= w->lowFraction * (float)s.magazine ? 1 : 0);
     const Color num = level == 2 ? w->emptyColor : level == 1 ? w->warnColor : w->textColor;
     Box(p, o.x, o.y, sz.x, sz.y, w->background, 10.0f, op);
-    Words(p, w->label, o.x + 14.0f, o.y + 10.0f, 1.5f, w->accent, op);
+    Words(p, w->label, o.x + 14.0f, o.y + 8.0f, 1.5f, w->accent, op);
     const std::string t = w->Text();
-    Words(p, t, o.x + sz.x - 14.0f - UITextW(t, 4.0f), o.y + 8.0f, 4.0f, num, op);
-    const float py = o.y + sz.y - 22.0f;
+    float npx = 4.0f;                                                    // the number shrinks until it fits beside the box edges
+    while (npx > 2.0f && UITextW(t, npx) > sz.x - 28.0f) npx -= 0.5f;
+    Words(p, t, o.x + sz.x - 14.0f - UITextW(t, npx), o.y + 20.0f + (32.0f - TextH(npx)) * 0.5f, npx, num, op);
+    const float py = o.y + sz.y - 20.0f;
     if (s.reloading) { Words(p, "RELOADING", o.x + 14.0f, py + 2.0f, 2.0f, w->warnColor, op); return; }
     if (w->showPips && s.magazine > 0 && s.magazine <= 40) {
         const float avail = sz.x - 28.0f;
@@ -159,7 +164,7 @@ void DrawTracker(Painter& p, UIObjectiveTracker* w, const Vec2& o, const Vec2& s
             Frame(p, o.x + 18.0f, y + 1.0f, 11.0f, 11.0f, done ? w->doneColor : w->textColor, 2.0f, 1, op);
             if (done) Box(p, o.x + 21.0f, y + 4.0f, 5.0f, 5.0f, w->doneColor, 1.0f, op);
             const Color c = done ? w->doneColor : w->textColor;
-            Words(p, l.text, o.x + 36.0f, y, px, c, op);
+            Words(p, l.text, o.x + 40.0f, y, px, c, op);
             if (l.need > 1) {
                 const std::string pr = std::to_string(std::min(l.have, l.need)) + "/" + std::to_string(l.need);
                 Words(p, pr, o.x + sz.x - 14.0f - UITextW(pr, px), y, px, c, op);
@@ -283,8 +288,10 @@ void DrawAbility(Painter& p, UIAbilityIcon* w, const Vec2& o, const Vec2& sz, fl
     const bool ready = w->Ready();
     const Color tile = ready ? w->iconColor : Color::FromBytes((int)(w->iconColor.r * 120), (int)(w->iconColor.g * 120), (int)(w->iconColor.b * 120), 255);
     MMFillCircle(p, (int)cx, (int)cy, (int)r, Ink(tile, op));
-    Tex tex = w->iconPath.empty() ? nullptr : p.LoadTexture(w->iconPath);
-    if (tex) {
+    const bool counting = w->Remaining() > 0.0f && w->Charges() == 0;   // the seconds replace the icon while it recharges
+    Tex tex = (w->iconPath.empty() || counting) ? nullptr : p.LoadTexture(w->iconPath);
+    if (counting) {
+    } else if (tex) {
         Rect dst{(int)(cx - r * 0.75f), (int)(cy - r * 0.75f), (int)(r * 1.5f), (int)(r * 1.5f)};
         p.SetTextureAlphaMod(tex, (std::uint8_t)(255.0f * op * (ready ? 1.0f : 0.5f)));
         p.Copy(tex, nullptr, &dst);
@@ -292,7 +299,7 @@ void DrawAbility(Painter& p, UIAbilityIcon* w, const Vec2& o, const Vec2& sz, fl
         const float px = r > 22.0f ? 3.0f : 2.0f;
         Words(p, w->label, cx - UITextW(w->label, px) * 0.5f, cy - TextH(px) * 0.5f, px, Color::White, op * (ready ? 1.0f : 0.6f));
     }
-    if (w->Remaining() > 0.0f && w->Charges() == 0) {
+    if (counting) {
         char b[16];
         if (w->Remaining() < 10.0f) std::snprintf(b, sizeof(b), "%.1f", w->Remaining()); else std::snprintf(b, sizeof(b), "%.0f", w->Remaining());
         Words(p, b, cx - UITextW(b, 2.5f) * 0.5f, cy - TextH(2.5f) * 0.5f, 2.5f, Color::White, op);

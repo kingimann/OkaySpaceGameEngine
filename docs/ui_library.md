@@ -92,7 +92,7 @@ now list the new parts. Nothing in this slice was run on Windows or in a real wi
      bullet pips follow (amber under a quarter of the magazine, red at 0). Click **Use (or press Q)**: the ring around the icon
      sweeps for 4 seconds and the seconds left show in the middle. Tick **I am near the door**: the key cap "E  Open the door"
      fades in; untick it and it fades out. That toggle is a two-way binding to the variable `near_door`.
-   - **Radial menu, kill feed.** Click a wedge of the wheel: the wheel text and "You picked: ..." change. Click **New kill**: a
+   - **Radial menu, kill feed.** Click a wedge of the wheel: the wedge under the pointer lights up, the last pick stays green and "You picked" shows its name. Click **New kill**: a
      line appears at the top right of the screen and fades after 12 seconds; lines with `Player` use the accent colour.
    - **Objectives, compass.** The tracker lists "Wolf trouble". **Wolf** adds one kill (shown as 1/3, 2/3), **Talk** and **Bridge**
      tick the other two, **Again** starts the quest over. Drag the heading slider: the compass strip slides.
@@ -104,7 +104,7 @@ now list the new parts. Nothing in this slice was run on Windows or in a real wi
      ("No scores yet"). Click the blue underlined "manual": "Link you clicked: manual" appears. The small coloured squares in the
      sentence are `[icon=...]` pictures (the sword and the potion take their colour from the item database).
      **Hot reload:** while the game runs, open `examples\ui_library\hot_reload_demo.okayui` in a text editor, change the words, save:
-     the yellow line at the bottom of the card changes within half a second. (If you play from another folder that line stays as it was.)
+     the two yellow lines at the bottom of the card change within half a second. (If you play from another folder that line stays as it was.)
 3. Press **Tab**: the focus ring walks the buttons in reading order (Shift+Tab goes back). Press Q for the ability.
 
 To add the parts to your own scene: **GameObject > UI > Game HUD** (Radial Menu, Kill Feed, Ammo Counter, Interaction Prompt,

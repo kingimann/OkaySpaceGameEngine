@@ -386,6 +386,81 @@ A panel that slides up from the bottom. on_change fires when it opens or closes.
 | `GetComponent<UIBottomSheet>().Toggle()` | `UIBottomSheet.Toggle/0` | step | Target (Object) | - | Open it if it is closed, or close it if it is open. |
 | `GetComponent<UIBottomSheet>().IsOpen()` | `UIBottomSheet.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the sheet is open. |
 
+## UIRadialMenu
+
+A wheel of choices. on_select fires when one is chosen; Chosen() is its index (0 is the top, going clockwise).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRadialMenu>().Open()` | `UIRadialMenu.Open/0` | step | Target (Object) | - | Show the wheel. |
+| `GetComponent<UIRadialMenu>().Close()` | `UIRadialMenu.Close/0` | step | Target (Object) | - | Hide the wheel without choosing. |
+| `GetComponent<UIRadialMenu>().Choose(index)` | `UIRadialMenu.Choose/1` | step | index (Number), Target (Object) | Result (Bool) | Choose wedge number `index` as if the player picked it. False when there is no such wedge. |
+| `GetComponent<UIRadialMenu>().Chosen()` | `UIRadialMenu.Chosen/0` | value | Target (Object) | Result (Number) | The wedge chosen last (-1 for none yet). |
+| `GetComponent<UIRadialMenu>().IsOpen()` | `UIRadialMenu.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the wheel is showing. |
+
+## UIKillFeed
+
+The lines that stack in a corner when something dies. Lines fade after their lifetime.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIKillFeed>().Push(killer, victim, weapon)` | `UIKillFeed.Push/3` | step | killer (Text), victim (Text), weapon (Text), Target (Object) | - | Add a line. `weapon` may be an empty string. |
+| `GetComponent<UIKillFeed>().Clear()` | `UIKillFeed.Clear/0` | step | Target (Object) | - | Remove every line. |
+
+## UIAmmoCounter
+
+The ammo number. It reads a Ranged Weapon or variables; SetAmmo types the numbers in by hand.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAmmoCounter>().SetAmmo(current, reserve)` | `UIAmmoCounter.SetAmmo/2` | step | current (Number), reserve (Number), Target (Object) | - | Show these numbers (used when no weapon or variable supplies them). |
+| `GetComponent<UIAmmoCounter>().Text()` | `UIAmmoCounter.Text/0` | value | Target (Object) | Result (Text) | The number as shown, like "12 / 90". |
+
+## UIInteractionPrompt
+
+A key cap and a word that shows only when the player is near. on_interact fires when the key is pressed while it shows.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIInteractionPrompt>().SetAction(text)` | `UIInteractionPrompt.SetAction/1` | step | text (Text), Target (Object) | - | Change the word next to the key. |
+| `GetComponent<UIInteractionPrompt>().IsShowing()` | `UIInteractionPrompt.IsShowing/0` | value | Target (Object) | Result (Bool) | True when the prompt should be on screen now. |
+
+## UICompass
+
+A heading strip. North is +Z.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UICompass>().Heading()` | `UICompass.Heading/0` | value | Target (Object) | Result (Number) | The heading now, in degrees clockwise from north. |
+
+## UIItemTooltipCard
+
+The card for one item from the item database.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIItemTooltipCard>().Show(item, count)` | `UIItemTooltipCard.Show/2` | step | item (Text), count (Number), Target (Object) | - | Show the card for this item id and stack size. |
+| `GetComponent<UIItemTooltipCard>().Hide()` | `UIItemTooltipCard.Hide/0` | step | Target (Object) | - | Hide the card. |
+
+## UIAbilityIcon
+
+An ability slot with a cooldown ring. on_ability_use and on_ability_ready fire on the object's script.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAbilityIcon>().Use()` | `UIAbilityIcon.Use/0` | step | Target (Object) | Result (Bool) | Spend a charge and start the cooldown. False when it is not ready. |
+| `GetComponent<UIAbilityIcon>().Reset()` | `UIAbilityIcon.Reset/0` | step | Target (Object) | - | Make the ability ready now. |
+| `GetComponent<UIAbilityIcon>().IsReady()` | `UIAbilityIcon.IsReady/0` | value | Target (Object) | Result (Bool) | True when a charge is ready. |
+| `GetComponent<UIAbilityIcon>().SecondsLeft()` | `UIAbilityIcon.SecondsLeft/0` | value | Target (Object) | Result (Number) | Seconds until the next charge. |
+
+## UIHotReload
+
+Watches a UI markup file or .okaytheme and applies it when it changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIHotReload>().ReloadNow()` | `UIHotReload.ReloadNow/0` | step | Target (Object) | Result (Bool) | Apply the file now. False (and the reason in the log) when it could not be applied. |
+
 ## Input
 
 Keyboard, mouse and gamepad.

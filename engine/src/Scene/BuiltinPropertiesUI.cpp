@@ -759,7 +759,7 @@ void RegisterUILibrary2() {
          .AddBool("holdToOpen", &UIRadialMenu::holdToOpen).Tooltip("Hold the key, point, let go to choose (off: click mode)")
          .AddBool("closeOnSelect", &UIRadialMenu::closeOnSelect).Tooltip("Close the wheel after a choice")
          .AddBool("alwaysShown", &UIRadialMenu::alwaysShown).Tooltip("Draw the wheel even while closed")
-         .AddString("centerText", &UIRadialMenu::centerText).Tooltip("Words in the middle (empty = the hovered choice)")
+         .AddString("centerText", &UIRadialMenu::centerText).Tooltip("Words in the middle (empty = nothing)")
          .AddString("chosenVar", &UIRadialMenu::chosenVar).Tooltip("A variable that receives the chosen number (<name>_text gets the label)");
         b.Commit();
     }

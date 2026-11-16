@@ -52,7 +52,7 @@ public:
     bool holdToOpen = true;                          ///< hold the key, point, release to choose (else click mode)
     bool closeOnSelect = true;
     bool alwaysShown = false;                        ///< draw it even while closed (a fixed wheel)
-    std::string centerText;                          ///< shown in the middle (empty = the hovered label)
+    std::string centerText;                          ///< shown in the middle (empty = nothing; the hovered wedge is lit anyway)
     /// A variable that receives the chosen wedge number; "<name>_text" receives its label (a UI Text Bind can show it).
     std::string chosenVar;
 

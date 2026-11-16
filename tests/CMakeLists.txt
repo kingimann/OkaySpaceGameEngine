@@ -2321,7 +2321,7 @@ if(SDL2_FOUND)
     add_executable(test_ui_library2_shots test_ui_library2_shots.cpp)
     target_link_libraries(test_ui_library2_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)

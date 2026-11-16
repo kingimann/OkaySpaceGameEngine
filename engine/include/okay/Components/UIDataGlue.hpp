@@ -74,7 +74,7 @@ private:
 };
 
 /// Fills the sibling UIListView from an array variable (a visual-script list or an Actions array). `format` makes the first
-/// text of each row ("{item}" is the entry, "{index}" its 1-based number; a list of maps also gives "{field}" for each
+/// text of each row (a template text of just "{item}" counts as no template text; "{item}" is the entry, "{index}" its 1-based number; a list of maps also gives "{field}" for each
 /// key, e.g. "{name}  x{count}"). A text deeper in the row template that contains "{...}" is filled the same way, so a
 /// row can have a name, a count and a price in three text objects. The list scrolls and recycles rows as usual.
 class UIListBind final : public Behaviour {

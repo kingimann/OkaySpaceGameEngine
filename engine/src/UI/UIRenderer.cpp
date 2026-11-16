@@ -755,22 +755,28 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             const bool it = italic || runStyle.italic;
             // Every run sits on the bottom of its line: the line is as tall as its largest run (S), a smaller run starts lower.
             const float ry = y + (S - s) * (float)Font8x8::Height * px;
-            float runW;
+            float runW, inkW = 0.0f;
             if (runStyle.icon >= 0 && icons && (std::size_t)runStyle.icon < icons->size()) {   // [icon=...]: one glyph cell, drawn as a picture
-                runW = (float)Font8x8::Height * rpx;
-                DrawRichIcon(r, (*icons)[(std::size_t)runStyle.icon], cx, ry, runW, col.a ? RGBA{255, 255, 255, col.a} : base);
+                const float cell = (float)Font8x8::Height * rpx;
+                runW = cell + rpx * 2.0f;                                   // a little air after the picture
+                DrawRichIcon(r, (*icons)[(std::size_t)runStyle.icon], cx, ry, cell, col.a ? RGBA{255, 255, 255, col.a} : base);
             } else {
                 DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
                 runW = UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+                if (runStyle.underline || runStyle.link >= 0) {
+                    std::string shown = run;                                // the space that joins a run to the next is not underlined
+                    while (!shown.empty() && shown.back() == ' ') shown.pop_back();
+                    inkW = UITextW(shown, rpx) + letterSp * rpx * (float)okay::utf8::Length(shown);
+                }
                 if (runStyle.underline) {
                     const float uy = ry + (float)Font8x8::Height * rpx + 1.0f;
                     r.SetDrawColor(col.r, col.g, col.b, col.a);
-                    FRect line{cx, uy, runW, rpx > 1.5f ? 2.0f : 1.0f};
+                    FRect line{cx, uy, inkW, rpx > 1.5f ? 2.0f : 1.0f};
                     r.FillRectF(&line);
                 }
             }
             if (runStyle.link >= 0 && links && linkRects && (std::size_t)runStyle.link < links->size())
-                linkRects->push_back(RichLinkRect{cx, ry, runW, (float)Font8x8::Height * rpx + 3.0f, (*links)[(std::size_t)runStyle.link]});
+                linkRects->push_back(RichLinkRect{cx, ry, inkW > 0.0f ? inkW : runW, (float)Font8x8::Height * rpx + 3.0f, (*links)[(std::size_t)runStyle.link]});
             cx += runW;
             cxAt = end;
         };

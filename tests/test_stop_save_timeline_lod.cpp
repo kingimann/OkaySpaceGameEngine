@@ -19,7 +19,6 @@
 using namespace okay;
 using okay::editor::EditorState;
 using okay::editor::PendingAction;
-using okay::optimize::LodView;
 using okay::optimize::LodSelection;
 
 namespace {
@@ -54,11 +53,11 @@ template <class MoveFn> float DragFrames(float from, float to, int fps, MoveFn m
 // Walk the camera from `near` to `far` (or back) feeding the state back; the distance where `level`
 // first shows (-1 = never).
 float FirstDistanceOf(const std::vector<float>& d, float size, int level, float nearD, float farD, float step) {
-    LodView view{1080.0f, 60.0f};
+    (void)size;   // the object's size no longer matters
     int state = -1;
     const bool out = farD > nearD;
     for (float x = nearD; out ? x <= farD : x >= farD; x += out ? step : -step) {
-        const LodSelection s = optimize::SelectLodByDistance(d, 0.0f, 0.1f, x, state, size, view);
+        const LodSelection s = optimize::SelectLodByDistance(d, 0.0f, 0.1f, x, state);
         state = s.state;
         if (s.level == level) return x;
     }
@@ -179,15 +178,30 @@ int main() {
             CHECK(l0 <= 5.0f && l0 >= 5.0f / 1.1f - 0.1f);
         }
         // A cull distance past the last switch culls there.
-        LodView view{1080.0f, 60.0f};
         int state = -1; bool culled = false; float at = -1.0f;
         for (float x = 1.0f; x < 200.0f && !culled; x += 0.05f) {
-            const LodSelection s = optimize::SelectLodByDistance({5.0f, 15.0f, 40.0f}, 60.0f, 0.1f, x, state, 50.0f, view);
+            const LodSelection s = optimize::SelectLodByDistance({5.0f, 15.0f, 40.0f}, 60.0f, 0.1f, x, state);
             state = s.state;
             if (s.culled) { culled = true; at = x; }
         }
         std::cout << "  size 50, cull 60 m: culled from " << at << " m\n";
         CHECK(culled && at >= 60.0f && at <= 60.0f / 0.9f + 0.1f);
+        // A cull distance shorter than a switch distance: culled there, the cut level never shows.
+        state = -1; at = -1.0f; bool sawL2 = false;
+        for (float x = 1.0f; x < 200.0f; x += 0.05f) {
+            const LodSelection s = optimize::SelectLodByDistance({5.0f, 15.0f, 40.0f}, 10.0f, 0.1f, x, state);
+            state = s.state;
+            if (s.level == 2) sawL2 = true;
+            if (s.culled && at < 0.0f) at = x;
+        }
+        CHECK(!sawL2 && at >= 10.0f && at <= 10.0f / 0.9f + 0.1f);
+        // Distances that don't rise (15 then 8): the second is pushed out to twice the first.
+        state = -1;
+        const LodSelection a = optimize::SelectLodByDistance({15.0f, 8.0f, 0.0f}, 0.0f, 0.0f, 20.0f, -1);
+        const LodSelection b = optimize::SelectLodByDistance({15.0f, 8.0f, 0.0f}, 0.0f, 0.0f, 31.0f, -1);
+        CHECK(a.level == 1 && b.level == 2);
+        // One level, no cull: always level 0.
+        CHECK(optimize::SelectLodByDistance({20.0f}, 0.0f, 0.1f, 1000.0f, -1).level == 0);
     }
 
     fs::remove_all(dir, ec);

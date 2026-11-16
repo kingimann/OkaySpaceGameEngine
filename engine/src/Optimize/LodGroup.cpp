@@ -78,26 +78,37 @@ float LodSwitchDistance(const LodGroup& g, int level, const LodView& view, float
     return LodDistanceFor(g.size * std::max(bias, 1e-6f), t, view.fovYDeg);
 }
 
+// Distance mode works on 1 / distance, which falls as the camera backs away just as a screen height
+// does, so SelectLodByHeight (thresholds, hysteresis) runs unchanged. It used to go through a screen
+// height for the object's size, clamped to 1: on an object bigger than about 1.15 x the switch
+// distance every short distance became the same clamped value and was replaced (issue #888, finding 77).
+// `ref` scales the values so every threshold is in (0, 0.5], as LodGroup::Valid wants.
 LodSelection SelectLodByDistance(const std::vector<float>& switchDistances, float cullDistance, float hysteresis,
-                                 float distance, int previousLevel, float size, const LodView& view) {
-    LodGroup g;
-    g.size = std::max(size, 0.01f);
-    g.hysteresis = hysteresis;
-    const int n = static_cast<int>(switchDistances.size());
-    g.levels.resize(static_cast<std::size_t>(n));
-    for (int i = 0; i < n; ++i) {
-        const float d = std::max(switchDistances[static_cast<std::size_t>(i)], 0.05f);
-        g.levels[static_cast<std::size_t>(i)].screenHeight = i + 1 < n
-            ? std::clamp(LodScreenHeightFor(g.size, d, view.fovYDeg), 0.001f, 0.999f) : 0.0f;
+                                 float distance, int previousLevel) {
+    constexpr float kMin = 0.05f;
+    int n = static_cast<int>(switchDistances.size());
+    if (n == 0) { LodSelection s; s.level = -1; s.culled = true; return s; }
+    std::vector<float> d(static_cast<std::size_t>(n), 0.0f);
+    for (int i = 0; i + 1 < n; ++i) {
+        float v = std::max(switchDistances[static_cast<std::size_t>(i)], kMin);
+        if (i > 0 && !(v > d[static_cast<std::size_t>(i) - 1])) v = d[static_cast<std::size_t>(i) - 1] * 2.0f;
+        d[static_cast<std::size_t>(i)] = v;
     }
-    g.cullScreenHeight = cullDistance > 0.05f ? std::clamp(LodScreenHeightFor(g.size, cullDistance, view.fovYDeg), 0.0f, 0.5f) : 0.0f;
-    for (int i = 1; i + 1 < n; ++i)
-        if (!(g.levels[static_cast<std::size_t>(i)].screenHeight < g.levels[static_cast<std::size_t>(i) - 1].screenHeight))
-            g.levels[static_cast<std::size_t>(i)].screenHeight = g.levels[static_cast<std::size_t>(i) - 1].screenHeight * 0.5f;
-    if (n >= 2 && g.cullScreenHeight >= g.levels[static_cast<std::size_t>(n - 2)].screenHeight)
-        g.cullScreenHeight = g.levels[static_cast<std::size_t>(n - 2)].screenHeight * 0.5f;
-    if (!g.Valid()) { LodSelection s; s.state = 0; return s; }
-    return SelectLod(g, distance, view, 1.0f, previousLevel);
+    const bool cull = cullDistance > kMin;
+    if (cull) {   // a level whose switch distance is at or past the cull distance is never reached
+        int keep = 1;
+        while (keep < n && d[static_cast<std::size_t>(keep) - 1] < cullDistance) ++keep;
+        n = keep;
+    }
+    const float ref = 0.5f * (n >= 2 ? d[0] : (cull ? cullDistance : 1.0f));
+    LodGroup g;
+    g.size = 1.0f;
+    g.hysteresis = hysteresis;
+    g.levels.resize(static_cast<std::size_t>(n));
+    for (int i = 0; i + 1 < n; ++i) g.levels[static_cast<std::size_t>(i)].screenHeight = ref / d[static_cast<std::size_t>(i)];
+    g.cullScreenHeight = cull ? ref / cullDistance : 0.0f;
+    const int prev = previousLevel > n ? n : previousLevel;   // a level cut by the cull distance counts as culled
+    return SelectLodByHeight(g, ref / std::max(distance, 1e-4f), prev);
 }
 
 LodGroup MakeLodGroup(const LodChain& chain, float cullScreenHeight) {

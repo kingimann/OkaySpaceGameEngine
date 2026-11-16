@@ -11,6 +11,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "TimelineWindow.hpp"
+#include "TimelineKeyMove.hpp"           // moving Transform / Letterbox / Shake / Fade keys (never onto another key)
 #include "ConsolePanel.hpp"             // ConsoleLog
 #include "EditorWidgets.hpp"            // AccentCol, SameLineRight
 #include "MainShared.hpp"               // the Animation window's transport, ruler, playhead and key widgets
@@ -174,22 +175,6 @@ std::vector<float> AllTimes(const Sequence& seq) {
     return out;
 }
 
-// Move every channel key at `from` to `to`; a key already at `to` is replaced.
-void MoveTransformKeys(SeqTransformTrack& tr, float from, float to) {
-    for (std::vector<SeqKey>* ch : {&tr.position, &tr.rotation, &tr.scale}) {
-        const int at = Sequence::KeyAt(*ch, from);
-        if (at < 0) continue;
-        SeqKey k = (*ch)[(std::size_t)at];
-        ch->erase(ch->begin() + at);
-        const int landing = Sequence::KeyAt(*ch, to);
-        if (landing >= 0) ch->erase(ch->begin() + landing);
-        k.time = to;
-        std::size_t i = 0;
-        while (i < ch->size() && (*ch)[i].time < to) ++i;
-        ch->insert(ch->begin() + (std::ptrdiff_t)i, k);
-    }
-}
-
 void EraseTransformKeys(SeqTransformTrack& tr, float at) {
     for (std::vector<SeqKey>* ch : {&tr.position, &tr.rotation, &tr.scale}) {
         const int i = Sequence::KeyAt(*ch, at);
@@ -243,46 +228,26 @@ float SelTime(const State& s) {
     }
 }
 
-void MoveFloatKeys(std::vector<SeqFloatKey>& keys, float from, float to) {
-    const int at = Sequence::FloatKeyAt(keys, from);
-    if (at < 0) return;
-    SeqFloatKey k = keys[(std::size_t)at];
-    keys.erase(keys.begin() + at);
-    const int landing = Sequence::FloatKeyAt(keys, to);
-    if (landing >= 0) keys.erase(keys.begin() + landing);
-    k.time = to;
-    std::size_t i = 0;
-    while (i < keys.size() && keys[i].time < to) ++i;
-    keys.insert(keys.begin() + (std::ptrdiff_t)i, k);
-}
-void MoveColorKeys(std::vector<SeqColorKey>& keys, float from, float to) {
-    const int at = Sequence::ColorKeyAt(keys, from);
-    if (at < 0) return;
-    SeqColorKey k = keys[(std::size_t)at];
-    keys.erase(keys.begin() + at);
-    const int landing = Sequence::ColorKeyAt(keys, to);
-    if (landing >= 0) keys.erase(keys.begin() + landing);
-    k.time = to;
-    std::size_t i = 0;
-    while (i < keys.size() && keys[i].time < to) ++i;
-    keys.insert(keys.begin() + (std::ptrdiff_t)i, k);
-}
-
-void SetSelTime(State& s, float t) {
-    if (!SelValid(s)) return;
+// Retime the selection. False when nothing moved: a key track's key can't land on the time of
+// another key there (issue #888, finding 76: the drag used to delete every key it passed over).
+bool SetSelTime(State& s, float t) {
+    if (!SelValid(s)) return false;
     Sel& e = s.sel;
+    bool moved = true;
     switch (e.kind) {
     case Kind::Camera:    SetTimeOf(s.seq.shots, e.index, t); break;
-    case Kind::Transform: MoveTransformKeys(s.seq.transforms[(std::size_t)e.track], e.time, t); e.time = t; break;
+    case Kind::Transform: moved = tlkeys::MoveTransformKeys(s.seq.transforms[(std::size_t)e.track], e.time, t); break;
     case Kind::Animation: SetTimeOf(s.seq.animations[(std::size_t)e.track].cues, e.index, t); break;
     case Kind::Audio:     SetTimeOf(s.seq.audio[(std::size_t)e.track].cues, e.index, t); break;
     case Kind::Events:    SetTimeOf(s.seq.events[(std::size_t)e.track].events, e.index, t); break;
-    case Kind::Letterbox: MoveFloatKeys(s.seq.letterbox.keys, e.time, t); e.time = t; break;
-    case Kind::Shake:     MoveFloatKeys(s.seq.shake.strength, e.time, t); MoveFloatKeys(s.seq.shake.frequency, e.time, t); e.time = t; break;
-    case Kind::Fade:      MoveColorKeys(s.seq.fade.keys, e.time, t); e.time = t; break;
+    case Kind::Letterbox: moved = tlkeys::MoveFloatKeys(s.seq.letterbox.keys, e.time, t); break;
+    case Kind::Shake:     moved = tlkeys::MoveFloatKeyPair(s.seq.shake.strength, s.seq.shake.frequency, e.time, t); break;
+    case Kind::Fade:      moved = tlkeys::MoveColorKeys(s.seq.fade.keys, e.time, t); break;
     case Kind::Nest:      SetTimeOf(s.seq.nests[(std::size_t)e.track].cues, e.index, t); break;
-    default: break;
+    default: return false;
     }
+    if (moved && (e.kind == Kind::Transform || e.kind == Kind::Letterbox || e.kind == Kind::Shake || e.kind == Kind::Fade)) e.time = t;
+    return moved;
 }
 
 void DeleteSel(State& s) {
@@ -766,7 +731,7 @@ bool ColorField(const char* label, Color& c, bool alpha) {
 // The time field every entry starts with.
 void TimeField(State& s) {
     float t = SelTime(s);
-    if (ImGui::DragFloat("Time##sel", &t, 0.01f, 0.0f, 3600.0f, "%.2f s")) { if (!s.dragPushed) { BeginEdit(); s.dragPushed = true; } SetSelTime(s, Snapped(t)); Touch(); }
+    if (ImGui::DragFloat("Time##sel", &t, 0.01f, 0.0f, 3600.0f, "%.2f s")) { if (!s.dragPushed) { BeginEdit(); s.dragPushed = true; } if (SetSelTime(s, Snapped(t))) Touch(); }
     if (ImGui::IsItemDeactivated()) s.dragPushed = false;
 }
 
@@ -995,7 +960,7 @@ void DrawGrid(EditorState& ed, const std::vector<Row>& rows) {
             const float nt = Snapped(s.dragOrigin + (mouseT - s.dragStart));
             if (std::fabs(nt - SelTime(s)) > 1e-6f) {
                 if (!s.dragPushed) { BeginEdit(); s.dragPushed = true; }
-                SetSelTime(s, nt); Touch();
+                if (SetSelTime(s, nt)) Touch();   // onto another key: wait a frame short of it
             }
         } else s.dragging = false;
     }

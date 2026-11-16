@@ -12,9 +12,18 @@ struct SaveBeforePlan {
     bool runActionAfter = true;   // then run the action the prompt was opened for
 };
 
+// While the game runs, saving cannot write the scene: what is on screen is the running copy, and the
+// edits to keep are in the edit-time snapshot that Stop restores. So for Stop (and for opening another
+// scene, which also ends Play) Save stops first and then saves the restored edit-time scene. Before
+// this, Save ran first, skipped the scene "because Play is running", and then stopped: the scene stayed
+// unsaved (issue #888, finding 85). Stop is then already done, so it is not run a second time.
 inline SaveBeforePlan PlanSaveBefore(PendingAction action, bool playing) {
-    (void)action; (void)playing;
-    return {};
+    SaveBeforePlan plan;
+    if (playing && (action == PendingAction::Stop || action == PendingAction::LoadScene)) {
+        plan.stopFirst = true;
+        plan.runActionAfter = action != PendingAction::Stop;
+    }
+    return plan;
 }
 
 // The Save button: `stop()` stops Play, `save()` saves (false = something failed, and the action

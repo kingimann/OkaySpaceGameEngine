@@ -47,7 +47,7 @@ About 3,000 lines in 67 files mention SDL, in `engine/`, `editor/` (48k-line `ma
 `Backend` (`Platform.hpp`) has: init, timers, windows (create, size, position, title, show/hide/raise, minimize, fullscreen,
 focus), an event queue, the GL context (create, make current, swap, swap interval, `GLProcAddress`), keyboard state, text input,
 mouse (state, relative mode, cursor visibility, warp), clipboard text, audio devices (playback and capture, queue or
-callback), and game controllers (open, axes, buttons, rumble). `Key` is the USB HID usage numbering, which is also SDL's scancode numbering.
+callback), game controllers (open, axes, buttons, rumble) and the display list (see "Displays" below). `Key` is the USB HID usage numbering, which is also SDL's scancode numbering.
 
 Call sites moved in this change (each commit builds):
 
@@ -277,6 +277,26 @@ platform backend (the roadmap's ImGui item); only then can `OKAY_PLATFORM_BACKEN
 `own` changes the timers, audio devices and controllers the apps use, and is the full platform for the tests and for new
 code that does not need `SDL_Renderer`.
 
+## Displays
+
+`okay::platform::Displays()` (the default backend) and `Backend::Displays()` list the monitors, **the primary first**. Each
+`DisplayInfo` has a `name`, `bounds` (desktop coordinates, the same as `Window::GetPosition`), `usable` (the bounds minus task
+bars and panels: the OS's work area, equal to the bounds when the OS gives none), `scale` (the DPI scale the OS asks for:
+1.0 = 96 DPI) and `primary`. Empty when video is not up.
+
+| backend | monitors | usable area | scale | primary |
+|---|---|---|---|---|
+| sdl2 | `SDL_GetNumVideoDisplays`, `SDL_GetDisplayBounds`, `SDL_GetDisplayName` | `SDL_GetDisplayUsableBounds` | `SDL_GetDisplayDPI` / 96 | SDL's display 0 |
+| own X11 | RandR 1.5 `XRRGetMonitors` (one per active output, or what `xrandr --setmonitor` defined); else Xinerama `XineramaQueryScreens` (when it lists more, as with several X screens joined by `+xinerama`); else the root window | `_NET_WORKAREA` of the current desktop (EWMH) clipped to each monitor | `Xft.dpi` in the root's `RESOURCE_MANAGER` / 96, read fresh each call | RandR's primary flag; else the first |
+| own Win32 | `EnumDisplayMonitors` + `GetMonitorInfoW` | `rcWork` | `GetDpiForMonitor` (effective DPI, `shcore.dll` at run time) / 96; the system DPI before Windows 8.1 | `MONITORINFOF_PRIMARY` |
+
+Two helpers hold the launcher's keep-on-screen rule so it can be tested alone: `WindowReachable(displays, x, y, w, h)` (at least
+160 x 80 of the window on one display's usable area and its title bar inside it) and `CenterOnDisplay(display, w, h)` (the middle
+of the usable area, shrunk to a 20 pixel margin). The launcher's `KeepWindowOnScreen` uses them with the display list of the
+backend that made the window. Written from the RandR 1.5 protocol, the Xinerama and EWMH specifications, the Xlib resource
+syntax and Microsoft's documentation of the monitor functions. Not done: display modes (exclusive fullscreen), the display a
+window is on, change events when a monitor is plugged in.
+
 ## The own backend
 
 ### Linux (written, tested under Xvfb)
@@ -300,14 +320,24 @@ code that does not need `SDL_Renderer`.
 * **Controllers: evdev** (`/dev/input/event*`, kernel header `linux/input.h` only): detection by `BTN_GAMEPAD` + `ABS_X`,
   Xbox-style mapping, normalised axes, triggers from axes or `BTN_TL2/TR2`, d-pad from hat or buttons, force-feedback rumble, hot-plug rescan once a second.
 
+* **Displays** (`Backend::Displays`, see "Displays" below): RandR 1.5 monitors (`libXrandr.so.2` through `dlopen`), else
+  Xinerama (`libXinerama.so.1`), else the root window; the usable area from the desktop's `_NET_WORKAREA`; the scale from `Xft.dpi`.
+
 Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), XDND file drop (`EventType::DropFile`
-never fires), touch, DPI / multi-monitor queries, window icons, IME composition display, PulseAudio-native or PipeWire-native audio.
+never fires), touch, display modes, IME composition display, PulseAudio-native or PipeWire-native audio.
 
 ### Windows (compiles, untested)
 
 `OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
-`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.** No audio device
-(`OpenAudio` returns null).
+`WM_DROPFILES`, the display list (`EnumDisplayMonitors`, `GetMonitorInfoW`, `GetDpiForMonitor` from `shcore.dll` loaded at
+run time) and per-monitor DPI awareness (`SetProcessDpiAwarenessContext`, looked up in `user32.dll` at run time).
+**Audio** (`OwnWin32Audio.cpp`): playback and capture on the waveform audio API (`waveOut*` / `waveIn*`, `winmm.dll` loaded
+at run time, nothing linked), written from Microsoft's documentation of those functions. One worker thread per device
+(`CreateThread`, a `CRITICAL_SECTION`, an event the driver sets when a buffer is done, four buffers), queue and callback mode
+as on ALSA; a named device opens through the mapper (`WAVE_MAPPED`), so the format is converted for us; capture drops what
+arrives while paused. Not WASAPI: the waveform API needs no COM and covers the launcher's 16 kHz mono voice; its latency is a
+few buffers (about 4 x 20 ms at the voice settings). **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run
+on Windows** (nor the audio).
 
 ### macOS (not written)
 
@@ -321,6 +351,8 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
+| `platform_display` | the keep-on-screen rule (`WindowReachable`, `CenterOnDisplay`), `Xft.dpi` parsing, the work-area clip | nothing |
+| `platform_display_own`, `platform_display_sdl2`, `platform_display_own_xinerama` | own X11: one Xvfb screen; then a work area, `Xft.dpi: 144` and two RandR 1.5 monitors that the test sets on the server itself (`tests/platform_fakedisplay.cpp`), read back fresh, primary first; sdl2 against own on the same screen; two Xvfb screens joined by Xinerama (`OKAY_XVFB_SCREENS`) | Xvfb (skipped, 77, without it) |
 
 Also `platform_gamepad`: the controller -> `Input` bridge (`PlatformGamepad.hpp`) driven by a fake `Gamepad`.
 

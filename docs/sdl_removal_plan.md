@@ -147,7 +147,7 @@ The launcher logs which one draws once (`launcher: renderer ...`) and, with `own
   `SDL_SetTextInputRect`; Win32 `ImmSetCompositionWindow` + `ImmSetCandidateWindow` (imm32.dll loaded at run time); X11 the XIM spot
   location, with over-the-spot input (`XIMPreeditPosition`) chosen when the input method offers it (`OKAY_X11_IME_SPOT=0` keeps the
   old root-window style). Xvfb has no input method server, so on X11 the call reports "not taken" there.
-* **What `main.cpp` still asks SDL with `own`.** `SDL_Init(SDL_INIT_VIDEO)` / `SDL_Quit` and the DPI hint (always made); the display
+* **What `main.cpp` still asks SDL with `own`** (gone with `own` + `own` in step 2d). `SDL_Init(SDL_INIT_VIDEO)` / `SDL_Quit` and the DPI hint (always made); the display
   bounds in `KeepWindowOnScreen` (`SDL_GetNumVideoDisplays`, `SDL_GetDisplayUsableBounds`: work because SDL video is started; needs a
   display API in `okay::platform`); the HWND of an sdl2 window (`SDL_GetWindowWMInfo`); SDL audio for voice. None of them breaks or is
   skipped with `own`. The event loop of the `sdl` renderer is SDL's by design.
@@ -162,6 +162,50 @@ The launcher logs which one draws once (`launcher: renderer ...`) and, with `own
   and 16.11 ms, `own` 8.23 and 16.61 ms in two runs: the same within the noise here; says nothing about a real GPU.
 * **Not done / unverified.** Nothing ran on Windows (the Win32 flash, IME, hook and window code passed a MinGW syntax check only). No
   real desktop: no task bar to see the flash, no input method to see the candidate window. The default stays `sdl`.
+
+### Step 2d. Launcher: no SDL at all with `own` + `own` (branch `claude2/sdl-launcher-no-sdl`, on top of 2c)
+
+**Status (2026-11-16): built and tested on Linux under Xvfb; still off by default; not merged; Windows not run.**
+With `OKAY_LAUNCHER_RENDERER=own` **and** `OKAY_PLATFORM_BACKEND=own` the launcher makes **no SDL call at all**, from start to
+exit (proof below). It logs `launcher: no SDL (own renderer, own platform backend)` once. Every other combination is as before.
+
+* **Start and end.** `SDL_SetMainReady`, the Windows DPI hint, `SDL_Init(SDL_INIT_VIDEO)` and `SDL_Quit` now run only on the paths
+  that use SDL: the `sdl` renderer, the `own` renderer on the sdl2 platform backend (that backend starts SDL itself) and a failed
+  `own` start that falls back to `sdl` (it starts SDL video just before the SDL window). With `own` + `own`, per-monitor DPI
+  awareness comes from `Backend::SetPerMonitorDpiAware` (Win32: `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, looked up
+  in `user32.dll` at run time; nothing to do on Linux).
+* **Displays.** A display list in `okay::platform` (`Backend::Displays`: bounds, usable area, DPI scale, primary first; sdl2, X11
+  RandR 1.5 / Xinerama / root window, Win32 `EnumDisplayMonitors` + `GetDpiForMonitor`; `docs/platform_layer.md`, "Displays").
+  `KeepWindowOnScreen` uses it (through `WindowReachable` / `CenterOnDisplay`) with the backend that made the window, so the sdl
+  renderer still gets SDL's list.
+* **Audio.** Voice capture and playback, the voice clips and the chime already opened their devices through
+  `okay::platform::AudioDevice`; only the start (`SDL_InitSubSystem(SDL_INIT_AUDIO)`) was SDL's. It now starts audio on the default
+  backend: SDL's audio on sdl2 (the same call as before), ALSA on our Linux backend (capture was already there), and **new
+  waveOut / waveIn playback and capture on our Win32 backend** (`engine/src/Platform/OwnWin32Audio.cpp`, `winmm.dll` loaded at run
+  time; MinGW syntax check only). With `own` + `own` the voice clips use our WAV decoder unless `OKAY_OWN_WAV=0` (the SDL one is
+  `SDL_LoadWAV`).
+* **What is left in `main.cpp`** (9 SDL calls): the start and end above (only on the SDL paths), the `sdl` renderer's event loop
+  (`SDL_PollEvent`, `SDL_free` of a dropped file name: SDL's by design), and the HWND of an sdl2 window for the tray
+  (`SDL_GetWindowWMInfo`, only for sdl2 windows; an own Win32 window gives its HWND directly).
+* **The no-SDL proof** (`scripts/launcher_no_sdl_check.sh <launcher> <folder>`). A small library is generated from every function
+  the launcher's `libSDL2` exports (`nm -D`: 839 functions here) and put in front of it with `LD_PRELOAD`; each function writes
+  `SDL CALL: <name>` and ends the process (exit 97). Results (2026-11-16, Xvfb, Mesa llvmpipe):
+  * control: the default `sdl` renderer stops at once (exit 97, first call `SDL_GetTicks64`), so the trap works;
+  * `own` + `own`, 120 frames on the Create page, then the launcher exits by itself: **exit 0, no SDL call** (start-up and shut-down);
+  * `own` + `own`, the busy run: the chat in its own window (saved at 5000,3000 on a 2400 x 1000 screen; the display list brought it
+    back to 900,260), a voice clip playing, a voice call (microphone and speaker opened on ALSA's `null` device: `libasound` is
+    loaded), a click into the search box and typing "abc", a click on Play: **no SDL call**, still running at the end.
+  Screenshots: the Create page, the search box with "abc", the Play page, the chat window.
+* **Counts** (`scripts/sdl_inventory.py`): the launcher's own directory 41 to 36 SDL calls (278 to 270 words); everything it reaches
+  91 to 86. The "displays" row of the inventory went from GAP to PARTIAL (display modes are left, for the editor and player).
+* **Tests.** `platform_display` (the keep-on-screen rule, `Xft.dpi` parsing, the work-area clip), `platform_display_own` (Xvfb: one
+  screen; a panel, `Xft.dpi: 144` and two RandR 1.5 monitors set by the test, primary first), `platform_display_sdl2` (sdl2 and own
+  report the same screen), `platform_display_own_xinerama` (two Xvfb screens joined by `+xinerama`; Xvfb puts both at 0,0, so the
+  test checks the count and sizes, not a side-by-side layout); every existing `platform*`, `launcher*`, `okayui_host`, WAV and voice
+  test passes; `scripts/launcher_renderer_check.sh` passes with the default and with `OKAY_PLATFORM_BACKEND=own` (same pictures as 2c:
+  the chat window identical, the pages differ only by the footer label).
+* **Not done / unverified.** Nothing ran on Windows: the Win32 display list, DPI awareness and waveOut / waveIn audio passed a MinGW
+  syntax check only (so did `main.cpp`). No real multi-monitor desktop (the monitors were made on Xvfb). The default stays `sdl`.
 
 ### Step 3. Move the call sites the seam already covers (the "HAVE" rows)
 

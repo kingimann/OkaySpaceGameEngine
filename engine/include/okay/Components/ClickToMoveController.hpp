@@ -130,9 +130,12 @@ public:
             m_repath -= dt;
             float gm = std::sqrt((m_dest.x - m_pathGoal.x) * (m_dest.x - m_pathGoal.x) +
                                  (m_dest.z - m_pathGoal.z) * (m_dest.z - m_pathGoal.z));
-            if (m_repath <= 0.0f || m_path.empty() || gm > 0.5f) {
+            // A timer replan waits for a free slot this frame (Navigation::TakeReplanSlot); see NavMeshAgent.
+            const bool mustPlan = m_path.empty() || gm > 0.5f;
+            if (mustPlan || (m_repath <= 0.0f && Navigation::TakeReplanSlot(scene))) {
                 m_path = Navigation::FindPath(scene, pos, m_dest, 0.4f, gameObject);
-                m_pathIdx = 0; m_pathGoal = m_dest; m_repath = repathInterval;
+                m_pathIdx = 0; m_pathGoal = m_dest;
+                m_repath = mustPlan ? repathInterval * (0.5f + 0.5f * Navigation::StaggerPhase(gameObject)) : repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() &&
                    std::sqrt((pos.x - m_path[m_pathIdx].x) * (pos.x - m_path[m_pathIdx].x) +

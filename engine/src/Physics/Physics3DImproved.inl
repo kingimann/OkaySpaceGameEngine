@@ -602,3 +602,64 @@ void Physics3D::Solver::Sleep(const std::vector<Rigidbody3D*>& all, float dt, co
     }
     st.islands = roots; st.awake = awake; st.asleep = asleep;
 }
+
+// ---- Queries over a caller's list of colliders (Finding 107) -------------------------------------------------------
+// The navigation grid fallback probes thousands of cells per path search, and each probe used to test every collider
+// in the scene. AI/NavProbeIndex.hpp keeps a grid of the colliders' world boxes and passes only the ones near a probe
+// here. These run the same per-collider steps as Raycast and OverlapSphere (further down in Physics3D.cpp), so the
+// answer is the same as long as the colliders left out could not have been hit. They live in this file, which
+// Physics3D.cpp already includes, so they can use that file's private helpers.
+namespace {
+bool Passes(Collider3D* c, GameObject* ignore, std::uint32_t mask, bool queryTriggers);
+bool RayNearBounds(Collider3D* c, const Vec3& o, const Vec3& d, float maxT);
+bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float& t, Vec3& n);
+bool RayTerrain(Terrain* terr, const Vec3& origin, const Vec3& dir, float maxT, float& tOut, Vec3& nOut);
+bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask);
+bool SphereTouch(Collider3D* col, const Vec3& c, float r, Vec3& n, Vec3& point);
+} // namespace
+
+RaycastHit3D Physics3D::RaycastAmong(Scene& scene, const std::vector<Collider3D*>& candidates,
+                                     const Vec3& origin, const Vec3& direction, float maxDistance,
+                                     GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    // The body of Raycast with the collider list swapped for `candidates`.
+    RaycastHit3D best;
+    best.distance = maxDistance;
+    Vec3 dir = direction.Normalized();
+    const QueryCache& q = QueryLists(scene);
+    for (Collider3D* c : candidates) {
+        if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, best.distance)) continue;
+        float t; Vec3 n;
+        if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
+            best.hit = true; best.collider = c; best.gameObject = c->gameObject;
+            best.distance = t; best.point = origin + dir * t; best.normal = n;
+        }
+    }
+    for (Terrain* terr : q.terrains) {
+        if (!TerrainPasses(terr, ignore, layerMask)) continue;
+        float t; Vec3 n;
+        if (RayTerrain(terr, origin, dir, best.distance, t, n) && t <= best.distance) {
+            best.hit = true; best.collider = nullptr; best.gameObject = terr->gameObject;
+            best.distance = t; best.point = origin + dir * t; best.normal = n;
+        }
+    }
+    return best;
+}
+
+std::vector<Collider3D*> Physics3D::OverlapSphereAmong(const std::vector<Collider3D*>& candidates,
+                                                       const Vec3& center, float radius,
+                                                       std::uint32_t layerMask, bool queryTriggers,
+                                                       GameObject* ignore) {
+    // The body of Overlap for a sphere shape (ShapeTouch's sphere case) with the collider list swapped.
+    std::vector<Collider3D*> out;
+    for (Collider3D* c : candidates) {
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+        if (MeshCollider3D* mc = TriMeshOf(c)) {
+            trimesh::WorldView v(ActiveTris(mc), mc->WorldMatrix());
+            if (v.Sphere(center, radius).hit) out.push_back(c);
+            continue;
+        }
+        Vec3 n, p;
+        if (SphereTouch(c, center, radius, n, p)) out.push_back(c);
+    }
+    return out;
+}

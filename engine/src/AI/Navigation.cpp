@@ -6,9 +6,11 @@
 #include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace okay {
 
@@ -21,6 +23,8 @@ struct SceneCache {
     std::vector<NavMeshAgent*> agents;
     std::vector<NavMeshObstacle*> obstacles;
     std::vector<NavMeshLink*> links;
+    std::uint64_t replanFrame = ~0ull;   // Scene::UpdateCount() of the frame the slots below were counted in
+    int replansThisFrame = 0;
 };
 
 SceneCache& CacheFor(Scene& scene) {
@@ -44,10 +48,49 @@ SceneCache& CacheFor(Scene& scene) {
     return *c;
 }
 
+std::uint64_t g_searches = 0;
+int g_replanBudget = -1000;   // not decided yet: read OKAY_NAV_REPLAN_BUDGET once
+
 const Vec3 kSnap{2.0f, 4.0f, 2.0f};   // how far a start / goal may be from the mesh
 const Vec3 kLinkSnap{1.5f, 3.0f, 1.5f};   // how far a link's end points may be from the mesh
 
 } // namespace
+
+int Navigation::ReplanBudget() {
+    if (g_replanBudget == -1000) {
+        g_replanBudget = 4;
+        if (const char* e = std::getenv("OKAY_NAV_REPLAN_BUDGET")) {
+            char* end = nullptr;
+            const long v = std::strtol(e, &end, 10);
+            if (end != e) g_replanBudget = (int)std::max(-1L, std::min(v, 100000L));
+        }
+    }
+    return g_replanBudget;
+}
+
+void Navigation::SetReplanBudget(int perFrame) { g_replanBudget = perFrame < 0 ? 0 : perFrame; }
+
+bool Navigation::TakeReplanSlot(Scene& scene) {
+    const int budget = ReplanBudget();
+    if (budget <= 0) return true;
+    SceneCache& c = CacheFor(scene);
+    if (c.replanFrame != scene.UpdateCount()) { c.replanFrame = scene.UpdateCount(); c.replansThisFrame = 0; }
+    if (c.replansThisFrame >= budget) return false;
+    ++c.replansThisFrame;
+    return true;
+}
+
+float Navigation::StaggerPhase(const GameObject* go) {
+    if (!go) return 0.0f;
+    // Mix the id's bits (an integer hash of the "multiply, shift, xor" kind) so neighbouring ids spread out.
+    std::uint64_t x = go->InstanceId() + 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    return (float)(x >> 40) / (float)(1ull << 24);
+}
+
+std::uint64_t Navigation::SearchCount() { return g_searches; }
 
 NavMeshSurface* Navigation::Surface(Scene& scene) {
     NavMeshSurface* s = CacheFor(scene).surface;
@@ -81,6 +124,7 @@ std::uint32_t Navigation::CarveGeneration(Scene& scene) {
 bool Navigation::FindPath(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
                           float agentRadius, GameObject* self) {
     out.clear();
+    ++g_searches;
     if (const NavMesh* mesh = Mesh(scene)) {
         Vec3 s, e;
         if (mesh->FindNearestPoly(from, kSnap, &s) < 0 || mesh->FindNearestPoly(to, kSnap, &e) < 0) return false;
@@ -99,11 +143,12 @@ bool Navigation::FindPathForAgent(Scene& scene, const Vec3& from, const Vec3& to
     legLinks.clear();
     const NavMesh* mesh = Mesh(scene);
     if (!mesh) {
-        if (!FindPath(scene, from, to, out, agentRadius, self)) return false;
+        if (!FindPath(scene, from, to, out, agentRadius, self)) return false;   // (counted there)
         legLinks.assign(out.size(), nullptr);
         return true;
     }
     out.clear();
+    ++g_searches;
     Vec3 s, e;
     if (mesh->FindNearestPoly(from, kSnap, &s) < 0 || mesh->FindNearestPoly(to, kSnap, &e) < 0) return false;
     SceneCache& cache = CacheFor(scene);

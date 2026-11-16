@@ -2388,6 +2388,11 @@ add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 add_executable(test_navmesh_carving test_navmesh_carving.cpp)
 target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
 add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
+
+# Finding 107: the no-NavMesh grid search uses a collider index and spreads replans over frames.
+add_executable(test_perf_nav_fallback test_perf_nav_fallback.cpp)
+target_link_libraries(test_perf_nav_fallback PRIVATE okay::engine)
+add_test(NAME perf_nav_fallback COMMAND test_perf_nav_fallback)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -3785,6 +3790,11 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+# The Hierarchy panel's flat row list and visible range (editor/HierarchyRowModel.hpp, Finding 99).
+add_executable(test_hierarchy_row_model test_hierarchy_row_model.cpp)
+target_include_directories(test_hierarchy_row_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_hierarchy_row_model PRIVATE okay::engine)
+add_test(NAME hierarchy_row_model COMMAND test_hierarchy_row_model)
 
 # Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.

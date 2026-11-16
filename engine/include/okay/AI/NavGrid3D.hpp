@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/AI/NavProbeIndex.hpp"
 #include <vector>
 #include <queue>
 #include <unordered_map>
@@ -17,6 +18,10 @@ namespace okay {
 /// which also hits heightmap Terrain) overlaps no solid collider. Returns a
 /// smoothed list of world waypoints, or empty when no route exists within
 /// the expansion budget (the caller falls back to straight-line steering).
+///
+/// Each probe tests only the colliders near it, through NavProbeIndex (a grid of the colliders'
+/// world boxes, kept between searches until a collider moves or the scene changes); the answers are
+/// the same as testing every collider, so the paths are too (Finding 107).
 class NavGrid3D {
 public:
     static std::vector<Vec3> FindPath(Scene& sc, const Vec3& from, const Vec3& to,
@@ -42,20 +47,24 @@ public:
         const float kMaxStep = 0.45f;
         struct CellInfo { bool ok; float surf; };
         std::unordered_map<std::int64_t, CellInfo> walkCache;
+        NavProbeIndex* index = NavProbeIndex::Enabled() ? &NavProbeIndex::For(sc) : nullptr;
         auto probeCell = [&](int ix, int iz) -> CellInfo {
             auto it = walkCache.find(key(ix, iz));
             if (it != walkCache.end()) return it->second;
             CellInfo ci{true, from.y};
             Vec3 c = cellCenter(ix, iz);
-            RaycastHit3D g = sc.physics3D().Raycast(sc, {c.x, c.y + 2.5f, c.z},
-                                                    {0, -1, 0}, 8.0f, self);
+            RaycastHit3D g = index ? index->CastDown(sc, {c.x, c.y + 2.5f, c.z}, 8.0f, self)
+                                   : sc.physics3D().Raycast(sc, {c.x, c.y + 2.5f, c.z},
+                                                            {0, -1, 0}, 8.0f, self);
             if (g.hit) ci.surf = g.point.y;
             if (std::abs(ix - gx) + std::abs(iz - gz) > 1) {
                 // No ground within range = a hole/cliff: blocked, hug real floor.
                 if (!g.hit || c.y - ci.surf > 3.0f) ci.ok = false;
                 if (ci.ok) {
                     Vec3 probe{c.x, ci.surf + agentRadius + 0.15f, c.z};
-                    for (Collider3D* col : sc.physics3D().OverlapSphere(sc, probe, agentRadius)) {
+                    std::vector<Collider3D*> all;
+                    if (!index) all = sc.physics3D().OverlapSphere(sc, probe, agentRadius);
+                    for (Collider3D* col : index ? index->OverlapSphere(sc, probe, agentRadius) : all) {
                         if (!col || col->isTrigger) continue;
                         GameObject* cg = col->gameObject;
                         if (self && cg && (cg == self || cg->IsSelfOrDescendantOf(self))) continue;

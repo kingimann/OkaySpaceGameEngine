@@ -102,7 +102,8 @@ void CenteredAt(const UI::DrawList& dl, float x, float y, float width, const cha
 const UI::Vec2* UnitArc(float a0, float a1, int n);
 void ArcTo(const UI::DrawList& dl, UI::Vec2 c, float r, float a0, float a1, int n);
 void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, float t);
-enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
+enum NavIcon { kIcoPlay = 1, kIcoGrid = 2, kIcoTrophy = 5, kIcoFriends = 6, kIcoBag = 7, kIcoDownload = 10, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
+void OutlineRect(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float rounding, float t);
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
 void DrawTrophy(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col);
 void DrawStar(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col);

@@ -15385,6 +15385,58 @@ static AchPageData& AchPageDataRefresh(bool kAchDemo) {
     return data;
 }
 
+// The Community page's library details (both the Dear ImGui page and its OkayUI port use them): the size and kind of each item,
+// worked out once per item (folder walks are slow) and forgotten on Refresh.
+static std::map<std::string, std::string>& CommunityMetaCache() { static std::map<std::string, std::string> m; return m; }
+static const std::string& CommunityItemMeta(const fs::path& root, const fs::path& scene) {
+    std::map<std::string, std::string>& cache = CommunityMetaCache();
+    auto it = cache.find(scene.string());
+    if (it != cache.end()) return it->second;
+    std::error_code ec;
+    std::uintmax_t bytes = 0; int n = 0;
+    if (fs::is_directory(root, ec)) {
+        for (auto f = fs::recursive_directory_iterator(root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n)
+            if (f->is_regular_file(ec)) bytes += f->file_size(ec);
+    } else bytes = fs::file_size(root, ec);
+    char sz[32];
+    if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
+    else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
+    std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
+    return cache.emplace(scene.string(), meta).first->second;
+}
+// "Remove from library?": the confirmation both Community pages open by setting `path` (a Dear ImGui modal on both).
+static void DrawCommunityRemoveModal(std::string& commRemovePath, const std::string& commRemoveName, std::vector<fs::path>& scenes) {
+    auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
+    if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
+        ImGui::OpenPopup("Remove from library?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Remove from library?", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
+        ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doRemove) {
+            std::error_code rec; fs::remove_all(commRemovePath, rec);
+            Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
+            refreshLibrary();
+            commRemovePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+            commRemovePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 // The Friends page's data (both the Dear ImGui page and its OkayUI port read it): the friends and requests, the activity feed,
 // my friend code (all from the Friends worker, never on this thread), the follows (from the follow worker), and what the two
 // pages share while the person uses them (the view, the search, the typed names, the Add friend messages). Viewing the page
@@ -21540,7 +21592,75 @@ int main(int argc, char** argv) {
                 }
                 }   // end list view
             }
+        } else if (tab == 2 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                         ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Community, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same hero, drop zone, library (search, cards, menu, double-click to play), share steps and templates as the Dear ImGui
+            // page below; differences in docs/own_ui_toolkit.md section 8.8.
+            uitiming::Scope uiT("Community", "OkayUI");
+            auto mutedTile = [](const std::string& name, unsigned char out[3]) {   // IconTile's colour: the name colour toward steel
+                const ImVec4 raw = NameColor(name);
+                auto mute = [](float c) { return 0.40f + (c - 0.40f) * 0.38f; };
+                out[0] = (unsigned char)(mute(raw.x) * 255.0f + 0.5f); out[1] = (unsigned char)(mute(raw.y) * 255.0f + 0.5f); out[2] = (unsigned char)(mute(raw.z) * 255.0f + 0.5f);
+            };
+            // The library model is rebuilt when the scene list changes or once a second (the ages), not every frame.
+            static okayuiscreens::CommunityModel cm;
+            static std::vector<std::pair<std::size_t, fs::path>> cmItems;   // scene index and item root, parallel to cm.items
+            static std::size_t cmScenes = (std::size_t)-1;
+            static Uint32 cmNext = 0;
+            if (cmScenes != scenes.size() || okay::platform::TicksMs32() >= cmNext || CommunityMetaCache().empty()) {
+                cmScenes = scenes.size(); cmNext = okay::platform::TicksMs32() + 1000;
+                cm = okayuiscreens::CommunityModel();
+                cmItems.clear();
+                for (std::size_t i = 0; i < scenes.size(); ++i) {
+                    const fs::path croot = CommunityItemRoot(scenes[i]);
+                    if (croot.empty()) continue;
+                    okayuiscreens::CommunityItem it;
+                    it.title = croot.filename().string();
+                    it.file = scenes[i].filename().string();
+                    it.meta = CommunityItemMeta(croot, scenes[i]);
+                    it.ago = ModifiedAgo(scenes[i]);
+                    mutedTile(it.title, it.tile);
+                    cm.items.push_back(it);
+                    cmItems.push_back({i, croot});
+                }
+                for (const auto& t : templates) {
+                    okayuiscreens::CommunityTemplate ct; ct.name = t.name; ct.desc = t.desc; mutedTile(t.name, ct.tile);
+                    cm.templates.push_back(ct);
+                }
+            }
+            cm.havePlayer = !player.empty(); cm.haveEditor = !editor.empty();
+            static okayuiscreens::CommunityState cs;
+            cs.libFilter = commFilter; cs.libCap = (int)sizeof(commFilter);
+            cs.tplFilter = marketFilter; cs.tplCap = (int)sizeof(marketFilter);
+            if (focusSearch) { cs.focusLibrarySearch = true; focusSearch = false; }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's body ends; the footer stays below
+            ImGui::InvisibleButton("##okayui_community", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::CommunityResult r = okayuiscreens::DrawCommunity(cm, cs, rp.x, rp.y, ra.x, ra.y);
+            // The same actions as the Dear ImGui page.
+            auto itemAt = [&](int i) -> const std::pair<std::size_t, fs::path>* {
+                return i >= 0 && i < (int)cmItems.size() && cmItems[(std::size_t)i].first < scenes.size() ? &cmItems[(std::size_t)i] : nullptr;
+            };
+            if (r.publish) { tab = 7; g_openPublishForm = true; }
+            if (r.openFolder) OpenExternal(CommunityDir().string());
+            if (r.revealGames) OpenExternal(g_exeDir);
+            if (r.refresh) { scenes = FindScenes(); CommunityMetaCache().clear(); Toast("Library refreshed", 1); }
+            if (const auto* it = itemAt(r.play)) { const std::string cpath = scenes[it->first].string(); Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+            if (const auto* it = itemAt(r.reveal)) OpenExternal(it->second.string());
+            if (const auto* it = itemAt(r.copyPath)) ImGui::SetClipboardText(scenes[it->first].string().c_str());
+            if (const auto* it = itemAt(r.remove)) { commRemovePath = it->second.string(); commRemoveName = cm.items[(std::size_t)r.remove].title; }
+            if (r.useTemplate >= 0 && r.useTemplate < (int)(sizeof(templates) / sizeof(templates[0])) && !editor.empty()) {
+                g_wizardTemplateRequest = templates[r.useTemplate].tmpl;   // a card only opens the New Project wizard
+                tab = 0; g_lastTab = 0;
+            }
+            DrawCommunityRemoveModal(commRemovePath, commRemoveName, scenes);
+#endif
         } else if (tab == 2) {                            // ---- Community ----
+            uitiming::Scope uiT("Community", "Dear ImGui");
             sectionHeader("Community", nullptr);
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -21598,25 +21718,9 @@ int main(int argc, char** argv) {
                 d->PathLineTo(ImVec2(c.x + 7.5f, c.y + 5.5f)); d->PathLineTo(ImVec2(c.x - 7.5f, c.y + 5.5f));
                 d->PathStroke(col, ImDrawFlags_Closed, 1.6f);
             };
-            // Size + kind of each library item, computed once (folder walks are slow).
-            static std::map<std::string, std::string> s_commMeta;
-            auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& {
-                auto it = s_commMeta.find(scene.string());
-                if (it != s_commMeta.end()) return it->second;
-                std::error_code ec;
-                std::uintmax_t bytes = 0; int n = 0;
-                if (fs::is_directory(root, ec)) {
-                    for (auto f = fs::recursive_directory_iterator(root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n)
-                        if (f->is_regular_file(ec)) bytes += f->file_size(ec);
-                } else bytes = fs::file_size(root, ec);
-                char sz[32];
-                if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-                else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
-                else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
-                std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
-                return s_commMeta.emplace(scene.string(), meta).first->second;
-            };
-            auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); };
+            // Size + kind of each library item, computed once (folder walks are slow; shared with the OkayUI page).
+            auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& { return CommunityItemMeta(root, scene); };
+            auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
 
             // Collect library items (scenes living under community/).
             struct CommItem { std::size_t idx; fs::path root; std::string title; };
@@ -21937,34 +22041,7 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();   // ##commbody
 
-            // Confirm before deleting a community game's folder from disk.
-            if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
-                ImGui::OpenPopup("Remove from library?");
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
-                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            if (ImGui::BeginPopupModal("Remove from library?", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
-                ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-                bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
-                ImGui::PopStyleColor(2);
-                if (doRemove) {
-                    std::error_code rec; fs::remove_all(commRemovePath, rec);
-                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
-                    refreshLibrary();
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) {
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
+            DrawCommunityRemoveModal(commRemovePath, commRemoveName, scenes);   // confirm before deleting a community game's folder
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 

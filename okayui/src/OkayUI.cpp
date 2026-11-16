@@ -2357,7 +2357,10 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     float* scroll  = floatState(cid, 0.0f);
     float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
     const bool hovered = hit(rx, ry, rw, rh);
-    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * rowH(); if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
+    // The wheel scrolls a row per notch; a child with the Dear ImGui-style padding and bar (StyleVar_ChildPadding) scrolls five
+    // lines of text per notch, at most two thirds of its height, as the Dear ImGui lists it stands in for do.
+    const float wheelStep = imguiBar ? std::floor(std::min(5.0f * textH(), rh * 0.67f)) : rowH();
+    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * wheelStep; if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
     // Clamp with the previous frame's content extent so layout uses a sane offset.
     if (*scroll < 0.0f) *scroll = 0.0f;
     if (*scroll > *maxSlot) *scroll = *maxSlot;

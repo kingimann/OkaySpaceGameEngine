@@ -686,4 +686,412 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
     return res;
 }
 
+// ---- Community -------------------------------------------------------------------------------------------------------------
+
+std::vector<int> CommunityFilter(const CommunityModel& m, const std::string& filter) {
+    const std::string q = Lower(filter);
+    std::vector<int> out;
+    for (int i = 0; i < (int)m.items.size(); ++i)
+        if (q.empty() || Lower(m.items[(std::size_t)i].file + " " + m.items[(std::size_t)i].title).find(q) != std::string::npos) out.push_back(i);
+    return out;
+}
+
+std::vector<int> CommunityTemplateFilter(const CommunityModel& m, const std::string& filter) {
+    const std::string q = Lower(filter);
+    std::vector<int> out;
+    for (int i = 0; i < (int)m.templates.size(); ++i)
+        if (q.empty() || Lower(m.templates[(std::size_t)i].name + " " + m.templates[(std::size_t)i].desc).find(q) != std::string::npos) out.push_back(i);
+    return out;
+}
+
+namespace {
+
+// The launcher's initial tile (IconTile): a rounded square in the muted name colour, its outline, the initial.
+void IconTile(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+    const float rnd = size * 0.14f;
+    dl.AddRectFilled(V(x, y), V(x + size, y + size), Rgb(rgb[0], rgb[1], rgb[2], 77), rnd);
+    dl.AddRect(V(x, y), V(x + size, y + size), Rgb(rgb[0], rgb[1], rgb[2], 140), rnd, 1.0f);
+    const char init[2] = {name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0};
+    const UI::Vec2 ts = UI::CalcTextSize(init);
+    Txt(dl, V(x + (size - ts.x) * 0.5f, y + (size - ts.y) * 0.5f), Rgb(224, 230, 240), init);
+}
+
+// A dashed outline along a rounded rectangle (the launcher's drop zone): the corners are quarter circles of as many segments
+// as the launcher's renderer gives a circle of that radius (its 0.3 px error target), walked clockwise from the top of the
+// left edge, dashes and gaps alternating along the way.
+void DashedRoundRect(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, float r, UI::Color32 col, float th, float dash, float gap) {
+    r = std::min(r, std::min(b.x - a.x, b.y - a.y) * 0.5f);
+    int seg = (int)std::ceil(kPi / std::acos(1.0f - std::min(0.3f, r) / std::max(r, 0.01f)));
+    seg = std::max(4, std::min(512, seg + (seg & 1)));
+    const int step = std::max(1, std::min(12, 48 / seg)), perQuarter = std::max(1, 12 / step);
+    std::vector<UI::Vec2> pts;
+    const UI::Vec2 c[4] = {V(a.x + r, a.y + r), V(b.x - r, a.y + r), V(b.x - r, b.y - r), V(a.x + r, b.y - r)};
+    for (int q = 0; q < 4; ++q) {
+        const float a0 = kPi * (1.0f + 0.5f * (float)q);
+        for (int i = 0; i <= perQuarter; ++i) {
+            const float t = a0 + (kPi * 0.5f) * (float)i / (float)perQuarter;
+            pts.push_back(V(c[q].x + std::cos(t) * r, c[q].y + std::sin(t) * r));
+        }
+    }
+    pts.push_back(pts[0]);
+    bool on = true;
+    float left = dash;
+    for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+        const UI::Vec2 p = pts[i], q = pts[i + 1];
+        const float dx = q.x - p.x, dy = q.y - p.y, len = std::sqrt(dx * dx + dy * dy);
+        float t = 0.0f;
+        while (len > 0.0f && t < len) {
+            const float stepLen = std::min(left, len - t);
+            if (on) dl.AddLine(V(p.x + dx * t / len, p.y + dy * t / len), V(p.x + dx * (t + stepLen) / len, p.y + dy * (t + stepLen) / len), col, th);
+            t += stepLen; left -= stepLen;
+            if (left <= 0.001f) { on = !on; left = on ? dash : gap; }
+        }
+    }
+}
+
+// The small-caps label of a Community section ("YOUR LIBRARY  -  3", or just the title); returns its height.
+float CommLabel(const UI::DrawList& dl, float x, float y, const char* title, int n) {
+    char t[64];
+    if (n >= 0) std::snprintf(t, sizeof(t), "%s  \xE2\x80\x94  %d", title, n); else std::snprintf(t, sizeof(t), "%s", title);
+    PushScale(0.80f);
+    const float lh = UI::GetTextLineHeight();
+    Txt(dl, V(x, y), Col(UI::Style().textDim), t);
+    UI::PopTextScale();
+    return lh;
+}
+
+// The folder glyph on a library card's reveal button.
+void FolderGlyph(const UI::DrawList& d, UI::Vec2 c, UI::Color32 col) {
+    d.PathClear();
+    d.PathLineTo(V(c.x - 7.5f, c.y - 5.5f)); d.PathLineTo(V(c.x - 2.5f, c.y - 5.5f));
+    d.PathLineTo(V(c.x - 0.5f, c.y - 3.5f)); d.PathLineTo(V(c.x + 7.5f, c.y - 3.5f));
+    d.PathLineTo(V(c.x + 7.5f, c.y + 5.5f)); d.PathLineTo(V(c.x - 7.5f, c.y + 5.5f));
+    d.PathStroke(col, true, 1.6f);
+}
+
+} // namespace
+
+CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float x, float y, float w, float h) {
+    CommunityResult res;
+    static char noLib[2] = "", noTpl[2] = "";
+    char* libBuf = st.libFilter && st.libCap > 0 ? st.libFilter : noLib;
+    char* tplBuf = st.tplFilter && st.tplCap > 0 ? st.tplFilter : noTpl;
+    const int libCap = st.libFilter && st.libCap > 0 ? st.libCap : 1, tplCap = st.tplFilter && st.tplCap > 0 ? st.tplCap : 1;
+    libBuf[libCap - 1] = tplBuf[tplCap - 1] = '\0';
+
+    const LauncherLook look;
+    UI::BareNextWindow();
+    if (UI::Begin("Community##okayui", x, y, w, h)) {
+        const UI::Theme& th = UI::Style();
+        const UI::Color32 cText = Col(th.text), cDim = Col(th.textDim), accLt = AccentLight();
+        const UI::DrawList& wd = UI::GetWindowDrawList();
+        const float fs = UI::GetTextLineHeight();
+        const UI::Vec2 mouse = UI::GetMousePos();
+        const float cy = PageHeader(wd, x, y, w, "Community", nullptr);
+
+        UI::SetCursorScreenPos(V(x, cy));
+        BeginPlainChild("##commbody", w, std::max(8.0f, y + h - cy));
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        const UI::Vec2 o = UI::GetCursorScreenPos();
+        const float W = UI::GetContentRegionAvail().x;
+        const bool bodyHovered = UI::IsWindowHovered();
+        float ly = o.y;
+
+        // ---- the hero card: what Community is, and its actions ----
+        {
+            const float px = o.x + 22.0f, hw = W - 44.0f;
+            const bool art = hw >= 560.0f;
+            const float textW = art ? hw - 190.0f : hw;
+            const float hy = ly + 20.0f;
+            PushScale(1.22f);
+            const float titleH = UI::GetTextLineHeight();
+            UI::PopTextScale();
+            const std::string desc = "Games, levels, scripts and models made by other OkaySpace creators. Everything you add "
+                                     "lives in your community folder and also shows up in Play.";
+            const float descY = NextY(NextY(hy, titleH), 2.0f);
+            const float descH = fs * (float)WrapCached(desc, textW).size();
+            float by = NextY(NextY(descY, descH), 8.0f);
+            // the buttons wrap onto a new line when the card is narrow
+            const float bh = 36.0f;
+            const float bw[3] = {206.0f, 206.0f, 112.0f};
+            float bx[3], byy[3], rowX = 0.0f, rowY = by;
+            for (int i = 0; i < 3; ++i) {
+                if (i > 0 && rowX + 8.0f + bw[i] <= hw) { bx[i] = px + rowX + 8.0f; rowX += 8.0f + bw[i]; }
+                else { if (i > 0) rowY = NextY(rowY, bh); bx[i] = px; rowX = bw[i]; }
+                byy[i] = rowY;
+            }
+            const float cardH = rowY + bh + 20.0f - ly;
+            dl.AddRectFilled(V(o.x, ly), V(o.x + W, ly + cardH), CRaised(), 12.0f);
+            if (art) {   // a stack of three tiles (play, grid, bag) on the right
+                struct Tile { float dx, dy; int icon; float a; };
+                const Tile tiles[3] = {{-150.0f, 18.0f, kIcoPlay, 0.16f}, {-104.0f, 2.0f, kIcoGrid, 0.26f}, {-58.0f, 22.0f, kIcoBag, 0.18f}};
+                const float S = 58.0f;
+                for (const Tile& t : tiles) {
+                    const UI::Vec2 a = V(px + hw + t.dx, hy + t.dy);
+                    dl.AddRectFilled(a, V(a.x + S, a.y + S), CRaised(), 14.0f);
+                    dl.AddRectFilled(a, V(a.x + S, a.y + S), AccentAlpha(t.a), 14.0f);
+                    dl.AddRect(a, V(a.x + S, a.y + S), Rgb(255, 255, 255, 26), 14.0f, 1.0f);
+                    DrawNavIcon(dl, t.icon, V(a.x + S * 0.5f, a.y + S * 0.5f), accLt);
+                }
+            }
+            PushScale(1.22f);
+            Txt(dl, V(px, hy), cText, "Play and share community creations");
+            UI::PopTextScale();
+            DrawWrapped(dl, px, descY, textW, desc, cDim);
+            if (FlatButton("##commpub", "Publish to Marketplace", bx[0], byy[0], bw[0], bh, true, true)) res.publish = true;
+            res.publishButton = UI::GetItemRect();
+            if (FlatButton("##commfolder", "Open community folder", bx[1], byy[1], bw[1], bh)) res.openFolder = true;
+            res.folderButton = UI::GetItemRect();
+            if (FlatButton("##commrefresh", "      Refresh", bx[2], byy[2], bw[2], bh)) res.refresh = true;
+            res.refreshButton = UI::GetItemRect();
+            DrawNavIcon(dl, kIcoRefresh, V(bx[2] + 22.0f, byy[2] + bh * 0.5f), cText);
+            if (UI::IsItemHovered()) UI::SetTooltip("%s", "Rescan the community folder");
+            ly = NextY(NextY(ly, cardH), 10.0f);
+        }
+
+        // ---- the drop zone: a dashed card; a click opens the community folder ----
+        {
+            const float zh = 88.0f;
+            const UI::Vec2 p = V(o.x, ly);
+            UI::SetCursorScreenPos(p);
+            if (UI::InvisibleButton("##commdrop", W, zh)) res.openFolder = true;
+            res.dropZone = UI::GetItemRect();
+            const bool hov = UI::IsItemHovered();
+            dl.AddRectFilled(p, V(p.x + W, p.y + zh), AccentAlpha(hov ? 0.10f : 0.05f), 12.0f);
+            DashedRoundRect(dl, V(p.x + 0.5f, p.y + 0.5f), V(p.x + W - 0.5f, p.y + zh - 0.5f), 12.0f, AccentAlpha(hov ? 0.85f : 0.50f), 1.5f, 7.0f, 5.0f);
+            const UI::Vec2 ic = V(p.x + 46.0f, p.y + zh * 0.5f);
+            dl.AddCircleFilled(ic, 22.0f, AccentAlpha(0.18f), 32);
+            DrawNavIcon(dl, kIcoDownload, ic, accLt);
+            const float tx = p.x + 84.0f, tw = W - 84.0f - 18.0f;
+            const std::string d1 = "Drag a game folder, scene, script or model onto this window to add it to your library. "
+                                   "A dropped .okayscene plays right away.";
+            const float dsy = fs * (float)WrapCached(d1, tw).size();
+            const float ty = p.y + (zh - (fs + 4.0f + dsy)) * 0.5f;
+            Txt(dl, V(tx, ty), cText, "Drop files here to add them to your library");
+            DrawWrapped(dl, Tr(tx), Tr(ty + fs + 4.0f), tw, d1, cDim);
+            if (hov) { UI::SetMouseCursor(UI::MouseCursor_Hand); UI::SetTooltip("%s", "Open the community folder"); }
+            ly = NextY(NextY(p.y, zh), 14.0f);
+        }
+
+        // A section header: its label (with the search pill on the right, or under it on a narrow page). Returns where the
+        // next item goes.
+        auto sectionHeader = [&](float yy, const char* title, int n, const char* id, const char* hint, char* buf, int cap, UI::Rect& rect, bool focus) {
+            const bool pillBelow = W < 560.0f;
+            const float pillW = pillBelow ? W : std::min(300.0f, W * 0.45f);
+            const float labelY = yy + (pillBelow ? 0.0f : 9.0f);
+            const float lh = CommLabel(dl, o.x, labelY, title, n);
+            float pillY = pillBelow ? NextY(NextY(labelY, lh), 2.0f) : yy;
+            if (focus) UI::SetKeyboardFocusHere();
+            SearchPill(dl, id, hint, buf, cap, pillBelow ? o.x : o.x + W - pillW, pillY, pillW, rect);
+            return NextY(NextY(pillY, rect.h), 6.0f);
+        };
+
+        // ---- your library: the header and a grid of cards (or the empty state) ----
+        ly = sectionHeader(ly, "YOUR LIBRARY", (int)m.items.size(), "##commFilter", "Search your library  (Ctrl+F)", libBuf, libCap, res.librarySearch, st.focusLibrarySearch);
+        st.focusLibrarySearch = false;
+        res.shown = CommunityFilter(m, libBuf);
+        if (res.shown.empty()) {
+            res.libraryEmpty = true;
+            ly = NextY(ly, 14.0f);
+            const UI::Vec2 c = V(o.x + W * 0.5f, ly + 30.0f);
+            dl.AddCircleFilled(c, 30.0f, Rgb(255, 255, 255, 12), 40);
+            DrawNavIcon(dl, kIcoGrid, c, cDim);
+            ly = NextY(ly, 70.0f);
+            std::string sub;
+            if (libBuf[0]) { res.emptyTitle = "No matches"; sub = std::string("Nothing in your library matches \"") + libBuf + "\"."; }
+            else { res.emptyTitle = "Your library is empty"; sub = "Drop a shared game onto this window, or put it in the community folder and Refresh."; }
+            CenteredT(dl, o.x, ly, W, res.emptyTitle.c_str(), cText);
+            ly = NextY(ly, fs);
+            CenteredT(dl, o.x, ly, W, sub.c_str(), cDim);
+            ly = NextY(NextY(ly, fs), 18.0f);
+        } else {
+            const float gap = 12.0f, cardH = 128.0f;
+            const int cols = std::max(1, (int)((W + gap) / (270.0f + gap)));
+            const float cardW = std::floor((W - (float)(cols - 1) * gap) / (float)cols);
+            const UI::Vec2 g0 = V(o.x, ly);
+            int n = 0;
+            for (int idx : res.shown) {
+                const CommunityItem& it = m.items[(std::size_t)idx];
+                UI::PushID(idx + 5000);
+                const UI::Vec2 cp = V(g0.x + (float)(n % cols) * (cardW + gap), g0.y + (float)(n / cols) * (cardH + gap));
+                ++n;
+                const float d = 32.0f, by = cp.y + cardH - 14.0f - d;
+                const UI::Rect playR{cp.x + 14.0f, by, cardW - 28.0f - 2.0f * (d + 8.0f), d};
+                const UI::Rect revealR{cp.x + cardW - 14.0f - 2.0f * d - 8.0f, by, d, d};
+                const UI::Rect moreR{cp.x + cardW - 14.0f - d, by, d, d};
+                UI::SetCursorScreenPos(cp);
+                const bool click = UI::InvisibleButton("##ccard", cardW, cardH);
+                res.cards.push_back(UI::GetItemRect());
+                const bool hovCard = UI::IsItemHovered();
+                const bool hov = bodyHovered && UI::IsMouseHoveringRect(cp, V(cp.x + cardW, cp.y + cardH));
+                const bool overBtn = In(playR, mouse) || In(revealR, mouse) || In(moreR, mouse);
+                if (hovCard && !overBtn && m.havePlayer && UI::IsMouseDoubleClicked(0)) res.play = idx;   // a double click plays
+                bool openMenu = false;
+                if (click && In(moreR, mouse)) openMenu = true;
+                if (click && In(revealR, mouse)) res.reveal = idx;
+                if (click && In(playR, mouse) && m.havePlayer) res.play = idx;
+                if (openMenu) UI::OpenPopup("##commctx");
+                if (UI::BeginPopupContextItem("##commctx") || UI::BeginPopup("##commctx")) {
+                    auto item = [&](const char* label) {
+                        const bool c = UI::Selectable(label, false);
+                        res.menuItems.push_back(UI::GetItemRect());
+                        res.menuLabels.push_back(label);
+                        if (c) UI::CloseCurrentPopup();
+                        return c;
+                    };
+                    if (m.havePlayer && item("Play")) res.play = idx;
+                    if (item("Show in Explorer")) res.reveal = idx;
+                    if (item("Copy Path")) res.copyPath = idx;
+                    UI::Separator();
+                    UI::PushStyleColor(UI::Col_Text, (unsigned char)242, (unsigned char)115, (unsigned char)115);
+                    if (item("Remove from library...")) res.remove = idx;
+                    UI::PopStyleColor();
+                    UI::EndPopup();
+                }
+                res.playButtons.push_back(playR); res.revealButtons.push_back(revealR); res.moreButtons.push_back(moreR);
+                dl.AddRectFilled(cp, V(cp.x + cardW, cp.y + cardH), CRaised(), 10.0f);
+                if (hov) {
+                    dl.AddRectFilled(cp, V(cp.x + cardW, cp.y + cardH), Rgb(255, 255, 255, 8), 10.0f);
+                    dl.AddRect(cp, V(cp.x + cardW, cp.y + cardH), Rgb(255, 255, 255, 30), 10.0f, 1.0f);
+                }
+                const float A = 52.0f;
+                IconTile(dl, cp.x + 14.0f, cp.y + 14.0f, A, it.tile, it.title);
+                const float tx = cp.x + 14.0f + A + 12.0f, tr = cp.x + cardW - 14.0f;
+                Txt(dl, V(tx, cp.y + 16.0f), cText, FitTextWidth(it.title, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + 37.0f), accLt, FitTextWidth(it.meta, tr - tx).c_str());
+                const std::string sub = it.file + (it.ago.empty() ? "" : "  \xC2\xB7  " + it.ago);
+                Txt(dl, V(tx, cp.y + 56.0f), cDim, FitTextWidth(sub, tr - tx).c_str());
+                // Play (the accent button), reveal and more
+                {
+                    const bool over = hov && In(playR, mouse), held = over && UI::IsItemActive() && m.havePlayer;
+                    const float a = m.havePlayer ? 1.0f : 0.55f;
+                    const unsigned char* acc = th.accent;
+                    const UI::Color32 bg = held ? Rgb((int)(acc[0] * 0.73f), (int)(acc[1] * 0.73f), (int)(acc[2] * 0.73f), (int)(255 * a))
+                                         : over && m.havePlayer ? Rgb((int)(acc[0] + (255 - acc[0]) * 0.2f), (int)(acc[1] + (255 - acc[1]) * 0.2f), (int)(acc[2] + (255 - acc[2]) * 0.2f))
+                                                                : Rgb(acc[0], acc[1], acc[2], (int)(235 * a));
+                    dl.AddRectFilled(V(playR.x, playR.y), V(playR.x + playR.w, playR.y + playR.h), bg, 6.0f);
+                    const UI::Vec2 ts = UI::CalcTextSize("Play");
+                    Txt(dl, V(playR.x + (playR.w - ts.x) * 0.5f, playR.y + (playR.h - ts.y) * 0.5f), Rgb(255, 255, 255, (int)(255 * a)), "Play");
+                    if (over && m.havePlayer) UI::SetMouseCursor(UI::MouseCursor_Hand);
+                    if (over && !m.havePlayer) UI::SetTooltip("%s", "Player runtime not found next to the launcher");
+                }
+                {
+                    const bool over = hov && In(revealR, mouse);
+                    const UI::Vec2 fc = V(revealR.x + d * 0.5f, revealR.y + d * 0.5f);
+                    dl.AddCircleFilled(fc, d * 0.5f, Rgb(255, 255, 255, over ? 34 : 16), 28);
+                    FolderGlyph(dl, fc, cText);
+                    if (over) { UI::SetMouseCursor(UI::MouseCursor_Hand); UI::SetTooltip("%s", "Show in folder"); }
+                }
+                {
+                    const bool over = hov && In(moreR, mouse);
+                    RoundIcon(dl, V(moreR.x, moreR.y), d, kRibMore, over, Rgb(255, 255, 255, 16), Rgb(255, 255, 255, 34), cText);
+                    if (over) { UI::SetMouseCursor(UI::MouseCursor_Hand); UI::SetTooltip("%s", "More"); }
+                }
+                UI::PopID();
+            }
+            const int rows = (n + cols - 1) / cols;
+            ly = NextY(g0.y + (float)rows * (cardH + gap) - gap, 0.0f);
+        }
+        ly = NextY(ly, 12.0f);
+
+        // ---- share your creation: three numbered steps and two buttons ----
+        {
+            static const char* kTitle[3] = {"Build it", "Share it", "Publish it"};
+            static const char* kDesc[3] = {"In the editor, File > Build Game makes a self-contained game folder.",
+                                           "Zip the folder and send it. Friends drop it onto their launcher to play.",
+                                           "Or put it on the Marketplace so anyone can find and download it."};
+            const float px = o.x + 20.0f, sw = W - 40.0f;
+            const bool rowLayout = sw >= 620.0f;
+            const float colW = rowLayout ? (sw - 2.0f * 18.0f) / 3.0f : sw;
+            float yy = ly + 16.0f;
+            PushScale(0.80f);
+            const float lblH = UI::GetTextLineHeight();
+            UI::PopTextScale();
+            const float stepsY = NextY(NextY(yy, lblH), 4.0f);
+            // each step is a group: the number disc, the title, the wrapped description; in a row they sit side by side
+            float sx = px, sy = stepsY, rowBottom = stepsY;
+            float stepX[3], stepY[3];
+            for (int k = 0; k < 3; ++k) {
+                const float tw = colW - 40.0f;
+                const std::vector<std::string>& lines = WrapCached(kDesc[k], tw);
+                float wmax = UI::CalcTextSize(kTitle[k]).x;
+                for (const std::string& l : lines) wmax = std::max(wmax, UI::CalcTextSize(l.c_str()).x);
+                const float gh = 2.0f + fs + kSpY + fs * (float)lines.size();
+                if (k > 0 && !rowLayout) sy = NextY(NextY(sy, 0.0f), 6.0f);
+                stepX[k] = sx; stepY[k] = sy;
+                if (rowLayout) { rowBottom = std::max(rowBottom, sy + gh); sx = sx + 40.0f + wmax + 18.0f; }
+                else { sy = NextY(sy, gh) - kSpY; rowBottom = sy; }
+                (void)stepY;
+            }
+            const float btnY = NextY(NextY(rowBottom, 0.0f), 8.0f);
+            const bool sameRow = sw >= 196.0f + 8.0f + 200.0f;
+            const float btn2Y = sameRow ? btnY : NextY(btnY, 32.0f);
+            const float cardH = btn2Y + 32.0f + 16.0f - ly;
+            dl.AddRectFilled(V(o.x, ly), V(o.x + W, ly + cardH), CRaised(), 12.0f);
+            CommLabel(dl, px, yy, "SHARE YOUR CREATION", -1);
+            for (int k = 0; k < 3; ++k) {
+                const UI::Vec2 p = V(stepX[k], stepY[k]);
+                const UI::Vec2 nc = V(p.x + 14.0f, p.y + 14.0f);
+                dl.AddCircleFilled(nc, 14.0f, AccentAlpha(0.22f), 28);
+                char num[4]; std::snprintf(num, sizeof(num), "%d", k + 1);
+                const UI::Vec2 ns = UI::CalcTextSize(num);
+                Txt(dl, V(nc.x - ns.x * 0.5f, nc.y - ns.y * 0.5f), accLt, num);
+                Txt(dl, V(p.x + 40.0f, p.y + 2.0f), cText, kTitle[k]);
+                DrawWrapped(dl, p.x + 40.0f, NextY(p.y + 2.0f, fs), colW - 40.0f, kDesc[k], cDim);
+            }
+            if (FlatButton("##commreveal", "Reveal my games folder", px, btnY, 196.0f, 32.0f)) res.revealGames = true;
+            res.shareFolderButton = UI::GetItemRect();
+            if (FlatButton("##commpub2", "Publish to Marketplace\xE2\x80\xA6", sameRow ? px + 196.0f + 8.0f : px, btn2Y, 200.0f, 32.0f)) res.publish = true;
+            res.sharePublishButton = UI::GetItemRect();
+            ly = NextY(NextY(ly, cardH), 16.0f);
+        }
+
+        // ---- starter templates: the header with its search, a grid of cards ----
+        ly = sectionHeader(ly, "STARTER TEMPLATES", -1, "##marketFilter", "Search templates", tplBuf, tplCap, res.templateSearch, false);
+        {
+            res.templatesShown = CommunityTemplateFilter(m, tplBuf);
+            const float gap = 10.0f, cardH = 72.0f;
+            const int cols = std::max(1, std::min(4, (int)((W + gap) / (230.0f + gap))));
+            const float cardW = std::floor((W - (float)(cols - 1) * gap) / (float)cols);
+            const UI::Vec2 g0 = V(o.x, ly);
+            int shown = 0;
+            for (int idx : res.templatesShown) {
+                const CommunityTemplate& t = m.templates[(std::size_t)idx];
+                const UI::Vec2 cp = V(g0.x + (float)(shown % cols) * (cardW + gap), g0.y + (float)(shown / cols) * (cardH + gap));
+                ++shown;
+                UI::PushID(idx + 9000);
+                UI::SetCursorScreenPos(cp);
+                const bool clicked = UI::InvisibleButton("##tpl", cardW, cardH);
+                res.templateCards.push_back(UI::GetItemRect());
+                const bool over = UI::IsItemHovered(), hov = over && m.haveEditor;
+                dl.AddRectFilled(cp, V(cp.x + cardW, cp.y + cardH), CRaised(), 10.0f);
+                if (hov) {
+                    dl.AddRectFilled(cp, V(cp.x + cardW, cp.y + cardH), Rgb(255, 255, 255, 10), 10.0f);
+                    OutlineRect(dl, cp, V(cp.x + cardW, cp.y + cardH), Col(th.accent), 10.0f, 1.5f);
+                    UI::SetMouseCursor(UI::MouseCursor_Hand);
+                    UI::SetTooltip("Start a new project from the %s template (you confirm the name first)", t.name.c_str());
+                } else if (over) UI::SetTooltip("%s", "Editor not found next to the launcher");
+                IconTile(dl, cp.x + 14.0f, cp.y + (cardH - 40.0f) * 0.5f, 40.0f, t.tile, t.name);
+                const float tx = cp.x + 14.0f + 40.0f + 12.0f, tr = cp.x + cardW - 12.0f;
+                Txt(dl, V(tx, cp.y + cardH * 0.5f - fs - 1.0f), m.haveEditor ? cText : Rgb(255, 255, 255, 110), FitTextWidth(t.name, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + cardH * 0.5f + 2.0f), cDim, FitTextWidth(t.desc, tr - tx).c_str());
+                if (clicked && m.haveEditor) res.useTemplate = idx;   // a card only opens New Project; the person confirms name and place
+                UI::PopID();
+            }
+            if (shown > 0) ly = NextY(g0.y + (float)((shown + cols - 1) / cols) * (cardH + gap) - gap, 0.0f);
+            else {
+                const std::string none = std::string("No templates match \"") + tplBuf + "\".";
+                Txt(dl, V(o.x, ly), cDim, none.c_str());
+                ly = NextY(ly, fs);
+            }
+            ly = NextY(ly, 6.0f);
+            Txt(dl, V(o.x, ly), cDim, "A template opens New Project on that starting point. Nothing is made until you press Create.");
+            ly = NextY(ly, fs);
+        }
+        EndPlainChild(ly + 6.0f);
+    }
+    UI::End();
+    return res;
+}
+
 } // namespace okayuiscreens

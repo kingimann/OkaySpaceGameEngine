@@ -126,6 +126,12 @@ void ArcTo(const UI::DrawList& dl, UI::Vec2 c, float r, float a0, float a1, int 
     const UI::Vec2* u = UnitArc(a0, a1, n);
     for (int i = 0; i <= n; ++i) dl.PathLineTo(V(c.x + u[i].x * r, c.y + u[i].y * r));
 }
+// A rectangle outline stroked `t` wide centred half a pixel inside its edge, where the launcher's outlines put it (OkayUI's own
+// AddRect strokes inward from the edge).
+void OutlineRect(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float rounding, float t) {
+    const float o = t * 0.5f - 0.5f;
+    dl.AddRect(V(mn.x - o, mn.y - o), V(mx.x + o, mx.y + o), col, rounding + o, t);
+}
 // A ring stroked `t` wide centred half a pixel inside radius r (where the launcher's circles put their outline).
 void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, float t) {
     dl.AddCircle(c, r - 0.5f + t * 0.5f, col, n, t);
@@ -164,6 +170,29 @@ void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
         ArcTo(d, c, 6.8f, kPi * 0.80f, kPi * 2.62f, 26);
         d.PathLineTo(V(c.x - r, c.y + r));
         d.PathStroke(col, true, t);
+        break;
+    case kIcoPlay:   // a play button in a circle
+        Ring(d, c, r, col, 28, t);
+        d.AddTriangleFilled(V(c.x - 2.3f, c.y - 3.8f), V(c.x - 2.3f, c.y + 3.8f), V(c.x + 4.0f, c.y), col);
+        break;
+    case kIcoGrid:   // a 2 x 2 grid of rounded squares
+        for (int k = 0; k < 4; ++k) {
+            const float gx = (k % 2) ? c.x + 1.2f : c.x - r, gy = (k / 2) ? c.y + 1.2f : c.y - r;
+            OutlineRect(d, V(gx, gy), V(gx + r - 1.2f, gy + r - 1.2f), col, 1.5f, t);
+        }
+        break;
+    case kIcoBag:   // a shopping bag
+        OutlineRect(d, V(c.x - 6.2f, c.y - 3.0f), V(c.x + 6.2f, c.y + r), col, 2.0f, t);
+        d.PathClear(); ArcTo(d, V(c.x, c.y - 3.0f), 3.2f, kPi, 2.0f * kPi, 10); d.PathStroke(col, false, t);
+        break;
+    case kIcoDownload:   // an arrow down into a tray
+        d.AddLine(V(c.x, c.y - r), V(c.x, c.y + 2.6f), col, t);
+        d.AddLine(V(c.x - 3.6f, c.y - 1.0f), V(c.x, c.y + 2.6f), col, t);
+        d.AddLine(V(c.x + 3.6f, c.y - 1.0f), V(c.x, c.y + 2.6f), col, t);
+        d.PathClear();
+        d.PathLineTo(V(c.x - r, c.y + 2.2f)); d.PathLineTo(V(c.x - r, c.y + r));
+        d.PathLineTo(V(c.x + r, c.y + r)); d.PathLineTo(V(c.x + r, c.y + 2.2f));
+        d.PathStroke(col, false, t);
         break;
     case kIcoRefresh: {
         d.PathClear(); ArcTo(d, c, 5.6f, -kPi * 0.35f, kPi * 1.45f, 20); d.PathStroke(col, false, t);

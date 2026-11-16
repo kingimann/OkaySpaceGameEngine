@@ -77,6 +77,22 @@ static S::FriendsModel Friends() {
     return m;
 }
 
+static S::CommunityModel Community() {
+    S::CommunityModel m;
+    auto it = [&](const char* title, const char* file, const char* meta, unsigned char r, unsigned char g, unsigned char b) {
+        S::CommunityItem i; i.title = title; i.file = file; i.meta = meta; i.ago = "3 d ago"; i.tile[0] = r; i.tile[1] = g; i.tile[2] = b;
+        m.items.push_back(i);
+    };
+    it("Puzzle Pack", "level1.okayscene", "Scene  \xC2\xB7  1 KB", 110, 140, 120);
+    it("Neon Drift", "neon.okayscene", "Game  \xC2\xB7  2.4 MB", 130, 128, 104);
+    it("Orbit Hopper", "Orbit Hopper.okayscene", "Game  \xC2\xB7  293 KB", 124, 104, 130);
+    const char* tpl[][2] = {{"Platformer", "Side-scrolling jump-and-run starter."}, {"Top-Down", "Top-down movement and rooms."},
+                            {"Coin Collector", "A complete pickup-the-coins game."}, {"Snake", "The classic, fully playable."},
+                            {"First Person", "FPS character: mouse-look, WASD, jump."}};
+    for (auto& t : tpl) { S::CommunityTemplate c; c.name = t[0]; c.desc = t[1]; m.templates.push_back(c); }
+    return m;
+}
+
 int main() {
     RUN_SUITE("okayui launcher more pages");
 
@@ -363,6 +379,139 @@ int main() {
         CHECK(st.view == 0 && UI::DroppedGeometry() == 0);
     }
 
+
+    // ================= Community =================
+    {   // the filters
+        const S::CommunityModel m = Community();
+        CHECK(S::CommunityFilter(m, "").size() == 3);
+        std::vector<int> f = S::CommunityFilter(m, "NEON");   // the title, any case
+        CHECK(f.size() == 1 && f[0] == 1);
+        f = S::CommunityFilter(m, "level1");                  // the file name
+        CHECK(f.size() == 1 && f[0] == 0);
+        CHECK(S::CommunityFilter(m, "zzz").empty());
+        f = S::CommunityTemplateFilter(m, "fps");             // the description
+        CHECK(f.size() == 1 && f[0] == 4);
+    }
+    {   // the page: hero buttons, drop zone, cards, menus, double click, search, templates, Ctrl+F
+        S::CommunityModel m = Community();
+        char lib[128] = "", tpl[128] = "";
+        S::CommunityState st; st.libFilter = lib; st.libCap = (int)sizeof(lib); st.tplFilter = tpl; st.tplCap = (int)sizeof(tpl);
+        S::CommunityResult r;
+        int play = -1, reveal = -1, copy = -1, remove = -1, useTpl = -1;
+        bool publish = false, folder = false, refresh = false, games = false;
+        auto rig = MakeRig(1000, 700, [&] {
+            r = S::DrawCommunity(m, st, 20, 20, 960, 620);
+            if (r.play >= 0) play = r.play;
+            if (r.reveal >= 0) reveal = r.reveal;
+            if (r.copyPath >= 0) copy = r.copyPath;
+            if (r.remove >= 0) remove = r.remove;
+            if (r.useTemplate >= 0) useTpl = r.useTemplate;
+            publish |= r.publish; folder |= r.openFolder; refresh |= r.refresh; games |= r.revealGames;
+        });
+        rig.Frames(3);
+        CHECK(r.shown.size() == 3 && r.cards.size() == 3 && !r.libraryEmpty);
+        CHECK(std::fabs(r.cards[0].y - r.cards[2].y) < 0.5f);   // three columns on a wide page
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("community_top", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+        rig.Click(r.publishButton); CHECK(publish);
+        rig.Click(r.folderButton); CHECK(folder);
+        rig.Click(r.refreshButton); CHECK(refresh);
+        folder = false; rig.Click(r.dropZone); CHECK(folder);
+        rig.Click(r.playButtons[1]); CHECK(play == 1);
+        rig.Click(r.revealButtons[2]); CHECK(reveal == 2 && play == 1);
+        // a double click on a card plays it
+        play = -1;
+        {
+            const UI::Rect c = r.cards[0];
+            rig.sim.Move(c.x + 40.0f, c.y + 50.0f); rig.Frame();
+            rig.sim.Down(); rig.Frame(); rig.sim.Up(); rig.Frame(); rig.sim.Down(); rig.Frame(); rig.sim.Up(); rig.Frame();
+        }
+        CHECK(play == 0);
+        // More opens the item menu; Copy Path reports the item
+        rig.Click(r.moreButtons[2]);
+        rig.Frames(1);
+        CHECK(r.menuLabels.size() == 4 && r.menuLabels[0] == "Play" && r.menuLabels[3] == "Remove from library...");
+        if (r.menuItems.size() == 4) rig.Click(r.menuItems[2]);
+        CHECK(copy == 2);
+        rig.Frames(1);
+        CHECK(r.menuItems.empty());
+        rig.RightClick(UI::Rect{r.cards[1].x + 150.0f, r.cards[1].y + 20.0f, 4.0f, 4.0f});
+        rig.Frames(1);
+        if (r.menuItems.size() == 4) rig.Click(r.menuItems[3]);
+        CHECK(remove == 1);
+        // no player next to the launcher: Play does nothing and the menu has no Play
+        m.havePlayer = false; play = -1;
+        rig.Frames(2);
+        rig.Click(r.playButtons[0]); CHECK(play == -1);
+        rig.Click(r.moreButtons[0]); rig.Frames(1);
+        CHECK(r.menuLabels.size() == 3 && r.menuLabels[0] == "Show in Explorer");
+        rig.Click(990, 690); rig.Frames(1);
+        // the library search filters; nothing matching shows its empty state
+        rig.Click(r.librarySearch);
+        rig.Type("orbit");
+        rig.Frames(2);
+        CHECK(r.shown.size() == 1 && r.shown[0] == 2 && std::string(lib) == "orbit");
+        rig.Type("zz");
+        rig.Frames(2);
+        CHECK(r.shown.empty() && r.libraryEmpty && r.emptyTitle == "No matches");
+        lib[0] = '\0';
+        rig.Frames(2);
+        // Ctrl+F: the keyboard goes to the library search
+        rig.Click(990, 690);
+        st.focusLibrarySearch = true;
+        rig.Frames(2);
+        rig.Type("neon");
+        rig.Frames(2);
+        CHECK(std::string(lib) == "neon" && !st.focusLibrarySearch && r.shown.size() == 1);
+        lib[0] = '\0';
+        // scroll to the templates; a template card opens New Project only when the editor is there
+        rig.sim.Move(500, 400);
+        for (int i = 0; i < 20; ++i) { rig.sim.wheel = -1.0f; rig.Frame(); }
+        rig.Frames(2);
+        CHECK(r.templateCards.size() == 5 && r.templateCards[4].y + r.templateCards[4].h < 640.0f);
+        CHECK(Has(r.shareFolderButton) && r.shareFolderButton.y > 20.0f);
+        Check("community_bottom", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+        rig.Click(r.templateCards[3]); CHECK(useTpl == 3);
+        rig.Click(r.shareFolderButton); CHECK(games);
+        m.haveEditor = false; useTpl = -1;
+        rig.Frames(2);
+        rig.Click(r.templateCards[1]); CHECK(useTpl == -1);
+        rig.Click(r.templateSearch);
+        rig.Type("snake");
+        rig.Frames(2);
+        CHECK(r.templatesShown.size() == 1 && r.templatesShown[0] == 3);
+    }
+    {   // a narrow page with an empty library: the search under its label, one column, no tile art, the buttons wrap
+        S::CommunityModel m = Community();
+        m.items.clear();
+        S::CommunityState st;   // no host buffers: still works
+        S::CommunityResult r;
+        auto rig = MakeRig(560, 700, [&] { r = S::DrawCommunity(m, st, 10, 10, 540, 680); });
+        rig.Frames(3);
+        CHECK(r.libraryEmpty && r.emptyTitle == "Your library is empty");
+        CHECK(r.librarySearch.w > 500.0f);                              // full width, under the label
+        CHECK(r.refreshButton.y > r.publishButton.y + 10.0f);           // the third button wrapped
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("community_narrow_empty", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+        m = Community();
+        for (int i = 0; i < 60; ++i) { S::CommunityItem c; c.title = "Item " + std::to_string(i); c.file = "x.okayscene"; m.items.push_back(c); }
+        rig.Frames(2);
+        CHECK(r.cards.size() == 63 && std::fabs(r.cards[0].x - r.cards[1].x) < 0.5f);   // one column
+        const float y0 = r.cards[62].y;
+        rig.sim.Move(280, 400);
+        for (int i = 0; i < 120; ++i) { rig.sim.wheel = -1.0f; rig.Frame(); }
+        CHECK(r.cards[62].y < y0 - 7000.0f);
+    }
+    {   // hostile text
+        S::CommunityModel m = Community();
+        m.items[0].title = std::string(4000, 'T'); m.items[1].meta = "\xff\xfe\xfd"; m.items[2].file = std::string(900, 'f');
+        m.templates[0].desc = std::string(2000, 'd');
+        char lib[4] = "abc";   // full buffer without room: still terminated
+        S::CommunityState st; st.libFilter = lib; st.libCap = 4;
+        auto rig = MakeRig(800, 600, [&] { S::DrawCommunity(m, st, 0, 0, 800, 600); });
+        rig.Frames(3);
+        CHECK(UI::DroppedGeometry() == 0 && lib[3] == '\0');
+    }
     // ================= Speed: per-frame CPU time of each page (headless; information, not a check) =================
     {
         auto bench = [](const char* name, float W, float H, const std::function<void()>& ui) {
@@ -382,6 +531,9 @@ int main() {
         };
         const S::FriendsModel fm = Friends(); S::FriendsState fs;
         bench("Friends", 1280, 720, [&] { S::DrawFriends(fm, fs, 248, 60, 1016, 600); });
+        const S::CommunityModel cm = Community(); char lib[128] = "", tpl[128] = "";
+        S::CommunityState cs; cs.libFilter = lib; cs.libCap = 128; cs.tplFilter = tpl; cs.tplCap = 128;
+        bench("Community", 1280, 720, [&] { S::DrawCommunity(cm, cs, 248, 60, 1016, 600); });
     }
     TEST_MAIN_RESULT();
 }

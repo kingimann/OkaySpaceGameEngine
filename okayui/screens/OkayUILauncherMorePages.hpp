@@ -87,4 +87,53 @@ struct FriendsResult {
 
 FriendsResult DrawFriends(const FriendsModel& model, FriendsState& state, float x, float y, float w, float h);
 
+// ---- Community (the launcher's page of that name) --------------------------------------------------------------------------
+
+struct CommunityItem {
+    std::string title;                   // the item's folder name
+    std::string file;                    // the scene's file name (searched, and shown with the age)
+    std::string meta;                    // "Game  ·  1.2 MB"
+    std::string ago;                     // "3 d ago", or empty
+    unsigned char tile[3] = {100, 110, 130};   // the initial tile's colour (the launcher's muted name colour)
+};
+struct CommunityTemplate {
+    std::string name, desc;
+    unsigned char tile[3] = {100, 110, 130};
+};
+struct CommunityModel {
+    std::vector<CommunityItem> items;    // everything in the community library
+    std::vector<CommunityTemplate> templates;
+    bool havePlayer = true;              // the player runtime is next to the launcher (Play works)
+    bool haveEditor = true;              // the editor is next to the launcher (a template opens New Project)
+};
+/// The search texts live in the host (the launcher keeps them for Ctrl+F and other pages); the page edits them in place.
+struct CommunityState {
+    char* libFilter = nullptr; int libCap = 0;
+    char* tplFilter = nullptr; int tplCap = 0;
+    bool focusLibrarySearch = false;     // Ctrl+F: put the keyboard in the library search (cleared when done)
+};
+
+/// The library items a search text shows (case-insensitive over the file name and the title), in model order.
+std::vector<int> CommunityFilter(const CommunityModel& model, const std::string& filter);
+/// The templates a search text shows (over the name and the description).
+std::vector<int> CommunityTemplateFilter(const CommunityModel& model, const std::string& filter);
+
+struct CommunityResult {
+    OkayUI::Rect publishButton, folderButton, refreshButton, dropZone, librarySearch, templateSearch, shareFolderButton, sharePublishButton;
+    std::vector<int> shown;              // library items shown
+    std::vector<OkayUI::Rect> cards, playButtons, revealButtons, moreButtons;   // parallel to `shown`
+    std::vector<int> templatesShown;
+    std::vector<OkayUI::Rect> templateCards;   // parallel to `templatesShown`
+    std::vector<OkayUI::Rect> menuItems;   // the open item menu's entries
+    std::vector<std::string> menuLabels;
+    bool libraryEmpty = false;
+    std::string emptyTitle;
+    // What the person did this frame:
+    bool publish = false, openFolder = false, refresh = false, revealGames = false;   // revealGames: the launcher's own folder
+    int play = -1, reveal = -1, copyPath = -1, remove = -1;   // indexes into model.items
+    int useTemplate = -1;                // index into model.templates
+};
+
+CommunityResult DrawCommunity(const CommunityModel& model, CommunityState& state, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

@@ -406,7 +406,9 @@ Mat4 Conj(const float* m) {
 } // namespace cob
 } // namespace
 
-static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// `release`: the caller's buffer behind `bytes`, which may be freed once it is parsed (ReadCobFile owns its bytes: the
+// file is then not held while the meshes are built). Nothing parsed refers back into it.
+static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, std::string* release = nullptr) {
     using namespace cob;
     if (bytes.size() < 32 || bytes.compare(0, 8, "Caligari") != 0 || bytes[9] != 'V') return Fail(err, "not a COB file (the text \"Caligari V..\" is missing)");
     const char kind = bytes[15];
@@ -415,6 +417,7 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
     Parsed P;
     if (kind == 'B') { if (!ParseBinary(bytes, P, err)) return false; }
     else { if (!ParseAscii(bytes, P, err)) return false; }
+    if (release) std::string().swap(*release);   // `bytes` is not used below
 
     int objectsWithoutMaterial = 0;
     // ---- hierarchy: groups and polygon objects become nodes, parents first ----
@@ -600,7 +603,10 @@ bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadCobBuffer(bytes, dir, out, err);
+    const bool ok = ReadCobImpl(bytes, dir, out, err, &bytes);   // as ReadCobBuffer, freeing the file once it is parsed
+    if (!ok) { out = ImportedModel{}; return false; }
+    out.backend = "own";
+    return true;
 }
 
 } // namespace okay

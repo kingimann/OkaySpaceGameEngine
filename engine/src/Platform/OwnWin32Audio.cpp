@@ -7,7 +7,7 @@
 // with the driver, and either calls the user's callback or moves bytes to / from a queue (SDL's audio device model).
 //
 // STATUS: COMPILES, UNTESTED. Only syntax-checked with MinGW on Linux; never run on Windows.
-// No std::thread / std::mutex here (the Windows build must not use them): CreateThread, CRITICAL_SECTION, events.
+// Threads and locks are Win32 ones (CreateThread, CRITICAL_SECTION, events): the Windows build has no C++ thread library.
 #ifdef _WIN32
 #include "Internal.hpp"
 #ifndef NOMINMAX

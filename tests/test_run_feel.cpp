@@ -528,8 +528,8 @@ int main() {
         const float zoomSpB = Horiz(b->GetComponent<Rigidbody3D>());
         std::printf("rmb+sprint speed template %.2f switched %.2f  fov %.1f %.1f (zoom 40, sprint kept)\n",
                     zoomSpA, zoomSpB, aC->fieldOfView, bC->fieldOfView);
-        CHECK(zoomSpA > 6.5f);
-        CHECK(zoomSpB > 6.5f);
+        CHECK(zoomSpA > 0.8f * af->runSpeed);
+        CHECK(zoomSpB > 0.8f * af->runSpeed);
         CHECK(aC->fieldOfView < 45.0f);
         CHECK(bC->fieldOfView < 45.0f);
         const float z0A = af->yaw, z0B = bf->yaw;

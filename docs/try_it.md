@@ -424,11 +424,12 @@ the launcher and the editor it starts both then call themselves v2.855.0. In Pow
 **Pictures** (headless, drawn by the launcher's real drawing code, `launcher/OpenProjectUI.cpp`; the rest of the launcher is not in the picture; not Windows):
 `docs/images/launcher_open/older.png` (v2.850.1 installed), `older_not_installed.png`, `newer.png`, `unversioned.png`, `newer_open_with.png`.
 
-**Status.** Run on this Linux machine: `open_project_gate` (the decision for every combination of versions, installed editors, default editor,
-"Open with" and "is this a project", the exact buttons and arguments, quoting: see the report in the change), `project_answer` (the flag is honoured only
-for a live launcher and the `--open` project), the new gate cases in `project_upgrade`, the older suites (`project_version`, `launcher_versions`,
-`app_restart`), a syntax-only compile of `launcher/main.cpp`, `editor/main.cpp` and the window with the Linux compiler, a MinGW (win32 threads) syntax check
-of the new headers, and the pictures above. **Not run:** the real launcher or editor, anything on Windows, the hand-off to an editor that is already open
+**Status.** Run on this Linux machine with `ctest` (a tests-only build of the real CMake targets, no editor or launcher program built); all 8 suites passed:
+`open_project_gate` 158568 checks (the decision for every combination of versions, installed editors, default editor, "Open with" and "is this a project",
+the exact buttons and arguments, quoting), `project_answer` 115 (the flag is honoured only for a live launcher and the `--open` project; the hand-off; a
+restart forgets it), `project_upgrade` 665 (with the new gate cases), `project_version` 301, `launcher_versions` 15534, `app_restart` 138,
+`startup_modals` 38 and `editor_hooks` 203, each with 0 failures. Also done: a syntax-only compile of `launcher/main.cpp`, `editor/main.cpp` and the window
+with the Linux compiler, a MinGW (win32 threads) syntax check of the new headers, and the pictures above. **Not run:** the real launcher or editor, anything on Windows, the hand-off to an editor that is already open
 (step 11), **Open with** and **Install** end to end (steps 4 and 5), and the **Check for updates** button. Tell us when a step above does not look as
 written.
 

@@ -77,9 +77,11 @@ release job or the installer build for this change.
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
+| 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
@@ -1191,6 +1193,26 @@ once when you let go (one undo step), and a time line under the Undo buttons tel
 **Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
 a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
 
+## 7zq. Modeling: curves, bevel weights, remesh, undo and attribute fixes
+
+**What it is.** More of the modeler (same Modeling window as 7zh): Bezier curves to meshes, edge bevel weights, Quad Remesh, saved reference images, and fixes so edits keep material slots, UVs, vertex colours and seams.
+
+**Steps.** Open the Modeling window and follow these.
+
+More new steps (same branch):
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
+- **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
+- **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
+- **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+- **Mirror and Undo fixes** (Edit Mesh): add a Mirror modifier to a half model that has UVs or material slots; the mirrored half now keeps its picture and colours. In Edit Mesh, add a modifier from the Inspector, change the mesh, then press Ctrl+Z: the modifier list goes back together with the mesh (Ctrl+Y brings both back). Edge snapping ignores the hidden diagonal inside a quad.
+- **Faces keep their look through edits**: in Edit Mesh on a mesh with two material slots (Material slots page) and UVs, select a face and Extrude, Inset, Subdivide, Poke or Duplicate it, or delete a face; the new faces keep the slot colour of the face they came from and the picture does not jump. The same holds for the Array, Solidify, Subdivision, Decimate and Displace modifiers (add one in the Inspector > Modifiers).
+- **Slots: remove and reorder; UVs survive edits** (Edit Mesh > Material slots page): with two or more slots, pick one and press `- Slot` (its faces fall back to slot 0, later slots move down) or `Up` / `Down` (faces keep their colour, the slot just changes place). Ctrl+Z undoes each. UVs: unwrap a mesh (UV page > Smart Unwrap), then Subdivide or Poke a few faces: the new faces keep the UV layout (no jump or stretch in the UV view) and marked seams stay seams, including through the Array and Subdivision modifiers.
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+
 ## 16. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -1265,6 +1287,36 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+
+## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
+
+What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
+network) and a fake "cheating" client, and the cheating client does eight things a modified game would do. You read what
+the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status table: `docs/anticheat_hardening_status.md`.
+
+**How to try it (Windows release).**
+
+1. Open a Command Prompt in the `Tools` folder of the release (next to `OkaySpacePlayer.exe`).
+2. Run: `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt`
+   (The Windows player has no console window, so the output goes to the file. It needs no game and no scene.)
+3. Wait about a minute. Open `cheat_sim.txt`. You should see eight blocks like
+   `[speed] the rogue moves 60 units a second where 8 is the limit` followed by `CAUGHT: ...` and
+   `the normal client next to it: untouched, still playing`.
+4. Near the end you should see the ban list (a line starting `a:2130706433`), the audit log (lines like
+   `2026-11-16T18:31:28Z ban who=3fa9c21b07 ...`; check that no name and no address appears in it) and the last line
+   `Result: 8 of 8 cheats caught, normal players left alone: YES. The server's anti-cheat works.`
+5. To run only some steps: `OkaySpacePlayer.exe --server --cheat-sim-only speed,flood --log cheat_sim.txt`, or set the
+   environment variable `OKAY_CHEAT_SIM=speed,flood` and run `OkaySpacePlayer.exe --server --log cheat_sim.txt`.
+6. The files the run wrote are in a new folder named in the first line of the log (`okay_cheatsim_...` in your temp folder).
+   `okay_bans.txt` is the ban list: delete a line to lift a ban. `okay_anticheat_audit.log` is the audit log.
+7. The same two files are kept by a real dedicated server that has the anti-cheat on
+   (`OkaySpacePlayer.exe --server --anticheat my_rules.okayac`): `okay_bans.txt` and `okay_anticheat_audit.log` appear in its
+   folder. `--no-ban-file` and `--no-audit-log` turn them off. A real cheater who gets kicked 3 times, or whose risk
+   score passes `detect.banAt`, is refused at the join with "banned from this server".
+
+**What is verified.** The test `anticheat_hard` runs the same code (all eight steps, the files, the no-personal-data check),
+on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
+detector instead of sending real input packets; the simulator's packets are not encrypted.
 
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 

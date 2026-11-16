@@ -1784,6 +1784,11 @@ add_executable(test_anticheat_sim test_anticheat_sim.cpp)
 target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
 add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
 
+# Anti-cheat hardening follow-up: ban list file, audit log, packet ceiling, input regularity, cheat simulator, hostile-field fuzz
+add_executable(test_anticheat_hard test_anticheat_hard.cpp)
+target_link_libraries(test_anticheat_hard PRIVATE okay::engine)
+add_test(NAME anticheat_hard COMMAND test_anticheat_hard)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)

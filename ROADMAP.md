@@ -127,16 +127,18 @@ _Last updated: 2026-11-13 17:55 UTC_
 2. [x] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked (#352).
 3. [x] Hit claims need a known weapon and are rate-limited (#353).
 4. [x] The hit origin isn't taken from positions the client can bank (#355).
-5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
-6. [ ] Tickets bound to one server, one client key and one connection.
+5. [x] Bans enforced when a join ticket is issued; no service_role key for game servers (Release). Code on main; the Edge function and SQL are not deployed yet (waits on Iman).
+6. [x] Tickets bound to one server, one client key and one connection. Code on main; the Edge function and SQL are not deployed yet (waits on Iman).
 7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, legacy hellos are now off by default (#733); `--legacy-hello=on` re-allows them.
-8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
-9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
-10. [ ] SyncVar, message and spawn limits.
+8. [x] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
+9. [x] Join checks: encryption first, rate-limited password and sign-in checks.
+10. [x] SyncVar, message and spawn limits.
 11. [x] Unowned world objects belong to the server (#372).
-12. [ ] Lag-compensation inputs the client can't stretch.
-13. [ ] Safer defaults and a config that fails closed.
-14. [ ] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
+12. [x] Lag-compensation inputs the client can't stretch.
+13. [x] Safer defaults and a config that fails closed.
+14. [x] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
+
+Follow-up on `claude/anticheat-1` (status table: `docs/anticheat_hardening_status.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
 
 ## Waiting on Iman
 

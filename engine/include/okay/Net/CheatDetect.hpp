@@ -51,6 +51,8 @@ enum class DetectKind : std::uint8_t {
     MessageBurst, Replay, Malformed, DesyncForce, TimeManipulation,
     // an immediate AntiCheat refusal (forged ownership, forged ticket, bad spawn ...)
     Violation,
+    // bot / macro: button presses far too regular to be a hand
+    InputRegularity,
     Count
 };
 const char* DetectKindName(DetectKind k);
@@ -102,6 +104,18 @@ struct DetectSettings {
     float ghostWindow = 1.0f;        ///< ...for this long
     float staleInputSeconds = 0.6f;  ///< input older than this says nothing
     float maxJumpsPerSecond = 4.0f;  ///< 0 = off
+    // Bot / macro heuristic: a hand never presses a button at the same interval
+    // 20 times in a row. The spread of the gaps (standard deviation / mean) is
+    // measured over the last `regularityPresses` presses of one button; below
+    // `regularityMaxCv` is evidence. Gaps outside [regularityMinGap, regularityMaxGap]
+    // seconds say nothing (holding a button is not a macro; a rare press is not a pattern).
+    int   regularityPresses = 20;    ///< 0 = off
+    /// Which PlayerInput buttons are measured (a bit mask). Fire and Alt Fire are left out: a game
+    /// whose weapons auto-fire presses them at one exact gap on purpose. Add 0x30 for click-to-fire games.
+    int   regularityButtons = 0x7FFFFFCF;
+    float regularityMaxCv = 0.04f;
+    float regularityMinGap = 0.08f;
+    float regularityMaxGap = 3.0f;
 
     // ---- combat ------------------------------------------------------------
     std::vector<WeaponDef> weapons;
@@ -265,6 +279,10 @@ public:
     void OnInput(std::uint32_t peer, float moveX, float moveY, double t);
     void OnAim(std::uint32_t peer, float yawDeg, float pitchDeg, double t);
     void OnJump(std::uint32_t peer, double t);
+    /// A button press (`button` = the PlayerInput bit index, 0..31) that the
+    /// player's own clock puts at `pressTime` (seconds; the input's tick / the
+    /// tick rate, so network jitter can't hide a macro), seen by the server at `t`.
+    void OnPress(std::uint32_t peer, int button, double pressTime, double t);
 
     // ---- combat ------------------------------------------------------------
     void OnShot(std::uint32_t peer, const ShotEvent& shot);
@@ -362,6 +380,8 @@ private:
         double snapT = -1e9; float snapSpeed = 0.0f;
         std::deque<double> snapHits;
         std::deque<double> jumps;
+        struct Presses { std::deque<double> times; double last = -1e18; };
+        std::unordered_map<int, Presses> presses;   // by button (at most 32)
         // combat
         std::deque<Shot> shots;
         std::unordered_map<std::string, Bucket> fire;

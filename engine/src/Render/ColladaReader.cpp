@@ -270,20 +270,31 @@ inline bool PointLocale() {
     return !dp || (dp[0] == '.' && dp[1] == 0);
 }
 
-// One float token [p, q) the way strtof reads it, whole token only. The fast path is from_chars for plain decimal
-// tokens; anything else (a sign '+', hex, inf / nan, out of range) goes the old way, so the result is the same.
-inline bool TokenToFloat(const char* p, const char* q, bool fast, float& v) {
+// Character classes for the number scanner: whitespace, the characters of a plain decimal number, '.' and ','.
+enum : unsigned char { kWs = 1, kNum = 2, kPoint = 4, kComma = 8, kOther = 16 };
+struct CharClass {
+    unsigned char c[256];
+    CharClass() {
+        for (int i = 0; i < 256; ++i) c[i] = kOther;
+        for (const char w : {' ', '\t', '\r', '\n', '\f', '\v'}) c[(unsigned char)w] = kWs;
+        for (int d = '0'; d <= '9'; ++d) c[d] = kNum;
+        c[(unsigned char)'-'] = c[(unsigned char)'+'] = c[(unsigned char)'e'] = c[(unsigned char)'E'] = kNum;
+        c[(unsigned char)'.'] = kPoint; c[(unsigned char)','] = kComma;
+    }
+};
+inline unsigned char ClassOf(char ch) { static const CharClass t; return t.c[(unsigned char)ch]; }
+
+// One float token [p, q) the way strtof reads it, whole token only. `plain`: the token holds only digits, signs, 'e' and
+// '.'. Then (in a '.' locale) std::from_chars reads it: it gives the same correctly rounded value as strtof. Anything
+// else (a leading '+', hex, inf / nan, out of range, not a whole number) goes the old way, so the result is the same.
+inline bool TokenToFloat(const char* p, const char* q, bool fast, bool plain, float& v) {
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
-    if (fast && *p != '+') {
-        bool plain = true;
-        for (const char* c = p; c < q; ++c) { const char k = *c; if (!((k >= '0' && k <= '9') || k == '.' || k == '-' || k == 'e' || k == 'E')) { plain = false; break; } }
-        if (plain) {
-            const auto r = std::from_chars(p, q, v);
-            if (r.ec == std::errc() && r.ptr == q) return true;
-        }
+    if (fast && plain && *p != '+') {
+        const auto r = std::from_chars(p, q, v);
+        if (r.ec == std::errc() && r.ptr == q) return true;
     }
 #else
-    (void)fast;
+    (void)fast; (void)plain;
 #endif
     // the token ends at whitespace, at '<' or ']' (the view into the file) or at the string's end: strtof stops there
     char* e = nullptr;
@@ -293,29 +304,31 @@ inline bool TokenToFloat(const char* p, const char* q, bool fast, float& v) {
 
 // Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
 // unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
-// counts such tokens so the reader can say so.
-bool ParseFloats(std::string_view t, std::vector<float>& out, int* commas = nullptr) {
+// counts such tokens so the reader can say so. `expect` (when not negative) is the count the file
+// announces: the room reserved, capped by what the text can hold, instead of counting the tokens first.
+bool ParseFloats(std::string_view t, std::vector<float>& out, int* commas = nullptr, long expect = -1) {
     out.clear();
-    out.reserve(CountTokens(t));
+    if (expect >= 0) out.reserve(std::min((std::size_t)expect, t.size() / 2 + 1));
+    else out.reserve(CountTokens(t));
     const bool fast = PointLocale();
     const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
-        while (p < end && IsWs(*p)) ++p;
+        while (p < end && ClassOf(*p) == kWs) ++p;
         if (p >= end) break;
         const char* q = p;
-        bool comma = false, point = false;
-        while (q < end && !IsWs(*q)) { if (*q == ',') comma = true; else if (*q == '.') point = true; ++q; }
+        unsigned char seen = 0, k;
+        while (q < end && (k = ClassOf(*q)) != kWs) { seen |= k; ++q; }
+        const bool comma = (seen & kComma) != 0, point = (seen & kPoint) != 0;
+        const bool plain = (seen & (kOther | kComma)) == 0;
         float v;
         if (comma && !point && q - p < 64) {
             char buf[72];
             for (const char* c = p; c < q; ++c) buf[c - p] = *c == ',' ? '.' : *c;
             buf[q - p] = 0;
-            char* e = nullptr;
-            v = detail::StrToF(buf, &e);
-            if (e != buf + (q - p)) return false;
+            if (!TokenToFloat(buf, buf + (q - p), fast, (seen & kOther) == 0, v)) return false;
             if (commas) ++*commas;
-        } else if (!TokenToFloat(p, q, fast, v)) {
+        } else if (!TokenToFloat(p, q, fast, plain, v)) {
             return false;   // not a whole token (or no number at all)
         }
         if (!std::isfinite(v)) return false;
@@ -328,7 +341,9 @@ bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nu
 
 // Integers as strtol(..., 10) reads them one after another (a number ends where strtol stops), appended to `out`.
 bool AppendInts(std::string_view t, std::vector<int>& out) {
-    out.reserve(out.size() + CountTokens(t));
+    // room for this list; grow geometrically, since a <polygons> set appends one short <p> per polygon
+    const std::size_t need = out.size() + CountTokens(t);
+    if (need > out.capacity()) out.reserve(std::max(need, out.capacity() * 2));
     const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
@@ -479,7 +494,9 @@ struct Reader {
         const int sn = Lookup(id);
         if (sn < 0 || x.n[(std::size_t)sn].name != "source") return false;
         const int fa = x.First(sn, "float_array");
-        if (fa < 0 || !ParseFloats(x.Text(fa), s.f, &decimalCommas)) return false;
+        long announced = -1;   // the array's count attribute: only how much room to reserve
+        if (fa >= 0 && x.HasAttr(fa, "count")) { announced = std::atol(x.Attr(fa, "count").c_str()); if (announced < 0) announced = -1; }
+        if (fa < 0 || !ParseFloats(x.Text(fa), s.f, &decimalCommas, announced)) return false;
         const int acc = x.Find(sn, "accessor");
         s.stride = 1; s.offset = 0;
         if (acc >= 0) {
@@ -490,8 +507,25 @@ struct Reader {
         return s.stride >= 1 && s.stride <= 64 && s.offset >= 0;
     }
 
+    // The sources of one <mesh>, each read once: its primitive sets (one per material) name the same position, normal
+    // and texture coordinate sources, which were parsed again for every set. Cleared when the mesh is done. A source's
+    // decimal-comma count is added again on every use, as when it was parsed every time.
+    struct CachedSrc { Src s; int commas = 0; };
+    std::unordered_map<std::string, std::shared_ptr<const CachedSrc>> srcCache;
+    std::shared_ptr<const CachedSrc> MeshSrc(const std::string& id) {
+        auto it = srcCache.find(id);
+        if (it != srcCache.end()) { decimalCommas += it->second->commas; return it->second; }
+        auto c = std::make_shared<CachedSrc>();
+        const int before = decimalCommas;
+        if (!ReadSrc(id, c->s)) return nullptr;
+        c->commas = decimalCommas - before;
+        srcCache.emplace(id, c);
+        return c;
+    }
+
     // ---- geometry ---------------------------------------------------------
-    struct Chan { Src src; int offset = 0; bool has = false; };
+    struct Chan { std::shared_ptr<const CachedSrc> keep; const Src* src = nullptr; int offset = 0; bool has = false;
+                  bool Read(Reader& r, const std::string& id) { keep = r.MeshSrc(id); src = keep ? &keep->s : nullptr; return src != nullptr; } };
     struct CornerKey {
         int p, n, t;
         bool operator==(const CornerKey& o) const { return p == o.p && n == o.n && t == o.t; }
@@ -519,12 +553,12 @@ struct Reader {
             const std::string src = UrlId(x.Attr(in, "source"));
             const int set = x.HasAttr(in, "set") ? std::atoi(x.Attr(in, "set").c_str()) : 0;
             auto take = [&](const std::string& semantic, const std::string& sid, int offset, int st) -> bool {
-                if (semantic == "POSITION" && !pos.has) { if (!ReadSrc(sid, pos.src)) return false; pos.offset = offset; pos.has = true; }
-                else if (semantic == "NORMAL" && !nrm.has) { if (!ReadSrc(sid, nrm.src)) return false; nrm.offset = offset; nrm.has = true; }
+                if (semantic == "POSITION" && !pos.has) { if (!pos.Read(*this, sid)) return false; pos.offset = offset; pos.has = true; }
+                else if (semantic == "NORMAL" && !nrm.has) { if (!nrm.Read(*this, sid)) return false; nrm.offset = offset; nrm.has = true; }
                 else if (semantic == "TEXCOORD") {
                     if (st < uvSet) {
                         if (uv.has) ++extraUv;
-                        if (!ReadSrc(sid, uv.src)) return false;
+                        if (!uv.Read(*this, sid)) return false;
                         uv.offset = offset; uv.has = true; uvSet = st;
                     } else ++extraUv;
                 } else if (semantic == "COLOR") sawColor = true;
@@ -543,9 +577,9 @@ struct Reader {
         (void)meshNode;
         if (sawColor) ++vcolors;
         if (!pos.has) return Fail("COLLADA: primitive has no POSITION input");
-        if (pos.src.stride < 3) return Fail("COLLADA: POSITION source has fewer than 3 components");
-        if (nrm.has && nrm.src.stride < 3) nrm.has = false;
-        if (uv.has && uv.src.stride < 2) uv.has = false;
+        if (pos.src->stride < 3) return Fail("COLLADA: POSITION source has fewer than 3 components");
+        if (nrm.has && nrm.src->stride < 3) nrm.has = false;
+        if (uv.has && uv.src->stride < 2) uv.has = false;
 
         // Corner stream -> polygons.
         std::vector<int> all;
@@ -603,23 +637,23 @@ struct Reader {
             const int pi = all[b + (std::size_t)pos.offset];
             const int ni = nrm.has ? all[b + (std::size_t)nrm.offset] : -1;
             const int ti = uv.has ? all[b + (std::size_t)uv.offset] : -1;
-            if (!pos.src.Has(pi, 3)) return false;
-            if (nrm.has && !nrm.src.Has(ni, 3)) return false;
-            if (uv.has && !uv.src.Has(ti, 2)) return false;
+            if (!pos.src->Has(pi, 3)) return false;
+            if (nrm.has && !nrm.src->Has(ni, 3)) return false;
+            if (uv.has && !uv.src->Has(ti, 2)) return false;
             const CornerKey key{pi, ni, ti};
             auto it = weld.find(key);
             if (it != weld.end()) { vi = it->second; return true; }
             vi = (int)m.vertices.size();
             weld.emplace(key, vi);
-            m.vertices.push_back(Vec3{pos.src.At(pi, 0), pos.src.At(pi, 1), pos.src.At(pi, 2)});
+            m.vertices.push_back(Vec3{pos.src->At(pi, 0), pos.src->At(pi, 1), pos.src->At(pi, 2)});
             ps.posIdx.push_back(pi);
             if (nrm.has) {
-                Vec3 nv{nrm.src.At(ni, 0), nrm.src.At(ni, 1), nrm.src.At(ni, 2)};
+                Vec3 nv{nrm.src->At(ni, 0), nrm.src->At(ni, 1), nrm.src->At(ni, 2)};
                 const float l = std::sqrt(nv.x * nv.x + nv.y * nv.y + nv.z * nv.z);
                 if (l > 0.0f) nv = Vec3{nv.x / l, nv.y / l, nv.z / l};
                 m.normals.push_back(nv);
             }
-            if (uv.has) m.uvs.push_back(Vec2{uv.src.At(ti, 0), 1.0f - uv.src.At(ti, 1)});
+            if (uv.has) m.uvs.push_back(Vec2{uv.src->At(ti, 0), 1.0f - uv.src->At(ti, 1)});
             return true;
         };
         std::vector<Vec3> ring;
@@ -639,7 +673,7 @@ struct Reader {
         if (totalVerts + m.vertices.size() > kMaxOutVerts) return Fail("COLLADA: model too large");
         totalVerts += m.vertices.size();
         if (!nrm.has && !m.vertices.empty()) {   // smooth normals, welded per source position
-            std::vector<Vec3> acc((std::size_t)pos.src.Count(), Vec3{0, 0, 0});
+            std::vector<Vec3> acc((std::size_t)pos.src->Count(), Vec3{0, 0, 0});
             for (std::size_t t = 0; t + 2 < m.triangles.size(); t += 3) {
                 const Vec3& p0 = m.vertices[(std::size_t)m.triangles[t]];
                 const Vec3& p1 = m.vertices[(std::size_t)m.triangles[t + 1]];
@@ -673,12 +707,13 @@ struct Reader {
             if (nm == "triangles" || nm == "polylist" || nm == "polygons" || nm == "tristrips" || nm == "trifans") {
                 PrimSet ps;
                 ps.mesh.name = x.Attr(gn, "name").empty() ? gid : x.Attr(gn, "name");
-                if (!BuildPrim(mn, k, ps)) { geoFailed[gid] = true; return nullptr; }
+                if (!BuildPrim(mn, k, ps)) { geoFailed[gid] = true; srcCache.clear(); return nullptr; }
                 if (!ps.mesh.triangles.empty()) sets.push_back(std::move(ps));
             } else if (nm == "lines" || nm == "linestrips") {
                 skippedPrims[nm]++;
             }
         }
+        srcCache.clear();
         auto ins = geoCache.emplace(gid, std::move(sets));
         return &ins.first->second;
     }

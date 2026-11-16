@@ -13,7 +13,6 @@
 
 using namespace okay;
 using namespace okay::modeling;
-using namespace okay::software;
 
 namespace {
 const Color kWall{0.92f, 0.86f, 0.70f, 1}, kRoof{0.75f, 0.18f, 0.12f, 1}, kFloor{0.35f, 0.25f, 0.16f, 1}, kDoor{0.15f, 0.30f, 0.75f, 1};
@@ -155,7 +154,7 @@ int main() {
             for (std::uint32_t p : r.color) {
                 const int c[3] = {(int)(p & 255), (int)((p >> 8) & 255), (int)((p >> 16) & 255)};
                 const int o1 = c[(ch + 1) % 3], o2 = c[(ch + 2) % 3];
-                if (c[ch] > 90 && c[ch] > o1 * 2 && c[ch] > o2 * 2) ++n;
+                if (c[ch] > 60 && c[ch] > o1 * 2 && c[ch] > o2 * 2) ++n;
             }
             return n;
         };

@@ -70,3 +70,10 @@ UVs (10 of 10). Subdivision of a cube: 24, 96, 384 faces, all closed, nothing no
 
 Selection, G/R/S and the modifier stack were **not** measured here: they run in the editor window, which this machine
 cannot open. The modifier stack already hashes its input with an eight-byte hash.
+
+## 105k-triangle sphere, headless (one run, shared machine, load about 2.7)
+
+Header-only parts built at -O2: Bisect 139 ms, WeldVertices after the fix 95 ms (Mirror = bisect + copy + weld, so about 0.3 s).
+Engine parts, built at **-O0** (so only the order of size is meaningful): modifier-stack input hash 0.45 ms per frame, geometry hash
+3.9 ms, one undo copy 0.31 ms, `FromMesh` 338 ms, Solidify 8 ms, Displace 33 ms, Decimate 33 ms, Array 23 ms, smooth normals 14 ms.
+Nothing here measures the editor window itself (selection, drawing): unmeasured. Before/after exists only for the items in the table above.

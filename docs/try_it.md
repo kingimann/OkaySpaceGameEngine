@@ -1088,6 +1088,27 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Follow cameras: a parented Camera Follow, and recovery after a bad frame (bug fix, branch `claude2/camera-follow-fixes`, #888 findings 66 and 67)
+
+Before: a Camera Follow on a camera that sits under another object (a rig, a vehicle, a player root) flew away and never
+stopped, or with Smoothing 0 sat off by the parent's position. And one frame where the followed object's position was
+not a number (NaN) left Camera Follow, Virtual Camera and Follow Target 2D broken for the rest of the game (the camera
+showed nothing, the chaser vanished). Now Camera Follow places the camera in world space, and all three skip a bad
+target frame and recover on the next good one.
+
+1. Open `Tools\OkayEngine.exe` and make a new scene. Add a Cube (**GameObject > 3D Object > Cube**) and name it `Target`.
+2. Add an empty object (**GameObject > Create Empty**), name it `Rig`, and set its Position to `100, 0, 0` (also try a
+   Rotation of `0, 90, 0`).
+3. Drag **Main Camera** onto `Rig` in the Hierarchy so it becomes its child.
+4. On Main Camera, **Add Component > Camera Follow**: Target Name `Target`, Offset `0, 2, -5`, Smoothing `5`.
+5. Press **Play**. The camera eases to just behind and above the cube and stays there (before, it slid away along x
+   without stopping). Set Smoothing to `0` and play again: it snaps to the same place.
+
+The NaN recovery has no button to press; it is covered by the test below.
+
+**Status.** Tested headless (`test_camera_follow_fixes`, run on Linux). The editor was not built or run here, so the
+Windows steps above are unverified (the menu names are from the docs).
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

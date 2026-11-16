@@ -94,12 +94,12 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
   - 9.5.3 Combat and health - `Components/NPCController` - attack range, damage, interval, windup, flee at low health, provoke, `Damage`, death broadcast
   - 9.5.4 Pathfinding use and animation - `Components/NPCController` - routes through `Navigation` when Use Pathfinding is on; drives a sibling Character's idle, walk, run and head look; broadcasts `npc_alert`, `npc_lost`, `npc_died` and more to Action Lists
   - 9.5.5 Behavior-tree brain mode - `Components/NPCController` - `SetExternalBrain` makes it take orders (`CommandGoTo`, `AttackNow`) from a BehaviorTreeRunner
-  - 9.5.6 Follow target (2D chase) - `Components/FollowTarget2D` - no-code chase: moves toward a named object each frame, stops within a stop distance, drives a sibling Rigidbody2D when present (enemies seeking the player, homing pickups, companions)
+  - 9.5.6 Follow target (2D chase) - `Components/FollowTarget2D` - no-code chase: moves toward a named object each frame, stops within a stop distance, drives a sibling Rigidbody2D when present (enemies seeking the player, homing pickups, companions); a non-finite target position is skipped for that frame
 - **Code:** `AI/Perception`, `Components/NPCController`, `Components/FollowTarget2D`, `editor/main.cpp` (NPC Controller inspector)
 - **API:** `NPCController`, `NPCController::Behavior`, `CommandGoTo`, `SetExternalBrain`, `Damage`, script `npc_goto`, Action List messages `npc_alert`, `npc_lost`, `npc_died`
 - **Editor:** Add Component > Gameplay > NPC Controller; Inspector groups for movement, perception, aggression, combat
 - **Docs:** `docs/npcs_and_crafting.md`
-- **Tests:** `npc_ai`, `npc_crafting`, `perception`
+- **Tests:** `npc_ai`, `npc_crafting`, `perception`, `follow`, `camera_follow_fixes`
 - **Status:** Works - NPCController.hpp read in full (states, perception, external-brain hooks); behaviours covered by `npc_ai` (sight cone, search, patrol, flee, leash) and `perception` (the controller, the tree service and the tree's line-of-sight test agree)
 - **Open:** health is a built-in `health` field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check (no hearing, no eye height)
 - **Related:** 9.1, 9.2, 9.4, 11.4, 11.7, 5.8

@@ -584,6 +584,11 @@ add_executable(test_cinemachine test_cinemachine.cpp)
 target_link_libraries(test_cinemachine PRIVATE okay::engine)
 add_test(NAME cinemachine COMMAND test_cinemachine)
 
+# Follow cameras: world-space CameraFollow under a parent, NaN-target recovery (#888 findings 66, 67).
+add_executable(test_camera_follow_fixes test_camera_follow_fixes.cpp)
+target_link_libraries(test_camera_follow_fixes PRIVATE okay::engine)
+add_test(NAME camera_follow_fixes COMMAND test_camera_follow_fixes)
+
 add_executable(test_shaders test_shaders.cpp)
 target_link_libraries(test_shaders PRIVATE okay::engine)
 add_test(NAME shaders COMMAND test_shaders)

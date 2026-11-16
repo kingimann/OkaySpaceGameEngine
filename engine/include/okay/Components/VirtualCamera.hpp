@@ -153,10 +153,17 @@ public:
                                    : followOffset;
             desiredPos = f->transform->Position() + worldOffset;
         }
-        if (!m_init) m_pos = desiredPos;
-        else {
+        // A target that is not a finite number (one bad frame) is skipped: the body
+        // holds still. Eased state that went non-finite starts again from the target,
+        // like the first frame, so the camera recovers on the next good frame.
+        const bool goodPos = FiniteV(desiredPos);
+        if (!goodPos) desiredPos = (m_init && FiniteV(m_pos)) ? m_pos : transform->Position();
+        if (!FiniteV(desiredPos)) desiredPos = Vec3{0.0f, 0.0f, 0.0f};
+        if (!m_init || !FiniteV(m_pos)) m_pos = desiredPos;
+        else if (goodPos) {
             float tp = (positionDamping <= 0.0f) ? 1.0f : (1.0f - std::exp(-positionDamping * dt));
             m_pos = Vec3::Lerp(m_pos, desiredPos, tp);
+            if (!FiniteV(m_pos)) m_pos = desiredPos;
         }
         // Confiner: keep the body inside the allowed box.
         if (confine) {
@@ -188,10 +195,12 @@ public:
         }
         // Dutch: add a constant roll around the view axis to the framed orientation.
         if (std::fabs(dutch) > 1e-4f) desiredRot = desiredRot * Quat::Euler(0.0f, 0.0f, dutch);
-        if (!m_init) m_rot = desiredRot;
+        if (!FiniteQ(desiredRot)) desiredRot = FiniteQ(m_rot) ? m_rot : Quat::Identity;
+        if (!m_init || !FiniteQ(m_rot)) m_rot = desiredRot;
         else {
             float tr = (rotationDamping <= 0.0f) ? 1.0f : (1.0f - std::exp(-rotationDamping * dt));
             m_rot = Quat::Slerp(m_rot, desiredRot, tr);
+            if (!FiniteQ(m_rot)) m_rot = desiredRot;
         }
         m_init = true;
 
@@ -230,6 +239,9 @@ private:
     float m_impulseT = 0.0f;
     Vec2 m_lastMouse{0.0f, 0.0f};
     bool m_mouseInit = false;
+
+    static bool FiniteV(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+    static bool FiniteQ(const Quat& q) { return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w); }
 
     /// Smooth 1-D value noise in [-1,1] (interpolated hash). Good enough for shake.
     static float Noise(float t, float seed) {

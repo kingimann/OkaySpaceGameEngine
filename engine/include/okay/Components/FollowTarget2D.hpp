@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -21,10 +22,13 @@ public:
         if (!transform || target.empty()) return;
         Scene* s = GetScene();
         GameObject* g = s ? s->Find(target) : nullptr;
-        if (!g) return;
+        if (!g || !g->transform) return;
         Vec3 me = transform->Position(), to = g->transform->Position();
         float dx = to.x - me.x, dy = to.y - me.y;
         float dist = Mathf::Sqrt(dx * dx + dy * dy);
+        // A target (or own) position that is not a finite number: skip this frame
+        // instead of moving by NaN, which would stick for the rest of the game.
+        if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dist)) return;
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;
         if (dist <= stopDistance + 1e-4f) {
             if (rb) rb->velocity = {0, 0};

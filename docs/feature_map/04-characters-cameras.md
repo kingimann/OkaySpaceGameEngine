@@ -116,13 +116,13 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.6.1 Shared orbit placement - `Components/PlayerCamera` - PlaceThirdPersonOrbit: pivot, aim blend, look smoothing, spring arm and landing shake in one function so controller and toggle agree
   - 4.6.2 Spring arm and wall collision - `Components/ControllerFeel` - SpringArm sphere sweep against solid colliders (triggers ignored), snaps in, glides out
   - 4.6.3 Follow pivot, look smoothing, auto-recenter - `Components/ControllerFeel`, `Components/ThirdPersonController` - FollowPivot (head point, separate horizontal and vertical lag, snaps on teleports over 2 m), LookSmoother, autoRecenter with delay and speed
-  - 4.6.4 Chase camera - `Components/CameraFollow` - eases toward a named target plus offset
+  - 4.6.4 Chase camera - `Components/CameraFollow` - eases toward a named target plus offset, in world space (works under a moved, rotated or scaled parent); a non-finite target is skipped for that frame
 - **Code:** `Components/PlayerCamera`, `Components/CameraFollow`, `Components/ControllerFeel`, `Components/ThirdPersonController`
 - **API:** `OrbitPose`, `PlaceThirdPersonOrbit`, `SpringArm`, `FollowPivot`, `CameraFollow::targetName`
 - **Editor:** Player Controller panel > Third person (orbit, aim, spring arm); Inspector for Camera Follow
 - **Docs:** `docs/making_a_game.md`
-- **Tests:** `player`, `view_ground`, `run_feel`
-- **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; CameraFollow has no dedicated test I found
+- **Tests:** `player`, `view_ground`, `run_feel`, `camera_follow_fixes`
+- **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; `camera_follow_fixes` checks CameraFollow under a parent and its recovery after a NaN target (#888 findings 66, 67)
 - **Open:** #554 landed on 2026-11-10 with the head and walk jitter work (tests `test_anim_jitter`, `test_head_stability`); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body) and by `controller_interpolation` (the real ThirdPersonController with a rigged character, walking in circles under 50 Hz physics with smoothing on, drawn at 30, 60 and 144 fps: the drawn root moved evenly to within 2 mm per frame and the camera to within 1 mm of the straight walk; one rig, one turn rate, headless, no screen); no other open item recorded
 - **Related:** 4.1, 4.8, 4.10
 - **Words:** third-person camera, orbit, spring arm, camera collision, shoulder offset, CameraFollow, chase camera, recenter
@@ -152,7 +152,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 ### 4.8 Virtual cameras and dollies
 - **What:** Shot-based cameras: virtual cameras describe where to stand and what to look at, a brain on the real camera blends to the highest-priority one, dolly paths (rails) carry them along a smooth curve, and the scene keeps an ordered camera stack.
 - **Parts:**
-  - 4.8.1 Virtual camera - `Components/VirtualCamera` - priority, Follow and LookAt by name, binding mode (World Space or Lock To Target), damping, dead zone, field of view, Dutch angle, confiner box, handheld shake, AddImpulse
+  - 4.8.1 Virtual camera - `Components/VirtualCamera` - priority, Follow and LookAt by name, binding mode (World Space or Lock To Target), damping, dead zone, field of view, Dutch angle, confiner box, handheld shake, AddImpulse; a non-finite follow or aim target is skipped for that frame and non-finite eased state is reset, so one bad frame does not leave the camera at NaN
   - 4.8.2 Cinemachine brain - `Components/CinemachineBrain` - on the real camera: picks the live vcam by priority, eases pose and FOV over blendTime (0 = cut), ease in/out
   - 4.8.3 Dolly path and cart - `Components/DollyPath` - Catmull-Rom waypoints (open or looped), DollyCart rides it; Tracked Dolly vcam
   - 4.8.4 Camera stack - `Components/Camera`, `Scene/EnsureCamera` - Scene::CameraStack sorted by depth, ClearPlan (Skybox, SolidColor, DepthOnly, DontClear), depth decides the main camera (#570), EnsureSceneCamera guarantees one camera
@@ -161,7 +161,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`
 - **Editor:** Inspector panels for Virtual Camera, Cinemachine Brain, Dolly Path, Dolly Cart; Add Component menu "Virtual Camera"
 - **Docs:** `docs/layers_tags_cameras.md` (Cameras), `docs/splines.md`, `docs/cutscenes.md`
-- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`
+- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_follow_fixes`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
 - **Open:** the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/layers_tags_cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3

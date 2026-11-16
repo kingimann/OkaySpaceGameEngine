@@ -86,6 +86,9 @@ struct Array {
 
 struct Prop {
     char type = 0;                 ///< binary type letter: Y C I F D L S R, or 'a' = numeric array
+    /// 'a': 1 + the index of the Document's own buffer that holds the array (Document::inflated for a binary file,
+    /// Document::numbers for an ASCII one); 0 when the array is a view into the parsed bytes. (In the padding after `type`.)
+    std::uint32_t own = 0;
     std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes; empty for other types
     union {                        ///< read the member the type says (or Num()): they share their bytes (40 bytes a property)
         std::int64_t i = 0;        ///< Y C I L
@@ -143,6 +146,18 @@ struct Elem {
 };
 inline ElemList::It& ElemList::It::operator++() { e = e->next; return *this; }
 
+/// The allocator of ByteBuffer: new elements are left unset on resize (default-initialised: for bytes, no zero fill).
+template <class T> struct UninitAllocator : std::allocator<T> {
+    template <class U> struct rebind { using other = UninitAllocator<U>; };
+    UninitAllocator() noexcept = default;
+    template <class U> UninitAllocator(const UninitAllocator<U>&) noexcept {}
+    template <class U> void construct(U* p) noexcept { ::new ((void*)p) U; }
+    template <class U, class... A> void construct(U* p, A&&... a) { ::new ((void*)p) U(static_cast<A&&>(a)...); }
+};
+/// Bytes that are written in full right after they are made room for (decoded zlib arrays): a resize does not zero
+/// them first (zero filling a 16 MB array cost about a tenth of reading the file it came from).
+using ByteBuffer = std::vector<std::uint8_t, UninitAllocator<std::uint8_t>>;
+
 struct Document {
     std::uint32_t version = 0;     ///< 7400, 7500, ... (0 for ASCII files without a header)
     bool binary = false;
@@ -151,7 +166,7 @@ struct Document {
     // storage (the pointers in the tree point into these)
     std::vector<Elem> elems;
     std::vector<Prop> props;
-    std::vector<std::vector<std::uint8_t>> inflated;   ///< decoded zlib arrays
+    std::vector<ByteBuffer> inflated;                  ///< decoded zlib arrays
     std::vector<std::vector<double>> numbers;          ///< ASCII arrays (doubles, or int32 / float32 values packed in)
     Document() = default;
     Document(Document&&) = default;

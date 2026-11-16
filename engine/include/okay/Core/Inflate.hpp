@@ -122,14 +122,19 @@ struct DecoderBase {
     enum : int { kBadCode = -1, kStarved = -2 };
 };
 
-// FastBits: the width of the direct lookup table. Literal/length and distance codes use kFastBits; the code-length
+// FastBits: the widest the direct lookup table gets. Literal/length and distance codes use kFastBits; the code-length
 // code (lengths of at most 7 bits) uses 7, so each dynamic block fills a 128-entry table for it instead of 1024.
-// Every code no longer than FastBits is found in the table, longer ones by the slow path, so the width changes
-// nothing but the work.
+// The table actually used is `bits` wide: FastBits, or the longest code when that is shorter (a small block's distance
+// code often has codes of at most 5 or 6 bits: 64 entries to fill instead of 1024). Every code no longer than `bits`
+// is found in the table, longer ones (only when bits == FastBits) by the slow path, so the width changes nothing but
+// the work.
 template <int FastBits>
 struct DecoderT : DecoderBase {
-    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low FastBits of i, 0 if none
+    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low `bits` bits of i, 0 if none; only
+    // the first 2^bits entries are used
     uint16_t quick[1 << FastBits];
+    int bits = FastBits;                  // table width in use (1..FastBits)
+    uint32_t mask = (1u << FastBits) - 1; // (1 << bits) - 1
     uint16_t sorted[288];                 // symbols ordered by (length, symbol)
     uint16_t lowestCode[kMaxBits + 1];     // first canonical code of each length
     uint16_t slotBase[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
@@ -137,14 +142,18 @@ struct DecoderT : DecoderBase {
     int used = 0;                         // symbols that have a code
 
     Shape Build(const uint8_t* lens, int n) {
-        std::memset(quick, 0, sizeof quick);
         for (int l = 0; l <= kMaxBits; ++l) countOf[l] = 0;
         for (int i = 0; i < n; ++i) ++countOf[lens[i]];
         used = n - countOf[0];
         // Kraft sum in units of 2^-15: a prefix code is complete exactly when it reaches 2^15.
         uint32_t kraft = 0;
-        for (int l = 1; l <= kMaxBits; ++l) kraft += uint32_t(countOf[l]) << (kMaxBits - l);
+        int longest = 0;
+        for (int l = 1; l <= kMaxBits; ++l) { kraft += uint32_t(countOf[l]) << (kMaxBits - l); if (countOf[l]) longest = l; }
         if (kraft > (1u << kMaxBits)) return Shape::Oversubscribed;
+        bits = longest < 1 ? 1 : (longest < FastBits ? longest : FastBits);
+        mask = (1u << bits) - 1;
+        // A complete code whose codes all fit the table writes every entry below: nothing to clear first.
+        if (!(kraft == (1u << kMaxBits) && longest <= bits)) std::memset(quick, 0, sizeof(uint16_t) << bits);
         // RFC 1951 3.2.2: next_code[bits] = (next_code[bits-1] + bl_count[bits-1]) << 1
         uint32_t next[kMaxBits + 2]; uint32_t code = 0; uint16_t slot = 0;
         lowestCode[0] = 0; slotBase[0] = 0;
@@ -160,9 +169,9 @@ struct DecoderT : DecoderBase {
             if (!l) continue;
             sorted[slotBase[l] + fill[l]++] = uint16_t(sym);
             uint32_t c = next[l]++;
-            if (l <= FastBits) {
+            if (l <= bits) {
                 uint32_t rev = Reverse(c, l);
-                for (uint32_t i = rev; i < (1u << FastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
+                for (uint32_t i = rev; i < (1u << bits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
             }
         }
         return kraft == (1u << kMaxBits) ? Shape::Complete : Shape::Incomplete;
@@ -171,7 +180,7 @@ struct DecoderT : DecoderBase {
     // Returns the symbol, kBadCode (no such code) or kStarved (the input ends inside the code).
     int Next(BitReader& br) const {
         if (br.cnt < kMaxBits) br.Refill();
-        uint16_t e = quick[br.buf & ((1u << FastBits) - 1)];
+        uint16_t e = quick[br.buf & mask];
         if (e) {
             int l = e & 15;
             if (l > br.cnt) return kStarved;
@@ -181,7 +190,7 @@ struct DecoderT : DecoderBase {
         // slow path: compare the next 15 bits, as a most-significant-first number, with each length's range
         uint32_t v = uint32_t(br.buf & ((1u << kMaxBits) - 1));
         v = Reverse(v, kMaxBits);
-        for (int l = FastBits + 1; l <= kMaxBits; ++l) {
+        for (int l = bits + 1; l <= kMaxBits; ++l) {   // (codes longer than the table exist only when bits == FastBits)
             uint32_t prefix = v >> (kMaxBits - l);
             uint32_t k = prefix - lowestCode[l];
             if (prefix >= lowestCode[l] && k < countOf[l]) {
@@ -210,10 +219,13 @@ struct FixedCodes {
 
 // ---- output buffer: grows only up to the cap, never doubles past it --------------------------------
 // Writes straight into the caller's vector (no second copy of the result). `size` is the number of bytes
-// produced; the vector itself is sized in steps and trimmed to `size` at the end.
-struct Output {
-    std::vector<uint8_t>& v; size_t size = 0, limit; bool capped = false;
-    Output(std::vector<uint8_t>& vec, size_t maxOut) : v(vec), limit(maxOut) {}
+// produced; the vector itself is sized in steps and trimmed to `size` at the end. Vec is std::vector<uint8_t>, or a
+// byte vector whose allocator leaves new bytes unset on resize (no zero fill: every byte below `size` is written by
+// the decoder before anything reads it, and the rest is cut off at the end).
+template <class Vec>
+struct OutputT {
+    Vec& v; size_t size = 0, limit; bool capped = false;
+    OutputT(Vec& vec, size_t maxOut) : v(vec), limit(maxOut) {}
     // Make room for `extra` more bytes (the caller has already checked size + extra <= limit).
     void Room(size_t extra) {
         size_t need = size + extra;
@@ -275,6 +287,7 @@ inline void CopyMatchFast(uint8_t* d, size_t back, size_t length) {
 }
 
 // Decodes the symbols of one Huffman-coded block until its end-of-block symbol.
+template <class Output>
 inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Output& out, const Options& op, std::string& why) {
     static const char* const kTooBig = "decoded body larger than the limit";
     for (;;) {
@@ -291,6 +304,7 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
             uint8_t* const o = out.v.data();
             const size_t outSafe = out.v.size() - (258 + 8), limit = out.limit;
             const bool stop = op.stopAtMax;
+            const uint32_t litMask = lit.mask, distMask = dist.mask;
             size_t size = out.size;
             auto save = [&] { br.pos = pos; br.buf = buf; br.cnt = cnt; out.size = size; };
             auto load = [&] { pos = br.pos; buf = br.buf; cnt = br.cnt; };
@@ -302,7 +316,7 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                     pos += size_t(take); cnt += take * 8;
                 }
                 int sym;
-                if (const uint16_t e = lit.quick[buf & ((1u << kFastBits) - 1)]) { const int l = e & 15; buf >>= l; cnt -= l; sym = e >> 4; }
+                if (const uint16_t e = lit.quick[buf & litMask]) { const int l = e & 15; buf >>= l; cnt -= l; sym = e >> 4; }
                 else {
                     save(); sym = lit.Next(br); load();
                     if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
@@ -315,6 +329,17 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                     }
                     o[size++] = uint8_t(sym);
                     if (stop && size == limit) { save(); out.capped = true; return true; }
+                    // Up to two more literals straight from the table while their bits are in the buffer (no refill
+                    // needed): each is what the loop's next turn would decode. Here size <= outSafe + 1 < v.size() <=
+                    // limit, so the limit and stop tests above cannot fire for them (the output never grows past the
+                    // cap); the loop's own bounds are tested again at its top.
+                    for (int extra = 0; extra < 2; ++extra) {
+                        const uint16_t e2 = lit.quick[buf & litMask];
+                        const int l2 = e2 & 15;
+                        if (e2 == 0 || (e2 >> 4) >= 256 || l2 > cnt) break;
+                        buf >>= l2; cnt -= l2;
+                        o[size++] = uint8_t(e2 >> 4);
+                    }
                     continue;
                 }
                 if (sym == 256) { save(); return true; }
@@ -324,7 +349,7 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                 size_t length = kSym.lenBase[li] + uint32_t(buf & ((uint64_t(1) << le) - 1));
                 buf >>= le; cnt -= le;
                 int ds;
-                if (const uint16_t e = dist.quick[buf & ((1u << kFastBits) - 1)]) { const int l = e & 15; buf >>= l; cnt -= l; ds = e >> 4; }
+                if (const uint16_t e = dist.quick[buf & distMask]) { const int l = e & 15; buf >>= l; cnt -= l; ds = e >> 4; }
                 else {
                     save(); ds = dist.Next(br); load();
                     if (ds < 0) { why = ds == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
@@ -380,6 +405,7 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
 }
 
 // ---- the three block kinds --------------------------------------------------------------------------
+template <class Output>
 inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
     br.AlignToByte();
     if (br.len - br.pos < 4) { why = "deflate data ends early"; return false; }
@@ -398,6 +424,7 @@ inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
     return true;
 }
 
+template <class Output>
 inline bool FixedBlock(BitReader& br, Output& out, const Options& op, std::string& why) {
     // Built on first use (a function-local static). C++11 makes that initialisation thread-safe, but this has not been
     // proven under MinGW's "win32" thread model; nothing here uses <mutex>, <thread> or call_once (CLAUDE.md rule 21a).
@@ -406,6 +433,7 @@ inline bool FixedBlock(BitReader& br, Output& out, const Options& op, std::strin
     return RunBlock(br, fixed.lit, fixed.dist, out, op, why);
 }
 
+template <class Output>
 inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::string& why) {
     int hlit = int(br.Take(5)) + 257, hdist = int(br.Take(5)) + 1, hclen = int(br.Take(4)) + 4;
     if (br.starved) { why = "deflate data ends early"; return false; }
@@ -490,11 +518,13 @@ inline uint32_t Le32(const uint8_t* p) { return p[0] | (uint32_t(p[1]) << 8) | (
 // decoded bytes. Input may be any pointer when n == 0.
 
 /// Raw deflate stream (RFC 1951). `consumed` is the number of input bytes used (not meaningful with stopAtMax).
-inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, size_t& consumed, std::string& why) {
+/// Vec: std::vector<uint8_t> or another vector of bytes (see detail::OutputT).
+template <class Vec>
+inline bool RawInto(const uint8_t* in, size_t n, Vec& out, const Options& op, size_t& consumed, std::string& why) {
     using namespace detail;
     out.clear();
     BitReader br(in, n);
-    Output o(out, op.maxOutput);
+    OutputT<Vec> o(out, op.maxOutput);
     if (op.hint) {
         // The first allocation is only a guess, so it never needs to be more than the stream could possibly produce:
         // DEFLATE cannot expand more than 1032:1 (a 258-byte match costs at least two bits plus a code). A header that
@@ -523,9 +553,13 @@ inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Op
     out.resize(o.size);
     return true;
 }
+inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, size_t& consumed, std::string& why) {
+    return RawInto(in, n, out, op, consumed, why);
+}
 
 /// zlib stream (RFC 1950). With op.checkTrailer: window <= 32K, Adler-32 must match, no bytes after it.
-inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, std::string& why) {
+template <class Vec>
+inline bool ZlibInto(const uint8_t* in, size_t n, Vec& out, const Options& op, std::string& why) {
     using namespace detail;
     out.clear();
     // CMF FLG; CM 8, header check divisible by 31, no preset dictionary
@@ -533,13 +567,16 @@ inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const O
     const bool badHeader = op.checkTrailer ? (n < 6 || (cmf >> 4) > 7) : n < 2;
     if (badHeader || (cmf & 0x0f) != 8 || ((cmf << 8) | flg) % 31 != 0 || (flg & 0x20)) { why = "not a zlib stream"; return false; }
     size_t used = 0;
-    if (!Raw(in + 2, n - 2, out, op, used, why)) return false;
+    if (!RawInto(in + 2, n - 2, out, op, used, why)) return false;
     if (!op.checkTrailer) return true;
     const size_t off = 2 + used;
     if (n - off != 4) { why = "bad zlib trailer"; out.clear(); return false; }
     const uint32_t want = (uint32_t(in[off]) << 24) | (uint32_t(in[off + 1]) << 16) | (uint32_t(in[off + 2]) << 8) | in[off + 3];
     if (want != Adler32(out.data(), out.size())) { why = "zlib checksum mismatch"; out.clear(); return false; }
     return true;
+}
+inline bool Zlib(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Options& op, std::string& why) {
+    return ZlibInto(in, n, out, op, why);
 }
 
 /// One gzip member (RFC 1952). CRC-32 and size are always checked; extra bytes (a second member) are refused.

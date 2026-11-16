@@ -65,6 +65,13 @@ bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>&
     // instead of growing the buffer by doubling (fewer copies, and no zero-filled slack).
     return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut, maxOut), why);
 }
+namespace {
+/// Inflate into a ByteBuffer (no zero fill of the output first): the same decoder, options and result.
+bool InflateArray(const std::uint8_t* data, std::size_t n, ByteBuffer& out, std::size_t maxOut) {
+    std::string why;
+    return okay::inflate::ZlibInto(data, n, out, okay::inflate::Options::Lenient(maxOut, maxOut), why);
+}
+} // namespace
 
 // ============================================================================
 // Binary FBX
@@ -116,10 +123,11 @@ struct Reader {
                 if (enc == 0) {
                     if (clen != raw) return Fail("array length mismatch");
                 } else if (enc == 1) {
-                    std::vector<std::uint8_t> tmp;
-                    if (!Inflate(src, clen, tmp, raw) || tmp.size() != raw) return Fail("bad compressed array");
+                    ByteBuffer tmp;
+                    if (!InflateArray(src, clen, tmp, raw) || tmp.size() != raw) return Fail("bad compressed array");
                     src = tmp.data();   // the vector's buffer does not move when the vector itself is moved below
                     doc->inflated.push_back(std::move(tmp));
+                    out.own = (std::uint32_t)doc->inflated.size();   // (1 + its index)
                 } else {
                     return Fail("unknown array encoding");
                 }
@@ -413,6 +421,7 @@ struct Text {
         }
         out.SetArray(type, (std::uint32_t)nv, (const std::uint8_t*)vals.data());
         doc->numbers.push_back(std::move(vals));   // the buffer stays where it is
+        out.own = (std::uint32_t)doc->numbers.size();   // (1 + its index)
         return true;
     }
 

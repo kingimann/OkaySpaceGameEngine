@@ -388,12 +388,14 @@ enum Mapping { kByPolyVert, kByVertex, kByPoly, kAllSame, kByEdge, kNoMap };
 struct Layer {
     Mapping map = kNoMap; bool indexed = false; int dim = 1;
     const Array* vals = nullptr; const Array* idx = nullptr;
+    const Prop* valsProp = nullptr; const Prop* idxProp = nullptr;   // the properties `vals` and `idx` are in (reader only)
     bool Ok() const { return map != kNoMap && vals; }
 };
-const Array* ArrayOf(const Elem& e, const char* name) {
+const Prop* ArrayPropOf(const Elem& e, const char* name) {
     const Elem* c = e.Find(name);
-    return (c && !c->props.empty() && c->props[0].type == 'a') ? &c->props[0].arr : nullptr;
+    return (c && !c->props.empty() && c->props[0].type == 'a') ? &c->props[0] : nullptr;
 }
+const Array* ArrayOf(const Elem& e, const char* name) { const Prop* p = ArrayPropOf(e, name); return p ? &p->arr : nullptr; }
 Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) {
     Layer L; L.dim = dim;
     const Elem* best = nullptr; double bestIdx = 1e30;
@@ -412,10 +414,10 @@ Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, con
     else if (mp == "AllSame") L.map = kAllSame;
     else if (mp == "ByEdge") L.map = kByEdge;
     else return L;
-    L.vals = ArrayOf(*best, valName);
+    L.valsProp = ArrayPropOf(*best, valName); L.vals = L.valsProp ? &L.valsProp->arr : nullptr;
     L.indexed = (ref == "IndexToDirect" || ref == "Index");
-    if (L.indexed) { L.idx = ArrayOf(*best, idxName); if (!L.idx) L.indexed = false; }
-    if (L.indexed && !L.vals && std::string(valName) != idxName) L.vals = nullptr;
+    if (L.indexed) { L.idxProp = ArrayPropOf(*best, idxName); L.idx = L.idxProp ? &L.idxProp->arr : nullptr; if (!L.idx) L.indexed = false; }
+    if (L.indexed && !L.vals && std::string(valName) != idxName) { L.vals = nullptr; L.valsProp = nullptr; }
     return L;
 }
 /// Fetches value `out[0..dim)` for a corner. Returns false when the data does not cover it.
@@ -1097,39 +1099,49 @@ struct Builder {
     // The reader keeps a mesh's polygons as the file stores them (positions, polygon index list, layers); the import
     // turns them into triangles and shared corners with BuildParts (below the Builder).
     Document* steal = nullptr;   // LoadMemory / LoadFile: the Document's decoded buffers may be handed to the scene
-    struct KeptBuf { std::shared_ptr<const void> keep; const std::uint8_t* data; };
-    std::unordered_map<const void*, KeptBuf> kept;          // by the Document array's data pointer
-    std::unordered_map<const void*, std::size_t> ownBuf;    // steal: data pointer -> inflated[i] (i) or numbers[i] (i | top bit)
-    bool ownBufReady = false;
-    static constexpr std::size_t kNumBit = (std::size_t)1 << (sizeof(std::size_t) * 8 - 1);
-    KeptArray Keep(const Array* a) {
+    /// The buffers one mesh keeps, in one allocation (shared by its KeptArrays; freed with the last of them).
+    struct MeshStore {
+        ByteBuffer bytes[12]; std::vector<double> nums[12]; int nb = 0, nn = 0;   // (a mesh keeps at most 11 arrays)
+    };
+    std::shared_ptr<MeshStore> store;   // the mesh being built
+    struct KeptBuf { const void* from; const std::uint8_t* data; };
+    std::vector<KeptBuf> keptHere;      // arrays already kept by the mesh being built (the material layer uses one twice)
+    void BeginMeshStore() { store = std::make_shared<MeshStore>(); keptHere.clear(); }
+    /// Keeps array property `p` (an 'a' property, or null) for the scene: the Document's own buffer is moved into the
+    /// mesh's store when the build may take it (steal), otherwise the bytes are copied.
+    KeptArray Keep(const Prop* p) {
         KeptArray k;
-        if (!a) return k;
+        if (!p) return k;
+        const Array* a = &p->arr;
         k.present = true; k.a = *a;
         if (a->count == 0 || !a->data) { k.a.data = nullptr; return k; }
-        if (auto it = kept.find(a->data); it != kept.end()) { k.keep = it->second.keep; k.a.data = it->second.data; return k; }
-        std::shared_ptr<const void> sp;
-        if (steal) {   // a decoded zlib array or a parsed ASCII array of the Document: moved into the scene, not copied
-            if (!ownBufReady) {
-                ownBufReady = true;
-                for (std::size_t i = 0; i < steal->inflated.size(); ++i) if (!steal->inflated[i].empty()) ownBuf.emplace(steal->inflated[i].data(), i);
-                for (std::size_t i = 0; i < steal->numbers.size(); ++i) if (!steal->numbers[i].empty()) ownBuf.emplace(steal->numbers[i].data(), i | kNumBit);
+        for (const KeptBuf& kb : keptHere) if (kb.from == a->data) { k.a.data = kb.data; k.keep = store; return k; }
+        MeshStore& st = *store;
+        bool done = false;
+        if (steal && p->own) {   // a decoded zlib array or a parsed ASCII array of the Document: moved, not copied
+            const std::size_t i = p->own - 1;
+            if (steal->binary) {
+                if (i < steal->inflated.size() && steal->inflated[i].data() == a->data && st.nb < 12) { st.bytes[st.nb++] = std::move(steal->inflated[i]); done = true; }
+            } else {
+                if (i < steal->numbers.size() && (const void*)steal->numbers[i].data() == (const void*)a->data && st.nn < 12) { st.nums[st.nn++] = std::move(steal->numbers[i]); done = true; }
             }
-            if (auto o = ownBuf.find(a->data); o != ownBuf.end()) {
-                const std::size_t i = o->second & ~kNumBit;
-                if (o->second & kNumBit) sp = std::make_shared<std::vector<double>>(std::move(steal->numbers[i]));
-                else sp = std::make_shared<std::vector<std::uint8_t>>(std::move(steal->inflated[i]));
-                ownBuf.erase(o);   // (the moved buffer is the same memory: a->data stays valid)
-            }
+            // (the moved buffer is the same memory: a->data stays valid)
         }
-        if (!sp) {   // a view into the caller's bytes (or a const Document): copied
+        if (!done) {   // a view into the caller's bytes (or a const Document): copied
             const std::size_t esz = (a->type == 'd' || a->type == 'l') ? 8 : ((a->type == 'b' || a->type == 'c') ? 1 : 4);
-            auto v = std::make_shared<std::vector<std::uint8_t>>(a->data, a->data + (std::size_t)a->count * esz);
-            k.a.data = v->data();
-            sp = std::move(v);
+            if (st.nb < 12) {
+                ByteBuffer& v = st.bytes[st.nb++];
+                v.assign(a->data, a->data + (std::size_t)a->count * esz);
+                k.a.data = v.data();
+            } else {   // (more arrays than a mesh has: its own allocation)
+                auto v = std::make_shared<std::vector<std::uint8_t>>(a->data, a->data + (std::size_t)a->count * esz);
+                k.a.data = v->data(); k.keep = v;
+                keptHere.push_back({a->data, k.a.data});
+                return k;
+            }
         }
-        k.keep = sp;
-        kept.emplace(a->data, KeptBuf{sp, k.a.data});
+        k.keep = store;
+        keptHere.push_back({a->data, k.a.data});
         return k;
     }
     MeshLayer KeepLayer(const Layer& L) {
@@ -1143,9 +1155,9 @@ struct Builder {
             case kByEdge: m.mapping = LayerMapping::ByEdge; break;
             default: return m;
         }
-        m.values = Keep(L.vals);
+        m.values = Keep(L.valsProp);
         m.indexed = L.indexed;
-        if (L.indexed) m.indices = Keep(L.idx);
+        if (L.indexed) m.indices = Keep(L.idxProp);
         return m;
     }
     bool BuildMesh(const Obj& geo, std::size_t modelNode, Mesh& m) {
@@ -1174,11 +1186,12 @@ struct Builder {
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
         m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated (flat, per polygon)
         Polygons& P = m.polygons;
+        BeginMeshStore();
         P.corners = total;
         P.positionScale = conv.s;
-        P.positions = Keep(verts);
-        P.polygonVertexIndex = Keep(pvi);
-        if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge) P.edges = Keep(ArrayOf(g, "Edges"));
+        P.positions = Keep(ArrayPropOf(g, "Vertices"));
+        P.polygonVertexIndex = Keep(ArrayPropOf(g, "PolygonVertexIndex"));
+        if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge) P.edges = Keep(ArrayPropOf(g, "Edges"));
         P.normals = KeepLayer(ln); P.uvs = KeepLayer(lu); P.colors = KeepLayer(lc); P.materials = KeepLayer(lm);
         if (lm.Ok()) P.materials.indexed = false;
         // material slots: materials connected to the model, in connection order

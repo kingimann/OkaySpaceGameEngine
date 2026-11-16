@@ -578,7 +578,8 @@ Template MakeHuman() {
     b.S("hand", "Hands", {{"block", "Block"}, {"mitten", "Mitten"}, {"fist", "Fist"}, {"fingers", "Fingers"}}, kSkin, 0);
     b.S("leg", "Legs", LimbDesigns(), kSkin, 0);
     b.S("foot", "Feet", {{"block", "Bare foot"}, {"boot", "Boot"}, {"sneaker", "Sneaker"}, {"round", "Round shoe"}}, kSkin, 0);
-    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"tucked", "Tucked shirt"}, {"jacket", "Jacket"}, {"vest", "Vest"}, {"tank", "Tank top"}, {"longsleeve", "Long sleeve"}, {"hoodie", "Hoodie"}}, kBlue, 3);
+    b.S("sole", "Soles", {{"rubber", "Rubber"}, {"none", "None"}}, Color{0.16f, 0.16f, 0.17f, 1}, 18);
+    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"tucked", "Tucked shirt"}, {"tunic", "Tunic"}, {"jacket", "Jacket"}, {"vest", "Vest"}, {"tank", "Tank top"}, {"longsleeve", "Long sleeve"}, {"hoodie", "Hoodie"}}, kBlue, 3);
     b.S("pants", "Bottoms", {{"none", "None"}, {"shorts", "Shorts"}, {"trousers", "Trousers"}, {"skirt", "Skirt"}, {"jeans", "Jeans"}, {"cargo", "Cargo trousers"}, {"leggings", "Leggings"}, {"longskirt", "Long skirt"}}, kGrey, 4);
     b.S("hat", "Hat", {{"none", "None"}, {"cap", "Cap"}, {"tophat", "Top hat"}, {"helmet", "Helmet"}, {"beanie", "Beanie"}}, kRed, 5);
     b.S("glasses", "Glasses", {{"none", "None"}, {"round", "Round"}, {"square", "Square"}, {"visor", "Visor"}}, kBlack, 6);
@@ -621,6 +622,7 @@ Template MakeHuman() {
         st.slotDesign["face"] = "none";
         st.slotDesign["eyes"] = big ? "big" : "round";
         st.slotDesign["eyewhite"] = "round";
+        st.slotDesign["sole"] = "rubber";
         st.slotDesign["brows"] = st.id == "athletic" || st.id == "hero" ? "thick" : "soft";
         st.slotDesign["nose"] = st.id == "child" ? "button" : "straight";
         st.slotDesign["mouth"] = "smile";
@@ -630,7 +632,7 @@ Template MakeHuman() {
     }
     b.t.generate = GenerateHuman;
     // The organic body is built with real rings at every Detail level, so it is never subdivided again (Catmull-Clark would shrink the open joints).
-    b.t.noSubdivisionSlots = {"head", "face", "eyes", "brows", "nose", "mouth", "ears", "hair", "neck", "torso", "pelvis", "arm", "hand", "leg", "foot", "shirt", "pants", "belt", "fitting", "scarf"};
+    b.t.noSubdivisionSlots = {"sole", "head", "face", "eyes", "brows", "nose", "mouth", "ears", "hair", "neck", "torso", "pelvis", "arm", "hand", "leg", "foot", "shirt", "pants", "belt", "fitting", "scarf"};
     return b.t;
 }
 

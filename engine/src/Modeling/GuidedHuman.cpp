@@ -273,9 +273,9 @@ void SculptTorso(PolyMesh& m, const Dim& d, float off) {
     for (int s = -1; s <= 1; s += 2) Bump(m, {s * d.W * 0.40f, d.hipY - 0.01f, -front(-0.02f)}, Vec3{s * 0.1f, -0.1f, -1.0f}, d.W * 0.46f, 0.018f + (d.bt == 2 ? 0.010f : 0.0f) + bd * 0.03f);   // buttocks
     for (int s = -1; s <= 1; s += 2) Bump(m, {s * d.W * 0.78f, d.hipY + 0.9f * d.tl, 0}, Vec3{s * 1.0f, 0.4f, 0}, d.W * 0.36f, 0.006f + 0.012f * d.muscle);   // the trapezius where it meets the shoulder
 }
-PolyMesh TorsoShell(const Dim& d, float off, float y0, float y1, bool hemRoll = false) {
+PolyMesh TorsoShell(const Dim& d, float off, float y0, float y1, bool hemRoll = false, bool flare = false) {
     std::vector<Station> st = TorsoStations(d, off, y0, y1);
-    if (hemRoll)   // the shirt hangs a little wider over the hips and the tops of the trousers' legs: it is the outer layer
+    if (flare)   // a tunic hangs wider over the hips
         for (Station& q : st) {
             const float y = (q.c.y - d.hipY) / d.tl;
             if (y < 0.22f) { const float k = Sm((0.22f - y) / 0.22f); q.rb += 0.028f * k; q.ra += 0.014f * k; }
@@ -309,7 +309,7 @@ const std::vector<LP> kCalf = {{0.0f, 0.048f, 0.046f, 0}, {0.1f, 0.052f, 0.052f,
 
 // A tube from a to b: the profile's radii times `scale` plus `off`, cut at `tmax`. `startShift` moves the first ring a little along
 // the limb so two tubes that meet at a joint do not share ring corners.
-PolyMesh LimbTube(Vec3 a, Vec3 b, const std::vector<LP>& prof, float scale, float off, float tmax, int sides, int rings, bool roundStart, bool roundEnd, float before = 0.0f, float after = 0.0f) {
+PolyMesh LimbTube(Vec3 a, Vec3 b, const std::vector<LP>& prof, float scale, float off, float tmax, int sides, int rings, bool roundStart, bool roundEnd, float before = 0.0f, float after = 0.0f, float tmin = 0.0f) {
     std::vector<Station> st;
     auto lp = [&](float t) {
         for (size_t i = 0; i + 1 < prof.size(); ++i)
@@ -322,7 +322,9 @@ PolyMesh LimbTube(Vec3 a, Vec3 b, const std::vector<LP>& prof, float scale, floa
     auto push = [&](const LP& p) { st.push_back({a + (b - a) * p.t + Vec3{0, 0, p.cz * scale}, p.ra * scale + off, p.rb * scale + off}); };
     if (before > 0.0f) { LP p = prof.front(); p.t = -before; push(p); }   // a short run-in so the joint's two tubes overlap
     bool done = false;
+    if (tmin > 0.0f) push(lp(tmin));   // a start part-way down (trousers begin under the shirt's hem)
     for (const LP& p : prof) {
+        if (p.t <= tmin + 1e-4f) continue;
         if (p.t > tmax + 1e-4f) break;
         push(p);
         if (p.t >= tmax - 1e-4f) { done = true; break; }
@@ -334,13 +336,14 @@ PolyMesh LimbTube(Vec3 a, Vec3 b, const std::vector<LP>& prof, float scale, floa
 }
 PolyMesh Ball(Vec3 c, float r, float ky = 1.0f) { return Elp(c, r, r * ky, r, 5, 10); }
 
-PolyMesh UpperArm(const Dim& d, int side, float off, float tmax, bool deltoid) {
+PolyMesh UpperArm(const Dim& d, int side, float off, float tmax, bool deltoid, float before = 0.0f, bool roundTop = false) {
     const float sc = d.gk * d.limbK;
-    PolyMesh m = LimbTube(d.S[side], d.E[side], kUpperArm, sc, off, tmax, Sides(d, 12, 8), Rings(d, 8, 4), false, false, 0.0f, 0.05f);
+    PolyMesh m = LimbTube(d.S[side], d.E[side], kUpperArm, sc, off, tmax, Sides(d, 12, 8), Rings(d, 8, 4), roundTop, false, before, 0.05f);
     const float s = side ? 1.0f : -1.0f;
     if (deltoid) {   // the deltoid cap over the shoulder joint, bigger with muscle
         const float k = sc * (1.0f + 0.2f * d.muscle);
-        shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.002f, -0.016f, 0.0f}, 0.048f * k + off, 0.056f * k + off, 0.048f * k + off, 5, 11));
+        if (off > 0.0f) shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.004f, -0.024f, 0.0f}, 0.047f * k + off, 0.050f * k + off, 0.047f * k + off, 5, 11));   // a sleeve: a low, smooth shoulder that follows the arm, not a pad
+        else shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.002f, -0.016f, 0.0f}, 0.048f * k + off, 0.056f * k + off, 0.048f * k + off, 5, 11));
     }
     if (tmax >= 0.999f) shapes::Append(m, Ball(d.E[side], 0.034f * sc + off));
     return m;
@@ -349,9 +352,9 @@ PolyMesh ForeArm(const Dim& d, int side, float off, float tmax) {
     const float sc = d.gk * d.limbK;
     return LimbTube(d.E[side], d.Wr[side], kForearm, sc, off, tmax, Sides(d, 12, 8), Rings(d, 8, 4), false, false, 0.05f);
 }
-PolyMesh Thigh(const Dim& d, int side, float off, float tmax) {
+PolyMesh Thigh(const Dim& d, int side, float off, float tmax, float tmin = 0.0f) {
     const float sc = d.gk * d.limbK * 1.04f;
-    PolyMesh m = LimbTube(d.Hp[side], d.K[side], kThigh, sc, off, tmax, Sides(d, 16, 10), Rings(d, 9, 4), false, false, 0.0f, 0.05f);
+    PolyMesh m = LimbTube(d.Hp[side], d.K[side], kThigh, sc, off, tmax, Sides(d, 16, 10), Rings(d, 9, 4), false, false, 0.0f, 0.05f, tmin);
     if (tmax >= 0.999f) shapes::Append(m, Ball(d.K[side] + Vec3{0, 0, 0.006f}, 0.044f * sc + off));
     return m;
 }
@@ -428,7 +431,7 @@ PolyMesh Skull(const Dim& d, const HeadShape& h) {
 PolyMesh Neck(const Dim& d, const HeadShape& h, const std::string& design) {
     const float nr = (design == "thin" ? 0.043f : 0.050f) * std::max(0.5f, d.hs / 0.233f) * (0.92f + 0.16f * d.build) * (d.bt == 2 ? 0.93f : d.bt == 1 ? 1.05f : 1.0f);
     const float y0 = d.shoulderY - 0.035f, y1 = h.yb + 0.06f * h.s;
-    std::vector<Station> st = {{{0, y0, -0.020f}, nr * 1.22f, nr * 1.3f}, {{0, Lerp(y0, y1, 0.3f), -0.016f}, nr * 1.04f, nr * 1.1f}, {{0, Lerp(y0, y1, 0.65f), -0.010f}, nr * 0.96f, nr * 1.0f}, {{0, y1, -0.004f}, nr * 0.98f, nr * 1.0f}};
+    std::vector<Station> st = {{{0, y0 - 0.02f, -0.018f}, nr * 1.9f, nr * 2.3f}, {{0, y0 + 0.012f, -0.018f}, nr * 1.45f, nr * 1.7f}, {{0, Lerp(y0, y1, 0.35f), -0.014f}, nr * 1.08f, nr * 1.15f}, {{0, Lerp(y0, y1, 0.7f), -0.008f}, nr * 0.92f, nr * 1.02f}, {{0, y1, -0.003f}, nr * 0.90f, nr * 1.0f}};   // wide at the base where the trapezius meets it, narrower and shallower toward the head
     return SmoothLoft(st, kFwd, Sides(d, 14, 6), Rings(d, 7, 3), false, false);
 }
 // Two eyes as two parts: the white ball and the iris (a darker disc on its front), so each takes its own colour.
@@ -717,30 +720,34 @@ PolyMesh HandLocal(const std::string& design, float hl, float side) {
     return m;
 }
 
-PolyMesh FootLocal(const std::string& design, float len, bool shoe) {   // the ankle is at x = z = 0; y is the height above the ground
+PolyMesh FootLocal(const std::string& design, float len, bool shoe, bool soleOnly = false) {   // the ankle is at x = z = 0; y is the height above the ground
     const float u = len / 0.26f;
     struct R { float z, cy, ra, rb; };
     const std::vector<R> rows = {{-0.066f, 0.042f, 0.036f, 0.026f}, {-0.040f, 0.052f, 0.050f, 0.036f}, {0.005f, 0.059f, 0.053f, 0.042f}, {0.058f, 0.046f, 0.040f, 0.046f}, {0.108f, 0.030f, 0.030f, 0.050f}, {0.158f, 0.021f, 0.021f, 0.048f}, {0.196f, 0.017f, 0.0165f, 0.040f}, {0.2145f, 0.0145f, 0.011f, 0.026f}};
     const float sk = shoe ? 1.07f : 1.0f;
     std::vector<Station> st;
     for (const R& r : rows) st.push_back({{0, r.cy * u * (shoe ? 1.04f : 1.0f), r.z * u * (shoe ? 1.03f : 1.0f) * 0.9f}, r.ra * u * sk, r.rb * u * sk});
-    PolyMesh m = Loft(Resample(st, std::max(5, N(10, 5))), {0, 1, 0}, std::max(8, N(14, 8)), true, true);
-    if (design == "round") for (Vec3& v : m.verts) if (v.z > 0.05f * u) v.x *= 1.12f;   // a rounder, wider toe box
+    PolyMesh m = soleOnly ? PolyMesh() : Loft(Resample(st, std::max(5, N(10, 5))), {0, 1, 0}, std::max(8, N(14, 8)), true, true);
+    if (design == "round" && !soleOnly) for (Vec3& v : m.verts) if (v.z > 0.05f * u) v.x *= 1.12f;   // a rounder, wider toe box
     if (shoe) {
         // a thick sole that sticks out a little all round, a toe cap and a padded collar round the ankle opening
         std::vector<Station> sl;
         for (const R& r : rows) sl.push_back({{0, 0.011f * u, r.z * u * 1.03f * 0.9f}, 0.011f * u, r.rb * u * sk * 1.10f});
-        shapes::Append(m, Loft(Resample(sl, std::max(4, N(8, 4))), {0, 1, 0}, std::max(8, N(14, 8)), true, true));
-        shapes::Append(m, Elp({0, 0.034f * u, 0.150f * u}, 0.044f * u, 0.024f * u, 0.034f * u, 3, 8));
-        std::vector<Station> col = {{{0, 0.098f * u, -0.006f * u}, 0.050f * u, 0.046f * u}, {{0, 0.118f * u, -0.008f * u}, 0.046f * u, 0.042f * u}};
-        shapes::Append(m, Loft(col, kFwd, std::max(8, N(12, 8)), false, false));
+        if (soleOnly) {   // the sole is a part of its own (its own colour)
+            shapes::Append(m, Loft(Resample(sl, std::max(4, N(8, 4))), {0, 1, 0}, std::max(8, N(14, 8)), true, true));
+        } else {
+            shapes::Append(m, Elp({0, 0.034f * u, 0.150f * u}, 0.044f * u, 0.024f * u, 0.034f * u, 3, 8));   // a toe cap on the upper
+            std::vector<Station> col = {{{0, 0.098f * u, -0.006f * u}, 0.050f * u, 0.046f * u}, {{0, 0.118f * u, -0.008f * u}, 0.046f * u, 0.042f * u}};
+            shapes::Append(m, Loft(col, kFwd, std::max(8, N(12, 8)), false, false));
+        }
+    } else if (soleOnly) {
     } else if (shapes::Detail() >= 1) {   // toes
         for (int k = 0; k < 5; ++k) {
             const float x = (0.034f - 0.0145f * (float)k) * u, z = (0.192f - 0.004f * (float)(k > 2 ? k - 2 : 0) + (k == 0 ? 0.012f : 0.0f) - (k == 4 ? 0.018f : 0.0f)) * u;
             shapes::Append(m, Elp({x, (0.013f + (k == 0 ? 0.004f : 0.0f)) * u, z + 0.008f * u}, (k == 0 ? 0.0105f : 0.0085f) * u, 0.0105f * u, (k == 0 ? 0.017f : 0.012f) * u, 3, 7));
         }
     }
-    if (design == "boot") {   // the shaft up the shin
+    if (design == "boot" && !soleOnly) {   // the shaft up the shin
         std::vector<Station> sh = {{{0, 0.06f * u, -0.004f * u}, 0.058f * u, 0.052f * u}, {{0, 0.13f * u, -0.012f * u}, 0.056f * u, 0.052f * u}, {{0, 0.20f * u, -0.016f * u}, 0.056f * u, 0.054f * u}};
         shapes::Append(m, Loft(Resample(sh, 4), kFwd, std::max(8, N(12, 8)), false, false));
     }
@@ -755,7 +762,7 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
     {
         std::vector<GeneratedPart> all;
         boxy(r, all);
-        static const char* kReplaced[] = {"head/", "face/", "neck/", "torso/", "pelvis/", "arm/", "hand/", "leg/", "foot/", "shirt/", "pants/", "belt/", "hair/", "eyes/", "brows/", "nose/", "mouth/", "ears/", "scarf/", "eyewhite/", "hat/", "glasses/"};
+        static const char* kReplaced[] = {"head/", "face/", "neck/", "torso/", "pelvis/", "arm/", "hand/", "leg/", "foot/", "shirt/", "pants/", "belt/", "hair/", "eyes/", "brows/", "nose/", "mouth/", "ears/", "scarf/", "eyewhite/", "hat/", "glasses/", "sole/"};
         for (GeneratedPart& p : all) {
             bool replaced = false;
             for (const char* pre : kReplaced) if (p.id.rfind(pre, 0) == 0) replaced = true;
@@ -816,13 +823,23 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         const std::string sd = std::to_string(side);
         AddPart(o, "leg/" + sd + "/upper", "leg", [&](const std::string& dg) { Dim e = d; e.limbK = limbK(dg); return Thigh(e, side, 0.0f, 1.0f); });
         AddPart(o, "leg/" + sd + "/lower", "leg", [&](const std::string& dg) { Dim e = d; e.limbK = limbK(dg); return Calf(e, side, 0.0f, 1.0f); });
-        AddPart(o, "foot/" + sd, "foot", [&](const std::string& dg) {
-            const float fl = d.H * 0.148f;
-            const bool shoe = dg == "boot" || dg == "sneaker" || dg == "round";
-            PolyMesh m = FootLocal(dg, fl, shoe);
+        auto placeFoot = [&](PolyMesh& m) {
             const float s = side ? 1.0f : -1.0f, ang = 0.15f * s;   // the toes turn out a few degrees
             for (Vec3& v : m.verts) { const float x = v.x * std::cos(ang) + v.z * std::sin(ang), z = -v.x * std::sin(ang) + v.z * std::cos(ang); v.x = x; v.z = z; }
+        };
+        AddPart(o, "foot/" + sd, "foot", [&](const std::string& dg) {   // the upper
+            const bool shoe = dg == "boot" || dg == "sneaker" || dg == "round";
+            PolyMesh m = FootLocal(dg, d.H * 0.148f, shoe);
+            placeFoot(m);
             shapes::Append(m, Ball({0, d.ankleY, 0}, 0.034f * d.gk * (shoe ? 1.2f : 1.0f)));
+            Move(m, {d.A[side].x, 0, d.A[side].z});
+            return m;
+        });
+        AddPart(o, "sole/" + sd, "sole", [&](const std::string&) {   // the sole of a shoe, in its own colour (a bare foot has none)
+            const std::string fd = o.r.DesignFor("foot", "foot/" + sd);
+            if (!(fd == "boot" || fd == "sneaker" || fd == "round")) return PolyMesh();
+            PolyMesh m = FootLocal(fd, d.H * 0.148f, true, true);
+            placeFoot(m);
             Move(m, {d.A[side].x, 0, d.A[side].z});
             return m;
         });
@@ -834,12 +851,12 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
     AddPart(o, "shirt/0", "shirt", [&](const std::string& dg) {
         const bool vest = dg == "vest" || dg == "tank";
         const bool tucked = dg == "tucked";
-        const float hem = tucked ? 0.12f : dg == "jacket" ? -0.11f : dg == "hoodie" ? -0.1f : dg == "longsleeve" ? -0.05f : dg == "tank" ? -0.07f : dg == "vest" ? -0.02f : -0.04f;
-        PolyMesh m = TorsoShell(d, tucked ? off - 0.008f : off, hem, 1.10f, true);
+        const float hem = tucked ? 0.12f : dg == "tunic" ? -0.22f : dg == "jacket" ? -0.11f : dg == "hoodie" ? -0.1f : dg == "longsleeve" ? -0.12f : dg == "tank" ? -0.13f : dg == "vest" ? -0.1f : -0.11f;
+        PolyMesh m = TorsoShell(d, tucked ? off - 0.008f : dg == "tunic" ? off + 0.004f : off, hem, 1.10f, true, dg == "tunic");
         const bool longSleeve = dg == "jacket" || dg == "longsleeve" || dg == "hoodie";
         if (!vest) for (int side = 0; side < 2; ++side) {
             Dim e = d; e.limbK = armK;
-            shapes::Append(m, UpperArm(e, side, off + 0.002f, longSleeve ? 1.0f : 0.5f, true));
+            shapes::Append(m, UpperArm(e, side, off + 0.002f, longSleeve ? 1.0f : 0.5f, true, 0.0f, true));
             if (longSleeve) shapes::Append(m, ForeArm(e, side, off, 0.97f));
         }
         if (dg == "hoodie") shapes::Append(m, Elp({0, d.shoulderY + 0.03f, -d.Dd * 0.55f}, d.W * 0.45f, 0.075f, d.Dd * 0.4f, 4, 12));
@@ -859,7 +876,7 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         const float tmax = dg == "shorts" ? 0.78f : 1.0f;
         for (int side = 0; side < 2; ++side) {
             Dim e = d; e.limbK = k;
-            shapes::Append(m, Thigh(e, side, legOff, tmax));
+            shapes::Append(m, Thigh(e, side, legOff, tmax, 0.12f));
             if (dg == "trousers" || dg == "greaves" || dg == "jeans" || dg == "cargo" || dg == "leggings") shapes::Append(m, Calf(e, side, legOff - 0.001f, 0.96f));
             if (dg == "cargo") {   // a pocket on the outside of each thigh
                 const float s = side ? 1.0f : -1.0f;
@@ -911,6 +928,22 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
                 return m;
             });
     }
+    // a neutral head: nodded forward a few degrees about the top of the neck, so the eyes look level (the Frankfurt plane, ear to eye socket, horizontal)
+    {
+        static const char* kHead[] = {"head", "face", "eyes", "eyewhite", "brows", "nose", "mouth", "ears", "hair", "hat", "glasses"};
+        const float a = 0.12f, ca = std::cos(a), sa = std::sin(a);
+        const Vec3 pv{0, hd.yb + 0.07f * hd.s, -0.012f};
+        for (GeneratedPart& p : parts) {
+            bool isHead = false;
+            for (const char* sl : kHead) if (p.slot == sl) isHead = true;
+            if (!isHead) continue;
+            for (Vec3& v : p.mesh.verts) {
+                const float y = v.y - pv.y, z = v.z - pv.z;
+                v.y = pv.y + y * ca - z * sa;
+                v.z = pv.z + y * sa + z * ca;
+            }
+        }
+    }
 }
 
 // ---- The skeleton -----------------------------------------------------------------------------------------------------------
@@ -954,7 +987,7 @@ bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out, RigNaming nam
 
 unsigned char RigGroupsOfSlot(const std::string& slot) {
     if (slot == "arm" || slot == "hand") return 2;
-    if (slot == "leg" || slot == "foot" || slot == "pants") return 1 | 4;
+    if (slot == "leg" || slot == "foot" || slot == "sole" || slot == "pants") return 1 | 4;
     if (slot == "shirt") return 1 | 2;
     return 1;
 }

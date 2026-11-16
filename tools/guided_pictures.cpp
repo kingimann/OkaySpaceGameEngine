@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
                 r.params["detail"] = lv;
                 const PolyMesh m = Create(r);
                 std::printf("human %s detail %d: %d triangles\n", id.c_str(), lv, TriangleCount(m));
-                g_smooth = lv >= 1;
+                g_smooth = true;
                 for (int v = 0; v < 3; ++v) Scene(im, m, lv * 330 + 2, v * 560 + 2, 326, 556, v == 0 ? 0.0f : v == 1 ? 1.5708f : 0.6f);
             }
             Save(dir, "human_views_" + id + tag + ".png", im);

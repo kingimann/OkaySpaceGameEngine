@@ -15,7 +15,7 @@ GameObject* BuildRiggedHuman(Scene& scene, const Recipe& recipe, const std::stri
     const PolyMesh pm = Create(recipe);
     Mesh mesh = pm.ToMesh();
     mesh.name = "";
-    if (DetailOf(recipe) >= 0.9f && (int)recipe.Param("style", 0) != 1) mesh.ComputeAutoSmoothNormals(40.0f);   // the same shading the editor gives a human
+    if (DetailOf(recipe) >= 0.0f && (int)recipe.Param("style", 0) != 1) mesh.ComputeAutoSmoothNormals(40.0f);   // the same shading the editor gives a human
 
     GameObject* root = scene.CreateGameObject(name);
     std::vector<GameObject*> bones(joints.size(), nullptr);

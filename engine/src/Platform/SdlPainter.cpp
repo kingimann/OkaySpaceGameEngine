@@ -57,9 +57,11 @@ public:
     ui2d::Tex CreateTexture(const TextureDesc& d, const std::uint8_t* rgba) override {
         if (d.width <= 0 || d.height <= 0) return nullptr;
         SDL_Texture* t = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888,
-                                           d.streaming ? SDL_TEXTUREACCESS_STREAMING : SDL_TEXTUREACCESS_STATIC, d.width, d.height);
+                                           d.target ? SDL_TEXTUREACCESS_TARGET : d.streaming ? SDL_TEXTUREACCESS_STREAMING : SDL_TEXTUREACCESS_STATIC,
+                                           d.width, d.height);
         if (!t) return nullptr;
         if (rgba) SDL_UpdateTexture(t, nullptr, rgba, d.width * 4);
+        else if (d.target) ClearTarget(t);   // a new target holds garbage: make it transparent black like every other texture
         SDL_SetTextureBlendMode(t, ToSdl(d.blend));
         if (d.scale == ScaleMode::Linear) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         return t;
@@ -67,7 +69,13 @@ public:
     bool UpdateTexture(ui2d::Tex t, const ui2d::Rect* r, const void* rgba, int pitch) override {
         return t && SDL_UpdateTexture((SDL_Texture*)t, (const SDL_Rect*)r, rgba, pitch) == 0;
     }
-    void DestroyTexture(ui2d::Tex t) override { if (t) SDL_DestroyTexture((SDL_Texture*)t); }
+    void DestroyTexture(ui2d::Tex t) override {
+        if (!t) return;
+        if (SDL_GetRenderTarget(m_r) == (SDL_Texture*)t) SDL_SetRenderTarget(m_r, nullptr);
+        SDL_DestroyTexture((SDL_Texture*)t);
+    }
+    bool SetTarget(ui2d::Tex t) override { return SDL_SetRenderTarget(m_r, (SDL_Texture*)t) == 0; }
+    ui2d::Tex GetTarget() override { return SDL_GetRenderTarget(m_r); }
     void SetTextureBlendMode(ui2d::Tex t, BlendMode m) override { SDL_SetTextureBlendMode((SDL_Texture*)t, ToSdl(m)); }
     void SetTextureScaleMode(ui2d::Tex t, ScaleMode m) override { SDL_SetTextureScaleMode((SDL_Texture*)t, ToSdl(m)); }
     void QueryTexture(ui2d::Tex t, int* w, int* h) override { SDL_QueryTexture((SDL_Texture*)t, nullptr, nullptr, w, h); }
@@ -99,6 +107,20 @@ public:
     }
 
 private:
+    // Transparent black into a freshly made target texture, leaving the draw colour, blend mode and target as they were.
+    void ClearTarget(SDL_Texture* t) {
+        SDL_Texture* prev = SDL_GetRenderTarget(m_r);
+        Uint8 r, g, b, a; SDL_GetRenderDrawColor(m_r, &r, &g, &b, &a);
+        SDL_BlendMode bm; SDL_GetRenderDrawBlendMode(m_r, &bm);
+        if (SDL_SetRenderTarget(m_r, t) == 0) {
+            SDL_SetRenderDrawBlendMode(m_r, SDL_BLENDMODE_NONE);
+            SDL_SetRenderDrawColor(m_r, 0, 0, 0, 0);
+            SDL_RenderClear(m_r);
+            SDL_SetRenderTarget(m_r, prev);
+        }
+        SDL_SetRenderDrawBlendMode(m_r, bm);
+        SDL_SetRenderDrawColor(m_r, r, g, b, a);
+    }
     SDL_Renderer* m_r;
     bool m_owns;
     SDL_Surface* m_surface;

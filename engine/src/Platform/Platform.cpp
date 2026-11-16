@@ -120,14 +120,29 @@ std::string Backend::BasePath() {
 std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     if (org.empty() || app.empty()) return std::string();
 #if defined(_WIN32)
-    const char* base = std::getenv("APPDATA");
-    if (!base || !*base) return std::string();
-    std::string root = base;
+    // %APPDATA% read as UTF-16 and made into UTF-8, so a user name with accents or other non-ASCII letters works
+    // (std::getenv returns the ANSI code page, which is not UTF-8 and breaks such paths).
+    wchar_t appdata[MAX_PATH * 2];
+    const DWORD an = GetEnvironmentVariableW(L"APPDATA", appdata, (DWORD)(sizeof(appdata) / sizeof(appdata[0])));
+    if (an == 0 || an >= sizeof(appdata) / sizeof(appdata[0])) return std::string();
+    auto toWide = [](const std::string& u) {
+        if (u.empty()) return std::wstring();
+        const int n = MultiByteToWideChar(CP_UTF8, 0, u.data(), (int)u.size(), nullptr, 0);
+        std::wstring w((size_t)(n > 0 ? n : 0), L'\0');
+        if (n > 0) MultiByteToWideChar(CP_UTF8, 0, u.data(), (int)u.size(), &w[0], n);
+        return w;
+    };
+    std::wstring root(appdata, an);
     for (const std::string& part : {org, app}) {
-        root += "\\" + part;
-        CreateDirectoryA(root.c_str(), nullptr);
+        root += L"\\" + toWide(part);
+        CreateDirectoryW(root.c_str(), nullptr);   // exists already is fine
     }
-    return root + "\\";
+    root += L"\\";
+    if (GetFileAttributesW(root.c_str()) == INVALID_FILE_ATTRIBUTES) return std::string();
+    const int len = WideCharToMultiByte(CP_UTF8, 0, root.c_str(), (int)root.size(), nullptr, 0, nullptr, nullptr);
+    std::string out((size_t)(len > 0 ? len : 0), '\0');
+    if (len > 0) WideCharToMultiByte(CP_UTF8, 0, root.c_str(), (int)root.size(), &out[0], len, nullptr, nullptr);
+    return out;
 #else
     std::string root;
     const char* xdg = std::getenv("XDG_DATA_HOME");
@@ -153,11 +168,27 @@ std::string Backend::PrefPath(const std::string& org, const std::string& app) {
 std::vector<std::string> Backend::PreferredLocales() {
     std::vector<std::string> out;
 #if defined(_WIN32)
-    wchar_t name[LOCALE_NAME_MAX_LENGTH];
-    if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) {
-        std::string s;
-        for (const wchar_t* c = name; *c; ++c) s += (*c < 128) ? (char)*c : '?';
-        if (!s.empty()) out.push_back(s);
+    // The user's preferred UI languages in order ("de-DE", "en-US"), a multi-string; else the default locale.
+    {
+        ULONG count = 0, size = 0;
+        if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, nullptr, &size) && size > 1) {
+            std::vector<wchar_t> buf(size);
+            if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buf.data(), &size)) {
+                for (const wchar_t* c = buf.data(); *c; c += wcslen(c) + 1) {
+                    std::string s;
+                    for (const wchar_t* d = c; *d; ++d) s += (*d < 128) ? (char)*d : '?';
+                    if (!s.empty()) out.push_back(s);
+                }
+            }
+        }
+    }
+    if (out.empty()) {
+        wchar_t name[LOCALE_NAME_MAX_LENGTH];
+        if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) {
+            std::string s;
+            for (const wchar_t* c = name; *c; ++c) s += (*c < 128) ? (char)*c : '?';
+            if (!s.empty()) out.push_back(s);
+        }
     }
 #else
     // LANGUAGE is a colon list; else LC_ALL / LC_MESSAGES / LANG. "de_DE.UTF-8@euro" -> "de-DE".

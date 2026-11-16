@@ -106,6 +106,7 @@ cmake --build "$BUILD_DIR" -j "$JOBS"
 #     OkayEngine.exe         (the editor)
 #     OkaySpacePlayer.exe    (standalone game runtime)
 #     okayspace-relay.exe    (multiplayer NAT relay, if built)
+#     OkayPlatformSelfTest.exe  (own platform self-test: window, input, tone, controller; writes a report)
 #     SDL2.dll               (copy — each exe needs the DLL beside it on Windows)
 #     VERSION.txt / accounts.md
 #
@@ -125,6 +126,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
+# The own-platform self-test (docs/try_it.md): opens a window, plays a tone, reads a controller and writes a report.
+[ -f "$BUILD_DIR/bin/OkayPlatformSelfTest.exe" ] && cp "$BUILD_DIR/bin/OkayPlatformSelfTest.exe" "$OUT_DIR/Tools/"
 # VERSION.txt is the single source of truth for the self-updater: the launcher
 # compares its baked version against releases/latest/download/VERSION.txt and only
 # updates when the published one is strictly newer. Derive it from CMakeLists so it
@@ -189,6 +192,9 @@ Everything else lives in  Tools/:
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/relay.md)
+  OkayPlatformSelfTest.exe  checks our own window / input / sound / controller code on
+                        this PC (double-click it, follow the prompts, send the report
+                        file it writes; nothing else starts it)
 
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play

@@ -201,6 +201,11 @@ set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
 
+# ---- Own-platform self-test program (okay::platform on the machine it runs on; docs/platform_layer.md) ----
+if(NOT EMSCRIPTEN)
+    add_subdirectory(platform_selftest)
+endif()
+
 # ---- OkayUI (SDL_Renderer immediate-mode UI toolkit) -----------------
 # Self-gates on SDL2 (skips quietly if absent). Added before the editor and tests
 # so both can link okay::ui. Only needed by SDL-based hosts and its own test.

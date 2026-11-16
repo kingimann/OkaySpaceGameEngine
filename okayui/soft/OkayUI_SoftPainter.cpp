@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <thread>
+#include <utility>
 #include <unordered_set>
 
 namespace OkayUI {
@@ -21,8 +22,16 @@ namespace ui2d = okay::ui2d;
 
 constexpr int kMaxDim = 16384;
 
+// What belongs to a render target: its clip rectangle and logical scale (the draw colour and blend mode are shared).
+struct TargetState {
+    bool clipOn = false;
+    ui2d::Rect clip{0, 0, 0, 0};
+    float sx = 1.0f, sy = 1.0f;
+};
+
 struct STex {
     int w = 0, h = 0;
+    TargetState state;   // used when this texture is a render target and not the current one
     std::vector<std::uint8_t> px;
     BlendMode blend = BlendMode::Blend;
     ScaleMode scale = ScaleMode::Nearest;
@@ -42,6 +51,7 @@ class SoftPainter final : public okay::platform::Painter {
 public:
     SoftPainter(okay::platform::Window* win, int w, int h, bool vsync) : m_win(win), m_vsync(vsync) { Resize(w, h); }
     ~SoftPainter() override {
+        SetTarget(nullptr);
         ReleaseCachedTextures();
         for (STex* t : m_texs) delete t;
     }
@@ -55,6 +65,20 @@ public:
         SyncSize();
         for (std::size_t i = 0; i + 3 < m_px.size(); i += 4) { m_px[i] = m_r; m_px[i + 1] = m_g; m_px[i + 2] = m_b; m_px[i + 3] = m_a; }
     }
+    // ---- render targets: while one is current, m_px / m_w / m_h ARE its pixels and size; the window's buffer waits in m_mainPx
+    bool SetTarget(ui2d::Tex tex) override {
+        STex* t = tex ? T(tex) : nullptr;
+        if (tex && !t) return false;
+        if (t == m_target) return true;
+        if (m_target) { m_target->px = std::move(m_px); m_target->state = Save(); }
+        else { m_mainPx = std::move(m_px); m_mainW = m_w; m_mainH = m_h; m_mainState = Save(); }
+        if (t) { m_px = std::move(t->px); m_w = t->w; m_h = t->h; Load(t->state); }
+        else { m_px = std::move(m_mainPx); m_w = m_mainW; m_h = m_mainH; Load(m_mainState); }
+        m_target = t;
+        if (!t) SyncSize();
+        return true;
+    }
+    ui2d::Tex GetTarget() override { return m_target; }
     void SetBlendMode(BlendMode m) override { m_blend = m; }
     BlendMode GetBlendMode() override { return m_blend; }
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override { m_r = r; m_g = g; m_b = b; m_a = a; }
@@ -107,18 +131,20 @@ public:
     bool UpdateTexture(ui2d::Tex tex, const ui2d::Rect* r, const void* rgba, int pitch) override {
         STex* t = T(tex);
         if (!t || !rgba) return false;
+        std::vector<std::uint8_t>& dst = Pix(t);
         ui2d::Rect rc{0, 0, t->w, t->h};
         if (r) rc = *r;
         if (rc.x < 0 || rc.y < 0 || rc.w <= 0 || rc.h <= 0 || rc.x + (long long)rc.w > t->w || rc.y + (long long)rc.h > t->h) return false;
         if (pitch < rc.w * 4) return false;
         const std::uint8_t* src = (const std::uint8_t*)rgba;
         for (int y = 0; y < rc.h; ++y)
-            std::memcpy(&t->px[((std::size_t)(rc.y + y) * (std::size_t)t->w + (std::size_t)rc.x) * 4], src + (std::size_t)y * (std::size_t)pitch, (std::size_t)rc.w * 4);
+            std::memcpy(&dst[((std::size_t)(rc.y + y) * (std::size_t)t->w + (std::size_t)rc.x) * 4], src + (std::size_t)y * (std::size_t)pitch, (std::size_t)rc.w * 4);
         return true;
     }
     void DestroyTexture(ui2d::Tex tex) override {
         STex* t = T(tex);
         if (!t) return;
+        if (t == m_target) SetTarget(nullptr);   // never leave drawing aimed at a texture that is gone
         m_texs.erase(t);
         delete t;
     }
@@ -153,7 +179,7 @@ public:
     void Geometry(ui2d::Tex tex, const ui2d::Vertex* v, int nv, const int* idx, int ni) override {
         if (!v || nv <= 0) return;
         STex* st = tex ? T(tex) : nullptr;
-        if (tex && !st) return;
+        if (tex && (!st || st == m_target)) return;   // unknown texture; or the target itself (not defined, nothing drawn)
         raster::Tex view; if (st) view = st->View();
         const bool blend = (st ? st->blend : m_blend) == BlendMode::Blend;
         const int n = idx ? ni : nv;
@@ -176,7 +202,10 @@ public:
 
     // ---- the frame --------------------------------------------------------------------------
     void Present() override {
-        if (m_win) m_win->PresentPixels(m_px.data(), m_w, m_h);
+        if (m_win) {   // the window's frame, also while a render target is current
+            if (m_target) m_win->PresentPixels(m_mainPx.data(), m_mainW, m_mainH);
+            else m_win->PresentPixels(m_px.data(), m_w, m_h);
+        }
         if (!m_win || !m_vsync) return;
         // A software present has no display sync: wait for the next refresh period instead of spinning.
         using clock = std::chrono::steady_clock;
@@ -196,6 +225,9 @@ public:
     }
 
 private:
+    std::vector<std::uint8_t>& Pix(STex* t) { return t == m_target ? m_px : t->px; }
+    TargetState Save() const { TargetState s; s.clipOn = m_clipOn; s.clip = m_clip; s.sx = m_sx; s.sy = m_sy; return s; }
+    void Load(const TargetState& s) { m_clipOn = s.clipOn; m_clip = s.clip; m_sx = s.sx; m_sy = s.sy; }
     STex* T(ui2d::Tex t) const {
         STex* s = (STex*)t;
         return s && m_texs.count(s) ? s : nullptr;
@@ -209,7 +241,7 @@ private:
         m_px.assign((std::size_t)w * (std::size_t)h * 4, 0);
     }
     void SyncSize() {
-        if (!m_win) return;
+        if (!m_win || m_target) return;
         int w = 0, h = 0;
         m_win->GetDrawableSize(w, h);
         if (w > 0 && h > 0 && (w != m_w || h != m_h)) Resize(w, h);
@@ -264,7 +296,7 @@ private:
     void Blit(ui2d::Tex tex, const ui2d::Rect* src, double dx, double dy, double dw, double dh, double angle,
               const ui2d::FPoint* centre, int flip) {
         STex* st = T(tex);
-        if (!st || !(dw > 0) || !(dh > 0) || !std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dw) || !std::isfinite(dh)) return;
+        if (!st || st == m_target || !(dw > 0) || !(dh > 0) || !std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dw) || !std::isfinite(dh)) return;
         ui2d::Rect sr{0, 0, st->w, st->h};
         if (src) sr = *src;
         if (sr.x < 0 || sr.y < 0 || sr.w <= 0 || sr.h <= 0 || sr.x + (long long)sr.w > st->w || sr.y + (long long)sr.h > st->h) return;
@@ -362,6 +394,10 @@ private:
     ui2d::Rect m_clip{0, 0, 0, 0};
     float m_sx = 1.0f, m_sy = 1.0f;
     std::unordered_set<STex*> m_texs;
+    STex* m_target = nullptr;              // the current render target; null = the window / bitmap
+    std::vector<std::uint8_t> m_mainPx;    // the window's buffer while a target is current
+    int m_mainW = 0, m_mainH = 0;
+    TargetState m_mainState;
     std::vector<int> m_cols;   // Blit scratch: the source column of each destination pixel
     std::chrono::steady_clock::time_point m_lastPresent{};
 };

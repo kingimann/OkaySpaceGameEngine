@@ -2941,6 +2941,15 @@ add_test(NAME accessibility_remaining COMMAND test_accessibility_remaining)
 add_executable(test_ui_focus test_ui_focus.cpp)
 target_link_libraries(test_ui_focus PRIVATE okay::engine)
 add_test(NAME ui_focus COMMAND test_ui_focus)
+# The plain logic of the own Windows backend (key tables, text conversion, event queue, XInput, audio queue): no display, no
+# Windows. Also built with MinGW and run by the Windows CI job on a real Windows machine.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_win32_logic test_platform_win32_logic.cpp)
+    target_link_libraries(test_platform_win32_logic PRIVATE okay::platform)
+    if(NOT WIN32)
+        add_test(NAME platform_win32_logic COMMAND test_platform_win32_logic)
+    endif()
+endif()
 # okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
 # platform: registry, timers, audio devices, controllers on each compiled-in backend (no
 # display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.

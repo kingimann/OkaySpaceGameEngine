@@ -34,6 +34,9 @@ struct TextureDesc {
     ScaleMode scale = ScaleMode::Nearest;
     /// A texture that is re-uploaded every frame (the 3D view). A hint only; every backend can update any texture.
     bool streaming = false;
+    /// A texture that can be drawn into: Painter::SetTarget(t) sends the drawing calls to it instead of the window
+    /// (SDL_TEXTUREACCESS_TARGET). It starts as transparent black (or `rgba`) and can also be copied from.
+    bool target = false;
 };
 
 class Painter : public ui2d::Painter {
@@ -63,6 +66,16 @@ public:
     virtual void DestroyTexture(ui2d::Tex t) = 0;
     virtual void SetTextureBlendMode(ui2d::Tex t, BlendMode m) = 0;
     virtual void SetTextureScaleMode(ui2d::Tex t, ScaleMode m) = 0;
+
+    // ---- render targets ---------------------------------------------------------------------
+    /// Draw into `t` (made with TextureDesc::target) from now on; null = back to the window (or the bitmap). While a
+    /// target is set OutputSize, ReadPixels, Clear and every draw call refer to it. The clip rectangle and the logical
+    /// scale belong to the target (each starts without a clip and at scale 1, and is kept while another is current);
+    /// the draw colour and the blend mode are shared. Returns false (and changes nothing) for a texture that is not a
+    /// target of this painter. Copying a texture into itself is not defined and draws nothing. Destroying the current
+    /// target returns drawing to the window first.
+    virtual bool SetTarget(ui2d::Tex t) = 0;
+    virtual ui2d::Tex GetTarget() = 0;
 
     // ---- the frame --------------------------------------------------------------------------
     /// Show what was drawn. Software: copies the frame buffer to the window, then (with SetVSync(true))

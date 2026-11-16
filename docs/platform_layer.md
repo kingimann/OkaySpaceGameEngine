@@ -303,16 +303,119 @@ code that does not need `SDL_Renderer`.
 Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), XDND file drop (`EventType::DropFile`
 never fires), touch, DPI / multi-monitor queries, window icons, IME composition display, PulseAudio-native or PipeWire-native audio.
 
-### Windows (compiles, untested)
+### Windows (reviewed against Microsoft's documentation, plain logic tested on Linux, never run on real Windows)
 
 `OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
-`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.** No audio device
-(`OpenAudio` returns null).
+`WM_DROPFILES`, and (new) waveOut / waveIn audio. **Nothing here has been run on a Windows machine by us.** Section
+"Windows backend review" below lists what was checked, what was fixed and what can only be settled on real Windows.
 
 ### macOS (not written)
 
 Needs Objective-C++ (Cocoa, NSOpenGLContext/Metal, CoreAudio, GameController). It cannot even be syntax-checked with the
 MinGW cross-compiler, so nothing was written rather than writing code that was never compiled.
+
+## Windows backend review (own backend, Windows)
+
+Written for this change (`claude/own-platform-2`). Every Win32 call and message in `OwnWin32.cpp` was read against Microsoft's
+public documentation of that call. Where the documented behaviour differs from what the first draft did, the file was changed;
+where the answer depends on a real machine, the item is in the checklist below. Nothing in this section was run on Windows.
+
+### What was written from what
+
+| File | Written from |
+|---|---|
+| `engine/include/okay/Platform/Win32Logic.hpp` | Microsoft's documentation of the `WM_KEYDOWN` lParam layout, set-1 scan codes (make codes and the extended flag), `CF_UNICODETEXT`, `GetDoubleClickTime` and `SM_CXDOUBLECLK`, `USER_DEFAULT_SCREEN_DPI`, `XINPUT_GAMEPAD`, `QueryPerformanceCounter`; the Unicode standard for UTF-8 and UTF-16 |
+| `engine/include/okay/Platform/Win32AudioLogic.hpp` | Microsoft's documentation of `WAVEFORMATEX`, `WAVEHDR` buffer cycling and `WAVEOUTCAPS` (31-character product name); ring-buffer basics |
+| `engine/src/Platform/OwnWin32.cpp` | the Win32, WGL, XInput and multimedia (waveOut / waveIn) documentation, call by call |
+| `platform_selftest/main.cpp` | the `okay::platform` interface; `SendInput` documentation for the Windows-only injected-input step |
+| `tests/test_platform_win32_logic.cpp` | expected values worked out by hand (the physical layout of a keyboard, UTF-8 byte tables, XInput masks) |
+
+Nothing was copied, ported or closely followed from SDL, GLFW, Dear ImGui or any other project.
+
+### Findings and what was done
+
+| # | First draft | Documented behaviour | Now |
+|---|---|---|---|
+| 1 | Clipboard opened with a null owner | `EmptyClipboard` with no owner window makes the owner null and `SetClipboardData` then fails: **setting the clipboard could not have worked** | a hidden message-only window owns it; the open is retried (another program may hold the clipboard); the memory lock is checked; reads are bounded by `GlobalSize` |
+| 2 | Plain LF in clipboard text | Windows text uses CR LF | LF to CR LF on set, back on get (`ToClipboardNewlines`) |
+| 3 | `::ShowCursor` called by both `SetRelativeMouse` and `ShowCursor` | the cursor display count is a counter; two hiders need two shows | never touched; `WM_SETCURSOR` hides it, `ClipCursor` confines it in relative mode, and the cursor is put back on the window's middle after each move |
+| 4 | Rumble duration ignored | `XInputSetState` vibrates until told to stop | `RumbleSchedule` + a stop in `PollEvent`; also stopped when the pad object dies and at shutdown |
+| 5 | No controller hot-plug events | (apps rely on added / removed events) | `PadSlotTracker` turns the four XInput slots into `GamepadAdded/Removed`, looked at once a second (`XInputGetState` on an empty slot is slow: documented) and at once when a read reports "not connected". Instance ids are never reused |
+| 6 | `clicks` always 1 | the window class had no double-click style, so no double-click message exists | `ClickTracker` counts 1, 2, 3 ... with the system's double-click time and rectangle |
+| 7 | `ReleaseCapture` on any button up | capture should end when the last button is released | counted |
+| 8 | `WM_SYSKEYDOWN` to `DefWindowProc` | a bare Alt, F10 and Alt+Enter start the menu loop or beep, which stalls a game | only Alt+F4 and Alt+Space go on; `WM_SYSCHAR` and `WM_MENUCHAR` are swallowed |
+| 9 | `IsKeyDown` read `GetAsyncKeyState` for about 50 keys | that call reports the key even when another program has the focus | key state follows our own key messages (every key), and focus loss releases everything with `KeyUp` / `MouseButtonUp` events |
+| 10 | `KeyForChar` assumed a US layout | `VkKeyScanEx` and `MapVirtualKeyEx` give the layout's key | used (an AZERTY keyboard gets Z at its own position) |
+| 11 | Surrogates dropped when unpaired; control codes passed | `WM_CHAR` delivers UTF-16 units, Backspace / Tab / Enter / Ctrl+letter come as control codes | `CharAssembler` |
+| 12 | `(ticks * 1000) / freq` | overflows 64 bits on a fast counter after weeks | `TicksToMs` splits the multiplication; `timeBeginPeriod(1)` so `Sleep(1)` is not 15.6 ms |
+| 13 | No `WM_DPICHANGED`; no scale query | a per-monitor-aware window must move to the suggested rectangle | handled; `Window::ContentScale()` (`GetDpiForWindow`, else the screen DC); `SetPerMonitorDpiAware` falls back to `SetProcessDPIAware` |
+| 14 | Fullscreen restore from `GetWindowRect` | a maximised window restored from that is the wrong size | `WINDOWPLACEMENT` |
+| 15 | `RefreshRateHz` 0; `SetIcon` false | `EnumDisplaySettings`; `CreateIconIndirect` + `WM_SETICON` | written |
+| 16 | `DragQueryFileW` into a fixed 520 character buffer | the call reports the length first | no fixed buffer |
+| 17 | Y axis `-sThumbLY` | `-(-32768)` does not fit in 16 bits | `-1 - v` (maps the whole range onto itself); triggers rounded |
+| 18 | Window centred on the whole screen | the taskbar is not usable space | the work area |
+| 19 | `PrefPath` read `APPDATA` as ANSI; one locale | a user name with accents breaks an ANSI path; Windows keeps an ordered language list | UTF-16 environment and `CreateDirectoryW`; `GetUserPreferredUILanguages` (`Platform.cpp`, shared with the sdl2 backend's base class) |
+| 20 | `OpenAudio` returned null | | waveOut / waveIn (below) |
+| 21 | Unbounded event list | | `EventQueue`: bounded (8,192), merges mouse moves (summing the motion) and resizes, evicts in a fixed order |
+| 22 | Print Screen has no key-down | Windows reports only its release | a key-down is made before the key-up |
+| 23 | Nothing on `WM_ENDSESSION` | | a `Quit` event |
+
+### Audio on Windows (new)
+
+waveOut / waveIn (the multimedia API present on every Windows version), not WASAPI: it is a plain C API, needs no COM and no
+header beyond `mmsystem.h`, and a shared-mode WASAPI client written without a machine to run it on would be a larger guess. One
+worker thread per device (`CreateThread`, events and a `CRITICAL_SECTION`; no `<thread>` or `<mutex>`, rule 21a) keeps 3 to 8
+buffers (at least 60 ms in total) cycling; queue mode and callback mode, playback and capture, devices start paused, an
+underrun plays silence, a capture queue that nobody reads keeps the newest second, device 0 of the list is "default" (the wave
+mapper, which converts rate and channel count), the others by name. Limits: mono and stereo only (more needs
+`WAVEFORMATEXTENSIBLE`); latency of about 60 to 100 ms; the default device does not follow a change of the default made while
+the program runs; `QueuedBytes` counts the queue, not the bytes already handed to the device (as the ALSA device does).
+
+### Own platform self-test (try it on Windows)
+
+`Tools\OkayPlatformSelfTest.exe` (built from `platform_selftest/`, shipped in the Windows zip and installer). Nothing starts it:
+it is a separate program, so it is off unless you run it. It checks the platform layer on the machine it runs on and writes
+`OkayPlatformSelfTest-report.txt` (next to where you started it; if that folder is read-only, in the per-user folder, and the
+report's second line says where). Every line starts with a result word: PASS, FAIL (checked and wrong), SKIP (this machine cannot
+do it: no sound card, no microphone, no controller), NOTSEEN (needs you and you did not do it) or INFO (a value to read).
+Options: `--backend own|sdl2` (default `own`; the first line says which one ran), `--auto` (no questions; on Windows it injects keys
+and mouse clicks itself with `SendInput`), `--report <file>`, `--seconds <n>` (the hands-on phase, default 60; 0 skips it),
+`--no-audio`, `--no-gl`. Exit code 1 only when a line says FAIL.
+
+Steps: the platform (init, base path, user folder, languages), timers (including what `DelayMs(1)` really costs), window (create,
+resize and the resize event, title, minimum size, DPI scale, refresh rate, icon, `PresentPixels` colour quarters, fullscreen on
+and off), an OpenGL context (version strings, clear colour read back with `glReadPixels`), the clipboard (accents, euro, emoji,
+line breaks, 200,000 characters, empty), audio (device list, a 440 Hz tone in callback mode checked against real time and, in an
+interactive run, by ear with a Y / N key; queue mode draining; capture; a nonsense format), controllers (hot-plug event, axes,
+buttons, rumble), injected keyboard and mouse (Windows, `--auto`), and the hands-on phase (twelve grey squares in the window that
+turn green when you press a key, type, move, click, double-click, right-click, scroll, resize, switch away and back, and drop a
+file onto it; Esc ends it early). The same program runs on Linux under Xvfb as the ctest `platform_selftest_own`.
+
+The Windows CI job (`windows-export`, on a real Windows runner) runs `test_platform_win32_logic.exe` (required) and
+`OkayPlatformSelfTest.exe --auto` on both backends and uploads the reports as the artifact `windows-platform-selftest`. That step is
+allowed to fail the job for now (`continue-on-error`) because nobody has seen a hosted runner's answer to audio, GL and keyboard
+focus yet; read the first reports before making it required.
+
+### What can only be verified on real Windows
+
+| What | Why it cannot be settled here | How to check |
+|---|---|---|
+| The window procedure as a whole (message order, `WM_SIZE` during creation, focus events, the modal loop while dragging a window) | needs Windows | self-test steps 3, 8, 9 |
+| Key messages: extended flags for arrows / Insert / Delete, the right Alt (AltGr), Pause, Num Lock, Print Screen | the tables are tested against the documentation, not against a keyboard | step 9 plus the injected step (A, extended Up) |
+| `KeyForChar` on an AZERTY / QWERTZ layout | `VkKeyScanEx` needs the real layout | switch the layout, run, see `KeyForChar('w')` in the injected step |
+| Clipboard with real programs | only the call order was reviewed | paste into Notepad (step 5 says what to see); copy text in Notepad and paste in the hands-on phase |
+| WGL context, `wglCreateContextAttribsARB`, swap interval | a driver matter | step 4 prints `GL_VERSION`, `GL_RENDERER` |
+| `StretchDIBits` present (the software painter) | never ran | step 3: four coloured quarters |
+| Fullscreen, DPI change between monitors, `WM_DPICHANGED` | needs monitors with different scale | drag the window between monitors; the title bar and content scale |
+| Cursor hiding, `ClipCursor` in relative mode | needs a real cursor | play the player with `OKAY_PLATFORM_BACKEND=own` and look around with the mouse |
+| waveOut / waveIn: tone, latency, the microphone, device removal | needs a sound card | step 6 (and your ears) |
+| XInput: hot-plug, axes, triggers, rumble timing | needs a controller | step 7 |
+| Sleep granularity (`timeBeginPeriod`) | system setting | step 2 prints the real `DelayMs(1)` |
+| Everything under Wine, a remote desktop, a locked screen | different from a real desktop | do not use these for sign-off |
+
+Not written (gaps): raw input (`WM_INPUT`) for relative mouse (the warp-to-centre method is used), IME composition, touch and
+pen, system cursors, tray icon hook, display / monitor queries, window flashing, high-resolution waitable timers, WASAPI, more than
+two audio channels, the XInput Guide button, a GL pixel format with multisampling or sRGB (`wglChoosePixelFormatARB`).
 
 ## Tests
 
@@ -321,6 +424,9 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
+| `platform_win32_logic` | the plain logic of the own Windows backend (`Win32Logic.hpp`, `Win32AudioLogic.hpp`): scan code and key tables, UTF-8 / UTF-16, clipboard line ends, `WM_CHAR` assembly, ticks, DPI maths, click counting, the event queue, XInput mapping, hot-plug, rumble timing, the audio byte queue, buffer plan, format and device-name checks (2,191 checks; clean under ASan + UBSan). Also built with MinGW and run by the Windows CI job on a real Windows machine | nothing |
+| `platform_selftest_own` | `OkayPlatformSelfTest --auto --backend own` under Xvfb: timers, window, resize, `PresentPixels`, GL clear colour, clipboard, audio on ALSA's `null` device (callback, queue, capture), the report file; fails on any FAIL line | Xvfb (skipped, 77, without) |
+| `okayui_painter_golden` | render targets on the software painter and on SDL's software renderer, and a golden-image scene for the headless reference painter (below) | nothing |
 
 Also `platform_gamepad`: the controller -> `Input` bridge (`PlatformGamepad.hpp`) driven by a fake `Gamepad`.
 

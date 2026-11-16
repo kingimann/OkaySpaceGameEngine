@@ -8,7 +8,8 @@
 //   BackendKind::Sdl2  thin wrapper over SDL2 (the default).
 //   BackendKind::Own   our own code: Linux = X11/GLX + ALSA + evdev, all loaded
 //                      with dlopen at run time (no link dependency); Windows =
-//                      Win32/WGL (compiles, untested); macOS = not written.
+//                      Win32/WGL/XInput/waveOut (reviewed and unit-tested, never run
+//                      on Windows; see docs/platform_layer.md); macOS = not written.
 //
 // The CMake option OKAY_PLATFORM_BACKEND=sdl2|own picks DefaultKind(). Both
 // backends can be created side by side with Get(kind), which is how the tests
@@ -163,6 +164,9 @@ public:
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Pixels per device-independent unit on the window's monitor (1.0 at 96 DPI, 1.5 at 144, 2.0 at 192). 1.0 when
+    /// the backend cannot tell (sdl2 and own Linux today; own Windows reads GetDpiForWindow).
+    virtual float ContentScale() const { return 1.0f; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer

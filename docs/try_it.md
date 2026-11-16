@@ -57,7 +57,7 @@ release job or the installer build for this change.
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
-| 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
+| 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own`, and the self-test program `Tools\OkayPlatformSelfTest.exe` (section "Own platform self-test" at the end) | The self-test is new; nothing has run on real Windows yet |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
@@ -1405,3 +1405,44 @@ The editor window code compiles but was not run; no Windows, GPU, or real multip
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## Own platform self-test (our own Windows window, input, sound and controller code)
+
+**What it is.** The own platform layer replaces SDL2 piece by piece. Its Windows half was written without ever running on
+Windows. `OkayPlatformSelfTest.exe` is a small program that checks it on your PC in about two minutes and writes a report.
+It is a separate program: nothing starts it, and the launcher, editor and player are not affected. Details and the full list of
+what it checks: `docs/platform_layer.md`, section "Own platform self-test".
+
+**How to try it (Windows release).**
+
+1. Open the folder you installed or unzipped. Open `Tools`. Double-click **`OkayPlatformSelfTest.exe`** (a black console window and
+   a small window open; `SDL2.dll` is in the same folder).
+2. Read the console. Lines start with `[PASS]`, `[FAIL]`, `[SKIP]` (your PC cannot do it: no microphone, no controller),
+   `[NOTSEEN]` (it needs you) or `[INFO]` (a number to read). The first line says `backend: own`, which is how you know the
+   new code is the one being tested.
+3. When the window opens it shows four coloured quarters (red, green, blue, yellow). Then it plays a short 440 Hz tone: press **Y**
+   in the window if you heard it, **N** if not. If a controller is connected it asks you to move the sticks and press buttons for
+   8 seconds, then makes it buzz for 0.4 seconds (it must stop by itself).
+4. The last phase shows twelve grey squares. Each turns green when you do the matching thing in the window: press a key, release
+   it, type a letter, move the mouse, left-click, right-click, double-click, turn the wheel, drag a window edge to resize, click
+   another window (focus lost) and click back, and drag any file from Explorer onto the window. **Esc** ends the phase early.
+5. At the end the console prints `RESULT: ...` and waits for Enter. The report is `OkayPlatformSelfTest-report.txt` in the folder
+   you started it from (the second console line says where). **Send us that file.** Any `[FAIL]` line is a bug in our code.
+6. To compare with SDL2: open a console in that folder and run `OkayPlatformSelfTest.exe --backend sdl2`. For an unattended run
+   (no questions; it presses keys and clicks by itself): `OkayPlatformSelfTest.exe --auto`.
+7. To try the own layer in the real player (software drawing, no GPU, slower): `set OKAY_PLATFORM_BACKEND=own` and start
+   `Tools\OkaySpacePlayer.exe` on an exported game. The startup line says `platform=own` and the log says `2D painter: software`.
+
+**What you should see.** All PASS or SKIP. A SKIP for the microphone or controller is normal. `DelayMs(1) really takes` should read
+about 1 to 2 ms; 15 ms means the timer setting did not apply (tell us).
+
+**Checked here (Linux only).** The plain logic of the Windows code (`ctest -R platform_win32_logic`, 2,191 checks, also under ASan and
+UBSan, and built with MinGW); the self-test program under Xvfb including audio on ALSA's `null` device (`ctest -R platform_selftest`);
+the cross-compile of the whole Windows backend, the self-test and the logic test. **Not checked: anything on real Windows.** The
+Windows CI job runs the logic test and the self-test on a hosted Windows runner and keeps the reports as the artifact
+`windows-platform-selftest`; it has not been seen yet.
+
+**Painter render targets (no click path).** The 2D painter gained offscreen render targets and a golden-image test
+(`ctest -R okayui_painter_golden`). Nothing in the launcher, editor or player draws to a render target yet, so there is nothing to click;
+it is the seam the editor and launcher need before they can leave `SDL_Renderer`.
+

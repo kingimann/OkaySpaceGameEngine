@@ -538,11 +538,12 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
           cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
-            test_polymesh test_mesh_asset test_poly_ops
+            test_polymesh test_mesh_asset test_poly_ops test_platform_win32_logic okay_platform_selftest
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
              build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
              build-win-tests/tests/test_mesh_asset.exe build-win-tests/tests/test_poly_ops.exe \
+             build-win-tests/tests/test_platform_win32_logic.exe build-win-tests/bin/OkayPlatformSelfTest.exe \
              "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
@@ -575,12 +576,37 @@ jobs:
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops") {
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset", "test_poly_ops", "test_platform_win32_logic") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }
           }
           if ($failed) { throw "failed: $($failed -join ', ')" }
+
+      # The own Windows platform backend on a real Windows machine (docs/platform_layer.md). This step may not fail
+      # the job yet: a hosted runner can lack a sound card, a microphone, a controller and the keyboard focus, and
+      # nobody has seen this run, so the first runs are read from the report below. The pure logic test above
+      # (test_platform_win32_logic) is required.
+      - name: Own platform self-test (report only)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path platform-report | Out-Null
+          Push-Location winbuild/win-tests
+          & ./OkayPlatformSelfTest.exe --auto --backend own --report "$env:GITHUB_WORKSPACE/platform-report/own.txt"
+          Write-Host "own backend exit code: $LASTEXITCODE"
+          & ./OkayPlatformSelfTest.exe --auto --backend sdl2 --report "$env:GITHUB_WORKSPACE/platform-report/sdl2.txt"
+          Write-Host "sdl2 backend exit code: $LASTEXITCODE"
+          Pop-Location
+
+      - name: Upload the platform self-test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-platform-selftest
+          path: platform-report/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Export a game and check its visual scripts
         shell: pwsh

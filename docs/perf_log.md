@@ -133,10 +133,10 @@ Default settings (sun shadows on), median of 5 alternating runs, ms per frame. *
   with the sun on and off at five picture sizes (96x54, 321x177, 640x360, 1000x563, 1280x720; the odd and tiny sizes move the
   band boundaries): 50 of 50 pairs printed the same `frame_hash` and `state_hash`.
   Long runs too (160x90, sun off): `bodies500` and `mixed` after 610 frames, `cubes2000` after 210, `skinned100` after 310:
-  the same hashes (the bodies have piled up and gone to sleep by then).
+  the same hashes.
 * `Render.Prewarm` got more expensive (`cubes2000` 0.15 to 0.42 ms): the per-object work that every thread used to repeat
   inside `Render.Raster` is now done once, there. The totals above include it.
-* The three shadow-map scenes are still dominated by the shadow maps; see section 6.
+* The four scenes whose sun casts shadows are still dominated by the shadow maps (63 to 67 percent of their frame); see section 6.
 * `ui500`: nothing in the UI path was changed, and nothing changed. The first table (5 runs of 80 frames) said 1.75 to
   1.97 ms (0.89x); that was noise. Repeated with 9 runs of 300 frames it said 1.956 to 1.953 ms. The exact count says the
   same: 59.39 million instructions before, 60.69 million after (3 frames), and the whole difference (+1.3 million) is

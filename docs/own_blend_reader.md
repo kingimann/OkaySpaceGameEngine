@@ -9,7 +9,7 @@ Status: **side by side, off by default.** Assimp (when the build has it, `OKAY_U
 | `engine/src/Render/BlendReader.cpp` | The reader: `okay::ReadBlendBuffer` / `okay::ReadBlendFile` (declared in `engine/include/okay/Render/ModelData.hpp`) |
 | `engine/src/Render/BlendModifiers.cpp` / `.hpp` | The Mirror and Subdivision Surface modifiers (section "Modifiers") |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 6 of the per-format backend switch (same code as COLLADA, 3DS, BVH) |
-| `scripts/gen_blend_fixtures.py` | Writes the **synthetic** fixtures `tests/data/models/blend_*.blend` (see "What was and was not tested") |
+| `scripts/gen_blend_fixtures.py` | Writes the **synthetic** fixtures `tests/data/models/blend_*.blend` and the copies in `examples/own_readers` (see "What was and was not tested"); `--check` writes nothing and fails when a committed file differs (ctest `blend_fixtures_check`) |
 | `tests/test_blend_reader.cpp` | Hand-computed checks on the fixtures and the seam (`blend_reader`) |
 | `tests/test_blend_modifiers.cpp` | Modifiers: hand-computed Catmull-Clark and Mirror results, the fixture, the corpus files with modifiers, a fuzz (`blend_modifiers`, standalone) |
 | `tests/test_blend_hostile.cpp` | Hostile input and mutation fuzz, built on its own under sanitizers (`blend_hostile`) |
@@ -63,11 +63,42 @@ counts, which then match exactly). Corners at bit-identical positions are joined
 along its edges (the corpus Suzanne has 1,198 vertices at 505 positions) is smoothed as one surface; Assimp does the same,
 Blender itself would keep the pieces apart (unverified: no Blender was run). UVs: with "subdivide UVs" (old flag 8, newer
 `uv_smooth` not 0) they are subdivided by the same rules on their own topology (corners joined by vertex and UV, so seams
-are boundaries); without it they are interpolated linearly. Edge creases: `MEdge.crease` (a byte) or the 4.x
-`crease_edge` attribute; crease 1 is sharp at every level and a partial crease `c` is sharp for `c x levels` levels (our
-choice, not compared with Blender); from Blender 2.90 on they are used only when the modifier's "use creases" bit (16) is
-set (from memory of the DNA headers, unverified). Vertex weights: vertex points keep theirs, edge and face points take the
-mean of their sources. Output is capped at 4 M subdivision faces per file (a level that would pass it is not done, named).
+are boundaries); without it they are interpolated linearly (2.8+ files: the "UV Smooth" mode, next subsection). Edge
+creases: `MEdge.crease` (a byte) or the 4.x `crease_edge` attribute, turned into a DeRose sharpness `s` (the number of
+levels an edge stays sharp): crease 1 is sharp at every level; a partial crease `c` gives `s = 10 c^2` in files from
+Blender 2.80 on (the OpenSubdiv mapping, from memory, unverified) and `s = c x levels` in older files (our choice, as
+before). From 2.90 on creases are used only when the modifier's "use creases" bit (16) is set. The crease rules follow
+**DeRose, Kass and Truong (1998)**: an edge with `s >= 1` uses the sharp rule (midpoint) and `0 < s < 1` blends the smooth
+and the sharp edge point by `s`; a vertex takes the smooth, crease or corner rule by its number of sharp edges (fewer than
+2, 2, more), and when that rule changes between this level and the next it blends the two by the vertex sharpness, the
+mean of its creased edges' sharpnesses, clamped to 1 (boundary edges, which are infinitely sharp, are left out of that
+mean); each half of a creased edge gets the paper's variable-sharpness (Chaikin) rule `max(0, (s_neighbour + 3 s) / 4 - 1)`,
+where the neighbour is the other creased edge at that end (the edge itself when the end has not exactly two). Along a
+uniform crease that is `s - 1` per level, the rule we had before; it differs only where creases of different sharpness
+meet. (Before this change a vertex clamped each edge to 1 before averaging; the paper averages first: edges 2 and 0.5 give
+a full crease, not a 0.75 blend. Both checked by hand in `blend_modifiers`.) Vertex weights: vertex points keep theirs,
+edge and face points take the mean of their sources. Output is capped at 4 M subdivision faces per file (a level that would pass it is not done, named).
+
+**Subdivision Surface options of Blender 2.8+.** Each is found by its field name in the file's own `SubsurfModifierData`
+(so a file that does not have the field keeps the old behaviour). The SDNA stores struct and field names and types, but
+**no enum or flag values**, so no file can confirm what the numbers mean; the values below are from memory of Blender's
+DNA headers and are **unverified** (no Blender 2.8+ file with these options was available, and no Blender was run).
+
+| Field (setting) | Values read | What we do |
+|---|---|---|
+| `uv_smooth` (UV Smooth) | 0 none, 1 keep corners, 2 keep corners + junctions, 3 + concave, 4 keep boundaries, 5 all | UVs are smoothed on their own topology (corners joined by vertex and UV, so a seam is a boundary); the mode says which UV vertices are held where they are: **corner** = on a UV boundary with one face around it; **junction** = its mesh vertex has 3 or more different UVs; **concave** = on a UV boundary with corner angles (in UV space) adding up to more than 180 degrees; **boundaries** = every UV-boundary vertex. 0 = linear UVs. Another value: smoothed everywhere, named in a note. Without the field (up to 2.7x): flag 8 "Subdivide UVs" = all, else linear, as before. These definitions are ours, from the mode names. |
+| `boundary_smooth` (Boundary Smooth) | 0 all, 1 keep corners | 1: a boundary vertex with only one face around it is a corner and stays at every level (and at the limit). |
+| `flags` bit 64 | set = "use limit surface" OFF | Read only when the file has the `quality` field (2.90+ DNA). Off (the default in Blender): after the last level every point moves to its **limit position**, with the masks of Halstead, Kass and DeRose (1993): smooth vertex of valence n `(n^2 S + 4 sum(edge neighbours) + sum(diagonal corners)) / (n (n + 5))`, crease or boundary `(a + 4 S + b) / 6`, corner stays; smoothed UVs too, with the mode's held vertices. A crease that is still only partly sharp after the last level blends the sharp and the smooth limit by its sharpness (an approximation; named here). |
+| `flags` bit 16 | use creases | From 2.90 (or when `quality` is present). |
+| `quality` | 1 to 6 | Read, no effect: in Blender it sets the accuracy of its limit evaluation on the GPU; our limit positions are exact for the masks above. |
+
+Tested (`blend_modifiers`): the limit of every vertex is the same whether projected at level 1 or level 2 (cube, open grid
+with and without keep corners, all-sharp cube; to 2e-6), the cube's face point goes to 68/81 = 0.839506 (worked by hand)
+and plain subdivision approaches it about four times closer per level; each UV mode on fans of quads with one, two, three
+and two-unequal UV islands (which centre UVs move and which stay); keep corners on grids. Three synthetic fixtures in the
+2.9x / 3.6 / 4.x layouts (`blend_subsurf_293`, `_36`, `_41`, written by `scripts/gen_blend_fixtures.py`) carry the new
+fields; the reader's mesh equals the same steps done by hand with the settings named in the script and differs from the
+old defaults. They prove the reader reads the fields our script writes, **not** that Blender writes them that way.
 
 How it is built: per level, every corner's edge is found by bucketing corners under their lower vertex index (a counting
 sort, then a sort of each small bucket): flat arrays, no hash map, no allocation per element. On the corpus Suzanne at
@@ -108,11 +139,23 @@ Counts are checked against the bytes in their block before anything is allocated
 - **Animation was not checked against any real animated file**: the corpus has one trivial one-key action and the armature files carry pre-2.5 Ipo animation (named, not read). F-Curve evaluation (bezier with flat handles, linear quaternion, whole-frame sampling, time base) is covered by the synthetic fixture only.
 - `blend_reader` (engine linked): four encodings of the attribute fixture (4.1 names, 3.6 names, big endian + 32 bit, gzip) must give identical meshes; hand-computed world positions, concave polygon area, UV flip, materials, collections, orphan object excluded, skin weights, inverse binds, bezier values (1.04 at frame 3, 5.0 at frame 6), flatten, the seam, container errors.
 - `blend_modifiers` (standalone, no engine library): Catmull-Clark on a cube at level 1 gives 24 quads and exactly the 26 hand-computed points (corners 5/9, edge points 3/4, face centres), 96 quads and 98 vertices at level 2, the face cap, simple subdivision, an open quad's boundary rule, creases (all sharp keeps the cube; sharpness 0.5 blends to 0.875), linear and seam-aware smooth UVs, Mirror merge (onto the plane) and no merge, three axes, a face in the plane, a mirror object, U flip, vertex group swap, weights through subdivision, the left / right name swap; the fixture `blend_modifiers.blend` (open box, Mirror X with merge and U flip, an Array that must be named, Subsurf level 1, one creased edge) through the reader against the same steps done by hand (80 triangles, every point equal); the four corpus files above when `OKAY_MODEL_CORPUS` is set; and a fuzz of 3,000 random meshes (repeated corners, non-manifold edges, loose vertices, 1e12 coordinates, random creases and weights) through Mirror and Subdivide. Clean under ASan + UBSan + float-cast-overflow.
-- `blend_hostile` (standalone, no engine): every truncation of every fixture; bad headers; a block size of -1 and 2 GB; SDNA claiming billions of names or structs, bad type indices, arrays of 2^31 and 99999x99999 elements, mismatching struct sizes; an object whose parent is itself; a 40 MiB stored-block gzip; every block header field set to boundary values; pointer scrambling; then a deterministic mutation fuzz (byte flips, length stomps, inserts, deletes, inf / NaN / 2^31 / 2^63 floats). Built with `-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all`: clean, including 60,000 mutations of the fixtures and 25,000 mutations of ten real files (`OKAY_BLEND_FUZZ_ITERS`, `OKAY_BLEND_FUZZ_REAL_ITERS`), slowest single read 0.05 s. (One finding: a mutated bone matrix gave a non-finite inverse bind; fixed and named.) With the modifiers (2026-11-16) the fuzz also mutates `blend_modifiers.blend`, `MirroredCube_252` and `SuzanneSubdiv_252`; run under ASan + UBSan with 20,000 fixture and 3,600 real-file mutations: clean after two fixes it found (the modifier code met loops of faces the reader had dropped, now compacted first; and, in the 3.6+ face-offset path that predates the modifiers, an offset near 2^32 wrapped a 32-bit sum into a negative face start, now compared in 64 bits). Slowest single read under ASan 8.6 s (a mutated subdivision level), with the face cap then at 8 M; it is 4 M now.
+- **Fixture drift (fixed 2026-11-16).** The script had stopped reproducing the four `blend_attr_*` files byte for byte. Cause:
+  Python 3.12 made `sum()` of floats compensated (Neumaier), which changed one float of the Child object's saved matrix
+  (`-1.2e-16` instead of `0.0`), and Python 3.13's `gzip.compress` writes OS byte 255 where the committed gzip file has 3.
+  The script now adds matrix products left to right and writes the gzip header itself; it reproduces every committed
+  fixture exactly again (the committed files did not change), and `--check` (ctest `blend_fixtures_check`) fails on drift
+  (a gzip file whose deflate bytes differ only because of another zlib is accepted when it inflates to the same bytes).
+- `blend_hostile` (standalone, no engine): every truncation of every fixture; bad headers; a block size of -1 and 2 GB; SDNA claiming billions of names or structs, bad type indices, arrays of 2^31 and 99999x99999 elements, mismatching struct sizes; an object whose parent is itself; a 40 MiB stored-block gzip; every block header field set to boundary values; pointer scrambling; then a deterministic mutation fuzz (byte flips, length stomps, inserts, deletes, inf / NaN / 2^31 / 2^63 floats). Built with `-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all`: clean, including 60,000 mutations of the fixtures and 25,000 mutations of ten real files (`OKAY_BLEND_FUZZ_ITERS`, `OKAY_BLEND_FUZZ_REAL_ITERS`), slowest single read 0.05 s. (One finding: a mutated bone matrix gave a non-finite inverse bind; fixed and named.) With the modifiers (2026-11-16) the fuzz also mutates `blend_modifiers.blend`, `MirroredCube_252` and `SuzanneSubdiv_252`; run under ASan + UBSan with 20,000 fixture and 3,600 real-file mutations: clean after two fixes it found (the modifier code met loops of faces the reader had dropped, now compacted first; and, in the 3.6+ face-offset path that predates the modifiers, an offset near 2^32 wrapped a 32-bit sum into a negative face start, now compared in 64 bits). Slowest single read under ASan 8.6 s (a mutated subdivision level), with the face cap then at 8 M; it is 4 M now. With the 2.9+ options (2026-11-16) the three `blend_subsurf_*` fixtures were added to the fuzz; ASan + UBSan, 20,000
+fixture and 3,600 real-file mutations: clean, slowest single read 14.7 s under ASan on a shared, loaded machine. The
+`blend_modifiers` fuzz now also draws the UV mode, keep corners, limit surface and use creases: 20,000 random meshes
+under ASan + UBSan, clean.
 
 ## Not handled
 
-Everything in "Named, not silent", plus: zstd and Blender 5.0 files; library-linked data from other .blend files; layer, visibility and hide flags (all objects of the scene are imported); curves, text, metaballs, lattices, point clouds, volumes, grease pencil; dupli / particle instancing; bone inherit-rotation / scale flags, B-Bone segments, IK; non-Principled shader nodes; texture coordinate nodes and mapping; images packed in the file; per-vertex delta rotations in non-Euler modes; multiple scenes (only the current one); sub-frame times; custom split normals; Subdivision Surface options of 2.8+ that are not read (`boundary_smooth` "keep corners", `quality`, limit surface, the separate render-only level choice: we always use the higher level), OpenSubdiv's exact results in 2.8+ (ours is the textbook Catmull-Clark, which they are meant to equal on quads, unverified), modifiers applied to animated shapes; Blender versions after 4.x not seen (field renames not in the alias lists would show as a missing mesh and a note).
+Everything in "Named, not silent", plus: zstd and Blender 5.0 files; library-linked data from other .blend files; layer, visibility and hide flags (all objects of the scene are imported); curves, text, metaballs, lattices, point clouds, volumes, grease pencil; dupli / particle instancing; bone inherit-rotation / scale flags, B-Bone segments, IK; non-Principled shader nodes; texture coordinate nodes and mapping; images packed in the file; per-vertex delta rotations in non-Euler modes; multiple scenes (only the current one); sub-frame times; custom split normals; the separate render-only level choice of the Subdivision Surface (we always use the higher level), mesh creases on UVs
+(UV smoothing ignores edge creases), OpenSubdiv's exact results in 2.8+ (ours is the textbook Catmull-Clark plus the rules
+above, which they are meant to equal, unverified), edge creases stored in Blender 3.5 / 3.6 files (if they are kept in a
+layer that is neither the `MEdge` struct nor the 4.x `crease_edge` attribute, they are not read; unverified which), modifiers applied to animated shapes; Blender versions after 4.x not seen (field renames not in the alias lists would show as a missing mesh and a note).
 
 ## Before it can become the default
 

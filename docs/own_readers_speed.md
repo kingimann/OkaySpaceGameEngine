@@ -173,6 +173,16 @@ Differences that are not by design, or that are worth a second look (counts are 
   (the read of that Suzanne was 240 ms before; the output is bit for bit the same). The blend row above went from 0.12x to
   0.24x and its largest peak from 4.0 to 33.2 MB because ours now makes the 251,904-triangle Suzanne too (Assimp: 84 MB);
   both still met. Digests of the other 351 corpus files (24 of them `.blend`) are unchanged.
+- **Blender: Subdivision Surface options of 2.9+ (2026-11-16).** The subdivision now also reads UV Smooth, Boundary
+  Smooth, the limit surface and DeRose's crease rules (`docs/own_blend_reader.md`). No corpus file has these options (the
+  corpus is Blender 2.41 to 2.93; its Subsurf files are 2.5x), so all 355 corpus digests are unchanged, the `.blend`
+  ones included. Speed rerun (`bench_model_readers`, 15 runs, median; the machine was shared with other builds, load
+  about 6 on 4 cores, so all times are higher than the quiet run above): `SuzanneSubdiv_252` 73 / 404 ms (0.18x),
+  `yxa_1` 21 / 119 ms (0.18x), `HUMAN` 12 / 23 ms (ours / Assimp); the whole `.blend` row 0.30x in a 5-run pass under the
+  same load (0.24x quiet before); peaks unchanged (33.2 / 84.1 MB). Ours still beats Assimp on every file with modifiers.
+  The new options only cost time when a file turns them on: the limit surface adds one pass over the finished mesh
+  (a cube at level 7, 98,304 quads, positions only: about 5.5 ms without and 11 ms with it, same load; UVs smoothed with
+  a mode add one more), measured with a scratch program, not a committed bench.
 - **Skeleton-only files** (BVH, CSM, MD5 `.md5anim`, Collada `cameras.dae` and `lights.dae`): Assimp adds a stand-in mesh
   (164, 352 and 200 triangles), ours adds none (deliberate).
 - **Triangle counts that differ by a few per cent**: concave polygons (Collada, OBJ and LWO `ConcavePolygon` 64 / 58,

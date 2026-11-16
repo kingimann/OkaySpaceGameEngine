@@ -250,6 +250,46 @@ void Refine(const Topo& t, const std::vector<int>& fs, const std::vector<int>& f
     }
 }
 
+// The limit positions when only boundaries are sharp (no creases, nothing held): one pass over the edges and one over
+// the corners, the same masks as Limit below (the common case, kept lean because it runs on the largest mesh).
+template <int D>
+void LimitNoCreases(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc, const std::vector<int>& lv, const float* vals,
+                    const std::vector<int>& eCnt, std::vector<float>& out) {
+    const std::size_t nV = (std::size_t)t.nV, nE = (std::size_t)t.nE, nF = fs.size();
+    std::vector<float> acc(nV * D, 0.0f), bnd(nV * D, 0.0f);   // 4 sum(edge neighbours) + sum(diagonals); boundary neighbours
+    std::vector<int> nEdge(nV, 0), nBnd(nV, 0), nFace(nV, 0);
+    std::vector<char> quadsOnly(nV, 1);
+    for (std::size_t e = 0; e < nE; ++e) {
+        const std::size_t ia = (std::size_t)t.e0[e], ib = (std::size_t)t.e1[e];
+        if (ia == ib) continue;
+        ++nEdge[ia]; ++nEdge[ib];
+        const float* a = vals + ia * D;
+        const float* b = vals + ib * D;
+        for (int d = 0; d < D; ++d) { acc[ia * D + d] += 4.0f * b[d]; acc[ib * D + d] += 4.0f * a[d]; }
+        if (eCnt[e] != 2) { ++nBnd[ia]; ++nBnd[ib]; for (int d = 0; d < D; ++d) { bnd[ia * D + d] += b[d]; bnd[ib * D + d] += a[d]; } }
+    }
+    for (std::size_t f = 0; f < nF; ++f) {
+        const std::size_t s = (std::size_t)fs[f];
+        if (fc[f] != 4) { for (std::size_t l = s; l < s + (std::size_t)fc[f]; ++l) { quadsOnly[(std::size_t)lv[l]] = 0; ++nFace[(std::size_t)lv[l]]; } continue; }
+        for (std::size_t i = 0; i < 4; ++i) {
+            const std::size_t v = (std::size_t)lv[s + i], o = (std::size_t)lv[s + (i + 2) % 4];
+            ++nFace[v];
+            for (int d = 0; d < D; ++d) acc[v * D + d] += vals[o * D + d];
+        }
+    }
+    for (std::size_t v = 0; v < nV; ++v) {
+        const int n = nEdge[v], k = nFace[v];
+        if (n == 0 || k == 0) continue;
+        const float* S = vals + v * D;
+        float* o = &out[v * D];
+        if (nBnd[v] >= 3) continue;                                           // corner
+        if (nBnd[v] == 2) { for (int d = 0; d < D; ++d) o[d] = (bnd[v * D + d] + 4.0f * S[d]) * (1.0f / 6.0f); continue; }
+        if (n != k || !quadsOnly[v]) continue;
+        const float inv = 1.0f / (float)(n * (n + 5));
+        for (int d = 0; d < D; ++d) o[d] = ((float)(n * n) * S[d] + acc[v * D + d]) * inv;
+    }
+}
+
 // Moves every vertex of an all-quad mesh to its Catmull-Clark limit position (Halstead, Kass and DeRose 1993):
 // smooth (n^2 S + 4 sum(edge neighbours) + sum(diagonal corners)) / (n (n + 5)); crease (a + 4 S + b) / 6; corner S.
 // A vertex whose creases are only partly sharp (0 < s < 1 left) blends the sharp and the smooth limit by that
@@ -262,6 +302,7 @@ void Limit(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc
     std::vector<int> eCnt(nE, 0);
     for (std::size_t f = 0; f < nF; ++f)
         for (std::size_t l = (std::size_t)fs[f]; l < (std::size_t)fs[f] + (std::size_t)fc[f]; ++l) ++eCnt[(std::size_t)t.loopEdge[l]];
+    if (!(op.edgeSharp && !op.edgeSharp->empty()) && !op.hold && !op.keepCorners) { LimitNoCreases<D>(t, fs, fc, lv, vals, eCnt, out); return; }
     VertexSharp<D> vs;
     GatherSharp<D>(t, fs, fc, lv, vals, eCnt, op.edgeSharp, vs);
     std::vector<float> nbr(nV * D, 0.0f), diag(nV * D, 0.0f);
@@ -407,7 +448,37 @@ void UvHold(UvSmooth mode, const PolyMesh& m, const Topo& tu, const std::vector<
 }
 
 // One subdivision level. False (mesh unchanged) when the result would pass maxFaces.
-bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces, int levelsLeft) {
+// The topology of the mesh one level down, without sorting: parent edge e becomes the halves 2e (end e0 to the edge
+// point) and 2e + 1 (edge point to end e1); corner l of the parent adds the edge 2E + l from its edge point to its face
+// point. Child quad of corner l (corner, edge point, face point, previous edge point) then has its four edges directly.
+// Used for the limit surface after the last level, so the largest mesh is not bucket-sorted again.
+void ChildTopo(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc, const std::vector<int>& lv, Topo& c) {
+    const std::size_t nV = (std::size_t)t.nV, nE = (std::size_t)t.nE, L = lv.size();
+    c.nV = (int)(nV + nE + fs.size());
+    c.nE = (int)(2 * nE + L);
+    c.e0.resize((std::size_t)c.nE); c.e1.resize((std::size_t)c.nE);
+    for (std::size_t e = 0; e < nE; ++e) {
+        const int ep = (int)(nV + e);
+        c.e0[2 * e] = t.e0[e]; c.e1[2 * e] = ep;
+        c.e0[2 * e + 1] = t.e1[e]; c.e1[2 * e + 1] = ep;
+    }
+    c.loopEdge.resize(L * 4);
+    for (std::size_t f = 0; f < fs.size(); ++f) {
+        const std::size_t s = (std::size_t)fs[f], n = (std::size_t)fc[f];
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t l = s + i, prev = i == 0 ? s + n - 1 : l - 1;
+            const std::size_t e = (std::size_t)t.loopEdge[l], ep = (std::size_t)t.loopEdge[prev];
+            c.e0[2 * nE + l] = (int)(nV + e); c.e1[2 * nE + l] = (int)(nV + nE + f);
+            int* o = &c.loopEdge[l * 4];
+            o[0] = (int)(2 * e + (t.e0[e] == lv[l] ? 0 : 1));        // corner -> its edge point
+            o[1] = (int)(2 * nE + l);                                  // edge point -> face point
+            o[2] = (int)(2 * nE + prev);                               // face point -> previous edge point
+            o[3] = (int)(2 * ep + (t.e0[ep] == lv[l] ? 0 : 1));       // previous edge point -> corner
+        }
+    }
+}
+
+bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces, int levelsLeft, Topo* childTopo) {
     const std::size_t L = m.loopVert.size(), nF = m.faceStart.size();
     if (!m.loopUv.empty() && m.loopUv.size() != L) m.loopUv.clear();
     if (L > maxFaces || L > (std::size_t)std::numeric_limits<int>::max() / 4) return false;
@@ -531,16 +602,18 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
             if (s1 > 0.0f) r.creases.push_back(Crease{eBase + (int)e, t.e1[e], s1});
         }
     }
+    // only for a level that will be the last one: the last asked for, or the next one would pass the face cap
+    if (childTopo && (levelsLeft <= 1 || L * 4 > maxFaces)) ChildTopo(t, m.faceStart, m.faceCount, m.loopVert, *childTopo);
     m = std::move(r);
     return true;
 }
 
 // After the last level: every point to its limit position (positions, and UVs when they are smoothed).
-void ApplyLimit(PolyMesh& m, const SubsurfSettings& st) {
+// t: the mesh's topology from ChildTopo (its edge numbering need not match BuildTopo's).
+void ApplyLimit(PolyMesh& m, const SubsurfSettings& st, const Topo& t) {
     if (m.faceStart.empty() || m.pos.empty()) return;
     for (int c : m.faceCount) if (c != 4) return;   // only after at least one Catmull-Clark level
-    Topo t;
-    BuildTopo(m.faceStart, m.faceCount, m.loopVert, (int)m.pos.size(), t);
+    if ((std::size_t)t.nV != m.pos.size() || t.loopEdge.size() != m.loopVert.size()) return;
     std::vector<float> edgeSharp;
     if (st.useCreases) EdgeSharpness(m, t, edgeSharp);
     RefineOpts po;
@@ -624,12 +697,15 @@ int Subdivide(PolyMesh& m, const SubsurfSettings& s, std::size_t maxFaces) {
         for (int& v : m.loopVert) v = canon[(std::size_t)v];
         for (Crease& c : m.creases) if (c.v0 >= 0 && c.v1 >= 0 && (std::size_t)c.v0 < canon.size() && (std::size_t)c.v1 < canon.size()) { c.v0 = canon[(std::size_t)c.v0]; c.v1 = canon[(std::size_t)c.v1]; }
     }
+    const bool limit = s.limitSurface && !s.simple;
+    Topo last;
     for (int lv = 0; lv < s.levels; ++lv) {
         if (m.faceStart.empty() || m.pos.empty()) break;
-        if (!SubdivideOnce(m, s, maxFaces, s.levels - lv)) break;
+        // the child topology is kept from every level that might be the last one (a later level can stop at the cap)
+        if (!SubdivideOnce(m, s, maxFaces, s.levels - lv, limit ? &last : nullptr)) break;
         ++done;
     }
-    if (s.limitSurface && !s.simple && done > 0) ApplyLimit(m, s);
+    if (limit && done > 0) ApplyLimit(m, s, last);
     m.creases.clear();
     return done;
 }

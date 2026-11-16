@@ -413,6 +413,17 @@ static void TestLimit() {
     for (auto& e : edges) sharp.creases.push_back(Crease{e[0], e[1], INFINITY});
     const PolyMesh sl = check(sharp, false);
     CHECK(UsedPositions(sl).count(K(1, 1, 1)) == 1 && UsedPositions(sl).count(K(1, 1, 0)) == 1);
+    // the lean limit path (no creases, nothing held) and the general one give the same points: "keep corners" on a
+    // closed cube changes nothing (no boundary) but takes the general path
+    {
+        PolyMesh a = Cube(), b = Cube();
+        SubsurfSettings sa; sa.levels = 2; sa.limitSurface = true;
+        SubsurfSettings sb = sa; sb.keepCorners = true;
+        Subdivide(a, sa, 100000); Subdivide(b, sb, 100000);
+        double worst = 0;
+        for (std::size_t i = 0; i < a.pos.size(); ++i) worst = std::max({worst, (double)std::fabs(a.pos[i].x - b.pos[i].x), (double)std::fabs(a.pos[i].y - b.pos[i].y), (double)std::fabs(a.pos[i].z - b.pos[i].z)});
+        CHECK(a.pos.size() == b.pos.size() && worst < 1e-6);
+    }
     // a flat mesh stays flat
     PolyMesh flat = Grid(2);
     SubsurfSettings sf; sf.levels = 2; sf.limitSurface = true;

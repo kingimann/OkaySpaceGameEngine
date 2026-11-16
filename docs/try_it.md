@@ -919,6 +919,13 @@ loads, it worked.
 3. **FBX with compressed arrays.** `set OKAY_OWN_FBX=1`, start the editor, import
    `examples\own_readers\cube_compressed_arrays.fbx` (a binary FBX 7.4 whose vertex and index arrays are zlib packed).
    A cube should appear. (The About popup should then list `fbx` among the own readers.)
+3a. **Our reader says no, the fallback reads it.** `set OKAY_OWN_FBX=1`, start the editor, import
+   `examples\own_readers\fallback_fbx61.fbx` (an old FBX 6.1 text file, our own test file). Our FBX reader refuses
+   FBX 6.x, so ufbx reads it: a flat square appears, as a child object named `Tri`. (Before this change the import
+   came out empty with `OKAY_OWN_FBX=1`.) The same for Assimp: `set OKAY_OWN_OFF=1`, import
+   `examples\own_readers\fallback_4off.off` (a `4OFF` file, which our OFF reader does not support): Assimp reads it
+   and a square of size 1 appears. There is no log line yet that says which reader ran (Step 0.4 of the flip
+   proposal); the square appearing is the sign. The test `own_reader_fallback` checks both.
 4. **Not shipped as samples:** `.x` with MSZIP, `.zgl`, 3MF and AMF. Their files are only built inside the tests
    (`x_reader`, `xgl_reader`, `3mf_reader`, `amf_reader`). If you have your own `.x` (MSZIP), `.zgl` or `.3mf` file,
    import it with `OKAY_OWN_X=1`, `OKAY_OWN_XGL=1` or `OKAY_OWN_3MF=1`.

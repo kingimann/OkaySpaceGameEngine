@@ -1,0 +1,33 @@
+; FBX 6.1.0 project file
+; ----------------------------------------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 6100
+}
+
+Definitions:  {
+	Version: 100
+	Count: 1
+	ObjectType: "Model" {
+		Count: 1
+	}
+}
+
+Objects:  {
+	Model: "Model::Tri", "Mesh" {
+		Version: 232
+		Properties60:  {
+			Property: "Lcl Translation", "Lcl Translation", "A+",0,0,0
+			Property: "Lcl Rotation", "Lcl Rotation", "A+",0,0,0
+			Property: "Lcl Scaling", "Lcl Scaling", "A+",1,1,1
+		}
+		Vertices: 0,0,0,1,0,0,1,1,0,0,1,0
+		PolygonVertexIndex: 0,1,2,-4
+		GeometryVersion: 124
+	}
+}
+
+Connections:  {
+	Connect: "OO", "Model::Tri", "Model::Scene"
+}

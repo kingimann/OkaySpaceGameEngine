@@ -20,7 +20,7 @@ The reader files use the standard library and one header-only file of our own, `
 
 - CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `OFF`).
 - Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
-- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
+- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file. The test `own_reader_fallback` (job `assimp-models`) checks this on both FBX paths (the single-mesh `ImportModel` and the scene `ImportModelScene`) with an FBX 6.1 ASCII file the test writes, and fails when either fallback line is removed (mutation checked).
 
 ## What it handles
 
@@ -58,7 +58,7 @@ The reader files use the standard library and one header-only file of our own, `
 Say plainly what a user might trip over:
 
 - **Real files: one outside corpus only.** 43 files from the test directories of an Assimp 5.4.3 checkout were read (`docs/model_corpus.md`): 42 read and agree with ufbx on counts, names, bounding boxes, surface area, skin weights, inverse binds and clip samples (within the tolerances listed there); one damaged file is rejected by every reader. Five bugs came out of it and are fixed (byte-array properties, takes sharing a timeline, stored slopes of auto keys, bridged polygons, integer conversions of hostile doubles). That is a handful of exporters and several tiny test cases: a file from another exporter can still break us. Keep ufbx as the default.
-- FBX 6.x and older (no `Objects` section / different layout) and binary versions below 7100. `Properties60` is not read.
+- FBX 6.x and older (no `Objects` section / different layout) and binary versions below 7100. `Properties60` is not read. An FBX 6.x file **is refused** (by the version in the ASCII comment line or the header's `FBXVersion`, below 7000, or, with no version, by an `Objects` section whose objects carry no number), so ufbx reads it. Before 2026-11-16 an FBX 6.1 ASCII file was "read" by ours as an empty scene that counted as a success: with `OKAY_OWN_FBX=1` the scene import came out empty and ufbx never ran (found by `own_reader_fallback`).
 - `InheritType` other than the default (`RrSs`, `Rrs` scale inheritance) is treated as the default. ufbx can compensate for these.
 - Only `Mesh` geometry. NURBS, patches, lines, cameras, lights, skeleton node attributes, `Pose`/`BindPose` objects, templates in `Definitions` and visibility are ignored (clusters carry the bind matrices we use).
 - Mesh data: only the first UV set; vertex colors are read but the engine does not use them; tangent, binormal and smoothing-group layers are ignored; `ByEdge` mapping is approximate (a corner takes the edge that starts at it).

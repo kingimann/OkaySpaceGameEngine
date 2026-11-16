@@ -3099,6 +3099,13 @@ target_link_libraries(test_model_readers PRIVATE okay::engine)
 target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
+# own_reader_fallback (flip proposal Step 0.2): our reader is forced on, refuses a file, and the fallback (Assimp, or
+# ufbx for FBX) must still read it. Only with Assimp: without it these formats have no fallback.
+if(OKAY_USE_ASSIMP)
+    add_executable(test_own_reader_fallback test_own_reader_fallback.cpp)
+    target_link_libraries(test_own_reader_fallback PRIVATE okay::engine)
+    add_test(NAME own_reader_fallback COMMAND test_own_reader_fallback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endif()
 add_executable(test_collada_reader test_collada_reader.cpp)
 target_link_libraries(test_collada_reader PRIVATE okay::engine)
 target_compile_definitions(test_collada_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -413,6 +413,21 @@ struct Builder {
     bool Index() {
         const Elem* o = doc.root.Find("Objects");
         if (!o) return Fail("no Objects section (FBX 6.x files are not supported)");
+        // FBX 6.x files do have an Objects section, but with a different layout (geometry inside the Model, objects
+        // named by strings, not numbered). Read as 7.x they gave an empty scene that counted as a success, so the
+        // ufbx fallback never ran. Refuse them: by the version (the ASCII comment line, else the header's
+        // FBXVersion), and, for a file with no version, by objects that carry no number.
+        {
+            double ver = doc.version;
+            if (ver == 0)
+                if (const Elem* h = doc.root.Find("FBXHeaderExtension"))
+                    if (const Elem* v = h->Find("FBXVersion"))
+                        if (!v->props.empty() && v->props[0].IsNumber()) ver = v->props[0].Num();
+            if (ver > 0 && ver < 7000) return Fail("FBX version " + std::to_string((long long)ver) + " (FBX 6.x or older) is not supported");
+            bool numbered = o->children.empty();
+            for (const Elem& e : o->children) if (!e.props.empty() && e.props[0].IsNumber()) { numbered = true; break; }
+            if (!numbered) return Fail("the Objects section has no numbered objects (FBX 6.x layout, not supported)");
+        }
         for (const Elem& e : o->children) {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;

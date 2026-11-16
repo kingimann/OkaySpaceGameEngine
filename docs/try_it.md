@@ -53,6 +53,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -65,11 +66,24 @@ release job or the installer build for this change.
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 | 7w | Player obstacle course: slopes, stairs, steps, moving platforms, water, voxel hill, with the player numbers on F3 | `examples\player\player_obstacle_course.okayscene`, Play, press F3 | New in this branch (`claude/player-deep`); tested headless on Linux, never run on Windows |
+| 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
+| 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
+| 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
+| 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
+| 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
+| 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
+| 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
+| 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 
 ---
 
@@ -262,6 +276,30 @@ the Details step and cannot start a second create. Unverified: the launcher scre
 compiled or run on this machine).
 
 ---
+
+## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
+
+Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
+in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
+a real one, because two of the checks touch projects.
+
+1. **Where do my projects go?** Install with `OkaySpace-Setup.exe`. Open the launcher, **Create**, make a project. Paste
+   `%LOCALAPPDATA%\OkaySpace\Projects` into the Explorer address bar. The audit says your project is **there** (the Setup welcome
+   page says Documents; it is wrong).
+2. **What does uninstall leave?** In the launcher open **Versions** and install one older version. Then uninstall from
+   **Settings > Apps > Installed apps > OkaySpace**. Look again at `%LOCALAPPDATA%\OkaySpace` and `%APPDATA%\OkaySpace`. The
+   audit predicts these are left: `Versions\`, `Projects\`, `downloads\`, `community\`, the `.log` and `okay_*.txt` files, `imgui.ini`,
+   `achievements.txt`, and in `%APPDATA%\OkaySpace` the `session.txt`, `accounts.db` and `servers.cfg`. Please tell us if the list
+   differs (that is how the audit gets checked).
+3. **Uninstall with the launcher open.** Install again, leave the launcher open, uninstall. The audit predicts `OkaySpace.exe` stays
+   and the Apps list no longer shows the program.
+4. **Does an old editor update itself?** (Use a copy of a project.) Install an older version on the Versions page, right-click the
+   copy of a project > **Open with** that version. The audit predicts an **Engine Update** window; do **not** press Download & Install
+   unless you want to see the problem (the old editor is replaced by the newest one and reopens your project without asking).
+
+**Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
+full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
+fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -681,6 +719,218 @@ Limit** (first and third person).
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
 controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
 **Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.
+## 7zh. Modeling: material slots and Repair Mesh
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button
+that cleans up a broken or imported mesh in one click. Slots are colours only for now: per-slot pictures (textures) and shaders are
+not built.
+
+**Try the example.**
+1. Open `Tools\OkayEngine.exe`, then **File > Open...** and pick `examples\modeling_tools\material_slots.okayscene`.
+2. You should see two objects: **Slot House** (cream walls, a red roof, a brown floor and a blue door) and **Slot Ball** (a white
+   ball with a green top and an orange bottom). Nothing else is needed: the colours come from the slots.
+3. Click **Slot House**, open the **Modeling** window (the menu bar), tick **Edit Mesh**, open the **Paint** area and find **Material Slots**.
+   You should see four rows: Slot 0 to Slot 3, each with a round button, a face count and a colour box.
+4. Click the colour box of **Slot 1** and pick green. Both roof faces turn green at once. Press **Ctrl+Z**: the roof is red again.
+5. Press key **3** (face mode), click one wall. Click the round button of **Slot 3**, press **Assign Sel**. That wall takes the door colour.
+   Press **Select Slot** with Slot 3 chosen: the door and that wall are selected. **Clear Slots** removes all slots and the colours they gave (the mesh goes back to its plain colour).
+6. Save the scene (Ctrl+S), close it and open it again: the slots and colours are still there.
+
+**Try Repair Mesh.** Select any object with a mesh, tick **Edit Mesh**, press **Delete Faces** on a face or two to make a hole, then
+**Repair Mesh**. The hole is capped and the Console says what was done, for example `Repair Mesh: merged 0 verts, capped 1 holes, flipped 0 faces; open edges 4 -> 0 (closed)`.
+
+**Files.** `examples\modeling_tools\slot_house.okaymesh` and `slot_ball.okaymesh` are the same two models as plain files: in the Inspector set **Mesh File**
+to one of them (it is in the Modeling window; the exact tab is unverified), or open one in a text editor to see the `slot N r g b a` lines.
+
+
+**More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+headless software render of it.
+1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
+   Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
+   Open its **...** menu and press **Copy**: a second identical modifier appears below it (the row is now doubled); **Remove** it again.
+2. **Spin.** Click **Spun Vase**, open the Modeling window, tick **Edit Mesh**, press key **2** (edge mode) and click one edge of the vase, then press **Spin**
+   (Y axis, 360 deg, 16 steps): a ring of new faces is made around the vase. Ctrl+Z removes it.
+3. **Extrude Along Path.** Click **Bent Horn** (or a cube), Edit Mesh, key **3** (faces), click the top face, choose **Arc**, press **Extrude Along Path**: a bent arm grows out of the face.
+4. **Measuring.** In Edit Mesh, under **Snapping and measuring**, read **Whole mesh** (width x height x depth, area, volume). Press key **1** (vertices), click two corners:
+   **Selection** shows their distance and the x, y, z difference. Select edges: it shows their total length; faces: their area.
+5. **Snapping.** Set **Snap to** to **Vertex** (or Edge or Face), tick **Snap (Ctrl)**, select a vertex, press **G** and move the mouse near another vertex: a yellow ring shows
+   it and the vertex jumps onto it; the bottom line says "snapping to Vertex". Enter confirms, Esc cancels.
+6. **Material library.** Select **Slot House**, Edit Mesh, **Material Slots**: pick a slot, open **Material library** and choose *Copper*: that slot takes the colour. Open **Palette** and choose *Barn*: four slots change at once.
+7. **Picture per slot.** In a slot row, type an image path (for example one of your own `Assets/brick.png`) in the **picture path** box: in the software renderer the slot's faces show the picture.
+   (The OpenGL and Direct3D renderers still show the colour; that part is not built yet.)
+8. **Add to scene as object.** Modeling window > **Import** page > **Add to scene as object**: choose **Exact mesh** and press **Add Copy to Scene**: a copy appears next to the object, with a Mesh Collider (choose **Box** or **No collider** for the others).
+9. **Shortcuts and recent tools.** Edit Mesh > **Shortcuts and recent tools** lists the keys and the last tools you used.
+
+
+**Model faster (same section; real window unverified).** Open `examples\modeling_tools\spin_path_curve.okayscene`: it now also has a **Table** and a **Window Wall** made by the "how do I" recipes.
+1. Click **Window Wall**, Modeling window, tick **Edit Mesh** (or press Tab). At the top of the 3D view, under the Object / Edit / Vertex / Edge / Face buttons, you should see a row of small tool buttons (Extrude Faces, Inset Faces, ... Repair Mesh, Sym X, Snap, Repeat, Find...). At the bottom-left a grey line says what to do.
+2. Press key **3** (faces), click a face of the wall. Hover **Extrude Faces**: the tooltip says what it does. Click it: the face is pushed out. Press **Shift+R**: it extrudes again. Ctrl+Z twice.
+3. **Right-click** (click, do not drag) in the 3D view: a menu of tools that fit the selection appears. Click **Inset Faces**.
+4. Press **Ctrl+K**: a box opens. Type `bevel`: *Bevel Edges* is first (greyed out until edges are selected; hover for why). Clear it and type `window`: *Make a Window Hole (how do I)*. Select a wall face, press Ctrl+K, type `window`, press **Enter**: an opening with a frame is cut.
+5. Select a few faces and press Ctrl+K, type `similar`, Enter on *Select Similar: Facing*: every face pointing the same way is selected. Try *Grow Selection*, *Shrink Selection*, *Select Up-Facing Faces*.
+6. Edge mode (key **2**), click an edge, Ctrl+K, `round`, Enter: the edge is rounded. Ctrl+K, `table`, Enter: a new **Table** object appears (Edit Mesh, Material Slots recolours top and legs).
+7. Open Edit Mesh > **Shortcuts and recent tools**: the **Recent** line lists your tools; **Undo history** lists them with names. Click an older step: the mesh goes back to before it.
+8. Scale an object (the Inspector scale to 2, 1, 1), then Ctrl+K, `apply scale`, Enter: the scale returns to 1 and the mesh is as wide as before (the Measure line stays the same).
+
+**Hide, drag-select and more (same section; real window unverified).** In `examples\modeling_tools\spin_path_curve.okayscene` the **House Roof Hidden** object has its roof faces hidden.
+1. Click **House Roof Hidden**, tick Edit Mesh (Tab). Press **Alt+H**: the red roof faces appear and are selected. Press **H**: they hide again. Select a wall and press **/**: only that wall shows (local view); **/** again shows everything. Ctrl+Z steps back through these.
+2. Press **B** and drag a rectangle round some vertices (Vertex mode, key 1): they are selected; try **C** (paint with the circle, wheel = size, Esc ends) and **L** (draw a loop). Without X-ray only the front side is picked; press **Alt+Z** (or the X-ray button) and drag again to select through the mesh.
+3. Face mode (key 3), select a face, press **Shift+D**: a copy appears and follows the mouse; Enter keeps it. Press **E** on a face: it is dragged out along its normal; type `0.5` and Enter for an exact distance. Press **I**: move the mouse toward the middle of the face; click to keep the inset.
+4. Edge mode (key 2): double-click an edge: its whole loop is selected.
+5. Press **Sym Y** (or **Z**) in the toolbar, select a vertex, press **G** and move: the partners across that plane move mirrored. In Edit Mesh tick **Start with symmetry on: X**, leave edit mode and enter it again: Symmetry X is already on.
+6. Ctrl+click two or more mesh objects in the Hierarchy, press **Ctrl+K**, type `join` and Enter: they become one object. Type `align` for Align Objects, `separate` on a mesh of several pieces to split it into objects, `cursor` then Enter to add a cube where the mouse pointed.
+
+**Vertex colours, creases, shrinkwrap, reduce, library (same section; real window unverified).** Open `examples\modeling_tools\vertex_paint_creases.okayscene`: a **Gradient Bar** already painted red to blue with vertex colours, a **Creased Cube** (its edges are pink in Edit Mesh) next to a plain cube, both with the Subdivision modifier, and a **Wrap Target** sphere.
+1. **Vertex colours.** Click **Gradient Bar**: it shows a smooth red-to-blue gradient. Tick Edit Mesh, Paint section, tick **Paint Brush (drag on mesh)** and **Vertex colours (smooth)**, pick green, drag over the bar: the colour blends in smoothly. Ctrl+Z undoes a stroke. Try **Smooth Colours** and **Clear Vertex Colours**. Switch the renderer in the editor's rendering settings (OpenGL, Direct3D 11, software) and look again.
+2. **Creases.** Click **Creased Cube** (it has a Subdivision modifier): it stays boxy; the plain cube beside it rounds into a blob. In Edit Mesh press key **2**, click an edge of the plain cube, set **Crease sharpness** to 2, press **Ctrl+K**, type `crease`, Enter: that edge turns pink and stays sharp after subdivision.
+3. **Shrinkwrap.** In the Hierarchy click **Gradient Bar**, Ctrl+click **Wrap Target**, tick Edit Mesh on the bar, select a few vertices (key 1), press Ctrl+K, type `snap`, Enter: those vertices jump onto the sphere. Try `shrinkwrap` for the whole mesh and change **Surface offset**.
+4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
+5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
+
+**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+
+**What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
+the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
+editor window (the editor code was only syntax-checked, the snapping ring and the buttons in steps 1 to 9 are unseen), run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
+## 7zg. Guided modeling: a fence from designs, then your own edits
+
+**What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
+**Fence**), a starting design, and get a normal editable mesh. You can change its settings, swap parts, and keep
+modeling by hand; rebuilding never overwrites your hand edits without asking. Written from general parametric
+modeling; no code, models or assets from other projects. Design: `docs/guided_modeling_design.md`.
+
+**Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
+600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
+nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+meshes (our own small rasteriser), not screenshots of the editor.
+
+**Try it (the example scene).**
+
+1. Open `Tools\OkayEngine.exe`, **File > Open...**, paste the path to `examples\modeling\guided_fences.okayscene`
+   (next to `OkaySpace.exe`, or `%LOCALAPPDATA%\OkaySpace\examples\modeling\` for the installer). You should see eight
+   fences in a row: picket, post and rail, ranch, wrought iron, chain link, stockade, low decorative, picket with a gate.
+2. Click one fence in the Hierarchy. Open **View > Editors & Tools > Modeling** and press **Guided** (first in the list).
+   You should see "Customise: Fence ..." with sliders.
+3. Drag **Height** and let go. The fence rebuilds and the console says "Updated ...".
+4. Under **Parts and materials** change **Pickets and bars** to another design, or the **Posts** design. Change a colour.
+5. Open **Each part**, a kind (for example Pickets), press **Select** on one part: it jumps into Edit Mesh with that part's
+   faces selected. Move it (G), then go back to the Guided page. Its row now says "[edited by you]".
+6. Drag **Height** again. A window asks what to do with the part you edited: **Keep my edits**, **Discard my edits** or
+   **Convert to regular mesh**. Try Keep: that part stays as you left it, everything else follows the new height.
+   Pressing Cancel changes nothing.
+7. In Edit Mesh add something of your own (Add page: a Cube, or extrude a face). Change a setting on the Guided page: your
+   addition stays exactly where it was. This is the "your own faces are never touched" rule.
+8. **Detach** on a part row, or **Convert to regular mesh**, are explicit: the part (or the whole model) stops following the
+   design and stays as plain mesh. **Undo guided step** steps back.
+
+**Try it (make a new one).** Modeling > Guided with nothing selected (or press "Make another one"): press a category
+(Vehicles, Characters, Environment, Props say "No designs here yet", on purpose), pick **Fence**, click a starting design
+card (pictures are drawn by our own renderer), give it a name and press **Create**. A mesh asset `Assets/<Name>.okaymesh` and
+`Assets/<Name>.okayguided` appear in the Project panel.
+
+**Your own parts and templates.** Select faces in Edit Mesh, then Guided > **My parts and templates**: type a name, pick
+which kind of part it fits, **Save selection as part**. It then appears in that kind's design list (and in "Each part"). **Save
+as template** keeps the whole setup; it shows as another card next to the built-in designs. Files are in
+`Assets/GuidedTemplates/` (`.okaypart`, `.okaytemplate`, plain text); copy them to another project to reuse them.
+
+**Not done or not verified (said plainly).** Only the fence exists; walls, stairs, doors, windows, roofs, vehicles,
+characters, environment and props come in a later phase. The path is a list of typed points (no drawing in the 3D view). No
+collider is added. Material numbers are stored but only colours are drawn today (per-face materials are a separate open
+item). The Guided page's look and feel in a real window is unverified.
+
+---
+## 7r. The walk looks like a walk, Shift looks like a run
+
+Why: "the character walking is basically running". The player used to move at 4.5 m/s for plain W, which is a jog, and at 8 m/s for
+Shift, which is a sprint, so both looked like running (the legs stepped about 270 times a minute for W and 250 for Shift). Now W is a
+real walk (2 m/s, about 125 steps a minute, one foot always on the ground, arms hanging and swinging a little) and Shift is a real run
+(5.5 m/s, about 185 steps a minute, both feet leave the ground, elbows bent, chest leaning forward). The full numbers, the targets and
+the pictures are in [walk_vs_run.md](walk_vs_run.md).
+
+**A new project.**
+1. Open the launcher (`OkaySpace.exe`) > **Create** > **New Project**. On the first step pick **Third Person** (under **All templates** if the starter
+   cards do not show it), press **Next**, name the project, press **Next**, then **Create project**. (**First Person** works too: the body is not drawn from
+   the eyes, so press **V** in Play to switch to the third-person view and watch it.)
+2. In the editor press **Play** (the triangle at the top). Click the Game view once so it has the keyboard.
+3. Hold **W**. You should see the character walk: an easy stride, the arms hanging with a small swing, the body upright, never both feet
+   off the ground. The camera moves slowly: 2 m/s.
+4. Now hold **Shift + W**. You should see it run: a faster step, the elbows bent, the chest leaning forward, and both feet leaving the ground
+   for a moment each step; the camera moves much faster. Let go of Shift: it goes back to the walk with no flicker.
+5. Select the Player in the Hierarchy and look at **Player Controller** (Third Person settings): **Walk Speed 2**, **Run Speed 5.5**.
+
+**An older project** (made before this change). It keeps the speeds it saved, so it will look the same until you opt in:
+1. Open the project (the editor asks about upgrading it first: answer as you like; this change does not touch the speeds).
+2. Select the Player. In the Inspector, in the **Player Controller** panel (or the First-person / Third-person settings of a bare controller,
+   or the Third Person Shooter Controller), press **Use natural walk and run speeds**. Hover it for what it sets.
+   Walk Speed becomes 2 and Run Speed 5.5 (5 for the shooter); Crouch and Prone Speed become 1 and 0.5 only if they were still 2.2 and 1.1.
+3. Press **Ctrl+Z**: the old numbers come back. Press Play to compare.
+4. If you set Walk Speed above 3, an amber line under it says the legs have to jog (that is real: a walk does not fit that speed).
+
+**Bring the old look back to compare** (same build, no reinstall). Close the editor, then in a Command Prompt:
+`set OKAY_OLD_GAIT=1` and `Tools\OkayEngine.exe` (in PowerShell: `$env:OKAY_OLD_GAIT = "1"` then `.\Tools\OkayEngine.exe`).
+Make a new Third Person project and Play: W is the hurried 4.5 m/s jog again. **How to tell the old one is on:** a new Player Controller
+shows Walk Speed 4.5 and Run Speed 8 (the natural one shows 2 and 5.5), and the Inspector shows an amber "The OLD walk and run is on"
+line under the button. Close the editor and start it again without the variable to get back to the natural one.
+
+**Status.** Verified here (Linux, headless): `walk_vs_run` (the walk and the run on every measure, in a new project's Animator setup and with the
+Character on its own, plus no flicker, no foot skating and the button's rules), `walk_vs_run_old` (the same program with the old gait on, showing the old
+walk was not clearly different), and the existing locomotion, jitter, mixamo, proxy, NPC and controller tests. The pictures are software renders from
+Linux, not screenshots of Windows. **Unverified:** the feel in the real editor and in the Windows player, the Inspector button and hint drawing
+(compile-checked only), a real Mixamo model (the checks use the test rigs), and whether 2 m/s feels right for your game. The default speeds are one number in
+`NaturalGait.hpp` and two fields in the Inspector if you want them faster (above about 2.4 m/s the legs start to jog).
+
+## 7u. Physics: crates that stand, a playground, materials, a slider and debris
+
+**What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
+get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
+(cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics.md) and
+[physics_plan.md](physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+`Physics/DebrisPool.hpp`.
+
+**How to reach it.**
+
+1. Open the editor (`Tools\OkayEngine.exe`, or the launcher). Use **File > Open Scene** and pick `examples\physics\physics_playground.okayscene`
+   (it ships next to the editor in the zip and the installer). The scene looks like a big grey floor with nine small stations.
+2. Press **Play**. Everything starts at once. Wait about 10 seconds.
+3. To compare with the old physics: stop Play, open **Project Settings > Physics**, under "Physics quality of the open scene" choose
+   **Classic**, press Play again. Change it back to **Improved**. (The choice is saved with the scene.)
+
+**What you should see (Improved).**
+
+| Station | What to look for |
+|---|---|
+| 1 Tower | Five crates stand in a column, hardly move, and (after about a second) go to sleep. In Classic the tower leans and falls. |
+| 2 Ball | A red ball rolls down a short ramp, bounces and rolls to a slow stop on the floor. |
+| 3 Ramps | Three ramps at 20 degrees, the same green crate on each: the plain and the rubber ramp hold it, the icy (light blue) one lets it slide off. The ramps' friction is set per collider (Physics Material). |
+| 4 Bullet | A small red ball fires at 60 m/s at a 5 cm thin wall and stops at it. In Classic it goes through. |
+| 5 Heavy and light | A 100 kg steel crate is pushed at 5 m/s and shoves the 1 kg wooden crate ahead of it. |
+| 6 Pads | The same blue ball dropped on a dark pad (dead) and a black rubber pad (bounces many times; the pad's own bounciness 0.92). |
+| 7 Rope | Six balls on distance joints swing from a hook and hang about 5 m long, close to their real length. |
+| 8 Slider | A blue drawer slides 3 m along x at 1 m/s and stops at its limit. |
+| 9 Debris | A burst of small brown chunks every 1.5 seconds: they fly, land, go to sleep, shrink away. There are never more than 150. |
+
+To see the joints and sleeping bodies: **View > Scene Overlays > Physics Debug > Show physics (Scene + Game)**. Colliders are green, sleeping
+ones grey, contacts red, joints orange.
+
+**Try the new settings yourself.**
+
+* Select the **3 Ramp ice** object, find its collider in the Inspector, open **Physics Material**, tick **Own Friction** and set it to 2: the crate now holds.
+* Select any crate, **Rigidbody 3D**: **Rolling Resistance** (0 = a ball rolls on for ever, 0.03 default). **Use Child Colliders** makes colliders on child objects part of the body.
+* Select the **8 Drawer**, **Joint 3D** (mode **Slider**): change **Max Travel** or **Motor Speed**.
+* Select **9 Debris emitter**: **Count**, **Interval**, **Max Active**, **Settled Life**.
+* Add your own: **Add Component > Physics 3D > DebrisEmitter** on an empty object, then Play. In code, `DebrisPool` spawns chunks at your own moments (a digger, an explosion).
+
+**Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
+
+* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
+
+**Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
+ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
+positions listed in the plan were read back. **Unverified:** the editor menus and Inspector rows on Windows (they were compiled, not opened), how the scene looks and feels in the real
+editor or player, any real GPU. The 2D step has no Improved solver yet (the setting is saved but 2D plays as before).
 ## 7v. Test builds: try a branch before it is released
 
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you
@@ -726,6 +976,126 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7zi. Guided architecture: walls, stairs, doors, windows, roofs, buildings
+
+**What it is.** More things on the Modeling window's **Guided** page, built on the same rules as the fence (7zg): every
+model is an ordinary mesh, parts have names, and rebuilding never overwrites your hand edits without asking.
+
+- **Wall** along a straight run or a path with windows and a door cut in and filled with real windows and doors (corners are
+  butt-joined, best at right angles). **Stairs**: straight, L, U and spiral with side boards and railings (landing edges have no
+  railing). **Door**: flat, panelled, glazed, planks, double; frame, handle, can stand open. **Window**: five bar layouts, three
+  frames, sill, shutters. **Roof**: gable, hip, shed, flat, with an overhang and trim. **Building**: walls, windows, a door and a roof
+  composed as parts, 1 to 6 floors.
+
+**Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
+every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
+building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
+Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+generated meshes, not editor screenshots.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling (fences, buildings, stairs...) > guided_architecture** (or File > Open... on
+   `examples\modeling\guided_architecture.okayscene`). A grid of 29 models, one row per kind: walls, stairs, doors, windows, roofs,
+   buildings (the rows are 14 m apart; use the Hierarchy and F to find them).
+2. Click a building in the Hierarchy, open Modeling > Guided. Drag **Floors**, **Roof pitch**, **Width**: the building rebuilds.
+3. Under **Parts and materials** change **Roof** from Hip to Gable, **Windows** to Colonial, **Front door** to Planks. Or open **Each
+   part**, pick **Windows**, and give one window its own design. Press **Select** to jump into Edit Mesh with just that window selected,
+   move it with G, return to Guided: its row says "[edited by you]". Change the roof: it asks nothing (the window is not touched).
+   Change that window's design: it asks (Keep my edits / Discard my edits / Convert to regular mesh).
+4. Click a wall, set **Door** on, **Windows** to 3. Draw your own wall: **Size > Draw in the Scene view**, then click points on the
+   ground in the Scene view (they snap to the **Snap to grid** step). **Finish** or Esc ends. The same works for fences.
+5. Click a staircase, switch **Shape** between Straight, L, U and Spiral; change **Steps** and **Total height**.
+6. **Collision**: **Exact (mesh)** / **None** on the page (new models also get a "Solid (exact collider)" tick when you press Create).
+7. To make your own: Modeling > Guided with nothing selected, Architecture, pick a thing, a starting design card, Create.
+
+**Not done or not verified (said plainly).** No landing railings; wall corners are not mitred; click-to-draw has no preview line
+in the view (the model itself shows the result after each click); per-face materials: colours are drawn today and the material slot
+numbers are stored, and `claude/modeling-more` (not merged yet) adds per-face slots, which will pick the stored numbers up with no
+change here; Vehicles, Characters, Environment and Props are not built.
+## 7zj. Guided vehicles, and the Detail level
+
+**What it is.** Vehicles on the Modeling window's **Guided** page, built on the same rules as 7zg and 7zi, plus one new setting on
+every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle count of each level next to it.
+
+**Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
+overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
+level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
+(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. The motorcycles are the roughest models.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_vehicles** (33 vehicles in rows: cars, trucks, buses, motorcycles, trailers; 16 m
+   apart). Click one in the Hierarchy, open Modeling > Guided.
+2. Change **Wheel radius**, **Wheelbase**, **Length**, **Cabin size**; under **Parts and materials** change **Wheels** to Eight spoke mesh,
+   **Headlights** to Twin lamps, **Bumpers** to Sport lip, **Spoiler** to Wing, **Roof fitting** to Light bar, **Exhaust** to Dual pipes.
+3. **Each part > Wheels**: give one wheel its own design (Select jumps to it in Edit Mesh).
+4. **Detail**: drag the **Detail** slider (0% blocky low poly to 100% finest) or press Low, Medium, High or Ultra. The model rebuilds when you let
+   go, and "N triangles now" shows the cost. Above 250,000 triangles a window asks before it builds. High and Ultra are smooth shaded.
+   Your own additions stay; a part you edited by hand is asked about first.
+4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
+   same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
+4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
+   it appears under **Removed parts** with **Add back**.
+5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
+
+**Not done / unverified.** Doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
+Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
+The editor's Detail slider, Variation and check, and Remove/Add back controls compile but were never seen in a window (unverified).
+
+---
+
+## 7zn. Guided: randomise within a style, and the save-edit-reopen round trip
+
+**What it is.** On the **Guided** page, **Variation and check** has a **Seed** field, **How different** and **Randomise within style** (and **Next seed**).
+The same seed and the same starting model always give the same result. The check line shows the validator's verdict.
+
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_roundtrip"`): 1000 seeds on each of 15 templates (15,000 models) with 0 validation
+failures; the round trip (generate, customise, edit by hand, save, reopen, edit again, regenerate) passes. The buttons themselves compile but were never
+clicked in a real window (unverified).
+
+**Try it.**
+
+1. Open **File > Examples > Guided modeling > guided_car_styles**, click a car, Modeling > Guided.
+2. Open **Variation and check**, type a seed (say 7), press **Randomise within style**. The car changes size and parts but stays that style. Press it
+   again with the same seed on the same car: the same result. **Next seed** tries another. **Undo guided step** goes back.
+3. Round trip: in Edit Mesh pull a headlight forward and add a box on the roof. Change **Wheels** to Eight spoke mesh. Both edits stay and nothing
+   asks. Change **Headlights**: it asks first about the headlight you pulled. Save the scene, close, reopen, click the car: the edits are listed
+   ("edited by you", "faces of your own"). Open **My parts and templates**, name it and press **Save as template**: it shows with the starting designs.
+
+**Not done / unverified.** Randomise has compatibility rules only for cars so far.
+
+---
+
+## 7zk. Guided characters
+
+**What it is.** Characters on the Modeling window's **Guided** page, same rules as 7zg to 7zj, including the **Detail** level (Low to Ultra).
+
+**Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
+setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
+was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+`character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
+The characters are blocky and rough (no skin weights, no skeleton, no animation; they are static meshes), spiders and insects have crude legs.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_characters** (26 characters: humans, robots and creatures in rows, 4 m apart). Click one in the
+   Hierarchy, open Modeling > Guided.
+2. **Proportions**: drag Height, Shoulder width, Head size, Leg length, Limb thickness; **Pose**: Arm angle, Elbow bend, Leg spread.
+3. **Parts and materials**: change Hair, Hat, Glasses, Top, Bottoms, Hands, Feet, Backpack, Belt, Cape, Shoulder pads; change a colour.
+4. **Each part > Hands**: give one hand its own design (Select jumps to it in Edit Mesh; move it with G, return: "[edited by you]"; change the
+   Hands design for all: it asks first). Add your own geometry in Edit Mesh: it stays when you change settings.
+5. **Creatures**: pick the Dragon, change **Wing span**, **Tail** and **Horns**; pick a Dog and change **Ears**; **Body plan** switches the layout.
+6. **Detail**: Low, Medium, High, Ultra (triangle counts shown). Collision: Exact (mesh) / None.
+7. To make your own: Modeling > Guided with nothing selected, Characters, pick a design card, Create. Select faces and **Save selection as part**
+   to keep a hat or hand of your own as a design.
+
+**Not done / unverified.** No rig, no skinning, no animation or facial expressions; clothes are shells around the body, not cloth; hands have
+no individual finger joints; the page's Detail control and smooth shading were never seen in a window.
+
+---
 
 ## Switches that are off by default (own code)
 
@@ -835,6 +1205,36 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 7n. Every own replacement at a glance: how to try each, and what is missing
+
+This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/own_flip_proposal.md`,
+which also says how ready each item is, in what order they could become the default, and what blocks deleting the library each one replaces
+(CLAUDE.md rules 4a and 17). Set a switch the way the section "Switches that are off by default" says: an environment variable in the
+Command Prompt, then start the program from that window. The sure way to see which parts are ours is **Help > About OkaySpace** in the editor.
+
+Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run on Windows.
+
+| Item | The switch | A sample that ships in the download | How you can tell it is on | Gap |
+|---|---|---|---|---|
+| FBX | `OKAY_OWN_FBX=1` | **none.** Use any `.fbx` you own | About popup: `readers=own(fbx,...)`, and the word `ufbx` goes away | no sample |
+| COLLADA | `OKAY_OWN_COLLADA=1` | `examples\own_readers\skinned_strip.dae` | `readers=own(dae)` | none |
+| 3DS | `OKAY_OWN_3DS=1` | `examples\own_readers\cube.3ds` | `readers=own(3ds)` | none |
+| OFF | `OKAY_OWN_OFF=1` | `examples\own_readers\cube.off` | `readers=own(off)` | none |
+| BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
+| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
+| Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
+| OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
+| CodeEdit (script editor) | `OKAY_UI_BACKEND=okayui` and `OKAY_DEV=1` | any script | none | never run in a real window |
+| okay::crypto | none, on purpose | none | the line says `crypto=libsodium` | nothing to try |
+
+The gaps (no sample for 32 of the 35 reader switches, no way to tell that the 16 newest readers or WAV are on, no run-time switch for STL
+and PLY, no import log line) are "Step 0" of the proposal. Until they are closed, a PR that adds or changes one of these must say so
+at the top (rule 4a).
 
 ### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
 

@@ -1,3 +1,4 @@
+#include <chrono>
 #include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
 #include "okay/Modeling/PolyOps.hpp"
@@ -22,6 +23,7 @@ const char* MeshModifier::TypeName(Type t) {
         case Type::Boolean:     return "Boolean";
         case Type::Decimate:    return "Decimate";
         case Type::Displace:    return "Displace";
+        case Type::CurveArray:  return "Array Along Curve";
         default:                return "?";
     }
 }
@@ -38,7 +40,9 @@ bool SameModifiers(const std::vector<MeshModifier>& a, const std::vector<MeshMod
             x.levels != y.levels || x.smoothShading != y.smoothShading || x.thickness != y.thickness ||
             x.width != y.width || x.segments != y.segments || x.angle != y.angle ||
             x.target != y.target || x.boolOp != y.boolOp || x.voxel != y.voxel || x.cellSize != y.cellSize ||
-            x.strength != y.strength || x.frequency != y.frequency || x.seed != y.seed)
+            x.strength != y.strength || x.frequency != y.frequency || x.seed != y.seed ||
+            x.align != y.align || x.path.size() != y.path.size() ||
+            !std::equal(x.path.begin(), x.path.end(), y.path.begin(), [](const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }))
             return false;
     }
     return true;
@@ -47,6 +51,10 @@ bool SameModifiers(const std::vector<MeshModifier>& a, const std::vector<MeshMod
 MeshModifier MeshModifier::Make(Type t) {
     MeshModifier m;
     m.type = t;
+    if (t == Type::CurveArray) {
+        m.count = 8;
+        m.path = {{0, 0, 0}, {1, 0.6f, 0}, {2, 0.9f, 0}, {3, 0.6f, 0}, {4, 0, 0}};
+    }
     return m;
 }
 
@@ -81,6 +89,7 @@ Mesh ArrayCopies(const Mesh& in, int count, const Vec3& step) {
         const int base = (int)out.vertices.size();
         for (const Vec3& v : in.vertices) out.vertices.push_back(v + step * (float)c);
         if (uv) out.uvs.insert(out.uvs.end(), in.uvs.begin(), in.uvs.end());
+        if (in.HasVertexColors()) out.vertexColors.insert(out.vertexColors.end(), in.vertexColors.begin(), in.vertexColors.end());
         if (nrm) out.normals.insert(out.normals.end(), in.normals.begin(), in.normals.end());
         for (int t : in.triangles) out.triangles.push_back(t + base);
         if (fc) out.triColors.insert(out.triColors.end(), in.triColors.begin(), in.triColors.end());
@@ -89,6 +98,36 @@ Mesh ArrayCopies(const Mesh& in, int count, const Vec3& step) {
     if (!uv) out.uvs.clear();
     if (!nrm) out.normals.clear();
     if (!fc) out.triColors.clear();
+    SyncPolyFace(out);
+    return out;
+}
+
+// Copies of `in`, copy c moved and turned by xf(c); polyFace ids are offset per copy.
+template <class Xf> Mesh CopiesWith(const Mesh& in, int count, Xf xf) {
+    Mesh out;
+    out.name = in.name;
+    const bool pf = (int)in.polyFace.size() == in.TriangleCount() && !in.polyFace.empty();
+    int maxId = 0;
+    if (pf) for (int id : in.polyFace) maxId = std::max(maxId, id);
+    const bool uv = in.uvs.size() == in.vertices.size();
+    const bool nrm = in.normals.size() == in.vertices.size();
+    const bool fc = in.triColors.size() * 3 == in.triangles.size() && !in.triColors.empty();
+    const bool sl = in.HasSlots();
+    for (int c = 0; c < count; ++c) {
+        const int base = (int)out.vertices.size();
+        Vec3 pos; Quat rot;
+        xf(c, pos, rot);
+        for (const Vec3& v : in.vertices) out.vertices.push_back(pos + rot * v);
+        if (uv) out.uvs.insert(out.uvs.end(), in.uvs.begin(), in.uvs.end());
+        if (nrm) for (const Vec3& n : in.normals) out.normals.push_back(rot * n);
+        if (in.HasVertexColors()) out.vertexColors.insert(out.vertexColors.end(), in.vertexColors.begin(), in.vertexColors.end());
+        for (int t : in.triangles) out.triangles.push_back(t + base);
+        if (fc) out.triColors.insert(out.triColors.end(), in.triColors.begin(), in.triColors.end());
+        if (sl) out.triSlot.insert(out.triSlot.end(), in.triSlot.begin(), in.triSlot.end());
+        if (pf) for (int id : in.polyFace) out.polyFace.push_back(id + c * (maxId + 1));
+    }
+    out.slotColors = in.slotColors;
+    if (!sl) out.triSlot.clear();
     SyncPolyFace(out);
     return out;
 }
@@ -131,6 +170,10 @@ void HashMesh(std::uint64_t& h, const Mesh& m) {
     if (!m.polyFace.empty()) HashBytes(h, m.polyFace.data(), m.polyFace.size() * sizeof(int));
     if (!m.cornerUVs.empty()) HashBytes(h, m.cornerUVs.data(), m.cornerUVs.size() * sizeof(m.cornerUVs[0]));
     if (!m.triColors.empty()) HashBytes(h, m.triColors.data(), m.triColors.size() * sizeof(m.triColors[0]));
+    for (const EdgeCrease& c : m.creases) { const int ab[2] = {c.a, c.b}; HashBytes(h, ab, sizeof ab); HashBytes(h, &c.w, sizeof c.w); }
+    if (!m.vertexColors.empty()) HashBytes(h, m.vertexColors.data(), m.vertexColors.size() * sizeof(m.vertexColors[0]));
+    if (!m.triSlot.empty()) HashBytes(h, m.triSlot.data(), m.triSlot.size() * sizeof(int));
+    if (!m.slotColors.empty()) HashBytes(h, m.slotColors.data(), m.slotColors.size() * sizeof(m.slotColors[0]));
     std::size_t nn = m.normals.size(); HashBytes(h, &nn, sizeof nn);
 }
 
@@ -140,6 +183,12 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                    Mesh& out, std::string* error) {
     using T = MeshModifier::Type;
     out = in;
+    // A setting that is NaN or infinite (a hand-edited scene can hold one) would turn the whole mesh into NaN.
+    {
+        float sum = mod.offset.x + mod.offset.y + mod.offset.z + mod.thickness + mod.width + mod.angle + mod.voxel + mod.cellSize + mod.strength + mod.frequency;
+        for (const Vec3& q : mod.path) sum += q.x + q.y + q.z;
+        if (!std::isfinite(sum)) { if (error) *error = "A setting is not a number"; return false; }
+    }
     if (in.vertices.empty() || in.triangles.empty()) return true;
     switch (mod.type) {
         case T::Mirror: {
@@ -157,6 +206,20 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                 step = Vec3{size.x * mod.offset.x, size.y * mod.offset.y, size.z * mod.offset.z};
             }
             out = ArrayCopies(in, n, step);
+            return true;
+        }
+        case T::CurveArray: {
+            if (mod.path.size() < 2) {
+                if (error) *error = "The curve needs at least two points";
+                return false;
+            }
+            const int n = std::clamp(mod.count, 1, 1000);
+            std::vector<Vec3> pos, dir;
+            SamplePath(mod.path, n, pos, dir);
+            out = CopiesWith(in, n, [&](int c, Vec3& p, Quat& r) {
+                p = pos[c];
+                r = mod.align ? Quat::FromToRotation(Vec3{1, 0, 0}, dir[c]) : Quat::Identity;
+            });
             return true;
         }
         case T::Subdivision: {
@@ -239,16 +302,42 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
     }
 }
 
+void SamplePath(const std::vector<Vec3>& path, int count, std::vector<Vec3>& pos, std::vector<Vec3>& dir) {
+    pos.clear(); dir.clear();
+    count = std::max(count, 0);
+    if (path.size() < 2) { pos.assign((std::size_t)count, path.empty() ? Vec3{0, 0, 0} : path[0]); dir.assign((std::size_t)count, Vec3{1, 0, 0}); return; }
+    std::vector<float> cum(path.size(), 0.0f);
+    for (std::size_t i = 1; i < path.size(); ++i) cum[i] = cum[i - 1] + (path[i] - path[i - 1]).Magnitude();
+    const float total = cum.back();
+    for (int k = 0; k < count; ++k) {
+        const float s = count > 1 ? total * (float)k / (float)(count - 1) : 0.0f;
+        std::size_t i = 1;
+        while (i + 1 < path.size() && cum[i] < s) ++i;
+        const float seg = cum[i] - cum[i - 1];
+        const float t = seg > 1e-9f ? std::clamp((s - cum[i - 1]) / seg, 0.0f, 1.0f) : 0.0f;
+        pos.push_back(path[i - 1] + (path[i] - path[i - 1]) * t);
+        Vec3 d = path[i] - path[i - 1];
+        // Skip zero-length segments so the direction is never zero.
+        for (std::size_t j = i; d.SqrMagnitude() < 1e-12f && j + 1 < path.size(); ++j) d = path[j + 1] - path[j];
+        for (std::size_t j = i; d.SqrMagnitude() < 1e-12f && j > 1; --j) d = path[j - 1] - path[j - 2];
+        dir.push_back(d.SqrMagnitude() < 1e-12f ? Vec3{1, 0, 0} : d.Normalized());
+    }
+}
+
 Mesh EvaluateModifiers(const Mesh& base, const std::vector<MeshModifier>& stack, const ModifierContext& ctx,
-                       std::vector<std::string>* errors) {
+                       std::vector<std::string>* errors, std::vector<float>* costMs) {
     if (errors) errors->assign(stack.size(), std::string());
+    if (costMs) costMs->assign(stack.size(), 0.0f);
     Mesh cur = base;
     for (std::size_t i = 0; i < stack.size(); ++i) {
         const MeshModifier& m = stack[i];
         if (!m.enabled || (ctx.editMode && !m.showInEditMode)) continue;
         Mesh next;
         std::string err;
-        if (ApplyModifier(cur, m, ctx, next, &err)) cur = std::move(next);
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ran = ApplyModifier(cur, m, ctx, next, &err);
+        if (costMs) (*costMs)[i] = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ran) cur = std::move(next);
         else if (errors) (*errors)[i] = err.empty() ? "Failed" : err;
     }
     // Keep the base's shading intent: a smooth-shaded base stays smooth.
@@ -272,6 +361,8 @@ std::uint64_t ModifierInputHash(const Mesh& base, const std::vector<MeshModifier
                               m.voxel, m.cellSize, m.strength, m.frequency};
         HashBytes(h, fl, sizeof fl);
         HashBytes(h, m.target.data(), m.target.size());
+        const bool al = m.align; HashBytes(h, &al, sizeof al);
+        if (!m.path.empty()) HashBytes(h, m.path.data(), m.path.size() * sizeof(Vec3));
         if (m.type == MeshModifier::Type::Boolean && m.enabled) {
             if (const MeshRenderer* tmr = FindTarget(ctx, m.target)) {
                 HashMesh(h, tmr->DisplayMesh());

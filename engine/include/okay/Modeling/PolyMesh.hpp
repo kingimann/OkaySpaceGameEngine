@@ -42,8 +42,18 @@ class PolyMesh {
 public:
     std::vector<Vec3>     verts;
     std::vector<PolyFace> faces;
+    /// Colour of each material slot (PolyFace::material indexes it). Empty = no slot table.
+    /// Saved in the .okaymesh as "slot N r g b a" lines; older files simply have none.
+    std::vector<Color> slotColors;
+    /// Colour per vertex (parallel to `verts`; may be shorter: missing ones are white). Saved as "vcolor i r g b a" lines.
+    std::vector<Color> vertColors;
     /// UV seams: edges (a < b) the unwrapper cuts the surface open along.
     std::vector<std::pair<int, int>> seams;
+    /// Subdivision creases (see EdgeCrease): saved as "crease a b w" lines.
+    std::vector<EdgeCrease> creases;
+    float CreaseOf(int a, int b) const;
+    /// Set the sharpness of an edge (0 or less clears it).
+    void SetCrease(int a, int b, float w);
     bool IsSeam(int a, int b) const;
     /// Mark (on) or clear an edge as a seam.
     void SetSeam(int a, int b, bool on);

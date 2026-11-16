@@ -12,6 +12,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/DayNightCycle.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -768,6 +769,24 @@ void RegisterSpawner() {
     b.Commit();
 }
 
+// DebrisEmitter
+void RegisterDebrisEmitter() {
+    PropertyBuilder<DebrisEmitter> b("DebrisEmitter", "debrisemitter", "Physics 3D");
+    b.AddInt("count", &DebrisEmitter::count).Range(1, 2000, 1).Tooltip("Chunks per burst")
+     .AddFloat("interval", &DebrisEmitter::interval).Range(0, 3600, 0.05).Tooltip("Seconds between bursts (0 = one burst, then none)")
+     .AddFloat("startDelay", &DebrisEmitter::startDelay).Range(0, 3600, 0.05).Tooltip("Seconds before the first burst")
+     .AddFloat("sizeMin", &DebrisEmitter::sizeMin).Range(0.01, 100, 0.01).Tooltip("Smallest chunk edge in metres")
+     .AddFloat("sizeMax", &DebrisEmitter::sizeMax).Range(0.01, 100, 0.01).Tooltip("Largest chunk edge in metres")
+     .AddFloat("speed", &DebrisEmitter::speed).Range(0, 200, 0.1).Tooltip("Launch speed in metres per second")
+     .AddFloat("spread", &DebrisEmitter::spread).Range(0, 5, 0.05).Tooltip("0 = straight up, larger = a wider cone")
+     .AddColor("color", &DebrisEmitter::color).Tooltip("Colour of the chunks")
+     .AddInt("maxActive", &DebrisEmitter::maxActive).Range(1, 5000, 1).Tooltip("Most chunks alive at once; the oldest is recycled")
+     .AddFloat("lifetime", &DebrisEmitter::lifetime).Range(0.1, 3600, 0.1).Tooltip("Seconds a chunk may live at the most")
+     .AddFloat("settledLife", &DebrisEmitter::settledLife).Range(0.1, 3600, 0.1).Tooltip("Seconds a chunk stays once it has landed and gone to sleep")
+     .AddBool("collideWithEachOther", &DebrisEmitter::collideWithEachOther).Tooltip("Off: chunks only hit the world, which is much cheaper");
+    b.Commit();
+}
+
 // ---- Audio -----------------------------------------------------------------
 
 // MusicPlayer
@@ -968,7 +987,7 @@ void RegisterJoint2D() {
 // Joint3D
 void RegisterJoint3D() {
     PropertyBuilder<Joint3D> b("Joint3D", "joint3d", "Physics 3D");
-    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge"}).Tooltip("Movement style")
+    b.AddEnum("mode", &Joint3D::mode, {"Distance", "Spring", "Pin", "Hinge", "Slider"}).Tooltip("Movement style")
      .AddString("connectedBody", &Joint3D::connectedBody).Tooltip("Name of the other body (empty = world anchor)")
      .AddVec3("anchor", &Joint3D::anchor).Range(-kBig, kBig, 0.1).Tooltip("World anchor point when there's no connected body")
      .AddFloat("distance", &Joint3D::distance).Range(0, kBig, 0.05).Tooltip("Rest length (Distance / Spring)")
@@ -1242,6 +1261,7 @@ void RegisterGameplayProperties() {
     RegisterMeleeAttacker();
     RegisterRangedWeapon();
     RegisterSpawner();
+    RegisterDebrisEmitter();
     RegisterVolume();
     RegisterMusicPlayer();
     RegisterCollectible();

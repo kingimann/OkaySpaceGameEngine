@@ -257,6 +257,8 @@ void RegisterRigidbody2D() {
      .AddBool("freezeRotation", &Rigidbody2D::freezeRotation)
      .AddBool("allowSleep", &Rigidbody2D::allowSleep)
      .AddBool("continuousCollision", &Rigidbody2D::continuousCollision)
+     .AddFloat("rollingResistance", &Rigidbody2D::rollingResistance).Range(0, 1, 0.005)
+         .Tooltip("How quickly a rolling ball or wheel slows down (Improved physics quality). 0 rolls on, 0.03 stops a ball in about 15 seconds")
      .Section("Runtime")
      .AddVec2("velocity", &Rigidbody2D::velocity).RuntimeOnly().Tooltip("Current velocity (live state, not saved)")
      .AddFloat("angularVelocity", &Rigidbody2D::angularVelocity).RuntimeOnly().Tooltip("Degrees per second (live state, not saved)")
@@ -280,6 +282,10 @@ void RegisterRigidbody3D() {
      .AddBool("freezeRotation", &Rigidbody3D::freezeRotation)
      .AddBool("allowSleep", &Rigidbody3D::allowSleep)
      .AddBool("continuousCollision", &Rigidbody3D::continuousCollision)
+     .AddFloat("rollingResistance", &Rigidbody3D::rollingResistance).Range(0, 1, 0.005)
+         .Tooltip("How quickly a rolling ball or wheel slows down (Improved physics quality). 0 rolls on, 0.03 stops a ball in about 15 seconds")
+     .AddBool("compoundChildren", &Rigidbody3D::compoundChildren)
+         .Tooltip("Use the colliders on child objects as part of this body (Improved physics quality): a table made of a top and four legs")
      .Section("Runtime")
      .AddVec3("velocity", &Rigidbody3D::velocity).RuntimeOnly().Tooltip("Current velocity (live state, not saved)")
      .AddVec3("angularVelocity", &Rigidbody3D::angularVelocity).RuntimeOnly().Tooltip("Radians per second (live state, not saved)")
@@ -299,6 +305,13 @@ void Collider2DCommon(PropertyBuilder<C>& b, bool withAutoFit = true) {
      .AddBool("isTrigger", &Collider2D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider2D::layer).Range(0, 31).Tooltip("Collision layer");
     if (withAutoFit) b.AddBool("autoFit", &Collider2D::autoFit).Tooltip("Keep the collider matched to the sprite bounds");
+    b.Section("Physics material")
+     .AddFloat("friction", &Collider2D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
+     .AddFloat("bounciness", &Collider2D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
+     .AddEnum("frictionCombine", &Collider2D::frictionCombine, {"Default", "Average", "Minimum", "Multiply", "Maximum"})
+         .Tooltip("How this friction mixes with the one it touches (Default = geometric mean)")
+     .AddEnum("bounceCombine", &Collider2D::bounceCombine, {"Default", "Average", "Minimum", "Multiply", "Maximum"})
+         .Tooltip("How this bounciness mixes with the one it touches (Default = the larger)");
     b.Section("Trigger filter")
      .AddString("triggerTag", &Collider2D::triggerTag).Tooltip("A trigger reacts only to objects with this tag (empty = any)")
      .AddInt("triggerLayers", &Collider2D::triggerLayers).Tooltip("Bit n set = layer n sets the trigger off");
@@ -311,6 +324,13 @@ void Collider3DCommon(PropertyBuilder<C>& b) {
      .AddBool("isTrigger", &Collider3D::isTrigger).Tooltip("Detects overlaps without pushing objects apart")
      .AddInt("layer", &Collider3D::layer).Range(0, 31).Tooltip("Collision layer")
      .AddBool("autoFit", &Collider3D::autoFit).Tooltip("Keep the collider matched to the mesh bounds")
+     .Section("Physics material")
+     .AddFloat("friction", &Collider3D::friction).Range(-1, 10, 0.01).Tooltip("-1 = use the Rigidbody's friction; 0 is ice")
+     .AddFloat("bounciness", &Collider3D::bounciness).Range(-1, 1, 0.01).Tooltip("-1 = use the Rigidbody's bounciness; 1 is a super ball")
+     .AddEnum("frictionCombine", &Collider3D::frictionCombine, {"Default", "Average", "Minimum", "Multiply", "Maximum"})
+         .Tooltip("How this friction mixes with the one it touches (Default = geometric mean)")
+     .AddEnum("bounceCombine", &Collider3D::bounceCombine, {"Default", "Average", "Minimum", "Multiply", "Maximum"})
+         .Tooltip("How this bounciness mixes with the one it touches (Default = the larger)")
      .Section("Trigger filter")
      .AddString("triggerTag", &Collider3D::triggerTag).Tooltip("A trigger reacts only to objects with this tag (empty = any)")
      .AddInt("triggerLayers", &Collider3D::triggerLayers).Tooltip("Bit n set = layer n sets the trigger off");

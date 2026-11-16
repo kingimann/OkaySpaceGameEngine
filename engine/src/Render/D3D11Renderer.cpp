@@ -5,6 +5,7 @@
 
 #include "okay/Render/D3D11Renderer.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/MeshHash.hpp"
 #include "okay/Render/Visibility.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
@@ -1075,21 +1076,25 @@ bool D3D11Renderer::Impl::EnsureDepthTarget(DepthTarget& t, int w, int h) {
 }
 
 // ---- Per-mesh vertex-buffer cache (mirrors GLRenderer.cpp) -------------------
+// (Was a byte-at-a-time FNV-1a loop, ~1.3 ns per byte; now okay::meshhash::Bytes, about 20 times faster. See MeshHash.hpp.)
 static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
                               std::uint64_t seed = 1469598103934665603ull) {
-    const unsigned char* pB = (const unsigned char*)data;
-    std::uint64_t h = seed;
-    for (std::size_t i = 0; i < nbytes; ++i) { h ^= pB[i]; h *= 1099511628211ull; }
-    return h;
+    return meshhash::Bytes(data, nbytes, seed);
 }
 static std::uint64_t MeshSampleHash(const Mesh& m) {
-    std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
-                             m.uvs.size(), m.triColors.size() };
+    std::size_t sizes[6] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size() };
     std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;     // a stroke of vertex paint shows at once
+      for (std::size_t i = 0; i < cn; i += cstep) h = FnvBytes(&m.vertexColors[i], sizeof(Color), h); }
     const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
-    for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
+    // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
+    // and a scene can show hundreds of them every frame).
+    if (step == 1) { if (vn) h = FnvBytes(m.vertices.data(), vn * sizeof(Vec3), h); }
+    else for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
     const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
-    for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
+    if (tstep == 1) { if (tn) h = FnvBytes(m.triangles.data(), tn * sizeof(int), h); }
+    else for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
     return h;
 }
 static std::uint64_t MeshFullHash(const Mesh& m) {
@@ -1099,6 +1104,7 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
     if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
     if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
     if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    if (!m.vertexColors.empty()) h = FnvBytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
     return h;
 }
 
@@ -1129,6 +1135,7 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
     const bool hasN = mesh.HasNormals();
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
     const bool faceCols = mesh.HasFaceColors();
+    const bool vcols = mesh.HasVertexColors();   // per-vertex colours blend smoothly across each face
     const int nv = (int)V.size();
     verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
     float* out = verts.data();
@@ -1162,6 +1169,7 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
             out[3] = nrm.x; out[4] = nrm.y; out[5] = nrm.z;
             out[6] = uu[k]; out[7] = vv[k];
             out[8] = cr;    out[9] = cg;    out[10] = cb2;
+            if (vcols) { const Color& vc = mesh.vertexColors[idx[k]]; out[8] *= vc.r; out[9] *= vc.g; out[10] *= vc.b; }
             out[11] = tan.x; out[12] = tan.y; out[13] = tan.z;
             out += 14;
         }

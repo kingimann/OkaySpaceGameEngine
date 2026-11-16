@@ -8,6 +8,7 @@
 #include <SDL.h>
 #include "WavPlayback.hpp"
 #endif
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -236,12 +237,91 @@ static void TestSdlSeam() {
 }
 #endif
 
+#ifdef OKAY_TEST_HAVE_SDL
+// The one place our 16-bit result is NOT SDL's, made explicit: 8, 24 and 32-bit PCM. The old launcher path was
+// SDL_LoadWAV (U8 for 8-bit, S32 for 24 and 32-bit) and then the launcher's VoiceClipToPlayable, which takes the
+// value v in -1..1 and does (Sint16)clamp(v * 32767): it scales by 32,767 and cuts toward zero. Ours (ToS16, and
+// LoadForPlayback) scales by 32,768 and rounds to the nearest (ties to even), so full scale is exactly -32768..32767
+// and a 16-bit value read back is the value written. We keep ours on purpose (docs/own_wav_decoder.md, "Rounding").
+// This checks both rules sample by sample and that they never differ by more than 2 steps.
+static int OldLauncherRule(SDL_AudioFormat f, const Uint8* p) {   // the old path, written out (launcher/main.cpp)
+    float v = 0.0f;
+    if (f == AUDIO_U8) v = (float(p[0]) - 128.0f) / 128.0f;
+    else if (f == AUDIO_S32SYS) { Sint32 x; std::memcpy(&x, p, 4); v = float(x) / 2147483648.0f; }
+    const float c = v * 32767.0f;
+    return int(Sint16(c < -32768.0f ? -32768.0f : c > 32767.0f ? 32767.0f : c));
+}
+static int OurRule(double v) {   // round half to even of v * 32768, clamped
+    const double r = std::nearbyint(v * 32768.0);
+    return int(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
+}
+static void TestRoundingVsOldPath() {
+    struct Case { int bits; Bytes data; };
+    std::vector<Case> cases;
+    { Bytes d; for (int i = 0; i < 256; ++i) d.push_back(Uint8(i)); cases.push_back({8, d}); }
+    {
+        Bytes d;
+        const std::int32_t v24[] = {0, 1, -1, 127, 128, 129, 383, 384, 385, -128, -129, -384, 8388607, -8388608, 8388480,
+                                    8388479, 4194304, -4194304, 1000000, -1000000, 0x123480, 0x123580, -0x123480};
+        for (std::int32_t v : v24) { d.push_back(Uint8(v)); d.push_back(Uint8(v >> 8)); d.push_back(Uint8(v >> 16)); }
+        std::uint32_t x = 12345;
+        for (int i = 0; i < 2000; ++i) { x = x * 1664525u + 1013904223u; d.push_back(Uint8(x >> 8)); d.push_back(Uint8(x >> 16)); d.push_back(Uint8(x >> 24)); }
+        cases.push_back({24, d});
+    }
+    {
+        Bytes d;
+        const std::int64_t v32[] = {0, 1, -1, 32767, 32768, 32769, 98304, -98304, 2147483647, -2147483647 - 1, 2147450880, 1073741824, -1073741824};
+        auto put = [&](std::uint32_t u) { P32(d, u); };
+        for (std::int64_t v : v32) put(std::uint32_t(v));
+        std::uint32_t x = 777;
+        for (int i = 0; i < 2000; ++i) { x = x * 1664525u + 1013904223u; put(x); }
+        cases.push_back({32, d});
+    }
+    for (const Case& c : cases) {
+        Put(Wav(1, 1, 8000, unsigned(c.bits), c.data));
+        SDL_AudioSpec so{}, sn{}; std::vector<Uint8> bo, bn;
+        setenv("OKAY_OWN_WAV", "0", 1);
+        const bool okOld = wav::LoadWavForSdl(kPath, so, bo);
+        setenv("OKAY_OWN_WAV", "1", 1);
+        CHECK(wav::LoadWavForSdl(kPath, sn, bn));
+        CHECK(sn.format == AUDIO_S16SYS);
+        const std::size_t n = c.data.size() / std::size_t(c.bits / 8);
+        CHECK(bn.size() == n * 2);
+        int differ = 0, maxDiff = 0;
+        for (std::size_t i = 0; i < n && bn.size() == n * 2; ++i) {
+            const Uint8* q = c.data.data() + i * std::size_t(c.bits / 8);
+            double v;   // the file's value in -1..1, exact
+            if (c.bits == 8) v = (int(q[0]) - 128) / 128.0;
+            else if (c.bits == 24) v = double(std::int32_t((std::uint32_t(q[0]) << 8) | (std::uint32_t(q[1]) << 16) | (std::uint32_t(q[2]) << 24)) >> 8) / 8388608.0;
+            else { std::int32_t x; std::memcpy(&x, q, 4); v = double(float(x)) / 2147483648.0; }   // our float step first
+            const int ours = S16At(bn, i);
+            CHECK(ours == OurRule(v));
+            if (!okOld) continue;   // an SDL that cannot read the file: nothing to compare
+            const std::size_t w = std::size_t(SDL_AUDIO_BITSIZE(so.format) / 8);
+            if (bo.size() != n * w || (so.format != AUDIO_U8 && so.format != AUDIO_S32SYS)) { CHECK(false); break; }
+            const int old = OldLauncherRule(so.format, bo.data() + i * w);
+            const int dd = ours > old ? ours - old : old - ours;
+            differ += dd != 0;
+            if (dd > maxDiff) maxDiff = dd;
+        }
+        if (okOld) {
+            CHECK(maxDiff <= 2);
+            CHECK(differ > 0);   // they do differ, and this test says so on purpose
+            std::printf("  %d-bit: our rounding differs from the old launcher path on %d of %zu samples, by at most %d of 32768\n",
+                        c.bits, differ, n, maxDiff);
+        }
+    }
+    unsetenv("OKAY_OWN_WAV");
+}
+#endif
+
 int main() {
     TestOwnPath();
     TestErrors();
     TestLargeFiles();
 #ifdef OKAY_TEST_HAVE_SDL
     TestSdlSeam();
+    TestRoundingVsOldPath();
 #endif
     std::remove(kPath);
     TEST_MAIN_RESULT();

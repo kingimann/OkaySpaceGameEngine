@@ -193,7 +193,7 @@ int main() {
         CHECK(p->transform->Position().y < 0.2f);
         // Station 3: walk the 0.25 m step line (x = -2): up and over, still alive.
         p->transform->SetPosition({-2.0f, 0.05f, -45.0f});
-        frames(2.0, {'w'}, 0.0f);
+        frames(4.0, {'w'}, 0.0f);
         CHECK(p->transform->Position().z < -52.0f);
         // Station 7: sprint at the 2 cm wall.
         p->transform->SetPosition({0, 0.05f, -110.0f});

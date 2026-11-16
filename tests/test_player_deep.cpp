@@ -137,12 +137,12 @@ int main() {
         r.Box(Vec3{0, 0, -3.0f} - n * 0.25f + Vec3{0, 2, 0}, {30, 4, 0.5f}, q);
         r.Box({0, -0.5f, 0}, {80, 1, 80});
         r.Spawn({0, 0, 0});
-        r.Frames(1.2, {'w'});
+        r.Frames(1.2, {'w', Input::KeyShift});
         const Vec3 a = r.p->transform->Position();
-        r.Frames(1.5, {'w'});
+        r.Frames(1.5, {'w', Input::KeyShift});
         const Vec3 d = r.p->transform->Position() - a;
         const double speed = (d.x * t.x + d.z * t.z) / 1.5;
-        CHECK(speed > 0.7 * 4.5 * 0.5);   // player_deep_wall_slide: 70% of the frictionless 2.25 m/s (was 29%)
+        CHECK(speed > 0.7 * 5.5 * 0.5);   // player_deep_wall_slide: 70% of the frictionless 2.75 m/s while running (was 29%); walking is 2.0 m/s since the natural gait landed on main
     }
 
     // ---- Standing still on a slope the player may stand on: no creeping. ----

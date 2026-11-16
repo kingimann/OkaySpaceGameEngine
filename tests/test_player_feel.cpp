@@ -136,7 +136,7 @@ int main() {
         if (q && q->first()) { CHECK(q->first()->controllerPreset == 4); CHECK_NEAR(q->first()->stickLookRamp, 0.8f, 1e-5f); CHECK_NEAR(q->first()->airControl, 0.35f, 1e-5f); }
         if (q && q->third()) { CHECK(q->third()->controllerPreset == 4); CHECK_NEAR(q->third()->stickLookRamp, 1.2f, 1e-5f); CHECK_NEAR(q->third()->turnSpeed, 32.0f, 1e-5f); }
         auto* pv = b.Find("P") ? b.Find("P")->GetComponent<PlayerView>() : nullptr;
-        CHECK(pv && pv->presetHotkeys);
+        if (view == 2) CHECK(pv && pv->presetHotkeys);   // a PlayerView exists in Both mode only
         // player_feel_saved
     }
 
@@ -163,10 +163,11 @@ int main() {
         Rig r;
         GameObject* lab = r.sc->CreateGameObject("PresetLabel");
         lab->AddComponent<TextRenderer>()->text = "?";
-        r.Spawn(Mode::First, -1);
+        r.Spawn(Mode::Both, -1);
         auto* fp = r.p->GetComponent<FirstPersonController>();
         auto* pv = r.p->GetComponent<PlayerView>();
         CHECK(pv && fp && !pv->presetHotkeys);
+        if (!pv || !fp) return 1;
         r.Frame({'3'}); r.Frame({});
         CHECK(fp->controllerPreset == 0);                    // off: the key does nothing
         pv->presetHotkeys = true;
@@ -230,8 +231,8 @@ int main() {
             for (int i = 0; i < (int)(1.5f * fps); ++i) {
                 r.Frame({'w'}, d);
                 const Vec3 c = cam->transform->Position();
-                off.push_back((c - r.Pos()).Length());
-                const float st = (c - prev).Length() / d;                        // camera speed (m/s)
+                off.push_back((c - r.Pos()).Magnitude());
+                const float st = (c - prev).Magnitude() / d;                        // camera speed (m/s)
                 maxStep = std::max(maxStep, st); sumStep += st; ++n; prev = c;
             }
             const float lo = *std::min_element(off.begin(), off.end()), hi = *std::max_element(off.begin(), off.end());

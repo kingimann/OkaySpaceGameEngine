@@ -82,16 +82,17 @@ struct Reader {
     int groups = 0, secondTm = 0, ignoredMaps = 0, uvTransforms = 0, otherKeyKinds = 0, unknownObjects = 0, sgOverflow = 0, shortSamples = 0, singleKeyTracks = 0;
     bool sawHeader = false;
 
-    static bool NumAt(const std::vector<std::string>& tk, std::size_t i, double& v) { return i < tk.size() && ToDouble(tk[i], v); }
-    static bool FloatAt(const std::vector<std::string>& tk, std::size_t i, float& v) { return i < tk.size() && ToFloat(tk[i], v); }
-    static bool IntAt(const std::vector<std::string>& tk, std::size_t i, long long& v) {
+    using Tokens = std::vector<std::string_view>;   // views into the file's text
+    static bool NumAt(const Tokens& tk, std::size_t i, double& v) { return i < tk.size() && ToDouble(tk[i], v); }
+    static bool FloatAt(const Tokens& tk, std::size_t i, float& v) { return i < tk.size() && ToFloat(tk[i], v); }
+    static bool IntAt(const Tokens& tk, std::size_t i, long long& v) {
         if (i >= tk.size()) return false;
-        std::string t = tk[i];
-        if (!t.empty() && t.back() == ':') t.pop_back();
+        std::string_view t = tk[i];
+        if (!t.empty() && t.back() == ':') t.remove_suffix(1);
         return ToInt(t, v);
     }
     // "A:" style label followed by a number
-    static bool Labeled(const std::vector<std::string>& tk, const char* label, long long& v) {
+    static bool Labeled(const Tokens& tk, const char* label, long long& v) {
         for (std::size_t i = 1; i + 1 < tk.size(); ++i) if (tk[i] == label) return ToInt(tk[i + 1], v);
         return false;
     }
@@ -107,13 +108,13 @@ struct Reader {
 
     bool Parse(const std::string& text) {
         Lines lines(text);
-        std::string raw;
+        std::string_view raw;
         std::vector<std::string> stack;
         std::string pending;   // a block name whose "{" is on the next line
         Obj* cur = nullptr;
         int curDepth = 0;      // stack size when the current object's block was opened
         std::size_t lineCount = 0;
-        std::vector<std::string> tk;   // the tokens of the line, reused line after line
+        Tokens tk;   // the tokens of the line (views into the text), reused line after line
         static const std::string kNoBlock;
         while (lines.Next(raw)) {
             ++lineCount;
@@ -129,9 +130,9 @@ struct Reader {
                 continue;
             }
             if (tk[0].empty() || tk[0][0] != '*') { continue; }   // stray text
-            const std::string_view key = std::string_view(tk[0]).substr(1);
+            const std::string_view key = tk[0].substr(1);
             const bool opens = tk.back() == "{";
-            const std::string& top = stack.empty() ? kNoBlock : stack.back();   // not used after the push below
+            const std::string_view top = stack.empty() ? std::string_view(kNoBlock) : std::string_view(stack.back());   // not used after the push below
             bool handled = true;
 
             // ---- file header and scene ----
@@ -237,7 +238,7 @@ struct Reader {
                     for (std::size_t k = 1; k + 1 < tk.size(); ++k) {
                         if (tk[k] == "*MESH_SMOOTHING") {
                             // "1" or "1,2,3": a list of group numbers (0 = none)
-                            const std::string& s = tk[k + 1];
+                            const std::string_view s = tk[k + 1];
                             std::size_t p = 0;
                             while (p < s.size()) {
                                 std::size_t q = s.find(',', p);

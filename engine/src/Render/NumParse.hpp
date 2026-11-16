@@ -2,6 +2,7 @@
 // strtod / strtof that read '.' as the decimal point whatever LC_NUMERIC says. The C library's own versions follow the
 // process locale: after setlocale(LC_ALL, "") in a German or French locale they stop at the '.' of "1.5" and a model file
 // reads as 1 (or fails). Model files always use the point. Internal: not installed.
+#include <cfloat>
 #include <clocale>
 #include <cstdlib>
 #include <cstring>
@@ -9,6 +10,59 @@
 
 namespace okay {
 namespace detail {
+
+// The exact fast case of decimal to double conversion (W. D. Clinger, "How to read floating point numbers accurately",
+// 1990): when the digits, read as an integer, fit in 53 bits and the power of ten is at most 22 either way, both are exact
+// doubles and one multiplication or division rounds the true value correctly, so the result is the one strtod gives.
+// Reads [p, e) as [-]digits[.digits][(e|E)[+|-]digits], the whole range; returns false for anything else (more digits,
+// a larger exponent, a '+' sign, other text) and the caller reads it the slow way. Needs no locale.
+inline bool FastDecimal(const char* p, const char* e, double& out) {
+    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+                                      1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
+    (void)p; (void)e; (void)out; return false;   // wider intermediate precision (x87) would round twice
+#else
+    if (p >= e) return false;
+#endif
+    const bool neg = *p == '-';
+    if (neg) ++p;
+    unsigned long long m = 0;
+    int digits = 0, scale = 0;   // significant digits taken; power of ten from the digits after the point
+    bool any = false;
+    for (; p < e && *p >= '0' && *p <= '9'; ++p) {
+        any = true;
+        if (m == 0 && *p == '0') continue;          // leading zeros are not significant
+        if (++digits > 19) return false;
+        m = m * 10 + (unsigned)(*p - '0');
+    }
+    if (p < e && *p == '.') {
+        ++p;
+        for (; p < e && *p >= '0' && *p <= '9'; ++p) {
+            any = true;
+            --scale;
+            if (m == 0 && *p == '0') continue;
+            if (++digits > 19) return false;
+            m = m * 10 + (unsigned)(*p - '0');
+        }
+    }
+    if (!any) return false;
+    if (p < e && (*p == 'e' || *p == 'E')) {
+        ++p;
+        bool eneg = false;
+        if (p < e && (*p == '-' || *p == '+')) { eneg = *p == '-'; ++p; }
+        if (p >= e) return false;
+        int x = 0;
+        for (; p < e && *p >= '0' && *p <= '9'; ++p) { x = x * 10 + (*p - '0'); if (x > 1000) return false; }
+        scale += eneg ? -x : x;
+    }
+    if (p != e) return false;
+    if (m == 0) { out = neg ? -0.0 : 0.0; return true; }
+    if (m > (1ull << 53) || scale < -22 || scale > 22) return false;
+    double v = (double)m;
+    v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
+    out = neg ? -v : v;
+    return true;
+}
 
 inline double StrToD(const char* s, char** end) {
     const char* dp = std::localeconv()->decimal_point;

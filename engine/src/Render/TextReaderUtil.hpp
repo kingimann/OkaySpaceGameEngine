@@ -12,7 +12,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace okay {
@@ -86,6 +88,22 @@ struct Lines {
     std::size_t pos = 0;
     std::size_t number = 0;   // 1 based number of the line last returned
     explicit Lines(const std::string& text) : t(&text) {}
+    // The next line as a view into the text (no copy); valid while the text is.
+    bool Next(std::string_view& line) {
+        const char* const b = t->data();
+        const std::size_t n = t->size();
+        if (pos >= n) return false;
+        // the line ends at the first '\n' or '\r': find the '\n', then look for a '\r' before it
+        const void* nl = std::memchr(b + pos, '\n', n - pos);
+        std::size_t e = nl ? (std::size_t)((const char*)nl - b) : n;
+        if (const void* cr = std::memchr(b + pos, '\r', e - pos)) e = (std::size_t)((const char*)cr - b);
+        line = std::string_view(b + pos, e - pos);
+        pos = e;
+        if (pos < n && b[pos] == '\r') { ++pos; if (pos < n && b[pos] == '\n') ++pos; }
+        else if (pos < n) ++pos;
+        ++number;
+        return true;
+    }
     bool Next(std::string& line) {
         const std::string& s = *t;
         if (pos >= s.size()) return false;
@@ -127,6 +145,28 @@ inline void SplitInto(const std::string& s, std::vector<std::string>& r) {
     }
     r.resize(n);
 }
+// The same tokens as views into `s` (valid while `s` is).
+inline void SplitInto(std::string_view s, std::vector<std::string_view>& r) {
+    r.clear();
+    // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13): the same set as IsWs
+    auto ws = [](char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; };
+    const char* p = s.data();
+    const char* const end = p + s.size();
+    while (p < end) {
+        while (p < end && ws(*p)) ++p;
+        if (p >= end) break;
+        if (*p == '"') {
+            const char* a = ++p;
+            while (p < end && *p != '"') ++p;
+            r.emplace_back(a, (std::size_t)(p - a));
+            if (p < end) ++p;
+        } else {
+            const char* a = p;
+            while (p < end && !ws(*p)) ++p;
+            r.emplace_back(a, (std::size_t)(p - a));
+        }
+    }
+}
 inline std::vector<std::string> Split(const std::string& s) {
     std::vector<std::string> r;
     SplitInto(s, r);
@@ -134,8 +174,10 @@ inline std::vector<std::string> Split(const std::string& s) {
 }
 
 // A finite number, the whole token, within +-1e15. No hex, no "nan", no "inf", no trailing text, '.' always the point.
-inline bool ToDouble(const std::string& s, double& v) {
+inline bool ToDouble(std::string_view s, double& v) {
     if (s.empty() || s.size() > 64) return false;
+    // the common case first: a plain decimal the exact fast path reads (it accepts only characters the check below allows)
+    if (FastDecimal(s.data(), s.data() + s.size(), v)) return std::isfinite(v) && std::fabs(v) <= 1e15;
     const char c = s[0];
     if (!((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')) return false;
     for (char ch : s) if (!((ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E')) return false;
@@ -151,14 +193,17 @@ inline bool ToDouble(const std::string& s, double& v) {
         }
     }
 #endif
+    char buf[72];   // the token is at most 64 characters and holds no NUL (checked above)
+    std::memcpy(buf, s.data(), s.size());
+    buf[s.size()] = '\0';
     char* e = nullptr;
-    v = StrToD(s.c_str(), &e);
+    v = StrToD(buf, &e);
     return e && *e == '\0' && std::isfinite(v) && std::fabs(v) <= 1e15;
 }
-inline bool ToFloat(const std::string& s, float& f) { double d; if (!ToDouble(s, d)) return false; f = (float)d; return true; }
+inline bool ToFloat(std::string_view s, float& f) { double d; if (!ToDouble(s, d)) return false; f = (float)d; return true; }
 
 // A plain decimal integer (optional sign), the whole token, within +-2^31.
-inline bool ToInt(const std::string& s, long long& v) {
+inline bool ToInt(std::string_view s, long long& v) {
     if (s.empty() || s.size() > 12) return false;
     std::size_t i = 0;
     bool neg = false;

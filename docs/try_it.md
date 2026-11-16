@@ -1361,3 +1361,14 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## Five starter templates removed from New Project
+
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer offered when you create a project. Projects and scenes
+already made from them still open and play, and the scene builders stay in the engine (still tested).
+
+1. Windows launcher: open the **Templates** page (or **Create**, then the New Project wizard). The list now has 17 templates:
+   Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are gone; Main Menu, Platformer, First Person and the rest are still there.
+2. Pick Main Menu (or any other) and create a project: the editor opens with the starter scene.
+3. In the editor, **File > New Project** shows the same list.
+4. Test: `ctest -R templates_work` checks the launcher list, the editor table and the builders agree.

@@ -915,6 +915,16 @@ inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
     return sz;
 }
 
+/// Where a TextRenderer's text starts inside its own box, measured from the box's
+/// top-left in unscaled pixels: its horizontal `align` (left / centre / right) and
+/// its vertical placement (centred, top or bottom). Screen-space text adds it to its
+/// box origin (UITextDrawOrigin); in-world text (a World Space UI object or a
+/// world-space Canvas) multiplies it by its projected scale first, so a centred
+/// label is centred in the world too.
+inline Vec2 UITextAlignOffset(const TextRenderer* tr, float screenW, float screenH) {
+    return tr->ResolvedScreenPos(screenW, screenH) - tr->BoxTopLeft(screenW, screenH);
+}
+
 /// The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:
 /// the label's box is anchored within its owning widget (so a text child of a
 /// panel/button follows it), then the text's own align/vcenter
@@ -923,9 +933,7 @@ inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
 /// for screen-space text instead of TextRenderer::ResolvedScreenPos so parented
 /// labels track their container.
 inline Vec2 UITextDrawOrigin(GameObject* go, const TextRenderer* tr, float screenW, float screenH) {
-    Vec2 box = UIResolveOrigin(go, screenW, screenH);          // parent-relative box top-left
-    Vec2 alignOff = tr->ResolvedScreenPos(screenW, screenH) - tr->BoxTopLeft(screenW, screenH);
-    return box + alignOff;
+    return UIResolveOrigin(go, screenW, screenH) + UITextAlignOffset(tr, screenW, screenH);   // box top-left + align
 }
 
 /// Whether a point (screen pixels) falls inside a widget's scaled rect.

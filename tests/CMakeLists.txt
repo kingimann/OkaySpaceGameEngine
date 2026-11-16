@@ -3416,3 +3416,9 @@ add_test(NAME own_reader_cmake_defaults
 add_executable(test_ui_nameplate_bound test_ui_nameplate_bound.cpp)
 target_link_libraries(test_ui_nameplate_bound PRIVATE okay::engine)
 add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)
+
+# The nameplate's level badge draws its text in the middle of the pill, in world space and on a Canvas, and a long
+# bound level stays inside the pill (drawn with the real UI pass on a small CPU painter; OKAY_SHOT_DIR saves pictures).
+add_executable(test_badge_text_centre test_badge_text_centre.cpp)
+target_link_libraries(test_badge_text_centre PRIVATE okay::engine)
+add_test(NAME badge_text_centre COMMAND test_badge_text_centre)

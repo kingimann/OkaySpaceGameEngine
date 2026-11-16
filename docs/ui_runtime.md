@@ -216,6 +216,19 @@ level and health; none of the text was typed into the plates.
 *Linux build of this change, headless (Xvfb), software rendering. The scene was written by hand for the picture (two
 objects with Stats, a cube body and a nameplate child each, with the same objects and bindings the menu item makes); the Game camera was
 placed by the editor's screenshot hook. Not yet tried on Windows.*
+
+**Fixed: the level text sat in the top-left corner of its pill** (as in the two pictures above). In-world UI text now
+keeps its own alignment (left / centre / right, vertical centring), like screen UI text, and in-world panels and
+progress bars now scale with the camera distance like the text does, so the card, the pill and the bar keep their shape
+up close and far away. Test: `badge_text_centre` (draws the real template with the UI pass and measures the pixels: the
+text's centre within 2 px of the pill's, and inside it, for "Lv 4" and "Lv 120", at 1.3 and 0.85 screen px per design
+px, and on a Canvas; before the fix it was 4.5 to 17 px left and 3 to 6 px up). How to try it: as above, then in Play
+move the camera toward the Goblin and away: "Lv 4" stays in the middle of its pill and the pill stays on the card.
+
+![Before and after: the level text moves from the corner of the pill to its middle, and the pill and bar now scale with the card](images/ui_nameplate/level_badge_before_after.png)
+
+*Drawn by the test with the engine's UI pass on a small CPU painter (OKAY_SHOT_DIR), shown at 2x; not a Play window.
+Not yet tried on Windows.*
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
 
@@ -235,5 +248,5 @@ once; with no project open it stays an unsaved scene.
 | UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
 | UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
-| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's) | yes, with Hit / Heal buttons |
+| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's), `badge_text_centre` (the level text is centred in its pill, in the world at two distances and on a Canvas) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |

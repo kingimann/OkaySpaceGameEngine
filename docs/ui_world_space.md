@@ -53,3 +53,8 @@ Notes / limits:
   is approximate.
 - World-space canvases preview in the **Game view**; the editor **Scene view**
   shows world-UI *labels* but not full world canvases (use Play / Game view).
+- Size with distance: panels, progress bars, text, buttons and tabs scale with the
+  camera distance (text keeps its alignment in its box). Images, sliders, toggles,
+  dropdowns, input fields, scroll views, radial progress, steppers, ratings and
+  keybind fields still draw at their design size in the world (their place moves
+  and scales, their size does not): not done yet.

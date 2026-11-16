@@ -6,7 +6,8 @@
 //     of Euler, LocalMatrix and its short path LocalSimple) against the plain 4x4 products;
 //   - curve evaluation that remembers its last key segment, with flags and slopes per attribute set, against the plain
 //     search over one copy per key (the storage before);
-//   - the ASCII number fast path against FastDecimal (test_fbx_exact_numbers.cpp).
+//   - the ASCII number fast path against FastDecimal and strtod, and ASCII arrays kept as int32 / float32 against the
+//     parsed doubles (test_fbx_exact_numbers.cpp).
 #include "test_framework.hpp"
 #include "../engine/src/Render/FbxScene.cpp"
 
@@ -14,6 +15,7 @@
 #include <random>
 
 long FbxExactNumberChecks(long& checks);   // test_fbx_exact_numbers.cpp
+long FbxExactArrayChecks(long& checks, long& packed);   // test_fbx_exact_numbers.cpp
 
 using namespace okay::fbx;
 
@@ -164,6 +166,12 @@ int main() {
     long nchecks = 0;
     const long nbad = FbxExactNumberChecks(nchecks);
     CHECK(nchecks == 400000); CHECK(nbad == 0);
+
+    RUN_SUITE("fbx exact: ASCII arrays stored as int32 / float32 read back as the parsed doubles");
+    long achecks = 0, apacked = 0;
+    const long abad = FbxExactArrayChecks(achecks, apacked);
+    std::printf("  %ld values in 3000 arrays (%ld stored as int32 or float32): %ld differ\n", achecks, apacked, abad);
+    CHECK(abad == 0); CHECK(achecks > 50000); CHECK(apacked > 800);
 
     std::printf("  matrices %ld differ, translate %ld, scale %ld, euler %ld, local %ld, simple %ld of %ld; curves %ld of %ld; numbers %ld of %ld\n",
                 mul, tr, scl, eul, loc, simple, simpleTried, cbad, cn, nbad, nchecks);

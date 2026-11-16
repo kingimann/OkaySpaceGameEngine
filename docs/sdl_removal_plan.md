@@ -68,6 +68,17 @@ sent in chat; download an editor version with progress and cancel; start a voice
 (no hang, no crash). Watch for freezes: that is how a lock mistake shows.
 **Try it (rule 4a).** Invisible by design; the owner uses the launcher as usual and reports hangs.
 
+### Step 2a. Launcher stage A: WAV reading and window calls (branch `claude2/launcher-own-wav-window`, on top of step 2)
+
+**Status (2026-11-16): moved, not yet merged; Windows not run.** Voice messages are read by our own WAV decoder
+(`launcher/VoiceClipLoad.hpp` over `okay::wav`; no `SDL_LoadWAV`, `SDL_AudioSpec` or `SDL_AUDIO_*` left in the launcher). The main and
+chat windows' show, hide, raise, restore, minimised / hidden / focused checks, size, position, id and minimum size go through a
+non-owning `okay::platform::WrapSdl2Window` view (taken, code only, from `claude/sdl-inventory`, which was not merged). The launcher's own
+SDL calls went from 130 to 81 (refs 458 to 363). Tested by `test_launcher_wav_window` (SDL vs our reader on every WAV in the repository and
+edge files; the window view against SDL's answers under the dummy video driver). Left for later stages: the renderer, textures and
+surfaces, the ImGui backends, the event pump, display bounds, `SDL_FlashWindow` and `SDL_Quit`. Try it: `docs/try_it.md`, "Launcher:
+voice clips and window calls on our own code".
+
 ### Step 3. Move the call sites the seam already covers (the "HAVE" rows)
 
 **What.** About 290 call sites in the launcher and editor are plain SDL calls for something `okay::platform` has a function for: window size, position, show,

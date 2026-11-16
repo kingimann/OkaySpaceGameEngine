@@ -1111,6 +1111,43 @@ If any step hangs or crashes where the last release did not, that is this change
 adds, join, detach, names; also clean under ThreadSanitizer), the launcher built natively, and `launcher/main.cpp` passed a
 MinGW (Windows) syntax check. Not run on Windows: the steps above are unverified until you run them.
 
+## Launcher: voice clips and window calls on our own code (branch `claude2/launcher-own-wav-window`, not merged or released yet)
+
+What changed (SDL removal, stage A):
+
+* **Voice messages.** The launcher read a voice message's WAV file with SDL (`SDL_LoadWAV`, or our decoder only with
+  `OKAY_OWN_WAV=1`). It now always reads it with our own WAV decoder (`launcher/VoiceClipLoad.hpp` over `okay::wav`).
+  `OKAY_OWN_WAV` no longer changes anything in the launcher. Playback itself is unchanged.
+* **Window calls.** Showing, raising, restoring, the minimised / hidden / focused checks, size, position, window id and
+  minimum size of the launcher window and the separate chat window now go through `okay::platform` (a
+  `WrapSdl2Window` view over the same SDL window). The window is still made by SDL, so nothing should look different.
+
+Steps:
+
+1. Start `OkaySpace.exe`. The splash shows, then the launcher. Try to make the window smaller than about 720 x 480: it
+   stops there, as before.
+2. Sign in. Open a chat, record a voice message (hold the mic button), send it. Press play on it: you hear it, the
+   waveform bars show its loudness (not even bars), the time counts, and **1.5x / 2x** speed it up without a higher
+   voice. Play a voice message someone else sent, too.
+3. Set chat to open in its own window (chat settings), open it. It cannot be made smaller than about 520 x 380. Close
+   and reopen the launcher: the chat window comes back where you left it.
+4. Minimise the launcher with the chat window open: the chat window keeps working. Restore the launcher from the
+   taskbar.
+5. In a game, press **Shift+Tab** (Invite friends): the launcher comes to the front, restored if it was minimised.
+6. With the launcher minimised or in the background, let an update hint or an incoming call arrive: the taskbar
+   button flashes.
+7. Close the launcher and start it again: it opens at the size you left it.
+
+If a voice message does not play, plays as noise, or a window step behaves differently from the last release, that
+is this change: report the step.
+
+**Status.** Tested on Linux only: `test_launcher_wav_window` (every WAV in the repository and five made-up ones read by
+SDL and by our reader give the same format and length, and the same samples, exactly for 16-bit and float, within 2 steps
+for 8/24-bit, A-law, mu-law and MS ADPCM, within 32 for IMA ADPCM; every truncation of a file fails or reads less; the
+window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
+dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
+syntax check. Not run on Windows: the steps above are unverified until you run them.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -2,6 +2,8 @@
 // or leave a non-finite vertex or a triangle that points outside the vertex list. Same seeds every run.
 #include "test_framework.hpp"
 #include "okay/Modeling/Modifiers.hpp"
+#include "okay/Modeling/Curve.hpp"
+#include "okay/Modeling/Remesh.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
 #include "okay/Optimize/MeshSimplify.hpp"
@@ -10,6 +12,7 @@
 #include <functional>
 #include <random>
 #include <set>
+#include <string>
 
 using namespace okay;
 using namespace okay::modeling;
@@ -76,6 +79,56 @@ const char* Sane(const Mesh& m) {
     for (const Vec2& u : m.uvs) if (!std::isfinite(u.x) || !std::isfinite(u.y)) return "non-finite uv";
     return nullptr;
 }
+Mesh RichMesh() {
+    Mesh m = RandomMesh();
+    const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
+    if (nv == 0 || nt == 0) return m;
+    m.uvs.clear(); m.vertexColors.clear(); m.triSlot.clear(); m.triColors.clear(); m.polyFace.clear(); m.cornerUVs.clear(); m.normals.clear();   // primitives bring their own
+    for (int i = 0; i < nv; ++i) m.uvs.push_back(Vec2{F(0, 1), F(0, 1)});
+    for (int i = 0; i < nv; ++i) m.vertexColors.push_back(Color{F(0, 1), F(0, 1), F(0, 1), 1});
+    for (int t = 0; t < nt; ++t) { m.triSlot.push_back(R(3)); m.triColors.push_back(Color{F(0, 1), 0.5f, 0.5f, 1}); m.polyFace.push_back(t); }
+    m.slotColors = {Color{1, 0, 0, 1}, Color{0, 1, 0, 1}, Color{0, 0, 1, 1}};
+    m.CaptureCornerUVs();                                                       // per-corner UVs and a few seams ride along too
+    for (int i = 0; i < 3 && nt > 0; ++i) m.seams.push_back({m.triangles[(size_t)(R(nt) * 3)], m.triangles[(size_t)(R(nt) * 3 + 1)]});
+    return m;
+}
+// Stricter than Sane: every optional list is empty or exactly in step with the vertices / triangles it describes.
+const char* Strict(const Mesh& m) {
+    if (const char* w = Sane(m)) return w;
+    const std::size_t nv = m.vertices.size(), nt = m.triangles.size() / 3;
+    if (!m.uvs.empty() && m.uvs.size() != nv) return "uvs out of step";
+    if (!m.vertexColors.empty() && m.vertexColors.size() != nv) return "vertex colours out of step";
+    if (!m.normals.empty() && m.normals.size() != nv) return "normals out of step";
+    if (!m.triColors.empty() && m.triColors.size() != nt) return "face colours out of step";
+    if (!m.triSlot.empty() && m.triSlot.size() != nt) return "slots out of step";
+    if (!m.polyFace.empty() && m.polyFace.size() != nt) return "polygon ids out of step";
+    if (!m.cornerUVs.empty() && m.cornerUVs.size() != m.triangles.size()) return "corner uvs out of step";
+    for (int sl : m.triSlot) if (sl < 0) return "negative slot";
+    for (const EdgeCrease& c : m.creases) if (c.a < 0 || c.b < 0 || c.a >= (int)nv || c.b >= (int)nv) return "crease index out of range";
+    for (const EdgeCrease& c : m.bevelWeights) if (c.a < 0 || c.b < 0 || c.a >= (int)nv || c.b >= (int)nv) return "bevel weight index out of range";
+    for (const auto& sm : m.seams) if (sm.first < 0 || sm.second < 0 || sm.first >= (int)nv || sm.second >= (int)nv) return "seam index out of range";
+    return nullptr;
+}
+PolyMesh RichPoly(const Mesh& base) {
+    PolyMesh pm = PolyMesh::FromMesh(base);
+    for (PolyFace& f : pm.faces) {
+        f.material = 2; f.hasColor = true; f.color = Color{0.2f, 0.4f, 0.6f, 1};
+        f.uvs.clear(); for (int i = 0; i < f.Size(); ++i) f.uvs.push_back(Vec2{F(0, 1), F(0, 1)});
+    }
+    return pm;
+}
+// Every face's per-corner UVs are empty or one per corner and finite, the slot is not negative, and (when `uniform`) every
+// face still carries the slot and colour all of them started with: a new face takes them from the face it came from.
+const char* PolyAttrs(const PolyMesh& p, bool uniform) {
+    for (const PolyFace& f : p.faces) {
+        if (!f.uvs.empty() && (int)f.uvs.size() != f.Size()) return "corner UVs out of step";
+        for (const Vec2& u : f.uvs) if (!std::isfinite(u.x) || !std::isfinite(u.y)) return "non-finite corner UV";
+        if (f.material < 0) return "negative slot";
+        if (uniform && f.material != 2) return "a face lost its slot";
+        if (uniform && (!f.hasColor || f.color.r != 0.2f)) return "a face lost its colour";
+    }
+    return nullptr;
+}
 const char* SanePoly(const PolyMesh& p) {
     for (const Vec3& v : p.verts) if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) return "non-finite vertex";
     for (const PolyFace& f : p.faces) for (int v : f.verts) if (v < 0 || v >= (int)p.verts.size()) return "face index out of range";
@@ -89,6 +142,11 @@ void Op(const char* name, int rounds, const std::function<const char*()>& body) 
         if (why) { ++bad; if (!first) first = why; }
     }
     ++okaytest::g_checks;
+    // Known gaps: these operators still leave a stale optional list behind (the renderers ignore a list whose size
+    // does not match, so the attribute is lost, not corrupted). Listed in docs/UNFINISHED.md; they are printed, not failed.
+    static const std::set<std::string> kKnownGaps = {};   // empty: every operator must keep its lists in step
+
+    if (bad && kKnownGaps.count(name)) { std::cout << "  GAP: " << name << ": " << bad << " of " << rounds << " runs leave a list out of step (" << first << ")\n"; return; }
     if (bad) { ++okaytest::g_failures; ++g_failedOps; std::cerr << "  FAIL: " << name << ": " << bad << " of " << rounds << " runs broke the mesh (" << first << ")\n"; }
 }
 } // namespace
@@ -133,6 +191,32 @@ int main() {
     MESHOP("Mirror", m.Mirror(R(5) - 1, R(2) == 0));
     MESHOP("Bisect", m.Bisect(Vec3{0, a, 0}, Vec3{R(2) ? 1.0f : 0.0f, 1, 0}, R(2) == 0, R(2) == 0));
     MESHOP("Displace", m.Displace(a, a, R(100)));
+    MESHOP("BevelWeights+Weld", { for (const auto& ed : e) m.SetBevelWeight(ed.first, ed.second, a); m.WeldVertices(F(0.0f, 0.5f)); });
+    Op("Quad remesh + TrisToQuads", N / 4 + 1, []() -> const char* {
+        Mesh m = RandomMesh(); okay::modeling::QuadRemeshOptions o; o.targetQuads = R(60) - 5; o.allQuads = R(2) == 0; o.relaxIterations = R(8) - 1; o.snapToSource = R(2) == 0;
+        okay::modeling::QuadRemeshReport rep; const PolyMesh p = okay::modeling::QuadRemesh(m, o, &rep);
+        if (const char* w = SanePoly(p)) return w;
+        int l = 0; const PolyMesh q = okay::modeling::TrisToQuads(m, RandomAmount(), RandomAmount(), &l);
+        return SanePoly(q);
+    });
+    Op("Curve builders", N, []() -> const char* {
+        std::vector<Vec3> pts; for (int i = 0, n = R(7); i < n; ++i) pts.push_back(R(8) == 0 ? Vec3{RandomAmount(), 0, 0} : Vec3{F(-3, 3), F(-3, 3), F(-3, 3)});
+        if (R(4) == 0 && !pts.empty()) pts.push_back(pts[0]);
+        const auto c = okay::modeling::CurveThrough(pts, R(2) == 0, RandomAmount());
+        std::vector<Vec2> prof; for (int i = 0, n = R(6); i < n; ++i) prof.push_back({F(-1, 1), F(-1, 1)});
+        const Mesh a = okay::modeling::CurvePipe(c, RandomAmount(), R(20) - 2, R(12) - 2, R(2) == 0);
+        const Mesh b = okay::modeling::CurveSweep(c, prof, R(2) == 0, R(12) - 2, RandomAmount(), R(2) == 0);
+        const Mesh r = okay::modeling::CurveRibbon(c, RandomAmount(), R(12) - 2);
+        for (const Mesh* m : {&a, &b, &r}) if (const char* w = Sane(*m)) return w;
+        return nullptr;
+    });
+    Op("Bevel modifier with weights", N, []() -> const char* {
+        Mesh m = RandomMesh(); const auto e = RandomEdges(m);
+        for (const auto& ed : e) m.SetBevelWeight(ed.first, ed.second, RandomAmount());
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Bevel); mod.width = RandomAmount(); mod.segments = R(6) - 1; mod.useBevelWeights = R(3) != 0;
+        Mesh out; std::string err; ApplyModifier(m, mod, ModifierContext(), out, &err);
+        return Sane(out);
+    });
     MESHOP("HideReveal", { m.HideTriangles(t); m.RevealHidden(); });
     MESHOP("Isolate", { m.IsolateTriangles(t); m.RevealHidden(); });
     MESHOP("Combine", m.Combine(RandomMesh()));
@@ -156,6 +240,23 @@ int main() {
     POLYOP("CompactVerts", CompactVerts(pm));
     POLYOP("Creased CatmullClark", { for (const auto& ed : pm.Edges()) if (R(2)) pm.SetCrease(ed.a, ed.b, F(0.0f, 3.0f)); pm = CatmullClark(pm, R(3)); });
     POLYOP("KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
+    RUN_SUITE("fuzz: polygon tools keep slots, colours and corner UVs");
+#define RPOLYOP(name, call) Op(name, N, [&]() -> const char* { Mesh base = RandomMesh(); PolyMesh pm = RichPoly(base); const bool had = !pm.faces.empty(); const auto e = RandomEdges(base); EdgeList el(e.begin(), e.end()); const auto t = RandomTris(base); const auto v = RandomVerts(base); const float a = RandomAmount(); (void)el; (void)t; (void)v; (void)a; std::string err; (void)err; call; if (const char* bad = SanePoly(pm)) return bad; return PolyAttrs(pm, had); })
+    RPOLYOP("rich LoopCut", LoopCut(pm, R(8), R(8), 1 + R(4), a));
+    RPOLYOP("rich BevelEdges", BevelEdges(pm, el, a, &err, R(6) - 1, a));
+    RPOLYOP("rich DissolveEdges", DissolveEdges(pm, el, R(2) == 0));
+    RPOLYOP("rich DissolveVerts", DissolveVerts(pm, v));
+    RPOLYOP("rich SplitEdge", SplitEdge(pm, R(8), R(8), a));
+    RPOLYOP("rich SplitFace", SplitFace(pm, R(8), R(4), R(4)));
+    RPOLYOP("rich MergeVerts", MergeVerts(pm, v, Vec3{a, 0, 0}));
+    RPOLYOP("rich BridgeEdgeLoops", BridgeEdgeLoops(pm, el, &err));
+    RPOLYOP("rich FillFaces", FillFaces(pm, el, &err));
+    RPOLYOP("rich GridFill", GridFill(pm, el, R(8) - 1, &err));
+    RPOLYOP("rich EdgeSlide", EdgeSlide(pm, el, a));
+    RPOLYOP("rich CatmullClark", pm = CatmullClark(pm, R(3)));
+    RPOLYOP("rich SpinEdges", SpinEdges(pm, el, Vec3{a, 0, 0}, Vec3{0, 1, 0}, a * 180.0f, R(40) - 2, &err));
+    RPOLYOP("rich ExtrudeAlongPath", ExtrudeAlongPath(pm, t, std::vector<Vec3>{Vec3{0, 0, 0}, Vec3{a, 1, 0}, Vec3{0, 2, a}}, &err));
+    RPOLYOP("rich KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
     RUN_SUITE("fuzz: selection, recipes, modifiers");
     MESHOP("Shrinkwrap", Shrinkwrap(m, v, RandomMesh(), R(2) ? WrapMode::Nearest : WrapMode::Project, a, a, Vec3{a, 1, 0}));
     MESHOP("SetCrease", { for (const auto& ed : e) m.SetCrease(ed.first, ed.second, a); });
@@ -180,6 +281,43 @@ int main() {
             Mesh out; std::string err;
             ApplyModifier(m, mod, ModifierContext(), out, &err);
             return Sane(out);
+        });
+    }
+    RUN_SUITE("fuzz: attributes stay in step (UVs, colours, slots, polygons) after every operator");
+#define RICHOP(name, call) Op(name, N, [&]() -> const char* { Mesh m = RichMesh(); const auto t = RandomTris(m); const auto v = RandomVerts(m); const auto e = RandomEdges(m); const float a = RandomAmount(); (void)t; (void)v; (void)e; (void)a; call; return Strict(m); })
+    RICHOP("rich ExtrudeFaces", m.ExtrudeFaces(t, a));
+    RICHOP("rich InsetFaces", m.InsetFaces(t, a));
+    RICHOP("rich SubdivideFaces", m.SubdivideFaces(t));
+    RICHOP("rich PokeFaces", m.PokeFaces(t, a));
+    RICHOP("rich DeleteFaces", m.DeleteFaces(t));
+    RICHOP("rich DuplicateFaces", m.DuplicateFaces(t));
+    RICHOP("rich ExtrudeFacesIndividual", m.ExtrudeFacesIndividual(t, a));
+    RICHOP("rich InsetFacesIndividual", m.InsetFacesIndividual(t, a));
+    RICHOP("rich FlipNormals", m.FlipNormals());
+    RICHOP("rich OrientFacesOutward", m.OrientFacesOutward());
+    RICHOP("rich WeldVertices", m.WeldVertices(a));
+    RICHOP("rich FillHoles", m.FillHoles());
+    RICHOP("rich Repair", m.Repair(a, true));
+    RICHOP("rich Decimate", m.Decimate(a));
+    RICHOP("rich CollapseEdges", m.CollapseEdges(e));
+    RICHOP("rich SplitEdges", m.SplitEdges(e));
+    RICHOP("rich Subdivide", m.Subdivide());
+    RICHOP("rich Solidify", m.Solidify(a));
+    RICHOP("rich Mirror", m.Mirror(R(3), R(2) == 0));
+    RICHOP("rich Bisect", m.Bisect(Vec3{0, a, 0}, Vec3{R(2) ? 1.0f : 0.0f, 1, 0}, R(2) == 0, R(2) == 0));
+    RICHOP("rich Combine", m.Combine(RichMesh()));
+    RICHOP("rich HideReveal", { m.HideTriangles(t); m.RevealHidden(); });
+    RICHOP("rich Isolate", { m.IsolateTriangles(t); m.RevealHidden(); });
+    RICHOP("rich SeparateFaces", { Mesh o = m.SeparateFaces(t); if (const char* w = Strict(o)) return w; });
+    RICHOP("rich BevelVertices", m.BevelVertices(v, a));
+    RICHOP("rich Array", m.Array(R(6), Vec3{a, 0, 0}));
+    for (int ty = 0; ty < (int)MeshModifier::Type::Count; ++ty) {
+        if ((MeshModifier::Type)ty == MeshModifier::Type::Boolean) continue;
+        Op((std::string("rich modifier ") + MeshModifier::TypeName((MeshModifier::Type)ty)).c_str(), N, [&]() -> const char* {
+            Mesh m = RichMesh(); MeshModifier mod = MeshModifier::Make((MeshModifier::Type)ty);
+            mod.count = R(6); mod.levels = R(3); mod.thickness = F(-1, 1); mod.width = F(0, 0.3f); mod.segments = R(4); mod.cellSize = F(0.05f, 1.0f);
+            Mesh out; std::string err; ApplyModifier(m, mod, ModifierContext(), out, &err);
+            return Strict(out);
         });
     }
     std::cout << g_failedOps << " operators broke the mesh\n";

@@ -983,6 +983,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Bevel weights (vertex pairs + weight), optional record.
+        if (!mr->mesh.bevelWeights.empty() && !generated) {
+            out << "  meshbevelw " << mr->mesh.bevelWeights.size();
+            for (const EdgeCrease& c : mr->mesh.bevelWeights) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
         // Subdivision creases (vertex pairs + sharpness), optional record.
         if (!mr->mesh.creases.empty() && !generated) {
             out << "  meshcreases " << mr->mesh.creases.size();
@@ -1087,7 +1093,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("lv", m.levels).b("smooth", m.smoothShading)("th", m.thickness)
              ("w", m.width)("seg", m.segments)("ang", m.angle)
              .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
-             ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+             ("str", m.strength)("freq", m.frequency)("seed", m.seed).b("bw", m.useBevelWeights);
             if (m.type == MeshModifier::Type::CurveArray) {      // the curve: "x,y,z;x,y,z;..."
                 std::ostringstream pt;
                 for (std::size_t i = 0; i < m.path.size(); ++i)
@@ -3991,6 +3997,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
+        out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
+            << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
     if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
@@ -4379,6 +4388,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
+        } else if (token == "refimage") {
+            modeling::RefImageRecord r; int fl = 0, vis = 1;
+            r.path = ReadQuoted(in);
+            in >> r.plane >> r.centre.x >> r.centre.y >> r.centre.z >> r.width >> r.opacity >> fl >> vis;
+            if (clear && in && r.plane >= 0 && r.plane <= 2 && std::isfinite(r.width + r.opacity + r.centre.x + r.centre.y + r.centre.z)) {
+                r.flipX = fl != 0; r.visible = vis != 0; scene.refImages.push_back(r);
+            }
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;
@@ -4734,6 +4750,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sl = 0; in >> sl;
                         mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
                     }
+                } else if (field == "meshbevelw") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int bn = 0; in >> bn;
+                    if (!in || bn < 0 || !countOk(bn, 6)) return bad("meshbevelw: bad count");
+                    mr->mesh.bevelWeights.clear();
+                    for (int i = 0; i < bn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) { c.w = std::min(c.w, 1.0f); mr->mesh.bevelWeights.push_back(c); } }
                 } else if (field == "meshcreases") {
                     auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
@@ -5327,7 +5350,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.i("lv", m.levels); k.b("smooth", m.smoothShading); k.f("th", m.thickness);
                     k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
                     k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
-                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed); k.b("bw", m.useBevelWeights);
                     if (m.type == MeshModifier::Type::CurveArray) {
                         k.b("align", m.align);
                         std::string pts; k.str("path", pts);

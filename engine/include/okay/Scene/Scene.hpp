@@ -9,6 +9,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Bounds.hpp"
 #include "okay/Scene/SceneValidation.hpp"
+#include "okay/Modeling/Reference.hpp"
 #include <algorithm>
 #include <memory>
 #include <functional>
@@ -504,6 +505,9 @@ public:
         WeatherSettings weather;
     };
     RenderSettings renderSettings;
+
+    /// Reference pictures (blueprint planes) the editor draws in the Scene view to trace a model from; saved as `refimage` records.
+    std::vector<modeling::RefImageRecord> refImages;
 
     /// Default TTF/OTF font for this scene's UI widgets (buttons, dropdowns, tabs,
     /// toggles, sliders, input fields, tooltips, ...). Empty = the built-in 8x8

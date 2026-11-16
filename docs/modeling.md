@@ -435,6 +435,16 @@ triangles without carrying slots; the colours they leave stay, and the faces
 fall back to no slot. Tools that go through the polygon mesh (loop cut,
 bevel, dissolve, bridge, subdivision, mirror) keep them.
 
+## Reference images, curves and bevel weights
+
+- **Reference images (blueprints)**: Import page, "Reference images". Pick a picture, a plane (front, side, top), size and flip; it draws as a textured quad in the Scene view. Session-only, not saved in the scene. Written from plain plane geometry (`Modeling/Reference.hpp`).
+- **Bezier curves**: Generate page, "Bezier curve". Click points, then make a Pipe, Ribbon or Swept profile mesh. Smooth Catmull-Rom handles, parallel-transport frames so the sweep does not twist (`Modeling/Curve.hpp`).
+- **Bevel weights**: select edges, Ctrl+K "Set Bevel Weight on Selected Edges"; tick "Use edge weights" on a Bevel modifier and only weighted edges round, width times weight. Stored in `.okaymesh` (`bevelw`) and scenes (`meshbevelw`).
+- **OpenGL, Direct3D 11 and Direct3D 12 per-slot drawing**: triangles are grouped by slot and drawn as one range per slot with its picture. Compile-checked (Direct3D with MinGW), never run on a GPU.
+- **Edge colours**: in Edit Mesh creased edges are pink and bevel-weighted edges green.
+- **Quad Remesh** (`Modeling/Remesh.hpp`, written from the idea of pairing triangles into quads plus subdivide-and-snap): simplify to about half the target in triangles, pair neighbouring triangles into the best-shaped quads, optionally split every face into quads, relax, and snap back onto the original surface. Limits: no flow lines (eyes, fingers), poles where triangles did not pair, sharp edges soften a little, slots/colours/UVs are not kept.
+- **Reference images are saved in the scene** (`refimage` records: path, plane, centre, width, opacity, flip, visible).
+
 ## Import
 
 Load an `.obj` or `.okaymesh` file into the renderer by path (the **Mesh File** field), and one-click **Add Physics**

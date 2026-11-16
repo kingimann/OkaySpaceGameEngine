@@ -465,6 +465,13 @@ const Font* g_font = &kFontDefault;
 inline int  fW() { return g_font->width; }
 inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
+// The glyph for the character at *p, and *p moved past it: an ASCII byte is looked up in the size's table right here (text is
+// nearly all ASCII), anything else is decoded and searched.
+inline const fontatlas::Glyph* asciiGlyph(const fontatlas::Size& z, const char*& p) {
+    const unsigned char b = (unsigned char)*p;
+    if (b < 0x80) { ++p; return z.ascii[b] > 0 ? &z.glyphs[z.ascii[b] - 1] : nullptr; }
+    return z.Find(fontatlas::NextCodepoint(&p));
+}
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
 inline float fMeasure(const char* s) {
@@ -473,8 +480,7 @@ inline float fMeasure(const char* s) {
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
         float w = 0.0f;
         for (const char* p = s; *p;) {
-            const unsigned cp = fontatlas::NextCodepoint(&p);
-            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            const fontatlas::Glyph* g = asciiGlyph(z, p); if (!g) g = z.Find('?');
             if (g) w += g->advance;
         }
         return w * 8.0f / z.px;
@@ -676,30 +682,65 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     I[ni++] = base + 0; I[ni++] = base + 1; I[ni++] = base + 2;
 }
 
-// A filled circle as a triangle fan of `segments` wedges.
+// The rim of a unit circle cut into n wedges: (cos, sin) of step * i for i = 1..n, worked out once per n (the same float
+// angles fillCircle always used, so the geometry is unchanged). n is 3..128.
+const float* unitCircle(int n) {
+    static float* table[129] = {};
+    if (!table[n]) {
+        float* t = new float[(std::size_t)n * 2];
+        const float step = 6.2831853f / n;
+        for (int i = 1; i <= n; ++i) { const float a = step * i; t[(i - 1) * 2] = SDL_cosf(a); t[(i - 1) * 2 + 1] = SDL_sinf(a); }
+        table[n] = t;
+    }
+    return table[n];
+}
+// A filled circle as a triangle fan of `segments` wedges that share the centre and rim vertices (the same triangles as one
+// tri() per wedge, with a third of the vertices).
 void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
     if (segments < 3) segments = 3;
-    const float step = 6.2831853f / segments;
-    float px = cx + radius, py = cy;
-    for (int i = 1; i <= segments; ++i) {
-        float a = step * i;
-        float nx = cx + radius * SDL_cosf(a), ny = cy + radius * SDL_sinf(a);
-        tri(cx, cy, px, py, nx, ny, c);
-        px = nx; py = ny;
-    }
+    if (segments > 128) segments = 128;
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
+    if (nv + segments + 2 > kMaxVerts || ni + segments * 3 > kMaxIdx) { noteDrop(); return; }
+    const float* u = unitCircle(segments);
+    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    const int base = nv;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    v.position.x = cx + radius; v.position.y = cy; V[nv++] = v;   // angle 0
+    for (int i = 0; i < segments; ++i) { v.position.x = cx + radius * u[i * 2]; v.position.y = cy + radius * u[i * 2 + 1]; V[nv++] = v; }
+    for (int i = 1; i <= segments; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
-// A filled circular arc/fan from angle a0 to a1 (radians), centered at (cx,cy).
-void arcFan(float cx, float cy, float r, float a0, float a1, const unsigned char c[4], int seg = 5) {
-    if (seg < 1) seg = 1;
-    const float step = (a1 - a0) / seg;
-    float px = cx + r * SDL_cosf(a0), py = cy + r * SDL_sinf(a0);
-    for (int i = 1; i <= seg; ++i) {
-        float a = a0 + step * i;
-        float nx = cx + r * SDL_cosf(a), ny = cy + r * SDL_sinf(a);
-        tri(cx, cy, px, py, nx, ny, c);
-        px = nx; py = ny;
+// The four quarter-circle corners of rrect, 5 wedges each: the unit-circle points are worked out once (the same float angles
+// arcFan would use, so the geometry is unchanged) instead of 12 sines and cosines per corner on every call.
+struct CornerTable {
+    float c[4][6], s[4][6];
+    CornerTable() {
+        const float PI = 3.14159265f;
+        const float a0[4] = {PI, 1.5f * PI, 0.0f, 0.5f * PI}, a1[4] = {1.5f * PI, 2.0f * PI, 0.5f * PI, PI};
+        for (int q = 0; q < 4; ++q) {
+            const float step = (a1[q] - a0[q]) / 5;
+            for (int i = 0; i <= 5; ++i) { const float a = i == 0 ? a0[q] : a0[q] + step * i; c[q][i] = SDL_cosf(a); s[q][i] = SDL_sinf(a); }
+        }
     }
+};
+// One corner as a fan that shares its centre and rim points (7 vertices, 5 triangles): the same triangles arcFan emits.
+void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
+    static const CornerTable T;
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
+    if (nv + 7 > kMaxVerts || ni + 15 > kMaxIdx) { noteDrop(); return; }
+    SDL_Vertex v; v.color = toColor(c); v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    const int base = nv;
+    v.position.x = cx; v.position.y = cy; V[nv++] = v;
+    for (int i = 0; i <= 5; ++i) { v.position.x = cx + r * T.c[q][i]; v.position.y = cy + r * T.s[q][i]; V[nv++] = v; }
+    for (int i = 1; i <= 5; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
 // A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
@@ -708,14 +749,13 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
     if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
     if (rad > w * 0.5f) rad = w * 0.5f;
     if (rad > h * 0.5f) rad = h * 0.5f;
-    const float PI = 3.14159265f;
     quad(x, y + rad, w, h - 2 * rad, c);            // middle band (full width)
     quad(x + rad, y, w - 2 * rad, rad, c);          // top strip
     quad(x + rad, y + h - rad, w - 2 * rad, rad, c);// bottom strip
-    arcFan(x + rad,     y + rad,     rad, PI,          1.5f * PI, c);  // top-left
-    arcFan(x + w - rad, y + rad,     rad, 1.5f * PI,   2.0f * PI, c);  // top-right
-    arcFan(x + w - rad, y + h - rad, rad, 0.0f,        0.5f * PI, c);  // bottom-right
-    arcFan(x + rad,     y + h - rad, rad, 0.5f * PI,   PI,        c);  // bottom-left
+    cornerFan(x + rad,     y + rad,     rad, 0, c);  // top-left
+    cornerFan(x + w - rad, y + rad,     rad, 1, c);  // top-right
+    cornerFan(x + w - rad, y + h - rad, rad, 2, c);  // bottom-right
+    cornerFan(x + rad,     y + h - rad, rad, 3, c);  // bottom-left
 }
 inline float rnd() { return g_theme.rounding; }
 
@@ -781,8 +821,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         int&        ni = g_toOverlay ? g_oni : g_ni;
         const SDL_Color sc = toColor(c);
         for (const char* p = str; *p;) {
-            const unsigned cp = fontatlas::NextCodepoint(&p);
-            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            const fontatlas::Glyph* g = asciiGlyph(z, p); if (!g) g = z.Find('?');
             if (!g) continue;
             if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
@@ -1057,6 +1096,7 @@ void BeginFrame(const Input& in) {
     g_tbl.active = false;                  // reset table layout
 }
 
+static float g_btnAlignX = 0.5f;   // StyleVar_ButtonTextAlign (x): 0 left, 0.5 centred, 1 right, inside a 12-pixel padding
 bool Button(int id, float x, float y, float w, float h, const char* label) {
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -1080,12 +1120,14 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     const float b = g_theme.borderPx;
     if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
 
-    // Centered label.
-    if (label && *label) {
+    // Centered label (what follows "##" is only part of the id).
+    const VisLabel vis(label);
+    if (vis.b[0]) {
         const float s  = g_theme.textScale;
-        const float tw = fMeasure(label) * s;
+        const float tw = fMeasure(vis.b) * s;
         const float th = fH() * s;
-        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+        const float tx = g_btnAlignX == 0.5f ? x + (w - tw) * 0.5f : x + 12.0f + std::max(0.0f, w - 24.0f - tw) * g_btnAlignX;
+        drawText(tx, y + (h - th) * 0.5f, vis.b, s, g_theme.text);
     }
     return clicked;
 }
@@ -2163,6 +2205,9 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 
 void End() {
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
+    // Forget it once the window is closed: the next BeginFrame restores a window LEFT OPEN to it, and a window that was opened inside
+    // the host's PushTextScale would otherwise hand that pushed scale to the next frame as the base (the text grew a step every frame).
+    if (g_curWin.valid) g_winBaseScale = 0.0f;
     g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
@@ -2280,7 +2325,23 @@ void SetWindowFocus(const char* title) {
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }
 
-bool BeginChild(const char* id, float w, float h, bool border) {
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar);
+bool BeginChild(const char* id, float w, float h, bool border) { return beginChildImpl(id, w, h, border, 6.0f, true); }
+
+bool BeginChild(const char* id, Vec2 size, int flags) {
+    if (!g_lay.active) return false;
+    const bool border = (flags & ChildFlags_Borders) != 0;
+    const float pad = border || (flags & ChildFlags_AlwaysUseWindowPadding) ? 6.0f : 0.0f;
+    const Vec2 avail = GetContentRegionAvail();
+    // Dear ImGui's sizes: 0 fills what is left, a negative value leaves that much; a size that cannot be used falls back to filling.
+    float w = std::isfinite(size.x) ? size.x : 0.0f, h = std::isfinite(size.y) ? size.y : 0.0f;
+    w = w > 0.0f ? w : avail.x + w; h = h > 0.0f ? h : avail.y + h;
+    if (w < 1.0f) w = std::max(avail.x, 1.0f);
+    if (h < 1.0f) h = std::max(avail.y, rowH());
+    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), border, pad, false);
+}
+
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar) {
     // Depth guard first: past the child-stack capacity the parent layout cannot
     // be saved, so the child cannot begin at all -- otherwise EndChild would pop
     // a slot that was never pushed and corrupt the parent's scroll/clip state.
@@ -2288,7 +2349,6 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     // cursor and scroll slots untouched on the skip path.
     if (!g_lay.active || g_childTop >= 8) return false;
     const int cid = hashLabel(id);
-    const float pad = 6.0f;
     const float rw = w > 0.0f ? w : availW();
     const float rh = h > 0.0f ? h : rowH() * 4.0f;
     float rx, ry; place(rw, rh, rx, ry);
@@ -2312,7 +2372,8 @@ bool BeginChild(const char* id, float w, float h, bool border) {
         c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f;
     }
     g_lay.ox = rx + pad;
-    g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
+    // The old form always leaves room for the scrollbar; the flags form only when the content overflowed last frame (Dear ImGui's way).
+    g_lay.contentW = rw - 2.0f * pad - (reserveBar || *maxSlot > 0.0f ? kScrollbarW : 0.0f);
     g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
     g_lay.cx = g_lay.ox;
@@ -2418,9 +2479,19 @@ void Separator() {
 
 namespace {
 // One line of text at the cursor in colour `col`.
+float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a frame's height (rowH)
+// StyleVar_CellPadding: the gap inside a cell, across (default 4) and above and below (default -1: none, and the row ends after the
+// last item's spacing, as it always did; 0 or more: that much above the first item and below the last one, without its spacing).
+float g_cellPadX = 4.0f, g_cellPadY = -1.0f;
+// StyleVar_FramePadding (y only, and only for the boxes of Checkbox and RadioButton): -1 = the default box (a text line + 6).
+float g_framePadY = -1.0f;
+inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col) {
-    const float h = rowH();
+    const float h = g_textRowH > 0.0f ? g_textRowH : rowH();
+    const bool after = g_lay.pendingSameLine && !g_posOverride;
+    const float prevH = g_lay.prevH;
     float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
+    if (after && prevH > h) { y += (prevH - h) * 0.5f; g_lay.prevY = y; }   // centred on the taller item before it on this line
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
@@ -2552,14 +2623,24 @@ void PopID() { popIdSeed(); }
 
 bool Button(const char* label) {
     if (!g_lay.active) return false;
-    const float w = labelW(label) + 24.0f, h = rowH();
+    const float w = labelW(VisLabel(label).b) + 24.0f, h = rowH();
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
+// A size from ImGui-style arguments: 0 or less (or not a number) in either axis keeps the automatic value.
+static float sizeOr(float v, float automatic) { return (v > 0.0f && std::isfinite(v)) ? std::min(v, 1.0e6f) : automatic; }
+
+bool Button(const char* label, Vec2 size) {
+    if (!g_lay.active) return false;
+    const float w = sizeOr(size.x, labelW(label) + 24.0f), h = sizeOr(size.y, rowH());
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
 
 bool SmallButton(const char* label) {
     if (!g_lay.active) return false;
-    const float w = labelW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
+    const float w = labelW(VisLabel(label).b) + 12.0f, h = textH() + 6.0f;   // tight padding
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -2670,6 +2751,12 @@ void PushStyleVar(StyleVar var, Vec2 value) {
         case StyleVar_ChildRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
         case StyleVar_WindowRounding: s.a = g_theme.windowRounding; g_theme.windowRounding = value.x; break;
         case StyleVar_BorderSize:    s.a = g_theme.borderPx; g_theme.borderPx = value.x; break;
+        case StyleVar_CellPadding:   s.a = g_cellPadX; s.b = g_cellPadY;
+                                     g_cellPadX = std::isfinite(value.x) ? std::min(std::max(value.x, 0.0f), 256.0f) : 4.0f;
+                                     g_cellPadY = std::isfinite(value.y) ? std::min(std::max(value.y, 0.0f), 256.0f) : -1.0f; break;
+        case StyleVar_FramePadding:  s.a = g_framePadY; g_framePadY = std::isfinite(value.y) ? std::min(std::max(value.y, 0.0f), 64.0f) : -1.0f; break;
+        case StyleVar_ButtonTextAlign: s.a = g_btnAlignX; g_btnAlignX = std::isfinite(value.x) ? std::min(1.0f, std::max(0.0f, value.x)) : 0.5f; break;
+        case StyleVar_TextRowHeight: s.a = g_textRowH; g_textRowH = (std::isfinite(value.x) && value.x > 0.0f) ? std::min(value.x, 4096.0f) : 0.0f; break;
         default: break;                              // accepted, nothing to change (see the header)
     }
     g_styleStack[g_styleTop++] = s;
@@ -2685,6 +2772,10 @@ void PopStyleVar(int count) {
             case StyleVar_ChildRounding: g_theme.rounding = s.a; break;
             case StyleVar_WindowRounding: g_theme.windowRounding = s.a; break;
             case StyleVar_BorderSize:    g_theme.borderPx = s.a; break;
+            case StyleVar_TextRowHeight: g_textRowH = s.a; break;
+            case StyleVar_ButtonTextAlign: g_btnAlignX = s.a; break;
+            case StyleVar_FramePadding:  g_framePadY = s.a; break;
+            case StyleVar_CellPadding:   g_cellPadX = s.a; g_cellPadY = s.b; break;
             default: break;
         }
     }
@@ -2692,7 +2783,7 @@ void PopStyleVar(int count) {
 
 bool Checkbox(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
-    const float h = rowH(), sz = textH() + 6.0f;
+    const float sz = boxSize(), h = std::max(rowH(), sz);
     const float w = sz + 8.0f + labelW(label);
     float x, y; place(w, h, x, y);
     return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value);
@@ -2700,7 +2791,7 @@ bool Checkbox(const char* label, bool* value) {
 
 bool RadioButton(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
-    const float h = rowH(), sz = textH() + 6.0f;
+    const float sz = boxSize(), h = std::max(rowH(), sz);
     const float w = sz + 8.0f + labelW(label);
     float x, y; place(w, h, x, y);
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
@@ -3914,8 +4005,9 @@ void EndCombo() { EndPopup(); }
 bool BeginPopupContextItem(const char* id) {
     const int pid = hashLabel(id);
     // Right-click on the last-issued widget opens the popup at the cursor.
-    if (g_lay.active && g_rPressed && !g_in.blocked &&
-        pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
+    // hit() is the test a left click on that widget passes: inside it, inside the clip (not scrolled out of its child), not
+    // under a window in front, not in a disabled block, not under an open overlay.
+    if (g_lay.active && g_rPressed && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {
         PopupSlot* p = popupSlot(pid, true);
         if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
     }
@@ -4121,13 +4213,13 @@ bool tblRowOutside(float top, float h) {
 }
 // Point the layout at the current cell (column g_tbl.index at row g_tbl.rowTop).
 void tblEnterCell() {
-    const float pad = 4.0f;
+    const float pad = g_cellPadX;
     const float cx = tblRealX(g_tbl.index);
     tblCellClip(g_tbl.index);
     g_lay.ox = cx + pad;
     g_lay.contentW = *g_tbl.w[g_tbl.index] - 2.0f * pad;
     if (g_lay.contentW < 8.0f) g_lay.contentW = 8.0f;
-    g_lay.cy = g_tbl.rowTop + g_tbl.shiftY;
+    g_lay.cy = g_tbl.rowTop + g_tbl.shiftY + (g_cellPadY > 0.0f ? g_cellPadY : 0.0f);
     g_lay.indent = 0.0f;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -4240,7 +4332,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
 }
 // Close the row in progress: the lowest point its cells reached becomes the row's bottom; its height is remembered for the next frame's band.
 void tblFinishRow() {
-    const float cyLogical = g_lay.cy - g_tbl.shiftY;
+    const float cyLogical = g_lay.cy - g_tbl.shiftY + (g_cellPadY >= 0.0f && g_tbl.index >= 0 ? g_cellPadY - g_lay.spacingY : 0.0f);
     if (cyLogical > g_tbl.rowBottom) g_tbl.rowBottom = cyLogical;
 }
 void tblRememberRow() {

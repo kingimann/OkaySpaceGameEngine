@@ -295,6 +295,11 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
+/// Dear ImGui's form: `size` 0 in an axis fills what is left, a negative value leaves that many pixels free. Flags: ChildFlags_Borders
+/// draws the frame and pads the content; ChildFlags_AlwaysUseWindowPadding pads it without a frame; with neither the content starts
+/// at the child's edge (Dear ImGui's default). Room for the scrollbar is taken only when the content overflowed on the last frame.
+enum ChildFlags : int { ChildFlags_None = 0, ChildFlags_Borders = 1, ChildFlags_AlwaysUseWindowPadding = 2 };
+bool BeginChild(const char* id, Vec2 size, int flags = ChildFlags_None);
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
 /// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
@@ -354,6 +359,9 @@ void SeparatorText(const char* label);
 // hashed from the label). The explicit-coordinate versions above still work for
 // free-form placement.
 bool Button(const char* label);
+/// A button of a given size (ImGui's Button(label, size)): a size.x or size.y of 0 or less keeps the automatic width or
+/// height, so Vec2{200, 0} is a 200-pixel wide button of the normal row height. Non-finite sizes fall back to automatic.
+bool Button(const char* label, Vec2 size);
 /// A compact button (tight padding, no full-line height) — for inline actions.
 bool SmallButton(const char* label);
 /// A row of tabs: clicking a tab sets *current to its index. Draw the selected
@@ -598,7 +606,8 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 si
 /// Request the named popup to open at the cursor (call once on the triggering event).
 void OpenPopup(const char* id);
 /// Open a popup when the LAST widget is right-clicked; returns true while it's open
-/// (then add items; clicking one should call CloseCurrentPopup()).
+/// (then add items; clicking one should call CloseCurrentPopup()). The right click counts only where a left click on that
+/// widget would: not on the part scrolled out of its child or clipped away, not under a window in front, not while disabled.
 bool BeginPopupContextItem(const char* id);
 /// Returns true while the named popup (opened via OpenPopup) is showing.
 bool BeginPopup(const char* id);
@@ -963,12 +972,19 @@ bool IsKeyPressed(KeyId key, bool repeat = true);
 bool IsKeyReleased(KeyId key);
 /// Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
 /// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x), FrameRounding and ChildRounding (corner radius),
-/// WindowRounding, BorderSize (all three ImGui border sizes). The others are accepted and do nothing, so ported code compiles:
-/// FramePadding, ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, ScrollbarSize, Alpha.
+/// WindowRounding, BorderSize (all three ImGui border sizes), ButtonTextAlign (x only: where a button's label sits, 0 left, 0.5
+/// centred, 1 right), CellPadding (a table cell's inner gap: x across, default 4; y above the first item and below the last one, which
+/// then ends the row without its item spacing; by default a row ends after the last item's spacing), FramePadding (y only, and only
+/// the box of Checkbox and RadioButton: a text line plus twice y; by default a text line plus 6). The others are accepted and do
+/// nothing, so ported code compiles: SelectableTextAlign, ItemInnerSpacing, ScrollbarSize, Alpha.
+/// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
+/// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// on the same line is centred on it.
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_TextRowHeight, StyleVar_CellPadding, StyleVar_COUNT
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);

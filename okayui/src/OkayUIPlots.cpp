@@ -4,6 +4,7 @@
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
+#include <string>
 #include <cmath>
 
 namespace OkayUI {
@@ -25,8 +26,12 @@ struct Source {
 int PlotImpl(const char* label, const Source& src, const PlotOptions& opt, bool histogram) {
     if (src.count <= 0 || (!src.values && !src.getter)) return -1;
     const int count = src.count;
-    const char* name = label ? label : "";
-    PushID(name);
+    PushID(label ? label : "");
+    // The label is drawn to the right of the plot; what follows "##" is only part of the id (Dear ImGui's convention).
+    std::string shown = label ? label : "";
+    const std::size_t hashes = shown.find("##");
+    if (hashes != std::string::npos) shown.resize(hashes);
+    const char* name = shown.c_str();
     const float lw = CalcTextSize(name).x > 0.0f ? CalcTextSize(name).x + 8.0f : 0.0f;
     const float availW = GetContentRegionAvail().x;
     const float pw = std::max(24.0f, (opt.size.x > 0.0f && std::isfinite(opt.size.x) ? opt.size.x : availW - lw));

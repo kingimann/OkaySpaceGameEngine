@@ -1,7 +1,7 @@
 # How the two Claudes work together
 
-Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422) and the
-**coordinator** with its agents (branches `claude/*`). One day went wrong in ways that cost real work. This page is the
+Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422; bug fixes and third-party replacement) and the
+**coordinator** with its agents (branches `claude/*`; unfinished features, reviews, releases). One day went wrong in ways that cost real work. This page is the
 agreement that stops it, and every rule here has a script that checks it, so nobody has to remember.
 
 The problems of 2026-11-15 and what now prevents each one:
@@ -25,8 +25,8 @@ match wins. Short version:
 
 | Owner | Areas |
 |---|---|
-| **Claude 2** | Gameplay components, in-game UI, editor features, rendering features, visual scripting features, inventory, vehicles and their follow-ups, examples, tests and docs of those, and bugs in those |
-| **Coordinator** | Our own replacements for third-party code (model and image readers, WAV, HTTP, crypto, the platform layer, the UI toolkit `okayui/`, the text editor), releases, CI and packaging (`.github/`, `scripts/`, `cmake/`, `dist/`), the launcher and `shared/`, reviews |
+| **Claude 2** | Bug fixes (any file, see below) and our own replacements for third-party code: model and image readers, WAV and audio decoders, HTTP, crypto (rule 18), the platform layer, the UI toolkit `okayui/`, the text editor, the ufbx and Assimp replacements, and their tests and docs |
+| **Coordinator** | Unfinished features: gameplay components, in-game UI, editor features, rendering features, visual scripting features, inventory, vehicles, the launcher, examples, tests and docs of those; plus releases, CI and packaging (`.github/`, `scripts/`, `cmake/`, `dist/`), `shared/` (except the own-code headers), reviews |
 | **Shared (handshake)** | `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`, `engine/CMakeLists.txt`, the feature map and every generated file, `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `examples/visual_script/playground/coverage.okayvs`, `docs/UNFINISHED.md`, roadmap and registry-style docs |
 | **Open** | Everything else (for example `engine/include/okay/Core`): either lane may claim it |
 
@@ -40,8 +40,12 @@ How the lanes work in practice:
   `python3 scripts/gen_feature_map.py` (check: `--check`); `editor/VisualScriptNodeDocs.inc` from
   `scripts/gen_vs_node_docs.py`. Edit the source pages, then regenerate. If the file conflicts when merging main,
   regenerate instead of resolving by hand.
-- Bugs go to the lane that owns the code. Own-replacement bugs go to the coordinator's agents; feature bugs go to Claude 2
-  (rule 24).
+- **Bugs go to Claude 2, and a bug fix may touch any file** (owner, 2026-11-15). Post the claim with an extra line
+  `Kind: bug` and a `Test-first:` line (the failing test that proves the bug); the lane check then does not need an `Agree:`
+  from the other lane. Claims that overlap another open claim still need the handshake. The coordinator's agents fix a bug
+  only inside a feature branch they are finishing (rule 24).
+- **No duplicate features** (owner, 2026-11-15): both lanes run `find_existing.py` first, extend what exists, and say
+  `Existing:` / `Gap:` in the claim.
 
 ## 2. Before you start: find what exists (2 minutes)
 

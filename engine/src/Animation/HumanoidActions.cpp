@@ -728,6 +728,11 @@ int DirFromWorld(GameObject* go, const Vec3& fromWorld) {
 }
 
 void BakeSit(std::vector<HumanoidLibrary::Entry>& out) {
+    // hipY is a drop from the standing hip height, in metres (idle 0, crouch -0.17, prone -0.78). The sit
+    // poses below were written as the hip height above the floor (0.48, 0.22, 0.32), which RAISED the body
+    // about 0.5 m instead of lowering it. kRestHip is the standing hip height above the soles
+    // (hip to ankle 0.80 + ankle 0.12, as in HumanoidMotion), so a hip height h above the floor is h - kRestHip.
+    constexpr float kRestHip = 0.92f;
     const KeyPose idle = FromState(1);
     KeyPose chair = idle;
     chair.bones[B::B_HIPS].x = -6.0f;
@@ -740,7 +745,9 @@ void BakeSit(std::vector<HumanoidLibrary::Entry>& out) {
     chair.bones[B::B_RUPARM] = {-18.0f, 0.0f, -22.0f};
     chair.bones[B::B_LFORE].x = -24.0f;
     chair.bones[B::B_RFORE].x = -24.0f;
-    chair.hipY = 0.48f;   // baked for a 0.45 m seat; the Seat moves the body onto it
+    // Thigh 86 deg, shin 78 deg back: the soles are on the floor with the hips 0.57 m up (thigh 0.37, shin 0.43,
+    // ankle 0.12), a hip joint about 0.12 m over a 0.45 m seat. The root (feet) stays on the floor under the seat.
+    chair.hipY = 0.57f - kRestHip;
 
     KeyPose ground = idle;
     ground.bones[B::B_HIPS].x = 10.0f;
@@ -751,14 +758,14 @@ void BakeSit(std::vector<HumanoidLibrary::Entry>& out) {
     ground.bones[B::B_RSHIN] = {-108.0f, 0.0f, -8.0f};
     ground.bones[B::B_LUPARM] = {-24.0f, 0.0f, 16.0f};
     ground.bones[B::B_RUPARM] = {-24.0f, 0.0f, -16.0f};
-    ground.hipY = 0.22f;
+    ground.hipY = 0.22f - kRestHip;
 
     KeyPose knees = ground;
     knees.bones[B::B_LTHIGH] = {42.0f, 8.0f, -10.0f};
     knees.bones[B::B_RTHIGH] = {42.0f, -8.0f, 10.0f};
     knees.bones[B::B_LSHIN] = {-96.0f, 0.0f, 0.0f};
     knees.bones[B::B_RSHIN] = {-96.0f, 0.0f, 0.0f};
-    knees.hipY = 0.32f;
+    knees.hipY = 0.32f - kRestHip;
 
     KeyPose chairBreath = chair;
     chairBreath.bones[B::B_TORSO].x += 3.0f;
@@ -1797,6 +1804,16 @@ bool RequestSit(GameObject* go, GameObject* seatObject, int sitType) {
         sm->GoTo("SitDown", 0.2f);
     }
     if (seat) seat->Claim(go);
+    return true;
+}
+
+bool BeginVehicleSit(GameObject* go) {
+    if (!go || IsDead(go)) return false;
+    SM* sm = BaseMachine(go);
+    if (!sm || !HasState(*sm, "SitDown")) return false;
+    sm->SetFloat("sitType", 0.0f);
+    sm->SetBool("sitting", true);
+    sm->GoTo("SitDown", 0.2f);
     return true;
 }
 

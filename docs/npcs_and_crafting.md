@@ -50,7 +50,7 @@ exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
 
 ## Items, loot tables and recipes
 
-**Window > Items, Loot & Recipes** (also **View > Editors & Tools > Items, Loot & Recipes**) is one window with three tabs. You can list, search, add, duplicate, delete and edit:
+**View > Editors & Tools > Items, Loot & Recipes** is one window with three tabs. You can list, search, add, duplicate, delete and edit:
 
 - **Items**, saved as the project's `items.okayitems`.
 - **Loot tables** (`.okayloot`): each entry has a weight and a quantity range. **Roll** previews a drop with the same roll the game uses.

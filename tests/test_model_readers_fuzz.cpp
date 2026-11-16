@@ -101,6 +101,15 @@ int main() {
         CHECK(!ReadObjBuffer("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2\n", "", m, &err));                // degenerate face = no faces
         CHECK(!ReadObjBuffer("v a b c\nf 1 1 1\n", "", m, &err));
         CHECK(!ReadObjFile(kDir + "does_not_exist.obj", m, &err));
+        // Index 2147483648 (INT_MAX + 1) in each slot: refused with the usual message, and no int overflow
+        // on the way (the cast used to overflow; UBSan aborts on it). 2147483649 and -2147483648 too.
+        for (const char* f : {"f 1 2 2147483648", "f 1//1 2//1 3//2147483648", "f 1/2147483648 2/1 3/1",
+                              "f 1 2 2147483649", "f 1 2 -2147483648", "f 2147483648 2 3", "f 1/-2147483648 2/1 3/1"}) {
+            std::string e2, txt = std::string("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvn 0 0 1\n") + f + "\n";
+            ImportedModel m2;
+            CHECK(!ReadObjBuffer(txt, "", m2, &e2));
+            CHECK(e2 == "face index out of range");
+        }
         // STL
         CHECK(!ReadStlBuffer("", m, &err));
         CHECK(!ReadStlBuffer("solid x\n", m, &err));

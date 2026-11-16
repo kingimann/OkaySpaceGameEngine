@@ -10,9 +10,9 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The tree of every object in the scene with search, drag and drop re-parenting, rename, and a large right-click menu.
 - **Parts:**
   - 15.1.1 Tree, search and selection - `editor/main.cpp` (`DrawHierarchy` ~17259-18391) - rows with icons, expand and collapse, multi-select, flat search list that matches name or type ("camera", "light", "ui")
-  - 15.1.2 Object context menu - `editor/main.cpp` (~17259-18391) - Cut, Copy, Paste as Sibling or Child, Duplicate, Group, Focus, Delete, Order, Create Child or Parent, Parent To, Select (children, below, parent, siblings, same name), Transform resets, Copy Text, Save As Prefab
-  - 15.1.3 Empty-space context menu - `editor/main.cpp` - create empty, sprite, cube, camera, light, 3D objects and UI widgets, Select All, Deselect, Expand/Collapse All, Sort A-Z
-  - 15.1.4 Rig and character entries - `editor/main.cpp` - Use Built-in Animations, Map Humanoid Bones, Rig Model (Humanoid), Add IK Target on model roots
+  - 15.1.2 Object context menu - `editor/HierarchyContextModel.hpp` (what is in it and when it is greyed out, tested), `editor/main.cpp` (`HierRowAction`) - Copy, Cut, Paste, Paste as Child, Rename, Duplicate and Delete (with counts: "Delete 3 Objects"), Delete Children, Create Empty Child, Create Child (every Create category), Create Parent or Group, Parent To, Unparent, Order, Select (children, below, parent, siblings, same name, same type), Expand and Collapse All Below, Activate, Lock, Focus, Isolate, Transform resets, Add Component (opens the Inspector's browser), Prefab, Save As Prefab, Copy Name or Path; greyed items say why (`docs/editor_menus.md`)
+  - 15.1.3 Empty-space context menu and [+] popup - `editor/HierarchyContextModel.hpp`, `editor/main.cpp` (`HierEmptyAction`) - Create Empty and the same Create categories as GameObject (2D, 3D, Player, Light, Camera, Audio, Effects, UI), Paste, Select All, Deselect, Expand/Collapse All, Sort A-Z
+  - 15.1.4 Rig and character entries - `editor/main.cpp` (`HierModelToolsSlot`) - Rig & IK submenu: Use Built-in Animations, Map Humanoid Bones, Rig Model (Humanoid), Add IK Target, on objects that can be a model or a character
   - 15.1.5 Scene merge drops - `editor/main.cpp` - drop a `.okayscene` on the Hierarchy to merge it into the open scene
   - 15.1.6 Filtered search - `editor/main.cpp`, `editor/InspectorModel.*` (`HierFilter`) - words must all match (name, tag or kind word); `t:tag`, `c:component`, `l:layer`, `is:off|locked|static|prefab`, `-word` to exclude, and `Parent/Child` path search (`Scene::FindAllByPath`)
   - 15.1.7 Drag and drop - `editor/main.cpp`, `editor/InspectorModel.*` - reparent and reorder by dropping on the middle (child) or top or bottom edge (before or after) of a row, with a drop indicator; multi-selection moves together; prefabs, models and pictures from the Project panel can be dropped on a row or on empty space (one undo step each)
@@ -20,8 +20,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Code:** `editor/main.cpp` (`DrawHierarchy`), `editor/EditorState.*`
 - **API:** menu View > Panels > Hierarchy; shortcuts for rename, duplicate, delete, focus
 - **Editor:** Hierarchy panel
-- **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click)
-- **Tests:** `editor` (selftest)
+- **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click), `docs/editor_menus.md` (the menus, what was there before and where it went)
+- **Tests:** `editor` (selftest), `hierarchy_context_model` (the menu lists, enable rules, reasons, plural labels; no ImGui)
 - **Status:** Works - used by every session; the GUI is not unit-tested; the undo menu entries, shortcuts and History panel are compiled but not run (`docs/editor_undo.md`: "The GUI was not run for this change"); the filter and drop rules are tested headless (`inspector_model`)
 - **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate); the Hierarchy search calls `FindAllByPath` for `Parent/Child` paths, and the panel still does not call `Validate`; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
 - **Related:** 15.2, 1.3, 1.6, 21
@@ -65,13 +65,13 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.3.5 Collider and terrain tools in the view - `editor/main.cpp` (~40947 collider face handles, ~40105 terrain sculpt brush, ~40157 mesh edit mode)
   - 15.3.6 View axis gizmo and camera bookmarks - `editor/main.cpp` - top-right axis tips snap the view; View > Appearance > Camera Bookmarks
   - 15.3.7 Scene overlays - `editor/main.cpp`, `editor/NavigationWindow.*` - colliders, physics debug, skeletons, navmesh polygons and agent paths
-  - 15.3.8 Spline tools - `editor/SplineTools.*` - draw every spline, edit points and handles, insert, delete, snap to ground; inspectors for spline, follower, spline mesh, instancer, line and trail; GameObject > Spline
+  - 15.3.8 Spline tools - `editor/SplineTools.*` - draw every spline, edit points and handles, insert, delete, snap to ground; inspectors for spline, follower, spline mesh, instancer, line and trail; GameObject > Effects > Spline
   - 15.3.9 Game view - `editor/main.cpp` (`DrawGameView` ~42926-43174) - runs the game image, Resolution presets, Safe area, Stats overlay, Capture mouse, Physics toggle
   - 15.3.10 Mobile emulator and shared game resolution - `editor/main.cpp` (~41398-41507, ~42845-42925) - phone and tablet frames shared by Game view and UI editing
   - 15.3.11 Play mode - `editor/EditorState.*`, `editor/main.cpp` - Play snapshots the scene and Stop restores it; mouse capture rules; Error Pause
   - 15.3.12 Orthographic views - `editor/LevelTools.*` - View options > Perspective / Orthographic and Top, Bottom, Front, Back, Right, Left (numpad 7, 1, 3 with Ctrl for the opposite, numpad 5 switches projection); a true orthographic projection of the Scene view, zoomed with the wheel; a label names the view
 - **Code:** `editor/main.cpp`, `editor/SplineTools.*`, `editor/NavigationWindow.*`, `editor/EditorState.*`, `editor/UIPreviewPainter.*`
-- **API:** View > Panels > Game; Scene toolbar; GameObject > Spline
+- **API:** View > Panels > Game; Scene toolbar; GameObject > Effects > Spline
 - **Editor:** Scene panel, Game panel, UI panel (12.10)
 - **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/splines.md`, `docs/web_mobile.md`
 - **Tests:** `editor` (selftest, play and stop in `EditorState`), `splines` (engine side)
@@ -234,7 +234,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.11 Console and diagnostics panels
 - **What:** The panels that show what the editor and game are doing: the Console log, Crash Log, Stats, Profiler, History, the Net panel and the live variable watch.
 - **Parts:**
-  - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, collapse of repeated lines, details, Error Pause, Open Script, tab badge
+  - 15.11.1 Console - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; severity filters with counts, a category dropdown, search, a visible Collapse toggle (remembered in `okay_settings.txt`) that merges identical level + category + message into one row with an `x37` count and the newest time, details, Error Pause, Open Script, tab badge
   - 15.11.2 Crash Log and crash diagnostics - `editor/main.cpp` (`DrawCrashLog` ~6642, crash handler ~549-788) - reads crash reports from earlier runs
   - 15.11.3 Stats - `editor/main.cpp` (`DrawStats` ~10247-10358) - object, mesh and triangle counts, FPS
   - 15.11.4 Profiler - `editor/main.cpp` (`DrawProfiler` ~42668-42844) - frame, CPU and GPU timeline you can pause and scrub, per-section self and total times, CSV copy; times only while open
@@ -284,7 +284,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.13.7 UI Theme window - `editor/main.cpp` (`DrawUIThemer` ~42586) - see 12.7
   - 15.13.8 Custom Actions window - `editor/main.cpp` (`DrawCustomActions` ~2219) - see 14.6
 - **Code:** `editor/main.cpp`, `editor/ContentEditors.cpp`
-- **API:** View > Editors & Tools, View > Panels, and Window > Items, Loot & Recipes
+- **API:** View > Editors & Tools and View > Panels
 - **Editor:** each window
 - **Docs:** `docs/editor.md`, `docs/save_games.md`, `docs/audio.md`
 - **Tests:** `dataasset`, `savedata`, `item_database`, `item_loot_recipes`, `audio_mixer` (engine side)
@@ -318,7 +318,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 ### 15.15 Editor shell, startup and lifecycle
 - **What:** What runs around the panels: the main loop, menu and toolbar, dock space, the launcher handshake, single-instance guard, multi-window support, the self-updater and the headless selftest.
 - **Parts:**
-  - 15.15.1 Menu and toolbar - `editor/main.cpp` (`DrawMenuAndToolbar` ~5551-6411, `DrawDockSpace` ~6520) - File, Edit, View, GameObject, Engine, Help menus; Play, Stop, Step (advance one frame) and Build buttons
+  - 15.15.1 Menu and toolbar - `editor/MenuBarModel.hpp` (the menus as data), `editor/MenuEntriesUI.hpp` (the ImGui drawer), `editor/main.cpp` (`DrawMainMenus`, `RunMenuAction`, `DrawCreateSlot`; `DrawMenuAndToolbar`, `DrawDockSpace`) - File, Edit, GameObject, View, Plugins, Help menus (`docs/editor_menus.md`); Play, Stop, Step (advance one frame) and Build buttons
   - 15.15.2 Main loop - `editor/main.cpp` (`main` ~43674-45136) - frame loop, panel draw order with profiler scopes, camera safety, dev screenshot hooks (`OKAY_UI_*` variables)
   - 15.15.3 Launcher gate and handshake - `editor/main.cpp` (~43267, ~43572, `DrawProjectGate` ~16655, `DrawNewProjectPopup` ~16748) - open a project from the launcher, "save and close" requests
   - 15.15.4 Single instance and multi-window - `editor/main.cpp` (~43329-43571) - hand-off to a running editor, dual-monitor viewport windows
@@ -328,8 +328,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Code:** `editor/main.cpp`, `editor/EditorCommon.hpp`, `editor/EditorWidgets.*`, `editor/okayspace.rc`, `editor/okayspace.ico`
 - **API:** command line `--selftest`; env `OKAY_UI_*` dev hooks
 - **Editor:** whole window
-- **Docs:** `docs/editor.md` (Building and running, Self-updating)
-- **Tests:** `editor` (selftest)
+- **Docs:** `docs/editor.md` (Building and running, Self-updating), `docs/editor_menus.md` (the menu bar: map and audit)
+- **Tests:** `editor` (selftest), `menu_bar_model` (menu order, no duplicates, reasons for greyed items, working shortcuts, nothing lost from the old menus; no ImGui)
 - **Status:** Works - used on every launch; CI runs the selftest
 - **Open:** the launcher update flow (17.1) and the editor's updater are separate code paths; no test for the single-instance or multi-window logic found
 - **Related:** 17.1, 18.5, 15.9, 15.10

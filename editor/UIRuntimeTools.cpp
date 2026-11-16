@@ -392,12 +392,16 @@ void OpenUIGalleryExample(EditorState& ed, bool portrait) {
                (where.empty() ? std::string() : " Saved as " + where + "."));
 }
 
+void DrawExampleItems(EditorState& ed, const std::function<void(const std::function<void()>&)>& afterSavePrompt) {
+    if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, false); });
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every in-game UI widget in one scene, in twelve looks. Press Play to try them.");
+    if (ImGui::MenuItem("UI Gallery (phone)")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, true); });
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same widgets in one scrolling column on a portrait canvas. Pick a phone in the Game view.");
+}
+
 void DrawExamplesMenu(EditorState& ed, const std::function<void(const std::function<void()>&)>& afterSavePrompt) {
     if (ImGui::BeginMenu("Examples")) {
-        if (ImGui::MenuItem("UI Gallery")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, false); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every in-game UI widget in one scene, in twelve looks. Press Play to try them.");
-        if (ImGui::MenuItem("UI Gallery (phone)")) afterSavePrompt([&ed] { OpenUIGalleryExample(ed, true); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same widgets in one scrolling column on a portrait canvas. Pick a phone in the Game view.");
+        DrawExampleItems(ed, afterSavePrompt);
         ImGui::EndMenu();
     }
 }

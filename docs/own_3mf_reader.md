@@ -9,7 +9,7 @@ Written from the public 3MF Core Specification (the zip package, the `3D/3dmodel
 | File | What |
 |---|---|
 | `engine/src/Render/ThreeMfReader.cpp`, `engine/include/okay/Render/ThreeMfReader.hpp` | `okay::Read3mfBuffer` / `okay::Read3mfFile` |
-| `engine/src/Render/ZipLite.hpp` | The zip reader (also used by AMF): central directory, stored and deflate entries, the engine's own inflate (`okay::Inflate`, `Core/ImageDecode.cpp`) |
+| `engine/src/Render/ZipLite.hpp` | The zip reader (also used by AMF): central directory, stored and deflate entries, the engine's own inflate (`okay::Inflate`, a wrapper in `Core/ImageDecode.cpp` over the one decoder in `Core/Inflate.hpp`) |
 | `engine/src/Render/XmlLite.hpp` | The strict XML reader shared by 3MF, AMF and X3D |
 | `engine/src/Render/ReaderCommon.hpp` | Shared by all five batch-B readers: locale-independent number parsing (`NumParse.hpp`), transforms, the triangle soup and its smooth-normal builder, the Z-up root |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 11 of the per-format backend switch (the batch-B table) |

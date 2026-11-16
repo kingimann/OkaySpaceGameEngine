@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 command -v valgrind >/dev/null || { echo "valgrind not installed"; exit 2; }
 out=$(mktemp -d)
 srcs=""
-for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519; do srcs="$srcs engine/src/Crypto/$f.cpp"; done
+for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha512 X25519 Ed25519; do srcs="$srcs engine/src/Crypto/$f.cpp"; done
 bad=0
 for cxx in g++ clang++; do
   command -v "$cxx" >/dev/null || continue

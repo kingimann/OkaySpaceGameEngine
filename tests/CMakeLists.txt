@@ -970,6 +970,18 @@ target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
 
+# The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
+# RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/sha256_comparison.md). Header-only: no link needed.
+add_executable(test_sha256_unify test_sha256_unify.cpp)
+target_compile_features(test_sha256_unify PRIVATE cxx_std_17)
+target_include_directories(test_sha256_unify PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME sha256_unify COMMAND test_sha256_unify)
+# Comparison tool (not a test): speed, memory and Python-hashlib differential of the old copies and the new one.
+# python3 scripts/sha256_python_diff.py <build>/tests/sha256_compare   |   sha256_compare bench
+add_executable(sha256_compare sha256_compare.cpp)
+target_compile_features(sha256_compare PRIVATE cxx_std_17)
+target_include_directories(sha256_compare PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+
 # Exercises the okay::Account facade and the account_* OkayScript builtins, so
 # this one links the engine.
 add_executable(test_account_script test_account_script.cpp)
@@ -1348,6 +1360,13 @@ target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
 
+# Where every node sits in the Add Node menu: one place each, no catch-all, no oversized topic, old topic names still search.
+add_executable(test_vs_categories test_vs_categories.cpp)
+target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_categories COMMAND test_vs_categories)
+
 add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
 target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_palette_levels PRIVATE okay::engine)
@@ -1705,6 +1724,12 @@ add_executable(test_ui_templates test_ui_templates.cpp)
 target_link_libraries(test_ui_templates PRIVATE okay::engine)
 add_test(NAME ui_templates COMMAND test_ui_templates)
 
+# Toast stack: pushing past the stack size used to spin forever (the "UI Notify" template froze the editor).
+add_executable(test_ui_toast test_ui_toast.cpp)
+target_link_libraries(test_ui_toast PRIVATE okay::engine)
+add_test(NAME ui_toast COMMAND test_ui_toast)
+set_tests_properties(ui_toast PROPERTIES TIMEOUT 60)
+
 add_executable(test_gltf_cubicspline test_gltf_cubicspline.cpp)
 target_link_libraries(test_gltf_cubicspline PRIVATE okay::engine)
 add_test(NAME gltf_cubicspline COMMAND test_gltf_cubicspline)
@@ -1718,6 +1743,10 @@ add_executable(test_project_delete test_project_delete.cpp)
 target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
+add_executable(test_project_list test_project_list.cpp)
+target_compile_features(test_project_list PRIVATE cxx_std_17)
+target_include_directories(test_project_list PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_list COMMAND test_project_list)
 
 # New-project rules shared by the editor and the launcher: name, location, folder choice, skeleton, atomic writes.
 add_executable(test_project_create test_project_create.cpp)
@@ -2825,7 +2854,7 @@ add_executable(test_crypto_fe16 test_crypto.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Util.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Random.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/ChaCha20.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Poly1305.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Aead.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Blake2b.cpp
-    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha256.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/X25519.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Ed25519.cpp)
 target_include_directories(test_crypto_fe16 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_crypto_fe16 PRIVATE OKAY_CRYPTO_FE16)
@@ -2841,7 +2870,7 @@ find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
 find_program(OKAY_VALGRIND valgrind)
 if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
     set(_okay_ct_srcs "")
-    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519)
+    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha512 X25519 Ed25519)
         list(APPEND _okay_ct_srcs ${CMAKE_SOURCE_DIR}/engine/src/Crypto/${_f}.cpp)
     endforeach()
     add_executable(crypto_ct_valgrind crypto_ct_valgrind.cpp ${_okay_ct_srcs})
@@ -3309,6 +3338,23 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the option-off vs option-on
+# equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
+add_executable(test_wav_playback test_wav_playback.cpp)
+target_link_libraries(test_wav_playback PRIVATE okay::engine)
+find_package(SDL2 QUIET)
+if(SDL2_FOUND)
+    target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)
+    target_include_directories(test_wav_playback PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_wav_playback PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(test_wav_playback PRIVATE ${SDL2_LIBRARIES})
+    endif()
+endif()
+add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
     -DENGINE_CMAKE=${PROJECT_SOURCE_DIR}/engine/CMakeLists.txt
@@ -3431,6 +3477,21 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_own_http_inflate PRIVATE Threads::Threads)
 add_test(NAME own_http_inflate COMMAND test_own_http_inflate)
 set_tests_properties(own_http_inflate PROPERTIES TIMEOUT 240)
+# The ONE inflate (engine/include/okay/Core/Inflate.hpp) against a slow reference written fresh from the RFCs
+# (tests/inflate_reference_slow.hpp): same accept/refuse and same bytes on every valid, bit-flipped, truncated and spliced stream,
+# in lenient, PNG and strict mode. About 7 s optimised and about 1 minute under ASan+UBSan of CPU time (limit 600 s).
+# python3 optional (SKIPs the Python-made corpus with a message); OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure.
+add_executable(test_inflate_differential test_inflate_differential.cpp)
+target_include_directories(test_inflate_differential PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME inflate_differential COMMAND test_inflate_differential)
+set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
+# A PNG header that claims a huge size with a few bytes of data is refused without allocating the claimed size (peak heap
+# measured with a counting operator new). Standalone: the image decoder sources only.
+add_executable(test_png_hint test_png_hint.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_png_hint PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+add_test(NAME png_hint COMMAND test_png_hint)
 if(UNIX AND NOT APPLE)
     add_executable(test_own_http_net test_own_http_net.cpp)
     target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
@@ -3540,3 +3601,15 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+# The editor's main menu bar and the Hierarchy menus as data (editor/MenuBarModel.hpp, editor/HierarchyContextModel.hpp; no ImGui, header-only):
+# the menu order, nothing listed twice, every greyed-out item says why, shortcuts that work, plural labels, and that every item of the old menus still has a home.
+# (They also read editor/*.cpp to check that every menu id has a handler there: OKAY_SOURCE_DIR.)
+add_executable(test_menu_bar_model test_menu_bar_model.cpp)
+target_include_directories(test_menu_bar_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_menu_bar_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME menu_bar_model COMMAND test_menu_bar_model)
+add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
+target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)

@@ -41,7 +41,7 @@ bool SameModifiers(const std::vector<MeshModifier>& a, const std::vector<MeshMod
             x.width != y.width || x.segments != y.segments || x.angle != y.angle ||
             x.target != y.target || x.boolOp != y.boolOp || x.voxel != y.voxel || x.cellSize != y.cellSize ||
             x.strength != y.strength || x.frequency != y.frequency || x.seed != y.seed ||
-            x.align != y.align || x.path.size() != y.path.size() ||
+            x.align != y.align || x.useBevelWeights != y.useBevelWeights || x.path.size() != y.path.size() ||
             !std::equal(x.path.begin(), x.path.end(), y.path.begin(), [](const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }))
             return false;
     }
@@ -170,6 +170,7 @@ void HashMesh(std::uint64_t& h, const Mesh& m) {
     if (!m.polyFace.empty()) HashBytes(h, m.polyFace.data(), m.polyFace.size() * sizeof(int));
     if (!m.cornerUVs.empty()) HashBytes(h, m.cornerUVs.data(), m.cornerUVs.size() * sizeof(m.cornerUVs[0]));
     if (!m.triColors.empty()) HashBytes(h, m.triColors.data(), m.triColors.size() * sizeof(m.triColors[0]));
+    for (const EdgeCrease& c : m.bevelWeights) { const int ab[2] = {c.a, c.b}; HashBytes(h, ab, sizeof ab); HashBytes(h, &c.w, sizeof c.w); }
     for (const EdgeCrease& c : m.creases) { const int ab[2] = {c.a, c.b}; HashBytes(h, ab, sizeof ab); HashBytes(h, &c.w, sizeof c.w); }
     if (!m.vertexColors.empty()) HashBytes(h, m.vertexColors.data(), m.vertexColors.size() * sizeof(m.vertexColors[0]));
     if (!m.triSlot.empty()) HashBytes(h, m.triSlot.data(), m.triSlot.size() * sizeof(int));
@@ -248,6 +249,32 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
         case T::Bevel: {
             bool ok = true;
             out = ViaPoly(in, [&](modeling::PolyMesh& pm, std::string* err) {
+                std::string why;
+                if (mod.useBevelWeights) {
+                    // Only the weighted edges, each group of equal weight beveled with width x weight (heavier edges get a wider bevel).
+                    std::vector<std::pair<int, modeling::EdgeList>> groups;                 // (weight in tenths, edges)
+                    for (const auto& e : pm.Edges()) {
+                        if (e.faceCount != 2) continue;
+                        const float w = pm.BevelWeightOf(e.a, e.b);
+                        if (!(w > 0.0f)) continue;
+                        const int key = std::clamp((int)std::lround(w * 10.0f), 1, 10);
+                        auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) { return g.first == key; });
+                        if (it == groups.end()) { groups.push_back({key, {}}); it = groups.end() - 1; }
+                        it->second.push_back({e.a, e.b});
+                    }
+                    if (groups.empty()) return true;                                         // no weighted edges: unchanged
+                    std::sort(groups.begin(), groups.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+                    int total = 0;
+                    for (const auto& g : groups) {
+                        modeling::EdgeList still;                                            // an earlier bevel may have used up an edge
+                        const modeling::PolyTopology T(pm);
+                        for (const auto& e : g.second) if (T.IsEdge(e.first, e.second)) still.push_back(e);
+                        if (still.empty()) continue;
+                        total += modeling::BevelEdges(pm, still, std::max(1e-4f, mod.width * (float)g.first * 0.1f), &why, std::clamp(mod.segments, 1, 8), 0.5f);
+                    }
+                    if (total == 0) { if (err) *err = why.empty() ? "These edges can't be beveled" : why; return false; }
+                    return true;
+                }
                 // Every closed edge whose faces meet sharper than `angle`.
                 modeling::EdgeList edges;
                 const float cosLimit = std::cos(std::clamp(mod.angle, 0.0f, 180.0f) * 3.14159265f / 180.0f);
@@ -257,7 +284,6 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                     if (Vec3::Dot(n0, n1) <= cosLimit + 1e-4f) edges.push_back({e.a, e.b});
                 }
                 if (edges.empty()) return true;   // nothing sharp enough: unchanged
-                std::string why;
                 int n = modeling::BevelEdges(pm, edges, std::max(1e-4f, mod.width), &why,
                                              std::clamp(mod.segments, 1, 8), 0.5f);
                 if (n == 0) { if (err) *err = why.empty() ? "These edges can't be beveled" : why; return false; }
@@ -362,6 +388,7 @@ std::uint64_t ModifierInputHash(const Mesh& base, const std::vector<MeshModifier
         HashBytes(h, fl, sizeof fl);
         HashBytes(h, m.target.data(), m.target.size());
         const bool al = m.align; HashBytes(h, &al, sizeof al);
+        const bool bw = m.useBevelWeights; HashBytes(h, &bw, sizeof bw);
         if (!m.path.empty()) HashBytes(h, m.path.data(), m.path.size() * sizeof(Vec3));
         if (m.type == MeshModifier::Type::Boolean && m.enabled) {
             if (const MeshRenderer* tmr = FindTarget(ctx, m.target)) {

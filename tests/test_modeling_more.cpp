@@ -2,6 +2,8 @@
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
+#include "okay/Modeling/Curve.hpp"
+#include "okay/Modeling/Reference.hpp"
 #include "okay/Modeling/Arrange.hpp"
 #include "okay/Modeling/EditTransform.hpp"
 #include "okay/Modeling/MeshLibrary.hpp"
@@ -996,6 +998,138 @@ int main() {
         const Mesh::SlotGroups none = Mesh::Cube().GroupBySlot();
         CHECK(none.groups.size() == 1 && none.groups[0][2] == 12 && none.order[5] == 5);
         CHECK(Mesh{}.GroupBySlot().groups.empty());
+    }
+    RUN_SUITE("reference image planes");
+    {
+        const auto f = RefPlaneCorners(RefPlane::Front, Vec3{1, 2, 3}, 4.0f, 0.5f);       // 4 wide, 2 tall
+        CHECK(f[0].x == -1 && f[0].y == 3 && f[0].z == 3 && f[1].x == 3 && f[1].y == 3 && f[2].x == 3 && f[2].y == 1 && f[3].x == -1 && f[3].y == 1);
+        const auto fl = RefPlaneCorners(RefPlane::Front, Vec3{0, 0, 0}, 4.0f, 0.5f, true);
+        CHECK(fl[0].x == 2 && fl[1].x == -2 && fl[0].y == 1 && fl[3].y == -1);          // mirrored left to right, same height
+        const auto sd = RefPlaneCorners(RefPlane::Side, Vec3{0, 0, 0}, 4.0f, 0.5f);      // the picture's left edge is toward +Z
+        CHECK(sd[0].z == 2 && sd[1].z == -2 && sd[0].x == 0 && sd[0].y == 1 && sd[3].y == -1);
+        const auto tp = RefPlaneCorners(RefPlane::Top, Vec3{0, 5, 0}, 4.0f, 0.5f);       // the picture's top edge is toward -Z
+        CHECK(tp[0].z == -1 && tp[3].z == 1 && tp[0].x == -2 && tp[1].x == 2 && tp[0].y == 5);
+        // Bad sizes give a point (nothing is drawn), never a crash or NaN.
+        for (const auto& bad : {RefPlaneCorners(RefPlane::Front, Vec3{1, 1, 1}, 0.0f, 1.0f), RefPlaneCorners(RefPlane::Front, Vec3{1, 1, 1}, 2.0f, -1.0f),
+                                RefPlaneCorners(RefPlane::Top, Vec3{1, 1, 1}, std::nanf(""), 1.0f), RefPlaneCorners(RefPlane::Side, Vec3{1, 1, 1}, INFINITY, 1.0f)})
+            for (const Vec3& v : bad) CHECK(!std::isnan(v.y) && (v - bad[0]).Magnitude() < 1e-6f);
+        // The corners go clockwise on screen from the viewing side: top-left, top-right, bottom-right, bottom-left.
+        const Vec3 e1 = f[1] - f[0], e2 = f[2] - f[1];
+        CHECK(Vec3::Cross(e1, e2).z < 0);                                                  // (viewed from +Z, clockwise)
+    }
+    RUN_SUITE("bezier curves to meshes");
+    {
+        const std::vector<Vec3> pts = {{0, 0, 0}, {1, 1, 0}, {2, 0, 0}, {3, 1, 0}};
+        const BezierCurve c = CurveThrough(pts);
+        CHECK(c.pts.size() == 4 && !c.closed && c.Spans() == 3);
+        const auto s8 = SampleCurve(c, 8);
+        CHECK(s8.size() == 3 * 8 + 1);
+        CHECK((s8.front() - pts[0]).Magnitude() < 1e-5f && (s8.back() - pts[3]).Magnitude() < 1e-5f);
+        for (int i = 0; i < 4; ++i) CHECK((s8[i * 8] - pts[i]).Magnitude() < 1e-5f);                    // it passes through every control point
+        // Smooth: the direction going into a point matches the direction leaving it.
+        for (int i = 1; i < 3; ++i) { const auto fine = SampleCurve(c, 64); const Vec3 din = (fine[i * 64] - fine[i * 64 - 1]).Normalized(), dout = (fine[i * 64 + 1] - fine[i * 64]).Normalized(); CHECK(Vec3::Dot(din, dout) > 0.99f); }
+        // Collinear points stay a straight line of the right length; tension 0 is straight segments.
+        const BezierCurve line = CurveThrough({{0, 0, 0}, {1, 0, 0}, {3, 0, 0}, {4, 0, 0}});
+        CHECK_NEAR(CurveLength(line), 4.0f, 1e-3);
+        for (const Vec3& q : SampleCurve(line, 6)) CHECK(std::fabs(q.y) < 1e-6f && q.x >= -1e-5f && q.x <= 4.0f + 1e-5f);
+        CHECK_NEAR(CurveLength(CurveThrough({{0, 0, 0}, {3, 0, 0}, {3, 4, 0}}, false, 0.0f), 4), 7.0f, 1e-3);
+        // Closed: no repeated first point, a loop.
+        const BezierCurve loop = CurveThrough({{2, 0, 0}, {0, 0, 2}, {-2, 0, 0}, {0, 0, -2}}, true);
+        CHECK(loop.closed && loop.Spans() == 4 && SampleCurve(loop, 5).size() == 20);
+        CHECK(CurveLength(loop, 16) > 2 * 3.14159f * 2 * 0.9f && CurveLength(loop, 16) < 2 * 3.14159f * 2 * 1.05f);   // about a circle of radius 2
+        // Not enough points, NaN points, and absurd sample counts are handled.
+        CHECK(SampleCurve(CurveThrough({{0, 0, 0}}), 8).empty() && SampleCurve(BezierCurve{}, 8).empty());
+        CHECK(CurveThrough({{0, 0, 0}, {std::nanf(""), 0, 0}, {1, 0, 0}}).pts.size() == 2);
+        CHECK(SampleCurve(c, 0).size() == 3 + 1 && SampleCurve(c, 100000).size() == 3 * 256 + 1);
+        // A straight pipe is a closed solid with the right volume.
+        const BezierCurve straight = CurveThrough({{0, 0, 0}, {4, 0, 0}}, false, 0.0f);
+        const Mesh pipe = CurvePipe(straight, 0.25f, 8, 4, true);
+        CHECK(pipe.TriangleCount() > 0 && pipe.Topology().Closed());
+        const float octArea = 0.5f * 8.0f * 0.25f * 0.25f * std::sin(6.28318530718f / 8.0f);
+        CHECK_NEAR(MeasureMesh(pipe).volume, octArea * 4.0f, 0.01);
+        CHECK(!CurvePipe(straight, 0.25f, 8, 4, false).Topology().Closed());                            // no caps: open at both ends
+        PolyMesh pp = PolyMesh::FromMesh(pipe); CHECK(pp.EulerCharacteristic() == 2);
+        // A pipe round a closed loop is a ring (torus: Euler 0), closed, positive volume.
+        const Mesh ringPipe = CurvePipe(loop, 0.2f, 10, 6);
+        PolyMesh rp = PolyMesh::FromMesh(ringPipe);
+        CHECK(ringPipe.Topology().Closed() && rp.EulerCharacteristic() == 0 && MeasureMesh(ringPipe).volume > 0);
+        // A ribbon: a flat strip facing up, area = width x length.
+        const Mesh rib = CurveRibbon(straight, 1.0f, 4);
+        CHECK_NEAR(MeasureMesh(rib).area, 4.0f, 1e-3);
+        Vec3 nsum{0, 0, 0}; for (int t = 0; t < rib.TriangleCount(); ++t) { const Vec3& a = rib.vertices[rib.triangles[t * 3]]; nsum += Vec3::Cross(rib.vertices[rib.triangles[t * 3 + 1]] - a, rib.vertices[rib.triangles[t * 3 + 2]] - a); }
+        CHECK(nsum.y > 0 && std::fabs(nsum.x) < 1e-4f && std::fabs(nsum.z) < 1e-4f);
+        // A square profile tapering to half size loses volume; a profile can be open (a flat strip).
+        const std::vector<Vec2> sq = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
+        const float vFull = MeasureMesh(CurveSweep(straight, sq, true, 4, 1.0f, true)).volume, vTaper = MeasureMesh(CurveSweep(straight, sq, true, 4, 0.5f, true)).volume;
+        CHECK_NEAR(vFull, 4.0f, 0.01); CHECK(vTaper > 0.3f * vFull && vTaper < 0.6f * vFull);
+        // Bad input gives an empty mesh and never a crash or NaN.
+        CHECK(CurvePipe(straight, 0.0f).TriangleCount() == 0 && CurvePipe(straight, std::nanf("")).TriangleCount() == 0 && CurvePipe(CurveThrough({{0, 0, 0}}), 1.0f).TriangleCount() == 0);
+        CHECK(CurveSweep(straight, {{0, 0}}, true).TriangleCount() == 0 && CurveSweep(straight, {{0, 0}, {std::nanf(""), 1}}, false).TriangleCount() == 0);
+        CHECK(CurveRibbon(straight, -1.0f).TriangleCount() == 0 && CurveSweep(straight, sq, true, 4, std::nanf("")).TriangleCount() == 0);
+        // A twisty path stays sound (the carried frame never flips or goes NaN).
+        std::vector<Vec3> wild; for (int i = 0; i < 40; ++i) wild.push_back({std::cos(i * 0.7f) * 2, i * 0.3f, std::sin(i * 0.7f) * 2});
+        const Mesh helix = CurvePipe(CurveThrough(wild), 0.1f, 8, 6);
+        bool fin = true; for (const Vec3& v : helix.vertices) if (!std::isfinite(v.x + v.y + v.z)) fin = false;
+        CHECK(fin && helix.TriangleCount() > 1000 && helix.Topology().Closed() && MeasureMesh(helix).volume > 0);
+        // A straight-up path (the usual "up" is along it) still builds.
+        CHECK(CurvePipe(CurveThrough({{0, 0, 0}, {0, 3, 0}}, false, 0.0f), 0.3f, 6, 2).Topology().Closed());
+        // Big: many points, high sample counts, many sides stays quick.
+        std::vector<Vec3> many; for (int i = 0; i < 60; ++i) many.push_back({(float)i, std::sin(i * 0.5f), 0});
+        const auto t0 = std::chrono::steady_clock::now();
+        const Mesh bigp = CurvePipe(CurveThrough(many), 0.1f, 32, 64);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(bigp.TriangleCount() > 100000 && secs < 20.0);
+    }
+    RUN_SUITE("bevel weights");
+    {
+        Mesh m = Mesh::Cube();
+        m.SetBevelWeight(3, 1, 0.5f); m.SetBevelWeight(1, 3, 5.0f); m.SetBevelWeight(2, 2, 1.0f); m.SetBevelWeight(0, 4, std::nanf(""));
+        CHECK(m.bevelWeights.size() == 1 && m.bevelWeights[0].a == 1 && m.bevelWeights[0].b == 3 && m.bevelWeights[0].w == 1.0f);   // order does not matter; the weight is capped at 1
+        m.SetBevelWeight(3, 1, 0.0f); CHECK(m.bevelWeights.empty());
+        // Through the polygon mesh and the .okaymesh file.
+        PolyMesh pm = PolyMesh::FromMesh(Mesh::Cube());
+        const auto e0 = pm.Edges()[0], e1 = pm.Edges()[1];
+        pm.SetBevelWeight(e0.a, e0.b, 0.7f); pm.SetBevelWeight(e1.b, e1.a, 0.2f);
+        CHECK(pm.BevelWeightOf(e0.b, e0.a) == 0.7f && pm.ToMesh().bevelWeights.size() == 2);
+        PolyMesh round; std::string err;
+        CHECK(PolyMesh::Parse(pm.Serialize(), round, &err) && round.BevelWeightOf(e1.a, e1.b) == 0.2f);
+        CHECK(PolyMesh::FromMesh(Mesh::Cube()).Serialize().find("bevelw") == std::string::npos);
+        CHECK(!PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nbevelw 3 4 0.5\n", round, &err) && !PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nbevelw 3 4\n", round, &err));
+        PolyMesh cp = PolyMesh::FromMesh(Mesh::Cube()); cp.verts.push_back(Vec3{9, 9, 9}); cp.SetBevelWeight(7, 6, 1.0f);
+        const std::vector<int> rm = CompactVerts(cp);
+        CHECK(cp.bevelWeights.size() == 1 && cp.bevelWeights[0].a == std::min(rm[6], rm[7]));
+        // The Bevel modifier with "use weights" rounds only the weighted edges; without weights it leaves the mesh alone.
+        auto volume = [](const Mesh& x) { return MeasureMesh(x).volume; };
+        Mesh cube = Mesh::Cube();
+        PolyMesh base = PolyMesh::FromMesh(cube);
+        int top = -1; for (int f = 0; f < (int)base.faces.size(); ++f) if (base.FaceNormal(f).y > 0.9f) top = f;
+        const PolyFace tf = base.faces[top];
+        auto weighted = [&](float w) {
+            PolyMesh b = base;
+            for (std::size_t k = 0; k < tf.verts.size(); ++k) b.SetBevelWeight(tf.verts[k], tf.verts[(k + 1) % tf.verts.size()], w);
+            return b.ToMesh();
+        };
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Bevel); mod.width = 0.1f; mod.segments = 2; mod.useBevelWeights = true;
+        Mesh out; std::string merr;
+        CHECK(ApplyModifier(cube, mod, ModifierContext(), out, &merr) && out.TriangleCount() == 12);                // no weights: unchanged
+        Mesh full, half;
+        CHECK(ApplyModifier(weighted(1.0f), mod, ModifierContext(), full, &merr) && full.TriangleCount() > 12 && full.Topology().Closed());
+        CHECK(ApplyModifier(weighted(0.5f), mod, ModifierContext(), half, &merr) && half.TriangleCount() > 12);
+        CHECK(volume(full) < 1.0f && volume(half) < 1.0f && volume(full) < volume(half));                           // a heavier weight takes a wider bevel
+        // Only the top edges were rounded: the bottom corners are still sharp (lowest vertices stay at y = -0.5, the full width).
+        float lowest = 9, widest = 0; for (const Vec3& v : full.vertices) { lowest = std::min(lowest, v.y); if (v.y < -0.49f) widest = std::max(widest, std::fabs(v.x)); }
+        CHECK(lowest < -0.499f && widest > 0.499f);
+        MeshModifier off = mod; off.useBevelWeights = false; off.angle = 30.0f;
+        Mesh angled; CHECK(ApplyModifier(weighted(1.0f), off, ModifierContext(), angled, &merr) && angled.TriangleCount() > full.TriangleCount());   // by angle it bevels all 12 edges
+        // A changed weight or the flag changes the stack's identity.
+        Mesh w1 = weighted(0.5f), w2 = weighted(1.0f);
+        CHECK(ModifierInputHash(w1, {}, ModifierContext()) != ModifierInputHash(w2, {}, ModifierContext()));
+        std::vector<MeshModifier> a = {mod}, b = a; b[0].useBevelWeights = false;
+        CHECK(!SameModifiers(a, b));
+        // Weld renumbers vertices: the weight follows.
+        Mesh wm = Mesh::Cube(); const Vec3 pa = wm.vertices[2]; wm.vertices.push_back(pa); wm.triangles.insert(wm.triangles.end(), {8, 0, 1});
+        wm.bevelWeights = {{8, 1, 0.5f}}; wm.WeldVertices();
+        CHECK(wm.bevelWeights.size() == 1 && wm.bevelWeights[0].b < (int)wm.vertices.size() && wm.bevelWeights[0].w == 0.5f);
     }
     TEST_MAIN_RESULT();
 }

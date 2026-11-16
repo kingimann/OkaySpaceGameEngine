@@ -212,6 +212,19 @@ void PolyMesh::SetCrease(int a, int b, float w) {
     if (w > 0.0f) creases.push_back({a, b, w});
 }
 
+float PolyMesh::BevelWeightOf(int a, int b) const {
+    if (a > b) std::swap(a, b);
+    for (const EdgeCrease& c : bevelWeights) if (c.a == a && c.b == b) return c.w;
+    return 0.0f;
+}
+void PolyMesh::SetBevelWeight(int a, int b, float w) {
+    if (a == b || a < 0 || b < 0) return;
+    if (a > b) std::swap(a, b);
+    for (std::size_t i = 0; i < bevelWeights.size(); ++i)
+        if (bevelWeights[i].a == a && bevelWeights[i].b == b) { if (w > 0.0f) bevelWeights[i].w = std::min(w, 1.0f); else bevelWeights.erase(bevelWeights.begin() + i); return; }
+    if (w > 0.0f) bevelWeights.push_back({a, b, std::min(w, 1.0f)});
+}
+
 PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::vector<int>* triFace) {
     PolyMesh pm;
     if (triFace) triFace->assign(mesh.TriangleCount(), -1);
@@ -243,6 +256,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
     }
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
+    for (const EdgeCrease& c : mesh.bevelWeights)
+        if (c.a >= 0 && c.b >= 0 && c.a < nv && c.b < nv && remap[c.a] != remap[c.b]) pm.SetBevelWeight(remap[c.a], remap[c.b], std::max(c.w, pm.BevelWeightOf(remap[c.a], remap[c.b])));
     for (const EdgeCrease& c : mesh.creases)
         if (c.a >= 0 && c.b >= 0 && c.a < nv && c.b < nv && remap[c.a] != remap[c.b]) pm.SetCrease(remap[c.a], remap[c.b], std::max(c.w, pm.CreaseOf(remap[c.a], remap[c.b])));
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
@@ -463,10 +478,11 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
             for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
         for (const auto& e : seams) if (edges.count(Key(e.first, e.second))) m.seams.push_back(Key(e.first, e.second));
     }
-    if (!creases.empty()) {                              // creases that are still edges of some face
+    if (!creases.empty() || !bevelWeights.empty()) {      // creases and bevel weights that are still edges of some face
         std::set<std::pair<int, int>> edgeSet;
         for (const PolyFace& f : faces) for (std::size_t c = 0; c < f.verts.size(); ++c) edgeSet.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
         for (const EdgeCrease& c : creases) if (edgeSet.count(Key(c.a, c.b))) m.creases.push_back(c);
+        for (const EdgeCrease& c : bevelWeights) if (edgeSet.count(Key(c.a, c.b))) m.bevelWeights.push_back(c);
     }
     if (triFace) *triFace = m.polyFace;
     return m;
@@ -497,6 +513,7 @@ std::string PolyMesh::Serialize() const {
         if (c.r == 1 && c.g == 1 && c.b == 1 && c.a == 1) continue;     // white is the default: only the painted vertices are written
         o << "vcolor " << i << " " << c.r << " " << c.g << " " << c.b << " " << c.a << "\n";
     }
+    for (const EdgeCrease& c : bevelWeights) o << "bevelw " << c.a << " " << c.b << " " << c.w << "\n";
     for (const EdgeCrease& c : creases) o << "crease " << c.a << " " << c.b << " " << c.w << "\n";
     for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
@@ -561,6 +578,10 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "bevelw") {
+            int a = -1, b = -1; float w = 0;
+            if (!(ls >> a >> b >> w) || a < 0 || b < 0) return fail(lineNo, "a bevelw needs two vertex numbers and a weight");
+            if (std::isfinite(w) && w > 0.0f) pm.SetBevelWeight(a, b, std::min(w, 1.0f));
         } else if (tag == "crease") {
             int a = -1, b = -1; float w = 0;
             if (!(ls >> a >> b >> w) || a < 0 || b < 0) return fail(lineNo, "a crease needs two vertex numbers and a sharpness");
@@ -590,6 +611,8 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
             if (v < 0 || v >= (int)pm.verts.size())
                 return fail(lineNo, "face " + std::to_string(i) + " uses vertex " + std::to_string(v) + ", which doesn't exist");
     if (pm.vertColors.size() > pm.verts.size()) return fail(lineNo, "a vcolor uses vertex " + std::to_string(pm.vertColors.size() - 1) + ", which doesn't exist");
+    for (const EdgeCrease& c : pm.bevelWeights)
+        if (c.b >= (int)pm.verts.size()) return fail(lineNo, "a bevelw uses vertex " + std::to_string(c.b) + ", which doesn't exist");
     for (const EdgeCrease& c : pm.creases)
         if (c.b >= (int)pm.verts.size()) return fail(lineNo, "a crease uses vertex " + std::to_string(c.b) + ", which doesn't exist");
     for (const auto& e : pm.seams)

@@ -62,6 +62,7 @@ std::uint64_t GeometryHash(const Mesh& mesh) {
     if (!mesh.uvs.empty()) mix(mesh.uvs.data(), mesh.uvs.size() * sizeof(Vec2));
     if (!mesh.triColors.empty()) mix(mesh.triColors.data(), mesh.triColors.size() * sizeof(Color));
     // Material slots only when there are some, so meshes without slots keep the hash they had.
+    for (const EdgeCrease& c : mesh.bevelWeights) { const int ab[2] = {c.a, c.b}; mix(ab, sizeof ab); mix(&c.w, sizeof c.w); }
     for (const EdgeCrease& c : mesh.creases) { const int ab[2] = {c.a, c.b}; mix(ab, sizeof ab); mix(&c.w, sizeof c.w); }
     if (!mesh.vertexColors.empty()) mix(mesh.vertexColors.data(), mesh.vertexColors.size() * sizeof(Color));
     if (!mesh.triSlot.empty()) mix(mesh.triSlot.data(), mesh.triSlot.size() * sizeof(int));

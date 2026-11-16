@@ -128,11 +128,19 @@ static void NormalizeImportedClips(GameObject* root) {
 }
 
 
+// A .gltf / .glb file of version 1.0 that our own glTF 1.0 reader should read (only asked when that reader is switched on,
+// so a default import never parses the file twice).
+static bool Gltf1Wanted(const std::string& path) {
+    if (EffectiveImportBackend(".gltf1") != ImportBackend::Own) return false;
+    std::string why;   // reading and parsing the file can throw (bad_alloc on a huge file): a throw means "no"
+    return RunReaderGuarded([&]() -> bool { return GltfFileIsVersion1(path); }, why);
+}
+
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
     if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp)
         return Mesh::LoadOBJ(path, ok, outTexture);
-    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
+    if ((EndsWith(p, ".gltf") || EndsWith(p, ".glb")) && !Gltf1Wanted(path)) return LoadGLTF(path, ok, outTexture);
     if (EndsWith(p, ".fbx")) {
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
@@ -602,6 +610,12 @@ constexpr bool kOwnMdlDefault = true;
 constexpr bool kOwnMdlDefault = false;
 #endif
 
+#ifdef OKAY_OWN_GLTF1_DEFAULT
+constexpr bool kOwnGltf1Default = true;
+#else
+constexpr bool kOwnGltf1Default = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -651,8 +665,9 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
+    {"OKAY_OWN_GLTF1",   "glTF 1.0", kOwnGltf1Default},    // 41: glTF 1.0 (pseudo-extension ".gltf1"; .gltf / .glb files of version 1)
 };
-constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL (batch E4), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
+constexpr int kOwnSlots = 42;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL (batch E4), 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"); raise this (and add rows above) when a reader needs a slot beyond 41
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -697,6 +712,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".mdl") return 38;
     if (e == ".pmx") return 39;
     if (e == ".lws" || e == ".mot") return 40;
+    if (e == ".gltf1") return 41;   // not a file extension: the switch for glTF 1.0 files (.gltf / .glb share 2.0's extensions)
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -808,6 +824,15 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
+    // glTF 1.0 (.gltf / .glb, version 1): our own reader when it is switched on (glTF 2.0 files are read by Gltf.hpp).
+    if ((ext == ".gltf" || ext == ".glb") && Gltf1Wanted(path)) {
+        std::string e1;
+        const bool good = RunReaderGuarded([&]() -> bool { return ReadGltf1File(path, out, &e1); }, e1);
+        if (!good) { out = ImportedModel{}; if (err) *err = e1; return false; }
+        if (flatten) FlattenImportedModel(out);
+        for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+        return true;
+    }
     // Our reader rejects a second `element vertex`. Assimp still loads that file,
     // and the default choice would hand it to Assimp after our reader said no.
     // The two blocks then contribute normals and UVs that do not line up with
@@ -876,6 +901,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 38 ? ReadMdlFile(path, out, &e1)
                   : s == 39 ? ReadPmxFile(path, out, &e1)
                   : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : s == 41 ? ReadGltf1File(path, out, &e1)   // a file named *.gltf1: read it as glTF 1.0
                   : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW), 34 to 36 (IQM, COB, NDO), 37 (OpenGEX), 38 (MDL), 39 (PMX) and 40 (LWS) are wired above; slot 32 is the empty one kept for SIB
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
@@ -1969,13 +1995,23 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
         return go;
     }
 
+    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays): our own reader when it
+    // is switched on (OKAY_OWN_GLTF1, docs/own_gltf1_reader.md), through the same seam as the other formats.
+    if (Gltf1Wanted(path)) {
+        ImportedModel im; std::string e;
+        if (ImportModelData(path, im, ImportBackend::Default, /*flatten=*/false, &e))
+            if (GameObject* r = BuildSceneFromModel(scene, im, path)) { if (ok) *ok = true; return r; }
+        Log::Error("model import '", path, "': ", e.empty() ? std::string("glTF 1.0: the scene could not be built") : e);
+        if (ok) *ok = false;
+        return nullptr;
+    }
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
-    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
+    // Otherwise glTF 1.0 is refused, with a message saying how to switch our reader on.
     if (const JVal* asset = doc.root.Find("asset"))
         if (const JVal* ver = asset->Find("version"))
             if (ver->type == JVal::Str && !ver->str.empty() && ver->str[0] == '1') {
-                Log::Error("model import '", path, "': glTF ", ver->str, " is not supported (only glTF 2.0); re-export the model as glTF 2.0");
+                Log::Error("model import '", path, "': glTF ", ver->str, " is not read by default (only glTF 2.0); our own glTF 1.0 reader is off by default: switch it on with OKAY_OWN_GLTF1=1 or -DOKAY_OWN_GLTF1=ON, or re-export the model as glTF 2.0");
                 if (ok) *ok = false;
                 return nullptr;
             }

@@ -797,6 +797,23 @@ target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${C
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
 add_test(NAME example_scenes COMMAND test_example_scenes)
 
+# Every project template is proven to work (docs/templates_check.md): the launcher's flow (CreateProject into a temp folder,
+# the version gate, reopen), one Main Camera, a stable save, the Problems model, 120 Play frames, and the family's own
+# interaction with simulated keys and mouse. Links the ImGui-free EditorState and the version gate, like test_example_scenes.
+add_executable(test_templates_work test_templates_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_templates_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_templates_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_TEST_ENGINE_VERSION="${PROJECT_VERSION}")
+target_link_libraries(test_templates_work PRIVATE okay::engine)
+add_test(NAME templates_work COMMAND test_templates_work)
+
+# Every example scene in examples/ (from a copy) and every File > Examples entry loads, has no Problems error, shows
+# something to the camera and plays 60 frames; the Windows release carries the folders the menu needs.
+add_executable(test_examples_work test_examples_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(test_examples_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_examples_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_examples_work PRIVATE okay::engine)
+add_test(NAME examples_work COMMAND test_examples_work)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)
@@ -894,6 +911,26 @@ add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
+
+# The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
+add_executable(test_project_context_model test_project_context_model.cpp)
+target_compile_features(test_project_context_model PRIVATE cxx_std_17)
+target_include_directories(test_project_context_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME project_context_model COMMAND test_project_context_model)
+
+# What the new Project panel menu items do on real folders: the dialogue / quest / behavior tree / cutscene files the Create menu makes (read back and validated, written safely), Reimport All in Folder, folder numbers for Properties, Duplicate and Paste on a selection, and Move to... (the picker's rule and Browser::Move agree).
+add_executable(test_project_menu_ops test_project_menu_ops.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_project_menu_ops PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_project_menu_ops PRIVATE okay::engine)
+add_test(NAME project_menu_ops COMMAND test_project_menu_ops)
+
+# The editor's launcher (editor/LaunchFile.cpp: Open with Default App, Open in External Editor, Show in Explorer) with fake programs on PATH: a hostile file name arrives as one argument, a name that starts with "-" is not an option, programs and scripts are refused, nothing goes through a shell. Linux only (fork + execv); the Windows half uses ShellExecuteW and is only compile-checked.
+if(NOT WIN32)
+    add_executable(test_launch_file test_launch_file.cpp ${PROJECT_SOURCE_DIR}/editor/LaunchFile.cpp)
+    target_compile_features(test_launch_file PRIVATE cxx_std_17)
+    target_include_directories(test_launch_file PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+    add_test(NAME launch_file COMMAND test_launch_file)
+endif()
 
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
@@ -1758,6 +1795,31 @@ add_test(NAME gltf_cubicspline COMMAND test_gltf_cubicspline)
 add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
+
+# Crash reports in detail (docs/crash_reports.md): the context the handler keeps and the text it writes, the handler itself (a child
+# process really faults: POSIX only; the Windows half is compiled by the Windows build but cannot run here), and the scrubber.
+add_executable(test_crash_context test_crash_context.cpp)
+target_include_directories(test_crash_context PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_context COMMAND test_crash_context)
+
+add_executable(test_crash_upload test_crash_upload.cpp)
+target_include_directories(test_crash_upload PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_upload COMMAND test_crash_upload)
+
+add_executable(test_crash_scrub test_crash_scrub.cpp)
+target_include_directories(test_crash_scrub PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_scrub COMMAND test_crash_scrub)
+
+if(NOT WIN32 AND NOT EMSCRIPTEN AND NOT OKAY_SANITIZE)   # (a sanitizer installs its own fault handlers and reports the null write itself)
+    find_package(Threads REQUIRED)
+    add_executable(test_crash_handler test_crash_handler.cpp)
+    target_include_directories(test_crash_handler PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_crash_handler PRIVATE Threads::Threads)   # (the test starts a second thread that faults too)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+        target_link_options(test_crash_handler PRIVATE -rdynamic)   # so backtrace_symbols names the faulting functions
+    endif()
+    add_test(NAME crash_handler COMMAND test_crash_handler)
+endif()
 
 # The launcher's "Delete project" safety checks (shared/ProjectDelete.hpp).
 add_executable(test_project_delete test_project_delete.cpp)

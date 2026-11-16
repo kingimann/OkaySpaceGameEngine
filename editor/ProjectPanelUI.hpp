@@ -3,6 +3,7 @@
 // confirmation (with what uses the asset), the "used by" list and the import-settings editor.
 // The logic they sit on is in ProjectBrowser.hpp. Call DrawDialogs() once per frame inside the Project window.
 #include "ProjectBrowser.hpp"
+#include "ProjectContextModel.hpp"
 
 #include <functional>
 #include <string>
@@ -38,6 +39,30 @@ void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std:
 /// it) and references that still use the old path of an asset moved outside the editor, with a Fix button that
 /// rewrites the stale ones (undo-able with Ctrl+Z in the Project panel). `onFixed` runs after a fix.
 void ShowReferenceProblems(okaypb::Browser& browser, std::function<void(const std::string&)> onPick, std::function<void(const okaypb::Result&)> onFixed);
+
+/// Draw a right-click menu made by ProjectContextModel.hpp. Call it between BeginPopup... and EndPopup. Draws the
+/// separators, headings, ticks, shortcuts and submenus of `items`; a greyed item shows its reason as a tooltip and an
+/// enabled one its tip. Returns the id of the item that was clicked in this frame, "" when none.
+std::string DrawContextMenu(const std::vector<okaypb::ctx::Item>& items);
+/// The rows of the Properties window (label in grey, value beside it, a warning in orange) as a two column table. Drawn here and
+/// not inside ShowProperties so a test program can draw the same rows without a Browser. (Both are in ProjectMenuDraw.cpp.)
+void DrawPropertyRows(const std::vector<okaypb::ctx::Property>& rows);
+
+/// "Move to...": a folder picker over the project's folders (read from the asset database). A folder the items cannot go
+/// to (themselves, a folder inside them, where they already are) is greyed with the reason. `onPick(destDir)` runs when
+/// the user presses Move; nothing is moved by the picker itself. `reveal` is a folder to show open (usually where the
+/// first item is now), may be empty.
+void AskFolder(okaypb::Browser& browser, std::vector<std::string> items, std::string reveal, std::function<void(const std::string& destDir)> onPick);
+
+/// What the Properties window shows that the asset database does not know.
+struct PropertyExtras {
+    bool favourite = false;
+    std::string colourLabel;    ///< the colour label's name, "" for none
+    bool startScene = false;    ///< the scene that starts a built game
+};
+/// Show the Properties window for one asset or folder: type, location, size, date, GUID, who uses it, tags (the rows
+/// come from okaypb::ctx::PropertyRows). The Copy Path button puts its path in Assets/... form on the clipboard.
+void ShowProperties(okaypb::Browser& browser, const std::string& path, const PropertyExtras& extras);
 
 /// Draw all open dialogs. Call every frame, inside the Project window, outside any child window.
 void DrawDialogs();

@@ -79,9 +79,15 @@ int main() {
                 const std::size_t a = text.find(start);
                 return a == std::string::npos ? std::string() : text.substr(a, text.find("};", a) - a);
             };
+            // The editor's table (title -> builder) is editor/TemplateTable.hpp; main.cpp only wraps it. tests/test_templates_work.cpp
+            // checks the real table; this reads the source so the shared list and the table cannot drift even in a build without the editor.
+            std::string tableText;
+            CHECK(ReadText((root / "editor" / "TemplateTable.hpp").string(), tableText));
+            CHECK(editor.find("oked::BuilderOrDefault") != std::string::npos);   // the editor looks titles up in that table
+            CHECK(editor.find("static const Tpl tpls[]") == std::string::npos);  // ... and keeps no second copy
             std::set<std::string> inEditor;
-            const std::string es = section(editor, "static const Tpl tpls[] = {");
-            const std::regex ere("\\{\"([^\"]+)\",\\s+&EditorState::\\w+\\}");
+            const std::string es = section(tableText, "static const std::vector<TemplateEntry> t = {");
+            const std::regex ere("\\{\"([^\"]+)\",\\s+&E::\\w+\\}");
             for (std::sregex_iterator it(es.begin(), es.end(), ere), end; it != end; ++it) inEditor.insert((*it)[1]);
             CHECK(inEditor == titles);
         } else std::cout << "  (source files not found next to the tests: template cross-check skipped)\n";

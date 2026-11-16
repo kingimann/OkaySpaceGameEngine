@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -112,10 +113,12 @@ struct Reader {
         Obj* cur = nullptr;
         int curDepth = 0;      // stack size when the current object's block was opened
         std::size_t lineCount = 0;
+        std::vector<std::string> tk;   // the tokens of the line, reused line after line
+        static const std::string kNoBlock;
         while (lines.Next(raw)) {
             ++lineCount;
             const std::size_t ln = lines.number;
-            std::vector<std::string> tk = Split(raw);
+            SplitInto(raw, tk);
             if (tk.empty()) continue;
             if (tk.size() == 1 && tk[0] == "{") { if (stack.size() >= kMaxDepth) return Fail("blocks nested too deeply", ln); stack.push_back(pending); pending.clear(); continue; }
             if (tk[0] == "}") {
@@ -126,9 +129,9 @@ struct Reader {
                 continue;
             }
             if (tk[0].empty() || tk[0][0] != '*') { continue; }   // stray text
-            const std::string key = tk[0].substr(1);
+            const std::string_view key = std::string_view(tk[0]).substr(1);
             const bool opens = tk.back() == "{";
-            const std::string top = stack.empty() ? std::string() : stack.back();
+            const std::string& top = stack.empty() ? kNoBlock : stack.back();   // not used after the push below
             bool handled = true;
 
             // ---- file header and scene ----
@@ -319,7 +322,7 @@ struct Reader {
                 if (cur && (key == "MESH_CVERTLIST" || key == "MESH_CFACELIST")) ++cur->vertexColorBlocks;
                 if (key == "MATERIAL" && stack.size() == 1 && stack[0] == "MATERIAL_LIST") { if (mats.size() >= kMaxMaterials) return Fail("too many materials", ln); mats.emplace_back(); }
                 if (key == "SUBMATERIAL" && !mats.empty()) { Material* m = &mats.back(); if (m->subs.size() >= kMaxMaterials) return Fail("too many sub-materials", ln); m->subs.emplace_back(); }
-                stack.push_back(key);
+                stack.emplace_back(key);
             } else if (!handled && tk.size() >= 1 && false) {}
         }
         if (!sawHeader) return Fail("not an ASE file (no *3DSMAX_ASCIIEXPORT line)");

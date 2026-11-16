@@ -5,6 +5,8 @@
 // installed. Nothing here reads past the buffer it is given.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -100,8 +102,14 @@ struct Lines {
 
 // Tokens of one line. Double quotes group a token ("my file.tga" is one token, quotes dropped); '#' and "//" start a
 // comment only when the caller asks for it (strip it first with StripComment).
-inline std::vector<std::string> Split(const std::string& s) {
-    std::vector<std::string> r;
+// SplitInto fills `r` and reuses its strings and room, so a reader that splits line after line into the same vector
+// does not allocate for every line.
+inline void SplitInto(const std::string& s, std::vector<std::string>& r) {
+    std::size_t n = 0;
+    auto put = [&](std::size_t a, std::size_t len) {
+        if (n < r.size()) r[n].assign(s, a, len); else r.emplace_back(s, a, len);
+        ++n;
+    };
     std::size_t i = 0;
     while (i < s.size()) {
         while (i < s.size() && IsWs(s[i])) ++i;
@@ -109,14 +117,19 @@ inline std::vector<std::string> Split(const std::string& s) {
         if (s[i] == '"') {
             std::size_t a = ++i;
             while (i < s.size() && s[i] != '"') ++i;
-            r.push_back(s.substr(a, i - a));
+            put(a, i - a);
             if (i < s.size()) ++i;
         } else {
             std::size_t a = i;
             while (i < s.size() && !IsWs(s[i])) ++i;
-            r.push_back(s.substr(a, i - a));
+            put(a, i - a);
         }
     }
+    r.resize(n);
+}
+inline std::vector<std::string> Split(const std::string& s) {
+    std::vector<std::string> r;
+    SplitInto(s, r);
     return r;
 }
 
@@ -126,6 +139,18 @@ inline bool ToDouble(const std::string& s, double& v) {
     const char c = s[0];
     if (!((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')) return false;
     for (char ch : s) if (!((ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E')) return false;
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    // std::from_chars reads '.' as the point and rounds correctly, as strtod does in a '.' locale: the same value. Only
+    // used in such a locale and for a token it reads whole; anything else (a leading '+', out of range) goes the old way.
+    if (c != '+') {
+        const char* dp = std::localeconv()->decimal_point;
+        if (!dp || (dp[0] == '.' && dp[1] == 0)) {
+            double d = 0;
+            const auto r = std::from_chars(s.data(), s.data() + s.size(), d);
+            if (r.ec == std::errc() && r.ptr == s.data() + s.size()) { v = d; return std::isfinite(v) && std::fabs(v) <= 1e15; }
+        }
+    }
+#endif
     char* e = nullptr;
     v = StrToD(s.c_str(), &e);
     return e && *e == '\0' && std::isfinite(v) && std::fabs(v) <= 1e15;

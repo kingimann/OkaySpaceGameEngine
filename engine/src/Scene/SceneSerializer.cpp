@@ -171,6 +171,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
@@ -9546,6 +9547,27 @@ void RegisterBuiltinComponentSerializers() {
                 lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry debris;
+    debris.name = "debrisemitter";
+    debris.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* de : go.GetComponents<DebrisEmitter>()) {
+            out << "  debrisemitter";
+            KvOut k{out};
+            k("count", de->count)("interval", de->interval)("delay", de->startDelay)("smin", de->sizeMin)("smax", de->sizeMax)
+             ("speed", de->speed)("spread", de->spread).col("c", de->color)("max", de->maxActive)("life", de->lifetime)
+             ("settled", de->settledLife).b("mutual", de->collideWithEachOther);
+            out << "\n";
+        }
+    };
+    debris.read = [](GameObject& go, std::istream& in) {
+        auto* de = go.AddComponent<DebrisEmitter>();
+        KvIn k(in);
+        k.i("count", de->count); k.f("interval", de->interval); k.f("delay", de->startDelay); k.f("smin", de->sizeMin);
+        k.f("smax", de->sizeMax); k.f("speed", de->speed); k.f("spread", de->spread); k.col("c", de->color);
+        k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
+    };
+    ComponentSerializerRegistry::Register(std::move(debris));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

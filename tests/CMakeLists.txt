@@ -542,6 +542,16 @@ add_executable(test_net_guard test_net_guard.cpp)
 target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME net_guard COMMAND test_net_guard)
 
+# Our own threads, mutexes, conditions and atomics (engine/src/Core/CoreThreads.hpp) and the launcher's opaque layer over
+# them (launcher/LauncherThreads.cpp, in place of SDL's): exclusion under contention, a woken waiter, exact atomic adds,
+# join, detach, names. Std / Win32 only: no engine, no SDL.
+find_package(Threads REQUIRED)
+add_executable(test_core_threads test_core_threads.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)
+target_compile_features(test_core_threads PRIVATE cxx_std_17)
+target_include_directories(test_core_threads PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_core_threads PRIVATE Threads::Threads)
+add_test(NAME core_threads COMMAND test_core_threads)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)

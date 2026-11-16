@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+Unreleased (next version)
+  Model import
+  - Our own FBX reader (still off by default; turn it on with
+    OKAY_OWN_FBX=1) now keeps an animation's own keys instead of taking 30
+    keys every second, and adds keys only where the motion needs them. The
+    animation plays the same (within 0.05 degrees), imports faster and is
+    much smaller, and a step in a curve now jumps instead of sliding over a
+    frame. Set OKAY_FBX_BAKE30=1 to get the old way back for comparison.
+    Try it: examples/own_readers/rig_animated.fbx.
+
 v2.878.0
   Walking, physics and digging
   - Walking looks like walking and running looks like running. The default

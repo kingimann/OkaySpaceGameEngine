@@ -65,6 +65,7 @@ release job or the installer build for this change.
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 18 | Our FBX reader keeps the file's own animation keys (instead of 30 a second) | `OKAY_OWN_FBX=1`, import `examples\own_readers\rig_animated.fbx` or any animated `.fbx`; `OKAY_FBX_BAKE30=1` for the old way | Tests only (Linux); the editor steps are unverified; no visible log line |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
@@ -1228,6 +1229,32 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
+
+### 18. FBX animations keep the file's own keys (our FBX reader)
+
+**What it is.** With our own FBX reader switched on, an imported animation now has keys where the artist put them (the
+file's own key times) plus extra keys only where they are needed to follow the curve closely, instead of 30 keys a
+second for the whole animation. It should play the same as before (within 0.05 degrees and a tenth of a millimetre on a
+1 m bone), import faster, and the clip has far fewer keys. A step in a curve now jumps instead of sliding over one frame.
+The ufbx reader (the default) is not changed.
+
+**Steps.**
+1. `set OKAY_OWN_FBX=1`, start the editor (`Tools\OkayEngine.exe`), **File > Import Model...**, choose
+   `examples\own_readers\rig_animated.fbx` (a small tube on three bones with a 2-second animation and a blend shape, made
+   by our own fixture script). Press Play: the tube bends one way and back, the top bone turns, the middle bone slides up
+   and the bottom bone's scale jumps at the end.
+2. To compare with the old way, close the editor, `set OKAY_FBX_BAKE30=1`, start again and import the same file: it
+   should play the same. That is the point: the motion does not change, the work and the clip size do.
+3. Any animated `.fbx` of your own works the same way; long animations with few keys import much faster.
+
+**How you know it worked.** Mostly by nothing changing on screen. The editor then reduces keys on both ways (it drops
+keys that lie on a straight line), so the key counts it shows are not the reader's. The reader's own counts and errors
+are printed by the test program `fbx_file_keys` in a build with tests (one line per file: keys now and at 30 Hz).
+
+**Status.** Verified here (Linux, headless): `fbx_file_keys` (every animated node of the 12 fixtures and 42 real files
+against the curves at 240 samples a second; worst error 0.56 of the tolerance), `fbx_reader`, `fbx_hostile`,
+`fbx_import_limits`, the wider animation and import tests, both with `OKAY_OWN_FBX=1` and without. **Unverified:** every
+editor step above (no editor window was opened), anything on Windows.
 
 ---
 

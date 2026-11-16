@@ -1,0 +1,113 @@
+#pragma once
+// Internal to okayui/screens: the launcher's Dear ImGui look (sizes, colours, the page header, its flat buttons and line icons)
+// shared by the OkayUI launcher pages (OkayUILauncherPages.cpp and OkayUILauncherMorePages.cpp). Written from the launcher's
+// own style values (launcher/main.cpp DarkTheme, shared/OkayTheme.hpp) and its icon drawing (DrawNavIcon); no code from any
+// other project. Not part of OkayUI's public API.
+#include "okay/UI/OkayUI.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <string>
+
+namespace UI = OkayUI;
+
+namespace okayuiscreens {
+namespace look {
+
+inline constexpr float kPi = 3.14159265f;
+
+inline UI::Color32 Col(const unsigned char c[4], float alpha = 1.0f) {
+    return UI::RGBA(c[0], c[1], c[2], (unsigned)(c[3] * std::max(0.0f, std::min(1.0f, alpha)) + 0.5f));
+}
+inline UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
+// The accent mixed toward white (the launcher's "accent light" for text on accent-tinted fills).
+inline UI::Color32 AccentLight() {
+    const unsigned char* a = UI::Style().accent;
+    return Rgb((int)(a[0] * 0.55f + 115), (int)(a[1] * 0.55f + 115), (int)(a[2] * 0.55f + 115));
+}
+inline UI::Color32 AccentAlpha(float alpha) { const unsigned char* a = UI::Style().accent; return Rgb(a[0], a[1], a[2], (int)(alpha * 255.0f + 0.5f)); }
+inline UI::Vec2 V(float x, float y) { return UI::Vec2{x, y}; }
+
+inline std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
+
+// ---- the launcher's Dear ImGui look ----------------------------------------------------------------------------------------
+// Sizes from the launcher's style (launcher/main.cpp DarkTheme): frames are padded 10 x 7, items sit 9 x 8 apart, the gap
+// inside an item is 7. Positions move down the way the launcher's layout moves them: an item's bottom plus the 8 px gap, cut
+// to a whole pixel.
+inline constexpr float kFrameX = 10.0f, kFrameY = 7.0f, kSpX = 9.0f, kSpY = 8.0f, kInnerX = 7.0f;
+inline float Tr(float v) { return std::floor(v); }
+// Text scaled by k, rounded to whole pixels as the launcher's scaled text is (17 px x 1.34 is drawn at 23 px).
+inline void PushScale(float k) {
+    const float fs = std::max(1.0f, UI::GetTextLineHeight());
+    UI::PushTextScale(std::max(1.0f, std::round(fs * k)) / fs);
+}
+inline float NextY(float itemY, float itemH) { return Tr(itemY + itemH + kSpY); }
+
+// The launcher's Slate colours (shared/OkayTheme.hpp) in bytes.
+inline UI::Color32 CRaised() { return Rgb(38, 42, 51); }
+inline UI::Color32 CField() { return Rgb(41, 46, 59); }
+inline UI::Color32 CControl(float alpha = 1.0f) { return Rgb(51, 56, 71, (int)(255.0f * alpha + 0.5f)); }
+inline UI::Color32 CControlHover(float alpha = 1.0f) { return Rgb(67, 72, 86, (int)(255.0f * alpha + 0.5f)); }
+inline UI::Color32 CBorder() { return Rgb(255, 255, 255, 19); }
+inline UI::Color32 CTitle() { return Rgb(242, 245, 250); }
+inline UI::Color32 CProgress() { return Rgb(230, 179, 0); }   // the bar fill the launcher's progress bars use
+
+// For the length of a page: text at the launcher's 17 px (16 px times 17/16; the atlas has that size baked), frames padded as
+// the launcher's, and the launcher's tooltip and combo box. Theme values it changes are put back at the end.
+class LauncherLook {
+public:
+    LauncherLook() {
+        UI::Theme& t = UI::Style();
+        m_tipOffX = t.tooltipOffsetX; m_tipOffY = t.tooltipOffsetY; m_tipPadX = t.tooltipPadX; m_tipPadY = t.tooltipPadY;
+        m_tipGap = t.tooltipLineGap; m_tipRound = t.tooltipRounding; std::memcpy(m_tipBg, t.tooltipBg, 4); m_combo = t.comboArrowBox;
+        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances;
+        // Its tooltips: 25 px right of and 10 px below the mouse, padded as its windows (14 x 12), lines touching, 8 px corners,
+        // the popup colour; its combo: a frame-coloured box with an arrow button.
+        t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f;
+        t.tooltipLineGap = 0.0f; t.tooltipRounding = 8.0f;
+        t.tooltipBg[0] = 35; t.tooltipBg[1] = 39; t.tooltipBg[2] = 48; t.tooltipBg[3] = 251;
+        t.comboArrowBox = true;
+        t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
+        t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
+        const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
+        UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
+        UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
+    }
+    ~LauncherLook() {
+        UI::PopStyleVar(1);
+        UI::PopTextScale();
+        UI::Theme& t = UI::Style();
+        t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
+        t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
+        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap;
+    }
+    LauncherLook(const LauncherLook&) = delete;
+    LauncherLook& operator=(const LauncherLook&) = delete;
+private:
+    float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
+    unsigned char m_tipBg[4];
+    bool m_combo, m_ascent, m_snap;
+};
+
+// ---- defined in OkayUILauncherPages.cpp ----
+bool BeginPlainChild(const char* id, float w, float h, float bar = 8.0f);
+void EndPlainChild(float contentBottom);
+float PageHeader(const UI::DrawList& dl, float x0, float y0, float w, const char* title, const char* subtitle);
+bool FlatButton(const char* id, const char* label, float x, float y, float w, float h, bool enabled = true, bool primary = false,
+                float rounding = 6.0f);
+void HairlineBox(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float r);
+void CenteredAt(const UI::DrawList& dl, float x, float y, float width, const char* s, UI::Color32 col);
+const UI::Vec2* UnitArc(float a0, float a1, int n);
+void ArcTo(const UI::DrawList& dl, UI::Vec2 c, float r, float a0, float a1, int n);
+void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, float t);
+enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
+void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
+void DrawTrophy(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col);
+void DrawStar(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col);
+void DrawMedal(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha);
+void DrawCross(const UI::DrawList& dl, UI::Vec2 c, float r, float arm, bool hover, UI::Color32 col, int baseAlpha, int hoverAlpha, float t);
+
+} // namespace look
+} // namespace okayuiscreens

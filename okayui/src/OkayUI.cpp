@@ -3873,6 +3873,8 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
     const float ty = y + (h - textH()) * 0.5f;
+    const VisLabel vis(label);   // "##id" is not shown (a row the caller draws itself)
+    if (label && std::strstr(label, "##")) label = vis.b;
     if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
         unsigned char tmp[4];
         const unsigned char white[4] = {255, 255, 255, 255};
@@ -3912,9 +3914,15 @@ static bool beginPopupBody(int id) {
     if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
-    const float w = p->w > 0.0f ? p->w : 160.0f, pad = 6.0f;
+    // Width: the caller's (combos), else 160 or as wide as last frame's widest item (a Selectable with an explicit size).
+    float* wSlot = floatState(id ^ 0x9191, 0.0f);
+    const float pad = 6.0f, w = p->w > 0.0f ? p->w : std::max(160.0f, *wSlot);
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
+    // Kept inside the display when its size is known (Input::displayW / displayH): a menu opened near the right or bottom edge
+    // opens to the left of or above where it would not fit.
+    if (g_dispW > 0.0f && px + w > g_dispW) px = std::max(0.0f, g_dispW - w);
+    if (g_dispH > 0.0f && py + *hSlot + pad * 2.0f > g_dispH) py = std::max(0.0f, g_dispH - (*hSlot + pad * 2.0f));
     // Frame (overlay so it sits above everything). Height is last frame's content.
     registerOverlay(px, py, w, *hSlot + pad * 2.0f, true);
     g_toOverlay = true;
@@ -3929,6 +3937,7 @@ static bool beginPopupBody(int id) {
     g_lay.indent = 0.0f; g_lay.seed = id;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_lay.maxRight = g_lay.ox;
     return true;
 }
 
@@ -3936,6 +3945,7 @@ void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
     *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    *floatState(c.id ^ 0x9191, 0.0f) = g_lay.maxRight - (c.x + 6.0f) + 12.0f;   // and the widest item (an auto-width popup's width)
     g_toOverlay = false;
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);

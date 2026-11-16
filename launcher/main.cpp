@@ -69,6 +69,7 @@
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
 #include "OkayUILauncherPages.hpp"   // Downloads, Notifications, Achievements
+#include "OkayUILauncherMorePages.hpp"   // Friends, Community, Versions
 #else
 // Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
 namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
@@ -4740,8 +4741,10 @@ static void OkayUIFrameBegin() {
     const Uint32 mb = SDL_GetMouseState(&mx, &my);
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
-                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+    OkayUI::Input in = g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
+                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
+    in.displayW = io.DisplaySize.x; in.displayH = io.DisplaySize.y;   // menus stay inside the window; dialogs centre in it
+    OkayUI::BeginFrame(in);
 }
 // A hosted screen's rectangle for this frame (ImGui's hover answer of this frame). OkayUIFrameBegin decided who owns the mouse
 // from last frame's rectangles; when the mouse is over this one now, OkayUI gets the mouse for the rest of the frame, so a click
@@ -15382,6 +15385,126 @@ static AchPageData& AchPageDataRefresh(bool kAchDemo) {
     return data;
 }
 
+// The Friends page's data (both the Dear ImGui page and its OkayUI port read it): the friends and requests, the activity feed,
+// my friend code (all from the Friends worker, never on this thread), the follows (from the follow worker), and what the two
+// pages share while the person uses them (the view, the search, the typed names, the Add friend messages). Viewing the page
+// clears the unread-DM badge. With OKAY_UI_DEMO_USER set (the dev screenshot hook) fixed demo lists are used instead.
+#ifdef OKAY_HAVE_OKAYUI
+using FriendsUiState = okayuiscreens::FriendsState;
+#else
+struct FriendsUiState { int view = 0; char filter[64] = ""; char addBuf[48] = ""; char followBuf[48] = ""; };
+#endif
+struct FriendsPageData {
+    std::vector<okay::Friend> list;
+    std::vector<okay::FriendEvent> feed;
+    std::string code;
+    std::vector<okay::FollowEntry> following, followers;
+    bool followSupported = true;
+    Uint32 nextRefresh = 0, followNext = 0;
+    std::string err, ok;               // the Add friend card's last message
+    FriendsUiState ui;
+    std::string nickUid; char nickBuf[48] = ""; bool nickOpen = false;   // the Set nickname dialog (a Dear ImGui modal on both pages)
+};
+// The Set nickname dialog (both Friends pages open it through FriendsPageData::nickOpen).
+static void DrawFriendNicknameModal(FriendsPageData& d) {
+    if (d.nickOpen) { ImGui::OpenPopup("Set nickname"); d.nickOpen = false; }
+    if (ImGui::BeginPopupModal("Set nickname", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("Only you see this nickname.");
+        ImGui::SetNextItemWidth(260);
+        bool ok = ImGui::InputText("##nick", d.nickBuf, sizeof(d.nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
+            if (!d.nickUid.empty()) {
+                if (d.nickBuf[0]) g_friendNicks[d.nickUid] = d.nickBuf; else g_friendNicks.erase(d.nickUid);
+                SavePrefs();
+            }
+            d.nickUid.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) { d.nickUid.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+}
+static FriendsPageData& FriendsPageDataRefresh(okay::account::AccountService& account, bool kFrDemo) {
+    static FriendsPageData d;
+    static bool init = false;
+    if (!init) {
+        init = true;
+        if (const char* v = std::getenv("OKAY_UI_DEMO_FRVIEW")) d.ui.view = std::atoi(v);   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (dev screenshot hook)
+    }
+    if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {   // viewing Friends clears the unread-DM badge
+        g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
+    }
+    const Uint32 now = okay::platform::TicksMs32();
+    // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
+    if (kFrDemo) {
+        static bool flSeeded = false;
+        if (!flSeeded) {
+            flSeeded = true;
+            const long t0 = (long)std::time(nullptr);
+            auto fe = [&](std::vector<okay::FollowEntry>& v, const char* id, const char* u, const char* dn, bool on, long ago) {
+                okay::FollowEntry e; e.id = id; e.username = u; e.display = dn; e.online = on; e.lastSeen = t0 - ago; v.push_back(e); };
+            fe(d.following, "u-maya", "maya", "Maya Chen", true, 0);
+            fe(d.following, "u-studio", "pixelforge", "PixelForge Studio", false, 3 * 3600);
+            fe(d.following, "u-ren", "ren", "Ren Ito", false, 2 * 86400);
+            fe(d.followers, "u-maya", "maya", "Maya Chen", true, 0);
+            fe(d.followers, "u-sam", "samw", "Sam Wilde", true, 0);
+            fe(d.followers, "u-ola", "ola", "Ola Nordmann", false, 26 * 3600);
+            fe(d.followers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
+        }
+    } else if (account.IsLoggedIn() && account.IsOnline()) {
+        if (!g_flMutex) g_flMutex = SDL_CreateMutex();
+        if (now >= d.followNext && !g_flBusy) { QueueFollowJob(0); d.followNext = now + 60000; }
+        SDL_LockMutex(g_flMutex);
+        if (g_flReady) {
+            g_flReady = false;
+            d.following = g_flFollowing; d.followers = g_flFollowers; d.followSupported = g_flSupported;
+            if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
+            g_flMsg.clear();
+        }
+        SDL_UnlockMutex(g_flMutex);
+    }
+    if (kFrDemo) {
+        static bool seeded = false;
+        if (!seeded) {
+            seeded = true;
+            long t0 = (long)std::time(nullptr);
+            auto mk = [&](long row, const char* id, const char* user, const char* disp, const char* st, bool in, bool on, const char* playing, const char* custom) {
+                okay::Friend f; f.rowId = row; f.id = id; f.username = user; f.display = disp; f.status = st;
+                f.incoming = in; f.online = on; f.playing = playing; f.customStatus = custom; d.list.push_back(f); };
+            mk(1, "u-maya", "maya", "Maya Chen", "accepted", false, true, "Playing Neon Drift", "");
+            mk(2, "demo-uid", "alexr", "Alex Rivera", "accepted", false, true, "", "shipping the jam build");
+            mk(3, "u-priya", "priya", "Priya Natarajan", "accepted", false, true, "In the editor", "");
+            mk(4, "u-jon", "jonas", "Jonas Berg", "accepted", false, false, "", "");
+            mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
+            mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
+            mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
+            d.list[3].lastSeen = t0 - 12 * 60; d.list[4].lastSeen = t0 - 3 * 3600 - 600;   // "Last online ..."
+            d.list[0].sessionCode = "QX7-42";
+            g_favFriends.insert("u-maya");
+            auto ev = [&](const char* a, const char* k, const char* dt, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = dt; e.when = t0 - ago; d.feed.push_back(e); };
+            ev("maya", "playing", "Neon Drift", 240); ev("alexr", "publish", "Coin Collector Deluxe", 3600);
+            ev("priya", "achievement", "First Build", 7200); ev("jonas", "online", "", 86400);
+            d.code = "OKAY-7K2F";
+        }
+    } else {
+        // EVERYTHING network for this page (ensure-profile, presence, my code, list, feed) runs on the Friends worker thread:
+        // the page never blocks on the network, so switching to Friends can't freeze.
+        if (!g_frMutex) g_frMutex = SDL_CreateMutex();
+        if (now >= d.nextRefresh && !g_frFetching) {
+            g_frFetching = true; d.nextRefresh = now + 10000;
+            if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
+                SDL_DetachThread(t);
+            else g_frFetching = false;
+        }
+        if (g_frMutex) {
+            SDL_LockMutex(g_frMutex);
+            if (g_frReady) { d.list = g_frList; d.feed = g_frFeed; d.code = g_frCode; g_frReady = false; }
+            SDL_UnlockMutex(g_frMutex);
+        }
+    }
+    return d;
+}
+
 // "first_win" -> "First Win" (label for showcase ids we have no row for).
 static std::string PfPrettyId(const std::string& id) {
     std::string o; bool up = true;
@@ -23958,103 +24081,157 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();
             }   // end achievements login gate
-        } else if (tab == 6) {                            // ---- Friends ----
-            sectionHeader("Friends", nullptr);
-            // Viewing Friends clears the unread-DM badge.
-            if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {
-                g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
+        } else if (tab == 6 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || okay::Friends(account).Available()) &&
+                   !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Friends, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same lists, chips, presence, rows, menus, follows, Add friend, code and activity as the Dear ImGui page below (signed
+            // out, that page's sign-in card shows instead); differences in docs/own_ui_toolkit.md section 8.8.
+            uitiming::Scope uiT("Friends", "OkayUI");
+            static const bool kFrDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+            okay::Friends fr(account);
+            FriendsPageData& fd = FriendsPageDataRefresh(account, kFrDemo);
+            auto nameOf = [&](const okay::Friend& f) -> std::string {
+                auto it = g_friendNicks.find(f.id);
+                if (it != g_friendNicks.end() && !it->second.empty()) return it->second;
+                return f.display.empty() ? f.username : f.display;
+            };
+            auto avatarRgb = [](const std::string& name, unsigned char out[3]) {   // DrawAvatar's disc: the name colour at 55%
+                const ImVec4 c = NameColor(name);
+                out[0] = (unsigned char)(c.x * 0.55f * 255.0f + 0.5f); out[1] = (unsigned char)(c.y * 0.55f * 255.0f + 0.5f); out[2] = (unsigned char)(c.z * 0.55f * 255.0f + 0.5f);
+            };
+            okayuiscreens::FriendsModel fm;
+            for (const okay::Friend& f : fd.list) {
+                okayuiscreens::FriendRow r;
+                r.rowId = f.rowId; r.id = f.id; r.username = f.username; r.name = nameOf(f);
+                r.kind = f.status == "accepted" ? 0 : f.incoming ? 1 : 2;
+                r.online = f.online; r.favorite = g_favFriends.count(f.id) != 0;
+                r.joinable = r.kind == 0 && f.online && !f.sessionCode.empty();
+                r.hasNickname = g_friendNicks.count(f.id) != 0;
+                r.playing = f.playing; r.customStatus = f.customStatus; r.lastSeen = f.lastSeen;
+                r.lastOnline = f.lastSeen > 0 ? LastOnline(f.lastSeen) : std::string();
+                avatarRgb(r.name, r.avatar);
+                fm.friends.push_back(r);
             }
+            auto follows = [&](const std::vector<okay::FollowEntry>& v, std::vector<okayuiscreens::FollowRow>& out) {
+                for (const okay::FollowEntry& e : v) {
+                    okayuiscreens::FollowRow r;
+                    r.id = e.id; r.username = e.username; r.display = e.display; r.online = e.online;
+                    r.seen = e.lastSeen > 0 ? "seen " + RelTime(e.lastSeen) : std::string();
+                    avatarRgb(e.display, r.avatar);
+                    out.push_back(r);
+                }
+            };
+            follows(fd.following, fm.following);
+            follows(fd.followers, fm.followers);
+            for (const okay::FriendEvent& e : fd.feed) {
+                okayuiscreens::FeedRow r;
+                r.who = e.actor;
+                for (const okay::Friend& f : fd.list) if (f.username == e.actor) { r.who = nameOf(f); break; }
+                const char* verb = e.kind == "playing" ? "is playing " : e.kind == "achievement" ? "unlocked "
+                                 : e.kind == "publish" ? "published " : e.kind == "online" ? "came online" : "";
+                r.text = r.who + " " + verb + e.detail;
+                r.ago = RelTime(e.when);
+                avatarRgb(r.who, r.avatar);
+                fm.feed.push_back(r);
+                if (fm.feed.size() >= 8) break;
+            }
+            fm.code = fd.code;
+            fm.presence = std::clamp(g_onlineStatus, 0, 2);
+            fm.followSupported = fd.followSupported; fm.followBusy = g_flBusy;
+            fm.canInvite = MpCanInvite(); fm.inviteLabel = "Invite to " + MpGameTitle();
+            fm.partyLabel = MpPartyId().empty() ? "Start a party with them" : "Invite to party";
+            fm.addError = fd.err; fm.addOk = fd.ok;
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's lists end; the footer stays below
+            ImGui::InvisibleButton("##okayui_friends", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::FriendsResult r = okayuiscreens::DrawFriends(fm, fd.ui, rp.x, rp.y, ra.x, ra.y);
+            // The same actions as the Dear ImGui page.
+            auto F = [&](int i) -> const okay::Friend& { return fd.list[(std::size_t)i]; };
+            if (r.viewChanged) { fd.err.clear(); fd.ok.clear(); }
+            if (r.presence >= 0) { g_onlineStatus = r.presence; fd.nextRefresh = 0; SavePrefs(); }   // the worker broadcasts it
+            if (r.copyCode && !fd.code.empty()) { ImGui::SetClipboardText(fd.code.c_str()); Toast("Friend code copied", 1); }
+            if (r.openProfile >= 0) OpenPublicProfile(F(r.openProfile).id, F(r.openProfile).username, nameOf(F(r.openProfile)), F(r.openProfile).avatar, F(r.openProfile).accent);
+            if (r.message >= 0) OpenChatWith(F(r.message).id, nameOf(F(r.message)), F(r.message).avatar);
+            if (r.join >= 0) MpJoinFriend(F(r.join).sessionCode, nameOf(F(r.join)));
+            if (r.invite >= 0) MpInviteUser(F(r.invite).id, nameOf(F(r.invite)));
+            if (r.party >= 0) MpPartyInvite(F(r.party).id, nameOf(F(r.party)));
+            if (r.toggleFavorite >= 0) {
+                const std::string& id = F(r.toggleFavorite).id;
+                if (g_favFriends.count(id)) g_favFriends.erase(id); else g_favFriends.insert(id);
+                SavePrefs();
+            }
+            if (r.setNickname >= 0) {
+                fd.nickUid = F(r.setNickname).id;
+                std::snprintf(fd.nickBuf, sizeof(fd.nickBuf), "%s", g_friendNicks.count(fd.nickUid) ? g_friendNicks[fd.nickUid].c_str() : "");
+                fd.nickOpen = true;
+            }
+            if (r.clearNickname >= 0) { g_friendNicks.erase(F(r.clearNickname).id); SavePrefs(); }
+            if (r.copyUsername >= 0) { ImGui::SetClipboardText(F(r.copyUsername).username.c_str()); Toast("Username copied", 1); }
+            if (r.accept >= 0) {
+                const std::string nm = nameOf(F(r.accept));
+                if (fr.Accept(F(r.accept).rowId)) Toast("You're now friends with " + nm, 1);
+                fd.nextRefresh = 0;
+            }
+            if (r.remove >= 0) { fr.Remove(F(r.remove).rowId); fd.nextRefresh = 0; }
+            if (!r.addRequest.empty()) {   // username first, then a friend code (as the Dear ImGui page)
+                std::string e1, e2;
+                if (fr.Request(r.addRequest, &e1) || fr.RequestByCode(r.addRequest, &e2)) {
+                    fd.ok = "Friend request sent to " + r.addRequest + ".";
+                    Toast(fd.ok, 1);
+                    fd.ui.addBuf[0] = '\0'; fd.err.clear(); fd.nextRefresh = 0;
+                } else {
+                    fd.err = okay::privacy::IsRuleText(e1) ? e1 : okay::privacy::IsRuleText(e2) ? e2
+                           : "Hmm, no player with that username or code. Check the spelling?";
+                    fd.ok.clear();
+                }
+            }
+            if (!r.follow.empty()) { if (kFrDemo) Toast("Now following @" + r.follow, 1); else QueueFollowJob(4, r.follow); }
+            const std::vector<okay::FollowEntry>& flShown = fd.ui.view == 4 ? fd.following : fd.followers;
+            if (r.openFollowProfile >= 0 && r.openFollowProfile < (int)flShown.size()) {
+                const okay::FollowEntry& e = flShown[(std::size_t)r.openFollowProfile];
+                OpenPublicProfile(e.id, e.username, e.display, e.avatar);
+            }
+            auto followAct = [&](const std::string& act, int actKind) {
+                if (act.empty()) return;
+                if (kFrDemo) {
+                    if (actKind == 2) fd.following.erase(std::remove_if(fd.following.begin(), fd.following.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), fd.following.end());
+                    else if (actKind == 3) fd.followers.erase(std::remove_if(fd.followers.begin(), fd.followers.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), fd.followers.end());
+                    else for (const auto& x : fd.followers) if (x.id == act) { fd.following.insert(fd.following.begin(), x); break; }
+                } else QueueFollowJob(actKind, act);
+            };
+            followAct(r.followBack, 1); followAct(r.unfollow, 2); followAct(r.removeFollower, 3);
+            DrawFriendNicknameModal(fd);
+#endif
+        } else if (tab == 6) {                            // ---- Friends ----
+            uitiming::Scope uiT("Friends", "Dear ImGui");
+            sectionHeader("Friends", nullptr);
             static const bool kFrDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
             okay::Friends fr(account);
             if (!fr.Available() && !kFrDemo) {
                 loginGate("Friends");
             } else {
-                static char addBuf[48] = "";
-                static std::string fErr, fOk;
-                static std::vector<okay::Friend> fCache;
-                static std::vector<okay::FriendEvent> fFeed;
-                static std::string fCode;
-                // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
-                static std::vector<okay::FollowEntry> flFollowing, flFollowers;
-                static bool flSupported = true;
-                static Uint32 flNext = 0;
-                static char flAddBuf[48] = "";
-                {
-                    const Uint32 tnow = okay::platform::TicksMs32();
-                    if (kFrDemo) {
-                        static bool flSeeded = false;
-                        if (!flSeeded) {
-                            flSeeded = true;
-                            const long t0 = (long)std::time(nullptr);
-                            auto fe = [&](std::vector<okay::FollowEntry>& v, const char* id, const char* u, const char* d, bool on, long ago) {
-                                okay::FollowEntry e; e.id = id; e.username = u; e.display = d; e.online = on; e.lastSeen = t0 - ago; v.push_back(e); };
-                            fe(flFollowing, "u-maya", "maya", "Maya Chen", true, 0);
-                            fe(flFollowing, "u-studio", "pixelforge", "PixelForge Studio", false, 3 * 3600);
-                            fe(flFollowing, "u-ren", "ren", "Ren Ito", false, 2 * 86400);
-                            fe(flFollowers, "u-maya", "maya", "Maya Chen", true, 0);
-                            fe(flFollowers, "u-sam", "samw", "Sam Wilde", true, 0);
-                            fe(flFollowers, "u-ola", "ola", "Ola Nordmann", false, 26 * 3600);
-                            fe(flFollowers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
-                        }
-                    } else if (account.IsLoggedIn() && account.IsOnline()) {
-                        if (!g_flMutex) g_flMutex = SDL_CreateMutex();
-                        if (tnow >= flNext && !g_flBusy) { QueueFollowJob(0); flNext = tnow + 60000; }
-                        SDL_LockMutex(g_flMutex);
-                        if (g_flReady) {
-                            g_flReady = false;
-                            flFollowing = g_flFollowing; flFollowers = g_flFollowers; flSupported = g_flSupported;
-                            if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
-                            g_flMsg.clear();
-                        }
-                        SDL_UnlockMutex(g_flMutex);
-                    }
-                }
+                // The lists, the feed, my code and the follows: read by FriendsPageDataRefresh (shared with the OkayUI page), as is
+                // what the two pages share (the view, the search, the typed names, the Add friend messages).
+                FriendsPageData& frData = FriendsPageDataRefresh(account, kFrDemo);
+                std::vector<okay::Friend>& fCache = frData.list;
+                std::vector<okay::FriendEvent>& fFeed = frData.feed;
+                std::string& fCode = frData.code;
+                std::vector<okay::FollowEntry>& flFollowing = frData.following;
+                std::vector<okay::FollowEntry>& flFollowers = frData.followers;
+                const bool flSupported = frData.followSupported;
+                std::string& fErr = frData.err;
+                std::string& fOk = frData.ok;
+                Uint32& fNextRefresh = frData.nextRefresh;
+                int& fView = frData.ui.view;
+                char (&addBuf)[48] = frData.ui.addBuf;
+                char (&flAddBuf)[48] = frData.ui.followBuf;
                 // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith(). Clicking a row opens
                 // the full public profile page (OpenPublicProfile).
-                static Uint32 fNextRefresh = 0;
-                static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
-                Uint32 now = okay::platform::TicksMs32();
-                if (kFrDemo) {
-                    static bool seeded = false;
-                    if (!seeded) {
-                        seeded = true;
-                        long t0 = (long)std::time(nullptr);
-                        auto mk = [&](long row, const char* id, const char* user, const char* disp, const char* st, bool in, bool on, const char* playing, const char* custom) {
-                            okay::Friend f; f.rowId = row; f.id = id; f.username = user; f.display = disp; f.status = st;
-                            f.incoming = in; f.online = on; f.playing = playing; f.customStatus = custom; fCache.push_back(f); };
-                        mk(1, "u-maya", "maya", "Maya Chen", "accepted", false, true, "Playing Neon Drift", "");
-                        mk(2, "demo-uid", "alexr", "Alex Rivera", "accepted", false, true, "", "shipping the jam build");
-                        mk(3, "u-priya", "priya", "Priya Natarajan", "accepted", false, true, "In the editor", "");
-                        mk(4, "u-jon", "jonas", "Jonas Berg", "accepted", false, false, "", "");
-                        mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
-                        mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
-                        mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
-                        fCache[3].lastSeen = t0 - 12 * 60; fCache[4].lastSeen = t0 - 3 * 3600 - 600;   // "Last online …"
-                        fCache[0].sessionCode = "QX7-42";
-                        g_favFriends.insert("u-maya");
-                        auto ev = [&](const char* a, const char* k, const char* d, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = d; e.when = t0 - ago; fFeed.push_back(e); };
-                        ev("maya", "playing", "Neon Drift", 240); ev("alexr", "publish", "Coin Collector Deluxe", 3600);
-                        ev("priya", "achievement", "First Build", 7200); ev("jonas", "online", "", 86400);
-                        fCode = "OKAY-7K2F";
-                    }
-                } else {
-                    // EVERYTHING network for this tab (ensure-profile, presence, my code,
-                    // list, feed) runs on the Friends worker thread — the tab never
-                    // blocks on the network, so switching to Friends can't freeze.
-                    if (!g_frMutex) g_frMutex = SDL_CreateMutex();
-                    if (now >= fNextRefresh && !g_frFetching) {
-                        g_frFetching = true; fNextRefresh = now + 10000;
-                        if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
-                            SDL_DetachThread(t);
-                        else g_frFetching = false;
-                    }
-                    if (g_frMutex) {
-                        SDL_LockMutex(g_frMutex);
-                        if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
-                        SDL_UnlockMutex(g_frMutex);
-                    }
-                }
 
                 // Private display name: a nickname you set, else their display
                 // name, else the username.
@@ -24151,8 +24328,8 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 0));
                 }
 
-                // Nickname editor popup state.
-                static std::string nickUid; static char nickBuf[48] = ""; static bool nickOpen = false;
+                // Nickname editor popup state (shared with the OkayUI page).
+                std::string& nickUid = frData.nickUid; char (&nickBuf)[48] = frData.nickBuf; bool& nickOpen = frData.nickOpen;
 
                 // ---- One friend row (chat-list style) ------------------------------
                 // kind: 0 friend, 1 incoming request, 2 sent request.
@@ -24471,7 +24648,7 @@ int main(int argc, char** argv) {
                     if (!side) { ImGui::Dummy(ImVec2(0, 10)); codeCard(); }
                 } else {
                     // Search pill.
-                    static char friendFilter[64] = "";
+                    char (&friendFilter)[64] = frData.ui.filter;
                     {
                         ImVec2 sp = ImGui::GetCursorScreenPos();
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
@@ -24561,23 +24738,7 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
 
-                // Nickname editor popup.
-                if (nickOpen) { ImGui::OpenPopup("Set nickname"); nickOpen = false; }
-                if (ImGui::BeginPopupModal("Set nickname", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ImGui::TextDisabled("Only you see this nickname.");
-                    ImGui::SetNextItemWidth(260);
-                    bool ok = ImGui::InputText("##nick", nickBuf, sizeof(nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
-                        if (!nickUid.empty()) {
-                            if (nickBuf[0]) g_friendNicks[nickUid] = nickBuf; else g_friendNicks.erase(nickUid);
-                            SavePrefs();
-                        }
-                        nickUid.clear(); ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
-                    ImGui::EndPopup();
-                }
+                DrawFriendNicknameModal(frData);   // the Set nickname dialog
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);

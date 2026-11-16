@@ -4,6 +4,7 @@
 // uses (its style in DarkTheme and shared/OkayTheme.hpp: a 17 px font, frames padded 10 x 7, items 9 x 8 apart, windows padded
 // 14 x 12), and the icons are the launcher's own line icons (DrawNavIcon in launcher/main.cpp) drawn again with OkayUI.
 #include "OkayUILauncherPages.hpp"
+#include "OkayUILauncherLook.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -17,86 +18,12 @@ namespace UI = OkayUI;
 
 namespace okayuiscreens {
 
-namespace {
+namespace look {
 
-constexpr float kPi = 3.14159265f;
-
-UI::Color32 Col(const unsigned char c[4], float alpha = 1.0f) {
-    return UI::RGBA(c[0], c[1], c[2], (unsigned)(c[3] * std::max(0.0f, std::min(1.0f, alpha)) + 0.5f));
-}
-UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The accent mixed toward white (the launcher's "accent light" for text on accent-tinted fills).
-UI::Color32 AccentLight() {
-    const unsigned char* a = UI::Style().accent;
-    return Rgb((int)(a[0] * 0.55f + 115), (int)(a[1] * 0.55f + 115), (int)(a[2] * 0.55f + 115));
-}
-UI::Color32 AccentAlpha(float alpha) { const unsigned char* a = UI::Style().accent; return Rgb(a[0], a[1], a[2], (int)(alpha * 255.0f + 0.5f)); }
-UI::Vec2 V(float x, float y) { return UI::Vec2{x, y}; }
-
-std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
-
-// ---- the launcher's Dear ImGui look ----------------------------------------------------------------------------------------
-// Sizes from the launcher's style (launcher/main.cpp DarkTheme): frames are padded 10 x 7, items sit 9 x 8 apart, the gap
-// inside an item is 7. Positions move down the way the launcher's layout moves them: an item's bottom plus the 8 px gap, cut
-// to a whole pixel.
-constexpr float kFrameX = 10.0f, kFrameY = 7.0f, kSpX = 9.0f, kSpY = 8.0f, kInnerX = 7.0f;
-float Tr(float v) { return std::floor(v); }
-// Text scaled by k, rounded to whole pixels as the launcher's scaled text is (17 px x 1.34 is drawn at 23 px).
-void PushScale(float k) {
-    const float fs = std::max(1.0f, UI::GetTextLineHeight());
-    UI::PushTextScale(std::max(1.0f, std::round(fs * k)) / fs);
-}
-float NextY(float itemY, float itemH) { return Tr(itemY + itemH + kSpY); }
-
-// The launcher's Slate colours (shared/OkayTheme.hpp) in bytes.
-UI::Color32 CRaised() { return Rgb(38, 42, 51); }
-UI::Color32 CField() { return Rgb(41, 46, 59); }
-UI::Color32 CControl(float alpha = 1.0f) { return Rgb(51, 56, 71, (int)(255.0f * alpha + 0.5f)); }
-UI::Color32 CControlHover(float alpha = 1.0f) { return Rgb(67, 72, 86, (int)(255.0f * alpha + 0.5f)); }
-UI::Color32 CBorder() { return Rgb(255, 255, 255, 19); }
-UI::Color32 CTitle() { return Rgb(242, 245, 250); }
-UI::Color32 CProgress() { return Rgb(230, 179, 0); }   // the bar fill the launcher's progress bars use
-
-// For the length of a page: text at the launcher's 17 px (16 px times 17/16; the atlas has that size baked), frames padded as
-// the launcher's, and the launcher's tooltip and combo box. Theme values it changes are put back at the end.
-class LauncherLook {
-public:
-    LauncherLook() {
-        UI::Theme& t = UI::Style();
-        m_tipOffX = t.tooltipOffsetX; m_tipOffY = t.tooltipOffsetY; m_tipPadX = t.tooltipPadX; m_tipPadY = t.tooltipPadY;
-        m_tipGap = t.tooltipLineGap; m_tipRound = t.tooltipRounding; std::memcpy(m_tipBg, t.tooltipBg, 4); m_combo = t.comboArrowBox;
-        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances;
-        // Its tooltips: 25 px right of and 10 px below the mouse, padded as its windows (14 x 12), lines touching, 8 px corners,
-        // the popup colour; its combo: a frame-coloured box with an arrow button.
-        t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f;
-        t.tooltipLineGap = 0.0f; t.tooltipRounding = 8.0f;
-        t.tooltipBg[0] = 35; t.tooltipBg[1] = 39; t.tooltipBg[2] = 48; t.tooltipBg[3] = 251;
-        t.comboArrowBox = true;
-        t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
-        t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
-        const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
-        UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
-        UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
-    }
-    ~LauncherLook() {
-        UI::PopStyleVar(1);
-        UI::PopTextScale();
-        UI::Theme& t = UI::Style();
-        t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
-        t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
-        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap;
-    }
-    LauncherLook(const LauncherLook&) = delete;
-    LauncherLook& operator=(const LauncherLook&) = delete;
-private:
-    float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
-    unsigned char m_tipBg[4];
-    bool m_combo, m_ascent, m_snap;
-};
 
 // A child region the way the launcher's children are: no padding inside, a thin 8 px (or `bar`) scrollbar that takes room only
 // while the content overflows.
-bool BeginPlainChild(const char* id, float w, float h, float bar = 8.0f) {
+bool BeginPlainChild(const char* id, float w, float h, float bar) {
     UI::PushStyleVar(UI::StyleVar_ChildPadding, 0.0f);
     UI::PushStyleVar(UI::StyleVar_ScrollbarSize, bar);
     return UI::BeginChild(id, w, h, false);
@@ -136,7 +63,7 @@ float PageHeader(const UI::DrawList& dl, float x0, float y0, float w, const char
 
 // A button as the launcher draws one: its control colour, lighter under the mouse, the accent while held, the label centred;
 // a disabled one at 55% strength. `primary` is the accent-coloured kind. Returns true on a click.
-bool FlatButton(const char* id, const char* label, float x, float y, float w, float h, bool enabled = true, bool primary = false) {
+bool FlatButton(const char* id, const char* label, float x, float y, float w, float h, bool enabled, bool primary, float rounding) {
     UI::SetCursorScreenPos(V(x, y));
     const bool clicked = UI::InvisibleButton(id, w, h) && enabled;
     const bool hov = enabled && UI::IsItemHovered(), held = hov && UI::IsItemActive();
@@ -150,12 +77,12 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
                   : Rgb((int)(acc[0] + (255 - acc[0]) * lift), (int)(acc[1] + (255 - acc[1]) * lift), (int)(acc[2] + (255 - acc[2]) * lift),
                         (int)((hov ? 255.0f : 235.0f) * a));
     } else bg = held ? Rgb(acc[0], acc[1], acc[2], (int)(255 * a)) : hov ? CControlHover(a) : CControl(a);
-    dl.AddRectFilled(V(x, y), V(x + w, y + h), bg, 6.0f);
+    dl.AddRectFilled(V(x, y), V(x + w, y + h), bg, rounding);
     const UI::Vec2 ts = UI::CalcTextSize(label);
     const UI::Color32 tc = primary ? Rgb(255, 255, 255, (int)(255 * a)) : Col(UI::Style().text, a);
     const bool cut = ts.x > w - 2.0f;   // a label wider than its button is cut at the button's edge
     if (cut) dl.PushClipRect(V(x, y), V(x + w, y + h));
-    dl.AddText(V(x + std::max(kFrameX, (w - ts.x) * 0.5f), Tr(y + (h - ts.y) * 0.5f)), tc, label);
+    dl.AddText(V(Tr(x + std::max(kFrameX, (w - ts.x) * 0.5f)), Tr(y + (h - ts.y) * 0.5f)), tc, label);
     if (cut) dl.PopClipRect();
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;
@@ -205,7 +132,6 @@ void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, f
 }
 
 // The launcher's line icons (DrawNavIcon in launcher/main.cpp): 1.6 px strokes in a 15 px box.
-enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
     const float r = 7.5f, t = 1.6f;
     switch (id) {
@@ -298,7 +224,9 @@ void DrawCross(const UI::DrawList& dl, UI::Vec2 c, float r, float arm, bool hove
     dl.AddLine(V(c.x + arm, c.y - arm), V(c.x - arm, c.y + arm), col, t);
 }
 
-} // namespace
+} // namespace look
+
+using namespace look;
 
 // ---- text helpers ----------------------------------------------------------------------------------------------------------
 

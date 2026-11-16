@@ -1,7 +1,9 @@
 // Headless pictures for the guided modeling docs (docs/images/guided_modeling/). A tiny software rasteriser of our own
 // (z-buffer, flat shading, face colours) and a minimal PNG writer, so no window or GPU is needed. These are
 // renders of the generated meshes, not screenshots of the editor.
-//   guided_pictures <output folder>
+//   guided_pictures <picture folder> [<example folder>]
+// With the second folder it also writes the shipped example (examples/modeling): one .okaymesh and .okayguided per fence
+// style and a scene that uses them, all made by this code.
 #include "okay/Modeling/Guided.hpp"
 #include <algorithm>
 #include <cmath>
@@ -224,6 +226,36 @@ int main(int argc, char** argv) {
         Scene(im, m, 0, 0, 600, 360);
         Scene(im, r.mesh, 600, 0, 600, 360);
         Save(dir, "manual_edit_survives_regeneration.png", im);
+    }
+    if (argc > 2) {
+        const std::string ex = argv[2];
+        std::filesystem::create_directories(ex);
+        std::string scene =
+            "okayscene 3\nname \"Guided fences\"\ngravity 0 -9.81\ngravity3 0 -9.81 0\n"
+            "rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15\n"
+            "fog 0 0.5882353 0.7254902 0.88235295 20 90\ntonemap 1\n"
+            "gameobject 0 \"Directional Light\"\n  active 1\n  parent -1\n  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1\n"
+            "  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0\nend\n"
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 0 -0.5 0 0 0 0 1 60 1 60\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        int id = 2;
+        std::vector<std::pair<std::string, Recipe>> items;
+        for (const StartDesign& st : T.starts) items.push_back({st.id, DefaultRecipe(T, st.id)});
+        Recipe gated = DefaultRecipe(T, "picket");
+        gated.params["gate"] = 1;
+        items.push_back({"picket_with_gate", gated});
+        for (size_t i = 0; i < items.size(); ++i) {
+            const std::string base = "fence_" + items[i].first;
+            const PolyMesh m = Create(items[i].second);
+            m.Save(ex + "/" + base + ".okaymesh");
+            SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), items[i].second);
+            char tr[160];
+            std::snprintf(tr, sizeof tr, "  transform -3 0 %g 0 0 0 1 1 1 1\n", (double)i * 2.5 - 8.0);
+            scene += "gameobject " + std::to_string(id++) + " \"Fence " + items[i].first + "\"\n  active 1\n  parent -1\n" + tr +
+                     "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        }
+        std::ofstream("" + ex + "/guided_fences.okayscene", std::ios::binary) << scene;
+        std::printf("wrote the example folder %s (%d fences)\n", ex.c_str(), (int)items.size());
     }
     return 0;
 }

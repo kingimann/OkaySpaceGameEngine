@@ -402,7 +402,7 @@ Recipe Normalize(const Template& t, const Recipe& in) {
         auto it = r.slotDesign.find(s.id);
         if (it != r.slotDesign.end()) {
             for (const DesignDef& d : s.designs) if (d.id == it->second) known = true;
-            if (it->second.rfind("user:", 0) == 0 && r.userParts.count(it->second.substr(5))) known = true;
+            if (it->second.rfind("user:", 0) == 0 && r.userParts.count(std::string(it->second, 5))) known = true;
         }
         if (!known && !s.designs.empty()) r.slotDesign[s.id] = s.designs.front().id;
         if (!r.colors.count(s.id)) r.colors[s.id] = s.defaultColor;

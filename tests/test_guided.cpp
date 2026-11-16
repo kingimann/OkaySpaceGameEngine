@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "okay/Modeling/Guided.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -444,6 +445,18 @@ int main() {
         CHECK(an.ok);
         CHECK(an.Count(PartState::Intact) == (int)Generate(DefaultRecipe(T)).size());
         CHECK(an.customFaces == 0);
+        // the way the editor stores it: SaveMeshAsset, LoadMeshAsset, then the polygon view the edit tools use
+        const std::string dir2 = TmpDir("asset");
+        const Recipe fr = DefaultRecipe(T, "wrought_iron");
+        const Mesh fm = Create(fr).ToMesh();
+        CHECK(SaveMeshAsset(dir2 + "/Fence.okaymesh", fm, &err));
+        Mesh loaded;
+        CHECK(LoadMeshAsset(dir2 + "/Fence.okaymesh", loaded, nullptr, &err));
+        for (int weld = 0; weld < 2; ++weld) {
+            const PolyMesh viaFile = PolyMesh::FromMesh(loaded, {weld == 1, true, 1.0f});
+            const Analysis af = Analyze(viaFile, fr);
+            CHECK(af.ok && af.Count(PartState::Intact) == (int)Generate(fr).size() && af.customFaces == 0);
+        }
     }
 
     // ---- guided_user_parts: save a selection as a part, use it, round trip --------------------------------

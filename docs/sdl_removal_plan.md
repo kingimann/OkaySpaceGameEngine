@@ -45,6 +45,13 @@ section 11), and check window, keys, mouse, text, clipboard, a file dropped from
 
 ### Step 2. Launcher threads, mutexes and atomics (independent: can start now, in parallel)
 
+**Status (2026-11-16, branch `claude2/launcher-own-threads`): the code is moved, not yet merged; Windows not run.** All of the
+launcher's thread, mutex and atomic calls (625 calls counted over everything the launcher reaches; 590 in `main.cpp`, 23 in
+`VoiceChat.hpp`, 12 in `VersionsUI.cpp`) now go through `launcher/LauncherThreads.hpp`, opaque handles over our own
+`engine/src/Core/CoreThreads.hpp` (which gained a recursive mutex, `Detach()`, thread names and atomics on Win32 `Interlocked*` or
+compiler builtins). The launcher's own SDL calls went from 755 to 130. Tested by `test_core_threads` (Linux, and under
+ThreadSanitizer); the launcher compiles natively and passes a MinGW syntax check. The "Real Windows" list below is still to do.
+
 **What.** 613 calls: `SDL_CreateThread` 67, `SDL_DetachThread` 55, `SDL_WaitThread` 17, `SDL_LockMutex` 178, `SDL_UnlockMutex` 184,
 `SDL_CreateMutex` 59, `SDL_DestroyMutex` 6, `SDL_Atomic*` 47. Files: `launcher/main.cpp` 578, `launcher/VoiceChat.hpp` 23, `launcher/VersionsUI.cpp` 12.
 **How.** Grow the existing `okay::corethreads` shim (`Mutex`, `CondVar`, `Thread`; Win32 `CRITICAL_SECTION`, `CONDITION_VARIABLE`, `CreateThread`; POSIX on the
@@ -123,7 +130,7 @@ SDL2, the CMake `find_package(SDL2)`, the CI and release downloads, `dist/SDL2.d
 
 ## What can run in parallel, and the critical path
 
-* Step 2 (threads) touches only the launcher's threading and needs nothing else. Start it now.
+* Step 2 (threads) touches only the launcher's threading and needs nothing else. Done on `claude2/launcher-own-threads` (see Step 2); a Windows run is left.
 * Steps 1 and 3 can run together (3 needs the bridge below).
 * The critical path is **4 -> 5 -> 6 -> 7**: drawing and the ImGui backends, then the windows, with a real Windows run at each stage. Within it, the GPU painter for the editor is the one
   piece nobody can size yet.

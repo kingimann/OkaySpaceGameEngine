@@ -551,6 +551,16 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_git_args PRIVATE Threads::Threads)
 add_test(NAME git_args COMMAND test_git_args)
 
+# Our own threads, mutexes, conditions and atomics (engine/src/Core/CoreThreads.hpp) and the launcher's opaque layer over
+# them (launcher/LauncherThreads.cpp, in place of SDL's): exclusion under contention, a woken waiter, exact atomic adds,
+# join, detach, names. Std / Win32 only: no engine, no SDL.
+find_package(Threads REQUIRED)
+add_executable(test_core_threads test_core_threads.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)
+target_compile_features(test_core_threads PRIVATE cxx_std_17)
+target_include_directories(test_core_threads PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_core_threads PRIVATE Threads::Threads)
+add_test(NAME core_threads COMMAND test_core_threads)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)
@@ -2304,7 +2314,7 @@ add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
 # The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
 if(SDL2_FOUND)
-    add_executable(test_voice_races test_voice_races.cpp)
+    add_executable(test_voice_races test_voice_races.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)   # VoiceChat.hpp uses the launcher's own threads
     target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME voice_races COMMAND test_voice_races)

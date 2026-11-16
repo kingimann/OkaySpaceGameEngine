@@ -1,0 +1,222 @@
+okayscene 3
+name "Guided architecture"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 40 -0.5 40 0 0 0 1 200 1 200
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Wall Plaster wall with windows"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "wall_plaster.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Wall Brick wall with a door"
+  active 1
+  parent -1
+  transform 12 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "wall_brick_door.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Wall Garden wall"
+  active 1
+  parent -1
+  transform 24 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "wall_garden.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Wall Wall with a plank door"
+  active 1
+  parent -1
+  transform 36 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "wall_barn.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Wall Blank wall"
+  active 1
+  parent -1
+  transform 48 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "wall_blank.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Stairs Straight stairs"
+  active 1
+  parent -1
+  transform 0 0 14 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "stairs_straight.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Stairs Open slab stairs"
+  active 1
+  parent -1
+  transform 12 0 14 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "stairs_open_slab.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Stairs L-shaped stairs"
+  active 1
+  parent -1
+  transform 24 0 14 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "stairs_l_shaped.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Stairs U-shaped stairs"
+  active 1
+  parent -1
+  transform 36 0 14 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "stairs_u_shaped.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Stairs Spiral stairs"
+  active 1
+  parent -1
+  transform 48 0 14 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "stairs_spiral.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Door Flat door"
+  active 1
+  parent -1
+  transform 0 0 28 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "door_flat.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Door Panelled door"
+  active 1
+  parent -1
+  transform 12 0 28 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "door_panelled.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Door Glazed door"
+  active 1
+  parent -1
+  transform 24 0 28 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "door_glazed.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Door Plank door"
+  active 1
+  parent -1
+  transform 36 0 28 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "door_barn.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Door Double door"
+  active 1
+  parent -1
+  transform 48 0 28 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "door_double.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Window Plain window"
+  active 1
+  parent -1
+  transform 0 0 42 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "window_plain.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Window Casement"
+  active 1
+  parent -1
+  transform 12 0 42 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "window_casement.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Window Cross window"
+  active 1
+  parent -1
+  transform 24 0 42 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "window_cross.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Window Colonial"
+  active 1
+  parent -1
+  transform 36 0 42 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "window_colonial.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Window Tall ornate"
+  active 1
+  parent -1
+  transform 48 0 42 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "window_tall_ornate.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Roof Gable roof"
+  active 1
+  parent -1
+  transform 0 0 56 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "roof_gable.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Roof Hip roof"
+  active 1
+  parent -1
+  transform 12 0 56 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "roof_hip.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Roof Shed roof"
+  active 1
+  parent -1
+  transform 24 0 56 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "roof_shed.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Roof Flat roof"
+  active 1
+  parent -1
+  transform 36 0 56 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "roof_flat.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Building Cottage"
+  active 1
+  parent -1
+  transform 0 0 70 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "building_cottage.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Building Townhouse"
+  active 1
+  parent -1
+  transform 12 0 70 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "building_townhouse.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Building Barn"
+  active 1
+  parent -1
+  transform 24 0 70 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "building_barn.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Building Shed"
+  active 1
+  parent -1
+  transform 36 0 70 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "building_shed.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 30 "Building Flat-roofed block"
+  active 1
+  parent -1
+  transform 48 0 70 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "building_flat_block.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end

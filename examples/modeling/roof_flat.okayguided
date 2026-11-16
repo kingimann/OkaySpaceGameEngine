@@ -1,0 +1,13 @@
+okayguided 1
+template roof 1
+param depth 6
+param overhang 0.10000000000000001
+param pitch 30
+param thickness 0.25
+param width 8
+slot roof flat
+slot trim edge
+color roof 0.600000024 0.600000024 0.579999983 1
+color trim 0.300000012 0.319999993 0.360000014 1
+material roof 0
+material trim 1

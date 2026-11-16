@@ -106,6 +106,7 @@ struct Recipe {
 struct Template {
     std::string id, name, description, category;   ///< category: Architecture, Vehicles, Characters, Environment, Props
     int version = 1;
+    bool usesPath = false;   ///< follows Recipe::path when it has two or more points (fence, wall)
     std::vector<ParamDef> params;
     std::vector<SlotDef> slots;
     std::vector<StartDesign> starts;

@@ -235,20 +235,21 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Boulder variant to Rock"; "refit the collider after an edit"
 
 ### 3.11 Guided creation (templates, parts, safe regeneration)
-- **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). Phase 1 ships the fence (7 styles); other categories show an honest empty state.
+- **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). The fence and the architecture templates (wall, stairs, door, window, roof, building) exist; other categories show an honest empty state. Click-to-draw path and a collider option are on the page.
 - **Parts:**
   - 3.11.1 Recipe, registry and generation - `Modeling/Guided` - Recipe (text `okayguided 1`), Template and Registry, deterministic Generate, parts with stable ids
   - 3.11.2 Analysis and regeneration - `Modeling/Guided` - Analyze (intact / edited / removed parts, custom faces), Regenerate with Keep / Discard decisions, DetachPart, ConvertToRegular
   - 3.11.3 Fence template - `Modeling/GuidedFence` - 7 start designs, posts, caps, rails, pickets, bars, chain link, gate, path and ground slope, user parts as designs
   - 3.11.4 User parts and templates - `Modeling/Guided` - MakeUserPart / FitUserPart (`.okaypart`), UserTemplate (`.okaytemplate`), folder loaders
+  - 3.11.6 Architecture templates - `Modeling/GuidedArchitecture` - Wall (path, openings), Stairs (straight, L, U, spiral), Door, Window, Roof, Building composed of swappable parts
   - 3.11.5 Guided page - `editor/GuidedPanel`, `editor/main.cpp` - categories, design browser with thumbnails, settings, parts list, decision window, undo and redo of guided steps
 - **Code:** `Modeling/Guided`, `Modeling/GuidedFence`, `editor/GuidedPanel`, `editor/main.cpp` (DrawModeling page 7)
 - **API:** `guided::Recipe`, `Template`, `Registry`, `Generate`, `Create`, `Analyze`, `Regenerate`, `DetachPart`, `ConvertToRegular`, `MakeUserPart`, `GuidedHistory`
 - **Editor:** Modeling window > Guided
 - **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg)
-- **Tests:** `guided_modeling`
+- **Tests:** `guided_modeling`, `guided_architecture`
 - **Status:** Partial - the engine side (generation, rules, files) is tested headlessly; the editor page compiles but has not been opened in a real window or on Windows
-- **Open:** only the fence exists (no walls, stairs, doors, windows, roofs, vehicles, characters, environment, props); the path is typed numbers; no collider is added; material slots are stored but only colours are drawn (M5b)
+- **Open:** Architecture and the fence exist; vehicles, characters, environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)
 - **Related:** 3.1, 3.5, 3.9
 - **Words:** guided, procedural, template, fence, parts, recipe, regenerate, picket, wrought iron, chain link, gate, user part, convert to regular mesh
 - **Seen as:** the Guided page asks what to do with parts you edited; a model made here still edits like any mesh; a fence changed height but one post did not

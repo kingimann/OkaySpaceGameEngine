@@ -621,6 +621,7 @@ void GenerateWall(const Recipe& r, std::vector<GeneratedPart>& out) {
 
 Template MakeWall() {
     Builder b;
+    b.t.usesPath = true;
     b.t.id = "wall"; b.t.name = "Wall"; b.t.category = "Architecture"; b.t.version = 1;
     b.t.description = "A wall along a straight run or a path, with windows and a door cut into it and filled in. Corners are butt-joined (best at right angles).";
     b.P("length", "Length", Builder::K::Float, 6, 0.5, 100, "Size", "Length of a straight wall (ignored when you draw a path).");

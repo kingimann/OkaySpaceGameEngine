@@ -105,7 +105,7 @@ void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, i
                     const float l1 = ((sy[2] - sy[0]) * (px - sx[2]) + (sx[0] - sx[2]) * (py - sy[2])) / den;
                     const float l2 = 1 - l0 - l1;
                     if (l0 < -1e-4f || l1 < -1e-4f || l2 < -1e-4f) continue;
-                    const float z = l0 * d[0] + l1 * d[1] + l2 * d[2];
+                    const float z = 1.0f / (l0 / d[0] + l1 / d[1] + l2 / d[2]);   // perspective-correct depth
                     const size_t idx = (size_t)y * im.w + x;
                     if (z >= im.z[idx]) continue;
                     im.z[idx] = z;
@@ -227,6 +227,33 @@ int main(int argc, char** argv) {
         Scene(im, r.mesh, 600, 0, 600, 360);
         Save(dir, "manual_edit_survives_regeneration.png", im);
     }
+    // 5. Architecture: a contact sheet per template, and a building with a window, the door and the roof swapped.
+    {
+        for (const char* id : {"wall", "stairs", "door", "window", "roof", "building"}) {
+            const Template& A = *Registry::Instance().Find(id);
+            const int cols = 3, tw = 400, th = 280;
+            const int rows = ((int)A.starts.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < (int)A.starts.size(); ++i) {
+                const PolyMesh m = Create(DefaultRecipe(A, A.starts[i].id));
+                Scene(sheet, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.7f);
+            }
+            Save(dir, std::string("architecture_") + id + ".png", sheet);
+        }
+        const Template& B = *Registry::Instance().Find("building");
+        const Recipe base = DefaultRecipe(B, "townhouse");
+        Recipe swapped = base;
+        swapped.slotDesign["roof"] = "gable";
+        swapped.slotDesign["door"] = "panelled";
+        swapped.partDesign["window/0/0/0"] = "colonial";
+        swapped.partDesign["window/1/0/1"] = "colonial";
+        Img im(1200, 420);
+        im.Clear(0, 0, 0);
+        Scene(im, Create(base), 0, 0, 600, 420, 0.6f);
+        Scene(im, Regenerate(Create(base), base, swapped).mesh, 600, 0, 600, 420, 0.6f);
+        Save(dir, "building_part_swap_before_after.png", im);
+    }
     if (argc > 2) {
         const std::string ex = argv[2];
         std::filesystem::create_directories(ex);
@@ -254,8 +281,32 @@ int main(int argc, char** argv) {
             scene += "gameobject " + std::to_string(id++) + " \"Fence " + items[i].first + "\"\n  active 1\n  parent -1\n" + tr +
                      "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
         }
-        std::ofstream("" + ex + "/guided_fences.okayscene", std::ios::binary) << scene;
+        std::ofstream(ex + "/guided_fences.okayscene", std::ios::binary) << scene;
         std::printf("wrote the example folder %s (%d fences)\n", ex.c_str(), (int)items.size());
+
+        // The architecture examples: every start design of every architecture template, a row per template.
+        std::string arch = scene.substr(0, scene.find("gameobject 1 ")) +
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 40 -0.5 40 0 0 0 1 200 1 200\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        arch.replace(arch.find("name \"Guided fences\""), 21, "name \"Guided architecture\"");
+        int aid = 2, row = 0, total = 0;
+        for (const char* tid : {"wall", "stairs", "door", "window", "roof", "building"}) {
+            const Template& A = *Registry::Instance().Find(tid);
+            for (size_t i = 0; i < A.starts.size(); ++i) {
+                const std::string base = std::string(tid) + "_" + A.starts[i].id;
+                const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * 12.0, (double)row * 14.0);
+                arch += "gameobject " + std::to_string(aid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                        "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++total;
+            }
+            ++row;
+        }
+        std::ofstream(ex + "/guided_architecture.okayscene", std::ios::binary) << arch;
+        std::printf("wrote %d architecture models\n", total);
     }
     return 0;
 }

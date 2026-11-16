@@ -6373,6 +6373,31 @@ static void DrawExampleMenuItems(EditorState& ed) {
         ImGui::EndMenu();
     }
     if (basics.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("No playground scenes were found next to the editor.");
+    // Guided modeling: the fences and the architecture models, all made by the Guided page's own designs.
+    {
+        namespace fs = std::filesystem;
+        std::vector<std::string> guided;
+        for (const fs::path root : {fs::path("examples/modeling"), fs::path("../examples/modeling"), fs::path("../../examples/modeling")}) {
+            std::error_code ec;
+            if (!fs::is_directory(root, ec)) continue;
+            for (const auto& f : fs::directory_iterator(root, ec)) { if (ec) break; if (f.path().extension() == ".okayscene") guided.push_back(f.path().lexically_normal().string()); }
+            if (!guided.empty()) break;
+        }
+        std::sort(guided.begin(), guided.end());
+        if (ImGui::BeginMenu("Guided modeling (fences, buildings, stairs...)", !guided.empty())) {
+            ImGui::TextDisabled("Select a model, then Modeling > Guided to change it.");
+            for (const std::string& p : guided) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else ConsoleLog("Open failed: " + err, 2);
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (guided.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The guided modeling examples (examples/modeling) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {
@@ -45170,7 +45195,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (!alive) g_wpPlace = nullptr;
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_wpPlace = nullptr;
     }
-    if (g_wpPlace && hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D &&
+    // Guided modeling: click-to-draw path for a fence or wall (Modeling > Guided > Draw in the Scene view).
+    const bool guidedPathDraw = oked::guided_ui::PathDrawing(ed.selected());
+    if (guidedPathDraw && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) oked::guided_ui::PathDrawStop();
+    if ((g_wpPlace || guidedPathDraw) && hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         float nx = (io.MousePos.x - canvasPos.x) / canvasSize.x * 2.0f - 1.0f;
         float ny = 1.0f - (io.MousePos.y - canvasPos.y) / canvasSize.y * 2.0f;
@@ -45183,9 +45211,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (rh.hit) at = rh.point;
         else if (Mathf::Abs(rd.y) > 1e-4f) at = p0 + rd * (-p0.y / rd.y);   // y=0 plane fallback
         else at = p0 + rd * 10.0f;
-        ed.PushUndo();
-        g_wpPlace->waypoints.push_back(at);
-        ed.dirty = true;
+        if (guidedPathDraw) oked::guided_ui::PathDrawClick(at);
+        else {
+            ed.PushUndo();
+            g_wpPlace->waypoints.push_back(at);
+            ed.dirty = true;
+        }
     } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld && !g_axisGizmoHot &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = g_hoverBone;   // a bone under the cursor wins over the mesh around it

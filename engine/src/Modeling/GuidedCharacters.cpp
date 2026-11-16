@@ -129,7 +129,9 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
             if (d == "cube") shapes::Append(m, BoxAA({-hs * 0.4f, hb + hs * 0.5f, hs / 2 - 0.005f}, {hs * 0.4f, hb + hs * 0.72f, hs / 2 + 0.025f}));   // visor strip
             return m;
         }
-        if (d == "oval") return Ell(hc, hs * 0.42f, hs * 0.55f, hs * 0.45f);
+        if (d == "oval" || d == "heart") return Ell(hc, hs * 0.42f, hs * 0.55f, hs * 0.45f);
+        if (d == "long") return Ell(hc, hs * 0.38f, hs * 0.62f, hs * 0.42f);
+        if (d == "wide") return Ell(hc, hs * 0.57f, hs * 0.48f, hs * 0.48f);
         if (d == "pointed") { PolyMesh m = Ell({0, hb + hs * 0.4f, 0}, hs * 0.45f, hs * 0.4f, hs * 0.45f); shapes::Append(m, Cone({0, hb + hs * 0.72f, 0}, {0, hb + hs * 1.12f, 0}, hs * 0.3f, 6)); return m; }
         if (d == "cyclops") { PolyMesh m = BoxAA({-hs / 2, hb, -hs / 2}, {hs / 2, hb + hs, hs / 2}); Frame e; e.origin = {0, hb + hs * 0.5f, hs / 2 - 0.01f}; e.t = {1, 0, 0}; e.u = {0, 0, 1}; e.n = {0, -1, 0}; e.sx = hs * 0.34f; e.sy = 0.05f; e.sz = hs * 0.34f; shapes::Append(m, shapes::Prism(e, 12)); return m; }
         return Ell(hc, hs * 0.5f, hs * 0.5f, hs * 0.5f);   // round, dome
@@ -154,7 +156,21 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
             PolyMesh m;
             auto cap = [&] { return Ell({0, top - hs * 0.2f, -hs * 0.02f}, hs * 0.54f, hs * 0.31f, hs * 0.54f); };
             if (d == "mohawk") return BoxAA({-0.04f, top - hs * 0.1f, -hs * 0.45f}, {0.04f, top + hs * 0.38f, hs * 0.35f});
+            if (d == "afro") return Ell({0, top - hs * 0.05f, -hs * 0.02f}, hs * 0.72f, hs * 0.62f, hs * 0.72f);
+            if (d == "buzz") return Ell({0, top - hs * 0.2f, -hs * 0.02f}, hs * 0.525f, hs * 0.30f, hs * 0.525f);
             m = cap();
+            if (d == "bob") {
+                shapes::Append(m, BoxAA({-hs * 0.5f, hb + hs * 0.1f, -hs * 0.62f}, {hs * 0.5f, top - hs * 0.3f, -hs * 0.36f}));
+                shapes::Append(m, BoxAA({-hs * 0.59f, hb + hs * 0.2f, -hs * 0.45f}, {-hs * 0.47f, top - hs * 0.3f, hs * 0.1f}));
+                shapes::Append(m, BoxAA({hs * 0.47f, hb + hs * 0.2f, -hs * 0.45f}, {hs * 0.59f, top - hs * 0.3f, hs * 0.1f}));
+            }
+            if (d == "ponytail") {
+                shapes::Append(m, Limb({0, top - hs * 0.2f, -hs * 0.5f}, {0, top - hs * 0.62f, -hs * 0.86f}, hs * 0.1f, true));
+                shapes::Append(m, Limb({0, top - hs * 0.64f, -hs * 0.865f}, {0, top - hs * 1.3f, -hs * 0.9f}, hs * 0.075f, true));
+            }
+            if (d == "curly") for (int k = 0; k < 7; ++k) { const float a = 2 * kPi * (float)k / 7.0f; shapes::Append(m, Ell({std::cos(a) * hs * 0.42f, top - hs * 0.1f - 0.003f * (float)k, std::sin(a) * hs * 0.42f - hs * 0.02f}, hs * 0.2f, hs * 0.2f, hs * 0.2f, 4, 8)); }
+            if (d == "sidepart") shapes::Append(m, BoxAA({-hs * 0.1f, top - hs * 0.27f, hs * 0.1f}, {hs * 0.55f, top - hs * 0.05f, hs * 0.54f}));
+            if (d == "braid") for (int k = 0; k < 4; ++k) shapes::Append(m, Ell({0.002f * (float)k, top - hs * (0.4f + 0.34f * (float)k), -hs * (0.55f + 0.02f * (float)k)}, hs * 0.11f, hs * 0.2f, hs * 0.11f, 4, 8));
             if (d == "long") shapes::Append(m, BoxAA({-hs * 0.5f, shoulderY - 0.1f, -hs * 0.6f}, {hs * 0.5f, top - hs * 0.3f, -hs * 0.33f}));
             if (d == "bun") shapes::Append(m, Ell({0, top + hs * 0.12f, -hs * 0.36f}, hs * 0.2f, hs * 0.2f, hs * 0.2f, 4, 8));
             if (d == "spiky") for (int k = 0; k < 5; ++k) { const float a = 2 * kPi * (float)k / 5.0f; shapes::Append(m, Cone({std::cos(a) * hs * 0.3f, top - hs * 0.12f, std::sin(a) * hs * 0.3f}, {std::cos(a) * hs * 0.38f, top + hs * 0.3f, std::sin(a) * hs * 0.38f}, hs * 0.1f, 4)); }
@@ -235,22 +251,23 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
         Frame f = FrameAA({-tw / 2 - 0.02f, hipY, -td / 2 - 0.02f}, {tw / 2 + 0.02f, shoulderY + 0.01f, td / 2 + 0.02f});
         o.Add("shirt/0", "shirt", f, [&](const std::string& d) {
             PolyMesh m;
-            const float bot = d == "jacket" ? hipY - 0.15f : hipY + 0.02f;
+            const bool longK = d == "jacket" || d == "longsleeve" || d == "hoodie";
+            const float bot = d == "jacket" || d == "hoodie" ? hipY - 0.15f : hipY + 0.02f;
             const float top = d == "vest" || d == "plates" ? shoulderY - 0.02f : shoulderY + 0.01f;
             shapes::Append(m, BoxAA({-tw / 2 - 0.02f, bot, -td / 2 - 0.02f}, {tw / 2 + 0.02f, top, td / 2 + 0.02f}));
             if (d == "plates") shapes::Append(m, BoxAA({-tw * 0.3f, hipY + torsoLen * 0.3f, td / 2 + 0.01f}, {tw * 0.3f, hipY + torsoLen * 0.85f, td / 2 + 0.05f}));
-            if (d == "tshirt" || d == "jacket") for (int side = 0; side < 2; ++side) {
+            if (d == "tshirt" || longK) for (int side = 0; side < 2; ++side) {
                 const float s = side ? 1.0f : -1.0f;
                 const float ua = H * armF * 0.46f;
                 const Vec3 S{s * sw * 0.5f, shoulderY - 0.04f, 0}, dd{s * std::sin(armA), -std::cos(armA), 0};
-                shapes::Append(m, Limb(S - dd * 0.02f, S + dd * (d == "jacket" ? ua * 0.97f : ua * 0.45f), th + 0.025f, true));
+                shapes::Append(m, Limb(S - dd * 0.02f, S + dd * (longK ? ua * 0.97f : ua * 0.45f), th + 0.025f, true));
             }
             return m;
         });
         Frame fpn = FrameAA({-tw / 2, hipY - 0.45f, -td / 2}, {tw / 2, hipY + 0.03f, td / 2});
         o.Add("pants/0", "pants", fpn, [&](const std::string& d) {
             PolyMesh m;
-            if (d == "skirt") { Frame sk; sk.origin = {0, hipY - 0.42f, 0}; sk.t = {1, 0, 0}; sk.u = {0, 1, 0}; sk.n = {0, 0, 1}; sk.sx = tw * 1.3f; sk.sz = td * 1.7f; sk.sy = 0.47f; return shapes::Prism(sk, 14); }
+            if (d == "skirt" || d == "longskirt") { const float sl = d == "longskirt" ? 0.85f : 0.47f; Frame sk; sk.origin = {0, hipY - (d == "longskirt" ? 0.8f : 0.42f), 0}; sk.t = {1, 0, 0}; sk.u = {0, 1, 0}; sk.n = {0, 0, 1}; sk.sx = tw * 1.3f; sk.sz = td * 1.7f; sk.sy = sl; return shapes::Prism(sk, 14); }
             shapes::Append(m, BoxAA({-tw * 0.46f - 0.02f, hipY - 0.13f, -td * 0.46f - 0.02f}, {tw * 0.46f + 0.02f, hipY + 0.04f, td * 0.46f + 0.02f}));
             for (int side = 0; side < 2; ++side) {
                 const float s = side ? 1.0f : -1.0f;
@@ -259,7 +276,7 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
                 const Vec3 d1{s * std::sin(stance), -std::cos(stance), 0};
                 const float len = d == "shorts" ? L * 0.35f : L * 0.5f;
                 shapes::Append(m, Limb(Hp - d1 * 0.03f, Hp + d1 * len, th * 1.25f + 0.025f, true));
-                if (d == "trousers" || d == "greaves") shapes::Append(m, Limb(Hp + d1 * (L * 0.5f), Hp + d1 * (L * 0.96f), th * 0.95f + 0.025f, true));
+                if (d == "trousers" || d == "greaves" || d == "jeans" || d == "cargo" || d == "leggings") shapes::Append(m, Limb(Hp + d1 * (L * 0.5f), Hp + d1 * (L * 0.96f), th * 0.95f + 0.025f, true));
             }
             return m;
         });
@@ -463,8 +480,20 @@ void GenerateCreature(const Recipe& r, std::vector<GeneratedPart>& parts) {
 
 
 // The human: blocky below Medium (the deliberate low-poly end), organic from Medium up. Same part ids and designs at every level.
-void GenerateHuman(const Recipe& r, std::vector<GeneratedPart>& parts) {
-    if (shapes::DetailF() >= 0.999f) { GenerateHumanOrganic(r, parts, GenerateBiped); return; }
+// Style: 0 realistic, 1 stylised low poly (visible facets, a little heroic), 2 cartoon (big head, short limbs), 3 blocky (always boxes).
+// Styles change the proportions on top of the sliders, so the sliders still work.
+Recipe StyledRecipe(const Recipe& r) {
+    Recipe s = r;
+    const int style = (int)r.Param("style", 0);
+    auto mul = [&](const char* id, double k, double lo, double hi) { s.params[id] = std::min(hi, std::max(lo, r.Param(id) * k)); };
+    if (style == 1) { mul("headSize", 1.1, 0.1, 0.6); mul("shoulderWidth", 1.08, 0.2, 1.0); mul("limbThickness", 1.1, 0.02, 0.16); }
+    if (style == 2) { mul("headSize", 1.55, 0.1, 0.6); mul("limbThickness", 1.3, 0.02, 0.16); mul("legLength", 0.86, 0.3, 0.6); mul("armLength", 0.9, 0.25, 0.5); mul("neckLength", 0.3, 0.0, 0.25); mul("torsoDepth", 1.1, 0.1, 0.6); }
+    return s;
+}
+void GenerateHuman(const Recipe& r0, std::vector<GeneratedPart>& parts) {
+    const Recipe r = StyledRecipe(r0);
+    const int style = (int)r0.Param("style", 0);
+    if (shapes::DetailF() >= 0.999f && style != 3) { GenerateHumanOrganic(r, parts, GenerateBiped); return; }
     Recipe b = r;   // Low: the separate face parts are drawn as the old combined face
     if (b.DesignFor("face", "face/0") == "none" && b.DesignFor("eyes", "eyes/0") != "none" && !b.DesignFor("eyes", "eyes/0").empty()) b.slotDesign["face"] = b.DesignFor("eyes", "eyes/0") == "big" ? "big" : "simple";
     GenerateBiped(b, parts);
@@ -517,15 +546,16 @@ Template MakeHuman() {
     b.t.id = "human"; b.t.name = "Human"; b.t.category = "Characters"; b.t.version = 1;
     b.t.description = "A person: head, face, hair, torso, arms, hands, legs, feet, clothes and accessories, each a part you can change, with body proportion sliders.";
     BipedParams(b, 1.75, 0.46, 0.24, 0.23, 0.47, 0.045, 0.40, 0.06);
+    { ParamDef p; p.id = "style"; p.label = "Style"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 3; p.group = "Proportions"; p.tip = "Realistic, stylised low poly (visible facets), cartoon (big head, short limbs) or blocky (always boxes, at every Detail level)."; p.choices = {"Realistic", "Stylised low poly", "Cartoon", "Blocky"}; b.t.params.push_back(p); }
     { ParamDef p; p.id = "bodyType"; p.label = "Body type"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 2; p.group = "Proportions"; p.tip = "Neutral, male or female build (shoulders, waist, hips, chest)."; p.choices = {"Neutral", "Male", "Female"}; b.t.params.push_back(p); }
-    b.S("head", "Head", {{"round", "Round"}, {"oval", "Oval"}, {"box", "Square"}, {"pointed", "Pointed"}}, kSkin, 0);
+    b.S("head", "Head", {{"round", "Round"}, {"oval", "Oval"}, {"box", "Square"}, {"pointed", "Pointed"}, {"heart", "Heart"}, {"long", "Long"}, {"wide", "Wide"}}, kSkin, 0);
     b.S("face", "Face", {{"simple", "Eyes and nose"}, {"big", "Big eyes"}, {"none", "None"}}, kBlack, 1);
     b.S("eyes", "Eyes", {{"none", "None"}, {"round", "Round"}, {"big", "Big"}, {"narrow", "Narrow"}}, kBlack, 11);
     b.S("brows", "Eyebrows", {{"none", "None"}, {"soft", "Soft"}, {"thick", "Thick"}, {"angular", "Angular"}}, kBrown, 12);
     b.S("nose", "Nose", {{"none", "None"}, {"straight", "Straight"}, {"button", "Button"}, {"long", "Long"}, {"flat", "Flat"}}, kSkin, 13);
     b.S("mouth", "Mouth", {{"none", "None"}, {"smile", "Smile"}, {"neutral", "Neutral"}, {"small", "Small"}}, Color{0.7f, 0.3f, 0.3f, 1}, 14);
     b.S("ears", "Ears", {{"none", "None"}, {"normal", "Normal"}, {"small", "Small"}, {"big", "Big"}}, kSkin, 15);
-    b.S("hair", "Hair", {{"none", "Bald"}, {"short", "Short"}, {"long", "Long"}, {"mohawk", "Mohawk"}, {"bun", "Bun"}, {"spiky", "Spiky"}}, kBrown, 2);
+    b.S("hair", "Hair", {{"none", "Bald"}, {"short", "Short"}, {"long", "Long"}, {"mohawk", "Mohawk"}, {"bun", "Bun"}, {"spiky", "Spiky"}, {"buzz", "Buzz cut"}, {"bob", "Bob"}, {"ponytail", "Ponytail"}, {"afro", "Afro"}, {"curly", "Curly"}, {"sidepart", "Side part"}, {"braid", "Braid"}}, kBrown, 2);
     b.S("neck", "Neck", {{"round", "Round"}, {"thin", "Thin"}}, kSkin, 0);
     b.S("torso", "Torso", {{"box", "Box"}, {"tapered", "Tapered"}, {"barrel", "Barrel"}}, kSkin, 0);
     b.S("pelvis", "Hips", {{"box", "Hips"}}, kSkin, 0);
@@ -533,12 +563,13 @@ Template MakeHuman() {
     b.S("hand", "Hands", {{"block", "Block"}, {"mitten", "Mitten"}, {"fist", "Fist"}, {"fingers", "Fingers"}}, kSkin, 0);
     b.S("leg", "Legs", LimbDesigns(), kSkin, 0);
     b.S("foot", "Feet", {{"block", "Bare foot"}, {"boot", "Boot"}, {"sneaker", "Sneaker"}, {"round", "Round shoe"}}, kSkin, 0);
-    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"jacket", "Jacket"}, {"vest", "Vest"}}, kBlue, 3);
-    b.S("pants", "Bottoms", {{"none", "None"}, {"shorts", "Shorts"}, {"trousers", "Trousers"}, {"skirt", "Skirt"}}, kGrey, 4);
+    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"jacket", "Jacket"}, {"vest", "Vest"}, {"tank", "Tank top"}, {"longsleeve", "Long sleeve"}, {"hoodie", "Hoodie"}}, kBlue, 3);
+    b.S("pants", "Bottoms", {{"none", "None"}, {"shorts", "Shorts"}, {"trousers", "Trousers"}, {"skirt", "Skirt"}, {"jeans", "Jeans"}, {"cargo", "Cargo trousers"}, {"leggings", "Leggings"}, {"longskirt", "Long skirt"}}, kGrey, 4);
     b.S("hat", "Hat", {{"none", "None"}, {"cap", "Cap"}, {"tophat", "Top hat"}, {"helmet", "Helmet"}, {"beanie", "Beanie"}}, kRed, 5);
     b.S("glasses", "Glasses", {{"none", "None"}, {"round", "Round"}, {"square", "Square"}, {"visor", "Visor"}}, kBlack, 6);
     b.S("backpack", "Backpack", {{"none", "None"}, {"small", "Small"}, {"large", "Large"}}, kLeather, 7);
     b.S("belt", "Belt", {{"none", "None"}, {"belt", "Belt"}}, kLeather, 8);
+    b.S("scarf", "Scarf", {{"none", "None"}, {"scarf", "Scarf"}, {"long", "Long scarf"}}, kRed, 16);
     b.S("cape", "Cape", {{"none", "None"}, {"short", "Short cape"}, {"long", "Long cape"}}, kRed, 9);
     b.S("shoulder", "Shoulder pads", {{"none", "None"}, {"round", "Round"}, {"plate", "Plate"}, {"spike", "Spike"}}, kSteel, 10);
     const std::map<std::string, Color> clothes = {{"shirt", kBlue}, {"pants", kGrey}, {"hair", kBrown}};

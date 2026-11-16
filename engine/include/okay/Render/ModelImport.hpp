@@ -97,6 +97,9 @@ std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* m
 /// given, receives a one-line human-readable summary of what was wired.
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
+/// The same, for a model that is already in the scene (not read from a file): a character the engine built itself, such as a
+/// rigged Guided human. `root` is the model's top object (a skeleton, a SkinnedMesh), not yet a child of anything.
+GameObject* AttachCharacterModelRoot(Scene& scene, GameObject* player, GameObject* root, std::string* outLog = nullptr);
 
 /// True when `go` reads player input (a person controller). An NPC or a bare
 /// Character is not one.

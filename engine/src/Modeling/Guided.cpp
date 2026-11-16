@@ -1,4 +1,5 @@
 #include "okay/Modeling/Guided.hpp"
+#include <chrono>
 #include "okay/Modeling/PolyOps.hpp"
 #include <algorithm>
 #include <array>
@@ -459,6 +460,12 @@ Recipe DefaultRecipe(const Template& t, const std::string& startId) {
     return Normalize(t, r);
 }
 
+namespace {
+thread_local GenStats g_stats;
+static thread_local std::map<std::string, PolyMesh> g_cache;
+static thread_local long g_cacheFaces = 0;
+}
+
 std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
     std::vector<GeneratedPart> out;
     RegisterBuiltinTemplates();
@@ -473,11 +480,33 @@ std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
     // Ultra: every part is subdivided (Catmull-Clark) one or two times, within a face budget per part, for a truly smooth high-poly surface.
     if (shapes::g_detail >= 2.5f) {
         const int levels = shapes::g_detail >= 2.95f ? 2 : 1;
+        // Instancing: parts of the same shape (four wheels, a row of pickets) are subdivided once and the result is moved to
+        // each place, instead of being subdivided again every time.
+        std::map<std::string, std::pair<PolyMesh, Vec3>> shapesDone;   // key -> subdivided mesh and the corner it was built at
         for (GeneratedPart& p : all) {
             int lv = levels;
             long faces = (long)p.mesh.faces.size();
             while (lv > 0 && faces * (long)(1 << (2 * lv)) > 2500) --lv;
-            if (lv > 0 && !p.mesh.faces.empty()) p.mesh = CatmullClark(p.mesh, lv);
+            if (lv <= 0 || p.mesh.faces.empty()) continue;
+            Vec3 lo{1e30f, 1e30f, 1e30f};
+            for (const Vec3& v : p.mesh.verts) lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
+            std::string key = std::to_string(lv) + ":";
+            for (const Vec3& v : p.mesh.verts) { key += std::to_string(std::llround((double)(v.x - lo.x) * 2e3)) + "," + std::to_string(std::llround((double)(v.y - lo.y) * 2e3)) + "," + std::to_string(std::llround((double)(v.z - lo.z) * 2e3)) + ";"; }
+            for (const PolyFace& f : p.mesh.faces) {
+                key += '|';
+                for (int vi : f.verts) key += std::to_string(vi) + ",";
+                key += std::to_string(f.material) + (f.hasColor ? "c" + std::to_string(f.color.r) + "," + std::to_string(f.color.g) + "," + std::to_string(f.color.b) : std::string());
+            }
+            auto it = shapesDone.find(key);
+            if (it != shapesDone.end()) {
+                p.mesh = it->second.first;
+                const Vec3 shift = lo - it->second.second;
+                for (Vec3& v : p.mesh.verts) v = v + shift;
+                ++g_stats.instanced;
+            } else {
+                p.mesh = CatmullClark(p.mesh, lv);
+                shapesDone[key] = {p.mesh, lo};
+            }
         }
     }
     shapes::g_detail = saved;
@@ -498,7 +527,25 @@ PolyMesh Assemble(const std::vector<GeneratedPart>& parts) {
     return m;
 }
 
-PolyMesh Create(const Recipe& r, std::string* error) { return Assemble(Generate(r, error)); }
+PolyMesh Create(const Recipe& r, std::string* error) {
+    // Cached by the recipe's settings: the same recipe again (a panel redraw, a triangle count, an undo back to a known state)
+    // is a copy, not a rebuild. Parts of the same shape inside one build are instanced (see Generate).
+    const std::string key = r.Serialize();
+    auto it = g_cache.find(key);
+    if (it != g_cache.end()) { ++g_stats.hits; return it->second; }
+    ++g_stats.misses;
+    const auto t0 = std::chrono::steady_clock::now();
+    PolyMesh m = Assemble(Generate(r, error));
+    g_stats.lastBuildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (!(error && !error->empty()) && !m.faces.empty()) {
+        if (g_cacheFaces + (long)m.faces.size() > 1500000) ClearCache();
+        g_cacheFaces += (long)m.faces.size();
+        g_cache[key] = m;
+    }
+    return m;
+}
+const GenStats& Stats() { return g_stats; }
+void ClearCache() { g_cache.clear(); g_cacheFaces = 0; }
 
 bool DetachPart(Recipe& r, const std::string& partId) {
     for (const GeneratedPart& p : Generate(r))

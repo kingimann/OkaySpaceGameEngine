@@ -109,6 +109,8 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/DebrisPool.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 

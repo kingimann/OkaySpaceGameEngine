@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "ProjectVersion.hpp"
-#include "UpdateSignature.hpp"
+#include "UpdateGuard.hpp"
 
 namespace okayversions {
 namespace fs = std::filesystem;
@@ -116,6 +116,9 @@ struct Sources {
     /// ed25519 public keys (hex, comma-separated) that must have signed versions.json (shared/UpdateSignature.hpp). Defaults to the keys
     /// built into this program (-DOKAY_UPDATE_TRUSTED_KEYS); "" = none, unsigned indexes are accepted (the transition).
     std::string trustedKeys = okayupdate::BuiltInTrustedKeys();
+    /// The replay floor file (shared/UpdateGuard.hpp), "" = none. With a trusted key, a validly signed list whose newest version is older
+    /// than the one remembered here is refused (an old signed list replayed), and a newer one raises it.
+    std::filesystem::path floorFile;
 };
 /// Find out which versions exist: <bucket>/versions.json; its channel heads are then checked against <bucket>/VERSION.txt and
 /// LTS.txt (the index is written last and can lag: a newer head there is added, without checksums). When there is no usable

@@ -539,6 +539,7 @@ struct SpawnProjectileNode : VsNode {
         id = 0;
         if (!GpHasBody(this, g, ctx) || !ctx.gameObject->scene()) return 0;
         if (path.empty()) { g.Error(this, ctx, "type a prefab path"); return 0; }
+        if (!ScriptPathOk(path, "visual script Shoot")) return 0;
         GameObject* b = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
         if (!b) { g.Error(this, ctx, "couldn't spawn '" + path + "'"); return 0; }
         const float speed = In(0, g, ctx, VsValue{12.0f}).AsFloat();
@@ -709,6 +710,7 @@ inline std::string GpAssetPath(NodeGraph& g, const std::string& path) {
 inline GameObject* GpSpawn(VsNode* n, NodeGraph& g, VsContext& ctx, const std::string& path) {
     if (!ctx.gameObject || !ctx.gameObject->scene()) { g.Error(n, ctx, "this node needs an object in a scene"); return nullptr; }
     if (path.empty()) { g.Error(n, ctx, "type a prefab path"); return nullptr; }
+    if (!ScriptPathOk(path, "visual script Spawn")) return nullptr;
     GameObject* o = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), GpAssetPath(g, path));
     if (!o) g.Error(n, ctx, "couldn't spawn '" + path + "'");
     return o;

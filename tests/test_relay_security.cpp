@@ -343,5 +343,89 @@ int main() {
         relay.Stop();
     }
 
+    // ---- SEC1: a flood of spoofed hellos must not lock new players out (the hello-rate table is bounded) ----
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        relay.SetLegacyHello(true);   // a legacy hello registers at once: lets the test see "joined" without a cookie
+        // Version-4 hellos with an empty cookie from 70,000 different (forged) addresses: each only earns a cookie reply
+        // and a row in the per-address hello-rate table, which holds kMaxHelloTrackers (65,536) rows.
+        auto v4 = [](const std::string& code) {
+            Packet p(RelayHello); p.Write(static_cast<std::uint8_t>(RelayClient)); p.Write(code);
+            p.Write(kRelayProtocolVersion); p.Write(std::uint32_t(0)); p.Write(std::uint32_t(0));
+            for (std::size_t i = 0; i < kRelayCookieBytes; ++i) p.Write(std::uint8_t(0));
+            while (p.Size() < kRelayHelloMinBytes) p.Write(std::uint8_t(0));
+            return std::vector<std::uint8_t>(p.Data(), p.Data() + p.Size());
+        };
+        const auto spoof = v4("X");
+        for (std::uint32_t i = 0; i < 70000; ++i)
+            relay.HandleDatagram(Endpoint{0x0A010000u + i, 4000}, spoof.data(), spoof.size());
+        CHECK(relay.PeerCount() == 0);      // nothing was allocated for a forged address
+        // A real player from a new address (a legacy hello needs no cookie round) still gets in.
+        const Endpoint real{0xC6336407u, 5000};   // 198.51.100.7
+        const auto hello = HelloBytes(RelayHost, "REAL-ROOM");
+        relay.HandleDatagram(real, hello.data(), hello.size());
+        CHECK(relay.SlotOf(real) != 0);
+        relay.Stop();
+    }
+
+    // ---- SEC1: one address's total forwarding is capped, however many peers and sessions it holds ----
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        relay.SetLegacyHello(true);
+        const std::uint32_t attacker = 0xCB007101u;   // 203.0.113.1
+        std::vector<Endpoint> hosts, clients;
+        for (int sIdx = 0; sIdx < 16; ++sIdx) {       // 16 sessions (the per-address session cap), 2 clients each
+            const std::string code = "FLOOD-" + std::to_string(sIdx);
+            const Endpoint h{attacker, static_cast<std::uint16_t>(10000 + sIdx * 10)};
+            const auto hh = HelloBytes(RelayHost, code);
+            relay.HandleDatagram(h, hh.data(), hh.size());
+            hosts.push_back(h);
+            for (int c = 1; c <= 2; ++c) {
+                const Endpoint e{attacker, static_cast<std::uint16_t>(10000 + sIdx * 10 + c)};
+                const auto ch = HelloBytes(RelayClient, code);
+                relay.HandleDatagram(e, ch.data(), ch.size());
+                clients.push_back(e);
+            }
+        }
+        CHECK(relay.PeerCount() == 48);
+        std::vector<std::uint8_t> big(64000, 0x5A);
+        for (std::size_t i = 0; i < clients.size(); ++i) {
+            const std::uint32_t hostSlot = relay.SlotOf(hosts[i / 2]);
+            big[0] = RelayData; StoreU32LE(big.data() + 1, hostSlot);
+            for (int k = 0; k < 30; ++k) relay.HandleDatagram(clients[i], big.data(), big.size());   // 1.9 MB each, 61 MB in all
+        }
+        // Each peer, each host's inbound and each session stays within its own cap, so only a per-address cap can stop this.
+        CHECK(relay.DroppedRate() > 0);
+        relay.Stop();
+    }
+
+    // ---- SEC1: one session's total forwarding is capped too ----
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        relay.SetLegacyHello(true);
+        const Endpoint host{0xC6336401u, 20000};   // 198.51.100.1
+        const auto hh = HelloBytes(RelayHost, "BUSY-ROOM");
+        relay.HandleDatagram(host, hh.data(), hh.size());
+        std::vector<Endpoint> clients;
+        for (std::uint32_t i = 0; i < 30; ++i) {   // each from its own address, so no per-address cap applies
+            const Endpoint e{0xC6336410u + i, 20001};
+            const auto ch = HelloBytes(RelayClient, "BUSY-ROOM");
+            relay.HandleDatagram(e, ch.data(), ch.size());
+            clients.push_back(e);
+        }
+        CHECK(relay.PeerCount() == 31);
+        std::vector<std::uint8_t> big(64000, 0x5A);
+        // The host sends 1.8 MB to each of 30 clients: 54 MB through one session, with every per-peer cap respected.
+        for (const auto& c : clients) {
+            big[0] = RelayData; StoreU32LE(big.data() + 1, relay.SlotOf(c));
+            for (int k = 0; k < 28; ++k) relay.HandleDatagram(host, big.data(), big.size());
+        }
+        CHECK(relay.DroppedRate() > 0);
+        relay.Stop();
+    }
+
     TEST_MAIN_RESULT();
 }

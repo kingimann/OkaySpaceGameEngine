@@ -30,8 +30,8 @@ struct Rig {
         f->transform->localPosition = {0, -0.5f, 0};
         f->AddComponent<BoxCollider3D>()->size = {400, 1, 400};
     }
-    void Spawn(Mode m, int preset) {
-        p = Templates::BuildPlayerBody(*sc, {0, 0.02f, 0}, "Player");
+    void Spawn(Mode m, int preset, float y = 0.02f) {
+        p = Templates::BuildPlayerBody(*sc, {0, y, 0}, "Player");
         rb = p->GetComponent<Rigidbody3D>();
         PlayerController::Add(p, m, m == Mode::Third ? PlayerView::View::Third : PlayerView::View::First);
         if (preset >= 0) ControllerPresets::ApplyTo(p, preset);
@@ -340,6 +340,63 @@ int main() {
         CHECK(live[0].avgMs > 0.0 || live[1].avgMs > 0.0);   // physics or scripts measured something
         std::printf("[player_feel] live system rows: physics %.3f scripts %.3f animation %.3f ms\n", live[0].avgMs, live[1].avgMs, live[2].avgMs);
         // player_feel_system_cost
+    }
+
+    // A body that is spawned in the air falls; it is not "snapped down to the ground it just left" (the ground-snap that keeps
+    // a walker on stairs and curbs needs a real ground contact first). Before the fix the first air frame of a controller that
+    // never touched ground counted as "just left the ground" and the body was moved the whole 0.2 m to the floor in one frame,
+    // and the first-person eye then glided down that 0.2 m for a second: a camera bob nobody asked for.
+    Accessibility::SetReduceMotion(true);   // so the walking head bob does not count as eye movement
+    for (Mode m : {Mode::First, Mode::Third}) {
+        Rig r; r.Spawn(m, -1, 0.2f);
+        for (int i = 0; i < 6; ++i) r.Frame({});
+        // 6 frames of free fall are about 5 cm; the snap-down had already put it on the floor by then.
+        const float y4 = r.Pos().y;
+        CHECK(y4 > 0.12f);
+        r.Frames(0.5, {});
+        CHECK(std::fabs(r.Pos().y) < 0.01f);
+        // Once the landing is over the camera holds a fixed height over the body (no eye gliding down a snap).
+        GameObject* cam = r.sc->Find("Main Camera");
+        CHECK(cam != nullptr);
+        float lo = 1e9f, hi = -1e9f;
+        for (int i = 0; i < 40; ++i) { r.Frame({'w'}); const float h = cam->transform->Position().y - r.Pos().y; lo = std::min(lo, h); hi = std::max(hi, h); }
+        std::printf("[player_feel] spawned 0.2 m in the air (%s): y after 6 frames %.3f, after landing %.4f, camera height spread while walking %.5f\n",
+                    m == Mode::First ? "first" : "third", y4, r.Pos().y, hi - lo);
+        if (m == Mode::First) CHECK(hi - lo < 0.001f);
+    }
+    Accessibility::SetReduceMotion(false);
+
+    // Walking into a crate pushes it: a movable body is not a wall (no wall-slide), so the walker keeps its pace. The walker's
+    // velocity is set by the controller each frame and the solver hands the crate its share; a person pushing a 30 kg crate
+    // across a floor (about 150 N of friction) also keeps walking, a little slower, never at four fifths of the speed.
+    {
+        auto walk = [](float crateKg) {
+            Scene sc("Push");
+            GameObject* g = sc.CreateGameObject("Ground");
+            g->transform->localPosition = {0, -0.5f, 0};
+            g->transform->localScale = {100, 1, 100};
+            g->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+            g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+            GameObject* player = Templates::AddThirdPersonPlayer(sc, {0, 0, 0});
+            if (crateKg > 0.0f) {   // 0.4 x 0.3 x 0.3 m, 0.8 m ahead of the walker
+                GameObject* c = sc.CreateGameObject("Crate");
+                c->transform->localPosition = {0, 0.3f, -0.8f};
+                c->transform->localScale = {0.4f, 0.3f, 0.3f};
+                c->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+                c->AddComponent<Rigidbody3D>()->mass = crateKg;
+            }
+            sc.Start();
+            for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+            const Vec3 a = player->transform->Position();
+            for (int i = 0; i < 90; ++i) { Input::FeedKeys({'w'}); sc.Update(1.0f / 60.0f); }
+            Input::FeedKeys({});
+            const Vec3 d = player->transform->Position() - a;
+            return std::sqrt(d.x * d.x + d.z * d.z);
+        };
+        const float free = walk(0.0f), light = walk(1.0f), heavy = walk(30.0f);
+        std::printf("[player_feel] pushing a crate head-on for 1.5 s: free %.3f m, 1 kg crate %.3f m, 30 kg crate %.3f m\n", free, light, heavy);
+        CHECK(light > free * 0.95f);
+        CHECK(heavy > free * 0.95f);
     }
 
     TEST_MAIN_RESULT();

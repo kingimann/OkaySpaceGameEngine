@@ -507,9 +507,10 @@ public:
         }
         if (rb) {
             m_sinceJump += dt;
+            if (m_groundContact > 0.0f || terrainGround) m_hadContact = true;
             m_sinceGroundS = grounded ? 0.0f : m_sinceGroundS + dt;
             // Just lost the ground without jumping, with ground one step down: stay on it (stairs, curbs, slopes).
-            if (!OldPlayerPath() && !grounded && !m_swimming && m_sinceGroundS < 0.15f && m_sinceJump > 0.3f &&
+            if (!OldPlayerPath() && m_hadContact && !grounded && !m_swimming && m_sinceGroundS < 0.15f && m_sinceJump > 0.3f &&
                 rb->velocity.y <= 0.5f && stepOffset > 0.0f && gameObject->scene() &&
                 SnapToGroundBelow(*gameObject->scene(), gameObject, rb, stepOffset + 0.25f)) {
                 grounded = true; m_grounded = true; m_groundContact = 0.10f;
@@ -942,6 +943,7 @@ private:
     WallSense m_wall;                    // the wall the body is pressed against, if any
     GroundSense m_sense;                 // what the ground contacts say about the surface under the feet
     Vec3  m_inherit{0, 0, 0};            // horizontal speed taken from a moving platform on a jump, carried in the air
+    bool  m_hadContact = false;          // a real ground contact was seen: a body spawned in the air has none, so it falls instead of being snapped down
     float m_sinceGroundS = 1.0f, m_sinceJump = 1.0f;   // 1: a body that starts in the air is not "just lost the ground" (no snap down)
     Vec3  m_hold{0, 0, 0}; bool m_holdOn = false;   // idle on a slope: where the body is held
     bool  m_frictionSet = false;
@@ -972,7 +974,7 @@ private:
         // below the player: such a floor refilled no jump.)
         if (!OldPlayerPath()) {
             if (m_sense.Note(c.normal)) m_groundContact = 0.10f;
-            else if (c.normal.y > -0.5f && c.normal.y < 0.5f) m_wall.Note(c.normal);
+            else if (c.normal.y > -0.5f && c.normal.y < 0.5f && !IsPushableBody(c.gameObject)) m_wall.Note(c.normal);
             return;
         }
         bool vertical = Mathf::Abs(c.normal.y) > 0.5f;

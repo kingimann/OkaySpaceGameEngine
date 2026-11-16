@@ -19,6 +19,7 @@
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -159,6 +160,16 @@ private:
 /// The wall a body is pressed against (a horizontal contact normal), so that pushing into it asks for the slide
 /// along it. Without this the steering that drops the old heading cancelled the slide every frame: a body
 /// walking at a wall at 30 degrees crept along it at a third of the speed a frictionless slide gives.
+/// A thing the body can push out of its way: another physics body that is not fixed (a crate, a ball). The contact solver
+/// answers a push into one (it gives way, or it does not), so it is not a wall to slide along. Treating it as a wall removed
+/// the push from the wish every frame the two touched, and a walker pushing a light crate head-on lost a fifth of its speed
+/// to a stutter (push, lose the contact, push again).
+inline bool IsPushableBody(const GameObject* other) {
+    if (!other) return false;
+    const auto* rb = other->GetComponent<Rigidbody3D>();
+    return rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic;
+}
+
 struct WallSense {
     void Note(const Vec3& contactNormal) {   // the contact normal points from the body toward the wall
         const float l = std::sqrt(contactNormal.x * contactNormal.x + contactNormal.z * contactNormal.z);

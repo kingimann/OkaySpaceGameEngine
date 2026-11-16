@@ -395,9 +395,7 @@ int main() {
             Ground(s);
             GameObject* player = Templates::AddThirdPersonPlayer(s, {0, 0, 0});
             auto* hold = player->AddComponent<ProceduralObjectHolding>();
-            // Not carried: the crate stands off to the side, out of the walker's path. (In front of the walker it is pushed, which
-            // slows the walker: the free walk then measured the crate, not the load. Carried, it is picked up from where it stands.)
-            GameObject* load = Crate(s, "Load", carry ? Vec3{0, 0.3f, -0.8f} : Vec3{4.0f, 0.3f, 0.0f}, {0.4f, 0.3f, 0.3f}, 30.0f);
+            GameObject* load = Crate(s, "Load", {0, 0.3f, -0.8f}, {0.4f, 0.3f, 0.3f}, 30.0f);
             s.Start();
             for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
             if (carry) hold->Pickup(load);
@@ -410,7 +408,6 @@ int main() {
         };
         const float free = walked(false), loaded = walked(true);
         CHECK(free > 2.0f);   // 1.5 s of walking at the natural 2 m/s (was 3 m at the old fast walk)
-        std::printf("  holding walk: free %.3f loaded %.3f ratio %.3f\n", free, loaded, loaded / free);
         CHECK(loaded < free * 0.7f && loaded > free * 0.45f);   // ~0.55x
         CHECK_NEAR(MoveSpeedScale(nullptr), 1.0f, 1e-6f);
     }

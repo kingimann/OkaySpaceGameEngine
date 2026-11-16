@@ -171,6 +171,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
@@ -566,6 +567,20 @@ void WriteTriggerFilters(std::ostream& out, const char* rec, const std::vector<T
         const T* c = cols[(std::size_t)i];
         if (c->triggerTag.empty() && c->triggerLayers == 0xFFFFFFFFu) continue;
         out << "  " << rec << " " << Quote(c->triggerTag) << " " << c->triggerLayers << " " << i << "\n";
+    }
+}
+
+// The physics material of a collider (friction, bounciness, how each is combined): one line per collider whose
+// material is not the default, with its index. Colliders with the default material write nothing, so older scenes
+// and older builds see the same files as before.
+template <class T>
+void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i) {
+        const T* c = cols[(std::size_t)i];
+        if (c->friction < 0.0f && c->bounciness < 0.0f && c->frictionCombine == CombineMode::Default &&
+            c->bounceCombine == CombineMode::Default) continue;
+        out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
+            << " " << (int)c->bounceCombine << " " << i << "\n";
     }
 }
 
@@ -1674,7 +1689,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << "\n";   // trailing (back-compatible)
     }
     for (auto* bc : go->GetComponents<BoxCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -1709,6 +1725,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
     WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
+    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -1718,7 +1735,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << " " << (rb->compoundChildren ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     for (auto* j : go->GetComponents<Joint3D>()) {   // every instance: a chain link holds two joints
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -2004,6 +2022,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
     WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
+    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -3936,6 +3955,13 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+        // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
+        // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
+        out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
+            << " " << (scene.physics3D().autoContinuous ? 1 : 0) << " " << (int)scene.physics().quality
+            << " " << scene.physics().solverIterations << "\n";
+    }
     {
         const auto& rs = scene.renderSettings;
         out << "rendersettings " << (rs.skybox ? 1 : 0) << " "
@@ -4320,6 +4346,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;
+        } else if (token == "physicsquality") {
+            int q3 = 0, it3 = 10, ac = 1, q2 = 0, it2 = 10;
+            in >> q3 >> it3 >> ac;
+            in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
+            if (clear) {
+                scene.physics3D().quality = q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
+                scene.physics3D().autoContinuous = (ac != 0);
+                scene.physics().quality = q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
+            }
         } else if (token == "rendersettings") {
             int sky = 1; Color top, hor, bot; float amb = 0.0f;
             in >> sky >> top.r >> top.g >> top.b
@@ -5300,6 +5337,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                } else if (field == "physmat2d" || field == "physmat3d") {
+                    float fr = -1.0f, bn = -1.0f; int fm = 0, bm = 0, index = -1;
+                    in >> fr >> bn >> fm >> bm;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
+                    if (field == "physmat2d") {
+                        auto all = go->GetComponents<Collider2D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    } else {
+                        auto all = go->GetComponents<Collider3D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    }
                 } else if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
@@ -5370,6 +5422,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cch = 0; in >> cch; rb->compoundChildren = (cch != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;
@@ -9584,6 +9638,27 @@ void RegisterBuiltinComponentSerializers() {
                 lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry debris;
+    debris.name = "debrisemitter";
+    debris.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* de : go.GetComponents<DebrisEmitter>()) {
+            out << "  debrisemitter";
+            KvOut k{out};
+            k("count", de->count)("interval", de->interval)("delay", de->startDelay)("smin", de->sizeMin)("smax", de->sizeMax)
+             ("speed", de->speed)("spread", de->spread).col("c", de->color)("max", de->maxActive)("life", de->lifetime)
+             ("settled", de->settledLife).b("mutual", de->collideWithEachOther);
+            out << "\n";
+        }
+    };
+    debris.read = [](GameObject& go, std::istream& in) {
+        auto* de = go.AddComponent<DebrisEmitter>();
+        KvIn k(in);
+        k.i("count", de->count); k.f("interval", de->interval); k.f("delay", de->startDelay); k.f("smin", de->sizeMin);
+        k.f("smax", de->sizeMax); k.f("speed", de->speed); k.f("spread", de->spread); k.col("c", de->color);
+        k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
+    };
+    ComponentSerializerRegistry::Register(std::move(debris));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

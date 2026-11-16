@@ -641,11 +641,12 @@ struct Reader {
 } // namespace ase
 } // namespace
 
-bool ReadAseBuffer(const std::string& textIn, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// The text is taken by value: ReadAseFile hands its bytes over (no second copy of the file), ReadAseBuffer copies.
+static bool ReadAseOwned(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     ase::Reader r;
     r.baseDir = baseDir;
-    std::string text = textIn, why;
+    std::string why;
     bool conv = false;
     bool ok = detail::txt::NormalizeEncoding(text, conv, why, ase::kMaxFileBytes);
     if (!ok) r.err = "ASE: " + why;
@@ -661,6 +662,10 @@ bool ReadAseBuffer(const std::string& textIn, const std::string& baseDir, Import
     return true;
 }
 
+bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    return ReadAseOwned(text, baseDir, out, err);
+}
+
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     std::string bytes;
@@ -668,7 +673,7 @@ bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadAseBuffer(bytes, dir, out, err);
+    return ReadAseOwned(std::move(bytes), dir, out, err);
 }
 
 } // namespace okay

@@ -104,9 +104,8 @@ struct Loaded { bool ok = false; ImportedModel m; std::vector<int> matMap; };
 } // namespace lws
 } // namespace
 
-static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err, const IrrMeshLoader* loader) {
+static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const IrrMeshLoader* loader) {
     using namespace lws;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -429,7 +428,11 @@ bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err, 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadLwsBuffer(bytes, dir, out, err, loader);
+    // the bytes are handed over, not copied (ReadLwsBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadLwsImpl(std::move(bytes), dir, out, err, loader);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

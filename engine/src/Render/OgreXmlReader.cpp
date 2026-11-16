@@ -152,9 +152,8 @@ void ParseScript(const std::string& script, std::map<std::string, Mat>& mats) {
 } // namespace ogre
 } // namespace
 
-static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
     using namespace ogre;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -371,7 +370,11 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
             if (detail::txt::ReadFileCapped(p.u8string(), 4u * 1024u * 1024u, s, &e3)) scripts.push_back(std::move(s));
         }
     }
-    return ReadOgreXmlBuffer(bytes, dir, out, err, &scripts);
+    // the bytes are handed over, not copied (ReadOgreXmlBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadOgreImpl(std::move(bytes), dir, out, err, &scripts);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

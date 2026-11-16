@@ -155,9 +155,8 @@ bool IsNumber(const std::string& s) { double d; return detail::txt::ToDouble(s, 
 } // namespace nff
 } // namespace
 
-static bool ReadNffImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err) {
+static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     using namespace nff;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -591,7 +590,11 @@ bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadNffBuffer(bytes, dir, out, err);
+    // the bytes are handed over, not copied (ReadNffBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadNffImpl(std::move(bytes), dir, out, err);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

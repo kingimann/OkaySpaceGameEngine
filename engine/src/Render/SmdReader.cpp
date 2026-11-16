@@ -370,11 +370,12 @@ struct Reader {
 } // namespace smd
 } // namespace
 
-bool ReadSmdBuffer(const std::string& textIn, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// The text is taken by value: ReadSmdFile hands its bytes over (no second copy of the file), ReadSmdBuffer copies.
+static bool ReadSmdOwned(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     smd::Reader r;
     r.baseDir = baseDir;
-    std::string text = textIn, why;
+    std::string why;
     bool conv = false;
     bool ok = detail::txt::NormalizeEncoding(text, conv, why, smd::kMaxFileBytes);
     if (!ok) r.err = "SMD: " + why;
@@ -389,6 +390,10 @@ bool ReadSmdBuffer(const std::string& textIn, const std::string& baseDir, Import
     return true;
 }
 
+bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    return ReadSmdOwned(text, baseDir, out, err);
+}
+
 bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     std::string bytes;
@@ -396,7 +401,7 @@ bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadSmdBuffer(bytes, dir, out, err);
+    return ReadSmdOwned(std::move(bytes), dir, out, err);
 }
 
 } // namespace okay

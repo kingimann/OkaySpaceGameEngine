@@ -15,6 +15,7 @@ launcher off SDL2: `docs/sdl_removal_plan.md`.
 |---|---|
 | `-DOKAY_PLATFORM_BACKEND=sdl2` | default. `okay::platform::Default()` is the SDL2 backend (a thin wrapper, behaviour as before). |
 | `-DOKAY_PLATFORM_BACKEND=own` | `Default()` is our own backend. SDL2 is **not** removed: the editor, launcher and player still need it for windows and `SDL_Renderer` (see "Not behind the seam yet"). |
+| `-DOKAY_WITH_SDL=OFF` | no SDL2 at all: the sdl2 backend is not built and SDL2 is not looked for or linked; `Default()` is our own backend. The launcher, player and editor build and run on our own code only (`docs/sdl_removal_plan.md`, "A build with no SDL"). A developer build: tests off, never for releases. Default ON. |
 
 The environment variable `OKAY_PLATFORM_BACKEND=sdl2|own` set when a program starts overrides the build's choice for that
 process (a value that is neither is ignored), so one binary can be tried on either backend. It changes nothing unless set.
@@ -294,8 +295,34 @@ Two helpers hold the launcher's keep-on-screen rule so it can be tested alone: `
 160 x 80 of the window on one display's usable area and its title bar inside it) and `CenterOnDisplay(display, w, h)` (the middle
 of the usable area, shrunk to a 20 pixel margin). The launcher's `KeepWindowOnScreen` uses them with the display list of the
 backend that made the window. Written from the RandR 1.5 protocol, the Xinerama and EWMH specifications, the Xlib resource
-syntax and Microsoft's documentation of the monitor functions. Not done: display modes (exclusive fullscreen), the display a
-window is on, change events when a monitor is plugged in.
+syntax and Microsoft's documentation of the monitor functions. Not done: change events when a monitor is plugged in. (Display modes
+and the display a window is on: next section.)
+
+## Display modes
+
+`Backend::DisplayModes(display)` lists every mode display `display` (an index in `Displays()`) can show, as `VideoMode` (width,
+height, refresh rate in Hz, 0 = not said), **largest first** (width, then height, then rate), without repeats; empty when the index
+is out of range or video is not up. `Backend::CurrentDisplayMode(display, out)` is the mode it shows now. `Window::DisplayIndex()` is
+the display the window is on (the one holding its centre, else the one it overlaps most; -1 = unknown).
+`Window::SetFullscreenMode(mode)` is **exclusive fullscreen**: the display the window is on switches to the listed mode closest to
+`mode` and the window covers it; `SetFullscreen(false)`, `SetFullscreen(true)` (desktop fullscreen) and destroying the window put the
+display's own mode back. `Window::FullscreenMode()` is the mode switched to while it is in effect. The choice is
+`ClosestVideoMode(modes, want)`: the same size with the nearest rate (the lower on a tie; `want.refreshHz` 0 = the highest), else
+the smallest mode that holds the wanted size, else the largest mode.
+
+| backend | modes | current | the window's display | switch | back |
+|---|---|---|---|---|---|
+| sdl2 | `SDL_GetNumDisplayModes` / `SDL_GetDisplayMode` | `SDL_GetCurrentDisplayMode` | `SDL_GetWindowDisplayIndex` | `SDL_GetClosestDisplayMode`, `SDL_SetWindowDisplayMode`, `SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN)` | SDL, when the window leaves `SDL_WINDOW_FULLSCREEN` |
+| own X11 | the RandR modes (`XRRGetScreenResourcesCurrent`) of the outputs (`XRRGetOutputInfo`) of the CRTC that shows the display; rate = pixel clock / (horizontal total x vertical total); a rotated CRTC swaps width and height | the CRTC's mode | `DisplayIndexForRect` on `Displays()` | `XRRSetCrtcConfig` with the same place, rotation and outputs (`XRRSetScreenSize` first when the mode would not fit in the screen); the window is asked to be `_NET_WM_STATE_FULLSCREEN` and moved over the CRTC (no window manager on Xvfb) | the old mode, place and screen size, and the window's old place and size |
+| own Win32 | `EnumDisplaySettingsW(device, 0, 1, 2 ...)` on the monitor's device (`MONITORINFOEXW::szDevice`), 16 bits per pixel and more | `EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS)` | `MonitorFromWindow`, matched by device name | `ChangeDisplaySettingsExW(device, mode, null, CDS_FULLSCREEN, null)` (temporary, not saved), then the window borderless over the monitor | `ChangeDisplaySettingsExW(device, null, null, 0, null)` |
+
+libXrandr is loaded at run time like the rest of X11. Written from the RandR protocol and library documentation and Microsoft's
+documentation of `EnumDisplaySettingsW`, `ChangeDisplaySettingsExW`, `DEVMODEW` and `MonitorFromWindow`; no code from elsewhere.
+`shared/PlatformDisplays.hpp` builds the game's resolution list from it (each display's modes plus its current one) and switches
+"Fullscreen" with `SetFullscreenMode` (desktop fullscreen when the switch is refused): the player on the own backend and the editor's
+Play with the three editor switches use it. Tested: `test_platform_display` (the rules; `modes-own` and `modes-sdl2` under Xvfb
+with four RandR modes the test adds itself, switched to and back). Not tested: a mode larger than the screen (Xvfb cannot grow its
+screen), a real monitor and window manager, Windows (MinGW syntax check only).
 
 ## The own backend
 

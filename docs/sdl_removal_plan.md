@@ -13,7 +13,7 @@ All sizes are **judgement, not measurements**. "Small" = an afternoon of agent w
 
 | | SDL calls left (`calls / words`) | what they are |
 |---|---|---|
-| player | 5 / 221 | almost only data types (`SDL_Rect`, `SDL_Color`, `Uint8`); the window, input, GL, audio and 2D drawing already go through `okay::platform` |
+| player | 0 / 2 in `player/` (was 5 / 199) | none on its own path: with `OKAY_PLATFORM_BACKEND=own` the player makes **no SDL call** (proved under Xvfb, section "Player" below); the 2 words left are the casts on the default path's SDL display and OkayUI calls |
 | launcher | 743 / 1,199 in its own files | **613 are threads, mutexes and atomics (83%)**; 57 `SDL_Renderer` drawing; 14 Dear ImGui SDL backends; about 60 window, input and other platform calls |
 | editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small (stages E1 to E3, below in "Editor": `main.cpp` 194 to 50 calls; with all three switches `own` the editor makes **no SDL call** on Linux, proved under Xvfb) |
 | engine library | 0 | outside the SDL backend files (`SdlBackend.cpp`, `SdlPainter.cpp`, `UIPainterSDL.hpp`) there is **no SDL word in code** |
@@ -486,7 +486,7 @@ platform backend)` at start. Every other combination is unchanged; the default (
   * `Backend::ShowErrorBox` on X11: a small box of our own (core X drawing on its own connection, title, lines of text, an OK button;
     Return, Escape or the close button end it); it only logged before. sdl2 and Win32 already had real boxes.
 * **What the own path does differently** (known): display modes (the game's resolution list shows the desktop size only; exclusive
-  fullscreen is desktop fullscreen); no touch input on the own backends; the editor's "open from the launcher" box has the error look on
+  fullscreen is desktop fullscreen; fixed on `claude2/sdl-player-no-sdl`, below); no touch input on the own backends; the editor's "open from the launcher" box has the error look on
   every backend; on X11 the refresh rate is whatever RandR reports (Xvfb reports none: 0, so Play's frame pacing falls back as it does
   when SDL reports none). Still no multi-window panels (E4).
 * **Proof: `scripts/editor_no_sdl_check.sh`** (the launcher's check made for the editor). A trap library defines every function
@@ -526,6 +526,110 @@ platform backend)` at start. Every other combination is unchanged; the default (
   manager, a real file manager's drag, a real monitor's refresh rate) is unrun: Xvfb has no window manager and reports no refresh rate.
   No multi-window panels on `own` (E4). The default stays `sdl` until the owner approves (rule 17).
 
+## Player, display modes and a build with no SDL (branch `claude2/sdl-player-no-sdl`, on top of E3)
+
+**Status (2026-11-16): built and run on Linux under Xvfb; nothing changes by default; not merged; Windows not run.**
+
+### Player: no SDL call on the own backend
+
+With `OKAY_PLATFORM_BACKEND=own` the player makes **no SDL call at all**, from start to exit. Nothing changes without it.
+
+* **What moved.** The five SDL calls left in `player/main.cpp`: the touch-screen count (`Backend::TouchDeviceCount`), the gesture clock
+  (`okay::platform::TicksMs`), the "no window" message (`Backend::LastError`), the game clipboard (`shared/PlatformClipboard.hpp`; on the
+  sdl2 backend these are the same SDL calls as before) and OkayUI's text-field clipboard (`OkayUI::SetSystemClipboard`, on own only).
+  The 2D types are `okay::ui2d`'s (`Rect`, `RGBA`, `Vertex`: the same layout as SDL's), so the player includes no SDL header. Its monitor
+  list and display modes come from `okay::platform` on an own window (below); an sdl2 window keeps `shared/SdlDisplays` as before.
+* **Shared code it reached.** `shared/Splash.hpp` and `shared/OkayScriptUIBridge.hpp` include no SDL any more (the splash's unused
+  `SDL_Renderer` overloads are gone). `okayui/src/OkayUI.cpp` uses `<cmath>` instead of `SDL_sinf` / `SDL_cosf` / `SDL_sqrtf` /
+  `SDL_floorf` (they were the player's first SDL calls on own, through the F3 overlay) and `okay::ui2d` types; its `SDL_Renderer` path
+  (`EndFrame(SDL_Renderer*)`) and SDL clipboard are now behind `#ifdef OKAY_PLATFORM_HAVE_SDL2`.
+* **A bug found and fixed (both backends).** The window's close button did nothing while the GPU renderer was on: SDL (and our
+  backends) send Quit only when the last window closes, and the GPU renderer keeps a hidden helper window. The player now ends on its
+  game window's `WindowClose`.
+* **Proof: `scripts/player_no_sdl_check.sh <okay-player> <scene> <out>`** (the launcher's and editor's trap: a library that defines
+  every function libSDL2 exports, 839 here, preloaded in front of it; each writes `SDL CALL: <name>` and exits 97). Run on
+  `examples/vehicle/vehicle_test.okayscene`, the way `OkaySpacePlayer.exe <scene>` runs it:
+  1. control, the default player under the trap: stops at its first call (`SDL_SetHint`), exit 97;
+  2. own: 15 seconds of play (W held, Shift+W, A, D, Space, the mouse moved, left and right clicks, the wheel, F3 on and off, F11 to
+     fullscreen and back, S, typing), then the window's close button: **exit 0, no SDL call**;
+  3. the default player through the same steps, for the pictures (both walk the character; the pictures differ where the software
+     painter and SDL's renderer differ and where the two runs are a few frames apart).
+  Before this branch the own run stopped at `SDL_GetNumTouchDevices` (the first frame), then at `SDL_cosf` (F3).
+
+### Display modes in `okay::platform`
+
+New (each with its sdl2, X11 and Win32 side; `docs/platform_layer.md`, "Display modes"):
+
+* `Backend::DisplayModes(display)`: every mode a display lists (width, height, refresh), largest first, no repeats;
+  `Backend::CurrentDisplayMode(display)`;
+* `Window::DisplayIndex()`: which display (index in `Displays()`) the window is on;
+* `Window::SetFullscreenMode(mode)`: exclusive fullscreen at the listed mode closest to `mode` (`ClosestVideoMode`: the same size
+  with the nearest rate, else the smallest mode that holds it, else the largest); `SetFullscreen(false)` and destroying the window put
+  the display's own mode back; `Window::FullscreenMode()`.
+* sdl2: SDL's mode list, `SDL_GetWindowDisplayIndex`, `SDL_GetClosestDisplayMode` + `SDL_SetWindowDisplayMode` +
+  `SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN)`. X11: the RandR modes of the outputs of the CRTC that shows the display
+  (`XRRGetOutputInfo`), switched with `XRRSetCrtcConfig` (the screen is made larger first when the mode does not fit,
+  `XRRSetScreenSize`), the window moved over the CRTC; libXrandr loaded at run time. Win32: `EnumDisplaySettingsW` on the monitor's
+  device, `MonitorFromWindow`, `ChangeDisplaySettingsExW(..., CDS_FULLSCREEN)` and `ChangeDisplaySettingsExW(device, null)` to undo;
+  written from Microsoft's documentation, **MinGW syntax check only**.
+* **Used by** `shared/PlatformDisplays.hpp`: the game's resolution list on own windows now lists the display's modes (it showed the
+  desktop size only) and "Fullscreen" switches the mode (it was desktop fullscreen). That is the player's list on `own` and the
+  editor's Play list with the three editor switches.
+* **Tests** (`test_platform_display`): the pure rules (`SortedVideoModes`, `ClosestVideoMode`, `DisplayIndexForRect`), and
+  `platform_display_modes_own` / `_sdl2` under Xvfb: the test adds four RandR modes itself (800x600 at 60 and 75 Hz, 640x480 at 60,
+  1024x768 at 50), checks the list (with Xvfb's own 1024x768), the current mode, the window's display, a switch to 800x600@75 (the
+  CRTC really shows 800 x 600; on own the window covers it), 700x500 (picks 800x600@75), 1024x768@50, back with
+  `SetFullscreen(false)`, and a switch undone by destroying the window. Not tested: a mode larger than the screen (Xvfb's screen
+  cannot grow past its start size), a real monitor, Windows.
+
+### A build with no SDL: `-DOKAY_WITH_SDL=OFF`
+
+`OKAY_WITH_SDL` is a new CMake option, **ON by default** (the default build is unchanged: SDL is found and linked as before and every
+switch keeps its SDL default). With `OFF`:
+
+* SDL2 is not looked for or linked (`find_package(SDL2)` is skipped in `cmake/OkayPlatform.cmake`, `okayui/`, `launcher/`, `editor/`,
+  `player/`); `OKAY_PLATFORM_HAVE_SDL2` is not defined.
+* Left out of the build: `SdlBackend.cpp`, `SdlPainter.cpp` (its no-SDL stubs moved to `Painter.cpp`), `LauncherGfxSdl.cpp`,
+  `EditorPlatformSdl.cpp`, `EditorGfxSdl.cpp`, `shared/SdlDisplays.cpp`, `editor/VsGraphShot.cpp` (`--vs-shot` says it needs SDL) and
+  Dear ImGui's `imgui_impl_sdl2.cpp` / `imgui_impl_sdlrenderer2.cpp`.
+* The switches' defaults become our own code: `OKAY_PLATFORM_BACKEND` (the own backend is the default whatever it says),
+  `OKAY_LAUNCHER_RENDERER`, `OKAY_EDITOR_PLATFORM`, `OKAY_EDITOR_RENDERER` (there is no sdl side to pick).
+* Code that exists only on the SDL path is compiled out with `#ifdef OKAY_PLATFORM_HAVE_SDL2`: SDL's start and end, the SDL event
+  loops of the launcher and the editor, the editor's SDL_Renderer view targets (Direct3D 11 zero-copy) and multi-window panels, the
+  SDL message box, SDL's clipboard, the HWND of an SDL window, OkayUI's `EndFrame(SDL_Renderer*)` and SDL event feed, the self-test's
+  SDL keyboard, the voice clips' `SDL_LoadWAV` path (our WAV decoder is then the only one). `SDL_Window*` / `SDL_Renderer*` /
+  `SDL_Texture*` stay in `editor/main.cpp` as opaque pointer types (forward-declared, never handed to SDL) so the shared code paths
+  did not have to be split; `OKAY_BUILD_TESTS` must be OFF (many tests compare against SDL; configuring says so).
+* **Run (2026-11-16, Linux, Xvfb, Mesa llvmpipe; `scripts/no_sdl_build_check.sh <bin> <scene> <out>`)**, the launcher, the player and
+  the editor (`-O1 -g0`) built with `-DOKAY_WITH_SDL=OFF -DOKAY_BUILD_TESTS=OFF`, run with **no switch set**:
+  * `ldd`: none of the three loads an SDL library (`libsodium`, `libstdc++`, `libm`, `libgcc_s`, `libc` only);
+  * launcher: says `launcher: no SDL (own renderer, own platform backend)`; the Create page, a click into the search box and "abc",
+    a click on Play (the Play page opens), exits by itself after 1,500 frames: exit 0 (median frame 8.1 ms);
+  * player: `platform=own`, the software painter; W, the mouse, F3; the close button: exit 0;
+  * editor: `editor: no SDL ...`, `--open` the physics example; a click in the Scene view, a Hierarchy row, "crate" typed into the
+    search, Ctrl+P (Play: the scene runs in the Game view) and Ctrl+P (Stop); the close button: exit 0.
+  Screenshots kept outside the repository. MinGW: every changed file passes a syntax check both with SDL (Linux SDL headers) and
+  without (`OKAY_PLATFORM_HAVE_SDL2` undefined), including `editor/main.cpp` and `launcher/main.cpp`.
+* **What blocks dropping SDL for real** (not done here, and the reason it stays a developer build): nothing of it has run on Windows
+  (the Win32 backend's windows, WGL, input, audio, display modes); the own renderers have not been compared with SDL's on a real GPU
+  ("faster and up to par" is unmeasured where it matters); no multi-window panels on own (E4); no touch input on the own backends;
+  the web build has no own backend (`OKAY_WITH_SDL=OFF` refuses Emscripten); the tests are SDL-based.
+
+### Counts (`scripts/sdl_inventory.py`, calls / words)
+
+| | before (`93ae3909`) | after |
+|---|---|---|
+| player, `player/` | 5 / 199 | **0 / 2** |
+| player, everything it reaches | 68 / 404 | 37 / 114 |
+| launcher, `launcher/` | 36 / 270 | 36 / 97 (the `Uint32` typedefs became `<cstdint>`; the calls are the default path's, now behind `#ifdef`) |
+| launcher, everything it reaches | 86 / 505 | 63 / 245 |
+| editor, `editor/` | 122 / 317 | 122 / 296 (the same: the default path keeps its SDL calls, behind `#ifdef`) |
+| editor, everything it reaches | 188 / 577 | 165 / 469 |
+| `okayui/` (not tests) | 44 / 144 | 21 / 79 |
+| all programs and shared code (no tests, no sdl2 backend) | 232 / 1,058 | 204 / 580 |
+
+The sdl2 backend grew (199 / 481 to 214 / 506): the display-mode calls.
+
 ### What comes next for the editor
 
 * **E2 (the rest). Drawing without `SDL_Renderer` everywhere.** Stage E2 above did the frame, ImGui and every texture from pixels. Left:
@@ -533,7 +637,8 @@ platform backend)` at start. Every other combination is unchanged; the default (
   read-back today), and the multi-window panels' own renderers (with E4). Then the main window can come from `okay::platform` directly
   (our GL painter on our own window) once its events come from `Backend::PollEvent` (E3). Medium.
 * **E3. Done on its branch** (section above): with the three switches the editor makes no SDL call (Linux, Xvfb). Left for it: a run on
-  Windows and on a real X11 desktop, and display modes in `okay::platform` (the game's resolution list and exclusive fullscreen).
+  Windows and on a real X11 desktop. (Display modes in `okay::platform`, the game's resolution list and exclusive fullscreen: done on
+  `claude2/sdl-player-no-sdl`, section "Player, display modes and a build with no SDL".)
 * **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`). Then the default path's own SDL (its event
   loop, `SDL_Init` / `SDL_Quit`, the base path, the message box, `SdlDisplays.cpp`, `SdlClipboard.hpp`) can go once the owner switches
   the default.

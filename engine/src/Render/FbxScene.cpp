@@ -461,10 +461,16 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
 // ---------------------------------------------------------------------------
 struct Curve {
     std::vector<double> t, v;           // seconds, value
-    std::vector<int> flags;             // per key
-    std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file; empty when all are 0
+    // Flags and slopes belong to the file's attribute sets (KeyAttrFlags, KeyAttrDataFloat), which several keys share
+    // (often all of them): they are kept per set, and each key names its set. The values are the same as one copy per
+    // key would hold.
+    std::vector<std::uint32_t> set;     // per key: its attribute set; empty when every key uses set 0
+    std::vector<int> setFlags;          // per set (at least one entry once the curve has keys)
+    std::vector<double> setR, setL;     // per set: right slope, next-left slope (value/sec); empty when all are 0
     bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
+    std::size_t SetOf(std::size_t i) const { return set.empty() ? 0 : set[i]; }
+    int FlagsOf(std::size_t i) const { return setFlags[SetOf(i)]; }
     double Eval(double time) const { std::size_t h = (std::size_t)-1; return Eval(time, h); }
     /// `hint` remembers the key segment of the last call: samples taken in increasing time move forward from it
     /// instead of searching all keys. The segment is the same either way (the last key at or before `time`).
@@ -484,14 +490,15 @@ struct Curve {
         hint = lo; hi = lo + 1;
         const double dt = t[hi] - t[lo];
         if (dt <= 0) return v[lo];
-        const int f = flags[lo];
+        const std::size_t sl = SetOf(lo);
+        const int f = setFlags[sl];
         if (f & 0x2) return v[lo];                                   // constant (step)
         const double u = (time - t[lo]) / dt;
         if (f & 0x4) return v[lo] + (v[hi] - v[lo]) * u;              // linear
         // cubic Hermite from the key tangents
-        double m0 = sr.empty() ? 0.0 : sr[lo], m1 = sl.empty() ? 0.0 : sl[lo];   // (empty: no key had stored slopes, all 0)
+        double m0 = setR.empty() ? 0.0 : setR[sl], m1 = setL.empty() ? 0.0 : setL[sl];   // (empty: no key had stored slopes, all 0)
         if ((f & 0x300) && !hasSlopes) {                              // auto / TCB without stored slopes: derive from the neighbours
-            m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, flags[hi]);
+            m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, FlagsOf(hi));
         }
         const double u2 = u * u, u3 = u2 * u;
         return (2 * u3 - 3 * u2 + 1) * v[lo] + (u3 - 2 * u2 + u) * dt * m0 + (-2 * u3 + 3 * u2) * v[hi] + (u3 - u2) * dt * m1;
@@ -1250,27 +1257,42 @@ struct Builder {
                 da = &daBitsArr;
             }
             const Array* rc = ArrayOf(*o.e, "KeyAttrRefCount");
-            std::vector<std::size_t> seg;   // attribute set of each key (all 0 without KeyAttrRefCount)
-            if (rc) { seg.assign(n, 0); std::size_t s = 0, left = rc->empty() ? n : (std::size_t)std::max(0.0, (*rc)[0]); for (std::size_t i = 0; i < n; ++i) { while (left == 0 && s + 1 < rc->size()) { ++s; left = (std::size_t)std::max(0.0, (*rc)[s]); } seg[i] = s; if (left) --left; } }
-            c.t.reserve(n); c.v.reserve(n); c.flags.reserve(n);
-            if (da) { c.sr.reserve(n); c.sl.reserve(n); }
+            // Attribute set of each key: KeyAttrRefCount says how many keys in a row use each set (all use set 0
+            // without it). Walked along with the keys below, the same rule as one index per key computed first.
+            const std::size_t nsets = (rc && !rc->empty()) ? rc->size() : 1;
+            std::size_t sCur = 0, left = (rc && !rc->empty()) ? (std::size_t)std::max(0.0, (*rc)[0]) : n;
+            auto nextSet = [&]() -> std::size_t {
+                if (!rc) return 0;
+                while (left == 0 && sCur + 1 < rc->size()) { ++sCur; left = (std::size_t)std::max(0.0, (*rc)[sCur]); }
+                const std::size_t sg = sCur;
+                if (left) --left;
+                return sg;
+            };
+            c.t.reserve(n); c.v.reserve(n);
+            if (nsets > 1) c.set.reserve(n);
             double prev = -1e300;
+            bool otherSet = false;
+            std::size_t maxSet = 0;   // the tables below cover the sets the kept keys use (never more than the keys)
             for (std::size_t i = 0; i < n; ++i) {
+                const std::size_t sg = nextSet();
                 const double t = (*kt)[i] / kKTimePerSec;
                 if (!std::isfinite(t) || !std::isfinite((*kv)[i]) || t < prev) continue;   // keep keys sorted and finite
                 prev = t;
                 c.t.push_back(t); c.v.push_back((*kv)[i]);
-                const std::size_t sg = rc ? seg[i] : 0;
-                int flags = 0x8;
-                if (fl && !fl->empty()) flags = SafeInt((*fl)[std::min(sg, fl->size() - 1)]);
-                c.flags.push_back(flags);
-                if (da) {   // without the array every slope is 0: nothing is stored (Eval reads 0)
-                    double r = 0, l = 0;
-                    if ((sg * 4 + 1) < da->size()) { r = (*da)[sg * 4]; l = (*da)[sg * 4 + 1]; c.hasSlopes = true; }
-                    c.sr.push_back(r); c.sl.push_back(l);
-                }
+                if (nsets > 1) { c.set.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
+                if (da && (sg * 4 + 1) < da->size()) c.hasSlopes = true;   // without the array every slope is 0
             }
-            if (!c.hasSlopes) { std::vector<double>().swap(c.sr); std::vector<double>().swap(c.sl); }   // all 0
+            if (!otherSet) std::vector<std::uint32_t>().swap(c.set);   // every key uses set 0
+            // per set: the flags (0x8, cubic, without KeyAttrFlags) and the slopes (0 where the file has none)
+            const std::size_t usedSets = c.set.empty() ? 1 : maxSet + 1;
+            c.setFlags.resize(usedSets);
+            for (std::size_t sg = 0; sg < usedSets; ++sg)
+                c.setFlags[sg] = (fl && !fl->empty()) ? SafeInt((*fl)[std::min(sg, fl->size() - 1)]) : 0x8;
+            if (c.hasSlopes) {
+                c.setR.assign(usedSets, 0.0); c.setL.assign(usedSets, 0.0);
+                for (std::size_t sg = 0; sg < usedSets; ++sg)
+                    if ((sg * 4 + 1) < da->size()) { c.setR[sg] = (*da)[sg * 4]; c.setL[sg] = (*da)[sg * 4 + 1]; }
+            }
             curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
             curveStore.push_back(std::move(c));
         }

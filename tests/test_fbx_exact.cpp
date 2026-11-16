@@ -4,7 +4,8 @@
 // so the internal functions can be called. Standalone: no engine library.
 //   - matrix products that drop the terms that are exactly zero (Mul, MulTranslate, MulScale, the one-axis rotations
 //     of Euler, LocalMatrix and its short path LocalSimple) against the plain 4x4 products;
-//   - curve evaluation that remembers its last key segment against the plain search;
+//   - curve evaluation that remembers its last key segment, with flags and slopes per attribute set, against the plain
+//     search over one copy per key (the storage before);
 //   - the ASCII number fast path against FastDecimal (test_fbx_exact_numbers.cpp).
 #include "test_framework.hpp"
 #include "../engine/src/Render/FbxScene.cpp"
@@ -17,6 +18,37 @@ long FbxExactNumberChecks(long& checks);   // test_fbx_exact_numbers.cpp
 using namespace okay::fbx;
 
 namespace ref {   // the plain versions, as they were before the fast paths
+// The curve as it was stored before flags and slopes were kept per attribute set: one copy per key, plain search.
+struct OldCurve {
+    std::vector<double> t, v; std::vector<int> flags; std::vector<double> sr, sl; bool hasSlopes = false;
+    double Eval(double time) const {
+        const std::size_t n = t.size();
+        if (n == 0) return 0;
+        if (time <= t[0] || n == 1) return v[0];
+        if (time >= t[n - 1]) return v[n - 1];
+        std::size_t lo = 0, hi = n - 1;
+        while (hi - lo > 1) { const std::size_t mid = (lo + hi) / 2; if (t[mid] <= time) lo = mid; else hi = mid; }
+        hi = lo + 1;
+        const double dt = t[hi] - t[lo];
+        if (dt <= 0) return v[lo];
+        const int f = flags[lo];
+        if (f & 0x2) return v[lo];
+        const double u = (time - t[lo]) / dt;
+        if (f & 0x4) return v[lo] + (v[hi] - v[lo]) * u;
+        double m0 = sr.empty() ? 0.0 : sr[lo], m1 = sl.empty() ? 0.0 : sl[lo];
+        if ((f & 0x300) && !hasSlopes) { m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, flags[hi]); }
+        const double u2 = u * u, u3 = u2 * u;
+        return (2 * u3 - 3 * u2 + 1) * v[lo] + (u3 - 2 * u2 + u) * dt * m0 + (-2 * u3 + 3 * u2) * v[hi] + (u3 - u2) * dt * m1;
+    }
+    double AutoSlope(std::size_t i, int f) const {
+        const std::size_t n = t.size();
+        if (i == 0 || i + 1 >= n) return 0;
+        const double dt = t[i + 1] - t[i - 1];
+        if (dt <= 0) return 0;
+        if ((f & 0x1000) && ((v[i] >= v[i - 1] && v[i] >= v[i + 1]) || (v[i] <= v[i - 1] && v[i] <= v[i + 1]))) return 0;
+        return (v[i + 1] - v[i - 1]) / dt;
+    }
+};
 Mat Mul(const Mat& a, const Mat& b) {
     Mat r;
     for (int i = 0; i < 4; ++i)
@@ -96,24 +128,34 @@ int main() {
     CHECK(mul == 0); CHECK(tr == 0); CHECK(scl == 0); CHECK(eul == 0); CHECK(loc == 0);
     CHECK(simpleTried > 10000); CHECK(simple == 0);
 
-    RUN_SUITE("fbx exact: curve evaluation with a remembered segment");
+    RUN_SUITE("fbx exact: curve evaluation with a remembered segment, flags and slopes per attribute set");
     long cbad = 0, cn = 0;
     for (int c = 0; c < 2000; ++c) {
-        Curve cv; const int nk = 1 + (int)(g() % 40); double tt = -1;
+        Curve cv; ref::OldCurve oc; const int nk = 1 + (int)(g() % 40); double tt = -1;
         const bool slopes = g() % 2;
+        // attribute sets: one for all keys, a few shared ones, or one per key
+        const int shape = (int)(g() % 3);
+        const int nsets = shape == 0 ? 1 : shape == 1 ? 1 + (int)(g() % 4) : nk;
+        for (int k = 0; k < nsets; ++k) {
+            cv.setFlags.push_back((int)(g() % 3 == 0 ? 0x2 : g() % 2 ? 0x4 : 0x8 | (g() % 2 ? 0x100 : 0) | (g() % 2 ? 0x1000 : 0)));
+            if (slopes) { cv.setR.push_back(rnd(false)); cv.setL.push_back(rnd(false)); }
+        }
         for (int k = 0; k < nk; ++k) {
             tt += (g() % 4 == 0) ? 0.0 : std::ldexp((double)(g() % 1000), -8);
-            cv.t.push_back(tt); cv.v.push_back(rnd(false));
-            cv.flags.push_back((int)(g() % 3 == 0 ? 0x2 : g() % 2 ? 0x4 : 0x8 | (g() % 2 ? 0x100 : 0) | (g() % 2 ? 0x1000 : 0)));
-            if (slopes) { cv.sr.push_back(rnd(false)); cv.sl.push_back(rnd(false)); }
+            const double val = rnd(false);
+            const std::uint32_t st = shape == 0 ? 0u : shape == 1 ? (std::uint32_t)(g() % (std::uint64_t)nsets) : (std::uint32_t)k;
+            cv.t.push_back(tt); cv.v.push_back(val);
+            if (shape != 0) cv.set.push_back(st);
+            oc.t.push_back(tt); oc.v.push_back(val); oc.flags.push_back(cv.setFlags[st]);
+            if (slopes) { oc.sr.push_back(cv.setR[st]); oc.sl.push_back(cv.setL[st]); }
         }
-        cv.hasSlopes = slopes;
+        cv.hasSlopes = oc.hasSlopes = slopes;
         std::size_t h = (std::size_t)-1;
         double time = -2;
         for (int s = 0; s < 300; ++s) {
             time += (g() % 10 == 0) ? -0.3 : std::ldexp((double)(g() % 100), -9);
-            const double a1 = cv.Eval(time), a2 = cv.Eval(time, h);
-            ++cn; if (std::memcmp(&a1, &a2, 8) != 0) ++cbad;
+            const double a0 = oc.Eval(time), a1 = cv.Eval(time), a2 = cv.Eval(time, h);
+            ++cn; if (std::memcmp(&a1, &a2, 8) != 0 || std::memcmp(&a0, &a1, 8) != 0) ++cbad;
         }
     }
     CHECK(cn == 600000); CHECK(cbad == 0);

@@ -148,23 +148,27 @@ int main() {
     long cbad = 0, cn = 0;
     for (int c = 0; c < 2000; ++c) {
         Curve cv; ref::OldCurve oc; const int nk = 1 + (int)(g() % 40); double tt = -1;
+        // the curve's arrays (a Curve only points at them, as it points into the reader's pools)
+        std::vector<double> ct, cvv, cr, cl; std::vector<std::uint32_t> cset; std::vector<int> cflags;
         const bool slopes = g() % 2;
         // attribute sets: one for all keys, a few shared ones, or one per key
         const int shape = (int)(g() % 3);
         const int nsets = shape == 0 ? 1 : shape == 1 ? 1 + (int)(g() % 4) : nk;
         for (int k = 0; k < nsets; ++k) {
-            cv.setFlags.push_back((int)(g() % 3 == 0 ? 0x2 : g() % 2 ? 0x4 : 0x8 | (g() % 2 ? 0x100 : 0) | (g() % 2 ? 0x1000 : 0)));
-            if (slopes) { cv.setR.push_back(rnd(false)); cv.setL.push_back(rnd(false)); }
+            cflags.push_back((int)(g() % 3 == 0 ? 0x2 : g() % 2 ? 0x4 : 0x8 | (g() % 2 ? 0x100 : 0) | (g() % 2 ? 0x1000 : 0)));
+            if (slopes) { cr.push_back(rnd(false)); cl.push_back(rnd(false)); }
         }
         for (int k = 0; k < nk; ++k) {
             tt += (g() % 4 == 0) ? 0.0 : std::ldexp((double)(g() % 1000), -8);
             const double val = rnd(false);
             const std::uint32_t st = shape == 0 ? 0u : shape == 1 ? (std::uint32_t)(g() % (std::uint64_t)nsets) : (std::uint32_t)k;
-            cv.t.push_back(tt); cv.v.push_back(val);
-            if (shape != 0) cv.set.push_back(st);
-            oc.t.push_back(tt); oc.v.push_back(val); oc.flags.push_back(cv.setFlags[st]);
-            if (slopes) { oc.sr.push_back(cv.setR[st]); oc.sl.push_back(cv.setL[st]); }
+            ct.push_back(tt); cvv.push_back(val);
+            if (shape != 0) cset.push_back(st);
+            oc.t.push_back(tt); oc.v.push_back(val); oc.flags.push_back(cflags[st]);
+            if (slopes) { oc.sr.push_back(cr[st]); oc.sl.push_back(cl[st]); }
         }
+        cv.t = {ct.data(), ct.size()}; cv.v = {cvv.data(), cvv.size()}; cv.set = {cset.data(), cset.size()};
+        cv.setFlags = {cflags.data(), cflags.size()}; cv.setR = {cr.data(), cr.size()}; cv.setL = {cl.data(), cl.size()};
         cv.hasSlopes = oc.hasSlopes = slopes;
         std::size_t h = (std::size_t)-1;
         double time = -2;

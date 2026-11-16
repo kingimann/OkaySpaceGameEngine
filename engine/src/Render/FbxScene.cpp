@@ -616,14 +616,27 @@ inline double NlerpErrorDeg(const double qa[4], const double qb[4], double u, co
 // ---------------------------------------------------------------------------
 // animation curves
 // ---------------------------------------------------------------------------
+/// A read-only run of values kept elsewhere: a Curve's arrays are runs in a few pooled arrays that the Animator owns
+/// (Builder::Animation), so a file with thousands of curves makes a handful of allocations instead of several per curve.
+template <class T> struct Run {
+    const T* p = nullptr; std::size_t n = 0;
+    std::size_t size() const { return n; }
+    bool empty() const { return n == 0; }
+    const T& operator[](std::size_t i) const { return p[i]; }
+    const T* begin() const { return p; }
+    const T* end() const { return p + n; }
+    const T& front() const { return p[0]; }
+    const T& back() const { return p[n - 1]; }
+};
+
 struct Curve {
-    std::vector<double> t, v;           // seconds, value
+    Run<double> t, v;                   // seconds, value
     // Flags and slopes belong to the file's attribute sets (KeyAttrFlags, KeyAttrDataFloat), which several keys share
     // (often all of them): they are kept per set, and each key names its set. The values are the same as one copy per
     // key would hold.
-    std::vector<std::uint32_t> set;     // per key: its attribute set; empty when every key uses set 0
-    std::vector<int> setFlags;          // per set (at least one entry once the curve has keys)
-    std::vector<double> setR, setL;     // per set: right slope, next-left slope (value/sec); empty when all are 0
+    Run<std::uint32_t> set;             // per key: its attribute set; empty when every key uses set 0
+    Run<int> setFlags;                  // per set (at least one entry once the curve has keys)
+    Run<double> setR, setL;             // per set: right slope, next-left slope (value/sec); empty when all are 0
     bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
     std::size_t SetOf(std::size_t i) const { return set.empty() ? 0 : set[i]; }
@@ -1332,6 +1345,8 @@ struct Animator : ClipSource {
     bool Fail(const std::string& m) { if (err.empty()) err = m; return false; }
     struct Layr { Id id; std::string_view name; double weight = 100; int blendMode = 0; };
     std::vector<Curve> curveStore;
+    // The curves' arrays (Curve's runs point into these; they do not change after the reader)
+    std::vector<double> poolT, poolV, poolSlope; std::vector<std::uint32_t> poolSet; std::vector<int> poolFlags;
     /// A curve node driving one node's T, R or S in one layer; `hint` and `hintP` remember the key segments of the
     /// last evaluation (two, so the probes between keys do not move the one the keys use).
     struct NodeCN { int layer; int which; const CurveNode* cn; std::size_t hint[3]; std::size_t hintP[3]; };   // which: 0 T, 1 R, 2 S
@@ -1366,12 +1381,25 @@ struct Animator : ClipSource {
         XProps x; FixedRot fixed; bool isRoot;
         double t0, tolT, tolS, tolR;
         std::size_t cost;   // curve nodes read per evaluation
-        NodeAnim* out;
+        // When no channel has more than one curve node (one layer, the usual case), the one per channel (or none):
+        // EvalChannel then returns that curve node's values, or the base values without one, which is what the direct
+        // reading in RawPose does without walking the list three times.
+        bool direct = false; NodeCN* only[3] = {nullptr, nullptr, nullptr};
     };
     void RawPose(NodeBake& nb, double at, bool probe, KeyPose& p) {
-        EvalChannel(*nb.list, *nb.layers, 0, nb.x.t, at, probe, p.rt);
-        EvalChannel(*nb.list, *nb.layers, 1, nb.x.r, at, probe, p.rr);
-        EvalChannel(*nb.list, *nb.layers, 2, nb.x.s, at, probe, p.rs);
+        if (nb.direct) {
+            const double* base[3] = {nb.x.t, nb.x.r, nb.x.s};
+            double* out[3] = {p.rt, p.rr, p.rs};
+            for (int w = 0; w < 3; ++w) {
+                NodeCN* n = nb.only[w];
+                if (!n) { for (int k = 0; k < 3; ++k) out[w][k] = base[w][k]; continue; }
+                for (int k = 0; k < 3; ++k) out[w][k] = n->cn->curve[k] ? n->cn->curve[k]->Eval(at, probe ? n->hintP[k] : n->hint[k]) : n->cn->def[k];
+            }
+        } else {
+            EvalChannel(*nb.list, *nb.layers, 0, nb.x.t, at, probe, p.rt);
+            EvalChannel(*nb.list, *nb.layers, 1, nb.x.r, at, probe, p.rr);
+            EvalChannel(*nb.list, *nb.layers, 2, nb.x.s, at, probe, p.rs);
+        }
         fileKeyEvals += nb.cost;
     }
     /// The same matrix chain and decomposition as the fixed-rate bake, so equal curve values give equal keys.
@@ -1383,12 +1411,15 @@ struct Animator : ClipSource {
         const Mat local = conv.Local(simple ? LocalSimple(x, nb.fixed, R) : LocalMatrix(x, nb.fixed, R), nb.isRoot);
         Decompose(local, p.t, p.q, p.s);
     }
+    // The keys of the node being baked go here first (kept from node to node, so they do not grow again for each one),
+    // then into the node's arrays at their final size.
+    std::vector<Key3> emitT, emitS; std::vector<Key4> emitQ;
     void Emit(NodeBake& nb, double at, const KeyPose& p) {
         const double rel = at - nb.t0;
         Key3 kt; kt.time = rel; for (int k = 0; k < 3; ++k) kt.v[k] = p.t[k];
         Key4 kq; kq.time = rel; for (int k = 0; k < 4; ++k) kq.v[k] = p.q[k];
         Key3 ks; ks.time = rel; for (int k = 0; k < 3; ++k) ks.v[k] = p.s[k];
-        nb.out->translation.push_back(kt); nb.out->rotation.push_back(kq); nb.out->scale.push_back(ks);
+        emitT.push_back(kt); emitQ.push_back(kq); emitS.push_back(ks);
     }
     /// How far linear playback from a to b is from the tolerances, judged from the poses at 1/3 and 2/3: `euler` is the
     /// largest move of an Euler angle over maxEulerStep, `err` the largest error over what is allowed. The segment is
@@ -1517,7 +1548,12 @@ struct Animator : ClipSource {
         KeyTimes(cs, t0, t1, times, jump);
         NodeBake nb;
         nb.list = &list; nb.layers = &layers; nb.x = xp[(std::size_t)node]; nb.fixed = FixedRotations(nb.x);
-        nb.isRoot = isRoot[(std::size_t)node] != 0; nb.t0 = t0; nb.cost = std::max<std::size_t>(1, list.size()); nb.out = &na;
+        nb.isRoot = isRoot[(std::size_t)node] != 0; nb.t0 = t0; nb.cost = std::max<std::size_t>(1, list.size());
+        nb.direct = true;
+        for (NodeCN& n : list) {
+            if (n.which < 0 || n.which > 2 || nb.only[n.which]) { nb.direct = false; break; }
+            nb.only[n.which] = &n;
+        }
         if ((double)times.size() * (double)nb.cost > (double)(4 * opt.limits.maxTotalBakedSamples - std::min(fileKeyEvals, 4 * opt.limits.maxTotalBakedSamples)))
             return Fail("animation bake budget exceeded");
         std::vector<KeyPose> poses(times.size());
@@ -1531,9 +1567,7 @@ struct Animator : ClipSource {
         }
         const KeyTolerance& tol = opt.keyTolerance;
         nb.tolT = tol.positionAbs + tol.positionRel * maxT; nb.tolS = tol.scaleRel * maxS; nb.tolR = tol.rotationDeg;
-        std::size_t want = times.size();   // the keys at the file's times and the pairs at jumps; added keys grow it
-        for (char j : jump) want += (std::size_t)j;
-        na.translation.reserve(want); na.rotation.reserve(want); na.scale.reserve(want);
+        emitT.clear(); emitQ.clear(); emitS.clear();
         Emit(nb, times[0], poses[0]);
         double ta = times[0]; KeyPose a = poses[0];
         for (std::size_t i = 1; i < times.size(); ++i) {
@@ -1548,6 +1582,7 @@ struct Animator : ClipSource {
             Emit(nb, times[i], poses[i]);
             ta = times[i]; a = poses[i];
         }
+        na.translation.assign(emitT.begin(), emitT.end()); na.rotation.assign(emitQ.begin(), emitQ.end()); na.scale.assign(emitS.begin(), emitS.end());
         return true;
     }
     /// A blend shape weight curve the same way (its own value is the cubic, so the check is exact).
@@ -1713,11 +1748,28 @@ bool Builder::Animation() {
     // The clips' keys are made later, by BuildClips (the import step): what they need is kept in `job`.
     auto job = std::make_shared<Animator>();
     std::vector<Curve>& curveStore = job->curveStore;
-    // curves
+    // curves: their arrays go into the Animator's pools; each curve records where its runs start, and the runs get
+    // their pointers once every curve is in (the pools may move while they grow)
     IdMap<int> curveOf;
+    std::vector<double>& poolT = job->poolT; std::vector<double>& poolV = job->poolV; std::vector<double>& poolSlope = job->poolSlope;
+    std::vector<std::uint32_t>& poolSet = job->poolSet; std::vector<int>& poolFlags = job->poolFlags;
+    struct At { std::size_t t, set, flags, slope; };
+    std::vector<At> runAt;
+    {
+        std::size_t keys = 0;   // an upper bound of the keys, for one allocation of each pool
+        for (const Obj& o : objs) {
+            if (o.cls != "AnimationCurve") continue;
+            const Array* kt = ArrayOf(*o.e, "KeyTime");
+            const Array* kv = ArrayOf(*o.e, "KeyValueFloat");
+            if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
+            if (kt && kv) keys += std::min(kt->size(), kv->size());
+        }
+        keys = std::min<std::size_t>(keys, opt.limits.maxAnimKeys);
+        poolT.reserve(keys); poolV.reserve(keys);
+    }
     for (const Obj& o : objs) {
         if (o.cls != "AnimationCurve") continue;
-        Curve c;
+        Curve c; At at{poolT.size(), poolSet.size(), poolFlags.size(), poolSlope.size()};
         const Array* kt = ArrayOf(*o.e, "KeyTime");
         const Array* kv = ArrayOf(*o.e, "KeyValueFloat");
         if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
@@ -1748,8 +1800,6 @@ bool Builder::Animation() {
             if (left) --left;
             return sg;
         };
-        c.t.reserve(n); c.v.reserve(n);
-        if (nsets > 1) c.set.reserve(n);
         double prev = -1e300;
         bool otherSet = false;
         std::size_t maxSet = 0;   // the tables below cover the sets the kept keys use (never more than the keys)
@@ -1763,23 +1813,33 @@ bool Builder::Animation() {
             const double val = valueAt(i);
             if (!std::isfinite(t) || !std::isfinite(val) || t < prev) continue;   // keep keys sorted and finite
             prev = t;
-            c.t.push_back(t); c.v.push_back(val);
-            if (nsets > 1) { c.set.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
+            poolT.push_back(t); poolV.push_back(val);
+            if (nsets > 1) { poolSet.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
             if (da && (sg * 4 + 1) < da->size()) c.hasSlopes = true;   // without the array every slope is 0
         }
-        if (!otherSet) std::vector<std::uint32_t>().swap(c.set);   // every key uses set 0
+        c.t.n = c.v.n = poolT.size() - at.t;
+        if (!otherSet) poolSet.resize(at.set);   // every key uses set 0
+        c.set.n = poolSet.size() - at.set;
         // per set: the flags (0x8, cubic, without KeyAttrFlags) and the slopes (0 where the file has none)
         const std::size_t usedSets = c.set.empty() ? 1 : maxSet + 1;
-        c.setFlags.resize(usedSets);
         for (std::size_t sg = 0; sg < usedSets; ++sg)
-            c.setFlags[sg] = (fl && !fl->empty()) ? SafeInt((*fl)[std::min(sg, fl->size() - 1)]) : 0x8;
-        if (c.hasSlopes) {
-            c.setR.assign(usedSets, 0.0); c.setL.assign(usedSets, 0.0);
+            poolFlags.push_back((fl && !fl->empty()) ? SafeInt((*fl)[std::min(sg, fl->size() - 1)]) : 0x8);
+        c.setFlags.n = usedSets;
+        if (c.hasSlopes) {   // right slopes, then next-left slopes, one run each
+            poolSlope.resize(at.slope + 2 * usedSets, 0.0);
             for (std::size_t sg = 0; sg < usedSets; ++sg)
-                if ((sg * 4 + 1) < da->size()) { c.setR[sg] = (*da)[sg * 4]; c.setL[sg] = (*da)[sg * 4 + 1]; }
+                if ((sg * 4 + 1) < da->size()) { poolSlope[at.slope + sg] = (*da)[sg * 4]; poolSlope[at.slope + usedSets + sg] = (*da)[sg * 4 + 1]; }
+            c.setR.n = c.setL.n = usedSets;
         }
         curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
-        curveStore.push_back(std::move(c));
+        curveStore.push_back(c);
+        runAt.push_back(at);
+    }
+    for (std::size_t i = 0; i < curveStore.size(); ++i) {   // the pools are complete: point the runs into them
+        Curve& c = curveStore[i]; const At& at = runAt[i];
+        c.t.p = poolT.data() + at.t; c.v.p = poolV.data() + at.t;
+        c.set.p = poolSet.data() + at.set; c.setFlags.p = poolFlags.data() + at.flags;
+        c.setR.p = poolSlope.data() + at.slope; c.setL.p = poolSlope.data() + at.slope + c.setR.n;
     }
     // curve nodes
     std::vector<CurveNode>& cns = job->cns; IdMap<std::size_t> cnOf;
@@ -2099,8 +2159,9 @@ bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::str
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "cannot open " + path; return false; }
-    // One read of the whole file at its size (a byte-by-byte stream iterator grew the buffer by doubling, slowly).
-    std::vector<std::uint8_t> buf;
+    // One read of the whole file at its size (a byte-by-byte stream iterator grew the buffer by doubling, slowly), into
+    // a buffer that is not zero-filled first (the read writes every byte that is kept).
+    ByteBuffer buf;
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
     f.seekg(0, std::ios::beg);

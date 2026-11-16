@@ -1894,6 +1894,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
     }
     if (!sc.clips.empty()) {
         auto* ma = root->AddComponent<ModelAnimator>();
+        std::vector<float> kt, c0, c1, c2, c3;   // one channel's keys at a time (kept from node to node: no new arrays)
         for (const fbx::Clip& fc : sc.clips) {
             ModelAnimator::Clip clip;
             std::string cn = fc.name;
@@ -1910,7 +1911,6 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 ac.smoothKeys = false;
                 // One array per channel, then each track gets all its keys at once; tracks are created in the same
                 // order as one AddKey per channel and sample did (the track table ends up the same).
-                std::vector<float> kt, c0, c1, c2, c3;
                 auto put3 = [&](const std::vector<fbx::Key3>& keys, const char* x, const char* y, const char* z) {
                     kt.clear(); c0.clear(); c1.clear(); c2.clear();
                     for (const fbx::Key3& k : keys) { kt.push_back((float)k.time); c0.push_back((float)k.v[0]); c1.push_back((float)k.v[1]); c2.push_back((float)k.v[2]); }

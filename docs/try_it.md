@@ -69,6 +69,8 @@ release job or the installer build for this change.
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
+| 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
@@ -1109,3 +1111,104 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## 7s. Digging the voxel terrain no longer drops the frame rate
+
+**What it is.** Holding the dig (left mouse) or build (right mouse) button in a voxel terrain used to re-build and re-upload the
+whole terrain every frame. Now only the chunks you touched are. Details and numbers: `docs/voxel_edit_perf.md`.
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_big_world.okayscene`
+   (a bigger hill than the Sandbox, so the old stutter is easy to see). The normal size is `voxel_sandbox.okayscene`, or New Project >
+   Sandbox.
+2. Open **View > Panels > Profiler** and press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground (dig) and **right mouse** (build). Watch the frame rate (the Game view's stats, or **F3** in
+   the player). You should see it stay steady. In the Profiler the rows `Voxel.Edit`, `Voxel.Mesh` and `Voxel.Upload` appear while
+   you hold the button and each stays well under 1 ms.
+4. Press Stop, select the **Terrain** object: the Voxel Terrain card says "Drawn as one mesh". While Playing and after your first
+   dig it says "Drawn as N chunk objects", and the Hierarchy shows `Voxel Chunk x,y,z` children (they are never saved).
+5. To feel the old behaviour: close the editor, open a Command Prompt, run `set OKAY_VOXEL_OLD_REMESH=1`, start
+   `Tools\OkayEngine.exe` from that same window and repeat steps 2-3. The frame rate drops while you hold the button and
+   `Voxel.Mesh` plus `Voxel.Upload` are several times bigger. The Terrain card then says so.
+
+**Status.** Tests run on Linux (`ctest -R "voxel|mesh_hash|terrain_water_speed"`): 127 + 10 + 36 + 13 + 55 + 25 + 13 checks, 0
+failures. Software renderer pixels identical in both modes. CPU time per dig frame measured 3x to 16x lower; **no GPU, no Windows,
+no real editor window was available**, so the real frame rates and the Inspector and Profiler lines are unverified until you look.
+
+## 7t. Voxel terrain digs like real life
+
+**What it is.** Dug ground no longer disappears. The ground has materials (grass, dirt, clay, stone, ore, sand, snow) with their own
+colour and hardness. Digging drops debris that falls; walk up to it and it is counted ("Dirt 3.20 m3" on screen). Right mouse
+builds with what you hold. Pieces you cut loose fall. Ctrl+Z takes back the last stroke. All the options are in the Inspector.
+Details: `docs/terrain_water.md`, "Real-life digging".
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_realistic.okayscene`.
+2. Press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground. You should see the ground carve away and small blocks of it fall and bounce. Walk up to the
+   blocks: the text at the top-left changes from "Nothing collected" to something like "Dirt 3.20 m3 Grass 1.10 m3". Blocks you
+   do not pick up lie for a few seconds and then melt back into the ground where they are.
+4. Hold **left mouse** on a dark grey patch (stone): it digs much more slowly than dirt. Ore (yellow) is too hard for the
+   starting tool and does not dig at all (raise **Tool Power** on the Voxel Digger card to dig it).
+5. Hold **right mouse**: it builds ground back, using up the count. With nothing collected, nothing builds.
+6. Cut under a ledge or a thin column of ground from the side and release the button: the cut-off piece falls as one lump with its
+   own shape and settles back into the ground.
+7. Press **Ctrl+Z** after letting go of the mouse: the last stroke is taken back.
+8. Press Stop and select the **Terrain** object. The **Voxel Terrain** card has a **Materials** table (colour, hardness, drop...);
+   the **Voxel Digger** card has **Real life**: a Preset (Realistic, Arcade, Creative), Dug Ground, brush shape, depth limit, bedrock
+   height, debris limit and the count text. Pick **Arcade** and Play again: the ground vanishes as it did before.
+
+**Pictures** (software renders from the headless test machine, not the GPU renderer): `docs/images/voxel/1_layers_cut.png` (a cut
+through the layers), `2_dig_debris_falling.png` (a dig with falling debris), `3_after_release.png`.
+
+**Status.** Tests (`ctest -R "voxel_materials|voxel_digger_real|voxel_examples"`): 60 + 34 + 58 checks, 0 failures on Linux. Volume
+kept: a stroke of 63 m3 put back came to 63.1 m3 (restored to 0.0 percent), debris that landed returned the volume to within 0.05
+percent. **Unverified:** Windows, a real GPU, the editor's Inspector click path, the feel of the controls, and the sound and particle
+hooks per material (the table has the fields, the digger still plays the one dig sound).
+
+### 7t, more options (second pass)
+
+1. In `voxel_realistic.okayscene`, select **Terrain**. In the **Voxel Terrain** card tick **Catch bodies that fall out of the world**.
+   Play, and push a prop off the side of the world: it is put back on the ground instead of falling for ever. (Off: it falls.)
+2. In the **Voxel Digger** card, with **Slump loose ground** on, raise **Slump Passes** to 8 and dig into a sand slope (pale yellow):
+   the sand runs farther down than with 1.
+3. In the **Voxel Terrain** card, type a **Seed** and press **Generate**: the same seed gives the same hill every time.
+4. Move or turn the **Terrain** object (Inspector: Position, Rotation) before pressing Play: digging, the brush circle and the
+   falling debris all still match the ground.
+5. Dust colour follows the dug material (stone dust is grey, dirt dust brown). A per-material dig sound needs a Voxel Digger object
+   with an Audio Source and a WAV file named in the material's table entry; this is unverified.
+Tests: `ctest -R voxel_more`.
+
+### 7t, tools, items, veins, sound (third pass)
+
+1. **Pickaxe and shovel.** Voxel Digger card: tick **Tools from inventory** (the list shows `shovel:2,pickaxe:5,iron_pickaxe:7`).
+   Play on a scene that has an Inventory (the player). With empty hands you can only dig soft ground (sand, snow); stone
+   will not dig. Give the player an item called `pickaxe` (Inventory card, or a pickup) and stone digs.
+2. **Stackable dirt you can pick up and place.** Tick **Give inventory items**, dig: stacks of `dirt`, `stone`, `ore`... arrive in
+   the bag (8 dirt per cubic metre, set in the Materials table). Tick **Build from items**: right mouse now builds with those items
+   and uses them up; with none it does nothing.
+3. **Ore veins.** Voxel Terrain card: set **Ore Veins** to 30, press **Regenerate layers**: long winding yellow veins appear in the stone
+   (dig a trench to see them). The same **Seed** gives the same veins. **Topsoil**, **Dirt Depth**, **Rock Slope** and **Ore Pockets** are
+   sliders for the layers.
+4. **Dig sound per material.** Put a WAV file path in a material's table entry (code: `materials[i].digSound`), add an Audio Source to the
+   digger's object: the first time that material is dug the file is loaded and plays while you dig it. Tested headless that the clip is
+   loaded; the actual sound output is unverified.
+5. The brush marker now matches the brush shape (cube, flat disc, can).
+Tests: `ctest -R "voxel_more|voxel_bughunt"`.
+
+### 7t, fourth pass (switches, all off by default)
+
+**Tools scene.** Open `examples\voxel\voxel_tools.okayscene`, Play. The player holds a shovel and a pickaxe (the text on screen says what to
+try). Left mouse digs dirt and sand with either tool; stone needs the pickaxe (the shovel's power is 2, stone is 4); ore needs a better tool
+(`iron_pickaxe:7` in the digger's Tools list; give the player an item of that name to dig it). Walk onto falling debris: stacks of `dirt`, `stone`
+and so on arrive in the bag. Right mouse builds with dirt items and uses them up.
+
+1. **Cave-in.** Voxel Digger card, **Cave-in Span** to 4. Dig a wide tunnel (hold left mouse and sweep sideways under a hill), then let go: the roof
+   that is more than about 4 voxels from a wall comes down as debris. A narrow tunnel holds.
+2. **Big world generation.** In code or a script: `terrain.BeginGenerate(0.5, 8, 0.3, seed, true)`; the terrain fills itself a few milliseconds a
+   frame and shows up when done (`Generating()`, `GenerateProgress()`).
+3. **Water and lava.** Voxel Terrain card: tick **Water / lava flow in holes** (press **Lava preset** for lava). Voxel Digger card: type `f` in
+   **Pour Key**. Play, dig a pit, aim at it and press F: water (blue blocks) runs down and fills the pit from the bottom. Dig beside it and it flows out.
+4. **Footprints.** Voxel Terrain card: tick **Footprints and tracks**. Play and walk on dirt, grass or sand: a trail of small dents. Stone takes no print.
+5. The foliage brush now finds the ground on a voxel terrain fast (no visible change; `ctest -R voxel_more` times it).
+Tests: `ctest -R "voxel_more|voxel_bughunt|voxel_examples"`.

@@ -783,6 +783,16 @@ add_executable(test_ui_widgets_more test_ui_widgets_more.cpp)
 target_link_libraries(test_ui_widgets_more PRIVATE okay::engine)
 add_test(NAME ui_widgets_more COMMAND test_ui_widgets_more)
 
+add_executable(test_ui_library test_ui_library.cpp)
+target_link_libraries(test_ui_library PRIVATE okay::engine)
+add_test(NAME ui_library COMMAND test_ui_library)
+
+# The shipped sample scene examples/ui_library/ui_library_1.okayscene, loaded and played
+add_executable(test_ui_library_example test_ui_library_example.cpp)
+target_link_libraries(test_ui_library_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library_example COMMAND test_ui_library_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -1784,6 +1794,11 @@ add_executable(test_anticheat_sim test_anticheat_sim.cpp)
 target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
 add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
 
+# Anti-cheat hardening follow-up: ban list file, audit log, packet ceiling, input regularity, cheat simulator, hostile-field fuzz
+add_executable(test_anticheat_hard test_anticheat_hard.cpp)
+target_link_libraries(test_anticheat_hard PRIVATE okay::engine)
+add_test(NAME anticheat_hard COMMAND test_anticheat_hard)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
@@ -2314,6 +2329,12 @@ if(SDL2_FOUND)
     target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
     target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
+
+    add_executable(test_ui_library_shots test_ui_library_shots.cpp)
+    target_link_libraries(test_ui_library_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})

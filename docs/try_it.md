@@ -60,6 +60,7 @@ release job or the installer build for this change.
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
+| 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
@@ -81,6 +82,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -642,6 +644,34 @@ player run in step 10 (the player's drawing code was only syntax-checked, never 
 the folder (the example-copy block of `scripts/build-windows-dist.sh` was run alone and does put `examples/ui_text/ui_text.okayscene`
 in the output; `bash -n` of the whole script is clean). The editor code for the new Inspector rows and
 menu entry was only syntax-checked, not run. The pictures are headless renders, not screenshots of a window.
+
+## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
+
+**What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
+([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
+
+**Steps.**
+1. Open the editor. **File > Examples > UI library (every in-game UI part) > ui_library_1**. (Or **File > Open...** with
+   `<install folder>\examples\ui_library\ui_library_1.okayscene`; the installer puts it in `%LOCALAPPDATA%\OkaySpace\examples\ui_library\`.)
+2. Press **Play**. The Game view shows "Range slider", "Input validation" and "Aspect ratio box (16:9)" cards with hints.
+3. Drag the handles of "Price range". The numbers above the track read `$120 to $380` and change in steps of 10. The handles
+   never cross. Drag the "Level range" handles: whole numbers, at least 3 apart.
+4. Click the Email box and type `ada@`. A red ring and a short sentence appear under the box. Type `lovelace.org`: the ring
+   turns green. Type `7` in Age: "Between 13 and 120". Type a short password, then repeat it differently: "That is not the
+   same password".
+5. Make the Game view taller, wider or a phone shape: the blue frame stays 16:9.
+6. Stop Play. Select the `Price` object: the Inspector shows **UI Range Slider**. Select `Email`: **UI Input Field** and
+   **UI Input Validator**. Select `Area`: **UI Aspect Ratio**. To add them to another scene: **GameObject > UI > Controls >
+   Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
+
+**What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
+other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+
+**Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
+The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
+were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
+world-space Canvas yet.
 
 ## 7r. The walk looks like a walk, Shift looks like a run
 
@@ -1287,6 +1317,36 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+
+## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
+
+What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
+network) and a fake "cheating" client, and the cheating client does eight things a modified game would do. You read what
+the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status table: `docs/anticheat_hardening_status.md`.
+
+**How to try it (Windows release).**
+
+1. Open a Command Prompt in the `Tools` folder of the release (next to `OkaySpacePlayer.exe`).
+2. Run: `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt`
+   (The Windows player has no console window, so the output goes to the file. It needs no game and no scene.)
+3. Wait about a minute. Open `cheat_sim.txt`. You should see eight blocks like
+   `[speed] the rogue moves 60 units a second where 8 is the limit` followed by `CAUGHT: ...` and
+   `the normal client next to it: untouched, still playing`.
+4. Near the end you should see the ban list (a line starting `a:2130706433`), the audit log (lines like
+   `2026-11-16T18:31:28Z ban who=3fa9c21b07 ...`; check that no name and no address appears in it) and the last line
+   `Result: 8 of 8 cheats caught, normal players left alone: YES. The server's anti-cheat works.`
+5. To run only some steps: `OkaySpacePlayer.exe --server --cheat-sim-only speed,flood --log cheat_sim.txt`, or set the
+   environment variable `OKAY_CHEAT_SIM=speed,flood` and run `OkaySpacePlayer.exe --server --log cheat_sim.txt`.
+6. The files the run wrote are in a new folder named in the first line of the log (`okay_cheatsim_...` in your temp folder).
+   `okay_bans.txt` is the ban list: delete a line to lift a ban. `okay_anticheat_audit.log` is the audit log.
+7. The same two files are kept by a real dedicated server that has the anti-cheat on
+   (`OkaySpacePlayer.exe --server --anticheat my_rules.okayac`): `okay_bans.txt` and `okay_anticheat_audit.log` appear in its
+   folder. `--no-ban-file` and `--no-audit-log` turn them off. A real cheater who gets kicked 3 times, or whose risk
+   score passes `detect.banAt`, is refused at the join with "banned from this server".
+
+**What is verified.** The test `anticheat_hard` runs the same code (all eight steps, the files, the no-personal-data check),
+on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
+detector instead of sending real input packets; the simulator's packets are not encrypted.
 
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 

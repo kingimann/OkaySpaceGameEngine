@@ -279,7 +279,7 @@ Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, con
     return L;
 }
 /// Fetches value `out[0..dim)` for a corner. Returns false when the data does not cover it.
-bool Fetch(const Layer& L, std::size_t pv, std::size_t face, std::size_t cp, const std::vector<int>& edgeOfCorner, double* out) {
+inline bool Fetch(const Layer& L, std::size_t pv, std::size_t face, std::size_t cp, const std::vector<int>& edgeOfCorner, double* out) {
     if (!L.Ok()) return false;
     std::size_t k = 0;
     switch (L.map) {
@@ -292,11 +292,22 @@ bool Fetch(const Layer& L, std::size_t pv, std::size_t face, std::size_t cp, con
     }
     if (L.indexed) {
         if (k >= L.idx->size()) return false;
-        const double v = (*L.idx)[k];
-        if (!(v >= 0) || v >= 4e9) return false;
-        k = (std::size_t)v;
+        if (L.idx->type == 'i') {   // the usual index type, read directly: the same test as below for a 32-bit integer
+            std::int32_t v; std::memcpy(&v, L.idx->data + k * 4, 4);
+            if (v < 0) return false;
+            k = (std::size_t)v;
+        } else {
+            const double v = (*L.idx)[k];
+            if (!(v >= 0) || v >= 4e9) return false;
+            k = (std::size_t)v;
+        }
     }
     if ((k + 1) * (std::size_t)L.dim > L.vals->size()) return false;
+    if (L.vals->type == 'd') {   // doubles, copied as they are (one fixed-size copy per number, no call)
+        const std::uint8_t* src = L.vals->data + k * (std::size_t)L.dim * 8;
+        for (int i = 0; i < L.dim; ++i) std::memcpy(out + i, src + (std::size_t)i * 8, 8);
+        return true;
+    }
     for (int i = 0; i < L.dim; ++i) out[i] = (*L.vals)[k * (std::size_t)L.dim + (std::size_t)i];
     return true;
 }
@@ -311,7 +322,7 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
     if (n > 256) { for (int i = 1; i + 1 < n; ++i) emit(0, i, i + 1); return; }   // keep hostile n-gons O(n)
     double nx = 0, ny = 0, nz = 0;   // Newell
     for (int i = 0; i < n; ++i) {
-        const auto& a = pts[(std::size_t)i]; const auto& b = pts[(std::size_t)((i + 1) % n)];
+        const auto& a = pts[(std::size_t)i]; const auto& b = pts[(std::size_t)(i + 1 == n ? 0 : i + 1)];
         nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
     }
     const double ax = std::fabs(nx), ay = std::fabs(ny), az = std::fabs(nz);
@@ -330,7 +341,7 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
         const int m = cnt;
         int ear = -1;
         for (int i = 0; i < m && ear < 0; ++i) {
-            const int a = idx[((i + m - 1) % m)], b = idx[i], c = idx[((i + 1) % m)];
+            const int a = idx[i == 0 ? m - 1 : i - 1], b = idx[i], c = idx[i + 1 == m ? 0 : i + 1];   // (no division: same as % m)
             if (cross(a, b, c) <= 1e-18) continue;   // reflex or degenerate
             bool inside = false;
             for (int j = 0; j < m && !inside; ++j) {
@@ -344,9 +355,9 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
         }
         if (ear < 0) {   // degenerate / self-touching input: clip the sharpest convex-ish vertex, never loop
             ear = 0; double best = -1e300;
-            for (int i = 0; i < m; ++i) { const double c = cross(idx[((i + m - 1) % m)], idx[i], idx[((i + 1) % m)]); if (c > best) { best = c; ear = i; } }
+            for (int i = 0; i < m; ++i) { const double c = cross(idx[i == 0 ? m - 1 : i - 1], idx[i], idx[i + 1 == m ? 0 : i + 1]); if (c > best) { best = c; ear = i; } }
         }
-        const int a = idx[((ear + m - 1) % m)], b = idx[ear], c = idx[((ear + 1) % m)];
+        const int a = idx[ear == 0 ? m - 1 : ear - 1], b = idx[ear], c = idx[ear + 1 == m ? 0 : ear + 1];
         emit(a, b, c);
         std::memmove(idx + ear, idx + ear + 1, sizeof(int) * (std::size_t)(cnt - ear - 1)); --cnt;
         if (++guard > n + 4) break;
@@ -684,53 +695,69 @@ struct Builder {
         if (!verts || !pvi) return true;   // an empty mesh: nothing to emit
         const std::size_t ncp = verts->size() / 3;
         m.controlPoints = (std::uint32_t)std::min<std::size_t>(ncp, 0xFFFFFFFFu);
-        std::vector<double> P(ncp * 3);
-        for (std::size_t i = 0; i < ncp; ++i) for (int k = 0; k < 3; ++k) P[i * 3 + (std::size_t)k] = (*verts)[i * 3 + (std::size_t)k] * conv.s;
-
-        // polygons
-        struct Face { std::size_t start, count; };
-        std::vector<Face> faces; std::vector<std::int32_t> cpOf(pvi->size());
-        {
-            std::size_t start = 0;
-            for (std::size_t i = 0; i < pvi->size(); ++i) {
+        // Positions (unit-scaled) and polygon corners are read straight from the file's arrays where they are used:
+        // no per-mesh copies (on big meshes the fresh memory for copies cost more time than the copying itself).
+        // Each value is the same double the copies held: verts[k] * s, and the corner decoding below.
+        auto pos = [&](std::size_t cp, int k) -> double {
+            const std::size_t at = cp * 3 + (std::size_t)k;
+            if (verts->type == 'd') { double v; std::memcpy(&v, verts->data + at * 8, 8); return v * conv.s; }
+            return (*verts)[at] * conv.s;
+        };
+        const std::size_t npv = pvi->size();
+        const bool pviInt = pvi->type == 'i';
+        // Corner i: its control point, or -1 when out of range; `end` is set on the last corner of a polygon.
+        auto cornerAt = [&](std::size_t i, bool& end) -> std::int32_t {
+            std::int64_t v;
+            if (pviInt) { std::int32_t x; std::memcpy(&x, pvi->data + i * 4, 4); v = x; }
+            else v = (std::int64_t)(*pvi)[i];   // range checked once, below, before any polygon is read
+            end = v < 0;
+            const std::int64_t c = end ? ~v : v;
+            return (c >= 0 && (std::size_t)c < ncp) ? (std::int32_t)c : -1;
+        };
+        if (!pviInt)
+            for (std::size_t i = 0; i < npv; ++i) {
                 const double d = (*pvi)[i];
                 if (!(d > -2147483649.0 && d < 2147483648.0)) return Fail("polygon index out of range");
-                const std::int64_t v = (std::int64_t)d;
-                const bool end = v < 0;
-                const std::int64_t c = end ? ~v : v;
-                cpOf[i] = (c >= 0 && (std::size_t)c < ncp) ? (std::int32_t)c : -1;
-                if (end) { faces.push_back({start, i + 1 - start}); start = i + 1; }
             }
-            if (start < pvi->size()) faces.push_back({start, pvi->size() - start});   // unterminated last polygon
-        }
-        std::vector<int> edgeOfCorner;
-        if (const Array* ed = ArrayOf(g, "Edges")) {
-            edgeOfCorner.assign(pvi->size(), -1);
-            for (std::size_t e = 0; e < ed->size(); ++e) { const double v = (*ed)[e]; if (v >= 0 && v < (double)pvi->size()) edgeOfCorner[(std::size_t)v] = (int)e; }
-        }
+        // Walks the polygons in order: fn(polygon number, first corner, corner count, all corners in range).
+        auto forEachPolygon = [&](auto&& fn) -> bool {
+            std::size_t start = 0, fi = 0; bool good = true;
+            for (std::size_t i = 0; i < npv; ++i) {
+                bool end; const std::int32_t c = cornerAt(i, end);
+                if (c < 0) good = false;
+                if (end) { if (!fn(fi++, start, i + 1 - start, good)) return false; start = i + 1; good = true; }
+            }
+            if (start < npv) return fn(fi, start, npv - start, good);   // unterminated last polygon
+            return true;
+        };
+        auto cpOf = [&](std::size_t i) { bool e; return cornerAt(i, e); };
         const Layer ln = LoadLayer(g, "LayerElementNormal", "Normals", "NormalsIndex", 3);
         const Layer lu = LoadLayer(g, "LayerElementUV", "UV", "UVIndex", 2);
         const Layer lc = LoadLayer(g, "LayerElementColor", "Colors", "ColorIndex", 4);
         Layer lm = LoadLayer(g, "LayerElementMaterial", "Materials", "Materials", 1);
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
         m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated (flat, per polygon)
-
-        // First pass: the material slot of every usable polygon and how many corners each slot will get, so each part's
-        // index list is allocated once at its final size. A polygon of n corners gives n - 2 triangles (Triangulate).
-        std::vector<int> slotOf(faces.size(), -1);   // -1 = polygon skipped
-        std::map<int, std::size_t> cornersOfSlot;
-        for (std::size_t fi = 0; fi < faces.size(); ++fi) {
-            const Face& f = faces[fi];
-            if (f.count < 3) continue;
-            bool bad = false;
-            for (std::size_t k = 0; k < f.count && !bad; ++k) bad = cpOf[f.start + k] < 0;
-            if (bad) continue;
+        std::vector<int> edgeOfCorner;   // only a ByEdge layer reads it
+        if (ln.map == kByEdge || lu.map == kByEdge || lc.map == kByEdge || lm.map == kByEdge)
+            if (const Array* ed = ArrayOf(g, "Edges")) {
+                edgeOfCorner.assign(npv, -1);
+                for (std::size_t e = 0; e < ed->size(); ++e) { const double v = (*ed)[e]; if (v >= 0 && v < (double)npv) edgeOfCorner[(std::size_t)v] = (int)e; }
+            }
+        auto slotOfPolygon = [&](std::size_t fi, std::size_t start) {
             int slot = 0;
             double mv;
-            if (lm.Ok() && Fetch(lm, f.start, fi, (std::size_t)cpOf[f.start], edgeOfCorner, &mv) && mv >= 0 && mv < 1e6) slot = (int)mv;
-            slotOf[fi] = slot;
-            cornersOfSlot[slot] += (f.count - 2) * 3;
-        }
+            if (lm.Ok() && Fetch(lm, start, fi, (std::size_t)cpOf(start), edgeOfCorner, &mv) && mv >= 0 && mv < 1e6) slot = (int)mv;
+            return slot;
+        };
+
+        // First pass: how many corners each material slot will get, so each part's index list is allocated once at its
+        // final size. A polygon of n corners gives n - 2 triangles (Triangulate); polygons with fewer than 3 corners
+        // or a corner out of range are skipped (in both passes).
+        std::map<int, std::size_t> cornersOfSlot;
+        forEachPolygon([&](std::size_t fi, std::size_t start, std::size_t count, bool good) {
+            if (count >= 3 && good) cornersOfSlot[slotOfPolygon(fi, start)] += (count - 2) * 3;
+            return true;
+        });
         {   // the same budget the loop below enforces polygon by polygon, checked before anything is allocated
             std::size_t total = 0;
             for (const auto& kv : cornersOfSlot) total += kv.second;
@@ -751,11 +778,14 @@ struct Builder {
             while (cap < guess * 2) cap <<= 1;
             pb.table.assign(cap, kEmpty);
         }
-        auto hashCorner = [](const Corner& c) {
-            std::uint32_t w[13]; std::memcpy(w, &c, sizeof(w));
-            std::uint64_t h = 0x9E3779B97F4A7C15ull;
-            for (std::uint32_t x : w) { h = (h ^ x) * 0xFF51AFD7ED558CCDull; h ^= h >> 32; }
-            return h ^ (h >> 29);
+        auto hashCorner = [](const Corner& c) {   // six 64-bit words and the last 32 bits, each times its own odd constant
+            std::uint64_t w[6]; std::uint32_t last;
+            std::memcpy(w, &c, sizeof(w)); std::memcpy(&last, (const unsigned char*)&c + sizeof(w), 4);
+            std::uint64_t h = w[0] * 0x9E3779B97F4A7C15ull + w[1] * 0xC2B2AE3D27D4EB4Full + w[2] * 0x165667B19E3779F9ull +
+                              w[3] * 0xD6E8FEB86659FD93ull + w[4] * 0xFF51AFD7ED558CCDull + w[5] * 0xC4CEB9FE1A85EC53ull +
+                              (std::uint64_t)last * 0x9FB21C651E98DF25ull;
+            h ^= h >> 32; h *= 0xD6E8FEB86659FD93ull; h ^= h >> 29;
+            return h;
         };
         auto addCorner = [&](PartBuild& pb, const Corner& c) {
             std::vector<Corner>& vs = pb.part.vertices;
@@ -779,30 +809,32 @@ struct Builder {
         };
         std::vector<std::array<double, 3>> pts;
         std::vector<int> tris;
-        for (std::size_t fi = 0; fi < faces.size(); ++fi) {
-            const Face& f = faces[fi];
-            const int slot = slotOf[fi];
-            if (slot < 0) continue;
-            pts.clear();
-            for (std::size_t k = 0; k < f.count; ++k) {
-                const std::int32_t c = cpOf[f.start + k];
-                pts.push_back({P[(std::size_t)c * 3], P[(std::size_t)c * 3 + 1], P[(std::size_t)c * 3 + 2]});
-            }
-            double fn[3] = {0, 0, 0};   // polygon (Newell) normal, used when the file has none
-            if (!ln.Ok()) for (std::size_t k = 0; k < pts.size(); ++k) {
-                const auto& pa = pts[k]; const auto& pb = pts[(k + 1) % pts.size()];
-                fn[0] += (pa[1] - pb[1]) * (pa[2] + pb[2]); fn[1] += (pa[2] - pb[2]) * (pa[0] + pb[0]); fn[2] += (pa[0] - pb[0]) * (pa[1] + pb[1]);
-            }
+        const bool ok = forEachPolygon([&](std::size_t fi, std::size_t start, std::size_t count, bool good) {
+            if (count < 3 || !good) return true;
+            const int slot = slotOfPolygon(fi, start);
             tris.clear();
-            Triangulate(pts, tris, false);
+            double fn[3] = {0, 0, 0};   // polygon (Newell) normal, used when the file has none
+            if (count == 3 && ln.Ok()) { tris.push_back(0); tris.push_back(1); tris.push_back(2); }   // what Triangulate gives
+            else {
+                pts.clear();
+                for (std::size_t k = 0; k < count; ++k) {
+                    const std::size_t c = (std::size_t)cpOf(start + k);
+                    pts.push_back({pos(c, 0), pos(c, 1), pos(c, 2)});
+                }
+                if (!ln.Ok()) for (std::size_t k = 0; k < pts.size(); ++k) {
+                    const auto& pa = pts[k]; const auto& pb = pts[k + 1 == pts.size() ? 0 : k + 1];
+                    fn[0] += (pa[1] - pb[1]) * (pa[2] + pb[2]); fn[1] += (pa[2] - pb[2]) * (pa[0] + pb[0]); fn[2] += (pa[0] - pb[0]) * (pa[1] + pb[1]);
+                }
+                Triangulate(pts, tris, false);
+            }
             if (cornersBuilt + tris.size() > opt.limits.maxCorners) return Fail("mesh too large");
             cornersBuilt += tris.size();
             PartBuild& part = parts[slot]; part.part.slot = slot;
             for (int t : tris) {
-                const std::size_t k = (std::size_t)t, pv = f.start + k;
-                const std::size_t cp = (std::size_t)cpOf[pv];
+                const std::size_t k = (std::size_t)t, pv = start + k;
+                const std::size_t cp = (std::size_t)cpOf(pv);
                 Corner c;
-                for (int a = 0; a < 3; ++a) c.p[a] = (float)P[cp * 3 + (std::size_t)a];
+                for (int a = 0; a < 3; ++a) c.p[a] = (float)pos(cp, a);
                 c.cp = (std::uint32_t)cp;
                 double nn[3] = {0, 0, 0};
                 if (ln.Ok()) { if (!Fetch(ln, pv, fi, cp, edgeOfCorner, nn)) { nn[0] = nn[1] = nn[2] = 0; } }
@@ -815,7 +847,9 @@ struct Builder {
                 if (lc.Ok() && Fetch(lc, pv, fi, cp, edgeOfCorner, col)) for (int a = 0; a < 4; ++a) c.color[a] = (float)col[a];
                 addCorner(part, c);
             }
-        }
+            return true;
+        });
+        if (!ok) return false;
         for (auto& kv : parts) if (!kv.second.part.indices.empty()) m.parts.push_back(std::move(kv.second.part));
 
         // material slots: materials connected to the model, in connection order

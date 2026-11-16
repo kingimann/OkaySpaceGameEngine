@@ -3,6 +3,7 @@
 // ImageDecodeJpeg.cpp. No third-party code. Every decoder is bounds-checked: malformed or
 // truncated input fails with an error string.
 #include "okay/Core/ImageDecode.hpp"
+#include "okay/Core/Inflate.hpp"
 #include "ImageDecodeInternal.hpp"
 
 #include <algorithm>
@@ -54,219 +55,16 @@ struct Rd {
     bool Has(std::size_t k) const { return Left() >= k; }
 };
 
-// ================================================================================================
-// DEFLATE / zlib
-// ================================================================================================
-constexpr int kInfFast = 10;
-
-struct InfHuff {
-    std::uint16_t fast[1 << kInfFast];   // (length << 9) | symbol; 0 = longer than kInfFast or unused
-    std::uint16_t count[16];
-    std::uint16_t symbol[288];
-};
-
-bool BuildInfHuff(InfHuff& h, const std::uint8_t* lens, int n) {
-    std::memset(h.count, 0, sizeof(h.count));
-    std::memset(h.fast, 0, sizeof(h.fast));
-    for (int i = 0; i < n; ++i) ++h.count[lens[i]];
-    h.count[0] = 0;
-    int left = 1;
-    for (int l = 1; l < 16; ++l) {
-        left <<= 1;
-        left -= h.count[l];
-        if (left < 0) return false;   // over-subscribed
-    }
-    std::uint16_t offs[16];
-    offs[1] = 0;
-    for (int l = 1; l < 15; ++l) offs[l + 1] = static_cast<std::uint16_t>(offs[l] + h.count[l]);
-    for (int i = 0; i < n; ++i) if (lens[i]) h.symbol[offs[lens[i]]++] = static_cast<std::uint16_t>(i);
-    // Fast table: canonical codes, stored bit-reversed because DEFLATE sends codes MSB first
-    // inside an LSB-first bit stream.
-    int code = 0, idx = 0;
-    for (int l = 1; l <= 15; ++l) {
-        for (int k = 0; k < h.count[l]; ++k, ++code, ++idx) {
-            if (l > kInfFast) continue;
-            int rev = 0;
-            for (int b = 0; b < l; ++b) if (code & (1 << b)) rev |= 1 << (l - 1 - b);
-            for (int fill = rev; fill < (1 << kInfFast); fill += 1 << l)
-                h.fast[fill] = static_cast<std::uint16_t>((l << 9) | h.symbol[idx]);
-        }
-        code <<= 1;
-    }
-    return true;
-}
-
-struct InfBits {
-    const std::uint8_t* p;
-    const std::uint8_t* end;
-    std::uint64_t acc = 0;
-    int n = 0;      // valid bits in acc
-    int fake = 0;   // zero bits invented past the end of the input
-    void Refill() {
-        while (n <= 56) {
-            if (p < end) acc |= static_cast<std::uint64_t>(*p++) << n;
-            else fake += 8;
-            n += 8;
-        }
-    }
-    bool Overrun() const { return n < fake; }
-    std::uint32_t Get(int k) {   // k <= 32, requires n >= k
-        const std::uint32_t v = static_cast<std::uint32_t>(acc & ((std::uint64_t(1) << k) - 1));
-        acc >>= k; n -= k;
-        return v;
-    }
-    int Decode(const InfHuff& h) {   // requires n >= 15
-        const int e = h.fast[acc & ((1 << kInfFast) - 1)];
-        if (e) { const int l = e >> 9; acc >>= l; n -= l; return e & 511; }
-        int code = 0, first = 0, index = 0;
-        for (int l = 1; l <= 15; ++l) {
-            code |= static_cast<int>((acc >> (l - 1)) & 1);
-            const int c = h.count[l];
-            if (code - c < first) { acc >>= l; n -= l; return h.symbol[index + (code - first)]; }
-            index += c; first += c; first <<= 1; code <<= 1;
-        }
-        return -1;
-    }
-};
-
-const std::uint16_t kLenBase[29] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-const std::uint8_t kLenExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-const std::uint16_t kDistBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-const std::uint8_t kDistExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
-
-// stopAtMax: reaching exactly `maxOut` bytes counts as success even if the stream continues
-// (PNG: only the expected pixel bytes matter). Otherwise exceeding maxOut fails.
-bool InflateCore(const std::uint8_t* data, std::size_t size, bool zlibWrapper, std::vector<std::uint8_t>& out,
-                 std::size_t maxOut, bool stopAtMax, std::size_t hint) {
-    out.clear();
-    if (zlibWrapper) {
-        if (size < 2) return false;
-        const unsigned cmf = data[0], flg = data[1];
-        if ((cmf & 15) != 8 || ((cmf << 8) | flg) % 31 != 0 || (flg & 32)) return false;
-        data += 2; size -= 2;
-    }
-    InfBits br;
-    br.p = data; br.end = data + size;
-    out.resize(std::min(maxOut, std::max<std::size_t>(hint, 1024)));
-    std::size_t o = 0;
-    auto room = [&](std::size_t need) -> bool {   // make space for `need` more bytes
-        if (o + need <= out.size()) return true;
-        if (o + need > maxOut) return false;
-        out.resize(std::min(std::max(out.size() * 2, o + need), maxOut));
-        return true;
-    };
-    InfHuff fixedLit, fixedDist, dynLit, dynDist;
-    bool fixedReady = false;
-    for (bool last = false; !last;) {
-        if (stopAtMax && o == maxOut) break;
-        br.Refill();
-        last = br.Get(1) != 0;
-        const std::uint32_t type = br.Get(2);
-        if (type == 0) {
-            br.Get(br.n & 7);   // to a byte boundary
-            br.Refill();
-            const std::uint32_t len = br.Get(16), nlen = br.Get(16);
-            if ((len ^ 0xFFFFu) != nlen) return false;
-            if (br.Overrun()) return false;
-            if (!room(len)) return false;
-            std::uint32_t left = len;
-            while (left > 0 && br.n >= 8) { out[o++] = static_cast<std::uint8_t>(br.Get(8)); --left; }
-            if (br.Overrun()) return false;
-            if (left > 0) {   // accumulator is empty: copy straight from the input
-                if (static_cast<std::size_t>(br.end - br.p) < left) return false;
-                std::memcpy(out.data() + o, br.p, left);
-                br.p += left; o += left;
-            }
-            continue;
-        }
-        if (type == 3) return false;
-        const InfHuff* lit;
-        const InfHuff* dist;
-        if (type == 1) {
-            if (!fixedReady) {
-                std::uint8_t l[288];
-                for (int i = 0; i < 144; ++i) l[i] = 8;
-                for (int i = 144; i < 256; ++i) l[i] = 9;
-                for (int i = 256; i < 280; ++i) l[i] = 7;
-                for (int i = 280; i < 288; ++i) l[i] = 8;
-                BuildInfHuff(fixedLit, l, 288);
-                std::uint8_t d[30];
-                for (int i = 0; i < 30; ++i) d[i] = 5;
-                BuildInfHuff(fixedDist, d, 30);
-                fixedReady = true;
-            }
-            lit = &fixedLit; dist = &fixedDist;
-        } else {
-            const int hlit = static_cast<int>(br.Get(5)) + 257;
-            const int hdist = static_cast<int>(br.Get(5)) + 1;
-            const int hclen = static_cast<int>(br.Get(4)) + 4;
-            if (hlit > 286 || hdist > 30) return false;
-            static const std::uint8_t order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
-            std::uint8_t cl[19] = {0};
-            for (int i = 0; i < hclen; ++i) { br.Refill(); cl[order[i]] = static_cast<std::uint8_t>(br.Get(3)); }
-            InfHuff clh;
-            if (!BuildInfHuff(clh, cl, 19)) return false;
-            std::uint8_t lens[286 + 30];
-            int i = 0;
-            while (i < hlit + hdist) {
-                br.Refill();
-                const int sym = br.Decode(clh);
-                if (sym < 0 || br.Overrun()) return false;
-                if (sym < 16) { lens[i++] = static_cast<std::uint8_t>(sym); continue; }
-                int rep, val = 0;
-                if (sym == 16) {
-                    if (i == 0) return false;
-                    val = lens[i - 1];
-                    rep = 3 + static_cast<int>(br.Get(2));
-                } else if (sym == 17) rep = 3 + static_cast<int>(br.Get(3));
-                else rep = 11 + static_cast<int>(br.Get(7));
-                if (i + rep > hlit + hdist) return false;
-                while (rep--) lens[i++] = static_cast<std::uint8_t>(val);
-            }
-            if (lens[256] == 0) return false;   // no end-of-block code
-            if (!BuildInfHuff(dynLit, lens, hlit)) return false;
-            if (!BuildInfHuff(dynDist, lens + hlit, hdist)) return false;
-            lit = &dynLit; dist = &dynDist;
-        }
-        for (;;) {
-            br.Refill();
-            int sym = br.Decode(*lit);
-            if (sym < 0) return false;
-            if (sym < 256) {
-                if (!room(1)) { if (stopAtMax) return o == maxOut; return false; }
-                out[o++] = static_cast<std::uint8_t>(sym);
-            } else if (sym == 256) {
-                break;
-            } else {
-                sym -= 257;
-                if (sym >= 29) return false;
-                const std::size_t len = kLenBase[sym] + br.Get(kLenExtra[sym]);
-                const int ds = br.Decode(*dist);
-                if (ds < 0 || ds >= 30) return false;
-                const std::size_t d = kDistBase[ds] + br.Get(kDistExtra[ds]);
-                if (d > o) return false;
-                std::size_t n = len;
-                if (stopAtMax && o + n > maxOut) n = maxOut - o;
-                if (!room(n)) return false;
-                std::uint8_t* dst = out.data() + o;
-                const std::uint8_t* src = dst - d;
-                for (std::size_t k = 0; k < n; ++k) dst[k] = src[k];
-                o += n;
-                if (stopAtMax && o == maxOut) break;
-            }
-            if (br.Overrun()) return false;
-        }
-        if (br.Overrun()) return false;
-    }
-    out.resize(o);
-    return true;
-}
-
+// DEFLATE / zlib: the one decoder lives in okay/Core/Inflate.hpp (shared with the model readers and the HTTP client).
+// Images keep their old forgiving behaviour: incomplete codes are accepted, the zlib Adler-32 and anything after
+// it is not checked (Options::Lenient).
 } // namespace
 
 bool Inflate(const std::uint8_t* data, std::size_t size, bool zlibWrapper, std::vector<std::uint8_t>& out, std::size_t maxOut) {
-    if (!InflateCore(data, size, zlibWrapper, out, maxOut, false, size * 4)) { out.clear(); return false; }
-    return true;
+    std::string why;
+    const inflate::Options op = inflate::Options::Lenient(maxOut, size * 4);
+    std::size_t used = 0;
+    return zlibWrapper ? inflate::Zlib(data, size, out, op, why) : inflate::Raw(data, size, out, op, used, why);
 }
 
 namespace {
@@ -368,8 +166,14 @@ bool DecodePng(const std::uint8_t* data, std::size_t size, int& W, int& H, std::
         rawSize += static_cast<std::size_t>(ph) * (1 + (static_cast<std::size_t>(pw) * bpp + 7) / 8);
     }
     std::vector<std::uint8_t> raw;
-    if (!InflateCore(idat.data(), idat.size(), true, raw, rawSize, true, rawSize) || raw.size() != rawSize)
-        return Fail(err, "corrupt or truncated PNG image data");
+    {
+        // PNG: only the pixel bytes matter, so decoding stops when they are all there (Lenient + stopAtMax).
+        inflate::Options po = inflate::Options::Lenient(rawSize, rawSize);
+        po.stopAtMax = true;
+        std::string why;
+        if (!inflate::Zlib(idat.data(), idat.size(), raw, po, why) || raw.size() != rawSize)
+            return Fail(err, "corrupt or truncated PNG image data");
+    }
     std::vector<std::uint8_t>().swap(idat);
 
     if (!AllocRgba(in.w, in.h, *rgba, err)) return false;

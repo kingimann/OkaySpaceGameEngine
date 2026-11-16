@@ -65,7 +65,7 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | iqm | 1 | 1 | 0.80x -> 0.84x (0.6 / 0.7 ms) | met | 0.68 / 0.69 -> 0.68 / 0.69 | met | 5.17x | 1.46 / 0.69 MB | 0 / 0 |
 | irr | 21 | 21 | 0.35x -> 0.38x (37.0 / 97.5 ms) | met | 1.73 / 1.91 -> 1.73 / 1.91 | met | 0.37x | 1.84 / 2.40 MB | 0 / 0 |
 | irrmesh | 5 | 5 | 0.77x -> 0.71x (3.6 / 5.1 ms) | met | 0.74 / 0.76 -> 0.72 / 0.76 | met | 0.66x | 0.72 / 0.76 MB | 0 / 0 |
-| lwo | 54 | 53 | 0.89x -> 0.56x (19.2 / 34.3 ms) | met | 1.66 / 1.60 -> 1.01 / 1.60 | met | 0.54x | 1.01 / 1.60 MB | 0 / 0 |
+| lwo | 54 | 53 | 0.89x -> 0.54x (16.5 / 30.4 ms) | met | 1.66 / 1.60 -> 0.88 / 1.60 | met | 0.55x | 0.88 / 1.60 MB | 0 / 0 |
 | lws | 15 | 15 | 0.54x -> 0.44x (12.9 / 29.5 ms) | met | 0.02 / 0.11 -> 1.78 / 3.67 | met | 0.62x | 1.78 / 3.67 MB | 0 / 0 |
 | md2 | 5 | 5 | 0.56x -> 0.43x (0.6 / 1.3 ms) | met | 0.44 / 0.43 -> 0.34 / 0.43 | met | 0.43x | 0.34 / 0.43 MB | 0 / 0 |
 | md3 | 3 | 3 | 0.39x -> 0.24x (0.2 / 0.7 ms) | met | 0.12 / 0.30 -> 0.12 / 0.30 | met | 0.25x | 0.12 / 0.30 MB | 0 / 0 |
@@ -75,7 +75,7 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | nff | 13 | 12 | 1.19x -> 0.77x (72.1 / 93.4 ms) | met | 6.76 / 13.09 -> 6.27 / 13.09 | met | 0.67x | 6.27 / 13.09 MB | 0 / 2 |
 | obj | 28 | 25 | 0.12x -> 0.12x (6.4 / 53.4 ms) | met | 0.85 / 17.28 -> 0.85 / 17.28 | met | 0.13x | 0.85 / 17.28 MB | 0 / 0 |
 | off | 5 | 2 | 0.93x -> 0.95x (1.4 / 1.5 ms) | met | 0.55 / 0.97 -> 0.55 / 0.97 | met | 0.86x | 0.55 / 0.97 MB | 0 / 0; Assimp crashes on 1 |
-| ogre | 4 | 3 | 0.72x -> 0.74x (10.3 / 13.9 ms) | met | 3.51 / 4.20 -> 3.49 / 3.38 | **not met** in this run (see below) | 0.86x | 3.49 / 3.38 MB | 2 / 3 |
+| ogre | 4 | 3 | 0.74x -> **0.42x** (4.1 / 9.9 ms) | met | 3.49 / 3.38 -> **1.82 / 3.37** | met (was not met; see below) | 0.39x | 1.82 / 3.37 MB | 0 / 0 |
 | ply | 12 | 9 | 0.37x -> 0.28x (20.6 / 73.2 ms) | met | 5.12 / 6.62 -> 5.12 / 6.62 | met | 0.27x | 5.51 / 6.62 MB | 0 / 0 |
 | pmx | 1 | 1 | 0.21x -> 0.10x (1.3 / 13.2 ms) | met | 1.50 / 3.39 -> 1.50 / 3.39 | met | 0.23x | 1.51 / 3.39 MB | 0 / 0 |
 | q3d | 4 | 4 | 0.34x (6.7 / 19.8 ms) | met | 1.28 / 4.10 | met | 0.83x | 1.28 / 4.10 MB | 0 / 0 |
@@ -89,10 +89,12 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | **mesh** (OGRE binary, new) | 3 | 3 | 0.12x (1.1 / 8.6 ms) | met | 0.43 / 1.68 | met | 0.08x | 0.43 / 1.68 MB | 0 / 0 |
 | **zae** (new) | 3 | 3 | 0.68x (27.5 / 40.5 ms) | met | 6.00 / 11.15 | met | 0.70x | 6.00 / 11.15 MB | 0 / 0 |
 | **xml** (new: by root element) | 9 | 4 | 0.70x (0.51 / 0.73 ms) | met | 0.14 / 0.20 | met | 0.71x | 0.14 / 0.20 MB | 1 / 0 |
+| **lxo** (Modo, new; the LWO reader) | 2 | 2 | 0.70x (1.25 / 1.77 ms) | met | 0.67 / 1.52 | met | 0.65x | 0.67 / 1.52 MB | 0 / 1 |
 
 `files slower / heavier` counts the files where ours took longer, or held more heap, than Assimp. "before" is the head of
 `claude2/own-collada-speed` (the first round, below); "now" is the head of `claude2/own-readers-speed-2`. LWS "before" had 14
-files both read (`QuickDraw v.2.2.lws` was refused); Q3D had none.
+files both read (`QuickDraw v.2.2.lws` was refused); Q3D had none. The `ogre`, `lwo`, `zae` and `lxo` rows are from branch
+`claude2/own-readers-gap-2` (third round, below).
 
 The three rows in bold were added on branch `claude2/own-readers-gap` (2026-11-16): readers for extensions the shipped build
 still handed to Assimp with no reader of ours (`docs/own_code_roadmap.md`, "What still needs Assimp"). One run each
@@ -100,7 +102,8 @@ still handed to Assimp with no reader of ours (`docs/own_code_roadmap.md`, "What
 
 - **mesh**: fish 0.10x the time / 0.58x the peak, ninja 0.13x / 0.25x, razor 0.25x / 0.81x. Assimp also builds the skeleton
   (bones and clips), which ours does not read, so part of the gap is work ours skips.
-- **zae**: duck 0.69x the time / 0.52x the peak, duck without manifest 0.67x / 0.52x, human 0.68x / 0.54x. The inflate and the
+- **zae**: duck 0.69x the time / 0.52x the peak, duck without manifest 0.67x / 0.52x, human 0.68x / 0.54x (gap-2 run: 0.70x
+  and 0.54x over the three; `human` now has its 2 materials and writes its eye texture next to the file once). The inflate and the
   COLLADA reader are most of the time. The image a duck's material names is written next to the `.zae` on the first read; later
   reads find it there (same size) and neither extract nor write it again (the first version extracted it on every read: 0.77x).
 - **xml**: `AsXML.xml` (COLLADA) 0.35x / 0.39x, the XGL file 0.34x / 0.49x; the two Irrlicht mesh files are 0.99x and 1.01x the
@@ -108,16 +111,34 @@ still handed to Assimp with no reader of ours (`docs/own_code_roadmap.md`, "What
   measures the same within noise). A first version looked at the first 64 KiB of the file to pick the reader and held that
   buffer during the read, which made the peak 1.05x Assimp's; it now looks at 8 KiB on the stack and the memory is met.
 
+### Third round (branch `claude2/own-readers-gap-2`, 2026-11-16): OGRE XML, LXO, LWO
+
+- **OGRE XML: time 1.03x and memory 1.04x -> 0.42x and 0.54x.** Callgrind on `TheThing/Mesh.mesh.xml` (52.1 M instructions,
+  whole program) showed the XML tree as most of the cost: one `std::string` for every element name, attribute name and
+  attribute value, a vector of children per element, and `StripPrefix` copies. A second parser in `XmlLite.hpp`,
+  `xml::ParseFlat`, accepts and refuses exactly the same files with the same messages but keeps names and values as offsets
+  into the file text (a value with an entity reference is decoded and stored), children as first-child / next-sibling
+  links, and checks character data without keeping it. The OGRE XML reader now uses it. Output unchanged (`--digest` equal
+  on every corpus file). Per file (this run): `fish` 0.38x the time / 0.55x the peak, `razor` 0.45x / 0.56x, `TheThing`
+  0.43x / 0.54x (2.14 / 4.97 ms, 1.82 / 3.37 MB); `ninja` 1.34 ms / 1.13 MB (Assimp failed on it in this run, see below).
+  In two more runs with `--runs 30`: `TheThing` 2.1 to 2.2 ms against Assimp's 4.5 to 4.7 ms. No OGRE file is slower or
+  heavier now. The other XML readers (3MF, AMF, X3D, XGL, Irrlicht, COLLADA ...) still use `xml::Parse`; moving them is
+  possible the same way, not done here.
+- **LXO (new):** `CrazyEngine` 0.68x the time / 0.44x the peak, `sphereWithVertMap` 0.85x / **1.12x** (0.21 / 0.19 MB): the
+  sphere keeps the file's per-corner normals, so it builds 1,104 vertices where Assimp builds 266. Over the two files both
+  are met (0.70x the time, 0.44x the largest peak). Two changes made it fast: the LWO reader's UV and normal maps are kept as
+  arrays (one slot per point, or grouped per polygon) instead of `std::map`s (a first version was 1.26x Assimp's time), and
+  `rc::BuildMesh` skips the corner angles and normal clusters when a part has its own normals. Neither changes any output.
+- **LWO:** the same array change and not keeping UVs for a layer that has no UV map: largest peak 1.01 -> 0.88 MB (Assimp
+  1.60), time 0.54x Assimp's; digests unchanged on all 54 files.
+
 ### Where it is not met, and why
 
-All 37 readers were measured (Q3D for the first time). **36 meet both time and memory in this run; OGRE misses memory**:
+All 38 readers are measured. **All meet time and memory over their files in this round.** Single files that are heavier than
+Assimp: `sphereWithVertMap.lxo` (above). Earlier runs of OGRE missed memory (3.49 / 3.38 MB on `TheThing`); that is fixed.
 
-- **OGRE, memory (not changed by this work).** Ours is heavier than Assimp on 3 of the 3 files both read in this run
-  (`TheThing/Mesh.mesh.xml` 3.49 / 3.38 MB, `razor` 1.17 / 1.02, `fish` 1.79 / 1.73). Whether the reader "meets" memory
-  depends on which files Assimp reads: **Assimp's OGRE importer fails on `ninja.mesh.xml` in some runs and on `fish.mesh.xml` in
-  others** (same build, same files); when it reads `ninja` (4.20 MB) the largest peak is Assimp's and the line says met (as in
-  the first round and in a `--format ogre` run after this one, 3.49 / 4.20). The per-file heap is the honest number: ours is
-  1.04x to 1.14x on three of four files. Not worked on here.
+**Assimp's OGRE importer is not repeatable**: in one run it fails on `ninja.mesh.xml`, in another on `fish.mesh.xml`, in a third
+it reads all four (same build, same files). The "both read" count of the OGRE row moves between 2 and 4 from run to run.
 
 What was not met before this round, and where it is now (instruction counts are callgrind's, whole program):
 
@@ -238,6 +259,20 @@ Differences that are not by design, or that are worth a second look (counts are 
 The full per-file list: run `bench_model_readers --compare` (one tab-separated line per file, `DIFF` and the fields).
 
 ## Tests run (Linux, 2026-11-16)
+
+Third round (`claude2/own-readers-gap-2`: OGRE XML on `xml::ParseFlat`, the LXO reader, the COLLADA material binding, the
+import log line):
+
+- `ctest -R "model|import|reader|mesh|collada"` with `OKAY_MODEL_CORPUS` set, Release, `OKAY_USE_ASSIMP=ON`: 72 of 72 passed;
+  `model_corpus`: 4,217 checks, 0 failures (450 rows: 411 read, 39 recorded failing; two new `lxo` rows, `human.zae` now
+  `mat=2 tex=1`). Also run: every `own_dispatch*`, `*hostile`, `*budget`, navmesh and modeling test: 36 of 37 passed;
+  `own_dispatch_e2` crashes inside Assimp's node walk (the RAW importer bug named in the second round below), as before.
+- `bench_model_readers --digest` and `--import-digest` on all corpus files, before and after: identical except
+  `human.zae` (now 2 materials) and the two new `.lxo` files.
+- Under ASan + UBSan + float-cast-overflow (`-O1`, `-fno-sanitize-recover=all`, reader sources only, built by hand):
+  `batchb_hostile` with 40,000 mutations per reader (LWO2, LWOB and the new LXO fixture among them): 271,754 checks, no
+  failure; `batchd_hostile` (OGRE XML on the new parser, AC3D, XGL, IRR, NFF) with 20,000 per reader: 152,297 checks, no
+  failure; `ogre_reader` and `lwo_reader` (standalone): no failure, no sanitizer report.
 
 Second round (`claude2/own-readers-speed-2`):
 

@@ -1190,10 +1190,13 @@ Tested on main (Linux): the line format and that each variable changes it, by th
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
   2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
   3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
+* **How you can tell it is really ours.** Since 2026-11-16 (branch `claude2/own-readers-gap-2`, not in a release yet) every
+  import writes one line in the **Console**: `model import '...cube.off': read by the own OFF reader in 0.05 ms (whole
+  import 0.40 ms)`. Without the variable the same import says `read by Assimp in ...`. If ours refuses a file and Assimp
+  reads it, the line says `read by Assimp (the own OFF reader refused it: <why>)`. FBX says `ufbx` or `the own FBX reader`,
+  glTF `the own glTF reader`. Before that change only the About popup or startup line (`own(off)`) told you. Tested on
+  Linux by `lwo_reader` (the line for a `.lxo` import); the Console showing it is **unverified** (no editor window was
+  opened). Without Assimp in a build, a format whose own reader is off fails
   with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
@@ -1206,9 +1209,14 @@ Tested on main (Linux): the line format and that each variable changes it, by th
     For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/own_zae_reader.md`.
   * **`.xml` (Irrlicht scene or mesh, COLLADA, XGL, OGRE XML by the root element)**: `set OKAY_OWN_XML=1`, import
     `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/own_xml_reader.md`.
-  * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube; as for
-    the other newer readers, nothing on screen says which reader ran. Checked on Linux by the `own_dispatch_gap` test (all
-    three samples read as 12 triangles, area 6); **not run on Windows**.
+  * **Modo `.lxo`** (added on branch `claude2/own-readers-gap-2`, not in a release yet): `set OKAY_OWN_LXO=1`, import
+    `examples\own_readers\cube.lxo`. A **blue** unit cube appears (material `Blue`, colour 0.2 / 0.4 / 0.9, from the file's
+    material item). The Console line says `read by the own LXO reader`. Without the variable Assimp reads it: the same cube,
+    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/own_lwo_reader.md`,
+    section LXO.
+  * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube (grey for
+    `.lxo`); the Console line on each import names the reader (see above). Checked on Linux by the `own_dispatch_gap` test (all
+    four samples read as 12 triangles, area 6); **not run on Windows**.
 
 ### 9. Own WAV decoder
 

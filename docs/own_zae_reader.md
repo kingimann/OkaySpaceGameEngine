@@ -57,10 +57,13 @@ XML elements (more: it is ignored, with a note). Then the COLLADA reader's own c
 
 The 3 `.zae` files of Assimp's test folder (`duck.zae`, `duck_nomanifest.zae`, `human.zae`) all read. **Against Assimp v5.4.3
 (`bench_model_readers --compare`)**: the two duck files equal Assimp on parts (1), triangles (4,212), vertices (2,399), nodes (4),
-materials (1) and box; `human.zae` equals Assimp on parts (2), triangles (28,796), vertices (15,593), nodes and box, and has 0
-materials to Assimp's 2. That difference is the COLLADA reader's, not the archive's: the same `human.dae` taken out of the
-archive gives 0 / 2 too (its effects are not read; see `docs/model_corpus.md`). Each duck's texture is written next to the file
-and the material points at it. In the `model_corpus` manifest (reader `zae`). Speed and memory (`docs/own_readers_speed.md`, row `zae`): 0.68x Assimp's read time and 0.54x its largest peak heap over the
+materials (1) and box; `human.zae` equals Assimp on parts (2), triangles (28,796), vertices (15,593), nodes, materials (2) and
+box. Until 2026-11-16 it gave 0 materials to Assimp's 2: its two `<polylist>` elements have no `material` attribute, and the
+COLLADA reader only bound a material through that symbol. COLLADA leaves an unnamed primitive's material to the application;
+the reader now uses the instance's material when its `<bind_material>` binds exactly one (both instances here do), and none
+when it binds several (`docs/model_import.md`, Collada). That change moved only this file's digest among the corpus files;
+the manifest row is now `mat=2 tex=1` (the eye texture `textures/brown_eye.png` is inside the archive and is written next to the
+`.zae` as `human_zae_brown_eye.png`). Each duck's texture is written next to the file and the material points at it. In the `model_corpus` manifest (reader `zae`). Speed and memory (`docs/own_readers_speed.md`, row `zae`): 0.68x Assimp's read time and 0.54x its largest peak heap over the
 three files; no file slower or heavier.
 
 Unverified: archives from other exporters (SketchUp, Blender add-ons), a manifest with a namespace prefix, a run on real Windows

@@ -20,7 +20,7 @@ Our replacements stay **off by default** until the owner declares them ready and
 5. **Delete** the third-party code, its CMake option, its FetchContent block and its CI download, **one release after the flip**. Then update this page and `docs/THIRD_PARTY.md`.
 | Library | Seam | Our backend, in order | Status |
 |---|---|---|---|
-| Assimp (optional) | `ImportModelData` and `ImportedModel` (all Assimp code in one file) | glTF/GLB, OBJ and MTL, STL and PLY readers are ours; a Collada reader is ours too, side by side with Assimp and off by default (`OKAY_OWN_COLLADA`, reads skins and per-component or matrix animation with LINEAR and STEP keys; tested on our own fixtures only, not on real exporter files); 3DS, BVH, Blender and 30 more formats have readers of ours too, all off by default (39 of the 45 importers our Windows build switches on are covered; the table below has the per-format state); 6 importers still have none (OpenGEX, MDL, Q3BSP, SIB, Nendo, glTF 1.0) plus the OGRE skeletons; the binary OGRE `.mesh`, `.zae` and `.xml` got readers on 2026-11-16 (off by default; per-extension list: section "What still needs Assimp" below). **Speed and memory against Assimp, per reader, on the 355 corpus files: `docs/own_readers_speed.md`** (36 of 37 readers now read the corpus at least as fast as Assimp with no more peak heap, Q3D included, which read none of its four corpus files before 2026-11-16; OGRE is a little heavier than Assimp on three of its four files; see that page for the per-file exceptions) | Seam and readers done; every reader side by side, off by default |
+| Assimp (optional) | `ImportModelData` and `ImportedModel` (all Assimp code in one file) | glTF/GLB, OBJ and MTL, STL and PLY readers are ours; a Collada reader is ours too, side by side with Assimp and off by default (`OKAY_OWN_COLLADA`, reads skins and per-component or matrix animation with LINEAR and STEP keys; tested on our own fixtures only, not on real exporter files); 3DS, BVH, Blender and 30 more formats have readers of ours too, all off by default (39 of the 45 importers our Windows build switches on are covered; the table below has the per-format state); 6 importers still have none (OpenGEX, MDL, Q3BSP, SIB, Nendo, glTF 1.0) plus the OGRE skeletons; the binary OGRE `.mesh`, `.zae` and `.xml` got readers on 2026-11-16 (off by default; per-extension list: section "What still needs Assimp" below). **Speed and memory against Assimp, per reader, on the 355 corpus files: `docs/own_readers_speed.md`** (all 38 readers now read the corpus at least as fast as Assimp with no more peak heap, Q3D included, which read none of its four corpus files before 2026-11-16; OGRE XML met both on 2026-11-16 with a compact XML tree, and Modo `.lxo` got a reader the same day; see that page for the per-file exceptions) | Seam and readers done; every reader side by side, off by default |
 | ufbx | same | Our own binary and ASCII FBX reader exists behind `OKAY_OWN_FBX` (off); checked on 43 real files from Assimp's test folder (42 agree with ufbx, none is known to be a Mixamo file), not promoted: speed and memory never measured, no run on real Windows, other exporters untested | Side by side, merged, off by default |
 | Dear ImGui | `okayui` (our existing own toolkit) is the replacement | Give OkayUI a headless software renderer and golden/input test harness first (in progress), then close the gaps the ImGui usage audit lists (docking, tables, tabs, plots, fonts, GPU backends), then port editor and launcher panels one at a time. Harness merged; gap step 1 (public draw list, cursor and measurement, item state, disabled blocks) built and tested headless, with the HAVE and GAP table by feature family in `docs/own_ui_toolkit.md` section 4; section 5 wires OkayUI into the real apps as an opt-in preview backend (Settings, `OKAY_UI_BACKEND`, `OKAY_UI_DEFAULT_BACKEND`); section 6 adds the usage report (`scripts/imgui_usage_report.py` -> `docs/imgui_port_report.md`: of about 26,000 `ImGui::` call sites 98.8% have an OkayUI function of the same name, but only 75.7% of the types, flags and enums, and 26% of call sites sit in screens that are fully covered by call name) and five ported screens in total (the launcher's What's New and Tips pages, the editor's Console, Crash Log and Audio Mixer; the three newest are small, together under 1% of the call sites, headless-tested with golden images, never run in a real window); everything else is still Dear ImGui and Dear ImGui is the default | Started, non-default |
 | SDL2 | `okay::platform` (timers, audio devices, controllers, windows, events, GL context, clipboard) | Own Linux/X11 backend tested under Xvfb; Win32 compiles but is untested; macOS not written; the player's window, events, input and GL context now go through it (stage 2, `docs/platform_layer.md`); the editor and launcher windows still call SDL directly, and every app still draws through `SDL_Renderer` (they need our own 2D painter and an own ImGui platform backend first), so `own` cannot run an app yet | Seam and Linux backend done; stage 2 (player) done; editor, launcher and the 2D painter next |
@@ -85,7 +85,9 @@ glTF 2.0 is off by default, so today every one of these extensions still goes to
 | `.ms3d` | 4 | `OKAY_OWN_MS3D` |
 | `.ase` | 17 | `OKAY_OWN_ASE` (`.ask` is not routed, see 4) |
 | `.3mf`, `.amf`, `.x3d`, `.dxf` | 1 (+1 at the test root), 11, 4, 5 | `OKAY_OWN_3MF`, `_AMF`, `_X3D`, `_DXF` |
-| `.lwo` | 54 | `OKAY_OWN_LWO` (`.lxo` is not read, see 4) |
+| `.lwo` | 54 | `OKAY_OWN_LWO` |
+| **`.lxo`** (new) | 2 | Modo, read by the LWO reader (`OKAY_OWN_LXO`, `docs/own_lwo_reader.md`, section LXO): 0.70x the time, 0.44x the largest peak (one file 1.12x the peak: it keeps the file's per-corner normals) |
+| **`.mesh.xml`** (moved up) | 4 | OGRE XML (`OKAY_OWN_OGRE`): 0.42x the time, 0.54x the largest peak since 2026-11-16 (was 1.03x / 1.04x); skeletons not read in either OGRE form |
 | `.blend` | 28 | `OKAY_OWN_BLEND` |
 | `.md2`, `.md3`, `.irrmesh`, `.b3d`, `.x` | 5, 3, 5, 3, 12 | `OKAY_OWN_MD2`, `_MD3`, `_IRRMESH`, `_B3D`, `_X` |
 | `.ac`, `.acc`, `.ac3d` | 9, 2, 0 | `OKAY_OWN_AC3D` |
@@ -106,7 +108,6 @@ glTF 2.0 is off by default, so today every one of these extensions still goes to
 
 | Extensions | Corpus | Why not yet |
 |---|---:|---|
-| `.mesh.xml` | 4 | OGRE XML (`OKAY_OWN_OGRE`): slightly slower and heavier than Assimp on the files both read (1.03x time, 1.04x memory in the 2026-11-16 run; `docs/own_readers_speed.md`); skeletons not read in either OGRE form |
 | `.gltf`, `.glb` | 48, 6 | glTF 2.0 is always ours and never goes to Assimp; **glTF 1.0** files (7 of the corpus) have no reader of ours on this branch (see 3) |
 | `.fbx` | 43 | never goes to Assimp: ufbx reads FBX, and our own FBX reader (`OKAY_OWN_FBX`) replaces ufbx, not Assimp (`docs/own_fbx_reader.md`) |
 | `.ndo` | 0 | Nendo: a seam that recognises the header and refuses every file (no description and no file exist; `docs/own_ndo_reader.md`) |
@@ -128,7 +129,6 @@ extension list above, not from Assimp's code; for the ones without a corpus file
 
 | Extensions | Corpus | What it is | Note |
 |---|---:|---|---|
-| `.lxo` | 2 | Modo's LightWave-like IFF format (`LXOB`), claimed by Assimp's LWO importer | the only gap left with corpus files; a different chunk set from LWO2, medium work |
 | `.ask` | 0 | an ASE variant, claimed by Assimp's ASE importer | possibly our ASE reader with a new extension; unverified, no file to check it on |
 | `.prj` | 0 | 3D Studio project file, claimed by the 3DS importer | no file to check |
 | `.md5camera` | 0 | Doom 3 camera path | no file to check; a camera clip, not a mesh |
@@ -140,7 +140,8 @@ extension list above, not from Assimp's code; for the ones without a corpus file
 
 The gap batch of 2026-11-16 took the three gap formats with the most corpus files (`.xml` 9, `.mesh` 3, `.zae` 3) and that users
 are most likely to have: OGRE game assets ship as binary `.mesh` far more often than as XML, ZAE is COLLADA's packaged form (one
-file with its textures), and `.xml` covered four readers we already had. What is left has 2 corpus files (`.lxo`) or none.
+file with its textures), and `.xml` covered four readers we already had. What was left had 2 corpus files (`.lxo`) or none; `.lxo` got its reader on 2026-11-16 (branch `claude2/own-readers-gap-2`), so
+every extension left in this table has **no corpus file**.
 
 ## Order
 

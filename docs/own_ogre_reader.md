@@ -56,6 +56,12 @@ File 256 MiB; 8,000,000 vertices per geometry; 20,000,000 faces; 100,000 submesh
 
 Assimp's tree has `fish`, `ninja`, `razor` (`.mesh.xml` and binary `.mesh`, `OgreSDK`) and `TheThing/Mesh.mesh.xml`. **All 4 `.mesh.xml` files read and equal Assimp on triangles, mesh count, surface area and bounding box** (fish 815 triangles area 34.8947; ninja 1,008, 2 meshes, 25,219.6177; razor 468, 29,764.2994; TheThing 2,656, 1.3468), and each gets the texture its `.material` names (`fish.jpg`, `Wrinkles.jpg`, ...). Not compared: skeletons and animation (Assimp reads them, ours does not).
 
+**Speed of the XML reader (2026-11-16, branch `claude2/own-readers-gap-2`).** The XML form is now parsed by `xml::ParseFlat`
+(`XmlLite.hpp`): the same accept / refuse rules and messages as `xml::Parse`, but element and attribute names and values are
+offsets into the file text instead of a `std::string` each, and character data is checked, not kept. Same output (digest
+equal on all four files); 0.42x Assimp's read time and 0.54x its largest peak heap over the files both read (was 1.03x and
+1.04x); every file faster and lighter (`docs/own_readers_speed.md`, third round).
+
 **Binary `.mesh` (2026-11-16).** All 3 binary meshes read and give **exactly the parts, triangles and box of their XML twins**: razor's model is bit for bit the same as the XML reader's (same digest); fish and ninja differ only in the last digits of positions (the XML text was rounded to about 6 significant digits; the binary floats are the exporter's values, at most 4.6e-5 apart) and in the skeleton name in the note. Against Assimp: fish 815 / 815 triangles, 530 / 530 vertices, ninja 1,008 / 1,008 and 842 / 842, razor 468 / 468 and 588 / 588, boxes equal; ninja has 1 material to Assimp's 2 (ours shares a material between submeshes with the same name, as the XML reader does); Assimp also gives the skeleton (nodes, bones, clips), ours does not. Speed and memory (`docs/own_readers_speed.md`, row `mesh`): 0.12x Assimp's read time and 0.25x its largest peak heap; every file faster and lighter.
 
 Unverified: a mesh with several uv sets, 32-bit-index meshes, strips and fans on a real exporter file (the two ways of writing the face elements are an assumption from the format description, checked on synthetic data only), files from exporters other than the SDK converter and the Blender exporter, a run on real Windows.

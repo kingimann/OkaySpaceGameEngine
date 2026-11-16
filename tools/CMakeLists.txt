@@ -6,7 +6,7 @@ set_target_properties(okay_gen_textures PROPERTIES OUTPUT_NAME gen_textures)
 
 # The launcher's version question drawn with its real drawing code and look (launcher/OpenProjectUI.cpp), headless (SDL's software renderer on an
 # offscreen surface), for the pictures in docs/images/launcher_open/. Needs the launcher's ImGui (so only when the launcher is configured).
-#   SDL_VIDEODRIVER=dummy okay_launcher_open_shot older out.bmp        (cases: older, older-missing, unversioned, newer, newer-open-with)
+#   SDL_VIDEODRIVER=dummy launcher_open_shot older out.bmp        (cases: older, older-missing, unversioned, newer, newer-open-with)
 if(TARGET launcher_imgui)
     find_package(Threads REQUIRED)
     add_executable(okay_launcher_open_shot launcher_open_shot.cpp

@@ -1718,6 +1718,8 @@ static std::string EditorVersionForOpen() {
 // Start the editor the way OpenProjectGate planned it. `version` "" = this launcher's own editor, otherwise an installed version under
 // Versions/; `args` are the arguments after the program (--launcher <pid> --open <scene> [--keep-version] [--project-answer=...]).
 // Blocked means an update is being installed (UpdateBlocksLaunch has already told the person); Failed means that editor is not there or did not start.
+// (LaunchEditorVersion above is not called any more: this replaces it. It is left in place only so this change merges cleanly with the
+// sign-in gate branch, which edits it; delete it once that has landed.)
 enum class PlannedLaunch { Started, Failed, Blocked };
 static PlannedLaunch LaunchEditorPlanned(const std::string& version, const std::vector<std::string>& args) {
     if (args.empty()) return PlannedLaunch::Failed;

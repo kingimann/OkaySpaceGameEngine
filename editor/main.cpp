@@ -27026,6 +27026,28 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
     return open;
 }
 
+// The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
+// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
+static void WalkSpeedHintLine(float walkSpeed) {
+    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
+    if (hint.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+    ImGui::TextWrapped("%s", hint.c_str());
+    ImGui::PopStyleColor();
+}
+static bool NaturalSpeedsButton(const char* id) {
+    char label[96];
+    std::snprintf(label, sizeof(label), "Use natural walk and run speeds##%s", id);
+    const bool hit = ImGui::SmallButton(label);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::NaturalGait::ButtonTooltip());
+    if (okay::NaturalGait::Old()) {   // OKAY_OLD_GAIT is set: say so where the speeds are, so it cannot be missed
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+        ImGui::TextWrapped("The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
+        ImGui::PopStyleColor();
+    }
+    return hit;
+}
+
 // A public field discovered in a script: its name, declared type, default value,
 // and any attributes (Header/Tooltip/Range). Used to show
 // serialized fields in the Script inspector.
@@ -35739,8 +35761,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     FirstPersonController& F = *fp;
                     switch (which) {
-                        case 0:   // Tactical: weighty mil-sim movement
-                            F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
+                        case 0:   // Tactical: weighty mil-sim movement (a real walk, a quick run)
+                            F.walkSpeed = 2.0f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
                             F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
                             F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
@@ -35772,6 +35794,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##fp");
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##fp");
+            WalkSpeedHintLine(fp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("fp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(fp->walkSpeed, fp->runSpeed, fp->crouchSpeed, fp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##fp");
             if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
@@ -35960,8 +35988,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     ThirdPersonController& T = *tp;
                     switch (which) {
-                        case 0:   // Grounded: weighty adventure movement
-                            T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
+                        case 0:   // Grounded: weighty adventure movement (a real walk, a quick run)
+                            T.walkSpeed = 2.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
                             T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
                             T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
@@ -35993,6 +36021,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tp");
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tp");
+            WalkSpeedHintLine(tp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("tp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(tp->walkSpeed, tp->runSpeed, tp->crouchSpeed, tp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tp");
             if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
@@ -36243,6 +36277,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Which views the player has.\nBoth: a key switches between them and the camera blends.\n"
                                   "One view only: no toggle, and the other view's settings are dropped.");
+            if (NaturalSpeedsButton("pc")) {
+                ed.PushUndo("Natural walk and run speeds");
+                if (auto* f = pc->first())
+                    okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
+                if (auto* t = pc->third())
+                    okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             CharacterModelTools(ed, go, "pc");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
@@ -36894,6 +36936,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tps");
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tps");
+            WalkSpeedHintLine(ts->walkSpeed);
+            if (NaturalSpeedsButton("tps")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(ts->walkSpeed, ts->runSpeed, ts->stanceControl.crouchSpeed, ts->stanceControl.proneSpeed,
+                                                    okay::NaturalGait::kShooterRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tps");
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;

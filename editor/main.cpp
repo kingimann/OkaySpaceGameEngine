@@ -12356,11 +12356,54 @@ void DrawMaterialEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The scene counts the Stats window shows, in its order (shared by the Dear ImGui window and the OkayUI one so they cannot drift).
+static void CollectStatRows(EditorState& ed, std::vector<std::pair<std::string, int>>& rows) {
+    int stTris = 0, stParts = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up || !up->active) continue;
+        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
+        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
+    }
+    rows = {
+        {"Objects",    (int)ed.scene().Objects().size()},
+        {"Triangles",  stTris},
+        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
+        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
+        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
+        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
+        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
+        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
+        {"Particles",  stParts},
+        {"Drawn",      okay::LastCullCounters().drawn},
+        {"Culled",     okay::LastCullCounters().culled},
+        {"Occluded",   okay::LastCullCounters().occluded},
+        {"LOD culled", okay::LastCullCounters().lodCulled},
+        {"LOD0",       okay::LastCullCounters().lod0},
+        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
+        {"Batches",    okay::LastCullCounters().batches},
+        {"Draws saved", okay::LastCullCounters().drawsSaved},
+    };
+}
+
 void DrawStats(EditorState& ed) {
-    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
-    ImGuiIO& io = ImGui::GetIO();
     static float hist[120] = {0};
     static int hi = 0;
+    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): the same numbers and switches
+        StatsHostData data;
+        data.framerate = ImGui::GetIO().Framerate;
+        hist[hi] = data.framerate; hi = (hi + 1) % 120;
+        data.history = hist; data.historyCount = 120; data.historyOffset = hi;
+        CollectStatRows(ed, data.rows);
+        data.frustumCulling = &okay::FrustumCullingEnabled();
+        data.occlusionCulling = &okay::visibility::OcclusionCullingEnabled();
+        data.staticBatching = &okay::visibility::StaticBatchingEnabled();
+        data.dynamicBatching = &okay::visibility::DynamicBatchingEnabled();
+        data.skinning = okay::SkinnedMesh::GpuSkinning() ? "GPU" : "CPU";
+        if (DrawStatsOkayUI(&g_showStats, data)) return;
+        hist[(hi + 119) % 120] = 0.0f; hi = (hi + 119) % 120;   // not drawn this frame (an ImGui popup covers the window): take the sample back, the ImGui window adds its own
+    }
+    if (!ImGui::Begin("Stats", &g_showStats)) { ImGui::End(); return; }
+    ImGuiIO& io = ImGui::GetIO();
     hist[hi] = io.Framerate; hi = (hi + 1) % 120;
     // Big FPS readout + frame time, then an auto-scaled plot with a 60 FPS guide.
     float fmin = 1e9f, fmax = 0.0f, fsum = 0.0f; int fcnt = 0;
@@ -12394,38 +12437,17 @@ void DrawStats(EditorState& ed) {
     ImGui::Spacing();
     // Scene census as a tidy two-column grid; zero counts are dimmed so the
     // numbers that matter stand out.
-    int stTris = 0, stParts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
-        if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
-    }
+    std::vector<std::pair<std::string, int>> statRows;
+    CollectStatRows(ed, statRows);
     struct StatRow { const char* name; int v; };
-    const StatRow rows[] = {
-        {"Objects",    (int)ed.scene().Objects().size()},
-        {"Triangles",  stTris},
-        {"Meshes",     (int)ed.scene().FindObjectsOfType<MeshRenderer>().size()},
-        {"Sprites",    (int)ed.scene().FindObjectsOfType<SpriteRenderer>().size()},
-        {"Lights",     (int)ed.scene().FindObjectsOfType<Light>().size()},
-        {"Colliders",  (int)(ed.scene().FindObjectsOfType<Collider2D>().size() + ed.scene().FindObjectsOfType<Collider3D>().size())},
-        {"Scripts",    (int)ed.scene().FindObjectsOfType<ScriptComponent>().size()},
-        {"NPCs",       (int)ed.scene().FindObjectsOfType<NPCController>().size()},
-        {"Particles",  stParts},
-        {"Drawn",      okay::LastCullCounters().drawn},    // last frame, after culling and batching
-        {"Culled",     okay::LastCullCounters().culled},
-        {"Occluded",   okay::LastCullCounters().occluded},
-        {"LOD culled", okay::LastCullCounters().lodCulled},
-        {"LOD0",       okay::LastCullCounters().lod0},
-        {"LOD1+",      okay::LastCullCounters().lod1 + okay::LastCullCounters().lod2 + okay::LastCullCounters().lod3},
-        {"Batches",    okay::LastCullCounters().batches},
-        {"Draws saved", okay::LastCullCounters().drawsSaved},
-    };
+    std::vector<StatRow> rows;
+    for (const auto& r : statRows) rows.push_back({r.first.c_str(), r.second});
     if (ImGui::BeginTable("##statgrid", 4, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("n1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 0.8f);
         ImGui::TableSetupColumn("n2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        for (int i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); ++i) {
+        for (int i = 0; i < (int)rows.size(); ++i) {
             if (i % 2 == 0) ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", rows[i].name);

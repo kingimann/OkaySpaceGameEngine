@@ -83,6 +83,7 @@ release job or the installer build for this change.
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zo | OkayUI: the Stats window drawn by OkayUI, plus a pile of new OkayUI pieces (tabs, tables, dock builder, code-editor line commands) that have no editor screen of their own yet | Developer switch only: in the Command Prompt `set OKAY_DEV=1`, `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`; open **Stats** from the View menu's panel list | New in this change; the OkayUI side is tested headless, the editor part was only syntax-checked and never run in a real window |
 
 ---
 
@@ -1169,6 +1170,29 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 the screens that have an OkayUI port change (in the editor, the Console panel today); everything else stays Dear ImGui.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`. Nothing was run in a real window.
+
+**New in the change "own UI 3": the Stats window (and what else is new).**
+It is developer-only on purpose (owner rule: no own replacement is on until declared ready), so a normal run still shows
+Dear ImGui everywhere. To try it:
+1. Open the Command Prompt, go to the folder with `Tools\OkayEngine.exe`, and type `set OKAY_DEV=1` then
+   `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. (The About popup should say `ui=okayui`.)
+2. Open the **Stats** window: it is in the editor's View menu (the list of panels; it is closed in the default layout).
+3. You should see: a big green frame-rate number (yellow below 55, red below 30) with the frame time and
+   "avg / min", a line graph of the last 120 frames with a faint green line at 60 fps, the scene counts in four columns
+   (the numbers 10,000 and up show as `12.3k`, a million as `1.5M`, zeros are dim), and the switches **Frustum culling**,
+   **Occlusion**, **Static batching**, **Dynamic batching**. Click a switch: it changes the real setting (the same one the
+   Dear ImGui window changes). Hold the pointer still on **Occlusion** or **Dynamic batching** for half a second: a
+   help box with two lines appears.
+4. To compare: close the window, `set OKAY_UI_BACKEND=imgui` (or unset it) and open Stats again: same content in Dear ImGui.
+Pictures (headless renders, not screenshots of the editor): `docs/images/okayui/stats_side_by_side.png` (Dear ImGui left,
+OkayUI right; the ImGui side is a copy of the ImGui calls with fixed data in ImGui's default look), `stats_okayui.png`,
+`stats_okayui_tooltip.png`.
+What is not visible to you yet: tab reordering, the table column hide menu, the dock layout builder and the code editor's
+line commands exist as library code with headless tests (`test_okayui_imcompat`, `test_okayui_dockbuilder`,
+`test_okayui_codeedit`); no editor screen uses them yet, so there is nothing to click. The one place you can try a
+code-editor command today is the script editor with the developer switch on (the same two `set` lines plus `OKAY_DEV=1`):
+open any script, click in the text, and press **Ctrl+/** (comment the line), **Alt+Up** / **Alt+Down** (move the line),
+**Ctrl+Shift+D** (duplicate it). The Windows keyboard host maps the slash key; this was not run on a real keyboard.
 
 ### 13. Own cryptography
 

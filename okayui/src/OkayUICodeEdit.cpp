@@ -541,6 +541,100 @@ bool CodeEdit::Tab(bool outdent) {
     return true;
 }
 
+// ---- line commands: toggle comment, move lines, duplicate lines (written from the usual behaviour of code editors) ----------------------
+namespace {
+bool blankLine(const std::string& s) { for (char c : s) if (c != ' ' && c != '\t') return false; return true; }
+int indentBytes(const std::string& s) { int i = 0; while (i < (int)s.size() && (s[(size_t)i] == ' ' || s[(size_t)i] == '\t')) ++i; return i; }
+}
+
+bool CodeEdit::ToggleLineComment(const std::string& prefix) {
+    if (readOnly_ || prefix.empty()) return false;
+    const CodePos a = SelectionStart(), b = SelectionEnd();
+    int l0 = a.line, l1 = b.line;
+    if (l1 > l0 && b.col == 0) --l1;
+    bool anyText = false, allCommented = true; int minIndent = 1 << 30;
+    for (int l = l0; l <= l1; ++l) {
+        const std::string& s = lines_[(size_t)l];
+        if (blankLine(s)) continue;
+        anyText = true;
+        const int ind = indentBytes(s);
+        minIndent = std::min(minIndent, ind);
+        if (s.compare((size_t)ind, prefix.size(), prefix) != 0) allCommented = false;
+    }
+    if (!anyText) return false;
+    std::vector<int> delta((size_t)(l1 - l0 + 1), 0);
+    std::vector<int> at((size_t)(l1 - l0 + 1), 0);
+    beginCompound();
+    for (int l = l1; l >= l0; --l) {
+        const std::string& s = lines_[(size_t)l];
+        if (blankLine(s)) continue;
+        if (allCommented) {
+            const int ind = indentBytes(s);
+            int len = (int)prefix.size();
+            if (ind + len < (int)s.size() && s[(size_t)(ind + len)] == ' ') ++len;
+            edit(Kind_Other, CodePos{l, ind}, CodePos{l, ind + len}, "");
+            delta[(size_t)(l - l0)] = -len; at[(size_t)(l - l0)] = ind;
+        } else {
+            const std::string ins = prefix + " ";
+            edit(Kind_Other, CodePos{l, minIndent}, CodePos{l, minIndent}, ins);
+            delta[(size_t)(l - l0)] = (int)ins.size(); at[(size_t)(l - l0)] = minIndent;
+        }
+    }
+    endCompound();
+    auto adj = [&](CodePos p) {
+        if (p.line >= l0 && p.line <= l1) {
+            const int d = delta[(size_t)(p.line - l0)], k = at[(size_t)(p.line - l0)];
+            if (d > 0 && p.col >= k) p.col += d; else if (d < 0 && p.col > k) p.col = std::max(k, p.col + d);
+        }
+        return p;
+    };
+    caret_ = Clamp(adj(caret_)); anchor_ = Clamp(adj(anchor_)); reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
+bool CodeEdit::MoveLines(bool down) {
+    if (readOnly_) return false;
+    const CodePos a = SelectionStart(), b = SelectionEnd();
+    int l0 = a.line, l1 = b.line;
+    if (l1 > l0 && b.col == 0) --l1;
+    const int last = (int)lines_.size() - 1;
+    if (down ? l1 >= last : l0 <= 0) return false;
+    std::string block;
+    for (int l = l0; l <= l1; ++l) { if (l > l0) block += '\n'; block += lines_[(size_t)l]; }
+    beginCompound();
+    if (down) {
+        const std::string below = lines_[(size_t)(l1 + 1)];
+        edit(Kind_Other, CodePos{l0, 0}, CodePos{l1 + 1, (int)below.size()}, below + "\n" + block);
+    } else {
+        const std::string above = lines_[(size_t)(l0 - 1)];
+        edit(Kind_Other, CodePos{l0 - 1, 0}, CodePos{l1, (int)lines_[(size_t)l1].size()}, block + "\n" + above);
+    }
+    endCompound();
+    const int d = down ? 1 : -1;
+    caret_ = Clamp(CodePos{caret_.line + d, caret_.col}); anchor_ = Clamp(CodePos{anchor_.line + d, anchor_.col});
+    reveal_ = true;
+    CE_FINISH();
+    return true;
+}
+
+bool CodeEdit::DuplicateLines() {
+    if (readOnly_) return false;
+    const CodePos a = SelectionStart(), b = SelectionEnd();
+    int l0 = a.line, l1 = b.line;
+    if (l1 > l0 && b.col == 0) --l1;
+    std::string block;
+    for (int l = l0; l <= l1; ++l) { if (l > l0) block += '\n'; block += lines_[(size_t)l]; }
+    const int n = l1 - l0 + 1;
+    beginCompound();
+    edit(Kind_Other, CodePos{l1, (int)lines_[(size_t)l1].size()}, CodePos{l1, (int)lines_[(size_t)l1].size()}, "\n" + block);
+    endCompound();
+    caret_ = Clamp(CodePos{caret_.line + n, caret_.col}); anchor_ = Clamp(CodePos{anchor_.line + n, anchor_.col});
+    reveal_ = true; desiredCol_ = -1;
+    CE_FINISH();
+    return true;
+}
+
 bool CodeEdit::Copy() const {
     if (!HasSelection()) return false;
     SetClipboardText(SelectedText().c_str());
@@ -1001,13 +1095,15 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.del) { DeleteForward(ctrl); any = true; }
     if (in.left) { Move(ctrl ? CodeMove_WordLeft : CodeMove_Left, shift); any = true; }
     if (in.right) { Move(ctrl ? CodeMove_WordRight : CodeMove_Right, shift); any = true; }
-    if (in.up) { Move(CodeMove_Up, shift); any = true; }
-    if (in.down) { Move(CodeMove_Down, shift); any = true; }
+    if (in.up) { if (io.keyAlt) MoveLines(false); else Move(CodeMove_Up, shift); any = true; }       // Alt+Up / Alt+Down move the lines
+    if (in.down) { if (io.keyAlt) MoveLines(true); else Move(CodeMove_Down, shift); any = true; }
     if (in.home) { Move(ctrl ? CodeMove_DocStart : CodeMove_LineStart, shift); any = true; }
     if (in.end) { Move(ctrl ? CodeMove_DocEnd : CodeMove_LineEnd, shift); any = true; }
     if (IsKeyPressed(KeyId_PageUp)) { Move(CodeMove_PageUp, shift); any = true; }
     if (IsKeyPressed(KeyId_PageDown)) { Move(CodeMove_PageDown, shift); any = true; }
     if (!ctrl && IsKeyPressed(KeyId_Tab)) { Tab(shift); any = true; }
+    if (ctrl && IsKeyPressed(KeyId_Slash)) { ToggleLineComment(); any = true; }
+    if (ctrl && shift && IsKeyPressed(KeyId_D)) { DuplicateLines(); any = true; }
     if (ctrl && IsKeyPressed(KeyId_Z)) { if (shift) Redo(); else Undo(); any = true; }
     if (ctrl && IsKeyPressed(KeyId_Y)) { Redo(); any = true; }
     if (in.escape && HasSelection()) { moveCaret(caret_, false); any = true; }

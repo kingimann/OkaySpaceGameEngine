@@ -128,6 +128,7 @@ public:
         case SDLK_LCTRL: case SDLK_RCTRL: return KeyId_Ctrl;
         case SDLK_LSHIFT: case SDLK_RSHIFT: return KeyId_Shift;
         case SDLK_LALT: case SDLK_RALT: return KeyId_Alt;
+        case SDLK_SLASH: return KeyId_Slash;
         default: return KeyId_None;
         }
     }

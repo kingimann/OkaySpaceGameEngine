@@ -198,6 +198,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a plugin panel does not appear | [24.2](20-35-planned.md#242-editor-extensions) Editor extensions |
 | a plugin panel does not draw | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
 | a point light casts no shadow | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| a ported panel does not compile for a missing flag name | [40.8](40-okayui-library.md#408-imgui-shaped-names-tabs-and-tables-extras-dock-builder-code-editor-line-commands-stats-port) ImGui-shaped names, tabs and tables extras, dock builder, code editor line commands, Stats port |
 | a pose pops at a key | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | a PR waits for a verdict | [19.3](19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) QA workflow, rig sweep test |
 | a prebuilt screen overlaps another | [12.7](12-ingame-ui.md#127-themes-and-the-launcher-matching-ui-kit) Themes and the launcher-matching UI kit |
@@ -275,6 +276,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a subtitle never appears | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | a Supabase function isn't found | [41.6](41-build-tools-infra.md#416-supabase-functions-and-sql-schema) Supabase functions and SQL schema |
 | a table column is the wrong width | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
+| a table has no column menu | [40.8](40-okayui-library.md#408-imgui-shaped-names-tabs-and-tables-extras-dock-builder-code-editor-line-commands-stats-port) ImGui-shaped names, tabs and tables extras, dock builder, code editor line commands, Stats port |
 | a tap does nothing on a phone | [8.4](08-input.md#84-cursor-and-touch) Cursor and touch |
 | a target silently missing (SDL2 not found warning) | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
 | a teleported body smears | [6.4](06-physics.md#64-fixed-step-with-render-interpolation-pose-history) Fixed step with render interpolation, pose history |
@@ -896,6 +898,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | subtitles too small or hard to read | [32.2](20-35-planned.md#322-subtitles) Subtitles |
 | sunrise does not change the sky | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | swinging hits nothing | [11.7](11-gameplay-systems.md#117-combat-actions-melee-dodge-dive) Combat actions: melee, dodge, dive |
+| tabs cannot be reordered | [40.8](40-okayui-library.md#408-imgui-shaped-names-tabs-and-tables-extras-dock-builder-code-editor-line-commands-stats-port) ImGui-shaped names, tabs and tables extras, dock builder, code editor line commands, Stats port |
 | tabs do not switch pages or overflow | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | tampered or unreadable" on load | [1.14](01-core-scene.md#114-data-assets-and-data-packs) Data assets and data packs |
 | Task Manager shows the wrong program name | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
@@ -1121,6 +1124,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the spine bends the wrong way on a model that faces -Z | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the sprite animation does not advance | [5.10](05-animation-ik.md#510-sprite-animation) Sprite animation |
 | the stamina bar stays full | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
+| the Stats window looks different with the OkayUI backend on | [40.8](40-okayui-library.md#408-imgui-shaped-names-tabs-and-tables-extras-dock-builder-code-editor-line-commands-stats-port) ImGui-shaped names, tabs and tables extras, dock builder, code editor line commands, Stats port |
 | the Steam overlay does not appear | [37.7](37-platform-windowing.md#377-steam-backend) Steam backend |
 | the story variable resets after loading | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
 | the template object is visible in the scene | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |

@@ -379,7 +379,8 @@ static void TestRoundTrip() {
     CHECK(wl->prefabOverrides.size() == Child(car, "Wheel L")->prefabOverrides.size());
     CHECK(wr->prefabOverrides.size() == Child(car, "Wheel R")->prefabOverrides.size());
     for (std::size_t i = 0; i < wl->prefabOverrides.size(); ++i) {
-        CHECK(wl->prefabOverrides[i].object == Child(car, "Wheel L")->prefabOverrides[i].object);
+        // the scene names the object by its path; the index is found again when the prefab is applied
+        CHECK(!wl->prefabOverrides[i].path.empty() && wl->prefabOverrides[i].path == Child(car, "Wheel L")->prefabOverrides[i].path);
         CHECK(wl->prefabOverrides[i].line == Child(car, "Wheel L")->prefabOverrides[i].line);
     }
     CHECK(car2->Guid() == car->Guid());
@@ -480,7 +481,14 @@ static void TestSaveNested() {
     const std::string text = Read(f.P("garage.okayprefab"));
     CHECK(Contains(text, "nestedprefab"));
     CHECK(Contains(text, "\"Spare\""));
-    CHECK(!Contains(text, "\"Hub\""));            // the nested prefab's own objects are not copied
+    {   // the nested prefab's own objects are not copied: no `gameobject N "Hub"` (records may name it by its path, "Hub")
+        std::istringstream ls(text);
+        std::string ln;
+        bool hubObject = false;
+        while (std::getline(ls, ln)) if (ln.rfind("gameobject ", 0) == 0 && Contains(ln, "\"Hub\"")) hubObject = true;
+        CHECK(!hubObject);
+        CHECK(Contains(text, "under \"Hub\""));    // Bolt is attached at the nested Hub
+    }
     CHECK(Contains(text, "\"Bolt\""));
     CHECK(!fs::exists(f.P("garage.okayprefab.tmp")));
 

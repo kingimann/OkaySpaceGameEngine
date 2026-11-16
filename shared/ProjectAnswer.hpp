@@ -74,8 +74,8 @@ inline PreAnswerRequest ParsePreAnswer(const std::vector<std::string>& args, con
         if (a == "--launcher" && i + 1 < args.size()) { pid = std::strtoul(args[i + 1].c_str(), nullptr, 10); havePid = true; ++i; }
         else if (a.rfind("--launcher=", 0) == 0) { pid = std::strtoul(a.c_str() + 11, nullptr, 10); havePid = true; }
         else if (a == "--open" && i + 1 < args.size()) { scene = args[i + 1]; ++i; }
-        else if (a.rfind("--open=", 0) == 0) scene = a.substr(7);
-        else if (a.rfind(flagEq, 0) == 0) answer = ParsePreAnswerName(a.substr(flagEq.size()));
+        else if (a.rfind("--open=", 0) == 0) scene = a.c_str() + 7;
+        else if (a.rfind(flagEq, 0) == 0) answer = ParsePreAnswerName(a.c_str() + flagEq.size());
     }
     if (answer == PreAnswer::None || scene.empty() || !havePid || pid == 0) return r;
     if (!launcherAlive || !launcherAlive(pid)) return r;

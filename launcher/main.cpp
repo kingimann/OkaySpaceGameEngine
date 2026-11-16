@@ -1732,16 +1732,10 @@ static PlannedLaunch LaunchEditorPlanned(const std::string& version, const std::
     if (exe.empty()) return PlannedLaunch::Failed;
     const std::string joined = okayversions::JoinArgs(args);   // every argument quoted for the platform (spaces, quotes and `$` in a path stay one argument)
     g_editorStartedVersion.clear();
-    if (SpawnTracked(exe, joined, "editor", "OkaySpace Editor")) {   // time in the editor counts too
-        g_editorStartedVersion = version.empty() ? std::string() : okayver::NormalizeVersion(version);
-        return PlannedLaunch::Started;
-    }
-    if (!version.empty()) return PlannedLaunch::Failed;
-#if defined(_WIN32)
-    RunCmd("start \"\" \"" + exe + "\" " + joined, false);   // as LaunchEditor does when the process cannot be tracked
-#else
-    RunCmd("\"" + exe + "\" " + joined + " >/dev/null 2>&1 &", false);
-#endif
+    // SpawnTracked is the one place every start goes through (and where a refusal, such as the update lock, is made). Its "no" is final here:
+    // there is deliberately no second try with a shell command, which would start the editor past that refusal.
+    if (!SpawnTracked(exe, joined, "editor", "OkaySpace Editor")) return PlannedLaunch::Failed;   // (time in the editor counts too)
+    g_editorStartedVersion = version.empty() ? std::string() : okayver::NormalizeVersion(version);
     return PlannedLaunch::Started;
 }
 

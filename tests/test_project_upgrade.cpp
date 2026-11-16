@@ -1686,6 +1686,7 @@ int main() {
                 CHECK(goB == 1 && noB == 0 && !g.Busy());
             }
             {   // a held open that is replaced by a newer one takes its answer with it
+                stamp(b, "2.850.0");                                                           // (the case above upgraded B: make it older again)
                 ProjectGate g(env);
                 int noB = 0;
                 g.Open(sceneOf(a), [] {}, [] {});

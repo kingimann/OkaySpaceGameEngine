@@ -1,6 +1,7 @@
 // Draws the launcher's version question (OpenProjectUI.hpp). The layout is the editor's own window for the same question
 // (editor/ProjectUpgradeUI.cpp, DrawGatePrompt): a small heading, the question, the project's folder, a short explanation, the status
 // of the old editor and the buttons in a row. The words come from OpenProjectGate.hpp (shared/ProjectQuestion.hpp), so both read the same.
+// Written for this engine from that window and Dear ImGui's documented API; no outside code.
 #include "OpenProjectUI.hpp"
 
 #include <algorithm>
@@ -16,15 +17,16 @@ const ImVec4 kAmber(0.95f, 0.80f, 0.35f, 1.0f), kGreen(0.45f, 0.82f, 0.56f, 1.0f
 std::string FitEnd(const std::string& s, float maxW) {
     if (ImGui::CalcTextSize(s.c_str()).x <= maxW) return s;
     const std::string dots = "\xE2\x80\xA6";
+    const float dotsW = ImGui::CalcTextSize(dots.c_str()).x;
     std::size_t cut = 0;
     while (cut < s.size()) {
-        for (int n = 0; n < 3 && cut < s.size(); ++n) {
+        for (int n = 0; n < 3 && cut < s.size(); ++n) {   // three characters at a time (whole UTF-8 characters)
             ++cut;
             while (cut < s.size() && ((unsigned char)s[cut] & 0xC0) == 0x80) ++cut;
         }
-        if (ImGui::CalcTextSize((dots + s.substr(cut)).c_str()).x <= maxW) break;
+        if (dotsW + ImGui::CalcTextSize(s.c_str() + cut).x <= maxW) break;
     }
-    return dots + s.substr(cut);
+    return dots + (s.c_str() + cut);
 }
 
 // The launcher's primary button (accent colour, white text), as its PrimaryButton in main.cpp draws it.

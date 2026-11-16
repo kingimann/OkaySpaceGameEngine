@@ -54,6 +54,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7k | Upgrade project: which folder is the project, held opens, byte-order marks | File > Open, File > Project Upgrade..., the launcher's Open | Waiting for the next release (issue #888 review fixes) |
+| 7m | The launcher asks "Upgrade / Open with the old version / Cancel" BEFORE the editor opens | Launcher > Create page > Recent projects: an older project, press **Open** | New in this change; tested on Linux and the window drawn headless, never run on Windows (see section 7m) |
 
 ---
 
@@ -364,6 +365,72 @@ variables `OKAY_DEV=1` and `OKAY_FAKE_VERSION=2.855.0` (the editor then calls it
 **Status.** The rules are tested on Linux (`project_upgrade`, `editor_hooks`: run for this change). The editor was built and the result
 window with its new list was seen in a headless screenshot (`docs/images/upgrade/`). Nothing was run on Windows: the any-case `assets` rule,
 8.3 / `\\?\` / mapped-drive spellings of the working folder and the launcher hand-off are unverified there.
+
+## 7m. The launcher asks about an old project BEFORE the editor opens
+
+**What it is.** You asked: "shouldn't you be asking if they want to upgrade the project BEFORE opening the editor, not after it opens". A plain
+**Open** on a project card used to start the editor, and only then did a window inside the editor ask "This project was made with v2.850.0 ...".
+Now the launcher asks first, in its own window, before any editor window exists. The editor still asks for every other way a project reaches it
+(File > Open inside the editor, a double-clicked `.okayscene`, the command line). How it works: `docs/project_upgrade.md`, "The question before Open".
+
+**Make an old project without waiting for two releases.** Every project has one line, `engine_version=<the version that last saved it>`, in
+`<project folder>\project.okayproj` (the Create page shows a card's folder under its name; the default place is `Projects\<Name>` next to
+`OkaySpace.exe`). Close the editor, open that file in Notepad, change the number on the first line, save. For three kinds of project:
+
+| You want | In `project.okayproj` | The launcher asks |
+|---|---|---|
+| older | `engine_version=2.850.0` | "<Name> was made with v2.850.0. This editor is v<yours>." |
+| newer | `engine_version=2.999.0` | "<Name> was last saved by v2.999.0, which is newer than this editor ..." (amber) |
+| no version recorded | delete the `engine_version=` line | "<Name> has no version recorded (made before this feature)." |
+
+Then press the round arrow next to the search box on the Create page so the cards show the new version (the question itself reads the file when you
+press **Open**, so it is always up to date). (Development builds only, other way: start the launcher with `OKAY_DEV=1` and `OKAY_FAKE_VERSION=2.855.0`;
+the launcher and the editor it starts both then call themselves v2.855.0. In PowerShell: `$env:OKAY_DEV=1; $env:OKAY_FAKE_VERSION="2.855.0"; .\OkaySpace.exe`.)
+
+**Steps.**
+1. **Older, plain Open.** On the card of the older project press **Open**. A window appears **in the launcher** and no editor window has opened yet
+   (look at the taskbar; Task Manager has no `OkayEngine.exe`). It says "<Name> was made with v2.850.0. This editor is v<yours>." and has three
+   buttons: **Upgrade project to v<yours>**, **Install v2.850.x** (when you have no v2.850 editor under `Versions\`, with an amber line saying so) or
+   **Open with v2.850.x** (when you have one, with a green line), and **Cancel**.
+2. **Cancel** (or Escape). Nothing starts and `project.okayproj` still says `2.850.0`.
+3. **Upgrade project.** Press **Open** again, then **Upgrade project to v<yours>**. Now the editor opens. The first thing it shows is its own
+   progress window "UPGRADING <Name>", then the result "UPGRADED". It does **not** show the question "This project was made with ..." a second time.
+   Press **Open project**. Next to the project there is a folder `<Name> (backup v2.850.0)`, and `project.okayproj` now says your version.
+4. **Install.** With no v2.850 editor installed, press **Open**, then **Install v2.850.x**: the launcher goes to the Versions page with that version
+   highlighted (it can only install a release that was published with checksums). Nothing else starts.
+5. **Open with the old version.** To see this button without an old release, make a hand-made copy: copy the whole `Tools` folder to
+   `Versions\2.850.1\Tools` (make `Versions` next to `OkaySpace.exe` if it is not there). Press **Open** on the older project: the green line says "v2.850.1
+   is installed and would open it." and the button reads **Open with v2.850.x**. It starts that editor with `--keep-version`, no question and no upgrade.
+   (The editor in that copy is really your current one, so its status bar shows `v<yours> (kept)`; a real old release would show `v2.850.1 (kept)`.)
+6. **Newer.** Set `engine_version=2.999.0` and press **Open**. The amber window says the project is newer than this editor and has **Check for updates**,
+   **Open anyway (a backup is made first)** and **Cancel**. **Check for updates** opens the launcher's Software Update window. **Open anyway** opens the
+   editor, which shows its progress window "BACKING UP", then "BACKUP MADE" with **Open project**: a folder `<Name> (backup v2.999.0)` appears and the
+   project file still says `2.999.0` until you save. Again the editor does not ask the newer question a second time.
+7. **No version recorded.** Delete the `engine_version=` line and press **Open**: "<Name> has no version recorded (made before this feature)." with
+   **Upgrade project** and **Cancel**. (If you set a default editor on the Versions page, such a project opens in it with no question, as before.)
+8. **No question when none is needed.** A project saved by your current version opens straight away. So does a scene that is not part of a project:
+   Create > **Open Project**, pick `examples\vehicle` (a loose scene): the editor opens at once and neither window asks anything.
+9. **Open Project (a folder from anywhere)** and **Open in editor** (the card's **More** menu) and **Open with** all ask the same way, because they all go
+   through one function. Try **Open Project** on the older project's folder.
+10. **The editor's own question is still there.** In the editor choose File > Open Project Folder... and pick the older project: the editor asks
+    "This project was made with v2.850.0. This editor is v<yours>." with **Upgrade project**, **Keep v2.850.x**, **Cancel**: the same words, because both
+    windows use the same sentences.
+11. **An editor is already open.** With the editor open on another project, press **Open** on the older project and choose **Upgrade project**: the open
+    editor takes the project (it asks "Save changes?" first if you changed something), then shows the upgrade progress, with no second question.
+
+**How you know it worked.** The question appears in the launcher before any `OkayEngine.exe` window; after your answer the editor shows no second
+"Project version" window for that project; and Cancel starts nothing. Before this change step 1 started the editor first.
+
+**Pictures** (headless, drawn by the launcher's real drawing code, `launcher/OpenProjectUI.cpp`; the rest of the launcher is not in the picture; not Windows):
+`docs/images/launcher_open/older.png` (v2.850.1 installed), `older_not_installed.png`, `newer.png`, `unversioned.png`, `newer_open_with.png`.
+
+**Status.** Run on this Linux machine: `open_project_gate` (the decision for every combination of versions, installed editors, default editor,
+"Open with" and "is this a project", the exact buttons and arguments, quoting: see the report in the change), `project_answer` (the flag is honoured only
+for a live launcher and the `--open` project), the new gate cases in `project_upgrade`, the older suites (`project_version`, `launcher_versions`,
+`app_restart`), a syntax-only compile of `launcher/main.cpp`, `editor/main.cpp` and the window with the Linux compiler, a MinGW (win32 threads) syntax check
+of the new headers, and the pictures above. **Not run:** the real launcher or editor, anything on Windows, the hand-off to an editor that is already open
+(step 11), **Open with** and **Install** end to end (steps 4 and 5), and the **Check for updates** button. Tell us when a step above does not look as
+written.
 
 ## Switches that are off by default (own code)
 

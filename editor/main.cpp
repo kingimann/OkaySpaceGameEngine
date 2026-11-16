@@ -44,7 +44,6 @@
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
-#include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -2232,6 +2231,35 @@ static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* t
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     return changed;
 }
+// Per-collider physics material (2D or 3D): this collider's own friction and bounciness (or the Rigidbody's), and how each
+// mixes with what it touches. Returns true when something changed.
+template <class Col>
+static bool PhysicsMaterialFields(Col* c, const char* id) {
+    bool changed = false;
+    const std::string sid = id;
+    if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
+    bool ownF = c->friction >= 0.0f;
+    if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's friction, as before. On: this collider has its own (0 is ice, 1 is rubber).");
+    if (ownF) {
+        if (ImGui::DragFloat(("Friction##pm" + sid).c_str(), &c->friction, 0.01f, 0.0f, 10.0f)) changed = true;
+        int fm = (int)c->frictionCombine;
+        if (ImGui::Combo(("Friction Mix##pm" + sid).c_str(), &fm, modes, 5)) { c->frictionCombine = (okay::CombineMode)fm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this friction mixes with the one it touches. Default is the geometric mean.");
+    }
+    bool ownB = c->bounciness >= 0.0f;
+    if (ImGui::Checkbox(("Own Bounciness##pm" + sid).c_str(), &ownB)) { c->bounciness = ownB ? 0.3f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's bounciness. On: this collider has its own (0 dead, 1 never loses height).");
+    if (ownB) {
+        if (ImGui::DragFloat(("Bounciness##pm" + sid).c_str(), &c->bounciness, 0.01f, 0.0f, 1.0f)) changed = true;
+        int bm = (int)c->bounceCombine;
+        if (ImGui::Combo(("Bounce Mix##pm" + sid).c_str(), &bm, modes, 5)) { c->bounceCombine = (okay::CombineMode)bm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
+    }
+    ImGui::TreePop();
+    return changed;
+}
 // Trigger filter fields for a trigger collider (2D or 3D): only react to objects
 // with a tag and/or on some collider layers. Returns true when something changed.
 template <class Col>
@@ -3174,6 +3202,8 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
+VoxelTerrain::LayerRules g_voxRules;      // voxel material layers: the sliders on the Voxel Terrain card
+int   g_voxSeed    = 2024;            // voxel generate: seed (the same seed gives the same ground)
 float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
@@ -17473,6 +17503,7 @@ void HandleShortcuts(EditorState& ed) {
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
+        else if (ed.isPlaying()) {}   // in Play, Ctrl+Z belongs to the game: the Voxel Digger takes back its last stroke
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -19358,6 +19389,34 @@ void DrawProjectSettings(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
+            ImGui::Separator();
+            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            {
+                auto& p3 = ed.scene().physics3D();
+                int q = (int)p3.quality;
+                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
+                ImGui::SetNextItemWidth(330);
+                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
+                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
+                    ed.scene().physics().quality = p3.quality;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
+                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
+                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
+                                      "New scenes start Improved. The setting is part of the scene file.");
+                if (p3.quality == okay::PhysicsQuality::Improved) {
+                    int it = p3.solverIterations;
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
+                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
+                }
+            }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
@@ -27573,17 +27632,14 @@ void DrawModeling(EditorState& ed) {
         {"Generate",  "Procedural shapes, pipes",         true},
         {"Edit Mesh", "Select, move, sculpt, paint",      true},
         {"Import",    "Bring in a model file",            true},
-        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
     };
-    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
     static int s_mdlPage = 0;
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
     ImGui::Dummy(ImVec2(0, 4));
-    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
-        const int i = kPageOrder[oi];
+    for (int i = 0; i < (int)(sizeof(kPages) / sizeof(kPages[0])); ++i) {
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
         ImGui::PushID(i);
@@ -27607,57 +27663,7 @@ void DrawModeling(EditorState& ed) {
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
     ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
     ImGui::Separator();
-    if (s_mdlPage == 7) {
-        // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
-        // and the thumbnail renderer.
-        namespace gu = oked::guided_ui;
-        gu::Host host;
-        host.ed = &ed;
-        host.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
-        host.leaveEditMode = [&](GameObject* g) { if (g_meshEdit && g_meshEditObj == g) SetMeshEditMode(ed, g, false); };
-        host.selectedFaces = [&](GameObject* g) {
-            std::vector<int> out;
-            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
-            if (!m || !g_meshEdit || g_meshEditObj != g) return out;
-            EditPoly(m->mesh);   // makes sure mesh.polyFace is current
-            std::set<int> faces;
-            for (int t : g_meshSelFaces) if (t >= 0 && t < (int)m->mesh.polyFace.size()) faces.insert(m->mesh.polyFace[t]);
-            out.assign(faces.begin(), faces.end());
-            return out;
-        };
-        host.selectFaces = [&](GameObject* g, const std::vector<int>& faces) {
-            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
-            if (!m) return;
-            if (!(g_meshEdit && g_meshEditObj == g)) SetMeshEditMode(ed, g, true);
-            EditPoly(m->mesh);
-            const std::set<int> want(faces.begin(), faces.end());
-            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
-            g_meshSelMode = 1;
-            for (int t = 0; t < (int)m->mesh.polyFace.size(); ++t) if (want.count(m->mesh.polyFace[t])) g_meshSelFaces.push_back(t);
-        };
-        host.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
-            static std::unordered_map<std::string, SDL_Texture*> cache;
-            auto it = cache.find(key);
-            if (it != cache.end()) return it->second;
-            static int s_frame = -1, s_made = 0;
-            if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
-            if (s_made >= 2 || !g_sdlRenderer) return nullptr;   // a couple of pictures per frame, the rest fill in
-            ++s_made;
-            SDL_Texture* tex = nullptr;
-            {
-                okay::Scene sc;
-                GameObject* g = sc.CreateGameObject("guided thumb");
-                MeshRenderer* m = g->AddComponent<MeshRenderer>();
-                m->mesh = build();
-                m->color = okay::Color{1, 1, 1, 1};   // faces carry their colours
-                sc.Update(0.0f);
-                tex = RenderObjectThumb(sc, g);
-            }
-            cache[key] = tex;
-            return tex;
-        };
-        gu::DrawGuidedPage(host);
-    } else if (s_mdlPage == 0) {
+    if (s_mdlPage == 0) {
 
     // --- Create a new object (drops it into the scene, selects it) ---
     // Organized Blender-style into an "Add" library: Primitives / Nature / Props /
@@ -30261,8 +30267,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
             ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
             ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+            ImGui::InputInt("Seed##vox", &g_voxSeed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
-                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
+                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
                 v->Apply(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -30270,6 +30281,90 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            SectionHeader("Materials");
+            ImGui::DragFloat("Topsoil (m)##voxlay", &g_voxRules.topsoil, 0.05f, 0.0f, 10.0f);
+            ImGui::DragFloat("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 0.1f, 0.0f, 40.0f);
+            ImGui::SliderFloat("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepness above which the surface is bare stone.");
+            ImGui::SliderFloat("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
+            ImGui::SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
+            if (!v->UseMaterials()) {
+                ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
+                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
+                ImGui::SameLine();
+                if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
+            } else {
+                bool changed = false;
+                for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
+                    VoxelTerrain::VoxelMaterial& m = v->materials[mi];
+                    ImGui::PushID((int)mi);
+                    char nm[64]; std::strncpy(nm, m.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("##mname", nm, sizeof(nm))) { m.name = nm; changed = true; }
+                    ImGui::SameLine();
+                    float mc[4] = {m.color.r, m.color.g, m.color.b, m.color.a};
+                    if (ImGui::ColorEdit4("##mcol", mc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) { m.color = {mc[0], mc[1], mc[2], mc[3]}; changed = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("hard##mh", &m.hardness, 0.05f, 0.1f, 50.0f, "%.1f")) { changed = true; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    if (ImGui::DragFloat("kg/m3##md", &m.density, 10.0f, 1.0f, 30000.0f, "%.0f")) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("loose##ml", &m.loose)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
+                    char dr[64]; std::strncpy(dr, m.drop.c_str(), sizeof(dr) - 1); dr[sizeof(dr) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("drop item##mdr", dr, sizeof(dr))) { m.drop = dr; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("per m3##mpm", &m.dropPerM3, 0.5f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
+                    ImGui::PopID();
+                }
+                if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
+                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
+                ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+            }
+            if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
+            if (v->catchFalling && ImGui::DragFloat("Catch Depth##vox", &v->catchMargin, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Footprints and tracks##voxft", &v->footprints)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
+            if (v->footprints) {
+                char ft[64]; std::strncpy(ft, v->footprintTag.c_str(), sizeof(ft) - 1); ft[sizeof(ft) - 1] = '\0';
+                if (ImGui::InputText("Who (tag)##voxft", ft, sizeof(ft))) { v->footprintTag = ft; ed.dirty = true; }
+                if (ImGui::Checkbox("Also rigid bodies##voxft", &v->footprintBodies)) ed.dirty = true;
+                if (ImGui::DragFloat("Step (m)##voxft", &v->footprintStep, 0.05f, 0.1f, 5.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Size##voxft", &v->footprintRadius, 0.02f, 0.05f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Depth##voxft", &v->footprintDepth, 0.01f, 0.02f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Water / lava flow in holes##voxfl", &v->fluidOn)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
+            if (v->fluidOn) {
+                if (ImGui::DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000)) ed.dirty = true;
+                if (ImGui::DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000)) ed.dirty = true;
+                if (ImGui::DragFloat("Flow Speed (steps/s)##voxfl", &v->fluidRate, 0.5f, 0.1f, 60.0f)) ed.dirty = true;
+                float fc[4] = {v->fluidColor.r, v->fluidColor.g, v->fluidColor.b, v->fluidColor.a};
+                if (ImGui::ColorEdit4("Fluid Color##voxfl", fc)) { v->fluidColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+                if (ImGui::Checkbox("Glow (lava)##voxfl", &v->fluidGlow)) ed.dirty = true;
+                if (ImGui::SmallButton("Lava preset##voxfl")) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Water preset##voxfl")) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear fluid##voxfl")) v->ClearFluid();
+                ImGui::TextDisabled("Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
+            }
+            {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
+                const auto& st = v->lastStats;
+                if (v->UsesChunkObjects())
+                    ImGui::TextDisabled("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                else
+                    ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
+            }
             if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }
@@ -30295,6 +30390,74 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Reach##vdg");
             if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
             oked::FieldTip("Show brush marker##vdg");
+            SectionHeader("Real life");
+            {
+                const char* presets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+                int pi = 0;
+                if (ImGui::Combo("Preset##vdg", &pi, presets, 4) && pi > 0) { vd->ApplyPreset((VoxelDigger::Preset)pi); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
+                const char* cols[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+                int ci = (int)vd->collect;
+                if (ImGui::Combo("Dug Ground##vdg", &ci, cols, 4)) { vd->collect = (VoxelDigger::Collect)ci; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
+                if (ImGui::Checkbox("Building needs material##vdg", &vd->needsMaterial)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Creative (unlimited)##vdg", &vd->creative)) ed.dirty = true;
+                VoxelTerrain* tv = vd->FindVoxel();
+                if (tv && tv->UseMaterials()) {
+                    int am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
+                    if (ImGui::BeginCombo("Build Material##vdg", tv->materials[(std::size_t)am].name.c_str())) {
+                        for (std::size_t k = 0; k < tv->materials.size(); ++k)
+                            if (ImGui::Selectable(tv->materials[k].name.c_str(), (int)k == am)) { vd->addMaterial = (int)k; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (ImGui::DragFloat("Tool Power##vdg", &vd->power, 0.1f, 0.0f, 1.0e9f, "%.1f", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Materials harder than this cannot be dug. 1e9 = everything.");
+                if (ImGui::DragFloat("Hardness Scale##vdg", &vd->hardnessScale, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies every material's hardness: higher = slower digging.");
+                const char* shapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+                int si = (int)vd->shape;
+                if (ImGui::Combo("Brush Shape##vdg", &si, shapes, 4)) { vd->shape = (VoxelTerrain::EditOptions::Shape)si; ed.dirty = true; }
+                if (ImGui::DragFloat("Depth Limit##vdg", &vd->depthLimit, 0.1f, -1.0f, 200.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres a stroke may go below where it started. -1 = no limit.");
+                if (ImGui::DragFloat("Bedrock Height##vdg", &vd->protectBelow, 0.1f, -1.0f, 500.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
+                if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
+                { int pk = (int)(unsigned char)vd->pourKey; char pkb[2] = {pk ? (char)pk : '\0', '\0'};
+                  if (ImGui::InputText("Pour Key##vdg", pkb, sizeof(pkb))) { vd->pourKey = pkb[0]; ed.dirty = true; }
+                  if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on."); }
+                if (ImGui::SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
+                if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
+                if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");
+                if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
+                if (ImGui::DragFloat("Debris Life (s)##vdg", &vd->debrisLife, 0.5f, 1.0f, 120.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Give inventory items##vdg", &vd->giveItems)) ed.dirty = true;
+                if (ImGui::Checkbox("Tools from inventory##vdg", &vd->toolsFromInventory)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
+                if (vd->toolsFromInventory) {
+                    char tl[160]; std::strncpy(tl, vd->tools.c_str(), sizeof(tl) - 1); tl[sizeof(tl) - 1] = '\0';
+                    if (ImGui::InputText("Tools##vdg", tl, sizeof(tl))) { vd->tools = tl; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
+                    if (ImGui::DragFloat("Bare Hands Power##vdg", &vd->bareHandsPower, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+                }
+                if (ImGui::Checkbox("Build from items##vdg", &vd->buildFromItems)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
+                char hud[96]; std::strncpy(hud, vd->hudTarget.c_str(), sizeof(hud) - 1); hud[sizeof(hud) - 1] = '\0';
+                if (ImGui::InputText("Count Text Object##vdg", hud, sizeof(hud))) { vd->hudTarget = hud; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
+                if (tv && tv->UseMaterials()) {
+                    for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
+                        if (vd->store[k] > 0.005) ImGui::TextDisabled("Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]);
+                }
+                ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
+            }
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
@@ -32080,6 +32243,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -32093,6 +32258,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32111,6 +32277,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cc, "cc")) ed.dirty = true;
             if (TriggerFilterFields(cc, "cc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32135,6 +32302,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap2")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap2")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32153,6 +32321,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(ec, "ec2")) ed.dirty = true;
             if (TriggerFilterFields(ec, "ec2")) ed.dirty = true;
             if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
@@ -32188,6 +32357,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(pc, "pc2")) ed.dirty = true;
             if (TriggerFilterFields(pc, "pc2")) ed.dirty = true;
             ImGui::Separator();
             ImGui::Text("Vertices (%d)", (int)pc->points.size());
@@ -32233,6 +32403,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb3", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+            if (ImGui::Checkbox("Use Child Colliders##rb3", &rb->compoundChildren)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
             if (go->transform && go->transform->Parent())
                 ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
             else
@@ -32242,8 +32416,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
         if (CompHeader("Joint 3D", jt, &toRemove)) {
             ImGui::TextDisabled("Constrains this body to an anchor or another body.");
-            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
-            ImGui::Combo("Mode##jt", &jt->mode, modes, 4);
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+            ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("Connected Body##jt", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
@@ -32252,7 +32426,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
                 oked::FieldTip("Anchor##jt");
             }
-            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge) {
+            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge && jt->mode != (int)Joint3D::Mode::Slider) {
                 ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
                 if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt", &jt->distance, 0.05f, 0.0f, 1000.0f);
             }
@@ -32278,6 +32452,23 @@ void DrawInspector(EditorState& ed) {
                     oked::FieldTip("Min Angle##jt");
                     if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
                     oked::FieldTip("Max Angle##jt");
+                }
+            }
+            if (jt->mode == (int)Joint3D::Mode::Slider) {
+                ImGui::TextDisabled("Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
+                float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+                if (ImGui::DragFloat3("Axis##jtsl", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The direction it slides in (world space, taken when Play starts).");
+                if (ImGui::Checkbox("Use Limits##jtsl", &jt->useLimits)) ed.dirty = true;
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Travel (m)##jtsl", &jt->minAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Max Travel (m)##jtsl", &jt->maxAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far it may slide from where it starts, in metres.");
+                }
+                if (ImGui::Checkbox("Use Motor##jtsl", &jt->useMotor)) ed.dirty = true;
+                if (jt->useMotor) {
+                    ImGui::DragFloat("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 0.05f);
+                    ImGui::DragFloat("Max Motor Force##jtsl", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
@@ -33067,6 +33258,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(mcol, "mc3")) ed.dirty = true;
             if (TriggerFilterFields(mcol, "mc3")) ed.dirty = true;
             if (!mcol->HasTriangles()) {
                 // Only the no-mesh fallback box uses a size.
@@ -33091,6 +33283,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc3")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
                 FitBox(go, bc); ed.dirty = true;
@@ -33120,6 +33313,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(sc, "sc3")) ed.dirty = true;
             if (TriggerFilterFields(sc, "sc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
                 FitSphere(go, sc); ed.dirty = true;
@@ -33142,6 +33336,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap3")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
                 FitCapsule(go, cap); ed.dirty = true;
@@ -40407,7 +40602,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -43767,7 +43962,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Physics debug view (Scene AND Game view, so you can watch it while playing):
     // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
-    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // joints (orange line, red when broken), this frame's contacts (red dot + normal) and the rays scripts cast (green to
     // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
     // physics records nothing.
     if (g_physDebug) {
@@ -43831,6 +44026,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
             line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
             ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
+        }
+        for (const PhysicsDebugJoint3D& jt : ed.scene().physics3D().DebugJoints()) {   // joints: orange line between what they hold, red when broken
+            const ImU32 jc = jt.broken ? IM_COL32(255, 60, 60, 255) : IM_COL32(255, 160, 40, 255);
+            line(jt.a, jt.b, jc, 2.0f);
+            ImVec2 sa, sb; if (toScreen(C(jt.a), sa)) dl->AddCircleFilled(sa, 3.0f, jc); if (toScreen(C(jt.b), sb)) dl->AddCircleFilled(sb, 3.0f, jc);
         }
         for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
             if (r.hit) {

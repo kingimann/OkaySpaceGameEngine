@@ -52,6 +52,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -64,10 +65,13 @@ release job or the installer build for this change.
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
-| 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
+| 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
+| 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
+| 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 
 ---
@@ -261,6 +265,30 @@ the Details step and cannot start a second create. Unverified: the launcher scre
 compiled or run on this machine).
 
 ---
+
+## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
+
+Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
+in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
+a real one, because two of the checks touch projects.
+
+1. **Where do my projects go?** Install with `OkaySpace-Setup.exe`. Open the launcher, **Create**, make a project. Paste
+   `%LOCALAPPDATA%\OkaySpace\Projects` into the Explorer address bar. The audit says your project is **there** (the Setup welcome
+   page says Documents; it is wrong).
+2. **What does uninstall leave?** In the launcher open **Versions** and install one older version. Then uninstall from
+   **Settings > Apps > Installed apps > OkaySpace**. Look again at `%LOCALAPPDATA%\OkaySpace` and `%APPDATA%\OkaySpace`. The
+   audit predicts these are left: `Versions\`, `Projects\`, `downloads\`, `community\`, the `.log` and `okay_*.txt` files, `imgui.ini`,
+   `achievements.txt`, and in `%APPDATA%\OkaySpace` the `session.txt`, `accounts.db` and `servers.cfg`. Please tell us if the list
+   differs (that is how the audit gets checked).
+3. **Uninstall with the launcher open.** Install again, leave the launcher open, uninstall. The audit predicts `OkaySpace.exe` stays
+   and the Apps list no longer shows the program.
+4. **Does an old editor update itself?** (Use a copy of a project.) Install an older version on the Versions page, right-click the
+   copy of a project > **Open with** that version. The audit predicts an **Engine Update** window; do **not** press Download & Install
+   unless you want to see the problem (the old editor is replaced by the newest one and reopens your project without asking).
+
+**Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
+full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
+fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -640,54 +668,56 @@ names and the favourites keys are checked by `tests/test_vs_categories.cpp` (com
 counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
 how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
 
-## 7zg. Guided modeling: a fence from designs, then your own edits
+## 7u. Physics: crates that stand, a playground, materials, a slider and debris
 
-**What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
-**Fence**), a starting design, and get a normal editable mesh. You can change its settings, swap parts, and keep
-modeling by hand; rebuilding never overwrites your hand edits without asking. Written from general parametric
-modeling; no code, models or assets from other projects. Design: `docs/guided_modeling_design.md`.
+**What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
+get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
+(cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics.md) and
+[physics_plan.md](physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+`Physics/DebrisPool.hpp`.
 
-**Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
-600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
-meshes (our own small rasteriser), not screenshots of the editor.
+**How to reach it.**
 
-**Try it (the example scene).**
+1. Open the editor (`Tools\OkayEngine.exe`, or the launcher). Use **File > Open Scene** and pick `examples\physics\physics_playground.okayscene`
+   (it ships next to the editor in the zip and the installer). The scene looks like a big grey floor with nine small stations.
+2. Press **Play**. Everything starts at once. Wait about 10 seconds.
+3. To compare with the old physics: stop Play, open **Project Settings > Physics**, under "Physics quality of the open scene" choose
+   **Classic**, press Play again. Change it back to **Improved**. (The choice is saved with the scene.)
 
-1. Open `Tools\OkayEngine.exe`, **File > Open...**, paste the path to `examples\modeling\guided_fences.okayscene`
-   (next to `OkaySpace.exe`, or `%LOCALAPPDATA%\OkaySpace\examples\modeling\` for the installer). You should see eight
-   fences in a row: picket, post and rail, ranch, wrought iron, chain link, stockade, low decorative, picket with a gate.
-2. Click one fence in the Hierarchy. Open **View > Editors & Tools > Modeling** and press **Guided** (first in the list).
-   You should see "Customise: Fence ..." with sliders.
-3. Drag **Height** and let go. The fence rebuilds and the console says "Updated ...".
-4. Under **Parts and materials** change **Pickets and bars** to another design, or the **Posts** design. Change a colour.
-5. Open **Each part**, a kind (for example Pickets), press **Select** on one part: it jumps into Edit Mesh with that part's
-   faces selected. Move it (G), then go back to the Guided page. Its row now says "[edited by you]".
-6. Drag **Height** again. A window asks what to do with the part you edited: **Keep my edits**, **Discard my edits** or
-   **Convert to regular mesh**. Try Keep: that part stays as you left it, everything else follows the new height.
-   Pressing Cancel changes nothing.
-7. In Edit Mesh add something of your own (Add page: a Cube, or extrude a face). Change a setting on the Guided page: your
-   addition stays exactly where it was. This is the "your own faces are never touched" rule.
-8. **Detach** on a part row, or **Convert to regular mesh**, are explicit: the part (or the whole model) stops following the
-   design and stays as plain mesh. **Undo guided step** steps back.
+**What you should see (Improved).**
 
-**Try it (make a new one).** Modeling > Guided with nothing selected (or press "Make another one"): press a category
-(Vehicles, Characters, Environment, Props say "No designs here yet", on purpose), pick **Fence**, click a starting design
-card (pictures are drawn by our own renderer), give it a name and press **Create**. A mesh asset `Assets/<Name>.okaymesh` and
-`Assets/<Name>.okayguided` appear in the Project panel.
+| Station | What to look for |
+|---|---|
+| 1 Tower | Five crates stand in a column, hardly move, and (after about a second) go to sleep. In Classic the tower leans and falls. |
+| 2 Ball | A red ball rolls down a short ramp, bounces and rolls to a slow stop on the floor. |
+| 3 Ramps | Three ramps at 20 degrees, the same green crate on each: the plain and the rubber ramp hold it, the icy (light blue) one lets it slide off. The ramps' friction is set per collider (Physics Material). |
+| 4 Bullet | A small red ball fires at 60 m/s at a 5 cm thin wall and stops at it. In Classic it goes through. |
+| 5 Heavy and light | A 100 kg steel crate is pushed at 5 m/s and shoves the 1 kg wooden crate ahead of it. |
+| 6 Pads | The same blue ball dropped on a dark pad (dead) and a black rubber pad (bounces many times; the pad's own bounciness 0.92). |
+| 7 Rope | Six balls on distance joints swing from a hook and hang about 5 m long, close to their real length. |
+| 8 Slider | A blue drawer slides 3 m along x at 1 m/s and stops at its limit. |
+| 9 Debris | A burst of small brown chunks every 1.5 seconds: they fly, land, go to sleep, shrink away. There are never more than 150. |
 
-**Your own parts and templates.** Select faces in Edit Mesh, then Guided > **My parts and templates**: type a name, pick
-which kind of part it fits, **Save selection as part**. It then appears in that kind's design list (and in "Each part"). **Save
-as template** keeps the whole setup; it shows as another card next to the built-in designs. Files are in
-`Assets/GuidedTemplates/` (`.okaypart`, `.okaytemplate`, plain text); copy them to another project to reuse them.
+To see the joints and sleeping bodies: **View > Scene Overlays > Physics Debug > Show physics (Scene + Game)**. Colliders are green, sleeping
+ones grey, contacts red, joints orange.
 
-**Not done or not verified (said plainly).** Only the fence exists; walls, stairs, doors, windows, roofs, vehicles,
-characters, environment and props come in a later phase. The path is a list of typed points (no drawing in the 3D view). No
-collider is added. Material numbers are stored but only colours are drawn today (per-face materials are a separate open
-item). The Guided page's look and feel in a real window is unverified.
+**Try the new settings yourself.**
 
----
+* Select the **3 Ramp ice** object, find its collider in the Inspector, open **Physics Material**, tick **Own Friction** and set it to 2: the crate now holds.
+* Select any crate, **Rigidbody 3D**: **Rolling Resistance** (0 = a ball rolls on for ever, 0.03 default). **Use Child Colliders** makes colliders on child objects part of the body.
+* Select the **8 Drawer**, **Joint 3D** (mode **Slider**): change **Max Travel** or **Motor Speed**.
+* Select **9 Debris emitter**: **Count**, **Interval**, **Max Active**, **Settled Life**.
+* Add your own: **Add Component > Physics 3D > DebrisEmitter** on an empty object, then Play. In code, `DebrisPool` spawns chunks at your own moments (a digger, an explosion).
 
+**Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
+
+* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
+
+**Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
+ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
+positions listed in the plan were read back. **Unverified:** the editor menus and Inspector rows on Windows (they were compiled, not opened), how the scene looks and feels in the real
+editor or player, any real GPU. The 2D step has no Improved solver yet (the setting is saved but 2D plays as before).
 ## 7v. Test builds: try a branch before it is released
 
 **What it is.** Today a change waits about an hour for the pull-request checks, is merged, and then a release builds for 15 to 30 minutes before you
@@ -842,6 +872,36 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 7n. Every own replacement at a glance: how to try each, and what is missing
+
+This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/own_flip_proposal.md`,
+which also says how ready each item is, in what order they could become the default, and what blocks deleting the library each one replaces
+(CLAUDE.md rules 4a and 17). Set a switch the way the section "Switches that are off by default" says: an environment variable in the
+Command Prompt, then start the program from that window. The sure way to see which parts are ours is **Help > About OkaySpace** in the editor.
+
+Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run on Windows.
+
+| Item | The switch | A sample that ships in the download | How you can tell it is on | Gap |
+|---|---|---|---|---|
+| FBX | `OKAY_OWN_FBX=1` | **none.** Use any `.fbx` you own | About popup: `readers=own(fbx,...)`, and the word `ufbx` goes away | no sample |
+| COLLADA | `OKAY_OWN_COLLADA=1` | `examples\own_readers\skinned_strip.dae` | `readers=own(dae)` | none |
+| 3DS | `OKAY_OWN_3DS=1` | `examples\own_readers\cube.3ds` | `readers=own(3ds)` | none |
+| OFF | `OKAY_OWN_OFF=1` | `examples\own_readers\cube.off` | `readers=own(off)` | none |
+| BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
+| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
+| Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
+| OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
+| CodeEdit (script editor) | `OKAY_UI_BACKEND=okayui` and `OKAY_DEV=1` | any script | none | never run in a real window |
+| okay::crypto | none, on purpose | none | the line says `crypto=libsodium` | nothing to try |
+
+The gaps (no sample for 32 of the 35 reader switches, no way to tell that the 16 newest readers or WAV are on, no run-time switch for STL
+and PLY, no import log line) are "Step 0" of the proposal. Until they are closed, a PR that adds or changes one of these must say so
+at the top (rule 4a).
 
 ### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
 
@@ -1010,3 +1070,104 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## 7s. Digging the voxel terrain no longer drops the frame rate
+
+**What it is.** Holding the dig (left mouse) or build (right mouse) button in a voxel terrain used to re-build and re-upload the
+whole terrain every frame. Now only the chunks you touched are. Details and numbers: `docs/voxel_edit_perf.md`.
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_big_world.okayscene`
+   (a bigger hill than the Sandbox, so the old stutter is easy to see). The normal size is `voxel_sandbox.okayscene`, or New Project >
+   Sandbox.
+2. Open **View > Panels > Profiler** and press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground (dig) and **right mouse** (build). Watch the frame rate (the Game view's stats, or **F3** in
+   the player). You should see it stay steady. In the Profiler the rows `Voxel.Edit`, `Voxel.Mesh` and `Voxel.Upload` appear while
+   you hold the button and each stays well under 1 ms.
+4. Press Stop, select the **Terrain** object: the Voxel Terrain card says "Drawn as one mesh". While Playing and after your first
+   dig it says "Drawn as N chunk objects", and the Hierarchy shows `Voxel Chunk x,y,z` children (they are never saved).
+5. To feel the old behaviour: close the editor, open a Command Prompt, run `set OKAY_VOXEL_OLD_REMESH=1`, start
+   `Tools\OkayEngine.exe` from that same window and repeat steps 2-3. The frame rate drops while you hold the button and
+   `Voxel.Mesh` plus `Voxel.Upload` are several times bigger. The Terrain card then says so.
+
+**Status.** Tests run on Linux (`ctest -R "voxel|mesh_hash|terrain_water_speed"`): 127 + 10 + 36 + 13 + 55 + 25 + 13 checks, 0
+failures. Software renderer pixels identical in both modes. CPU time per dig frame measured 3x to 16x lower; **no GPU, no Windows,
+no real editor window was available**, so the real frame rates and the Inspector and Profiler lines are unverified until you look.
+
+## 7t. Voxel terrain digs like real life
+
+**What it is.** Dug ground no longer disappears. The ground has materials (grass, dirt, clay, stone, ore, sand, snow) with their own
+colour and hardness. Digging drops debris that falls; walk up to it and it is counted ("Dirt 3.20 m3" on screen). Right mouse
+builds with what you hold. Pieces you cut loose fall. Ctrl+Z takes back the last stroke. All the options are in the Inspector.
+Details: `docs/terrain_water.md`, "Real-life digging".
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_realistic.okayscene`.
+2. Press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground. You should see the ground carve away and small blocks of it fall and bounce. Walk up to the
+   blocks: the text at the top-left changes from "Nothing collected" to something like "Dirt 3.20 m3 Grass 1.10 m3". Blocks you
+   do not pick up lie for a few seconds and then melt back into the ground where they are.
+4. Hold **left mouse** on a dark grey patch (stone): it digs much more slowly than dirt. Ore (yellow) is too hard for the
+   starting tool and does not dig at all (raise **Tool Power** on the Voxel Digger card to dig it).
+5. Hold **right mouse**: it builds ground back, using up the count. With nothing collected, nothing builds.
+6. Cut under a ledge or a thin column of ground from the side and release the button: the cut-off piece falls as one lump with its
+   own shape and settles back into the ground.
+7. Press **Ctrl+Z** after letting go of the mouse: the last stroke is taken back.
+8. Press Stop and select the **Terrain** object. The **Voxel Terrain** card has a **Materials** table (colour, hardness, drop...);
+   the **Voxel Digger** card has **Real life**: a Preset (Realistic, Arcade, Creative), Dug Ground, brush shape, depth limit, bedrock
+   height, debris limit and the count text. Pick **Arcade** and Play again: the ground vanishes as it did before.
+
+**Pictures** (software renders from the headless test machine, not the GPU renderer): `docs/images/voxel/1_layers_cut.png` (a cut
+through the layers), `2_dig_debris_falling.png` (a dig with falling debris), `3_after_release.png`.
+
+**Status.** Tests (`ctest -R "voxel_materials|voxel_digger_real|voxel_examples"`): 60 + 34 + 58 checks, 0 failures on Linux. Volume
+kept: a stroke of 63 m3 put back came to 63.1 m3 (restored to 0.0 percent), debris that landed returned the volume to within 0.05
+percent. **Unverified:** Windows, a real GPU, the editor's Inspector click path, the feel of the controls, and the sound and particle
+hooks per material (the table has the fields, the digger still plays the one dig sound).
+
+### 7t, more options (second pass)
+
+1. In `voxel_realistic.okayscene`, select **Terrain**. In the **Voxel Terrain** card tick **Catch bodies that fall out of the world**.
+   Play, and push a prop off the side of the world: it is put back on the ground instead of falling for ever. (Off: it falls.)
+2. In the **Voxel Digger** card, with **Slump loose ground** on, raise **Slump Passes** to 8 and dig into a sand slope (pale yellow):
+   the sand runs farther down than with 1.
+3. In the **Voxel Terrain** card, type a **Seed** and press **Generate**: the same seed gives the same hill every time.
+4. Move or turn the **Terrain** object (Inspector: Position, Rotation) before pressing Play: digging, the brush circle and the
+   falling debris all still match the ground.
+5. Dust colour follows the dug material (stone dust is grey, dirt dust brown). A per-material dig sound needs a Voxel Digger object
+   with an Audio Source and a WAV file named in the material's table entry; this is unverified.
+Tests: `ctest -R voxel_more`.
+
+### 7t, tools, items, veins, sound (third pass)
+
+1. **Pickaxe and shovel.** Voxel Digger card: tick **Tools from inventory** (the list shows `shovel:2,pickaxe:5,iron_pickaxe:7`).
+   Play on a scene that has an Inventory (the player). With empty hands you can only dig soft ground (sand, snow); stone
+   will not dig. Give the player an item called `pickaxe` (Inventory card, or a pickup) and stone digs.
+2. **Stackable dirt you can pick up and place.** Tick **Give inventory items**, dig: stacks of `dirt`, `stone`, `ore`... arrive in
+   the bag (8 dirt per cubic metre, set in the Materials table). Tick **Build from items**: right mouse now builds with those items
+   and uses them up; with none it does nothing.
+3. **Ore veins.** Voxel Terrain card: set **Ore Veins** to 30, press **Regenerate layers**: long winding yellow veins appear in the stone
+   (dig a trench to see them). The same **Seed** gives the same veins. **Topsoil**, **Dirt Depth**, **Rock Slope** and **Ore Pockets** are
+   sliders for the layers.
+4. **Dig sound per material.** Put a WAV file path in a material's table entry (code: `materials[i].digSound`), add an Audio Source to the
+   digger's object: the first time that material is dug the file is loaded and plays while you dig it. Tested headless that the clip is
+   loaded; the actual sound output is unverified.
+5. The brush marker now matches the brush shape (cube, flat disc, can).
+Tests: `ctest -R "voxel_more|voxel_bughunt"`.
+
+### 7t, fourth pass (switches, all off by default)
+
+**Tools scene.** Open `examples\voxel\voxel_tools.okayscene`, Play. The player holds a shovel and a pickaxe (the text on screen says what to
+try). Left mouse digs dirt and sand with either tool; stone needs the pickaxe (the shovel's power is 2, stone is 4); ore needs a better tool
+(`iron_pickaxe:7` in the digger's Tools list; give the player an item of that name to dig it). Walk onto falling debris: stacks of `dirt`, `stone`
+and so on arrive in the bag. Right mouse builds with dirt items and uses them up.
+
+1. **Cave-in.** Voxel Digger card, **Cave-in Span** to 4. Dig a wide tunnel (hold left mouse and sweep sideways under a hill), then let go: the roof
+   that is more than about 4 voxels from a wall comes down as debris. A narrow tunnel holds.
+2. **Big world generation.** In code or a script: `terrain.BeginGenerate(0.5, 8, 0.3, seed, true)`; the terrain fills itself a few milliseconds a
+   frame and shows up when done (`Generating()`, `GenerateProgress()`).
+3. **Water and lava.** Voxel Terrain card: tick **Water / lava flow in holes** (press **Lava preset** for lava). Voxel Digger card: type `f` in
+   **Pour Key**. Play, dig a pit, aim at it and press F: water (blue blocks) runs down and fills the pit from the bottom. Dig beside it and it flows out.
+4. **Footprints.** Voxel Terrain card: tick **Footprints and tracks**. Play and walk on dirt, grass or sand: a trail of small dents. Stone takes no print.
+5. The foliage brush now finds the ground on a voxel terrain fast (no visible change; `ctest -R voxel_more` times it).
+Tests: `ctest -R "voxel_more|voxel_bughunt|voxel_examples"`.

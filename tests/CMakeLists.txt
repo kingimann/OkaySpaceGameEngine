@@ -1129,6 +1129,56 @@ add_executable(test_voxel_dig test_voxel_dig.cpp)
 target_link_libraries(test_voxel_dig PRIVATE okay::engine)
 add_test(NAME voxel_dig COMMAND test_voxel_dig)
 
+# Voxel terrain edit path (docs/voxel_edit_perf.md): the surface after any edit equals a full rebuild, the faster marching-cubes
+# loop equals the original bit for bit, the running game draws the terrain in chunk objects that look like one big mesh, the
+# brushes and the local floater cleanup do what they always did, and bad brush numbers no longer write NaN into the field.
+add_executable(test_voxel_edit test_voxel_edit.cpp)
+target_link_libraries(test_voxel_edit PRIVATE okay::engine)
+add_test(NAME voxel_edit COMMAND test_voxel_edit)
+
+add_executable(test_voxel_materials test_voxel_materials.cpp)
+target_link_libraries(test_voxel_materials PRIVATE okay::engine)
+add_test(NAME voxel_materials COMMAND test_voxel_materials)
+
+add_executable(test_voxel_digger_real test_voxel_digger_real.cpp)
+target_link_libraries(test_voxel_digger_real PRIVATE okay::engine)
+add_test(NAME voxel_digger_real COMMAND test_voxel_digger_real)
+
+add_executable(test_voxel_more test_voxel_more.cpp)
+target_link_libraries(test_voxel_more PRIVATE okay::engine)
+target_compile_definitions(test_voxel_more PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME voxel_more COMMAND test_voxel_more)
+
+add_executable(test_voxel_bughunt test_voxel_bughunt.cpp)
+target_link_libraries(test_voxel_bughunt PRIVATE okay::engine)
+add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
+add_executable(test_voxel_chunks test_voxel_chunks.cpp)
+target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
+add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
+add_executable(test_mesh_hash test_mesh_hash.cpp)
+target_link_libraries(test_mesh_hash PRIVATE okay::engine)
+add_test(NAME mesh_hash COMMAND test_mesh_hash)
+# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/terrain_audit.md): same normals, far faster.
+add_executable(test_terrain_water_speed test_terrain_water_speed.cpp)
+target_link_libraries(test_terrain_water_speed PRIVATE okay::engine)
+add_test(NAME terrain_water_speed COMMAND test_terrain_water_speed)
+# The shipped examples/voxel scenes open and dig (OKAY_WRITE_VOXEL_EXAMPLES=1 rewrites them from the Sandbox template).
+add_executable(test_voxel_examples test_voxel_examples.cpp)
+target_link_libraries(test_voxel_examples PRIVATE okay::engine)
+target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME voxel_examples COMMAND test_voxel_examples)
+# Bugs the terrain audit proved (docs/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# World Streamer threw away a dug voxel cell when it unloaded it.
+add_executable(test_terrain_audit test_terrain_audit.cpp)
+target_link_libraries(test_terrain_audit PRIVATE okay::engine)
+add_test(NAME terrain_audit COMMAND test_terrain_audit)
+# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
+add_executable(bench_voxel_edit bench_voxel_edit.cpp)
+target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
+add_executable(bench_voxel_real bench_voxel_real.cpp)
+target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)
 add_test(NAME api_expand COMMAND test_api_expand)
@@ -1207,6 +1257,27 @@ add_test(NAME skinning COMMAND test_skinning)
 add_executable(test_physics_joints test_physics_joints.cpp)
 target_link_libraries(test_physics_joints PRIVATE okay::engine)
 add_test(NAME physics_joints COMMAND test_physics_joints)
+
+# Physics audit (docs/physics_plan.md): box contact points, the iterated solver on its own, the bugs the audit found
+# (both physics qualities), the Improved quality, and how its settings are saved.
+add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
+target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
+add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
+add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
+target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
+add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
+add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
+target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
+add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)
+add_executable(test_physics_deep_improved test_physics_deep_improved.cpp)
+target_link_libraries(test_physics_deep_improved PRIVATE okay::engine)
+add_test(NAME physics_deep_improved COMMAND test_physics_deep_improved)
+add_executable(test_physics_deep_save test_physics_deep_save.cpp)
+target_link_libraries(test_physics_deep_save PRIVATE okay::engine)
+add_test(NAME physics_deep_save COMMAND test_physics_deep_save)
+add_executable(test_physics_deep_more test_physics_deep_more.cpp)
+target_link_libraries(test_physics_deep_more PRIVATE okay::engine)
+add_test(NAME physics_deep_more COMMAND test_physics_deep_more)
 
 add_executable(test_math_extra test_math_extra.cpp)
 target_link_libraries(test_math_extra PRIVATE okay::engine)
@@ -2110,9 +2181,6 @@ add_test(NAME edit_transform COMMAND test_edit_transform)
 add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
-add_executable(test_guided test_guided.cpp)
-target_link_libraries(test_guided PRIVATE okay::engine)
-add_test(NAME guided_modeling COMMAND test_guided)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

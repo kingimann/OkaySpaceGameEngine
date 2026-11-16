@@ -171,6 +171,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
@@ -569,6 +570,20 @@ void WriteTriggerFilters(std::ostream& out, const char* rec, const std::vector<T
     }
 }
 
+// The physics material of a collider (friction, bounciness, how each is combined): one line per collider whose
+// material is not the default, with its index. Colliders with the default material write nothing, so older scenes
+// and older builds see the same files as before.
+template <class T>
+void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i) {
+        const T* c = cols[(std::size_t)i];
+        if (c->friction < 0.0f && c->bounciness < 0.0f && c->frictionCombine == CombineMode::Default &&
+            c->bounceCombine == CombineMode::Default) continue;
+        out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
+            << " " << (int)c->bounceCombine << " " << i << "\n";
+    }
+}
+
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -901,7 +916,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
         }
         // A Spline Mesh builds its renderer's mesh again on load: none of it is saved.
-        const bool generated = go->GetComponent<SplineMesh>() != nullptr;
+        // (A Voxel Terrain does too: its per-face colours were 0.4 MB of every saved Sandbox scene, rebuilt on load anyway.)
+        const bool generated = go->GetComponent<SplineMesh>() != nullptr || go->GetComponent<VoxelTerrain>() != nullptr;
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>() && !generated) {
             // A mesh in edit mode is welded with its exact UVs per corner: write it
@@ -1403,6 +1419,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
+        if (v->catchFalling) out << "  voxelcatch " << v->catchMargin << "\n";
+        if (v->footprints) out << "  voxelfoot " << Quote(v->footprintTag) << " " << (v->footprintBodies ? 1 : 0) << " " << v->footprintStep << " " << v->footprintRadius << " " << v->footprintDepth << " " << v->footprintPower << "\n";
+        if (v->fluidOn) out << "  voxelfluid " << v->fluidBudget << " " << v->fluidMaxCells << " " << v->fluidRate << " " << (v->fluidGlow ? 1 : 0) << " "
+                            << v->fluidColor.r << " " << v->fluidColor.g << " " << v->fluidColor.b << " " << v->fluidColor.a << "\n";
+        // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
+        if (v->UseMaterials()) {
+            out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
+            for (const auto& m : v->materials)
+                out << "  voxelmat " << Quote(m.name) << " " << m.color.r << " " << m.color.g << " " << m.color.b << " " << m.color.a
+                    << " " << m.hardness << " " << m.density << " " << (m.loose ? 1 : 0) << " " << Quote(m.drop) << " " << m.dropPerM3
+                    << " " << Quote(m.texture) << " " << Quote(m.digSound)
+                    << " " << m.particle.r << " " << m.particle.g << " " << m.particle.b << "\n";
+        }
     }
     for (auto* vd : go->GetComponents<VoxelDigger>()) {
         out << "  voxeldigger " << (int)vd->mode << " " << vd->button
@@ -1410,7 +1439,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
             << " " << vd->brushColor.r << " " << vd->brushColor.g
             << " " << vd->brushColor.b << " " << vd->brushColor.a
-            << " " << vd->addButton << "\n";
+            << " " << vd->addButton
+            << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
+            << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
+            << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -1635,7 +1669,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << "\n";   // trailing (back-compatible)
     }
     for (auto* bc : go->GetComponents<BoxCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -1670,6 +1705,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
     WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
+    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -1679,7 +1715,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << " " << (rb->compoundChildren ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     for (auto* j : go->GetComponents<Joint3D>()) {   // every instance: a chain link holds two joints
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -1965,6 +2002,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
     WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
+    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -3897,6 +3935,13 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+        // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
+        // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
+        out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
+            << " " << (scene.physics3D().autoContinuous ? 1 : 0) << " " << (int)scene.physics().quality
+            << " " << scene.physics().solverIterations << "\n";
+    }
     {
         const auto& rs = scene.renderSettings;
         out << "rendersettings " << (rs.skybox ? 1 : 0) << " "
@@ -4281,6 +4326,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;
+        } else if (token == "physicsquality") {
+            int q3 = 0, it3 = 10, ac = 1, q2 = 0, it2 = 10;
+            in >> q3 >> it3 >> ac;
+            in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
+            if (clear) {
+                scene.physics3D().quality = q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
+                scene.physics3D().autoContinuous = (ac != 0);
+                scene.physics().quality = q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
+            }
         } else if (token == "rendersettings") {
             int sky = 1; Color top, hor, bot; float amb = 0.0f;
             in >> sky >> top.r >> top.g >> top.b
@@ -5209,6 +5265,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                } else if (field == "physmat2d" || field == "physmat3d") {
+                    float fr = -1.0f, bn = -1.0f; int fm = 0, bm = 0, index = -1;
+                    in >> fr >> bn >> fm >> bm;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
+                    if (field == "physmat2d") {
+                        auto all = go->GetComponents<Collider2D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    } else {
+                        auto all = go->GetComponents<Collider3D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    }
                 } else if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
@@ -5279,6 +5350,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cch = 0; in >> cch; rb->compoundChildren = (cch != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;
@@ -7451,6 +7524,63 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // real-life options (optional: older scenes end above)
+                        int col = 0, nm = 0, cr = 0, shp = 0, sn = 0, sl = 0, co = 0, gi = 0;
+                        in >> col >> nm >> cr >> vd->addMaterial >> vd->power >> vd->hardnessScale >> shp >> vd->depthLimit >> vd->protectBelow
+                           >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
+                        vd->hudTarget = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {
+                            int tf = 0, bf = 0;
+                            in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses));
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
+                                in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                        }
+                        vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
+                        vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
+                        vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));
+                        vd->slump = sl != 0; vd->collapse = co != 0; vd->giveItems = gi != 0;
+                    }
+                } else if (field == "voxelcatch") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) { v->catchFalling = true; in >> v->catchMargin; }
+                } else if (field == "voxelfoot") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int fb = 0; v->footprints = true; v->footprintTag = ReadQuoted(in);
+                        in >> fb >> v->footprintStep >> v->footprintRadius >> v->footprintDepth >> v->footprintPower;
+                        v->footprintBodies = fb != 0;
+                        v->footprintStep = std::max(0.1f, v->footprintStep); v->footprintRadius = std::max(0.05f, std::min(5.0f, v->footprintRadius));
+                    }
+                } else if (field == "voxelfluid") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int gl = 0; v->fluidOn = true;
+                        in >> v->fluidBudget >> v->fluidMaxCells >> v->fluidRate >> gl >> v->fluidColor.r >> v->fluidColor.g >> v->fluidColor.b >> v->fluidColor.a;
+                        v->fluidGlow = gl != 0;
+                        v->fluidBudget = std::max(1, std::min(100000, v->fluidBudget)); v->fluidMaxCells = std::max(0, std::min(2000000, v->fluidMaxCells));
+                        v->fluidRate = std::max(0.1f, std::min(120.0f, v->fluidRate));
+                    }
+                } else if (field == "voxelmats") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        std::size_t n = 0; std::string blob; in >> n >> blob;
+                        v->DecodeMaterials(blob); v->matCountExpected_ = n;
+                    }
+                } else if (field == "voxelmat") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        if (v->materials.size() >= 255) { /* ignore the rest */ }
+                        else {
+                            VoxelTerrain::VoxelMaterial m; int lo = 0;
+                            m.name = ReadQuoted(in);
+                            in >> m.color.r >> m.color.g >> m.color.b >> m.color.a >> m.hardness >> m.density >> lo;
+                            m.loose = lo != 0; m.drop = ReadQuoted(in); in >> m.dropPerM3;
+                            m.texture = ReadQuoted(in); m.digSound = ReadQuoted(in);
+                            in >> m.particle.r >> m.particle.g >> m.particle.b;
+                            if (v->materials.empty() || !v->loadedMaterialTable_) { v->materials.clear(); v->loadedMaterialTable_ = true; }
+                            v->materials.push_back(m);
+                            if (v->materials.size() == v->matCountExpected_) v->Apply();   // the table is complete: colour the surface by material
+                        }
+                    }
                 } else if (field == "pausemenu") {
                     auto* pm = go->AddComponent<PauseMenu>();
                     int tk = 27, sr = 1, sq = 1;
@@ -9493,6 +9623,27 @@ void RegisterBuiltinComponentSerializers() {
                 lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry debris;
+    debris.name = "debrisemitter";
+    debris.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* de : go.GetComponents<DebrisEmitter>()) {
+            out << "  debrisemitter";
+            KvOut k{out};
+            k("count", de->count)("interval", de->interval)("delay", de->startDelay)("smin", de->sizeMin)("smax", de->sizeMax)
+             ("speed", de->speed)("spread", de->spread).col("c", de->color)("max", de->maxActive)("life", de->lifetime)
+             ("settled", de->settledLife).b("mutual", de->collideWithEachOther);
+            out << "\n";
+        }
+    };
+    debris.read = [](GameObject& go, std::istream& in) {
+        auto* de = go.AddComponent<DebrisEmitter>();
+        KvIn k(in);
+        k.i("count", de->count); k.f("interval", de->interval); k.f("delay", de->startDelay); k.f("smin", de->sizeMin);
+        k.f("smax", de->sizeMax); k.f("speed", de->speed); k.f("spread", de->spread); k.col("c", de->color);
+        k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
+    };
+    ComponentSerializerRegistry::Register(std::move(debris));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

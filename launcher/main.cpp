@@ -108,6 +108,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #  include <csignal>
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
+#include "GitArgs.hpp"      // the Git buttons as argv steps: no shell, message via a temp file (tests/test_git_args.cpp)
 #include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
 #include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
 #include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release_channels.md "Test builds")
@@ -648,22 +649,42 @@ static bool GitAvailable() {
     return cached == 1;
 }
 
-struct GitJob { std::vector<std::string> cmds; std::string okMsg, failMsg; bool rescan = false; };
+// Each step is an argv list run WITHOUT a shell (okay::restart::RunAndWait), so a
+// commit message, URL or path is never re-read by sh or cmd. tempFiles (the
+// commit-message file) are deleted when the job ends.
+struct GitJob {
+    std::vector<okay::gitargs::Argv> steps;
+    std::vector<std::string> tempFiles;
+    std::string okMsg, failMsg;
+    bool rescan = false;
+};
 
 static int GitWorker(void* data) {
     GitJob* job = (GitJob*)data;
-    int rc = 0;
-    for (std::size_t i = 0; i < job->cmds.size(); ++i) {
-        int c = RunCmd(job->cmds[i], true);
-        if (i + 1 == job->cmds.size()) rc = c;   // the last command decides success
+    // Stop at the first failing step: a failed commit must not be followed by a
+    // push that "succeeds" with nothing new and turns the toast green.
+    const okay::gitargs::StepsResult res = okay::gitargs::RunSteps(
+        job->steps, [](const okay::gitargs::Argv& a) { return okay::restart::RunAndWait(a); });
+    std::string failMsg = job->failMsg;
+    if (!res.ok) {
+        if (res.failedIndex < job->steps.size()) {
+            const okay::gitargs::Argv& bad = job->steps[res.failedIndex];
+            failMsg += " (" + okay::gitargs::StepName(bad) + " failed)";
+            std::fprintf(stderr, "[git] step %zu failed with code %d: %s\n", res.failedIndex + 1, res.rc,
+                         okay::gitargs::DisplayLine(bad).c_str());
+        } else {
+            std::fprintf(stderr, "[git] nothing to run (refused input)\n");
+        }
     }
+    for (const std::string& f : job->tempFiles) { std::error_code ec; fs::remove(fs::path(f), ec); }
     SDL_LockMutex(g_gitMutex);
     g_gitBusy = false;
     g_gitResultReady = true;
-    g_gitResultMsg = (rc == 0) ? job->okMsg : job->failMsg;
-    g_gitResultKind = (rc == 0) ? 1 : 2;
-    if (rc == 0 && job->rescan) g_gitWantRescan = true;
+    g_gitResultMsg = res.ok ? job->okMsg : failMsg;
+    g_gitResultKind = res.ok ? 1 : 2;
+    if (res.ok && job->rescan) g_gitWantRescan = true;
     SDL_UnlockMutex(g_gitMutex);
+    const int rc = res.ok ? 0 : (res.rc ? res.rc : 1);
     delete job;
     return rc;
 }
@@ -676,11 +697,21 @@ static bool StartGit(GitJob* job) {
     g_gitBusy = true;
     SDL_UnlockMutex(g_gitMutex);
     SDL_Thread* t = SDL_CreateThread(GitWorker, "okay-git", job);
-    if (t) SDL_DetachThread(t); else { SDL_LockMutex(g_gitMutex); g_gitBusy = false; SDL_UnlockMutex(g_gitMutex); delete job; return false; }
+    if (t) SDL_DetachThread(t); else {
+        SDL_LockMutex(g_gitMutex); g_gitBusy = false; SDL_UnlockMutex(g_gitMutex);
+        for (const std::string& f : job->tempFiles) { std::error_code ec; fs::remove(fs::path(f), ec); }
+        delete job; return false;
+    }
     return true;
 }
-static std::string GitQ(const std::string& s) { return "\"" + s + "\""; }
-static std::string GitC(const std::string& dir) { return "git -C " + GitQ(dir) + " "; }
+// The commit message in a new private temp file (git commit -F), so no command
+// line carries it. "" when it could not be written.
+static std::string GitMessageFile(const std::string& message) {
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec);
+    if (ec) return {};
+    return okay::gitargs::WriteMessageFile(dir, message);
+}
 
 // Extract a .zip into destDir, best-effort, using whatever's on the system.
 bool ExtractZip(const std::string& zip, const std::string& destDir) {
@@ -1826,7 +1857,7 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
     }
     if (gitInit && GitAvailable()) {
         GitJob* j = new GitJob();
-        j->cmds = { GitC(root.string()) + "init" };
+        j->steps = okay::gitargs::InitSteps(okay::restart::Utf8(root));   // UTF-8: RunAndWait widens each argument
         j->okMsg = "Started a Git repository in " + finalName;
         j->failMsg = "Couldn't start a Git repository in " + finalName;
         if (!StartGit(j)) Toast("Git is busy — the project was created without a repository", 2);
@@ -19993,19 +20024,19 @@ int main(int argc, char** argv) {
                     ImGui::SameLine();
                     if ((ImGui::Button("Clone") || go) && ghUrl[0]) {
                         std::string url = ghUrl;
-                        std::string nm = url;
-                        if (auto sl = nm.find_last_of('/'); sl != std::string::npos) nm = nm.substr(sl + 1);
-                        if (nm.size() > 4 && nm.substr(nm.size() - 4) == ".git") nm.erase(nm.size() - 4);
-                        for (char& ch : nm) if (ch=='"'||ch=='\\'||ch==':'||ch=='*'||ch=='?') ch='-';
-                        if (nm.empty()) nm = "ClonedProject";
-                        std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
-                        GitJob* j = new GitJob();
-                        j->cmds   = { GitC(npLoc) + "clone " + GitQ(url) + " " + GitQ(nm) };
-                        j->okMsg  = "Cloned " + nm + " from GitHub";
-                        j->failMsg= "Clone failed — check the URL and your Git sign-in";
-                        j->rescan = true;
-                        StartGit(j);
-                        Toast("Cloning " + nm + "\xE2\x80\xA6");
+                        std::string nm = okay::gitargs::CloneFolderName(url);
+                        if (!okay::gitargs::UrlOk(url)) {
+                            Toast("That URL can't be cloned (it starts with '-' or uses a command transport)", 2);
+                        } else {
+                            std::error_code cec; fs::create_directories(fs::path(npLoc), cec);
+                            GitJob* j = new GitJob();
+                            j->steps  = okay::gitargs::CloneSteps(npLoc, url, nm);
+                            j->okMsg  = "Cloned " + nm + " from GitHub";
+                            j->failMsg= "Clone failed — check the URL and your Git sign-in";
+                            j->rescan = true;
+                            StartGit(j);
+                            Toast("Cloning " + nm + "\xE2\x80\xA6");
+                        }
                         ghUrl[0] = '\0'; ImGui::CloseCurrentPopup();
                     }
                     ImGui::EndPopup();
@@ -20145,21 +20176,23 @@ int main(int argc, char** argv) {
                             std::string root = fs::path(pr.scene).parent_path().parent_path().string();
                             std::error_code gec;
                             bool hasGit = fs::exists(fs::path(root) / ".git", gec);
+                            // Git runs without a shell through RunAndWait, which reads each argument as UTF-8.
+                            const std::string gitRoot = okay::restart::Utf8(fs::path(pr.scene).parent_path().parent_path());
                             ImGui::Separator();
                             if (hasGit) {
                                 if (ImGui::MenuItem("Git: Pull", nullptr, false, !g_gitBusy)) {
                                     GitJob* j = new GitJob();
-                                    j->cmds = { GitC(root) + "pull" };
+                                    j->steps = okay::gitargs::PullSteps(gitRoot);
                                     j->okMsg = "Pulled latest for " + pr.name;
                                     j->failMsg = "Pull failed for " + pr.name;
                                     j->rescan = true; StartGit(j);
                                     Toast("Pulling " + pr.name + "\xE2\x80\xA6");
                                 }
                                 if (ImGui::MenuItem("Git: Commit & Push", nullptr, false, !g_gitBusy)) {
-                                    gitCommitRoot = root; gitCommitName = pr.name; gitOpenCommit = true;
+                                    gitCommitRoot = gitRoot; gitCommitName = pr.name; gitOpenCommit = true;
                                 }
                             } else if (ImGui::MenuItem("Publish to GitHub...", nullptr, false, !g_gitBusy)) {
-                                gitPublishRoot = root; gitPublishName = pr.name; gitOpenPublish = true;
+                                gitPublishRoot = gitRoot; gitPublishName = pr.name; gitOpenPublish = true;
                             }
                         }
                         ImGui::Separator();
@@ -20482,14 +20515,18 @@ int main(int argc, char** argv) {
                 ImGui::SetNextItemWidth(360);
                 ImGui::InputTextWithHint("##cmsg", "Commit message", gitCommitMsg, sizeof(gitCommitMsg));
                 if (ImGui::Button("Commit & Push", ImVec2(150, 0)) && gitCommitMsg[0]) {
-                    GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitCommitRoot) + "add -A",
-                                GitC(gitCommitRoot) + "commit -m " + GitQ(gitCommitMsg),
-                                GitC(gitCommitRoot) + "push" };
-                    j->okMsg = "Pushed " + gitCommitName + " to GitHub";
-                    j->failMsg = "Push failed — is a GitHub remote set up?";
-                    StartGit(j);
-                    Toast("Pushing " + gitCommitName + "\xE2\x80\xA6");
+                    const std::string msgFile = GitMessageFile(gitCommitMsg);
+                    if (msgFile.empty()) {
+                        Toast("Couldn't write the commit message to a temp file", 2);
+                    } else {
+                        GitJob* j = new GitJob();
+                        j->steps = okay::gitargs::CommitPushSteps(gitCommitRoot, msgFile);
+                        j->tempFiles = {msgFile};
+                        j->okMsg = "Pushed " + gitCommitName + " to GitHub";
+                        j->failMsg = "Push failed — is a GitHub remote set up?";
+                        StartGit(j);
+                        Toast("Pushing " + gitCommitName + "\xE2\x80\xA6");
+                    }
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
@@ -20503,17 +20540,20 @@ int main(int argc, char** argv) {
                 ImGui::SetNextItemWidth(380);
                 ImGui::InputTextWithHint("##purl", "https://github.com/you/your-repo.git", gitPublishUrl, sizeof(gitPublishUrl));
                 if (ImGui::Button("Publish", ImVec2(130, 0)) && gitPublishUrl[0]) {
-                    GitJob* j = new GitJob();
-                    j->cmds = { GitC(gitPublishRoot) + "init",
-                                GitC(gitPublishRoot) + "add -A",
-                                GitC(gitPublishRoot) + "commit -m " + GitQ("Initial commit"),
-                                GitC(gitPublishRoot) + "branch -M main",
-                                GitC(gitPublishRoot) + "remote add origin " + GitQ(gitPublishUrl),
-                                GitC(gitPublishRoot) + "push -u origin main" };
-                    j->okMsg = "Published " + gitPublishName + " to GitHub";
-                    j->failMsg = "Publish failed — check the URL and your Git sign-in";
-                    StartGit(j);
-                    Toast("Publishing " + gitPublishName + "\xE2\x80\xA6");
+                    const std::string msgFile = okay::gitargs::UrlOk(gitPublishUrl) ? GitMessageFile("Initial commit") : std::string();
+                    if (!okay::gitargs::UrlOk(gitPublishUrl)) {
+                        Toast("That URL can't be used (it starts with '-' or uses a command transport)", 2);
+                    } else if (msgFile.empty()) {
+                        Toast("Couldn't write the commit message to a temp file", 2);
+                    } else {
+                        GitJob* j = new GitJob();
+                        j->steps = okay::gitargs::PublishSteps(gitPublishRoot, gitPublishUrl, msgFile);
+                        j->tempFiles = {msgFile};
+                        j->okMsg = "Published " + gitPublishName + " to GitHub";
+                        j->failMsg = "Publish failed — check the URL and your Git sign-in";
+                        StartGit(j);
+                        Toast("Publishing " + gitPublishName + "\xE2\x80\xA6");
+                    }
                     gitPublishUrl[0] = '\0'; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();

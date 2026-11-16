@@ -63,6 +63,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a collider is bigger or smaller than the mesh | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a colour comes out too dark | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
 | a Combo list draws under other widgets | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
+| a commit message lost its `$word` or backtick text | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
@@ -802,6 +803,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | published item not showing (needs review) | [17.6](17-launcher-platform.md#176-marketplace-and-workshop) Marketplace and Workshop |
 | publishing is refused" before the SQL is run | [17.14](17-launcher-platform.md#1714-official-game-install-update-publish) Official game: install, update, publish |
 | pull leaves a broken scene | [28.1](20-35-planned.md#281-git-integration) Git integration |
+| Pushed" although nothing was committed | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
 | rain does not make the player wet or cold | [53.2](43-proposals.md#532-weather-gameplay-effects) Weather gameplay effects |
 | rain follows the camera in the editor preview | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | Recently played with" missing people | [16.9](16-networking.md#169-match-results-stats-and-leaderboards) Match results, stats and leaderboards |

@@ -74,6 +74,7 @@ release job or the installer build for this change.
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7w | Launcher Git buttons: a commit message, URL or path is never run as a command, and a failed step says so | Launcher > Create, right-click a project > **Git: Commit & Push** (or **Publish to GitHub...**, or **Clone from GitHub**) | Bug fix in this change; tested on Linux with real git, the Windows buttons were not clicked |
 
 ---
 
@@ -1048,6 +1049,34 @@ they are headless software renders (meshes only, no on-screen text), not window 
 Status: the list logic (hide, restart, a project that is both in the folder and opened by path, slash and trailing-slash
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
+
+## 7w. Launcher Git buttons: your text is never run as a command
+
+**What changed.** The launcher's Git buttons (Clone from GitHub, Git: Pull, Git: Commit & Push, Publish to GitHub, and
+"git init" for a new project) used to build one command line per step and hand it to the system shell. A commit
+message with a backtick, `$HOME`, `$(...)`, a `"` or a trailing `\` was changed or broke the commit, and a URL with
+`$(...)` (Linux, macOS) or `%VAR%`, `&`, `|` (Windows) could run a command. Also only the LAST step counted, so a failed
+commit followed by a push that had nothing to send still said "Pushed". Now git is started directly with each piece
+as its own argument (no shell at all), the commit message goes to git through a private temporary file
+(`git commit -F`), a URL that starts with `-` or uses `ext::` / `fd::` is refused, and the job stops at the first failing
+step. The red toast then names it, for example "Push failed — is a GitHub remote set up? (git commit failed)".
+
+**Steps** (needs Git for Windows on PATH and a project with a GitHub remote, or a test repository):
+1. Launcher > **Create**. Right-click a project that already has Git > **Git: Commit & Push**.
+2. Change any file in the project first, then type this message: ``Price $HOME `whoami` "quoted" 100%PATH% C:\``
+   and click **Commit & Push**.
+3. Expected: the green toast "Pushed <project> to GitHub". On GitHub (or `git log -1` in the project folder) the
+   message is exactly what you typed: `$HOME`, the backticks, the quotes, `%PATH%` and the trailing `\` are all there,
+   nothing was replaced by your user name or your PATH.
+4. Click **Commit & Push** again without changing anything. Expected: a red toast ending "(git commit failed)",
+   because there was nothing to commit. Before this change it said "Pushed".
+5. **Clone from GitHub** with the URL `--upload-pack=calc` : a red toast says the URL can't be cloned, and nothing starts.
+
+Status: the steps, the quoting, the temporary message file and the stop at the first failing step are tested by
+`tests/test_git_args.cpp` on Linux, including a real `git commit` whose recorded message matches byte for byte. The
+Windows quoting is checked against a model of `cmd.exe` because it cannot run here. The buttons were not clicked on
+Windows. Note: git's own output no longer goes to a console (there was none on Windows before either), and a push that
+needs a password typed into a terminal now fails instead of waiting; Git for Windows' sign-in window still works.
 
 ## Checks run for this page
 

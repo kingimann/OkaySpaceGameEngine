@@ -542,6 +542,15 @@ add_executable(test_net_guard test_net_guard.cpp)
 target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME net_guard COMMAND test_net_guard)
 
+# The launcher's Git buttons (launcher/GitArgs.hpp): argv steps with no shell, commit message through a temp file, hostile
+# text printed literally by /bin/sh, the Windows cmd quoting checked against a model, stop at the first failing step.
+add_executable(test_git_args test_git_args.cpp)
+target_compile_features(test_git_args PRIVATE cxx_std_17)
+target_include_directories(test_git_args PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/shared)
+find_package(Threads REQUIRED)
+target_link_libraries(test_git_args PRIVATE Threads::Threads)
+add_test(NAME git_args COMMAND test_git_args)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)

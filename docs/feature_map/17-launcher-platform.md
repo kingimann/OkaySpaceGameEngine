@@ -239,17 +239,17 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Parts:**
   - 17.12.1 Project list and New Project - `launcher/main.cpp` (tab 0, L17892) - every `<Location>/<Name>/Assets` folder holding a `.okayscene`, plus projects opened from elsewhere; the template choice is passed to the editor as `--template`
   - 17.12.2 Safe delete - `shared/ProjectDelete.hpp` - what counts as a project folder, and the folders never deleted (drive root, home, launcher folder, projects folder)
-  - 17.12.3 Git for projects - `launcher/main.cpp` (L543-809) - clone, pull, commit and push, publish to GitHub (right-click a project)
-- **Code:** `shared/ProjectDelete.hpp`, `launcher/main.cpp`
+  - 17.12.3 Git for projects - `launcher/main.cpp` (GitWorker), `launcher/GitArgs.hpp` - clone, pull, commit and push, publish to GitHub (right-click a project); git runs without a shell, the commit message goes through a temp file, the job stops at the first failing step
+- **Code:** `shared/ProjectDelete.hpp`, `launcher/GitArgs.hpp`, `launcher/main.cpp`
 - **API:** launcher Create page; right-click menu: Delete project, Publish to GitHub, Commit & Push
 - **Editor:** the project opens in the editor; the starter templates are 1.6
 - **Docs:** `docs/making_a_game.md`
-- **Tests:** `project_delete`
-- **Status:** Works - the safety rules are unit tested (added in 2.829.0, #334); Git calls shell out and are untested
+- **Tests:** `project_delete`, `git_args`
+- **Status:** Works - the safety rules are unit tested (added in 2.829.0, #334); the Git steps, quoting and stop-at-first-failure are unit tested (`git_args`), the buttons themselves were not clicked on Windows
 - **Open:** project templates are static scene templates; project migration across engine versions is planned (area 25)
 - **Related:** 1.6, 25.1, 15.4
 - **Words:** Create page, projects, new project, template, delete project, remove, Projects folder, Git, GitHub, commit, push
-- **Seen as:** a project is missing from the list; "setting up..." never finishes; deleting is refused
+- **Seen as:** a project is missing from the list; "setting up..." never finishes; deleting is refused; a commit message lost its `$word` or backtick text; "Pushed" although nothing was committed
 - **Ask me like:** "why can't I delete this project from the launcher?"
 
 ### 17.13 Play page: library, web games, collections, playtime

@@ -50,3 +50,18 @@ Unverified: a mesh with several uv sets, 32-bit-index meshes, strips and fans on
 ## Provenance (what this file was written from)
 
 `OgreXmlReader.cpp` was written from scratch for this project from the public description of the OGRE mesh XML format (the element and attribute names of the `OgreXMLConverter` output as documented in the OGRE manual) and of the OGRE material script language, and from reading the four sample `.mesh.xml` files and the `.material` files of Assimp's `test/models*` as data (never the Assimp source). Assimp was used only as a **black box** (counts, area, box and texture names on the sample files). No code, comment, table or test from any other importer was read, copied or ported.
+
+## Memory (2026-11-16)
+
+The reader held 1.03x to 1.14x Assimp's peak heap on three of the four corpus files. Two changes, output unchanged
+(`bench_model_readers --digest` and `--import-digest` identical on every corpus file):
+
+- The XML reader (`XmlLite.hpp`) has a `keepText` switch (on by default, so the 3MF, AMF, X3D, XGL and Irrlicht readers are
+  unchanged). The OGRE reader turns it off: character data is still checked (the limits, entity references) but not stored.
+  An OGRE mesh is all elements and attributes, and the white space of a pretty-printed file gave every parent element its own
+  text string on the heap.
+- The file's bytes are freed once the document is parsed, before the meshes are built.
+
+Peak heap of one read, ours / Assimp (MB): `fish` 1.79 -> 1.35 / 1.73, `ninja` 2.47 -> 1.89 / 4.20, `razor` 1.17 -> 0.91 /
+1.02, `TheThing/Mesh` 3.49 -> 2.78 / 3.37. Every file is now below Assimp (`docs/own_readers_speed.md`).
+

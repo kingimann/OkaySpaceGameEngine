@@ -37,10 +37,11 @@ held at once during one call above what was held before it, counted by replacing
 "met" for time when its summed read time over the files both read is not above Assimp's, and "met" for memory when its
 largest peak and its summed peaks are both not above Assimp's.
 
-Assimp crashes on two corpus files (`RAW/WithColor.raw`, `RAW/WithTexture.raw`: a node's child list holds a bad pointer, in
-Assimp 5.4.3's RAW importer) and dies (killed by a signal) on `invalid/OutOfMemory.off`, a file that claims 353 billion vertices. The bench therefore reads every
-file with Assimp in a child process first and reports such a file as "crash" instead of dying. **The shipped Windows build
-reads `.raw` through Assimp**, so importing those two files there probably crashes the editor (not tried on Windows).
+Assimp crashed on two corpus files (`RAW/WithColor.raw`, `RAW/WithTexture.raw`: a node's child list holds null pointers, in
+Assimp 5.4.3's RAW importer; since the third round the seam never hands such a file to Assimp, see below) and dies (killed by a signal) on `invalid/OutOfMemory.off`, a file that claims 353 billion vertices. The bench therefore reads every
+file with Assimp in a child process first and reports such a file as "crash" instead of dying. The shipped Windows build
+reads `.raw` through Assimp, so importing those two files there crashed (not tried on Windows); now our RAW reader reads
+them (`docs/own_raw_reader.md`, "Files Assimp is not given").
 
 The machine was a shared 4-core Linux container with other builds running, so a small file's time can move by 20% from run
 to run; the instruction counts quoted below (callgrind) do not move.
@@ -75,11 +76,11 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | nff | 13 | 12 | 1.19x -> 0.77x (72.1 / 93.4 ms) | met | 6.76 / 13.09 -> 6.27 / 13.09 | met | 0.67x | 6.27 / 13.09 MB | 0 / 2 |
 | obj | 28 | 25 | 0.12x -> 0.12x (6.4 / 53.4 ms) | met | 0.85 / 17.28 -> 0.85 / 17.28 | met | 0.13x | 0.85 / 17.28 MB | 0 / 0 |
 | off | 5 | 2 | 0.93x -> 0.95x (1.4 / 1.5 ms) | met | 0.55 / 0.97 -> 0.55 / 0.97 | met | 0.86x | 0.55 / 0.97 MB | 0 / 0; Assimp crashes on 1 |
-| ogre | 4 | 3 | 0.72x -> 0.74x (10.3 / 13.9 ms) | met | 3.51 / 4.20 -> 3.49 / 3.38 | **not met** in this run (see below) | 0.86x | 3.49 / 3.38 MB | 2 / 3 |
+| ogre | 4 | 4 | 0.72x -> 0.74x -> 0.63x (13.2 / 20.9 ms) | met | 3.51 / 4.20 -> 3.49 / 3.38 -> 2.78 / 4.20 | met (every file below Assimp, third round) | 0.58x | 2.78 / 4.20 MB | 0 / 0 |
 | ply | 12 | 9 | 0.37x -> 0.28x (20.6 / 73.2 ms) | met | 5.12 / 6.62 -> 5.12 / 6.62 | met | 0.27x | 5.51 / 6.62 MB | 0 / 0 |
 | pmx | 1 | 1 | 0.21x -> 0.10x (1.3 / 13.2 ms) | met | 1.50 / 3.39 -> 1.50 / 3.39 | met | 0.23x | 1.51 / 3.39 MB | 0 / 0 |
 | q3d | 4 | 4 | 0.34x (6.7 / 19.8 ms) | met | 1.28 / 4.10 | met | 0.83x | 1.28 / 4.10 MB | 0 / 0 |
-| raw | 4 | 1 | 1.04x -> 0.70x (2.0 / 2.8 ms) | met | 1.06 / 1.43 -> 1.00 / 1.43 | met | 0.85x | 1.00 / 1.43 MB | 0 / 0; Assimp crashes on 2 |
+| raw | 4 | 1 | 1.04x -> 0.70x (2.0 / 2.8 ms) | met | 1.06 / 1.43 -> 1.00 / 1.43 | met | 0.85x | 1.00 / 1.43 MB | 0 / 0; Assimp crashed on 2 (not given to it since the third round) |
 | smd | 4 | 3 | 1.20x -> 0.66x (3.2 / 4.8 ms) | met | 2.64 / 3.30 -> 2.66 / 3.30 | met | 0.70x | 2.66 / 3.30 MB | 0 / 0 |
 | stl | 8 | 8 | 0.64x -> 0.68x (5.2 / 7.6 ms) | met | 1.29 / 2.10 -> 1.30 / 2.10 | met | 0.48x | 1.30 / 2.10 MB | 2 / 0 |
 | ter | 2 | 2 | 0.01x -> 0.01x (6.3 / 733.4 ms) | met | 16.54 / 157.51 -> 16.54 / 157.51 | met | 0.01x | 28.07 / 157.51 MB | 0 / 0 |
@@ -93,7 +94,8 @@ files both read (`QuickDraw v.2.2.lws` was refused); Q3D had none.
 
 ### Where it is not met, and why
 
-All 37 readers were measured (Q3D for the first time). **36 meet both time and memory in this run; OGRE misses memory**:
+All 37 readers were measured (Q3D for the first time). **36 meet both time and memory in this run; OGRE misses memory**
+(fixed in the third round, below: all 37 meet both now):
 
 - **OGRE, memory (not changed by this work).** Ours is heavier than Assimp on 3 of the 3 files both read in this run
   (`TheThing/Mesh.mesh.xml` 3.49 / 3.38 MB, `razor` 1.17 / 1.02, `fish` 1.79 / 1.73). Whether the reader "meets" memory
@@ -161,6 +163,21 @@ one `--only own-read` run of the whole program (about 3.5 M of each is the progr
 | MD2 memory | `ReadMd2File` frees the file once its tables are read, before the mesh is built (`ReadMd2Buffer` does not own its buffer and is unchanged). | `faerie.md2` peak 0.43 -> 0.34 MB (Assimp 0.42) |
 | RAW weld | The weld table of a group is freed before its mesh is built. | |
 
+### Third round (branch `claude2/own-readers-speed-3`, 2026-11-16)
+
+Same check: `--digest` and `--import-digest` identical on every corpus file except `LWS/move_x_oldformat_56.lws` (read on
+purpose: its motion, see below).
+
+| Step | What it does | Effect |
+|---|---|---|
+| OGRE memory | `XmlLite` gets a `keepText` switch (default on, the other XML readers unchanged); OGRE turns it off, so the white space between elements is checked but not stored, and the reader frees the file's bytes once the document is parsed. | Peak ours / Assimp MB: `fish` 1.79 -> 1.35 / 1.73, `ninja` 2.47 -> 1.89 / 4.20, `razor` 1.17 -> 0.91 / 1.02, `TheThing` 3.49 -> 2.78 / 3.37: no OGRE file is heavier than Assimp now (`docs/own_ogre_reader.md`) |
+| RAW files Assimp breaks on | `RawFileUnsafeForAssimp`: a file with two or more groups of triangles goes to our RAW reader even when `.raw` is set to Assimp; an explicit Assimp request is refused with a message. The Assimp scene walk skips null children. | `own_dispatch_e2` no longer crashes; `WithColor.raw` and `WithTexture.raw` import |
+| LWS older motion layout | Scene versions 1 and 2 keep motion as a channel count, then per channel a key count and lines of value, time and span, with angles in degrees; ours read none of it. | `move_x_oldformat_56.lws`: clip 0 -> 1 and box as Assimp's; it now gives exactly what `move_x.lws` gives (`docs/own_lws_reader.md`) |
+| Number scanner switch | `OKAY_NUMPARSE_NO_FOUR_DIGITS` forces the digit-by-digit path (what a big-endian machine runs); `reader_numparse` and `reader_numparse_portable` run the same checks both ways. | Both: 3,865,709 corpus tokens and 340,000 others, 0 differ from FastDecimal |
+
+`move_x.lws` (an older note said Assimp makes 36 triangles there, ours 12): not reproduced in 12 runs, both make 12, and 12 is
+right by the format (one layer of six quads).
+
 The two number helpers are written from the arithmetic, not from any library: `detail::FastDecimal` is the exact fast case
 of decimal conversion (W. D. Clinger, "How to read floating point numbers accurately", 1990: digits that fit in 53 bits and a
 power of ten of at most 22 are both exact doubles, so one multiplication or division rounds correctly and gives the value
@@ -171,7 +188,7 @@ decimal point (it is correctly rounded like `strtod`); under another locale the 
 ## Accuracy: where our reader and Assimp disagree
 
 `--compare` reads each file with both and compares part, triangle, vertex, node, material, clip and bone counts, the
-bounding box in world space (1/1000 of the diagonal) and the node names. Of the 355 files, 62 agree on everything (61 before this round; `WusonOrange.q3o` is the new one), 14 are
+bounding box in world space (1/1000 of the diagonal) and the node names. Of the 355 files, 63 agree on everything (62 after the second round, which added `WusonOrange.q3o`; the third added `move_x_oldformat_56.lws`), 14 are
 refused by both, and the rest differ in at least one number. Most differences are by design and documented in each reader's
 page: vertex counts (Assimp joins identical vertices, we weld per corner key), node counts (Assimp adds or merges nodes), material counts
 (Assimp adds a default material), and boxes for readers that turn Z-up files to Y-up at the root when Assimp does not.
@@ -192,8 +209,10 @@ Differences that are not by design, or that are worth a second look (counts are 
 - **X3D `ComputerKeyboard.x3d`: ours is right.** 98 keys are `USE`s of one `DEF`ed key (some inside a group that is itself
   used three times); X3D draws a `USE` wherever it is used, so 100 shapes and 2,020 triangles. Assimp builds 4 meshes and 100
   triangles: it drops 96 keys (`docs/own_x3d_reader.md`).
+- **LWS `move_x_oldformat_56.lws`: fixed (third round).** Ours read no motion from the version 2 layout; it does now and agrees
+  with Assimp (clip and box).
 - **Assimp's OGRE importer is not repeatable**: in one run it fails on `ninja.mesh.xml`, in another on `fish.mesh.xml`.
-- **RAW: Assimp crashes on two files ours reads** (`WithColor.raw`, `WithTexture.raw`); see above.
+- **RAW: Assimp crashed on two files ours reads** (`WithColor.raw`, `WithTexture.raw`); such files are now read by ours (see above).
 - **OGRE `fish.mesh.xml` (in some runs), COB `dwarf_ascii.cob` and
   `molecule_ascii.cob`, NFF `cone.nff`, AC3D `SphereWithLight_UTF16LE.ac` and Blender `BlenderDefault_262.blend`** are read
   by ours and refused by Assimp. PLY `ant-half.ply` (truncated), OFF `invalid.off`, X3D `IndexedLineSet.x3d` and the three
@@ -213,14 +232,28 @@ Differences that are not by design, or that are worth a second look (counts are 
 - **ASE UTF-16**: Assimp reads the two UTF-16 `ThreeCubesGreen` files as one part of 8 triangles; ours reads the 3 cubes
   (36 triangles), like the UTF-8 file.
 - Bounding boxes differ on 68 files, almost all where one side turns Z-up to Y-up at the root and the other does not, or
-  where the triangle counts above differ; clip counts differ on 17: Assimp makes clips that ours does not on 10 Irrlicht
+  where the triangle counts above differ; clip counts differ on 16 (17 before the third round): Assimp makes clips that ours does not on 10 Irrlicht
   scenes (animators), the 3 SMD files (a one-frame pose), `ninja.mesh.xml` (20, from the skeleton file ours does not read),
-  `CameraRollAnim.3ds` and `move_x_oldformat_56.lws`; ours makes one where Assimp makes none on `mrfixit.iqm`. Bone counts
+  `CameraRollAnim.3ds` (and `move_x_oldformat_56.lws` before the third round); ours makes one where Assimp makes none on `mrfixit.iqm`. Bone counts
   differ on 28 files.
 
 The full per-file list: run `bench_model_readers --compare` (one tab-separated line per file, `DIFF` and the fields).
 
 ## Tests run (Linux, 2026-11-16)
+
+Third round (`claude2/own-readers-speed-3`):
+
+- `ctest -R "model|import|collada|reader|obj|gltf|mesh|anim"` with `OKAY_MODEL_CORPUS` set, Release, `OKAY_USE_ASSIMP=ON`:
+  **106 of 106 passed** (the two new `reader_numparse` tests included); `model_corpus`: 4,080 checks, 0 failures. Also
+  passed (18): `own_dispatch`, `own_dispatch_c`, `_d`, `_e`, `_e3`, `_e5`, `own_pmx_lws_default`, `ase_hostile`,
+  `smd_hostile`, `batchb_hostile` to `batche_hostile`, `batchd_budget`, `batche2_hostile`, `pmxlws_hostile`; and
+  **`own_dispatch_e2`, which crashed before**: 58 checks, 0 failures (52 without the corpus).
+- **Engine-linked tests under ASan + UBSan + float-cast-overflow** for the first time on this work: a whole-engine build at
+  `-O1 -g0`, `-fno-sanitize-recover=all`, Assimp off (our readers only). `model_readers_fuzz` 1,437 checks, `model_corpus`
+  (corpus set) 4,080 checks, `reader_numparse` and `reader_numparse_portable` (corpus set): all passed, **no sanitizer report,
+  so nothing to fix**. The standalone reader tests of the second round (11, rebuilt by hand with the same flags) passed again
+  with no report.
+- `--digest` / `--import-digest`: identical on every corpus file except `move_x_oldformat_56.lws` (the intentional LWS fix).
 
 Second round (`claude2/own-readers-speed-2`):
 
@@ -233,9 +266,9 @@ Second round (`claude2/own-readers-speed-2`):
   AC3D, OGRE, XGL, IRR), `batche_hostile` (CSM, with the real file), `batche2_hostile`, `q3d_reader`, `raw_reader`,
   `lws_reader`, `pmxlws_hostile`: 11 of 11 passed, no sanitizer report. The engine-linked tests (`model_readers_fuzz`,
   `model_corpus`) were **not** run under sanitizers this round.
-- **Found, not fixed (not caused by this work):** `own_dispatch_e2` crashes (segmentation fault inside Assimp's RAW
-  importer, the node-child bug above) in a build with `OKAY_USE_ASSIMP=ON`; it crashes the same on the code before this
-  branch. It is not in the ctest regex above.
+- **Found, not fixed then (fixed in the third round):** `own_dispatch_e2` crashed in a build with `OKAY_USE_ASSIMP=ON`
+  (a null child node that Assimp's RAW importer leaves, met by our scene walk). It is registered in ctest but not matched by
+  the regex above.
 
 First round:
 

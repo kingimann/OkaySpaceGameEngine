@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Core/ImportSidecar.hpp"
+#include "okay/Core/Paths.hpp"   // FindFile: project-relative texture paths
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec4.hpp"
 #include "okay/Math/Mat4.hpp"
@@ -829,11 +830,14 @@ inline Image* GetCachedTexture(const std::string& path) {
     auto it = cache.find(path);
     if (it == cache.end()) {
         Image img;
+        std::string file = path;
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)
-        else
-            img.Load(path);                    // leaves the image empty on failure
-        ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
+        else {
+            file = Paths::FindFile(path);      // a project-relative path opens under the asset folder too
+            img.Load(file);                    // leaves the image empty on failure
+        }
+        ApplyTextureImportSettings(file, img);   // the asset's own "largest side", if it has one
         it = cache.emplace(path, std::move(img)).first;
     }
     return it->second.Width() > 0 ? &it->second : nullptr;

@@ -842,6 +842,13 @@ target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
+# A file dropped from the Project panel is stored project-relative (editor/ProjectRelativePath.hpp; ImGui-free) and still opens
+# with the project as the asset folder (okay::Paths::FindFile), whatever the working directory.
+add_executable(test_drop_path_relative test_drop_path_relative.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_drop_path_relative PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_drop_path_relative PRIVATE okay::engine)
+add_test(NAME drop_path_relative COMMAND test_drop_path_relative)
+
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
 add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)

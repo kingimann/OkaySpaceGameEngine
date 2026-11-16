@@ -1449,6 +1449,7 @@ int main(int argc, char** argv) {
     okay::Accessibility::Load();   // the player's saved accessibility choices (text size, contrast, motion, colour filter)
     okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
+    okay::Paths::SetAssetBaseDir(baseDir);   // project-relative pictures and fonts ("Assets/a.png") open from the data folder
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     AntiCheatConfig::SetAssetBaseDir(baseDir);   // a relative anti-cheat rules file (.okayac) is looked for in the data folder
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt

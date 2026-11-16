@@ -3,6 +3,8 @@
 #include "LevelTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "InspectorPanel.hpp"   // AssetPathPicker, HighlightAssetDrop
+#include "ProjectRelativePath.hpp"   // StoredDropPath
+#include "okay/Core/Paths.hpp"
 #include "okay/Components/Cable.hpp"
 #include "okay/Components/Decal.hpp"
 #include "okay/Components/Foliage.hpp"
@@ -64,7 +66,8 @@ bool PathField(const char* label, std::string& s, const char* kind) {
     if (AssetPathPicker(s, kind)) changed = true;
     HighlightAssetDrop(kind);
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) { s = std::string((const char*)p->Data); changed = true; }
+        // a picture or font inside the project is stored project-relative (the asset folder is the project)
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) { s = StoredDropPath(Paths::AssetBaseDir(), std::string((const char*)p->Data)); changed = true; }
         ImGui::EndDragDropTarget();
     }
     return changed;

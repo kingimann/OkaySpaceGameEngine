@@ -63,6 +63,11 @@ public:
     /// `relative` under the asset folder; an absolute path (or one with a drive letter) is returned as is.
     static std::string Resolve(const std::string& relative);
     static bool IsAbsolute(const std::string& path);
+    /// The file a load should open: `path` when it is there as written (absolute, or relative to the working
+    /// directory), else the same relative path under the asset folder when that file is there, else `path` unchanged.
+    /// So a project-relative "Assets/a.png" opens in the editor (asset folder = the project) and in a built game
+    /// (asset folder = <Name>_Data/) whatever the working directory is.
+    static std::string FindFile(const std::string& path);
     /// The StreamingAssets folder of a built game: files the game opens by name at run time, copied from the
     /// project's StreamingAssets/ folder as they are (<Name>_Data/StreamingAssets/). Empty when the game has none.
     /// The player sets it at startup; it ends in '/'.

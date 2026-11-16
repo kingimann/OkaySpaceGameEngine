@@ -1,5 +1,6 @@
 // okay::platform::Painter: the parts every implementation shares (the texture cache and the font atlas upload).
 #include "okay/Platform/Painter.hpp"
+#include "okay/Core/Paths.hpp"   // FindFile: project-relative picture paths
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
@@ -23,7 +24,7 @@ ui2d::Tex Painter::LoadTexture(const std::string& path) {
     auto it = m_cache.find(path);
     if (it != m_cache.end()) return it->second;
     okay::Image img;
-    if (!img.Load(path) && !img.Load(m_baseDir + path)) {
+    if (!img.Load(Paths::FindFile(path)) && !img.Load(m_baseDir + path)) {   // as written, under the asset folder, under the base dir
         m_cache[path] = nullptr;   // remember the miss so a bad path is not decoded every frame
         return nullptr;
     }

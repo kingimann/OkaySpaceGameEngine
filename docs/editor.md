@@ -135,6 +135,12 @@ Recent additions (v2.12–2.14):
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
+  A picture or font dropped onto a slot (Inspector fields, the Scene view, the Hierarchy, material and tab-icon
+  fields) is stored **relative to the project** (`Assets/tex/a.png`, forward slashes), not as `C:\Users\...`, so
+  the scene works on another PC and in the built game. A file outside the project keeps its full path. The project
+  folder is the asset folder in the editor and `<Name>_Data/` in a built game (`okay::Paths::FindFile`), whatever
+  the working directory is. Other kinds (sounds, models, scripts, data files) still store the full path for now.
+  Logic: `editor/ProjectRelativePath.hpp`, tested in `tests/test_drop_path_relative.cpp`.
 - **Combine scenes (seamless worlds)** — **File ▸ Merge Scene into Current…**
   (or **drag a `.okayscene` from Project onto the Hierarchy**) folds another
   scene's objects into the open one (the host keeps its own name,

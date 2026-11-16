@@ -4,6 +4,7 @@
 #include "ConsolePanel.hpp"
 #include "InspectorModel.hpp"
 #include "PrefabEdit.hpp"
+#include "ProjectRelativePath.hpp"   // StoredDropPath: a dropped picture or font is stored project-relative
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
@@ -168,7 +169,7 @@ bool AssetField(const char* label, std::string& value, const char* kind, const s
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
             const std::string path((const char*)p->Data);
-            if (AssetKindAccepts(kind, path) && p->IsDelivery()) { value = path; changed = true; }
+            if (AssetKindAccepts(kind, path) && p->IsDelivery()) { value = StoredDropPath(projectDir, path); changed = true; }
         }
         ImGui::EndDragDropTarget();
     }

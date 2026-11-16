@@ -3,6 +3,7 @@
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Paths.hpp"   // FindFile: project-relative font paths
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -232,7 +233,7 @@ TtfFont* GetFont(const std::string& path) {
     auto it = cache.find(path);
     if (it != cache.end()) return it->second.get();    // may be a cached failure (nullptr-valued)
     auto font = std::make_unique<TtfFont>();
-    if (!font->LoadFromFile(path)) {
+    if (!font->LoadFromFile(Paths::FindFile(path))) {   // a project-relative path opens under the asset folder too
         cache[path] = nullptr;   // remember the failure so we don't re-read every frame
         return nullptr;
     }

@@ -1499,7 +1499,7 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
         g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img->Width(), img->Height(), 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, img->Data());
         // The picture's own Filter / Wrap / Mipmaps import settings (defaults: repeat, trilinear, mipmapped).
-        const TextureSampling ts = TextureImportSampling(name);
+        const TextureSampling ts = TextureImportSampling(Paths::FindFile(name));
         m_texInfo[tex] = ts;
         const int wrapMode = ts.wrap == TextureSampling::Clamp ? GL_CLAMP_TO_EDGE
                            : ts.wrap == TextureSampling::Mirror ? 0x8370 /*GL_MIRRORED_REPEAT*/ : GL_REPEAT;

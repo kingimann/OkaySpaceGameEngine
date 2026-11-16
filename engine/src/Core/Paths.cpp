@@ -1,6 +1,7 @@
 #include "okay/Core/Paths.hpp"
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -129,6 +130,15 @@ bool Paths::IsAbsolute(const std::string& p) {
 std::string Paths::Resolve(const std::string& relative) {
     if (IsAbsolute(relative)) return relative;
     return Join(AssetDirRef(), relative);
+}
+
+std::string Paths::FindFile(const std::string& path) {
+    if (path.empty()) return path;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(std::filesystem::u8path(path), ec)) return path;
+    if (IsAbsolute(path) || AssetDirRef().empty()) return path;
+    const std::string under = Join(AssetDirRef(), path);
+    return std::filesystem::is_regular_file(std::filesystem::u8path(under), ec) ? under : path;
 }
 
 static std::string& StreamingDirRef() { static std::string d; return d; }

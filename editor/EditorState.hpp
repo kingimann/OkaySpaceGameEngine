@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Render/TexturePath.hpp"
+#include "okay/Core/Paths.hpp"
 #include <cstdint>
 #include <functional>
 #include <Okay.hpp>
@@ -186,6 +187,9 @@ public:
         m_projectDir = d;
         // Model files in this project may name textures anywhere in the project (absolute or "../" paths); nothing outside it.
         okay::SetModelTextureRoots(d.empty() ? std::vector<std::string>() : std::vector<std::string>{d});
+        // The asset folder is the project: a picture or font stored project-relative ("Assets/a.png", what a drop
+        // from the Project panel stores) opens whatever the working directory is (okay::Paths::FindFile).
+        okay::Paths::SetAssetBaseDir(d);
         if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());

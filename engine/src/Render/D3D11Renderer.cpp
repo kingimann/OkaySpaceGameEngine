@@ -1321,7 +1321,7 @@ ID3D11ShaderResourceView* D3D11Renderer::Impl::TextureFor(const std::string& nam
 // or the material's Pixel override. The default (Trilinear, Repeat) is the renderer's long-standing sampler.
 ID3D11SamplerState* D3D11Renderer::Impl::SamplerFor(const std::string& name, bool pixel) {
     auto ti = texSampling.find(name);
-    if (ti == texSampling.end()) ti = texSampling.emplace(name, TextureImportSampling(name)).first;
+    if (ti == texSampling.end()) ti = texSampling.emplace(name, TextureImportSampling(Paths::FindFile(name))).first;
     const TextureSampling ts = ti->second;
     const bool point = pixel || ts.filter == TextureSampling::Point;
     if (ts.wrap == TextureSampling::Repeat) {

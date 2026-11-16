@@ -598,6 +598,30 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Dropped pictures and fonts are stored project-relative (bug fix, branch `claude2/drag-paths-relative`, not merged or released yet)
+
+Before: dragging a texture or font from the Project panel onto an Inspector slot stored the full path
+(`C:\Users\<you>\...\Assets\a.png`). Build Game warned, and the built game still looked on your PC.
+
+1. Open a project in the editor (`Tools\OkayEngine.exe` or Open from the launcher). Put a `.png` in its `Assets\`
+   folder (or use one that is there).
+2. Select an object with a **Mesh Renderer** (for example **GameObject > 3D Object > Cube**). Drag the picture from the
+   Project panel onto the Mesh Renderer's **Texture** slot. The cube shows the picture.
+3. **File > Save**. Open the `.okayscene` file in Notepad and search for `.png`. The path starts with `Assets/`
+   (forward slashes), with no drive letter and no user folder.
+4. Close and reopen the editor, open the scene: the cube still shows the picture.
+5. The same for a font: drop a `.ttf` from the Project panel onto a Text object in the Scene view, save, and the
+   `fontPath` in the file starts with `Assets/`.
+6. **File > Build Settings > Build**: the report has no "absolute asset path" warning for that picture. Run the built
+   game: the cube shows the picture (it is read from `<Name>_Data\Assets\...`).
+
+A file dropped from outside the project folder keeps its full path (and Build Game still warns about it). Sounds,
+models, scripts and data files still store the full path; only pictures and fonts changed.
+
+**Status.** The path logic and "a stored relative path opens with the project as asset folder" are tested headless
+(`test_drop_path_relative`, run on Linux). The editor and player changes were syntax-checked only, not run; steps 2 to 6
+are unverified until you try them on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

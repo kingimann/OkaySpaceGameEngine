@@ -60,11 +60,14 @@ release job or the installer build for this change.
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
+| 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7w | Player obstacle course: slopes, stairs, steps, moving platforms, water, voxel hill, with the player numbers on F3 | `examples\player\player_obstacle_course.okayscene`, Play, press F3 | New in this branch (`claude/player-deep`); tested headless on Linux, never run on Windows |
+| 7wa | Player feel lab: five controller presets (Classic, Modern, Arcade, Realistic, Shooter), stick look ramp, F3 systems page | `examples\player\player_feel_lab.okayscene`, Play, press 1 to 5, press F3 twice | New in `claude/player-feel`; tested headless on Linux, never run on Windows |
 | 7z | First-person arm: looks normal to you and to others; presets to compare | Editor: File > Examples or open `examples\fp_hand\fp_hand_test.okayscene`, Play; select Player > First Person Hands > Preset | New in this change; headless renders only, nothing run on Windows or a GPU |
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
@@ -75,9 +78,11 @@ release job or the installer build for this change.
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
+| 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -638,6 +643,34 @@ the folder (the example-copy block of `scripts/build-windows-dist.sh` was run al
 in the output; `bash -n` of the whole script is clean). The editor code for the new Inspector rows and
 menu entry was only syntax-checked, not run. The pictures are headless renders, not screenshots of a window.
 
+## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
+
+**What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
+([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
+
+**Steps.**
+1. Open the editor. **File > Examples > UI library (every in-game UI part) > ui_library_1**. (Or **File > Open...** with
+   `<install folder>\examples\ui_library\ui_library_1.okayscene`; the installer puts it in `%LOCALAPPDATA%\OkaySpace\examples\ui_library\`.)
+2. Press **Play**. The Game view shows "Range slider", "Input validation" and "Aspect ratio box (16:9)" cards with hints.
+3. Drag the handles of "Price range". The numbers above the track read `$120 to $380` and change in steps of 10. The handles
+   never cross. Drag the "Level range" handles: whole numbers, at least 3 apart.
+4. Click the Email box and type `ada@`. A red ring and a short sentence appear under the box. Type `lovelace.org`: the ring
+   turns green. Type `7` in Age: "Between 13 and 120". Type a short password, then repeat it differently: "That is not the
+   same password".
+5. Make the Game view taller, wider or a phone shape: the blue frame stays 16:9.
+6. Stop Play. Select the `Price` object: the Inspector shows **UI Range Slider**. Select `Email`: **UI Input Field** and
+   **UI Input Validator**. Select `Area`: **UI Aspect Ratio**. To add them to another scene: **GameObject > UI > Controls >
+   Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
+
+**What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
+other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+
+**Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
+The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
+were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
+world-space Canvas yet.
+
 ## 7r. The walk looks like a walk, Shift looks like a run
 
 Why: "the character walking is basically running". The player used to move at 4.5 m/s for plain W, which is a jog, and at 8 m/s for
@@ -774,6 +807,87 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7w. Player obstacle course and the player's own numbers
+
+Where: `examples\player\player_obstacle_course.okayscene` (next to the other examples, see "Where the files are"). Open it in
+`Tools\OkayEngine.exe` with **File > Open...** and press **Play**, or open it in `Tools\OkaySpacePlayer.exe`. You start on the ground
+with a third-person player. **WASD** walk, **Shift** run, **Space** jump, **Ctrl** crouch, **V** switches to the eyes and back.
+**Press F3**: below the frame numbers you see the player's lines (grounded or in the air, slope in degrees against the limit,
+speed, velocity, the ground normal, what you stand on). In the editor the same lines are in the Game view stats.
+
+Walk -Z (straight ahead) past the signs. Each sign says what to try; what you should see:
+
+| Station | Try | You should see |
+|---|---|---|
+| 1 Ramps 15, 30, 45, 55, 65 degrees | walk up each, stop half way up | 15 to 45: you walk up and stand still on it with no creeping (F3: "held on slope"). 55 and 65: you slide back down; F3 says TOO STEEP |
+| 2 Stairs | walk up, turn, walk down | you stay on the steps going down (F3 stays "grounded"), no hopping |
+| 3 Steps 0.10, 0.25, 0.35, 0.60 m | walk into each | the first three you climb in one go, the 0.60 m block stops you |
+| 4 Plank over a gap | walk along it, step off the side | you fall into the gap, nothing sticks |
+| 5 Tunnel 1.3 m | crouch (Ctrl), go in, press Ctrl again inside | you fit when crouched; standing up inside is refused until you are out |
+| 6 Moving platform and turning bridge | stand on the platform, jump off sideways | you ride it with no slipping; jumping off keeps the platform's speed; the bridge carries you round |
+| 7 Thin wall (2 cm) | hold Shift and run into it | you stop; you do not get through |
+| 8 Water | walk into the shallow end, then the deep end | shallow: you wade; deep: you swim (Space up, Ctrl down). (Swim into the stone edge on the east side to climb out.) |
+| 9 Voxel terrain patch | walk over the hill and the hole | you follow the ground without bouncing |
+| 10 Ladder tower | walk into the ladder and hold W; let go; press Space | you climb at 2.5 m/s, hang still when you let go, Space jumps off; the jump down from the top is a "hard landing" (F3 shows "last landing ... hard landings N") |
+| 11 Pool bank (east edge of the pool) | swim to the stone edge and keep pushing W | you climb out onto the bank (before, you stayed in the water) |
+| Variable jump (the course player has it on) | tap Space, then hold Space | a tap is a short hop, holding is the full jump. Off in a fresh player (Inspector: Variable Jump) |
+| Gizmo | in the editor select the player | a blue ring at the feet, four orange spokes rising at the Slope Limit, a green ring at the Step Offset height (Scene view, Gizmos on) |
+
+**Compare with the old player**: close the game, set the environment variable `OKAY_OLD_PLAYER=1` (for example in a command
+prompt: `set OKAY_OLD_PLAYER=1` then start `OkaySpacePlayer.exe` from that prompt, or start the editor from it), and walk the same
+stations. F3 then adds "[old player path]" to the first player line. With it set: standing on ramps 25 to 49 degrees creeps, the
+stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/player_audit.md`).
+
+Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
+Limit** (first and third person).
+
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+
+**Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
+`tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
+controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
+**Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.
+
+## 7wa. Player feel lab: compare five controller feels, and see which system costs the frame
+
+Where: `examples\player\player_feel_lab.okayscene`. Open it in `Tools\OkayEngine.exe` (**File > Open...**, **Play**) or in
+`Tools\OkaySpacePlayer.exe`. You start in third person at the start sign. **WASD** walk, **Shift** run, **Space** jump, **Ctrl** crouch,
+**V** switches to the eyes and back.
+
+**Switch the feel.** Press **1 Classic, 2 Modern, 3 Arcade, 4 Realistic, 5 Shooter**. The sign at the start changes to
+"PRESET: <name>", and **F3** shows "feel preset: <name>" under the player lines. Walk the stations after each pick:
+
+| Station | Try | You should see (numbers are from the headless tests, `tests/test_player_feel.cpp`) |
+|---|---|---|
+| A Run track, markers every 5 m | hold W + Shift, let go at the red line | Arcade stops in about 0.14 m, Classic 0.27 m, Realistic 0.50 m (it also takes longer to get going) |
+| B Slalom | weave through the posts | Arcade and Shooter turn sharply; Realistic turns slowly (third person turn speed) |
+| C Gaps 2, 3, 4 m | run and jump | Arcade has a double jump, Realistic has the least air steering (about 1.0 m/s sideways against 2.6 for Arcade). A miss drops into the pit and returns you to the start |
+| D Towers 2, 4, 8 m | climb the stairs, step off | the camera dips on landing (Realistic most, Arcade least); the 8 m drop is a hard landing (F3 counts them) |
+| E Corridor | walk through in third person | the camera pulls in at the walls and eases back out |
+
+**In your own scene.** Select the player, the **Player Controller** panel, **Controller Preset** drop-down: one pick sets speeds,
+acceleration, stopping, air control, jump timing, head bob (first person) or turn speed and camera follow (third person). Edit any
+value afterwards; the scene saves the numbers. The same panel has **Stick Look Ramp** (gamepad camera acceleration: seconds from 45%
+to full look speed at full stick; 0 = off, the default) and, on **Player View**, **Preset Hotkeys (1-5)** (off by default; the lab
+has it on; it needs the player to have both views).
+
+**Systems page (F3, second press).** In `OkaySpacePlayer.exe` press F3 once for the frame numbers, again for **Systems**:
+milliseconds per system (Physics, Scripts, Animation, Audio, UI, Render, Terrain, Other CPU, Idle/wait) averaged over the last 120
+frames with their peaks, and a graph of the last 120 frame times. A third press closes it. In the editor, **Game view > Stats overlay**
+shows the same rows while playing (Audio and Render rows are filled by the player only; the editor shows UI and the scene's own
+scopes). It measures only while the page is open.
+
+**Compare with before.** `set OKAY_OLD_PLAYER=1` brings back the old player behaviour. `set OKAY_OLD_SCENE_QUERIES=1` brings back
+the old scene-wide searches (see the numbers below).
+
+**Checks run here (Linux, headless):** `tests/test_player_feel.cpp` (127 checks: presets, saved, hotkeys, stick ramp, camera
+steadiness at 30/60/144/240 fps, eye bob range, foot sliding of the real controller for all presets walking and running, system
+rows), `tests/test_player_feel_lab.cpp` (the shipped scene is what the code writes; 1-5 switch the preset), and the player,
+controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/player_audit.md` (section
+"Busy scene").
+**Not seen:** Windows, a window, the Inspector drop-down, the F3 systems page on a screen, the lab scene on a screen, gamepad
+feel with a real pad, whether the preset numbers feel right (they were chosen by measurement and by reasoning, not by playing).
 
 ## 7z. First-person arm: normal for you and for everyone else
 
@@ -1107,6 +1221,26 @@ once when you let go (one undo step), and a time line under the Undo buttons tel
 **Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
 a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
 
+## 7zq. Modeling: curves, bevel weights, remesh, undo and attribute fixes
+
+**What it is.** More of the modeler (same Modeling window as 7zh): Bezier curves to meshes, edge bevel weights, Quad Remesh, saved reference images, and fixes so edits keep material slots, UVs, vertex colours and seams.
+
+**Steps.** Open the Modeling window and follow these.
+
+More new steps (same branch):
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
+- **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
+- **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
+- **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+- **Mirror and Undo fixes** (Edit Mesh): add a Mirror modifier to a half model that has UVs or material slots; the mirrored half now keeps its picture and colours. In Edit Mesh, add a modifier from the Inspector, change the mesh, then press Ctrl+Z: the modifier list goes back together with the mesh (Ctrl+Y brings both back). Edge snapping ignores the hidden diagonal inside a quad.
+- **Faces keep their look through edits**: in Edit Mesh on a mesh with two material slots (Material slots page) and UVs, select a face and Extrude, Inset, Subdivide, Poke or Duplicate it, or delete a face; the new faces keep the slot colour of the face they came from and the picture does not jump. The same holds for the Array, Solidify, Subdivision, Decimate and Displace modifiers (add one in the Inspector > Modifiers).
+- **Slots: remove and reorder; UVs survive edits** (Edit Mesh > Material slots page): with two or more slots, pick one and press `- Slot` (its faces fall back to slot 0, later slots move down) or `Up` / `Down` (faces keep their colour, the slot just changes place). Ctrl+Z undoes each. UVs: unwrap a mesh (UV page > Smart Unwrap), then Subdivide or Poke a few faces: the new faces keep the UV layout (no jump or stretch in the UV view) and marked seams stay seams, including through the Array and Subdivision modifiers.
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+
 ## 16. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -1228,6 +1362,18 @@ Recycle Bin call and the clicks were not run on Windows.
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## hygiene1. Repository hygiene: one account config file, no built programs in git
+
+What changes for you:
+
+1. **Nothing is required in GitHub.** The Supabase address and publishable key are now in one plain file, `config/public-account.json` (explained in `config/README.md`). Every build reads it. The GitHub repository variables `OKAY_DEFAULT_ACCOUNT_URL` / `OKAY_DEFAULT_ACCOUNT_KEY` are an optional override; leave them unset.
+2. **Optional: rotate the key.** In the Supabase dashboard (Project Settings > API) create a new publishable key, edit `key` in `config/public-account.json`, commit, then disable the old key. Keep the row-level security policies correct: they are what protects the data.
+3. Try it: run a release or "Test build" as usual; sign in works as before. The build log shows "Account server baked in: yes (from config/public-account.json)" (the key is never printed). To see the empty case, build locally with the file removed: the launcher prints `[account] No account server is set in this build` and starts without online features.
+4. `dist/` no longer holds programs. Use the installer, the zip or the launcher from a release, or build with `scripts/build-windows-dist.sh` (output `build-win-dist/`).
+5. New check: a branch that adds an `.exe`/`.dll`/`.so`/archive or a big binary file fails "No built programs or big binary files in git" (`python3 scripts/branch_lint.py binaries`).
+
+**Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
 
 ## Team tooling (not part of the Windows release)
 
@@ -1427,6 +1573,25 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
 
+## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
+
+The Sandbox got slow from the first click on because the player and the editor ran a hidden software render of the whole scene, with shadows, every
+frame once the digger's dust particle object existed. It now runs only while dust, lines or trails are actually alive, and without shadows.
+
+1. Start the player (or the editor, press Play) on `examples\voxel\voxel_sandbox.okayscene` and press **F3** (in the editor: the Game view's stats overlay).
+2. Read the lines under the frame times:
+   * `renderer: Direct3D 11 (GPU)` (or OpenGL). If it says `SOFTWARE (CPU ...)` the GPU renderer is not being used and the game runs on the CPU at a few frames a
+     second: tell us the reason shown on that line.
+   * `voxel: 1 terrain, 13122 triangles, 25 chunk objects of 75` (or `one combined mesh` before the first dig).
+   * `voxel: terrain 0.00 ms/frame, digger 0.02 ms/frame, last rebuild 0.49 ms (4 chunks)`. All three should stay far below 1 ms, also while you hold the mouse.
+   * `draw: N drawn, M frustum-culled ...` once the GPU renderer reports it.
+3. Hold the left mouse for a few seconds, let go, wait two seconds: the frame rate should not stay lower than before the first click.
+4. To compare with the previous way: start from a Command Prompt with `set OKAY_VOXEL_OLD_REMESH=1` (old rebuild of the whole terrain on every edit; the F3 line
+   then ends with `OLD REMESH ON`).
+5. On a machine that falls back to the software renderer, shadows are now capped at 1024 texels (about four times cheaper). `set OKAY_SOFTWARE_SHADOW_CAP=4096` brings the old
+   sharper shadows (and the old cost) back.
+Tests: `ctest -R "voxel_overlay_depth"`; numbers: `bench_voxel_frame`.
+
 ## Checks run for this page
 
 Run on Linux, on the branch `claude/try-it`:
@@ -1444,6 +1609,17 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## Five starter templates removed from New Project
+
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer offered when you create a project. Projects and scenes
+already made from them still open and play, and the scene builders stay in the engine (still tested).
+
+1. Windows launcher: open the **Templates** page (or **Create**, then the New Project wizard). The list now has 17 templates:
+   Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are gone; Main Menu, Platformer, First Person and the rest are still there.
+2. Pick Main Menu (or any other) and create a project: the editor opens with the starter scene.
+3. In the editor, **File > New Project** shows the same list.
+4. Test: `ctest -R templates_work` checks the launcher list, the editor table and the builders agree.
 
 ## How the packaging was checked (and what was not)
 

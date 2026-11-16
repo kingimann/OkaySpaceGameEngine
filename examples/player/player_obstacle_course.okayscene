@@ -1,0 +1,486 @@
+okayscene 3
+name "Player obstacle course"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  guid "ad6880d05cebc43543f00cecf0ba8539"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  guid "9521ca9c42b710731f2542805e887de2"
+  active 1
+  parent -1
+  transform 0 -0.5 -100 0 0 0 1 60 1 260
+  mesh "Cube" 0.47058824 0.4862745 0.5176471 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 2 "Label"
+  guid "45d3e6a52d7cbfef66025e9215f82630"
+  active 1
+  parent -1
+  transform -9 3.2 3 0 0 0 1 1 1 1
+  text "START: WASD walk, Shift run, Space jump, Ctrl crouch, V switch view, F3 shows the player numbers" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 3 "Label"
+  guid "906586cf281c374dfc0d455d7db462eb"
+  active 1
+  parent -1
+  transform -12 5.5 -4 0 0 0 1 1 1 1
+  text "1 RAMPS 15 30 45 | 55 65 are too steep: you slide back, standing still on the others does not creep" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 4 "Ramp"
+  guid "fad7a8f2233dd719b7bca0d23711bbd3"
+  active 1
+  parent -1
+  transform -10 0.6264571 -15.897778 0.1305262 0 0 0.9914449 3.5 0.3 6
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 5 "Ramp"
+  guid "5ce2876ebf8ab4a0111ff7e4b487294a"
+  active 1
+  parent -1
+  transform -5 1.35 -15.598076 0.25881904 0 0 0.9659258 3.5 0.3 6
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 6 "Ramp"
+  guid "149f3d2d5442894b52022d83e9af85cb"
+  active 1
+  parent -1
+  transform 0 1.9713203 -15.121321 0.38268346 0 0 0.9238795 3.5 0.3 6
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 7 "Ramp"
+  guid "8e71bafad9b9da485fc40e14d3dba0e9"
+  active 1
+  parent -1
+  transform 5 2.307456 -14.72073 0.4617486 0 0 0.8870108 3.5 0.3 6
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 8 "Ramp"
+  guid "0d0fd5d784ba7837d8fbe35637396e9c"
+  active 1
+  parent -1
+  transform 10 2.5689235 -14.267855 0.53729963 0 0 0.8433914 3.5 0.3 6
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 9 "Label"
+  guid "6f58dbf21603418113101cb68f02b671"
+  active 1
+  parent -1
+  transform -5 4 -28 0 0 0 1 1 1 1
+  text "2 STAIRS: up and down, the camera and feet stay calm" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 10 "Tread"
+  guid "49e3d0de64f154c3bd2fcb48cdf1e015"
+  active 1
+  parent -1
+  transform 0 0.09 -32.15 0 0 0 1 3 0.18 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 11 "Tread"
+  guid "b66aa895a9a698fb07f512b2edc65587"
+  active 1
+  parent -1
+  transform 0 0.18 -32.45 0 0 0 1 3 0.36 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 12 "Tread"
+  guid "1704a82d0dd4e9916ffe893f221ad516"
+  active 1
+  parent -1
+  transform 0 0.27 -32.75 0 0 0 1 3 0.54 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 13 "Tread"
+  guid "43c7546ee26b8baa20bdba0318d760a8"
+  active 1
+  parent -1
+  transform 0 0.36 -33.05 0 0 0 1 3 0.72 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 14 "Tread"
+  guid "96c70dd0693990d636f7478358b3a259"
+  active 1
+  parent -1
+  transform 0 0.45000002 -33.35 0 0 0 1 3 0.90000004 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 15 "Tread"
+  guid "fb42a603241a7018287960a9a3477d4a"
+  active 1
+  parent -1
+  transform 0 0.54 -33.65 0 0 0 1 3 1.08 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 16 "Tread"
+  guid "bc68a50e199c8255971bc75dd3bda09a"
+  active 1
+  parent -1
+  transform 0 0.63 -33.95 0 0 0 1 3 1.26 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 17 "Tread"
+  guid "54dfe48347c8eedc7131ce7abde3fd15"
+  active 1
+  parent -1
+  transform 0 0.72 -34.25 0 0 0 1 3 1.44 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 18 "Tread"
+  guid "7c5d9c765b531165fd1f282cc85a2a88"
+  active 1
+  parent -1
+  transform 0 0.81000006 -34.55 0 0 0 1 3 1.6200001 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 19 "Tread"
+  guid "e537c3ac90594702a5b713598c0add4a"
+  active 1
+  parent -1
+  transform 0 0.90000004 -34.85 0 0 0 1 3 1.8000001 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 20 "Tread"
+  guid "a53ebf53c1b14d5ede03733be33c381d"
+  active 1
+  parent -1
+  transform 0 0.99 -35.15 0 0 0 1 3 1.98 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 21 "Tread"
+  guid "a96ff02f962604f99a4ad210b9345595"
+  active 1
+  parent -1
+  transform 0 1.08 -35.45 0 0 0 1 3 2.16 0.3
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 22 "Stair landing"
+  guid "ba2a299045f01f30ee1239e72cd289d5"
+  active 1
+  parent -1
+  transform 0 1.08 -38.1 0 0 0 1 5 2.16 5
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 23 "Label"
+  guid "c2dfebe01eff2ccd74adb7b1339da2b1"
+  active 1
+  parent -1
+  transform -6 3 -46 0 0 0 1 1 1 1
+  text "3 STEPS 0.10 0.25 0.35 climb, 0.60 blocks" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 24 "Step"
+  guid "9528e98087ef05003ab7e226608c569f"
+  active 1
+  parent -1
+  transform -6 0.05 -50 0 0 0 1 2.5 0.1 2.5
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 25 "Step"
+  guid "565908ec7a2bcbe652e728f97bdd1d5a"
+  active 1
+  parent -1
+  transform -2 0.125 -50 0 0 0 1 2.5 0.25 2.5
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 26 "Step"
+  guid "6b3bf8381a212a582c1435cfce22cdfb"
+  active 1
+  parent -1
+  transform 2 0.175 -50 0 0 0 1 2.5 0.35 2.5
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 27 "Step"
+  guid "10946c9d404a6509583974bfe11eed12"
+  active 1
+  parent -1
+  transform 6 0.3 -50 0 0 0 1 2.5 0.6 2.5
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 28 "Label"
+  guid "83063a44da8941d707e31f2876e211a0"
+  active 1
+  parent -1
+  transform -6 3 -58 0 0 0 1 1 1 1
+  text "4 LEDGE: a plank over a gap, step off the side" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 29 "Plank"
+  guid "b991998303bf3bfad569d33da5b3fd17"
+  active 1
+  parent -1
+  transform 0 -0.1 -64 0 0 0 1 1.2 0.2 10
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 30 "Label"
+  guid "d269643ec06b458ad2f8124d2e9ae922"
+  active 1
+  parent -1
+  transform -7 3 -73 0 0 0 1 1 1 1
+  text "5 TUNNEL 1.3 m: crouch (Ctrl) to go in; standing up inside is refused" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 31 "Tunnel roof"
+  guid "263167d19cb11bcedb6ec0977116316c"
+  active 1
+  parent -1
+  transform 0 1.6 -80 0 0 0 1 4 0.6 8
+  mesh "Cube" 0.5882353 0.3529412 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 32 "Tunnel wall L"
+  guid "237f65e5a45ad6f36e73663a556ddd3c"
+  active 1
+  parent -1
+  transform -2.2 0.9 -80 0 0 0 1 0.4 1.8 8
+  mesh "Cube" 0.5882353 0.3529412 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 33 "Tunnel wall R"
+  guid "c934a8ebbb4102b5ce03efcf1768d818"
+  active 1
+  parent -1
+  transform 2.2 0.9 -80 0 0 0 1 0.4 1.8 8
+  mesh "Cube" 0.5882353 0.3529412 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 34 "Label"
+  guid "43c27517cce18ed0233d2e5dd486fce7"
+  active 1
+  parent -1
+  transform -9 4 -90 0 0 0 1 1 1 1
+  text "6 MOVING: ride the platform (it slides), jump off keeps its speed; the bridge turns" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 35 "Moving platform"
+  guid "23f748a873c03f057ab110b90e625a60"
+  active 1
+  parent -1
+  transform -8 0.15 -96 0 0 0 1 4 0.3 4
+  mesh "Cube" 0.3529412 0.5882353 0.78431374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  tweenanim 0 8 0.15 -96 1 1 1 1 0 0 0 4 0 0 -1 1 1 1 0 10 1 1 1 ""
+end
+gameobject 36 "Turning bridge"
+  guid "2e65e66727994137269cbbc24014c2e9"
+  active 1
+  parent -1
+  transform 0 0.4 -104 0 0 0 1 8 0.3 1.6
+  mesh "Cube" 0.3529412 0.5882353 0.78431374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  spinner 0 30 0
+end
+gameobject 37 "Label"
+  guid "c01b211380181c4704f330f4abb3f1a6"
+  active 1
+  parent -1
+  transform -8 3 -112 0 0 0 1 1 1 1
+  text "7 THIN WALL 2 cm: hold Shift and run into it, you must not get through" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 38 "Thin wall"
+  guid "85bd253dbd5df27a0db56e03864838f1"
+  active 1
+  parent -1
+  transform 0 1.5 -118 0 0 0 1 10 3 0.02
+  mesh "Cube" 0.5882353 0.3529412 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 39 "Label"
+  guid "fb179588e717ddc589a77cbe8a8c6668"
+  active 1
+  parent -1
+  transform -8 3 -126 0 0 0 1 1 1 1
+  text "8 WATER: wade in the shallow end, swim in the deep end (Space up, Ctrl down)" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 40 "Water"
+  guid "bc0f7cfffdc91f9a924233a9358767b6"
+  active 1
+  parent -1
+  transform 0 0 -134 0 0 0 1 1 1 1
+  water 12 12 0.05 9 1.1 0.15686275 0.43137255 0.64705884 0.72 0.55 0.85 80 0.025 0.018 2.2 1 4 ""
+end
+gameobject 41 "Pool floor deep"
+  guid "2c01174b2501b94f7e35d5e0343cc071"
+  active 1
+  parent -1
+  transform 0 -2.45 -137 0 0 0 1 12 0.5 6
+  mesh "Cube" 0.47058824 0.4862745 0.5176471 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 42 "Pool floor shallow"
+  guid "271fd7a6d78c46c2e9c697cf5b01730d"
+  active 1
+  parent -1
+  transform 0 -0.55 -131 0 0 0 1 12 0.5 6
+  mesh "Cube" 0.47058824 0.4862745 0.5176471 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 43 "Pool wall"
+  guid "91067b01cd3102424e7e227b3f870a76"
+  active 1
+  parent -1
+  transform 0 0.3 -140.4 0 0 0 1 12 1 0.4
+  mesh "Cube" 0.47058824 0.4862745 0.5176471 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 44 "Label"
+  guid "dc64a43e5e142c46b37c251a9ca51f34"
+  active 1
+  parent -1
+  transform -8 4 -146 0 0 0 1 1 1 1
+  text "9 VOXEL TERRAIN: walk on the hill and the little hole" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 45 "Voxel patch"
+  guid "a0b324e14ed844aa846b3cf993461474"
+  active 1
+  parent -1
+  transform 0 0 -156 0 0 0 1 1 1 1
+  voxelterrain 24 14 24 0.8 0 1 16 0.6 0.47058824 0.43137255 0.3764706 1 0.3764706 0.5882353 0.3137255 0.47843137 0.4392157 0.4 0.4392157 0.3372549 0.23529412 0.9254902 0.9411765 0.972549 0.08 "" QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3u7u3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkNGRkNCQkJCQkJCQkJCGBgYGBgYGBgYGB0jIx0YGBgYGBgYGBgY7e3t7e3t7e3t7vT6+vTu7e3t7e3t7e3tw8PDw8PDw8PDw8bLy8bDw8PDw8PDw8PDmZmZmZmZmZmZmZmampmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQ0tSUktDQkJCQkJCQkJCGBgYGBgYGBgYHSo1NSodGBgYGBgYGBgY7e3t7e3t7e3t9AIODgL07e3t7e3t7e3tw8PDw8PDw8PDxtHb29HGw8PDw8PDw8PDmZmZmZmZmZmZmZ2iop2ZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCRlJcXFJGQkJCQkJCQkJCGBgYGBgYGBgYIzVDQzUjGBgYGBgYGBgY7e3t7e3t7e3u+g4dHQ767u3t7e3t7e3tw8PDw8PDw8PDy9vn59vLw8PDw8PDw8PDmZmZmZmZmZmZmqKpqaKamZmZmZmZmZmZgYGBgYGBgYGBgYGDg4GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCRlJcXFJGQkJCQkJCQkJCGBgYGBgYGBgYIzVDQzUjGBgYGBgYGBgY7e3t7e3t7e3u+g4dHQ767u3t7e3t7e3tw8PDw8PDw8PDy9vn59vLw8PDw8PDw8PDmZmZmZmZmZmZmqKpqaKamZmZmZmZmZmZgYGBgYGBgYGBgYGDg4GBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQ0tSUktDQkJCQkJCQkJCGBgYGBgYGBgYHSo1NSodGBgYGBgYGBgY7e3t7e3t7e3t9AIODgL07e3t7e3t7e3tw8PDw8PDw8PDxtHb29HGw8PDw8PDw8PDmZmZmZmZmZmZmZ2iop2ZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkNGRkNCQkJCQkJCQkJCGBgYGBgYGBgYGB0jIx0YGBgUDxgYGBgY7e3t7e3t7e3t7vT6+vTu7e3t6u3t7e3tw8PDw8PDw8PDw8bLy8bDw8PDw8PDw8PDmZmZmZmZmZmZmZmampmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBj76w8YGBgY7e3t7e3t7e3t7e3u7u3t7e3c0ert7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgH+xQYGBgY7e3t7e3t7e3t7e3t7e3t7e3l3O3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3tw8PDw8PDw8PDw8PDw8PDw8PDw8PDw8PDmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGB
+end
+gameobject 46 "Label"
+  guid "72111b94e6cabf6f082851cf9f4eea27"
+  active 1
+  parent -1
+  transform -10 8 -164 0 0 0 1 1 1 1
+  text "10 LADDER: walk into it and hold W to climb, Space to jump off; the jump down from the top is a hard landing (F3 counts them)" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 47 "Tower"
+  guid "f3b45d11f56c49b1a3126ff7c33996dc"
+  active 1
+  parent -1
+  transform 0 3 -172 0 0 0 1 3 6 3
+  mesh "Cube" 0.5882353 0.3529412 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 48 "Ladder"
+  guid "d33af39897028a3d84950ae94c8dee7c"
+  active 1
+  tag "Climbable"
+  parent -1
+  transform 0 3.5 -169.9 0 0 0 1 1 1 1
+  boxcollider3d 1.2 7 1.2 0 0 0 1 0 0
+end
+gameobject 49 "Ladder rails"
+  guid "7ff958d3488ecc39aed15d454d5c8536"
+  active 1
+  parent -1
+  transform 0 3.5 -170.45 0 0 0 1 1.2 7 0.1
+  mesh "Cube" 0.74509805 0.5882353 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 50 "Pool bank"
+  guid "ee8d5f9442786fe3dfef912d633e0e0f"
+  active 1
+  parent -1
+  transform 9 -0.9 -134 0 0 0 1 6 2.4 12
+  mesh "Cube" 0.47058824 0.4862745 0.5176471 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 51 "Player"
+  guid "dac09cfa9d30d422ba8070ebb4151376"
+  active 1
+  parent -1
+  transform 0 0.05 6 0 0 0 1 1 1 1
+  animsm "Idle" 48 "Idle" "Idle" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Walk" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.28 "Run" 3 "run" 0 0.22 "Run" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.22 "Walk" 4 "run" 0 0.22 "Crouch" "Crouch" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "CrouchWalk" 1 "speed" 0.35 0.2 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "CrouchWalk" "" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "Crouch" 2 "speed" 0.2 0.2 "Prone" "Prone" 1 1 4 "Crawl" 1 "speed" 0.35 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "GetUp" 4 "prone" 0 0.1 "Crawl" "" 1 1 6 "Prone" 2 "speed" 0.2 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "Run" 4 "prone" 0 0.8 "Walk" 4 "prone" 0 0.8 "GetUp" 4 "prone" 0 0.1 "GetUp" "GetUp" 1.25 0 7 "Prone" 3 "prone" 0 0.75 "Crouch" 3 "crouch" 0 0.25 "CrouchWalk" 0 "" 0 0.25 "Crouch" 0 "" 0 0.25 "Run" 0 "" 0 0.15 "Walk" 0 "" 0 0.15 "Idle" 0 "" 0 0.15 "Drop" "Drop" 1.3333334 0 4 "Crouch" 4 "prone" 0 0.25 "Idle" 4 "prone" 0 0.2 "Crawl" 0 "" 0 0.75 "Prone" 0 "" 0 0.75 "Jump" "Jump" 1 0 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Fall" "Fall" 1 1 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Land" "Land" 1 0 7 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Idle" 0 "" 0 0.28 "Hang" "Hang" 1 1 9 "Death" 5 "die" 0 0.12 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 2 "airTime" 0.12 0.25 "Crouch" 2 "airTime" 0.12 0.25 "Run" 2 "airTime" 0.12 0.2 "Walk" 2 "airTime" 0.12 0.2 "Idle" 2 "airTime" 0.12 0.2 "Fall" 4 "hanging" 0 0.12 "Wave" "Wave" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Point" "Point" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Clap" "Clap" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "ThumbsUp" "ThumbsUp" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Salute" "Salute" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "WaveBoth" "WaveBoth" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Cheer" "Cheer" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Sad" "Sad" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Angry" "Angry" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Think" "Think" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Death" "" 1 0 2 "GetUp" 4 "dead" 0 0.8 "DeadHold" 0 "" 0 0.5 "DeadHold" "" 1 1 1 "GetUp" 4 "dead" 0 0.8 "Dive" "Dive" 1 0 4 "Death" 5 "die" 0 0.2 "DiveLand" 0 "" 0 0.5 "Crawl" 0 "" 0 0.5 "Prone" 0 "" 0 0.5 "DiveLand" "DiveLand" 1 0 3 "Death" 5 "die" 0 0.2 "Crawl" 3 "grounded" 0 0.5 "Prone" 3 "grounded" 0 0.5 "SitDown" "" 1 0 1 "Sit" 0 "" 0 0.15 "Sit" "" 1 1 1 "StandUp" 4 "sitting" 0 0.12 "StandUp" "" 1 0 1 "Idle" 0 "" 0 0.2 "HitHeavy" "" 1 0 1 "Idle" 0 "" 0 0.1 "Hit_Crouch" "Hit_Crouch" 1 0 1 "Crouch" 0 "" 0 0.1 "Hit_Prone" "Hit_Prone" 1 0 1 "Prone" 0 "" 0 0.1 "Roll" "Roll_F" 1 0 1 "Idle" 0 "" 0 0.12 "Dodge" "" 1 0 1 "Idle" 0 "" 0 0.12 "Slide" "Slide" 1 1 1 "SlideEnd" 4 "slide" 0 0.1 "SlideEnd" "SlideEnd" 1 0 2 "Run" 0 "" 0 0.12 "Crouch" 0 "" 0 0.12 "Vault" "Vault" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleLow" "Mantle_Low" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleHigh" "Mantle_High" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LedgeGrab" "LedgeGrab" 1 0 2 "Death" 5 "die" 0 0.12 "Hang" 0 "" 0 0.15 "ClimbUp" "ClimbUp" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LetGo" "LetGo" 1 0 2 "Death" 5 "die" 0 0.12 "Fall" 0 "" 0 0.15 "HangShimmy" "" 1 1 2 "Death" 5 "die" 0 0.12 "Hang" 2 "shimmy" 0.2 0.25 "Swim" "" 1 1 2 "Death" 5 "die" 0 0.2 "Idle" 4 "swimming" 0 0.8 "Emote_Nod" "Emote_Nod" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shake" "Emote_Shake" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shrug" "Emote_Shrug" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15
+  animsmpos 48 40 40 40 130 40 220 260 40 260 130 480 40 480 130 480 220 480 310 700 40 700 130 700 220 700 310 920 40 920 130 920 220 920 310 920 400 920 490 920 580 920 670 920 760 920 850 1140 40 1140 130 1360 40 1360 130 1580 40 1580 130 1580 220 1800 40 1800 130 1800 220 2020 40 2020 130 2020 220 2020 310 2240 40 2240 130 2240 220 2240 310 2240 400 2240 490 2240 580 2460 40 2680 40 2680 130 2680 220
+  animsmparams 37 "speed" 0 "airTime" 0 "verticalSpeed" 0 "gaitX" 0 "gaitZ" 0 "gaitSpeed" 0 "run" 1 "crouch" 1 "prone" 1 "dive" 2 "grounded" 1 "sprint" 1 "deathDir" 0 "dead" 1 "die" 2 "sitting" 1 "sitType" 0 "sit" 2 "hit" 2 "hitDir" 0 "hitHeavy" 1 "staggerScale" 0 "dodgeDir" 0 "roll" 2 "dodge" 2 "slide" 1 "vault" 2 "mantle" 2 "ledgeGrab" 2 "climbUp" 2 "letGo" 2 "hanging" 1 "shimmy" 0 "swimSpeed" 0 "swimming" 1 "emoteId" 3 "emote" 2
+  animsmx 48 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "gaitX" 40 "Walk_0.3_F" 0 "Walk_0.3_FR" 0.21213204 "Walk_0.3_R" 0.3 "Walk_0.3_BR" 0.21213204 "Walk_0.3_B" -2.6226834e-08 "Walk_0.3_BL" -0.21213204 "Walk_0.3_L" -0.3 "Walk_0.3_FL" -0.21213204 "Walk_1_F" 0 "Walk_1_FR" 0.70710677 "Walk_1_R" 1 "Walk_1_BR" 0.70710677 "Walk_1_B" -8.742278e-08 "Walk_1_BL" -0.70710677 "Walk_1_L" -1 "Walk_1_FL" -0.70710677 "Walk_2_F" 0 "Walk_2_FR" 1.4142135 "Walk_2_R" 2 "Walk_2_BR" 1.4142135 "Walk_2_B" -1.7484555e-07 "Walk_2_BL" -1.4142135 "Walk_2_L" -2 "Walk_2_FL" -1.4142135 "Walk_3_F" 0 "Walk_3_FR" 2.1213202 "Walk_3_R" 3 "Walk_3_BR" 2.1213202 "Walk_3_B" -2.6226832e-07 "Walk_3_BL" -2.1213202 "Walk_3_L" -3 "Walk_3_FL" -2.1213202 "Walk_4.5_F" 0 "Walk_4.5_FR" 3.1819804 "Walk_4.5_R" 4.5 "Walk_4.5_BR" 3.1819804 "Walk_4.5_B" -3.934025e-07 "Walk_4.5_BL" -3.1819804 "Walk_4.5_L" -4.5 "Walk_4.5_FL" -3.1819804 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 1 "gaitX" 40 "Run_3_F" 0 "Run_3_FR" 2.1213202 "Run_3_R" 3 "Run_3_BR" 2.1213202 "Run_3_B" -2.6226832e-07 "Run_3_BL" -2.1213202 "Run_3_L" -3 "Run_3_FL" -2.1213202 "Run_4_F" 0 "Run_4_FR" 2.828427 "Run_4_R" 4 "Run_4_BR" 2.828427 "Run_4_B" -3.496911e-07 "Run_4_BL" -2.828427 "Run_4_L" -4 "Run_4_FL" -2.828427 "Run_5.5_F" 0 "Run_5.5_FR" 3.8890872 "Run_5.5_R" 5.5 "Run_5.5_BR" 3.8890872 "Run_5.5_B" -4.808253e-07 "Run_5.5_BL" -3.8890872 "Run_5.5_L" -5.5 "Run_5.5_FL" -3.8890872 "Run_7_F" 0 "Run_7_FR" 4.9497476 "Run_7_R" 7 "Run_7_BR" 4.9497476 "Run_7_B" -6.119594e-07 "Run_7_BL" -4.9497476 "Run_7_L" -7 "Run_7_FL" -4.9497476 "Run_8.5_F" 0 "Run_8.5_FR" 6.0104074 "Run_8.5_R" 8.5 "Run_8.5_BR" 6.0104074 "Run_8.5_B" -7.430936e-07 "Run_8.5_BL" -6.0104074 "Run_8.5_L" -8.5 "Run_8.5_FL" -6.0104074 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "gaitX" 24 "CrouchWalk_0.3_F" 0 "CrouchWalk_0.3_FR" 0.21213204 "CrouchWalk_0.3_R" 0.3 "CrouchWalk_0.3_BR" 0.21213204 "CrouchWalk_0.3_B" -2.6226834e-08 "CrouchWalk_0.3_BL" -0.21213204 "CrouchWalk_0.3_L" -0.3 "CrouchWalk_0.3_FL" -0.21213204 "CrouchWalk_1_F" 0 "CrouchWalk_1_FR" 0.70710677 "CrouchWalk_1_R" 1 "CrouchWalk_1_BR" 0.70710677 "CrouchWalk_1_B" -8.742278e-08 "CrouchWalk_1_BL" -0.70710677 "CrouchWalk_1_L" -1 "CrouchWalk_1_FL" -0.70710677 "CrouchWalk_2_F" 0 "CrouchWalk_2_FR" 1.4142135 "CrouchWalk_2_R" 2 "CrouchWalk_2_BR" 1.4142135 "CrouchWalk_2_B" -1.7484555e-07 "CrouchWalk_2_BL" -1.4142135 "CrouchWalk_2_L" -2 "CrouchWalk_2_FL" -1.4142135 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 1 "speed" 0.2 3 "run" 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 "" 0 4 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 0 1 "gaitX" 4 "Crawl" 0 "Crawl_R" 0.8 "Crawl_B" 0 "Crawl_L" -0.8 6 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 0 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 4 0 1 0 1 3 "crouch" 0 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 1 0 0 0 "" 0 9 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "deathDir" 4 "Death_F" 0 "Death_B" 1 "Death_L" 2 "Death_R" 3 2 0 1 0 0 1 1 0 0 1 "deathDir" 4 "DeadHold_F" 0 "DeadHold_B" 1 "DeadHold_L" 2 "DeadHold_R" 3 1 0 1 0 0 0 "" 0 4 0 1 0 0 1 1 0 1 4 "grounded" 0 1 1 0 2 3 "grounded" 0 1 "speed" 0.35 1 1 0 1 3 "grounded" 0 0 "" 0 3 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "sitType" 2 "SitDown_Chair" 0 "SitDown_Ground" 1 1 1 1 0 0 1 "sitType" 3 "Sit_Chair" 0 "Sit_Ground" 1 "Sit_Ground_Knees" 2 1 0 1 0 0 1 "sitType" 2 "StandUp_Chair" 0 "StandUp_Ground" 1 1 1 1 0 0 1 "hitDir" 2 "Hit_Heavy_F" 0 "Hit_Heavy_B" 1 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 1 "dodgeDir" 4 "Roll_F" 0 "Dodge_B" 1 "Dodge_L" 2 "Dodge_R" 3 1 1 1 0 0 0 "" 0 1 0 1 0 0 0 "" 0 2 1 1 0 2 3 "sprint" 0 4 "crouch" 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 1 "shimmy" 2 "Hang_Shimmy_L" -1 "Hang_Shimmy_R" 1 2 0 1 0 0 0 1 0 1 1 "shimmy" -0.2 1 "swimSpeed" 2 "Swim_Tread" 0 "Swim_Fwd" 1.5 2 0 1 0 0 0 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0
+  animsmany 22 "Swim" 3 "swimming" 0 0.5 0 1 0 0 "Jump" 1 "airTime" 0.12 0.12 0 1 0 2 1 "verticalSpeed" 0.4 4 "prone" 0 "Fall" 1 "airTime" 0.12 0.12 0 1 0 2 2 "verticalSpeed" 0.4 4 "prone" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "sprint" 0 3 "grounded" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "run" 0 3 "grounded" 0 "Death" 5 "die" 0 0.25 0 1 0 0 "SitDown" 5 "sit" 0 0.2 0 1 0 0 "Hit_Prone" 5 "hit" 0 0.25 0 1 1 1 3 "prone" 0 "Hit_Crouch" 5 "hit" 0 0.25 0 1 1 2 3 "crouch" 0 4 "prone" 0 "HitHeavy" 5 "hit" 0 0.25 0 1 1 3 3 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0 "Roll" 5 "roll" 0 0.1 0 1 1 0 "Dodge" 5 "dodge" 0 0.1 0 1 1 0 "Slide" 3 "slide" 0 0.1 0 1 0 0 "Vault" 5 "vault" 0 0.12 0 1 0 0 "MantleLow" 5 "mantle" 0 0.12 0 1 0 0 "LedgeGrab" 5 "ledgeGrab" 0 0.12 0 1 0 0 "ClimbUp" 5 "climbUp" 0 0.12 0 1 0 0 "LetGo" 5 "letGo" 0 0.12 0 1 0 0 "Hang" 3 "hanging" 0 0.12 0 1 0 0 "Emote_Nod" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 0 "Emote_Shake" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 1 "Emote_Shrug" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 2
+  animsm2d 48 1 "" "" 0 2 "gaitZ" "gaitSpeed" 40 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 3 2.1213202 -1.3113416e-07 -2.1213202 -3 -2.1213202 -1.3113416e-07 2.1213202 4.5 3.1819804 -1.9670125e-07 -3.1819804 -4.5 -3.1819804 -1.9670125e-07 3.1819804 2 "gaitZ" "gaitSpeed" 40 3 2.1213202 -1.3113416e-07 -2.1213202 -3 -2.1213202 -1.3113416e-07 2.1213202 4 2.828427 -1.7484555e-07 -2.828427 -4 -2.828427 -1.7484555e-07 2.828427 5.5 3.8890872 -2.4041265e-07 -3.8890872 -5.5 -3.8890872 -2.4041265e-07 3.8890872 7 4.9497476 -3.059797e-07 -4.9497476 -7 -4.9497476 -3.059797e-07 4.9497476 8.5 6.0104074 -3.715468e-07 -6.0104074 -8.5 -6.0104074 -3.715468e-07 6.0104074 1 "" "" 0 2 "gaitZ" "gaitSpeed" 24 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 1 "" "" 0 2 "gaitZ" "gaitSpeed" 4 0.8 0 -0.8 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 3 0 0 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0
+  animsmev 48 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0.31 0.14124998 0.29 0 "" "" 1 6 0 0 0 0 0 0 "" "" 0 4 0 0 0 0 "" "" 0 6 0 0 0 0 0 0 "" "" 0 7 0 0 0.31 0 0.14124998 0.29 0 "" "" 0 4 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0.31 0 0.14124998 0.29 0 "" "" 1 9 0 0 0 0.31 0 0.14124998 0.29 0 0 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 0 2 0 0 "" "" 0 1 0 "" "" 0 4 0 0 0 0 "" "" 0 3 0 0 0 "" "" 0 1 0 "sit" "" 0 1 0 "stand" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmfb 48 -1 -1 -1 -1 -1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 0 0 0 1 1 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 -1 -1 -1
+  animsmlk 48 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmint 48 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 4 0 4 4 4 6 4 4 4 4 4 0 4 0 4 4 0 6 0 4 4 4 4 0 7 4 4 4 4 0 0 0 4 4 0 4 4 7 0 0 0 0 4 4 4 7 0 0 0 0 4 4 4 7 4 0 4 4 4 4 4 9 1 4 0 4 4 0 0 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 2 0 0 1 0 4 0 0 0 0 3 0 0 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 2 0 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 3 0 0 0 3 0 0 0 3 0 0 0
+  animsmmatch 48 0 1 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmactions 8
+  animsmnoint 48 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1
+  animsmanyint 22 1 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmlayer 1 0 "Torso"
+  animsm "Off" 2 "Off" "Hit_Off" 1 1 0 "Hit" "" 1 0 1 "Off" 0 "" 0 0.1
+  animsmpos 2 40 40 40 140
+  animsmx 2 0 "" 0 0 1 "hitDir" 4 "Hit_F" 0 "Hit_B" 1 "Hit_L" 2 "Hit_R" 3 1 1 1 0 0
+  animsmany 1 "Hit" 5 "hit" 0 0.1 0 1 1 3 4 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0
+  animsmanyint 1 1
+  fphands 1 0 1 1 1 0 0 0 0 0 0 0 1 0 1 -0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 1 0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0
+  fphands2 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0
+  fphands3 0 1 0 1 1
+  character 1 0.862745 0.690196 0.588235 0.235294 0.372549 0.294118 0.156863 0.164706 0.215686 0.14902 0.137255 0.14902 0.313726 0.196078 0.117647 0.117647 0.101961 0.109804 0.588235 0.176471 0.176471 0.294118 0.235294 0.176471 0.176471 0.156863 0.137255 0.27451 0.27451 0.313726 0.137255 0.109804 0.0862745 1 0 0 2 0 1 0 0 0 0 0 0 0 0 0 0 1 1 "-" - 0 1 0 - - - 0.15 0 - - - 0 0 0 0.05 0.12 28 50 0.22 32 0.45 1 5 - 0
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 0.6 1.8 0.6 0 0.9 0 0 0 0
+  playercontroller view=2 allow=1 start=1 key=118 pad=4 blend=0.3 ease=1 snap=0 ex=0 ey=0 ez=0 dist=-1 shoulder=0 presetKeys=0
+  pcfirst 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  pcfirstfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
+  pcfirststance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=1 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+  pcthird 2 5.5 6 0.2 24 5 1.5 1 1 0 0 2 12 1 0 20 -20 70 0 130 90 0.78 0.12 0.12 1 0.3 16 0 17 122 1 1 0.5 0.4 1.1 12 113 101 12 0.5 10 1 0 20 10 0.6 0.05 0.2 4294967295 30 6
+  pcthirdstance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.2 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=1 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+  pcthirdfeel 0 6 7 1 2.2 0.65 48 0.6 10 0 1.5 2.5 0.25 1.5 1 10 0.75 1 1 0 0 7.5 0.35 0.55 18 0 0 0 0 1
+  comporder "Character" "MeshRenderer" "AnimStateMachine" "AnimStateMachine" "Rigidbody3D" "BoxCollider3D" "PlayerController" "FirstPersonController" "ThirdPersonController" "PlayerView" "FirstPersonHands"
+end
+gameobject 52 "Main Camera"
+  guid "3db4a22ec218dc42316e3ffaea58ee7c"
+  active 1
+  parent 51
+  transform 0.45 3.045085 4.755283 -0.15643448 0 0 0.98768836 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

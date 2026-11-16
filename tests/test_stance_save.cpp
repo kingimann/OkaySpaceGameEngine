@@ -59,7 +59,7 @@ void UnderCover(void (*tpl)(Scene&), char stanceKey, typename C::Stance want, fl
 
     // Crawl out from under the cover and stand up: the full-height body comes back.
     Step(b, {stanceKey}, 1);
-    Step(b, {'w'}, 420); Step(b, {}, 30);   // prone crawls at 0.5 m/s now (walk-vs-run defaults), so give it time to clear a 4 m cover
+    { const Vec3 a0 = q->transform->Position(); Step(b, {'w'}, 420); Step(b, {}, 30); const Vec3 d0 = q->transform->Position() - a0; std::printf("  crawl: moved %.2f m, stance %d, box %.2f\n", std::sqrt(d0.x*d0.x+d0.z*d0.z), (int)c->stance(), box->size.y); }   // prone crawls at 0.5 m/s now (walk-vs-run defaults), so give it time to clear a 4 m cover
     CHECK(c->stance() == C::Stance::Stand);
     CHECK_NEAR(box->size.y, 1.8f, 1e-3f);
 }

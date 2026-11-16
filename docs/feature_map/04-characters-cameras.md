@@ -37,11 +37,12 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.2.5 Vault, mantle, ledge grab - `Components/Traversal` - TraverseKind, TraverseProbe, TraverseJob; canVault, canMantle, canLedgeGrab default off; vault() and mantle() still probe
   - 4.2.6 Swimming - `Components/FirstPersonController`, `Components/ThirdPersonController` - waist-deep water (read from a Water probe) switches to swim speeds
   - 4.2.7 Collision for transform-only players - `Physics/PlayerCollision` - a sphere pushed out of solid geometry when there is no Rigidbody3D
+  - 4.2.8 Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) - `Components/PlayerPerf`, `Components/PlayerDebug`, `Components/StepUp`, the two controllers - ground read from the contact normal (not the other object's pivot), the slope limit on box, mesh and heightmap ground, held still on a slope it may stand on, slide along walls, stay on the treads going down, a jump off a moving platform keeps its speed, a floor that vanishes under a sleeping player, remote avatars run no wall or camera code; `OKAY_OLD_PLAYER=1` brings the old path back; Slope Limit and Step Offset saved and in the Inspector; `docs/player_audit.md`
 - **Code:** `Components/Stance`, `Components/StanceControl`, `Components/StepUp`, `Components/ControllerFeel`, `Components/Traversal`, `Components/DodgeAction`, `Components/DiveAction`, `Physics/PlayerCollision`
 - **API:** `StanceControl`, `StanceTimes`, `GroundLatch`, `TraverseKind`; scripts `crouch()`, `prone()`, `stand()`, `set_stance(0|1|2)`, `SetStance`, `dodge(dir)`, `dive()`, `vault()`, `mantle()`
 - **Editor:** Player Controller panel sections (Crouch / prone, Slide, Dodge, Vault and mantle, Stance changes on the Animator)
 - **Docs:** `docs/making_a_game.md` (Crouch and prone), `docs/animation.md` (Actions: dive, roll, vault)
-- **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`
+- **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`, `player_deep`, `player_course`
 - **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
 - **Open:** old map: verify prone on first and third person; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
 - **Related:** 4.1, 5.12, 5.6, 5.9, 6.2

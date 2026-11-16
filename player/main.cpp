@@ -24,6 +24,7 @@
 #endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
@@ -40,6 +41,7 @@
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
@@ -1806,6 +1808,7 @@ int main(int argc, char** argv) {
         std::sscanf(si, "%f,%f,%f,%f", &f.left, &f.top, &f.right, &f.bottom);
     }
     bool g_statsUI = false;           // F3 toggles the OkayUI performance HUD
+    int  g_statsPage = 0;             // F3 again: page 1 = milliseconds per system (physics, scripts, animation, ...)
     char g_uiText[32] = {0}; bool g_uiBack = false;
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
@@ -1910,7 +1913,11 @@ int main(int argc, char** argv) {
             if (e.type == ET::Quit) running = false;
 #ifdef OKAY_HAVE_OKAYUI
             if (keyDown && e.key == PK::F1 && devPanels) g_testUI = !g_testUI;
-            if (keyDown && e.key == PK::F3) g_statsUI = !g_statsUI;
+            if (keyDown && e.key == PK::F3) {   // off -> frame page -> systems page -> off
+                if (!g_statsUI) { g_statsUI = true; g_statsPage = 0; }
+                else if (g_statsPage == 0) g_statsPage = 1;
+                else { g_statsUI = false; g_statsPage = 0; }
+            }
             if (e.type == ET::MouseWheel) g_uiWheel += osWheelY;   // for OkayUI scrolling
             if (g_testUI || okay::ServerBrowser::Shared().windowOpen) {   // OkayUI text fields need the typing
                 if (e.type == ET::TextInput) {   // append, truncated to the buffer like SDL_strlcat did
@@ -2237,6 +2244,12 @@ int main(int argc, char** argv) {
                 okay::DisplaySettings::ApplyQuality();
             }
         }
+#ifdef OKAY_HAVE_OKAYUI
+        okay::Prof().enabled = g_statsUI && g_statsPage == 1;   // only measured while the systems page is open
+#else
+        okay::Prof().enabled = false;   // the F3 page is an OkayUI panel: builds without OkayUI (web) never measure
+#endif
+        okay::Prof().BeginFrame();
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
@@ -2260,12 +2273,13 @@ int main(int argc, char** argv) {
                     AudioMixer::SetListener(lt->Position(), lt->Right());
                 }
                 std::vector<float> st((size_t)n * 2);
-                AudioMixer::RenderStereo(scene, st.data(), n);
+                { OKAY_PROFILE("Audio.Mix"); AudioMixer::RenderStereo(scene, st.data(), n); }
                 if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
                 audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
             }
         }
 
+        okay::Prof().Begin("Render.Submit");
         int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;
         Color bg = cam ? cam->backgroundColor : Color::Black;
@@ -2436,20 +2450,26 @@ int main(int argc, char** argv) {
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
+                const char* rendererUsed = nullptr;   // which renderer drew this frame (shown in the F3 overlay)
                 if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
-                    if (!px && d3d12Ready && d3d12Renderer)
+                    if (!px && d3d12Ready && d3d12Renderer) {
                         px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                    if (!px && d3dReady && d3dRenderer)
+                        if (px) rendererUsed = "Direct3D 12 (GPU)";
+                    }
+                    if (!px && d3dReady && d3dRenderer) {
                         px = d3dRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                        if (px) rendererUsed = "Direct3D 11 (GPU)";
+                    }
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
                         if (glWindow->MakeCurrent()) {
                             px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
                             okay::platform::Default()->ReleaseCurrent();
+                            if (px) rendererUsed = "OpenGL (GPU)";
                         }
                     }
                     if (!px) ++gpuFails; else gpuFails = 0;
@@ -2461,9 +2481,13 @@ int main(int argc, char** argv) {
                 // GPU renderers don't read back depth, so particle occlusion is off for
                 // them; the software path (next line) fills + validates the depth buffer.
                 SceneOcclusionDepth().valid = false;
-                if (!px)
+                if (!px) {
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                    rendererUsed = !cfg.gpu ? "SOFTWARE (CPU; GPU switched off in the config)"
+                                 : gpuFails >= 3 ? "SOFTWARE (CPU; the GPU renderer failed 3 times and is not retried)" : "SOFTWARE (CPU; no GPU renderer started)";
+                }
+                if (rendererUsed) okay::FrameOverlay::RendererName() = rendererUsed;
                 if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)
                     okay::StoreCameraTarget(cam->renderTarget, px, vw, vh);
                 if (px) {
@@ -2496,13 +2520,12 @@ int main(int argc, char** argv) {
                 // HALF-resolution software depth pre-pass to fill the occlusion buffer so
                 // particles still hide behind geometry. Only pay it when particles exist.
                 if (!SceneOcclusionDepth().valid) {
-                    bool anyParticles = false;   // (or lines / trails: they hide behind geometry the same way)
-                    for (const auto& up : scene.Objects())
-                        if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
-                                                 up->GetComponent<TrailRenderer>())) { anyParticles = true; break; }
+                    // (or lines / trails: they hide behind geometry the same way). A particle system with no live particle does
+                    // not count: the Voxel Digger's dust object exists from the first dig on and made every later frame pay for this pass.
+                    const bool anyParticles = okay::SceneHasOverlayNeedingDepth(scene);
                     if (anyParticles) {
                         static Raster occWork; static std::vector<std::uint32_t> occDown;
-                        int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
+                        int hw = w > 1 ? std::min(w / 2, 427) : 1, hh = h > 1 ? std::max(1, hw * h / std::max(1, w)) : 1;   // half resolution, but never above 427 wide: a coarse depth test is enough for particles
                         FillOcclusionDepth(occWork, occDown, scene, vp, camPos, hw, hh, ignore);
                     }
                 }
@@ -2701,6 +2724,8 @@ int main(int argc, char** argv) {
             };
             UIWorld().clipContains = [ww, hh](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, (float)ww, (float)hh); };
         }
+        okay::Prof().End();   // Render.Submit
+        okay::Prof().Begin("UI.Draw");
         ui2d::RenderSceneUI(scene, uiBatch, w, h);
         uiBatch.Flush();   // leaves no clip, scale 1
 
@@ -2755,15 +2780,20 @@ int main(int argc, char** argv) {
         // not the 0.1 s the game stepped), plus the time scale, hit stop, debug scale and pause reasons. The
         // editor's Game view shows the same lines.
         if (g_statsUI) {
-            const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
-            const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
+            std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            for (const std::string& pl : okay::PlayerDebug::Lines(scene)) overlayLines.push_back(pl);   // the local player's ground, slope and speed
+            std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
+            if (g_statsPage == 1) {   // page 2: which system eats the frame (ms each) + the last 120 frame times
+                overlayLines = okay::SystemCost::Lines(okay::Prof());
+                plot = okay::SystemCost::Plot(okay::Prof());
+            }
 
-            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list
+            OkayUI::Begin(g_statsPage == 1 ? "Systems  (F3: next page)" : "Performance  (F3: systems page)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list
             for (const std::string& ol : overlayLines) OkayUI::Text(ol.c_str());
             char line[64];
             std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
             OkayUI::LabelText("Objects", line);
-            OkayUI::SeparatorText("FPS (last 90 frames)");
+            OkayUI::SeparatorText(g_statsPage == 1 ? "Frame ms (last 120 frames)" : "FPS (last 90 frames)");
             OkayUI::PlotLines("", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);   // no label: OkayUI draws "##" ids as text
             OkayUI::SeparatorText("Scene objects");
             if (OkayUI::BeginChild("##objs", 0.0f, 64.0f, true)) {
@@ -2782,6 +2812,7 @@ int main(int argc, char** argv) {
         }
         pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
+        okay::Prof().End();   // UI.Draw
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
@@ -2829,6 +2860,7 @@ int main(int argc, char** argv) {
         // unless the GPU post chain already drew it into the frame.
         if (!okay::PostVignetteHandled()) DrawVignette(renderer, scene.renderSettings.vignette);
         renderer->Present();
+        okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.
         if (cfg.fpsCap > 0) {

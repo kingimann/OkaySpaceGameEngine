@@ -37,6 +37,7 @@ public:
     Vec3  eyeOffset{0, 0, 0};           ///< added at the eyes (local: +X right, +Y up, +Z back)
     float thirdPersonDistance = -1.0f;  ///< orbit distance while this view is driving; < 0 = the controller's own
     float shoulderOffset = 0.0f;        ///< over-the-shoulder shift while this view is driving
+    bool  presetHotkeys = false;        ///< keys 1-5 apply a feel preset (Classic, Modern, Arcade, Realistic, Shooter) to the player: a testing aid, off by default
 
     /// 0 = first person, 1 = third person. The view asked for (the camera eases there).
     void SetView(int view);

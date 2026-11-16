@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Animation/AnimationClip.hpp"
@@ -28,6 +29,7 @@ public:
     void  Restart() { m_time = 0.0f; m_eventsPrimed = false; ApplyAt(0.0f); }
 
     void Update(float dt) override {
+        OKAY_PROFILE("Anim.Clip");
         if (!playing) return;
         float prev = m_time;
         m_time += dt * speed;

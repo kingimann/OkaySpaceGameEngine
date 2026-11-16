@@ -46,8 +46,11 @@ GAME_DIR="$(cd "$GAME_DIR" && pwd)"
 KEEP="${KEEP:-3}"
 BUCKET="${BUCKET:-releases}"
 PREFIX="official"
-SUPABASE_URL="${SUPABASE_URL:-$(grep -m1 '^set(OKAY_DEFAULT_ACCOUNT_URL' CMakeLists.txt | grep -oE 'https://[a-z0-9]+\.supabase\.co')}"
+# The project URL: SUPABASE_URL, else OKAY_DEFAULT_ACCOUNT_URL, else config/public-account.json (the value the build bakes in).
+. "$(dirname "$0")/public-account.sh"
+SUPABASE_URL="${SUPABASE_URL:-${OKAY_DEFAULT_ACCOUNT_URL:-$(okay_public_account url)}}"
 SUPABASE_URL="${SUPABASE_URL%/}"
+[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set and config/public-account.json has no url (docs/accounts.md)"
 REF="$(printf '%s' "$SUPABASE_URL" | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')"
 MAX_BYTES=$((50 * 1024 * 1024))   # Supabase's per-file upload limit on this plan
 [[ "$KEEP" =~ ^[1-9][0-9]*$ ]] || die "KEEP must be a whole number (got $KEEP)"

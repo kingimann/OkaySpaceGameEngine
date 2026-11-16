@@ -514,23 +514,76 @@ struct CurveNode {
     const Curve* curve[3] = {nullptr, nullptr, nullptr};
 };
 
+/// Object id -> value, open addressing in flat arrays (no allocation per entry, unlike a node-based map; scenes have
+/// tens of thousands of objects). Nothing iterates it, so the layout never shows in the output.
+template <class V> struct IdMap {
+    std::vector<Id> keys; std::vector<V> vals; std::vector<unsigned char> used; std::size_t n = 0;
+    static std::size_t Hash(Id id) { std::uint64_t h = (std::uint64_t)id * 0x9E3779B97F4A7C15ull; return (std::size_t)(h ^ (h >> 29)); }
+    std::size_t Slot(Id id) const {
+        const std::size_t mask = keys.size() - 1;
+        std::size_t at = Hash(id) & mask;
+        while (used[at] && keys[at] != id) at = (at + 1) & mask;
+        return at;
+    }
+    void Rehash(std::size_t cap) {
+        std::vector<Id> k(cap); std::vector<V> v(cap); std::vector<unsigned char> u(cap, 0);
+        k.swap(keys); v.swap(vals); u.swap(used);
+        for (std::size_t i = 0; i < k.size(); ++i) if (u[i]) { const std::size_t s = Slot(k[i]); used[s] = 1; keys[s] = k[i]; vals[s] = std::move(v[i]); }
+    }
+    void reserve(std::size_t want) { std::size_t cap = 16; while (cap < want * 2) cap <<= 1; if (cap > keys.size()) Rehash(cap); }
+    const V* find(Id id) const { if (keys.empty()) return nullptr; const std::size_t s = Slot(id); return used[s] ? &vals[s] : nullptr; }
+    V* find(Id id) { if (keys.empty()) return nullptr; const std::size_t s = Slot(id); return used[s] ? &vals[s] : nullptr; }
+    bool count(Id id) const { return find(id) != nullptr; }
+    V& operator[](Id id) {
+        if ((n + 1) * 2 > keys.size()) Rehash(keys.empty() ? 16 : keys.size() * 2);
+        const std::size_t s = Slot(id);
+        if (!used[s]) { used[s] = 1; keys[s] = id; vals[s] = V(); ++n; }
+        return vals[s];
+    }
+};
+
+/// The connections grouped by parent and by child, in file order within each group (what a map of vectors held),
+/// as two flat arrays and a range per id.
+struct ConnSpan {
+    const Conn* const* b = nullptr; const Conn* const* e = nullptr;
+    const Conn* const* begin() const { return b; }
+    const Conn* const* end() const { return e; }
+    bool empty() const { return b == e; }
+};
+
 struct Builder {
     const Document& doc; Scene& sc; const BuildOptions& opt; std::string err;
-    std::vector<Obj> objs; std::unordered_map<Id, std::size_t> byId;
+    std::vector<Obj> objs; IdMap<std::size_t> byId;
     std::vector<Conn> conns;
-    std::unordered_map<Id, std::vector<const Conn*>> childrenOf, parentsOf;   // by parent / by child
+    struct Range { std::uint32_t begin = 0, count = 0; };
+    std::vector<const Conn*> byParent, byChild;
+    IdMap<Range> parentRange, childRange;
+    ConnSpan ChildrenOf(Id id) const {   // connections whose parent is `id`
+        const Range* r = parentRange.find(id);
+        return r ? ConnSpan{byParent.data() + r->begin, byParent.data() + r->begin + r->count} : ConnSpan{};
+    }
+    ConnSpan ParentsOf(Id id) const {    // connections whose child is `id`
+        const Range* r = childRange.find(id);
+        return r ? ConnSpan{byChild.data() + r->begin, byChild.data() + r->begin + r->count} : ConnSpan{};
+    }
     Conv conv;
-    std::unordered_map<Id, int> nodeOfModel, texOfObj, matOfObj, meshOfGeom;
+    IdMap<int> nodeOfModel, texOfObj, matOfObj, meshOfGeom;
     std::vector<Id> nodeModelId;
     std::size_t cornersBuilt = 0;
 
     Builder(const Document& d, Scene& s, const BuildOptions& o) : doc(d), sc(s), opt(o) {}
     bool Fail(const std::string& m) { if (err.empty()) err = m; return false; }
-    const Obj* Get(Id id) const { auto it = byId.find(id); return it == byId.end() ? nullptr : &objs[it->second]; }
+    const Obj* Get(Id id) const { const std::size_t* i = byId.find(id); return i ? &objs[*i] : nullptr; }
 
     bool Index() {
         const Elem* o = doc.root.Find("Objects");
         if (!o) return Fail("no Objects section (FBX 6.x files are not supported)");
+        {
+            std::size_t count = 0;
+            for (const Elem& e : o->children) { (void)e; ++count; }
+            byId.reserve(std::min<std::size_t>(count, opt.limits.maxElements + 1));
+            objs.reserve(std::min<std::size_t>(count, opt.limits.maxElements + 1));
+        }
         for (const Elem& e : o->children) {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;
@@ -552,7 +605,17 @@ struct Builder {
             if (e.props.size() > 3 && e.props[3].type == 'S') cn.prop = e.props[3].s;
             conns.push_back(std::move(cn));
         }
-        for (const Conn& cn : conns) { childrenOf[cn.parent].push_back(&cn); parentsOf[cn.child].push_back(&cn); }
+        // Group by parent and by child: count per id, give each id its range, then place the connections in order.
+        auto group = [&](bool byParentId, std::vector<const Conn*>& out, IdMap<Range>& ranges) {
+            ranges.reserve(conns.size());
+            for (const Conn& cn : conns) ++ranges[byParentId ? cn.parent : cn.child].count;
+            std::uint32_t at = 0;
+            for (std::size_t i = 0; i < ranges.keys.size(); ++i) if (ranges.used[i]) { ranges.vals[i].begin = at; at += ranges.vals[i].count; ranges.vals[i].count = 0; }
+            out.assign(conns.size(), nullptr);
+            for (const Conn& cn : conns) { Range& r = *ranges.find(byParentId ? cn.parent : cn.child); out[r.begin + r.count++] = &cn; }
+        };
+        group(true, byParent, parentRange);
+        group(false, byChild, childRange);
         return true;
     }
 
@@ -586,8 +649,7 @@ struct Builder {
             if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
             if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s);
             const Id id = ToId(o.e->props[0].Num());
-            auto pit = parentsOf.find(id);   // Video -> Texture
-            for (const Conn* c : childrenOf[id]) {   // children of the texture: Video
+            for (const Conn* c : ChildrenOf(id)) {   // children of the texture: Video
                 const Obj* v = Get(c->child);
                 if (!v || v->cls != "Video" || c->propLink) continue;
                 if (t.fileName.empty()) if (const Elem* f = v->e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
@@ -598,7 +660,6 @@ struct Builder {
                     else if (p.type == 'S' && !p.s.empty()) { const std::string b = Base64Decode(p.s); t.content.assign(b.begin(), b.end()); }
                 }
             }
-            (void)pit;
             // A Video that carries the picture while the one connected to the texture does not (some exporters write the pair
             // apart): found by file name, as ufbx does. Only when the texture got no content from its own Video.
             if (t.content.empty() && (!t.fileName.empty() || !t.relativeFileName.empty())) {
@@ -674,19 +735,19 @@ struct Builder {
                 for (; *names; ++names) { const std::string n = squash(pre + *names); if (want == n || want == n + "map") return true; }
                 return false;
             };
-            for (const Conn* c : childrenOf[id]) {   // textures plugged into this material
+            for (const Conn* c : ChildrenOf(id)) {   // textures plugged into this material
                 const Obj* t = Get(c->child);
                 if (!t || t->cls != "Texture" || !c->propLink) continue;
-                auto it = texOfObj.find(c->child);
-                if (it == texOfObj.end()) continue;
+                const int* tex = texOfObj.find(c->child);
+                if (!tex) continue;
                 if (pbr) {
                     const std::string pre = pbr->prefix;
-                    if (isOneOf(c->prop, pbr->baseColor, pre)) { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; continue; }
-                    if (isOneOf(c->prop, pbr->normal, pre)) { if (m.normalTexture < 0) m.normalTexture = it->second; continue; }
-                    if (isOneOf(c->prop, pbr->ao, pre)) { if (m.aoTexture < 0) m.aoTexture = it->second; continue; }
+                    if (isOneOf(c->prop, pbr->baseColor, pre)) { if (m.diffuseTexture < 0) m.diffuseTexture = *tex; continue; }
+                    if (isOneOf(c->prop, pbr->normal, pre)) { if (m.normalTexture < 0) m.normalTexture = *tex; continue; }
+                    if (isOneOf(c->prop, pbr->ao, pre)) { if (m.aoTexture < 0) m.aoTexture = *tex; continue; }
                 }
-                if (c->prop == "DiffuseColor" || c->prop == "Diffuse") { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; }
-                else if (c->prop == "NormalMap") { if (m.normalTexture < 0) m.normalTexture = it->second; }
+                if (c->prop == "DiffuseColor" || c->prop == "Diffuse") { if (m.diffuseTexture < 0) m.diffuseTexture = *tex; }
+                else if (c->prop == "NormalMap") { if (m.normalTexture < 0) m.normalTexture = *tex; }
             }
             matOfObj[id] = (int)sc.materials.size();
             sc.materials.push_back(std::move(m));
@@ -763,66 +824,105 @@ struct Builder {
         std::vector<std::size_t> models;
         for (std::size_t i = 0; i < objs.size(); ++i) if (objs[i].cls == "Model") models.push_back(i);
         if (models.size() > opt.limits.maxNodes) return Fail("too many nodes");
+        // Everything below is per model, by its position in `models` (flat arrays instead of maps keyed by id).
+        const std::size_t nm = models.size();
+        std::vector<Id> idOf(nm);
+        IdMap<std::uint32_t> modelOf; modelOf.reserve(nm);
+        for (std::size_t k = 0; k < nm; ++k) { idOf[k] = ToId(objs[models[k]].e->props[0].Num()); modelOf[idOf[k]] = (std::uint32_t)k; }
         // parent of each model (first Model parent wins; id 0 = scene root)
-        std::unordered_map<Id, Id> parentOf;
-        for (std::size_t mi : models) {
-            const Id id = ToId(objs[mi].e->props[0].Num());
+        std::vector<Id> parentOf(nm, 0);
+        for (std::size_t k = 0; k < nm; ++k) {
+            const Id id = idOf[k];
             Id par = 0;
-            auto it = parentsOf.find(id);
-            if (it != parentsOf.end()) for (const Conn* c : it->second) {
+            for (const Conn* c : ParentsOf(id)) {
                 if (c->propLink) continue;
                 if (c->parent == 0) { par = 0; break; }
                 const Obj* p = Get(c->parent);
                 if (p && p->cls == "Model" && c->parent != id) { par = c->parent; break; }
             }
-            parentOf[id] = par;
+            parentOf[k] = par;
         }
-        // children in file order; roots first, then anything caught in a parent cycle
-        std::unordered_map<Id, std::vector<Id>> kids;
-        std::vector<Id> rootIds, order;
-        for (std::size_t mi : models) { const Id id = ToId(objs[mi].e->props[0].Num()); if (parentOf[id] == 0) rootIds.push_back(id); else kids[parentOf[id]].push_back(id); }
-        std::unordered_map<Id, int> depth; std::unordered_set<Id> seen;
-        auto walk = [&](Id start) -> bool {
-            std::vector<Id> stack{start}; depth[start] = 1;
+        // children in file order (grouped by parent model); roots first, then anything caught in a parent cycle
+        std::vector<std::uint32_t> kidBegin(nm + 1, 0), kids;
+        for (std::size_t k = 0; k < nm; ++k) if (parentOf[k] != 0) ++kidBegin[*modelOf.find(parentOf[k]) + 1];
+        for (std::size_t k = 0; k < nm; ++k) kidBegin[k + 1] += kidBegin[k];
+        kids.resize(kidBegin[nm]);
+        {
+            std::vector<std::uint32_t> fill(kidBegin.begin(), kidBegin.end() - 1);
+            for (std::size_t k = 0; k < nm; ++k) if (parentOf[k] != 0) kids[fill[*modelOf.find(parentOf[k])]++] = (std::uint32_t)k;
+        }
+        std::vector<std::uint32_t> rootIds, order;
+        for (std::size_t k = 0; k < nm; ++k) if (parentOf[k] == 0) rootIds.push_back((std::uint32_t)k);
+        std::vector<int> depth(nm, 0); std::vector<unsigned char> seen(nm, 0);
+        std::vector<std::uint32_t> stack;
+        auto walk = [&](std::uint32_t start) -> bool {
+            stack.assign(1, start); depth[start] = 1;
             while (!stack.empty()) {
-                const Id cur = stack.back(); stack.pop_back();
-                if (!seen.insert(cur).second) continue;
+                const std::uint32_t cur = stack.back(); stack.pop_back();
+                if (seen[cur]) continue;
+                seen[cur] = 1;
                 order.push_back(cur);
                 if (depth[cur] > (int)opt.limits.maxNodeDepth) return false;
-                auto& k = kids[cur];
-                for (std::size_t j = k.size(); j-- > 0;) { depth[k[j]] = depth[cur] + 1; stack.push_back(k[j]); }
+                for (std::uint32_t j = kidBegin[cur + 1]; j-- > kidBegin[cur];) { depth[kids[j]] = depth[cur] + 1; stack.push_back(kids[j]); }
             }
             return true;
         };
-        for (Id r : rootIds) if (!walk(r)) return Fail("node hierarchy too deep");
-        for (std::size_t mi : models) {   // cycle members: promote to roots
-            const Id id = ToId(objs[mi].e->props[0].Num());
-            if (!seen.count(id)) { parentOf[id] = 0; rootIds.push_back(id); if (!walk(id)) return Fail("node hierarchy too deep"); }
+        for (std::uint32_t r : rootIds) if (!walk(r)) return Fail("node hierarchy too deep");
+        for (std::size_t k = 0; k < nm; ++k) {   // cycle members: promote to roots
+            if (!seen[k]) { parentOf[k] = 0; rootIds.push_back((std::uint32_t)k); if (!walk((std::uint32_t)k)) return Fail("node hierarchy too deep"); }
         }
         // `order` is depth-first pre-order per root already, but a promoted cycle root may have been walked
         // with stale parents: recompute final parents from visit order.
-        sc.nodes.resize(order.size()); xp.resize(order.size()); nodeModelId = order;
-        for (std::size_t i = 0; i < order.size(); ++i) nodeOfModel[order[i]] = (int)i;
+        sc.nodes.resize(order.size()); xp.resize(order.size()); nodeModelId.resize(order.size());
+        nodeOfModel.reserve(order.size());
+        std::vector<int> nodeOfIndex(nm, 0);
+        for (std::size_t i = 0; i < order.size(); ++i) { nodeModelId[i] = idOf[order[i]]; nodeOfModel[idOf[order[i]]] = (int)i; nodeOfIndex[order[i]] = (int)i; }
         for (std::size_t i = 0; i < order.size(); ++i) {
-            const Id id = order[i];
+            const std::uint32_t k = order[i];
             SceneNode& n = sc.nodes[i];
-            const Obj& o = objs[byId[id]];
+            const Obj& o = objs[models[k]];
             n.name = std::string(o.name);
-            Id par = parentOf[id];
-            n.parent = par == 0 ? -1 : nodeOfModel[par];
+            const Id par = parentOf[k];
+            n.parent = par == 0 ? -1 : nodeOfIndex[*modelOf.find(par)];
             if (n.parent >= (int)i) n.parent = -1;           // (cycle promoted) keep parents before children
             if (n.parent < 0) sc.roots.push_back((int)i); else sc.nodes[(std::size_t)n.parent].children.push_back((int)i);
             XProps& x = xp[i];
-            const Props& p = o.props;
-            p.Vec3("Lcl Translation", x.t, 0); p.Vec3("Lcl Rotation", x.r, 0); p.Vec3("Lcl Scaling", x.s, 1);
-            p.Vec3("PreRotation", x.pre, 0); p.Vec3("PostRotation", x.post, 0);
-            p.Vec3("RotationOffset", x.roff, 0); p.Vec3("RotationPivot", x.rp, 0);
-            p.Vec3("ScalingOffset", x.soff, 0); p.Vec3("ScalingPivot", x.sp, 0);
-            p.Vec3("GeometricTranslation", x.gt, 0); p.Vec3("GeometricRotation", x.gr, 0); p.Vec3("GeometricScaling", x.gs, 1);
-            x.order = SafeInt(p.Get("RotationOrder", 0));
+            ReadXProps(o.props, x);
         }
         // a first pass for world matrices happens in Finish()
         return true;
+    }
+
+    /// The transform properties of a model in one pass over its P records. The same values as one Props lookup per
+    /// name: for each name, the last record with at least one number wins.
+    static void ReadXProps(const Props& p, XProps& x) {
+        enum { kT, kR, kS, kPre, kPost, kRoff, kRp, kSoff, kSp, kGt, kGr, kGs, kOrder, kCount };
+        static const char* const names[kCount] = {"Lcl Translation", "Lcl Rotation", "Lcl Scaling", "PreRotation", "PostRotation",
+            "RotationOffset", "RotationPivot", "ScalingOffset", "ScalingPivot", "GeometricTranslation", "GeometricRotation",
+            "GeometricScaling", "RotationOrder"};
+        static const std::string_view views[kCount] = {names[0], names[1], names[2], names[3], names[4], names[5], names[6],
+            names[7], names[8], names[9], names[10], names[11], names[12]};
+        const Elem* hit[kCount] = {};
+        if (p.p70) for (const Elem& e : p.p70->children) {
+            if (e.props.size() < 5 || e.name != "P" || e.props[0].type != 'S') continue;
+            const std::string_view n = e.props[0].s;
+            int which = -1;
+            for (int k = 0; k < kCount; ++k) if (n == views[k]) { which = k; break; }
+            if (which < 0) continue;
+            bool number = false;
+            for (std::size_t i = 4; i < e.props.size() && !number; ++i) number = e.props[i].IsNumber();
+            if (number) hit[which] = &e;
+        }
+        auto vec3 = [&](int k, double out[3], double def) {
+            double v[3]; const int got = Props::Numbers(hit[k], v, 3);
+            for (int i = 0; i < 3; ++i) out[i] = i < got ? v[i] : def;
+        };
+        vec3(kT, x.t, 0); vec3(kR, x.r, 0); vec3(kS, x.s, 1);
+        vec3(kPre, x.pre, 0); vec3(kPost, x.post, 0);
+        vec3(kRoff, x.roff, 0); vec3(kRp, x.rp, 0);
+        vec3(kSoff, x.soff, 0); vec3(kSp, x.sp, 0);
+        vec3(kGt, x.gt, 0); vec3(kGr, x.gr, 0); vec3(kGs, x.gs, 1);
+        double ord; x.order = SafeInt(Props::Numbers(hit[kOrder], &ord, 1) == 1 ? ord : 0);
     }
 
     void SetLocal(std::size_t i, const Mat& rawLocal) {
@@ -1011,19 +1111,16 @@ struct Builder {
         // material slots: materials connected to the model, in connection order
         {
             const Id mid = nodeModelId[modelNode];
-            auto it = parentsOf.find(mid);   // (not used) materials are children of the model
-            (void)it;
-            for (const Conn* c : childrenOf[mid]) {
+            for (const Conn* c : ChildrenOf(mid)) {   // materials are children of the model
                 if (c->propLink) continue;
-                auto mt = matOfObj.find(c->child);
-                if (mt != matOfObj.end()) m.materials.push_back(mt->second);
+                if (const int* mt = matOfObj.find(c->child)) m.materials.push_back(*mt);
             }
         }
 
         // skin + blend shapes
         const Id gid = ToId(g.props[0].Num());
         bool haveSkin = false;
-        for (const Conn* c : childrenOf[gid]) {
+        for (const Conn* c : ChildrenOf(gid)) {
             const Obj* d = Get(c->child);
             if (!d || d->cls != "Deformer" || c->propLink) continue;
             if (d->sub == "Skin" && !haveSkin) {
@@ -1032,13 +1129,13 @@ struct Builder {
                 const Mat g2n = Mul(Translate(xp[modelNode].gt[0], xp[modelNode].gt[1], xp[modelNode].gt[2]),
                                     Mul(Euler(xp[modelNode].gr, 0), ScaleM(xp[modelNode].gs[0], xp[modelNode].gs[1], xp[modelNode].gs[2])));
                 std::uint32_t ci = 0;
-                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
+                for (const Conn* cc : ChildrenOf(ToId(d->e->props[0].Num()))) {
                     const Obj* cl = Get(cc->child);
                     if (!cl || cl->cls != "Deformer" || cl->sub != "Cluster" || cc->propLink) continue;
                     Cluster cluster;
-                    for (const Conn* bc : childrenOf[ToId(cl->e->props[0].Num())]) {
-                        auto nm = nodeOfModel.find(bc->child);
-                        if (nm != nodeOfModel.end() && !bc->propLink) { cluster.boneNode = nm->second; break; }
+                    for (const Conn* bc : ChildrenOf(ToId(cl->e->props[0].Num()))) {
+                        const int* nm = nodeOfModel.find(bc->child);
+                        if (nm && !bc->propLink) { cluster.boneNode = *nm; break; }
                     }
                     // `Transform` is the mesh node's matrix relative to the bone at bind time (what exporters
                     // such as Blender write; TransformLink, the bone's world bind matrix, is not needed).
@@ -1057,12 +1154,12 @@ struct Builder {
                 for (auto& w : m.skinWeights) std::stable_sort(w.begin(), w.end(), [](const Influence& a, const Influence& b) { return a.weight > b.weight; });
                 if (m.clusters.empty()) m.skinWeights.clear();
             } else if (d->sub == "BlendShape") {
-                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
+                for (const Conn* cc : ChildrenOf(ToId(d->e->props[0].Num()))) {
                     const Obj* ch = Get(cc->child);
                     if (!ch || ch->cls != "Deformer" || ch->sub != "BlendShapeChannel" || cc->propLink) continue;
                     BlendChannel bc; bc.name = std::string(ch->name); bc.weight = ch->props.Get("DeformPercent", 0.0) * 0.01;
                     const Obj* shape = nullptr;
-                    for (const Conn* sc2 : childrenOf[ToId(ch->e->props[0].Num())]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
+                    for (const Conn* sc2 : ChildrenOf(ToId(ch->e->props[0].Num()))) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
                     if (shape) {
                         const Array* ix = ArrayOf(*shape->e, "Indexes");
                         const Array* dv = ArrayOf(*shape->e, "Vertices");
@@ -1087,21 +1184,20 @@ struct Builder {
         }
         return true;
     }
-    std::unordered_map<Id, std::pair<int, int>> chanOfObj;
+    IdMap<std::pair<int, int>> chanOfObj;
 
     bool Meshes() {
         for (std::size_t ni = 0; ni < nodeModelId.size(); ++ni) {
             const Id mid = nodeModelId[ni];
             const Obj* geo = nullptr;
-            for (const Conn* c : childrenOf[mid]) {
+            for (const Conn* c : ChildrenOf(mid)) {
                 if (c->propLink) continue;
                 const Obj* o = Get(c->child);
                 if (o && o->cls == "Geometry" && o->sub == "Mesh") { geo = o; break; }
             }
             if (!geo) continue;
             const Id gid = ToId(geo->e->props[0].Num());
-            auto it = meshOfGeom.find(gid);
-            if (it != meshOfGeom.end()) { sc.nodes[ni].mesh = it->second; continue; }
+            if (const int* it = meshOfGeom.find(gid)) { sc.nodes[ni].mesh = *it; continue; }
             Mesh m;
             if (!BuildMesh(*geo, ni, m)) return false;
             meshOfGeom[gid] = (int)sc.meshes.size();
@@ -1131,7 +1227,7 @@ struct Builder {
         }
         std::size_t totalKeys = 0, totalBaked = 0;
         // curves
-        std::unordered_map<Id, int> curveOf;
+        IdMap<int> curveOf;
         for (const Obj& o : objs) {
             if (o.cls != "AnimationCurve") continue;
             Curve c;
@@ -1173,24 +1269,24 @@ struct Builder {
             curveStore.push_back(std::move(c));
         }
         // curve nodes
-        std::vector<CurveNode> cns; std::unordered_map<Id, std::size_t> cnOf;
+        std::vector<CurveNode> cns; IdMap<std::size_t> cnOf;
         for (const Obj& o : objs) {
             if (o.cls != "AnimationCurveNode") continue;
             CurveNode cn;
             const Id id = ToId(o.e->props[0].Num());
             o.props.Vec3("d|X", cn.def, 0);
             if (o.props.Has("d|DeformPercent")) cn.def[0] = o.props.Get("d|DeformPercent", 0);
-            for (const Conn* c : childrenOf[id]) {   // curves feeding it
+            for (const Conn* c : ChildrenOf(id)) {   // curves feeding it
                 if (!c->propLink) continue;
                 const Obj* cv = Get(c->child);
                 if (!cv || cv->cls != "AnimationCurve") continue;
-                auto it = curveOf.find(c->child);
-                if (it == curveOf.end() || curveStore[(std::size_t)it->second].Empty()) continue;
+                const int* it = curveOf.find(c->child);
+                if (!it || curveStore[(std::size_t)*it].Empty()) continue;
                 const int comp = (c->prop == "d|X" || c->prop == "d|DeformPercent") ? 0 : c->prop == "d|Y" ? 1 : c->prop == "d|Z" ? 2 : -1;
-                if (comp >= 0) cn.curve[comp] = &curveStore[(std::size_t)it->second];
+                if (comp >= 0) cn.curve[comp] = &curveStore[(std::size_t)*it];
             }
             for (int k = 1; k < 3; ++k) { const char* nm = k == 1 ? "d|Y" : "d|Z"; cn.def[k] = o.props.Get(nm, 0); }
-            for (const Conn* c : parentsOf[id]) {    // what it drives
+            for (const Conn* c : ParentsOf(id)) {    // what it drives
                 if (!c->propLink) continue;
                 cn.target = c->parent; cn.prop = c->prop; break;
             }
@@ -1202,7 +1298,7 @@ struct Builder {
             if (st.cls != "AnimationStack") continue;
             const Id sid = ToId(st.e->props[0].Num());
             std::vector<Layr> layers;
-            for (const Conn* c : childrenOf[sid]) {
+            for (const Conn* c : ChildrenOf(sid)) {
                 const Obj* l = Get(c->child);
                 if (!l || l->cls != "AnimationLayer" || c->propLink) continue;
                 Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
@@ -1215,15 +1311,15 @@ struct Builder {
             double t0 = 1e300, t1 = -1e300;
             auto span = [&](const CurveNode& cn) { for (int k = 0; k < 3; ++k) if (cn.curve[k] && !cn.curve[k]->Empty()) { t0 = std::min(t0, cn.curve[k]->t.front()); t1 = std::max(t1, cn.curve[k]->t.back()); } };
             for (std::size_t li = 0; li < layers.size(); ++li)
-                for (const Conn* c : childrenOf[layers[li].id]) {
-                    auto it = cnOf.find(c->child);
-                    if (it == cnOf.end() || c->propLink) continue;
-                    const CurveNode& cn = cns[it->second];
-                    auto nm = nodeOfModel.find(cn.target);
-                    if (nm != nodeOfModel.end()) {
+                for (const Conn* c : ChildrenOf(layers[li].id)) {
+                    const std::size_t* it = cnOf.find(c->child);
+                    if (!it || c->propLink) continue;
+                    const CurveNode& cn = cns[*it];
+                    const int* nm = nodeOfModel.find(cn.target);
+                    if (nm) {
                         int which = cn.prop == "Lcl Translation" ? 0 : cn.prop == "Lcl Rotation" ? 1 : cn.prop == "Lcl Scaling" ? 2 : -1;
                         if (which < 0) continue;
-                        perNode[nm->second].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
+                        perNode[*nm].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
                     } else if (cn.prop == "DeformPercent" && chanOfObj.count(cn.target)) { blendCns.push_back({(int)li, cn.target, &cn}); span(cn); }
                 }
             if (perNode.empty() && blendCns.empty()) continue;

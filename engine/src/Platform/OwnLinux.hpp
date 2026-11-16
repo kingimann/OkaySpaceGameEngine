@@ -46,6 +46,9 @@ public:
     /// The monitors, primary first: RandR 1.5 monitors (libXrandr.so.2, dlopen), else Xinerama (libXinerama.so.1), else the
     /// root window. Usable area from _NET_WORKAREA, scale from Xft.dpi in the root's RESOURCE_MANAGER (read fresh each call).
     virtual std::vector<DisplayInfo> Displays() = 0;
+    /// Display modes (Backend::DisplayModes / CurrentDisplayMode): the RandR modes of the outputs of the CRTC that shows the display.
+    virtual std::vector<VideoMode> DisplayModes(int display) = 0;
+    virtual bool CurrentDisplayMode(int display, VideoMode& out) = 0;
 };
 
 /// The local file paths in a text/uri-list (RFC 2483: one URI per line, CR LF or LF, '#' lines are comments), what an XDND

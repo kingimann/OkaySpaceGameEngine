@@ -7,12 +7,13 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Platform/Painter.hpp"
 
-#include <SDL.h>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
+
+struct SDL_Renderer;   // only a pointer type here (SetRenderer); no SDL header is needed
 
 namespace okay {
 

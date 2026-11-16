@@ -180,8 +180,11 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 
 /// Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
 /// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing
-/// else is disturbed.
+/// else is disturbed. Only in a build with SDL (OKAY_PLATFORM_HAVE_SDL2; not with -DOKAY_WITH_SDL=OFF): other hosts use
+/// EndFrameData() and GetDrawData() with a render backend.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 void EndFrame(SDL_Renderer* renderer);
+#endif
 
 // ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
 // The frame's geometry as plain data, valid after the frame's widget calls (call

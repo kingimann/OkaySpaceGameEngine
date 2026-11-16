@@ -50,7 +50,34 @@ public:
     void Raise() override { SDL_RaiseWindow(m_win); }
     void Minimize() override { SDL_MinimizeWindow(m_win); }
     void Restore() override { SDL_RestoreWindow(m_win); }
-    void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
+    void SetFullscreen(bool on) override {
+        SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);   // leaving SDL_WINDOW_FULLSCREEN puts the desktop mode back
+        m_mode = VideoMode();
+    }
+    int DisplayIndex() const override { const int i = SDL_GetWindowDisplayIndex(m_win); return i >= 0 ? i : -1; }
+    bool SetFullscreenMode(const VideoMode& want) override {
+        const int display = DisplayIndex() >= 0 ? DisplayIndex() : 0;
+        std::vector<VideoMode> modes;
+        const int n = SDL_GetNumDisplayModes(display);
+        for (int k = 0; k < n; ++k) {
+            SDL_DisplayMode dm;
+            if (SDL_GetDisplayMode(display, k, &dm) == 0) modes.push_back(VideoMode{dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0});
+        }
+        const VideoMode pick = ClosestVideoMode(modes, want);
+        if (pick.width <= 0) return false;
+        SDL_DisplayMode request;
+        SDL_zero(request);
+        request.w = pick.width; request.h = pick.height; request.refresh_rate = pick.refreshHz;
+        SDL_DisplayMode closest;   // SDL fills in the pixel format of the listed mode
+        if (!SDL_GetClosestDisplayMode(display, &request, &closest)) return false;
+        if (SDL_SetWindowDisplayMode(m_win, &closest) != 0) return false;
+        if (SDL_SetWindowFullscreen(m_win, SDL_WINDOW_FULLSCREEN) != 0) return false;
+        m_mode = VideoMode{closest.w, closest.h, closest.refresh_rate > 0 ? closest.refresh_rate : 0};
+        return true;
+    }
+    VideoMode FullscreenMode() const override {
+        return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN ? m_mode : VideoMode();
+    }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
     bool IsMinimized() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MINIMIZED) != 0; }
@@ -110,6 +137,7 @@ private:
     SDL_Window* m_win = nullptr;
     bool m_owns = true;
     SDL_GLContext m_ctx = nullptr;
+    VideoMode m_mode;   // what SetFullscreenMode switched to
 };
 
 class SdlAudioDevice final : public AudioDevice {
@@ -333,6 +361,24 @@ public:
             out.push_back(d);
         }
         return out;
+    }
+
+    std::vector<VideoMode> DisplayModes(int display) override {
+        std::vector<VideoMode> out;
+        if (!(SDL_WasInit(0) & SDL_INIT_VIDEO) || display < 0 || display >= SDL_GetNumVideoDisplays()) return out;
+        const int n = SDL_GetNumDisplayModes(display);
+        for (int k = 0; k < n; ++k) {
+            SDL_DisplayMode dm;
+            if (SDL_GetDisplayMode(display, k, &dm) == 0) out.push_back(VideoMode{dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0});
+        }
+        return SortedVideoModes(std::move(out));
+    }
+    bool CurrentDisplayMode(int display, VideoMode& out) override {
+        if (!(SDL_WasInit(0) & SDL_INIT_VIDEO) || display < 0 || display >= SDL_GetNumVideoDisplays()) return false;
+        SDL_DisplayMode dm;
+        if (SDL_GetCurrentDisplayMode(display, &dm) != 0) return false;
+        out = VideoMode{dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0};
+        return true;
     }
 
     int GamepadDeviceCount() override {

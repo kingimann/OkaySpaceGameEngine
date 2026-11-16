@@ -107,6 +107,31 @@ struct ImmApi {
 };
 ImmApi g_imm;
 
+// ---- Display modes (Microsoft's documentation of EnumDisplaySettingsW, ChangeDisplaySettingsExW and DEVMODEW) ----
+/// Every mode a display device (\\.\DISPLAY1, the szDevice of MONITORINFOEXW) lists: EnumDisplaySettingsW with mode numbers
+/// 0, 1, 2 ... until it fails. Windows lists each size once per colour depth and per rate; the caller sorts and drops repeats.
+/// A rate of 0 or 1 means "the hardware's default" (unknown here: 0). Modes below 16 bits per pixel are left out.
+std::vector<VideoMode> ModesOfDevice(const wchar_t* device) {
+    std::vector<VideoMode> out;
+    DEVMODEW dm;
+    for (DWORD k = 0;; ++k) {
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(device, k, &dm)) break;
+        if (dm.dmBitsPerPel != 0 && dm.dmBitsPerPel < 16) continue;
+        out.push_back(VideoMode{(int)dm.dmPelsWidth, (int)dm.dmPelsHeight, dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0});
+    }
+    return out;
+}
+/// The device name of the monitor that holds most of `hwnd`.
+std::wstring DeviceOfWindow(HWND hwnd) {
+    MONITORINFOEXW mi;
+    ZeroMemory(&mi, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO*)&mi)) return std::wstring();
+    return std::wstring(mi.szDevice);
+}
+
 class WinWindow final : public Window {
 public:
     WinWindow(WinBackend* b, HWND h) : m_b(b), m_hwnd(h) {}
@@ -136,8 +161,16 @@ public:
     void Minimize() override { ShowWindow(m_hwnd, SW_MINIMIZE); }
     void Restore() override { ShowWindow(m_hwnd, SW_RESTORE); }
     bool IsFullscreen() const override { return m_full; }
+    int DisplayIndex() const override;
+    bool SetFullscreenMode(const VideoMode& mode) override;
+    VideoMode FullscreenMode() const override { return m_mode; }
+    void LeaveFullscreenMode();   // ChangeDisplaySettingsExW(device, null): the registry's (desktop) mode comes back
     void SetFullscreen(bool on) override {
-        if (on == m_full) return;
+        LeaveFullscreenMode();   // from an exclusive mode to desktop fullscreen or a window: the display's own mode first
+        if (on == m_full) {
+            if (on) CoverMonitor();   // the monitor is back at its desktop size: cover it again
+            return;
+        }
         if (on) {
             m_style = GetWindowLongW(m_hwnd, GWL_STYLE);
             GetWindowRect(m_hwnd, &m_rect);
@@ -207,6 +240,15 @@ public:
     bool m_full = false;
     LONG m_style = 0;
     RECT m_rect = {0, 0, 0, 0};
+    VideoMode m_mode;          // SetFullscreenMode: the mode switched to ({0,0,0} = none)
+    std::wstring m_modeDevice; // ...and the display device it was switched on
+    /// Put the (already borderless) window over the whole monitor it is on.
+    void CoverMonitor() {
+        MONITORINFO mi; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
+        SetWindowPos(m_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
     wchar_t m_highSurrogate = 0;
     std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
 
@@ -514,6 +556,21 @@ public:
         std::stable_sort(c.out.begin(), c.out.end(), [](const DisplayInfo& a, const DisplayInfo& b) { return a.primary && !b.primary; });
         return c.out;
     }
+    std::vector<VideoMode> DisplayModes(int display) override {
+        const std::vector<DisplayInfo> ds = Displays();
+        if (display < 0 || display >= (int)ds.size()) return {};
+        return SortedVideoModes(ModesOfDevice(Wide(ds[(size_t)display].name).c_str()));
+    }
+    bool CurrentDisplayMode(int display, VideoMode& out) override {
+        const std::vector<DisplayInfo> ds = Displays();
+        if (display < 0 || display >= (int)ds.size()) return false;
+        DEVMODEW dm;
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(Wide(ds[(size_t)display].name).c_str(), ENUM_CURRENT_SETTINGS, &dm)) return false;
+        out = VideoMode{(int)dm.dmPelsWidth, (int)dm.dmPelsHeight, dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0};
+        return true;
+    }
     static BOOL CALLBACK MonitorProc(HMONITOR mon, HDC, LPRECT, LPARAM lp) {
         MonCtx& c = *(MonCtx*)lp;
         MONITORINFOEXW mi; std::memset(&mi, 0, sizeof(mi));
@@ -701,7 +758,49 @@ private:
     SetStateFn m_setState = nullptr;
 };
 
+int WinWindow::DisplayIndex() const {
+    const std::wstring dev = DeviceOfWindow(m_hwnd);
+    if (dev.empty()) return -1;
+    const std::string name = Utf8(dev.c_str(), (int)dev.size());
+    const std::vector<DisplayInfo> ds = m_b->Displays();
+    for (size_t i = 0; i < ds.size(); ++i) if (ds[i].name == name) return (int)i;
+    return -1;
+}
+bool WinWindow::SetFullscreenMode(const VideoMode& want) {
+    const std::wstring dev = m_modeDevice.empty() ? DeviceOfWindow(m_hwnd) : m_modeDevice;
+    if (dev.empty()) return false;
+    const VideoMode pick = ClosestVideoMode(SortedVideoModes(ModesOfDevice(dev.c_str())), want);
+    if (pick.width <= 0) return false;
+    DEVMODEW dm;
+    ZeroMemory(&dm, sizeof(dm));
+    dm.dmSize = sizeof(dm);
+    dm.dmPelsWidth = (DWORD)pick.width;
+    dm.dmPelsHeight = (DWORD)pick.height;
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    if (pick.refreshHz > 0) { dm.dmDisplayFrequency = (DWORD)pick.refreshHz; dm.dmFields |= DM_DISPLAYFREQUENCY; }
+    // CDS_FULLSCREEN: a temporary change, not written to the registry; Windows puts the registry's mode back when this
+    // process ends, and ChangeDisplaySettingsExW(device, null) does it now.
+    if (ChangeDisplaySettingsExW(dev.c_str(), &dm, nullptr, CDS_FULLSCREEN, nullptr) != DISP_CHANGE_SUCCESSFUL) return false;
+    m_modeDevice = dev;
+    m_mode = pick;
+    if (!m_full) {   // borderless over the monitor, as desktop fullscreen (SetFullscreen's own steps, without leaving the mode)
+        m_style = GetWindowLongW(m_hwnd, GWL_STYLE);
+        GetWindowRect(m_hwnd, &m_rect);
+        SetWindowLongW(m_hwnd, GWL_STYLE, (LONG)((m_style & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP));
+        m_full = true;
+    }
+    CoverMonitor();   // the monitor's rectangle is the new mode's size now
+    return true;
+}
+void WinWindow::LeaveFullscreenMode() {
+    if (m_modeDevice.empty()) return;
+    ChangeDisplaySettingsExW(m_modeDevice.c_str(), nullptr, nullptr, 0, nullptr);
+    m_modeDevice.clear();
+    m_mode = VideoMode();
+}
+
 WinWindow::~WinWindow() {
+    LeaveFullscreenMode();
     DestroyGLContext();
     m_b->Unregister(m_hwnd);
     DestroyWindow(m_hwnd);

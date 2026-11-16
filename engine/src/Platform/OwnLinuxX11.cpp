@@ -3,6 +3,7 @@
 // GL header files only supply types and constants; with them absent (no
 // OKAY_PLATFORM_X11_HEADERS) this file is just "no display".
 #include "OwnLinux.hpp"
+#include "Internal.hpp"   // SortedVideoModes, DisplayIndexForRect
 
 #ifndef OKAY_PLATFORM_X11_HEADERS
 namespace okay::platform::own {
@@ -59,6 +60,7 @@ namespace {
     F(int, XRaiseWindow, (Display*, ::Window)) \
     F(int, XMoveWindow, (Display*, ::Window, int, int)) \
     F(int, XResizeWindow, (Display*, ::Window, unsigned, unsigned)) \
+    F(int, XMoveResizeWindow, (Display*, ::Window, int, int, unsigned, unsigned)) \
     F(int, XSetInputFocus, (Display*, ::Window, int, Time)) \
     F(int, XStoreName, (Display*, ::Window, const char*)) \
     F(int, XChangeProperty, (Display*, ::Window, Atom, Atom, int, int, const unsigned char*, int)) \
@@ -260,6 +262,10 @@ public:
     bool Flash(FlashMode m) override;
     bool SetTextInputArea(int x, int y, int w, int h) override;
     int RefreshRateHz() const override;
+    int DisplayIndex() const override;
+    bool SetFullscreenMode(const VideoMode& mode) override;
+    VideoMode FullscreenMode() const override { return m_mode; }
+    void LeaveFullscreenMode();   // puts the CRTC's own mode and the window's old place back (SetFullscreen, the destructor)
     void SetUrgent(bool on);
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
     bool CreateGLContext(const GLAttributes& a) override;
@@ -287,6 +293,8 @@ public:
     uint64_t m_urgentUntil = 0;       // Flash(Briefly): when to clear it (ms, NowMs), 0 = until focused
     GC m_gc = nullptr;                // PresentPixels: made on first use
     std::vector<uint8_t> m_present;   // PresentPixels: the frame in the server's pixel layout
+    VideoMode m_mode;                 // SetFullscreenMode: the mode switched to ({0,0,0} = none)
+    int m_savedX = 0, m_savedY = 0, m_savedW = 0, m_savedH = 0;   // ...and where the window was before it
 };
 
 class X11Impl final : public X11System {
@@ -753,6 +761,182 @@ public:
         return best ? best : first;   // a window off every CRTC: the first lit one
     }
 
+    // ---- display modes ------------------------------------------------------------------
+    // A display (an entry of Displays()) is shown by a CRTC; its modes are the modes of that CRTC's outputs (the RandR
+    // protocol: each output lists the modes it can show, the screen resources describe them). XRROutputInfo is laid out from
+    // libXrandr's public interface (field order and types), like the structs above.
+    struct RrOutputInfo {
+        Time timestamp; unsigned long crtc; char* name; int nameLen; unsigned long mmWidth, mmHeight;
+        unsigned short connection, subpixelOrder; int ncrtc; unsigned long* crtcs; int nclone; unsigned long* clones;
+        int nmode, npreferred; unsigned long* modes;
+    };
+    struct ListedMode { VideoMode mode; unsigned long id; };
+    /// What SetFullscreenMode changed, to put back: the CRTC, its old mode and place, and the screen size if it grew.
+    struct ModeSwitch {
+        unsigned long crtc = 0, oldMode = 0; int x = 0, y = 0; unsigned short rotation = 1;
+        std::vector<unsigned long> outputs;
+        int oldScreenW = 0, oldScreenH = 0, oldScreenMmW = 0, oldScreenMmH = 0; bool screenGrew = false;
+    };
+    bool LoadModeFunctions() {
+        LoadDisplayLibs();
+        if (!m_rrModeTried) {
+            m_rrModeTried = true;
+            if (void* rr = dlopen("libXrandr.so.2", RTLD_NOW | RTLD_GLOBAL)) {
+                m_rrGetOutput = reinterpret_cast<RrOutputInfo* (*)(Display*, RrScreenResources*, unsigned long)>(dlsym(rr, "XRRGetOutputInfo"));
+                m_rrFreeOutput = reinterpret_cast<void (*)(RrOutputInfo*)>(dlsym(rr, "XRRFreeOutputInfo"));
+                m_rrSetCrtc = reinterpret_cast<Status (*)(Display*, RrScreenResources*, unsigned long, Time, int, int, unsigned long,
+                                                          unsigned short, unsigned long*, int)>(dlsym(rr, "XRRSetCrtcConfig"));
+                m_rrSetScreenSize = reinterpret_cast<void (*)(Display*, ::Window, int, int, int, int)>(dlsym(rr, "XRRSetScreenSize"));
+            }
+        }
+        int ev = 0, er = 0;
+        return m_rrGetRes && m_rrFreeRes && m_rrGetCrtc && m_rrFreeCrtc && m_rrGetOutput && m_rrFreeOutput &&
+               m_rrQueryExt && m_rrQueryExt(m_dpy, &ev, &er);
+    }
+    static VideoMode ModeOf(const RrModeInfo& m, unsigned short rotation) {
+        const bool sideways = (rotation & (2 | 8)) != 0;   // RR_Rotate_90 / RR_Rotate_270: the picture is turned on its side
+        return VideoMode{(int)(sideways ? m.height : m.width), (int)(sideways ? m.width : m.height), RefreshFromMode(m)};
+    }
+    /// The CRTC that shows display `display`: the lit one at the display's top-left corner with its size, else the lit one
+    /// holding the display's centre. 0 = none (no RandR, or the display is not a CRTC's picture).
+    unsigned long CrtcForDisplay(RrScreenResources* res, int display) {
+        const std::vector<DisplayInfo> ds = Displays();
+        if (display < 0 || display >= (int)ds.size()) return 0;
+        const DisplayRect b = ds[(size_t)display].bounds;
+        unsigned long exact = 0, holds = 0;
+        for (int i = 0; i < res->ncrtc && !exact; ++i) {
+            RrCrtcInfo* c = m_rrGetCrtc(m_dpy, res, res->crtcs[i]);
+            if (!c) continue;
+            if (c->mode) {
+                if (c->x == b.x && c->y == b.y && (int)c->width == b.w && (int)c->height == b.h) exact = res->crtcs[i];
+                const int cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+                if (!holds && cx >= c->x && cy >= c->y && cx < c->x + (int)c->width && cy < c->y + (int)c->height) holds = res->crtcs[i];
+            }
+            m_rrFreeCrtc(c);
+        }
+        return exact ? exact : holds;
+    }
+    /// The modes the outputs of `crtc` can show (each once, with its RandR mode id).
+    std::vector<ListedMode> CrtcModes(RrScreenResources* res, RrCrtcInfo* c) {
+        std::vector<ListedMode> out;
+        for (int o = 0; o < c->noutput; ++o) {
+            RrOutputInfo* oi = m_rrGetOutput(m_dpy, res, c->outputs[o]);
+            if (!oi) continue;
+            for (int k = 0; k < oi->nmode; ++k)
+                for (int j = 0; j < res->nmode; ++j)
+                    if (res->modes[j].id == oi->modes[k]) {
+                        bool seen = false;
+                        for (const ListedMode& l : out) seen |= l.id == res->modes[j].id;
+                        if (!seen) out.push_back(ListedMode{ModeOf(res->modes[j], c->rotation), res->modes[j].id});
+                        break;
+                    }
+            m_rrFreeOutput(oi);
+        }
+        return out;
+    }
+    std::vector<VideoMode> DisplayModes(int display) override {
+        std::vector<VideoMode> out;
+        if (!LoadModeFunctions()) return out;
+        RrScreenResources* res = m_rrGetRes(m_dpy, m_root);
+        if (!res) return out;
+        if (const unsigned long crtc = CrtcForDisplay(res, display)) {
+            if (RrCrtcInfo* c = m_rrGetCrtc(m_dpy, res, crtc)) {
+                for (const ListedMode& l : CrtcModes(res, c)) out.push_back(l.mode);
+                m_rrFreeCrtc(c);
+            }
+        }
+        m_rrFreeRes(res);
+        return SortedVideoModes(std::move(out));
+    }
+    bool CurrentDisplayMode(int display, VideoMode& outMode) override {
+        if (!LoadModeFunctions()) return false;
+        RrScreenResources* res = m_rrGetRes(m_dpy, m_root);
+        if (!res) return false;
+        bool ok = false;
+        if (const unsigned long crtc = CrtcForDisplay(res, display)) {
+            if (RrCrtcInfo* c = m_rrGetCrtc(m_dpy, res, crtc)) {
+                for (int j = 0; j < res->nmode && !ok; ++j)
+                    if (res->modes[j].id == c->mode) { outMode = ModeOf(res->modes[j], c->rotation); ok = true; }
+                m_rrFreeCrtc(c);
+            }
+        }
+        m_rrFreeRes(res);
+        return ok;
+    }
+    /// Switch the CRTC of `display` to the listed mode closest to `want`. On success `sw` says how to put it back (filled only
+    /// the first time: a second switch keeps the first one's "old" values) and `rect` is the CRTC's picture now.
+    bool SwitchMode(int display, const VideoMode& want, ModeSwitch& sw, bool haveOld, VideoMode& picked, DisplayRect& rect) {
+        if (!LoadModeFunctions() || !m_rrSetCrtc) return false;
+        RrScreenResources* res = m_rrGetRes(m_dpy, m_root);
+        if (!res) return false;
+        bool ok = false;
+        const unsigned long crtc = CrtcForDisplay(res, display);
+        RrCrtcInfo* c = crtc ? m_rrGetCrtc(m_dpy, res, crtc) : nullptr;
+        if (c) {
+            const std::vector<ListedMode> listed = CrtcModes(res, c);
+            std::vector<VideoMode> modes;
+            for (const ListedMode& l : listed) modes.push_back(l.mode);
+            const VideoMode pick = ClosestVideoMode(modes, want);
+            unsigned long id = 0;
+            for (const ListedMode& l : listed) if (l.mode == pick) { id = l.id; break; }
+            if (id) {
+                if (!haveOld) {
+                    sw = ModeSwitch();
+                    sw.crtc = crtc; sw.oldMode = c->mode; sw.x = c->x; sw.y = c->y; sw.rotation = c->rotation;
+                    sw.outputs.assign(c->outputs, c->outputs + c->noutput);
+                    RootSize(sw.oldScreenW, sw.oldScreenH);
+                    sw.oldScreenMmW = DisplayWidthMM(m_dpy, m_screen); sw.oldScreenMmH = DisplayHeightMM(m_dpy, m_screen);
+                }
+                // A mode larger than the screen needs a larger screen first (the protocol refuses a CRTC that leaves it).
+                const int needW = c->x + pick.width, needH = c->y + pick.height;
+                int curW = 0, curH = 0;
+                RootSize(curW, curH);
+                g_lastXError = 0;
+                if ((needW > curW || needH > curH) && m_rrSetScreenSize) {
+                    const int nw = std::max(needW, curW), nh = std::max(needH, curH);
+                    const int mmW = curW > 0 ? (int)((long long)DisplayWidthMM(m_dpy, m_screen) * nw / curW) : 0;
+                    const int mmH = curH > 0 ? (int)((long long)DisplayHeightMM(m_dpy, m_screen) * nh / curH) : 0;
+                    m_rrSetScreenSize(m_dpy, m_root, nw, nh, mmW, mmH);
+                    m_x.XSync(m_dpy, False);
+                    sw.screenGrew = g_lastXError == 0;
+                }
+                const Status st = m_rrSetCrtc(m_dpy, res, crtc, CurrentTime, c->x, c->y, id, c->rotation, c->outputs, c->noutput);
+                m_x.XSync(m_dpy, False);
+                ok = st == 0 && g_lastXError == 0;   // RRSetConfigSuccess
+                g_lastXError = 0;
+                if (ok) { picked = pick; rect = DisplayRect{c->x, c->y, pick.width, pick.height}; }
+                else if (sw.screenGrew && !haveOld) { RestoreScreenSize(sw); sw.screenGrew = false; }
+            }
+            m_rrFreeCrtc(c);
+        }
+        m_rrFreeRes(res);
+        return ok;
+    }
+    /// The screen's size now (the root window's; Xlib's DisplayWidth keeps the size from when the connection opened).
+    void RootSize(int& w, int& h) {
+        XWindowAttributes a;
+        if (m_x.XGetWindowAttributes(m_dpy, m_root, &a)) { w = a.width; h = a.height; }
+        else { w = DisplayWidth(m_dpy, m_screen); h = DisplayHeight(m_dpy, m_screen); }
+    }
+    void RestoreScreenSize(const ModeSwitch& sw) {
+        if (!m_rrSetScreenSize || sw.oldScreenW <= 0 || sw.oldScreenH <= 0) return;
+        m_rrSetScreenSize(m_dpy, m_root, sw.oldScreenW, sw.oldScreenH, sw.oldScreenMmW, sw.oldScreenMmH);
+        m_x.XSync(m_dpy, False);
+    }
+    /// Put back what SwitchMode changed.
+    void RestoreMode(const ModeSwitch& sw) {
+        if (!LoadModeFunctions() || !m_rrSetCrtc || !sw.crtc) return;
+        RrScreenResources* res = m_rrGetRes(m_dpy, m_root);
+        if (!res) return;
+        std::vector<unsigned long> outs = sw.outputs;
+        g_lastXError = 0;
+        m_rrSetCrtc(m_dpy, res, sw.crtc, CurrentTime, sw.x, sw.y, sw.oldMode, sw.rotation, outs.empty() ? nullptr : outs.data(), (int)outs.size());
+        m_x.XSync(m_dpy, False);
+        g_lastXError = 0;
+        m_rrFreeRes(res);
+        if (sw.screenGrew) RestoreScreenSize(sw);
+    }
+
     // ---- misc input ------------------------------------------------------------------
     void* GLProcAddress(const char* name) override {
         if (!m_hasGlx) return nullptr;
@@ -1123,6 +1307,12 @@ public:
     void (*m_rrFreeRes)(RrScreenResources*) = nullptr;
     RrCrtcInfo* (*m_rrGetCrtc)(Display*, RrScreenResources*, unsigned long) = nullptr;
     void (*m_rrFreeCrtc)(RrCrtcInfo*) = nullptr;
+    bool m_rrModeTried = false;
+    RrOutputInfo* (*m_rrGetOutput)(Display*, RrScreenResources*, unsigned long) = nullptr;
+    void (*m_rrFreeOutput)(RrOutputInfo*) = nullptr;
+    Status (*m_rrSetCrtc)(Display*, RrScreenResources*, unsigned long, Time, int, int, unsigned long, unsigned short, unsigned long*, int) = nullptr;
+    void (*m_rrSetScreenSize)(Display*, ::Window, int, int, int, int) = nullptr;
+    std::map<::Window, ModeSwitch> m_modeSwitches;   // SetFullscreenMode: one per window that switched a display's mode
     // XDND (file drops)
     Atom m_aXdndAware = 0, m_aXdndEnter = 0, m_aXdndPosition = 0, m_aXdndStatus = 0, m_aXdndLeave = 0, m_aXdndDrop = 0,
          m_aXdndFinished = 0, m_aXdndSelection = 0, m_aXdndActionCopy = 0, m_aXdndTypeList = 0, m_aUriList = 0, m_aDropProp = 0;
@@ -1138,6 +1328,7 @@ public:
 #define XF m_sys->m_x
 
 X11Win::~X11Win() {
+    LeaveFullscreenMode();
     DestroyGLContext();
     if (m_ic) XF.XDestroyIC(m_ic);
     if (m_gc) XF.XFreeGC(XD, m_gc);
@@ -1199,6 +1390,42 @@ int X11Win::RefreshRateHz() const {
     GetPosition(x, y);
     GetSize(w, h);
     return m_sys->RefreshRateAt(x + w / 2, y + h / 2);
+}
+int X11Win::DisplayIndex() const {
+    int x = 0, y = 0, w = 0, h = 0;
+    GetPosition(x, y);
+    GetSize(w, h);
+    return DisplayIndexForRect(m_sys->Displays(), x, y, w, h);
+}
+bool X11Win::SetFullscreenMode(const VideoMode& want) {
+    const int display = DisplayIndex() >= 0 ? DisplayIndex() : 0;
+    const bool haveOld = m_mode.width > 0;
+    X11Impl::ModeSwitch& sw = m_sys->m_modeSwitches[m_win];
+    if (!haveOld) { GetPosition(m_savedX, m_savedY); GetSize(m_savedW, m_savedH); }
+    VideoMode picked; DisplayRect r;
+    if (!m_sys->SwitchMode(display, want, sw, haveOld, picked, r)) {
+        if (!haveOld) m_sys->m_modeSwitches.erase(m_win);
+        return false;
+    }
+    m_mode = picked;
+    // Cover the CRTC's picture: the window manager does it for _NET_WM_STATE_FULLSCREEN; with none (Xvfb) move and size it.
+    m_fullscreen = true;
+    XEvent e; std::memset(&e, 0, sizeof(e));
+    e.xclient.type = ClientMessage; e.xclient.window = m_win; e.xclient.message_type = m_sys->m_aNetState; e.xclient.format = 32;
+    e.xclient.data.l[0] = 1; e.xclient.data.l[1] = (long)m_sys->m_aNetFull; e.xclient.data.l[3] = 1;
+    XF.XSendEvent(XD, m_sys->m_root, False, SubstructureNotifyMask | SubstructureRedirectMask, &e);
+    XF.XMoveResizeWindow(XD, m_win, r.x, r.y, (unsigned)r.w, (unsigned)r.h);
+    XF.XRaiseWindow(XD, m_win);
+    XF.XSync(XD, False);
+    return true;
+}
+void X11Win::LeaveFullscreenMode() {
+    if (m_mode.width <= 0) return;
+    auto it = m_sys->m_modeSwitches.find(m_win);
+    if (it != m_sys->m_modeSwitches.end()) { m_sys->RestoreMode(it->second); m_sys->m_modeSwitches.erase(it); }
+    m_mode = VideoMode();
+    if (m_savedW > 0 && m_savedH > 0) XF.XMoveResizeWindow(XD, m_win, m_savedX, m_savedY, (unsigned)m_savedW, (unsigned)m_savedH);
+    XF.XSync(XD, False);
 }
 void X11Win::Restore() { m_hidden = false; XF.XMapWindow(XD, m_win); XF.XRaiseWindow(XD, m_win); XF.XFlush(XD); }
 bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
@@ -1287,6 +1514,7 @@ bool X11Win::PresentPixels(const uint8_t* rgba, int w, int h) {
     return ok;
 }
 void X11Win::SetFullscreen(bool on) {
+    LeaveFullscreenMode();   // from an exclusive mode to desktop fullscreen or a window: the display's own mode comes back
     m_fullscreen = on;
     XEvent e; std::memset(&e, 0, sizeof(e));
     e.xclient.type = ClientMessage;

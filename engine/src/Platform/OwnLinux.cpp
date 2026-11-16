@@ -107,6 +107,8 @@ public:
     std::unique_ptr<Gamepad> OpenGamepad(int i) override { return own::OpenEvdevGamepad(i); }
 
     std::vector<DisplayInfo> Displays() override { return m_x11 ? m_x11->Displays() : std::vector<DisplayInfo>(); }
+    std::vector<VideoMode> DisplayModes(int display) override { return m_x11 ? m_x11->DisplayModes(display) : std::vector<VideoMode>(); }
+    bool CurrentDisplayMode(int display, VideoMode& out) override { return m_x11 && m_x11->CurrentDisplayMode(display, out); }
     bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent) override {
         std::string err;
         if (own::X11MessageBox(title, text, err)) return true;

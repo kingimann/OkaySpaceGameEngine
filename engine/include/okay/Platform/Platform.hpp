@@ -113,6 +113,18 @@ struct Event {
     std::string text;
 };
 
+// ---- Display modes -------------------------------------------------------------
+/// One mode a display can show: its size in pixels and refresh rate (Hz; 0 = the OS did not say).
+struct VideoMode {
+    int width = 0, height = 0, refreshHz = 0;
+    bool operator==(const VideoMode& o) const { return width == o.width && height == o.height && refreshHz == o.refreshHz; }
+    bool operator!=(const VideoMode& o) const { return !(*this == o); }
+};
+/// The mode of `modes` closest to `want`: the same size if listed (with the nearest refresh rate, the lower one on a tie;
+/// want.refreshHz 0 = the highest rate listed for that size), otherwise the smallest listed mode at least as large as `want`
+/// in both directions, otherwise the largest one. {0, 0, 0} when `modes` is empty. What SetFullscreenMode picks with.
+VideoMode ClosestVideoMode(const std::vector<VideoMode>& modes, const VideoMode& want);
+
 // ---- Windows and the OpenGL context -----------------------------------------
 constexpr int kCentered = 0x2FFF0000;   // x / y: let the window manager centre it
 
@@ -169,6 +181,19 @@ public:
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Which display the window is on: its index in Backend::Displays() (the display that holds the window's centre, else
+    /// the one it overlaps most). -1 = unknown (no display list, or the window is off every display).
+    /// sdl2: SDL_GetWindowDisplayIndex; X11: the RandR monitors; Win32: MonitorFromWindow.
+    virtual int DisplayIndex() const { return -1; }
+    /// Exclusive fullscreen: switch the display the window is on to the listed mode closest to `mode` (Backend::DisplayModes;
+    /// same size first, then the nearest refresh rate; a refresh of 0 = any) and cover that display with the window.
+    /// SetFullscreen(false) leaves it and puts the display's own mode back (so does destroying the window).
+    /// sdl2: SDL_GetClosestDisplayMode + SDL_SetWindowDisplayMode + SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN);
+    /// X11: RandR XRRSetCrtcConfig on the CRTC that shows the display; Win32: ChangeDisplaySettingsExW(CDS_FULLSCREEN).
+    /// False = no such mode, the switch was refused, or not supported here (the window is then left as it was).
+    virtual bool SetFullscreenMode(const VideoMode& mode) { (void)mode; return false; }
+    /// The mode SetFullscreenMode switched to while it is in effect; {0, 0, 0} otherwise.
+    virtual VideoMode FullscreenMode() const { return VideoMode(); }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -415,6 +440,15 @@ public:
     /// else the root window, with _NET_WORKAREA as the usable area and Xft.dpi as the scale; Win32 EnumDisplayMonitors /
     /// GetMonitorInfoW and GetDpiForMonitor (shcore.dll loaded at run time). Empty when video is not up.
     virtual std::vector<DisplayInfo> Displays() { return {}; }
+    /// Every mode display `display` (an index into Displays()) can show, largest first (by width, then height, then refresh
+    /// rate), without repeats. Empty when the index is out of range, video is not up or the backend cannot list modes.
+    /// sdl2: SDL_GetNumDisplayModes / SDL_GetDisplayMode; X11: the RandR modes of the outputs of the display's CRTC (libXrandr
+    /// loaded at run time); Win32: EnumDisplaySettingsW on the display's device.
+    virtual std::vector<VideoMode> DisplayModes(int display) { (void)display; return {}; }
+    /// The mode display `display` shows right now (the desktop mode; while a window holds a SetFullscreenMode, that mode).
+    /// False when it cannot be read. sdl2: SDL_GetCurrentDisplayMode; X11: the mode of the display's CRTC; Win32:
+    /// EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS).
+    virtual bool CurrentDisplayMode(int display, VideoMode& out) { (void)display; (void)out; return false; }
 };
 
 // ---- Free functions on the default backend ------------------------------------

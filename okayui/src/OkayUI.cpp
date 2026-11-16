@@ -5,8 +5,14 @@
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
-#include <SDL.h>
-#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/UI/UIPainter.hpp"     // the 2D types (ui2d::Rect, Vertex, RGBA), laid out as SDL's
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
+#include <SDL.h>                     // only the SDL_Renderer path (EndFrame(SDL_Renderer*)) and SDL's clipboard
+#endif
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers
 #include <cstddef>  // offsetof
 #include <cstdarg>
 #include <cstring>
@@ -32,14 +38,14 @@ int g_dropped = 0;
 bool g_rowClipper = true;   // the table row clipper (SetTableRowClipping)
 bool g_cullRow = false;   // a table row wholly outside the clip: its geometry is skipped, not emitted (see TableNextRow)
 inline void noteDrop() { ++g_dropped; }
-SDL_Vertex g_verts[kMaxVerts];
+okay::ui2d::Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
 int        g_idx[kMaxIdx];
 int        g_ni = 0;
 
 // Overlay batch: popups (Combo lists) and tooltips draw here, then it's appended
 // AFTER the main batch each frame so it composites on top of later widgets.
-SDL_Vertex g_ovVerts[kMaxVerts];
+okay::ui2d::Vertex g_ovVerts[kMaxVerts];
 int        g_onv = 0;
 int        g_ovIdx[kMaxIdx];
 int        g_oni = 0;
@@ -75,15 +81,15 @@ SDL_Texture* fallbackTex(okay::TtfFont* f) {
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
 // texture. A span records the index where a state begins; EndFrame draws each range
 // with the matching clip rect + texture. The overlay batch is never clipped.
-struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
+struct DrawSpan { int startIdx; bool on; okay::ui2d::Rect rect; SDL_Texture* tex; };
 constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
 DrawSpan g_spans[kMaxSpans];
 int      g_nspans = 0;
-SDL_Rect g_clipStack[16];
+okay::ui2d::Rect g_clipStack[16];
 int      g_clipTop = 0;
 // Current draw state; a span is emitted whenever clip or texture changes.
 bool         g_curClipOn = false;
-SDL_Rect     g_curClipRect = { 0, 0, 0, 0 };
+okay::ui2d::Rect     g_curClipRect = { 0, 0, 0, 0 };
 SDL_Texture* g_curTex = nullptr;
 // Record a span at the current index position (coalescing if no geometry was added
 // since the previous span).
@@ -95,7 +101,7 @@ void pushSpan() {
     if (g_nspans < kMaxSpans) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
 }
 // Backwards-compatible helper used by the clip API.
-void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
+void pushClipSpan(bool on, okay::ui2d::Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
 // Switch the bound texture for subsequent geometry (nullptr = untextured/flat color).
 void setTexture(SDL_Texture* t) { if (t != g_curTex) { g_curTex = t; pushSpan(); } }
 
@@ -553,8 +559,8 @@ void place(float w, float h, float& x, float& y) {
     g_nextItemW = -1.0f;   // a one-shot SetNextItemWidth applies to just this item
 }
 
-inline SDL_Color toColor(const unsigned char c[4]) {
-    SDL_Color sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
+inline okay::ui2d::RGBA toColor(const unsigned char c[4]) {
+    okay::ui2d::RGBA sc; sc.r = c[0]; sc.g = c[1]; sc.b = c[2]; sc.a = c[3];
     if (g_disCount > 0 && !g_rawDraw) {   // inside BeginDisabled: halfway to the panel colour, alpha kept
         const unsigned char* p = g_theme.panel;   // (so stacked layers of one widget do not blend through each other)
         sc.r = (unsigned char)((sc.r + p[0]) / 2); sc.g = (unsigned char)((sc.g + p[1]) / 2); sc.b = (unsigned char)((sc.b + p[2]) / 2);
@@ -565,16 +571,16 @@ inline SDL_Color toColor(const unsigned char c[4]) {
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
 // batch is active (main, or overlay when g_toOverlay is set).
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }   // batch full: counted and reported
-    const SDL_Color sc = toColor(c);
+    const okay::ui2d::RGBA sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v;
+    okay::ui2d::FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    okay::ui2d::Vertex v;
     v.color = sc; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     V[nv++] = v;
     v.position.x = x + w; v.position.y = y;     V[nv++] = v;
@@ -592,9 +598,9 @@ void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
     if (g_cullRow) return;
     setTexture(tex);
     if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
-    const SDL_Color sc = toColor(tint);
+    const okay::ui2d::RGBA sc = toColor(tint);
     const int base = g_nv;
-    SDL_Vertex v; v.color = sc;
+    okay::ui2d::Vertex v; v.color = sc;
     v.position.x = x;     v.position.y = y;     v.tex_coord.x = u0; v.tex_coord.y = v0; g_verts[g_nv++] = v;
     v.position.x = x + w; v.position.y = y;     v.tex_coord.x = u1; v.tex_coord.y = v0; g_verts[g_nv++] = v;
     v.position.x = x + w; v.position.y = y + h; v.tex_coord.x = u1; v.tex_coord.y = v1; g_verts[g_nv++] = v;
@@ -607,16 +613,16 @@ void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
 // A quad from four arbitrary corners (for rotated/skewed shapes and thick lines).
 void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
              float dx, float dy, const unsigned char c[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
-    const SDL_Color sc = toColor(c);
+    const okay::ui2d::RGBA sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    okay::ui2d::FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    okay::ui2d::Vertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
@@ -630,15 +636,15 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
 void gradQuad(float x, float y, float w, float h,
               const unsigned char tl[4], const unsigned char tr[4],
               const unsigned char br[4], const unsigned char bl[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.tex_coord = uv;
+    okay::ui2d::FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    okay::ui2d::Vertex v; v.tex_coord = uv;
     v.position.x = x;     v.position.y = y;     v.color = toColor(tl); V[nv++] = v;
     v.position.x = x + w; v.position.y = y;     v.color = toColor(tr); V[nv++] = v;
     v.position.x = x + w; v.position.y = y + h; v.color = toColor(br); V[nv++] = v;
@@ -652,7 +658,7 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
     float dx = x1 - x0, dy = y1 - y0;
     float len = dx * dx + dy * dy;
     if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
-    len = 1.0f / SDL_sqrtf(len);
+    len = 1.0f / std::sqrt(len);
     // Perpendicular unit vector * half thickness.
     float px = -dy * len * th * 0.5f, py = dx * len * th * 0.5f;
     quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
@@ -660,16 +666,16 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
 
 // A single filled triangle.
 void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
     if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) { noteDrop(); return; }
-    const SDL_Color sc = toColor(c);
+    const okay::ui2d::RGBA sc = toColor(c);
     const int base = nv;
-    SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
-    SDL_Vertex v; v.color = sc; v.tex_coord = uv;
+    okay::ui2d::FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
+    okay::ui2d::Vertex v; v.color = sc; v.tex_coord = uv;
     v.position.x = ax; v.position.y = ay; V[nv++] = v;
     v.position.x = bx; v.position.y = by; V[nv++] = v;
     v.position.x = cx; v.position.y = cy; V[nv++] = v;
@@ -683,7 +689,7 @@ void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int 
     float px = cx + radius, py = cy;
     for (int i = 1; i <= segments; ++i) {
         float a = step * i;
-        float nx = cx + radius * SDL_cosf(a), ny = cy + radius * SDL_sinf(a);
+        float nx = cx + radius * std::cos(a), ny = cy + radius * std::sin(a);
         tri(cx, cy, px, py, nx, ny, c);
         px = nx; py = ny;
     }
@@ -693,10 +699,10 @@ void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int 
 void arcFan(float cx, float cy, float r, float a0, float a1, const unsigned char c[4], int seg = 5) {
     if (seg < 1) seg = 1;
     const float step = (a1 - a0) / seg;
-    float px = cx + r * SDL_cosf(a0), py = cy + r * SDL_sinf(a0);
+    float px = cx + r * std::cos(a0), py = cy + r * std::sin(a0);
     for (int i = 1; i <= seg; ++i) {
         float a = a0 + step * i;
-        float nx = cx + r * SDL_cosf(a), ny = cy + r * SDL_sinf(a);
+        float nx = cx + r * std::cos(a), ny = cy + r * std::sin(a);
         tri(cx, cy, px, py, nx, ny, c);
         px = nx; py = ny;
     }
@@ -734,8 +740,8 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     const float px = fH() * s, k = px / f->BakeHeight();
     const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
     const float base = y + f->Ascent(px);
-    const SDL_Color sc = toColor(c);
-    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    const okay::ui2d::RGBA sc = toColor(c);
+    okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
@@ -750,7 +756,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
             const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
             const float u0 = g->x0 / aw, v0 = g->y0 / ah, u1 = g->x1 / aw, v1 = g->y1 / ah;
             const int b0 = nv;
-            SDL_Vertex v; v.color = sc;
+            okay::ui2d::Vertex v; v.color = sc;
             v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
             v.position.x = x1; v.position.y = y0; v.tex_coord.x = u1; v.tex_coord.y = v0; V[nv++] = v;
             v.position.x = x1; v.position.y = y1; v.tex_coord.x = u1; v.tex_coord.y = v1; V[nv++] = v;
@@ -773,13 +779,13 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
-        float pen = exact ? SDL_floorf(x + 0.5f) : x;
-        const float base = exact ? SDL_floorf(y + z.ascent * k + 0.5f) : y + z.ascent * k;
-        SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+        float pen = exact ? std::floor(x + 0.5f) : x;
+        const float base = exact ? std::floor(y + z.ascent * k + 0.5f) : y + z.ascent * k;
+        okay::ui2d::Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
         int*        I = g_toOverlay ? g_ovIdx   : g_idx;
         int&        nv = g_toOverlay ? g_onv : g_nv;
         int&        ni = g_toOverlay ? g_oni : g_ni;
-        const SDL_Color sc = toColor(c);
+        const okay::ui2d::RGBA sc = toColor(c);
         for (const char* p = str; *p;) {
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
@@ -788,7 +794,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
                 const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
                 const int b0 = nv;
-                SDL_Vertex v; v.color = sc;
+                okay::ui2d::Vertex v; v.color = sc;
                 v.position.x = x0; v.position.y = y0; v.tex_coord.x = g->u0; v.tex_coord.y = g->v0; V[nv++] = v;
                 v.position.x = x1; v.position.y = y0; v.tex_coord.x = g->u1; v.tex_coord.y = g->v0; V[nv++] = v;
                 v.position.x = x1; v.position.y = y1; v.tex_coord.x = g->u1; v.tex_coord.y = g->v1; V[nv++] = v;
@@ -896,7 +902,7 @@ inline void registerWindowRect(int id, unsigned long long z, float x, float y, f
     if (g_wCurN < 64) g_wCur[g_wCurN++] = WinRect{id, z, x, y, w, h};
 }
 // Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
-struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
+struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; okay::ui2d::Rect clip; SDL_Texture* tex; };
 WinRec g_wrec[64]; int g_nwrec = 0; int g_wrecOpen = -1;
 inline void wrecEnd() { if (g_wrecOpen >= 0) { g_wrec[g_wrecOpen].i1 = g_ni; g_wrecOpen = -1; } }
 inline void wrecBegin(int id, unsigned long long z) {
@@ -921,7 +927,7 @@ void reorderWindows() {
     static DrawSpan nsp[kMaxSpans];
     int nn = 0, nns = 0;
     bool fail = false;
-    auto stateAt = [&](int idx) { DrawSpan st{0, false, SDL_Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
+    auto stateAt = [&](int idx) { DrawSpan st{0, false, okay::ui2d::Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
     auto emit = [&](int a, int b) {
         if (b <= a || fail) return;
         if (nns + 1 + g_nspans > kMaxSpans) { fail = true; return; }
@@ -952,7 +958,7 @@ inline bool hitOverlay(float x, float y, float w, float h) {
 // the edge of a clipped window) is invisible, so it must not take clicks either.
 inline bool inClip() {
     if (g_toOverlay || g_clipTop <= 0) return true;
-    const SDL_Rect& c = g_clipStack[g_clipTop - 1];
+    const okay::ui2d::Rect& c = g_clipStack[g_clipTop - 1];
     return pointIn(g_in.mouseX, g_in.mouseY, (float)c.x, (float)c.y, (float)c.w, (float)c.h);
 }
 inline bool hit(float x, float y, float w, float h) {
@@ -1586,7 +1592,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 namespace {
 // Append the overlay batch after the main batch so popups/tooltips draw on top.
 void mergeOverlay() {
-    if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
+    if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, okay::ui2d::Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
     const int fit = g_nv - base;   // overlay vertices that made it in
@@ -1639,10 +1645,10 @@ void finalizeFrame() {
 }
 } // namespace
 
-static_assert(sizeof(DrawVertex) == sizeof(SDL_Vertex), "DrawVertex must match SDL_Vertex");
-static_assert(offsetof(DrawVertex, x) == offsetof(SDL_Vertex, position), "DrawVertex layout");
-static_assert(offsetof(DrawVertex, r) == offsetof(SDL_Vertex, color), "DrawVertex layout");
-static_assert(offsetof(DrawVertex, u) == offsetof(SDL_Vertex, tex_coord), "DrawVertex layout");
+static_assert(sizeof(DrawVertex) == sizeof(okay::ui2d::Vertex), "DrawVertex must match okay::ui2d::Vertex");
+static_assert(offsetof(DrawVertex, x) == offsetof(okay::ui2d::Vertex, position), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, r) == offsetof(okay::ui2d::Vertex, color), "DrawVertex layout");
+static_assert(offsetof(DrawVertex, u) == offsetof(okay::ui2d::Vertex, tex_coord), "DrawVertex layout");
 
 namespace {
 // The span list as backend-neutral commands: the same index ranges, clip rectangles
@@ -1651,14 +1657,14 @@ namespace {
 DrawCmd g_cmds[kMaxSpans + 2];
 int buildCmds() {
     int n = 0;
-    auto add = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* tex) {
+    auto add = [&](int from, int to, bool on, const okay::ui2d::Rect& r, SDL_Texture* tex) {
         if (to <= from || n >= kMaxSpans + 2) return;
         DrawCmd& c = g_cmds[n++];
         c.idxOffset = from; c.idxCount = to - from;
         c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
         c.texture = (const void*)tex;
     };
-    const SDL_Rect none = { 0, 0, 0, 0 };
+    const okay::ui2d::Rect none = { 0, 0, 0, 0 };
     if (g_nspans == 0) { add(0, g_ni, false, none, g_defTex); return n; }
     add(0, g_spans[0].startIdx, false, none, g_defTex);
     for (int s = 0; s < g_nspans; ++s)
@@ -1690,6 +1696,7 @@ okay::TtfFont* FallbackFontOf(const void* texture) {
 
 void EndFrameData() { finalizeFrame(); }
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 // The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
 SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
     for (int i = 0; i < g_nfb; ++i)
@@ -1709,13 +1716,14 @@ SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
     }
     return g_atlasTex;
 }
+#endif // OKAY_PLATFORM_HAVE_SDL2
 
 // Toasts: a few short messages stacked in the bottom-right corner (see Toast()).
-struct ToastSlot { char text[160]; int kind; Uint32 until; Uint32 born; };
+struct ToastSlot { char text[160]; int kind; std::uint32_t until; std::uint32_t born; };
 ToastSlot g_toasts[4];
 int       g_ntoasts = 0;
 void drawToasts(float screenW, float screenH) {
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     int k = 0;
     for (int i = 0; i < g_ntoasts; ++i) if (g_toasts[i].until > now) g_toasts[k++] = g_toasts[i];
     g_ntoasts = k;
@@ -1750,6 +1758,10 @@ void EndFrameData(int outputWidth, int outputHeight) {
     finalizeFrame();
 }
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+// The SDL_Renderer path: OkayUI's vertices are okay::ui2d::Vertex, laid out as SDL_Vertex (checked below), so they go to
+// SDL_RenderGeometry as they are; the clip rectangles likewise.
+static_assert(sizeof(okay::ui2d::Vertex) == sizeof(SDL_Vertex) && sizeof(okay::ui2d::Rect) == sizeof(SDL_Rect), "ui2d types must match SDL's layout");
 void EndFrame(SDL_Renderer* r) {
     if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
     finalizeFrame();
@@ -1761,7 +1773,7 @@ void EndFrame(SDL_Renderer* r) {
     SDL_GetRenderDrawBlendMode(r, &prev);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (g_nspans == 0) {
-        SDL_RenderGeometry(r, defTex, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
+        SDL_RenderGeometry(r, defTex, (const SDL_Vertex*)g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
     } else {
         // Draw each contiguous index range under its clip rect. Ranges run from one
         // span's startIdx to the next span's (last extends to g_ni).
@@ -1770,21 +1782,22 @@ void EndFrame(SDL_Renderer* r) {
         // Geometry before the first span (window frames drawn pre-clip) is unclipped.
         if (g_spans[0].startIdx > 0) {
             SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, defTex, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
+            SDL_RenderGeometry(r, defTex, (const SDL_Vertex*)g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
         }
         for (int s = 0; s < g_nspans; ++s) {
             int from = g_spans[s].startIdx;
             int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
             if (to <= from) continue;
-            if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
+            if (g_spans[s].on) SDL_RenderSetClipRect(r, (const SDL_Rect*)&g_spans[s].rect);
             else               SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, resolveTex(r, g_spans[s].tex), g_verts, g_nv, &g_idx[from], to - from);
+            SDL_RenderGeometry(r, resolveTex(r, g_spans[s].tex), (const SDL_Vertex*)g_verts, g_nv, &g_idx[from], to - from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
     }
     SDL_SetRenderDrawBlendMode(r, prev);
 }
+#endif // OKAY_PLATFORM_HAVE_SDL2
 
 Theme& Style() { return g_theme; }
 
@@ -2385,10 +2398,10 @@ void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++]
 void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
 
 void PushClipRect(float x, float y, float w, float h) {
-    SDL_Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
+    okay::ui2d::Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
     // Intersect with the enclosing clip so nested regions never draw outside a parent.
     if (g_clipTop > 0) {
-        SDL_Rect& p = g_clipStack[g_clipTop - 1];
+        okay::ui2d::Rect& p = g_clipStack[g_clipTop - 1];
         int x0 = r.x > p.x ? r.x : p.x, y0 = r.y > p.y ? r.y : p.y;
         int x1 = (r.x + r.w) < (p.x + p.w) ? (r.x + r.w) : (p.x + p.w);
         int y1 = (r.y + r.h) < (p.y + p.h) ? (r.y + r.h) : (p.y + p.h);
@@ -2401,7 +2414,7 @@ void PushClipRect(float x, float y, float w, float h) {
 void PopClipRect() {
     if (g_clipTop > 0) --g_clipTop;
     if (g_clipTop > 0) pushClipSpan(true, g_clipStack[g_clipTop - 1]);
-    else               pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 });
+    else               pushClipSpan(false, okay::ui2d::Rect{ 0, 0, 0, 0 });
 }
 
 void Spacing(float h) {
@@ -2830,7 +2843,7 @@ bool Knob(const char* label, float* value, float minV, float maxV, float size) {
     fillCircle(cx, cy, rad * 0.82f, g_theme.panel);
     float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
     const float a = 2.35619f + t * 4.71239f;   // 135deg + t*270deg (radians)
-    line(cx, cy, cx + SDL_cosf(a) * rad, cy + SDL_sinf(a) * rad, 2.5f, g_theme.accent);
+    line(cx, cy, cx + std::cos(a) * rad, cy + std::sin(a) * rad, 2.5f, g_theme.accent);
     if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return changed;
 }
@@ -4113,7 +4126,7 @@ bool tblRowOutside(float top, float h) {
         if (g_tbl.rowFrozen) return false;
         clipTop = g_tbl.frozenBottom; clipBot = g_tbl.oy + g_tbl.oh;
     } else if (g_clipTop > 0) {
-        const SDL_Rect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
+        const okay::ui2d::Rect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
     } else if (g_dispH > 0.0f) {
         clipTop = 0.0f; clipBot = g_dispH;
     } else return false;
@@ -4758,7 +4771,7 @@ void Spinner(float size) {
     unsigned char tmp[4];
     for (int i = 0; i < 20; ++i) {   // a 270-degree arc fading toward its tail
         const float t0 = a0 + i * 0.2356f, t1 = t0 + 0.2356f;
-        line(cx + r * SDL_cosf(t0), cy + r * SDL_sinf(t0), cx + r * SDL_cosf(t1), cy + r * SDL_sinf(t1),
+        line(cx + r * std::cos(t0), cy + r * std::sin(t0), cx + r * std::cos(t1), cy + r * std::sin(t1),
              d * 0.1f, withAlpha(g_theme.accent, 0.15f + 0.85f * (float)i / 19.0f, tmp));
     }
 }
@@ -4771,7 +4784,7 @@ void Toast(const char* text, int kind, float seconds) {
     t.text[i] = 0;
     t.kind = kind;
     t.born = okay::platform::TicksMs32();
-    t.until = t.born + (Uint32)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
+    t.until = t.born + (std::uint32_t)((seconds > 0.5f ? seconds : 0.5f) * 1000.0f);
 }
 
 
@@ -4803,7 +4816,9 @@ void SetClipboardText(const char* text) {
     std::memcpy(g_clip, text, n); g_clip[n] = 0;
     trimPartialChar(g_clip);
     if (g_sysClipSet) { g_sysClipSet(g_clip); return; }
+#ifdef OKAY_PLATFORM_HAVE_SDL2
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
+#endif
 }
 const char* GetClipboardText() {
     if (g_sysClipGet) {
@@ -4813,6 +4828,7 @@ const char* GetClipboardText() {
         }
         return g_clip;
     }
+#ifdef OKAY_PLATFORM_HAVE_SDL2
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
@@ -4820,6 +4836,7 @@ const char* GetClipboardText() {
         }
         SDL_free(sys);
     }
+#endif
     return g_clip;
 }
 
@@ -4872,7 +4889,7 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
     Vec2 off[kMaxPath];
     auto segNormal = [&](int a, int b) {
         float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
-        const float l = SDL_sqrtf(dx * dx + dy * dy);
+        const float l = std::sqrt(dx * dx + dy * dy);
         return Vec2{ -dy / l, dx / l };
     };
     for (int i = 0; i < m; ++i) {
@@ -4880,7 +4897,7 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
         const Vec2 nb = hasNext ? segNormal(i, (i + 1) % m) : segNormal(i - 1, i);
         const Vec2 na = hasPrev ? segNormal((i + m - 1) % m, i) : nb;
         float mx = na.x + nb.x, my = na.y + nb.y;
-        const float ml = SDL_sqrtf(mx * mx + my * my);
+        const float ml = std::sqrt(mx * mx + my * my);
         if (ml < 1.0e-4f) { off[i] = Vec2{ na.x * half, na.y * half }; continue; }   // a U-turn: no mitre
         mx /= ml; my /= ml;
         float k = mx * na.x + my * na.y;                  // cos of half the turn angle
@@ -4916,7 +4933,7 @@ int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad
     for (int k = 0; k < 4; ++k)
         for (int i = 0; i <= 6; ++i) {
             const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
-            out[n++] = Vec2{ cx[k] + rad * SDL_cosf(a), cy[k] + rad * SDL_sinf(a) };
+            out[n++] = Vec2{ cx[k] + rad * std::cos(a), cy[k] + rad * std::sin(a) };
         }
     return n;
 }
@@ -4991,7 +5008,7 @@ void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, f
     Vec2 pts[128];
     for (int i = 0; i < n; ++i) {
         const float a = 6.2831853f * (float)i / (float)n;
-        pts[i] = Vec2{ center.x + r * SDL_cosf(a), center.y + r * SDL_sinf(a) };
+        pts[i] = Vec2{ center.x + r * std::cos(a), center.y + r * std::sin(a) };
     }
     strokePath(pts, n, true, th, c);
 }
@@ -5073,7 +5090,7 @@ void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segm
     if (n > 128) n = 128;
     for (int i = 0; i <= n; ++i) {
         const float a = a0 + (a1 - a0) * (float)i / (float)n;
-        PathLineTo(Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) });
+        PathLineTo(Vec2{ center.x + radius * std::cos(a), center.y + radius * std::sin(a) });
     }
 }
 void DrawList::PathStroke(Color32 col, bool closed, float th) const {
@@ -5149,7 +5166,7 @@ bool IsAnyItemActive()   { return g_active != 0; }                              
 bool IsItemVisible() {                                                                // the last item overlaps the current clip rectangle
     if (!g_lay.active) return false;
     float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
-    if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    if (g_clipTop > 0) { const okay::ui2d::Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return g_lay.prevX < x1 && g_lay.prevX + g_lay.prevW > x0 && g_lay.prevY < y1 && g_lay.prevY + g_lay.prevH > y0;
 }
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }

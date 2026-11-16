@@ -1165,8 +1165,10 @@ Branch `claude2/editor-stop-save-timeline-lod`, not merged or released yet.
    centre (the extra 11 % is the 0.1 hysteresis), whatever the object's size. Before the fix a 20-unit object switched at
    about 19 m and 39 m, and a 100-unit one at about 96 m and 193 m.
 
-**Checked:** `test_stop_save_timeline_lod` (headless, Linux). See the branch report for the other suites. The editor was
-syntax-checked only, not run: the three steps above have not been tried in the GUI.
+**Checked (Linux, headless):** `test_stop_save_timeline_lod` 45 checks, 0 failures (21 of 41 failed before the fix);
+`test_editor_hooks`, `test_editor_undo`, `test_play*`, `test_player*`, `test_sequence`, `test_visibility_lod`,
+`test_optimize_simplify` and `test_optimize_occlusion` all pass. `editor/main.cpp` and `editor/TimelineWindow.cpp` were
+syntax-checked only (not built or run): the three walkthroughs above have not been tried in the GUI or on Windows.
 
 ## Team tooling (not part of the Windows release)
 

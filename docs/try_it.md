@@ -743,6 +743,8 @@ value afterwards; the scene saves the numbers. The same panel has **Stick Look R
 to full look speed at full stick; 0 = off, the default) and, on **Player View**, **Preset Hotkeys (1-5)** (off by default; the lab
 has it on; it needs the player to have both views).
 
+**Landing and gamepad (round 2, `claude/player-feel-2`).** At station D the knee bend on landing follows how hard you hit: step off the 2 m, 4 m and 8 m towers and watch the body dip deeper and longer each time. In the editor Inspector, **Player Controller > Gamepad sticks (this session only)** edits the dead zone, outer zone, curve and round/axial shape of both sticks live (not saved with the scene, gone when the editor closes). Not seen on a screen or with a real pad.
+
 **Systems page (F3, second press).** In `OkaySpacePlayer.exe` press F3 once for the frame numbers, again for **Systems**:
 milliseconds per system (Physics, Scripts, Animation, Audio, UI, Render, Terrain, Other CPU, Idle/wait) averaged over the last 120
 frames with their peaks, and a graph of the last 120 frame times. A third press closes it. In the editor, **Game view > Stats overlay**

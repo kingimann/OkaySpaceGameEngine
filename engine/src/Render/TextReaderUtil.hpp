@@ -202,6 +202,57 @@ inline bool ToDouble(std::string_view s, double& v) {
 }
 inline bool ToFloat(std::string_view s, float& f) { double d; if (!ToDouble(s, d)) return false; f = (float)d; return true; }
 
+// Reads the token that starts at `p` (not white space, not a quote: the caller checks) up to the next white space or `e`,
+// leaves `p` just after it, and returns exactly what ToDouble(token) returns, in one pass for the usual plain decimal: the
+// FastDecimal grammar is followed with white space taken as the end of the token (so "1e " is refused here as FastDecimal
+// refuses "1e"); any token it does not settle (more than 19 digits, a large exponent, other characters, more than 64
+// characters) is handed to ToDouble whole.
+inline bool ScanToDouble(const char*& p, const char* e, double& v) {
+    const char* const a = p;
+#if !(defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0)
+    {
+        static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+                                          1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+        const char* q = a;
+        const bool neg = q < e && *q == '-';
+        if (neg) ++q;
+        unsigned long long m = 0;
+        const char* const d0 = q;
+        for (unsigned d; q < e && (d = (unsigned)(unsigned char)*q - '0') <= 9; ++q) m = m * 10 + d;
+        std::ptrdiff_t digits = q - d0;
+        int scale = 0;
+        bool ok = true;
+        if (q < e && *q == '.') {
+            const char* const f0 = ++q;
+            for (unsigned d; q < e && (d = (unsigned)(unsigned char)*q - '0') <= 9; ++q) m = m * 10 + d;
+            scale = -(int)std::min<std::ptrdiff_t>(q - f0, 1000);
+            digits += q - f0;
+        }
+        if (digits == 0 || digits > 19) ok = false;
+        if (ok && q < e && (*q == 'e' || *q == 'E')) {
+            ++q;
+            bool eneg = false;
+            if (q < e && (*q == '-' || *q == '+')) { eneg = *q == '-'; ++q; }
+            if (q >= e || IsWs(*q)) ok = false;
+            int x = 0;
+            for (; ok && q < e && *q >= '0' && *q <= '9'; ++q) { x = x * 10 + (*q - '0'); if (x > 1000) ok = false; }
+            scale += eneg ? -x : x;
+        }
+        if (ok && (q >= e || IsWs(*q)) && q - a <= 64 && (m == 0 || (m <= (1ull << 53) && scale >= -22 && scale <= 22))) {
+            double r = 0;
+            if (m != 0) { r = (double)m; r = scale < 0 ? r / kPow10[-scale] : r * kPow10[scale]; }
+            v = neg ? -r : r;
+            p = q;
+            return std::isfinite(v) && std::fabs(v) <= 1e15;   // as ToDouble after FastDecimal
+        }
+    }
+#endif
+    const char* q = a;
+    while (q < e && !IsWs(*q)) ++q;
+    p = q;
+    return ToDouble(std::string_view(a, (std::size_t)(q - a)), v);
+}
+
 // A plain decimal integer (optional sign), the whole token, within +-2^31.
 inline bool ToInt(std::string_view s, long long& v) {
     if (s.empty() || s.size() > 12) return false;

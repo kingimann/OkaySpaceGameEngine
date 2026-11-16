@@ -65,6 +65,37 @@ struct Obj {
     int extraChannels = 0, vertexColorBlocks = 0;
 };
 
+// The vertex weld of one part: corner key (vertex index, normal, uv, uv flag; 9 words compared bit for bit) -> vertex.
+// Open addressing in one array: no allocation per vertex and no hashing of a string (it was an unordered_map keyed by
+// the key's bytes as a std::string; the vertices and their order are the same, only the lookup changed).
+struct WeldMap {
+    struct E { std::uint32_t k[9]; int v; };
+    std::vector<E> t;
+    std::size_t n = 0;
+    static std::size_t Hash(const std::uint32_t* k) {
+        std::uint64_t h = 0x9E3779B97F4A7C15ull;
+        for (int i = 0; i < 9; ++i) { h = (h ^ k[i]) * 0xBF58476D1CE4E5B9ull; h ^= h >> 31; }
+        return (std::size_t)h;
+    }
+    // the vertex of `k`, or `fresh` (stored for it) when the key is new; `added` says which
+    int Get(const std::uint32_t* k, int fresh, bool& added) {
+        if ((n + 1) * 2 > t.size()) Grow();
+        const std::size_t mask = t.size() - 1;
+        for (std::size_t i = Hash(k) & mask;; i = (i + 1) & mask) {
+            E& e = t[i];
+            if (e.v < 0) { std::memcpy(e.k, k, sizeof e.k); e.v = fresh; ++n; added = true; return fresh; }
+            if (std::memcmp(e.k, k, sizeof e.k) == 0) { added = false; return e.v; }
+        }
+    }
+    void Grow() {
+        std::vector<E> old;
+        old.swap(t);
+        t.assign(std::max<std::size_t>(64, old.size() * 2), E{{0, 0, 0, 0, 0, 0, 0, 0, 0}, -1});
+        const std::size_t mask = t.size() - 1;
+        for (const E& e : old) if (e.v >= 0) for (std::size_t i = Hash(e.k) & mask;; i = (i + 1) & mask) if (t[i].v < 0) { t[i] = e; break; }
+    }
+};
+
 struct Reader {
     std::string err;
     std::string baseDir;
@@ -106,33 +137,187 @@ struct Reader {
         return m;
     }
 
+    // The kind of an open block, worked out once when the block opens: each line is then dispatched on it, not on a chain of
+    // name compares.
+    enum Blk : unsigned char {
+        B_Other, B_Scene, B_MaterialList, B_Material, B_SubMaterial, B_MapDiffuse, B_MapOther, B_Object, B_NodeTm, B_Mesh,
+        B_VertexList, B_FaceList, B_TVertList, B_TFaceList, B_Normals, B_TmAnimation, B_PosTrack, B_ScaleTrack, B_RotTrack
+    };
+    static Blk BlockCode(std::string_view n) {
+        switch (n.size() ? n[0] : 0) {
+        case 'S': if (n == "SCENE") return B_Scene; if (n == "SUBMATERIAL") return B_SubMaterial; if (n == "SHAPEOBJECT") return B_Object; break;
+        case 'M':
+            if (n == "MATERIAL_LIST") return B_MaterialList; if (n == "MATERIAL") return B_Material;
+            if (n.compare(0, 4, "MAP_") == 0) return n == "MAP_DIFFUSE" ? B_MapDiffuse : B_MapOther;
+            if (n == "MESH") return B_Mesh; if (n == "MESH_VERTEX_LIST") return B_VertexList; if (n == "MESH_FACE_LIST") return B_FaceList;
+            if (n == "MESH_TVERTLIST") return B_TVertList; if (n == "MESH_TFACELIST") return B_TFaceList; if (n == "MESH_NORMALS") return B_Normals;
+            break;
+        case 'G': if (n == "GEOMOBJECT") return B_Object; break;
+        case 'H': if (n == "HELPEROBJECT") return B_Object; break;
+        case 'C':
+            if (n == "CAMERAOBJECT") return B_Object;
+            if (n == "CONTROL_POS_TRACK" || n == "CONTROL_POS_TCB" || n == "CONTROL_POS_BEZIER") return B_PosTrack;
+            if (n == "CONTROL_SCALE_TRACK" || n == "CONTROL_SCALE_TCB" || n == "CONTROL_SCALE_BEZIER") return B_ScaleTrack;
+            if (n == "CONTROL_ROT_TRACK" || n == "CONTROL_ROT_TCB" || n == "CONTROL_ROT_BEZIER") return B_RotTrack;
+            break;
+        case 'L': if (n == "LIGHTOBJECT") return B_Object; break;
+        case 'N': if (n == "NODE_TM") return B_NodeTm; break;
+        case 'T': if (n == "TM_ANIMATION") return B_TmAnimation; break;
+        default: break;
+        }
+        return B_Other;
+    }
+
+    // ---- the fast path for the lines that make up nearly all of a big file ----
+    // A line of a vertex, normal, texture vertex, texture face or animation sample list is read straight from the text, without
+    // the token vector, when it is exactly "*KEY n1 n2 ..." with the expected count of plain tokens. Every value goes through the
+    // same ToInt / ToDouble as the general path, and nothing is changed unless the whole line reads; anything else (a quote, a
+    // token too many or too few, a bad number, an index out of range, a budget passed) returns false and the line goes the
+    // general way, which reports it exactly as before.
+    struct Scan {
+        const char* p; const char* e;
+        static bool Ws(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // the set SplitInto uses
+        // the next token, or false at the end of the line or at a quote (a quoted token is the general path's job)
+        bool Tok(std::string_view& t) {
+            while (p < e && Ws(*p)) ++p;
+            if (p >= e || *p == '"') return false;
+            const char* a = p;
+            while (p < e && !Ws(*p)) ++p;
+            t = std::string_view(a, (std::size_t)(p - a));
+            return true;
+        }
+        bool End() { while (p < e && Ws(*p)) ++p; return p >= e; }
+        bool Num(double& v) { while (p < e && Ws(*p)) ++p; return p < e && *p != '"' && ScanToDouble(p, e, v); }
+        bool Index(long long& v) { std::string_view t; if (!Tok(t)) return false; if (!t.empty() && t.back() == ':') t.remove_suffix(1); return ToInt(t, v); }   // as IntAt
+    };
+    // "1" or "1,2,3": a list of smoothing group numbers (0 = none), or-ed into the face's groups
+    void Smoothing(std::string_view s, Face& f) {
+        std::size_t p = 0;
+        while (p < s.size()) {
+            std::size_t q = s.find(',', p);
+            if (q == std::string::npos) q = s.size();
+            long long g;
+            if (ToInt(s.substr(p, q - p), g) && g > 0) { if (g > 32) ++sgOverflow; f.sg |= 1u << ((g - 1) % 32); }
+            p = q + 1;
+        }
+    }
+    // "*MESH_FACE i: A: a B: b C: c AB: x BC: x CA: x [*MESH_SMOOTHING list] [*MESH_MTLID m]" exactly (the general path takes
+    // any order and repeats; this one only the usual layout, and no other token that starts with '*')
+    bool FastFace(Obj* cur, Scan sc) {
+        long long i, v[3];
+        std::string_view t;
+        if (!sc.Index(i)) return false;
+        static constexpr std::string_view kLab[3] = {"A:", "B:", "C:"};
+        for (int k = 0; k < 3; ++k) if (!sc.Tok(t) || t != kLab[k] || !sc.Tok(t) || !ToInt(t, v[k])) return false;
+        static constexpr std::string_view kEdge[3] = {"AB:", "BC:", "CA:"};
+        for (int k = 0; k < 3; ++k) if (!sc.Tok(t) || t != kEdge[k] || !sc.Tok(t) || t[0] == '*' || t == "{") return false;   // a last "{" opens a block: the general path
+        std::string_view sg, mtl;
+        bool haveSg = false, haveMtl = false;
+        if (sc.Tok(t)) {
+            if (t == "*MESH_SMOOTHING") {
+                if (!sc.Tok(sg) || sg == "{") return false;
+                if (sg == "*MESH_MTLID") t = sg;   // "*MESH_SMOOTHING *MESH_MTLID 0": no group (the general path reads "*MESH_MTLID" as the list: no number)
+                else if (sg[0] == '*') return false;
+                else { haveSg = true; if (!sc.Tok(t)) t = std::string_view(); }
+            }
+            if (!t.empty()) { if (t != "*MESH_MTLID" || !sc.Tok(mtl) || mtl[0] == '*' || mtl == "{") return false; haveMtl = true; }
+            if (!sc.End()) return false;
+        }
+        if (i < 0 || i >= cur->numFaces) return false;
+        Face& f = cur->faces[(std::size_t)i];
+        for (int k = 0; k < 3; ++k) f.v[k] = (int)std::max<long long>(-1, std::min<long long>(v[k], 2147483647));
+        f.sg = 0;
+        if (haveSg) Smoothing(sg, f);
+        if (haveMtl) { long long m; if (ToInt(mtl, m) && m >= 0) f.mtl = (int)std::min<long long>(m, 1000000); }
+        return true;
+    }
+    bool FastLine(Obj* cur, Blk top, std::string_view key, Scan sc) {
+        if (!cur) return false;
+        long long i;
+        double x, y, z;
+        switch (top) {
+        case B_VertexList:
+            if (key != "MESH_VERTEX" || !sc.Index(i) || !sc.Num(x) || !sc.Num(y) || !sc.Num(z) || !sc.End() || i < 0 || i >= cur->numVertex) return false;
+            cur->pos[(std::size_t)i] = Vec3{(float)x, (float)y, (float)z};
+            return true;
+        case B_FaceList: return key == "MESH_FACE" && FastFace(cur, sc);
+        case B_TVertList: {
+            if (key != "MESH_TVERT" || !sc.Index(i) || !sc.Num(x) || !sc.Num(y) || !sc.End() || i < 0 || i >= cur->numTVertex) return false;
+            cur->tvert[(std::size_t)i] = Vec2{(float)x, (float)y};   // FloatAt is (float) of ToDouble
+            return true;
+        }
+        case B_TFaceList: {
+            long long a, b, c;
+            if (key != "MESH_TFACE" || !sc.Index(i) || !sc.Index(a) || !sc.Index(b) || !sc.Index(c) || !sc.End()) return false;
+            if (i < 0 || i >= cur->numFaces) return true;   // skipped, as the general path does
+            Face& f = cur->faces[(std::size_t)i];
+            f.tv[0] = (int)a; f.tv[1] = (int)b; f.tv[2] = (int)c; f.hasTv = true;
+            return true;
+        }
+        case B_Normals: {
+            const bool fn = key == "MESH_FACENORMAL";
+            if (!fn && key != "MESH_VERTEXNORMAL") return false;
+            if (!sc.Index(i) || !sc.Num(x) || !sc.Num(y) || !sc.Num(z) || !sc.End()) return false;
+            if (cur->fnormals.empty() && cur->numFaces > 0) { cur->fnormals.assign((std::size_t)cur->numFaces, std::array<Vec3, 3>{Vec3{0, 0, 0}, Vec3{0, 0, 0}, Vec3{0, 0, 0}}); cur->fnHas.assign((std::size_t)cur->numFaces, 0); }
+            if (fn) { cur->curNormalFace = (i >= 0 && i < cur->numFaces) ? (int)i : -1; return true; }
+            if (cur->curNormalFace >= 0) {
+                const Face& f = cur->faces[(std::size_t)cur->curNormalFace];
+                for (int k = 0; k < 3; ++k) if (f.v[k] == (int)i) { cur->fnormals[(std::size_t)cur->curNormalFace][(std::size_t)k] = Vec3{(float)x, (float)y, (float)z}; cur->fnHas[(std::size_t)cur->curNormalFace] |= (char)(1 << k); }
+            }
+            return true;
+        }
+        case B_PosTrack: case B_ScaleTrack: {
+            double t;
+            if (animSkip || key != (top == B_PosTrack ? std::string_view("CONTROL_POS_SAMPLE") : std::string_view("CONTROL_SCALE_SAMPLE"))) return false;
+            if (!sc.Num(t) || !sc.Num(x) || !sc.Num(y) || !sc.Num(z) || !sc.End() || totalKeys + 1 > kMaxKeys) return false;
+            ++totalKeys;
+            (top == B_PosTrack ? cur->posKeys : cur->sclKeys).push_back({t, Vec3{(float)x, (float)y, (float)z}});
+            return true;
+        }
+        case B_RotTrack: {
+            double t, a;
+            if (animSkip || key != "CONTROL_ROT_SAMPLE") return false;
+            if (!sc.Num(t) || !sc.Num(x) || !sc.Num(y) || !sc.Num(z) || !sc.Num(a) || !sc.End() || totalKeys + 1 > kMaxKeys) return false;
+            ++totalKeys;
+            cur->rotKeys.push_back({t, Vec3{(float)x, (float)y, (float)z}, (float)a});
+            return true;
+        }
+        default: return false;
+        }
+    }
+
     bool Parse(const std::string& text) {
         Lines lines(text);
         std::string_view raw;
         std::vector<std::string> stack;
+        std::vector<Blk> codes;   // BlockCode of each entry of `stack`
         std::string pending;   // a block name whose "{" is on the next line
         Obj* cur = nullptr;
         int curDepth = 0;      // stack size when the current object's block was opened
         std::size_t lineCount = 0;
         Tokens tk;   // the tokens of the line (views into the text), reused line after line
-        static const std::string kNoBlock;
         while (lines.Next(raw)) {
             ++lineCount;
             const std::size_t ln = lines.number;
+            if (!codes.empty() && cur) {
+                Scan sc{raw.data(), raw.data() + raw.size()};
+                std::string_view k0;
+                if (sc.Tok(k0) && k0.size() > 1 && k0[0] == '*' && FastLine(cur, codes.back(), k0.substr(1), sc)) continue;
+            }
             SplitInto(raw, tk);
             if (tk.empty()) continue;
-            if (tk.size() == 1 && tk[0] == "{") { if (stack.size() >= kMaxDepth) return Fail("blocks nested too deeply", ln); stack.push_back(pending); pending.clear(); continue; }
+            if (tk.size() == 1 && tk[0] == "{") { if (stack.size() >= kMaxDepth) return Fail("blocks nested too deeply", ln); stack.push_back(pending); codes.push_back(BlockCode(pending)); pending.clear(); continue; }
             if (tk[0] == "}") {
                 if (stack.empty()) return Fail("'}' without an open block", ln);
                 if (cur && (int)stack.size() == curDepth) cur = nullptr;
-                stack.pop_back();
+                stack.pop_back(); codes.pop_back();
                 // a block closing may share its line with the next keyword: ignore the rest
                 continue;
             }
             if (tk[0].empty() || tk[0][0] != '*') { continue; }   // stray text
             const std::string_view key = tk[0].substr(1);
             const bool opens = tk.back() == "{";
-            const std::string_view top = stack.empty() ? std::string_view(kNoBlock) : std::string_view(stack.back());   // not used after the push below
+            const Blk top = codes.empty() ? B_Other : codes.back();   // not used after the push below
             bool handled = true;
 
             // ---- file header and scene ----
@@ -141,18 +326,18 @@ struct Reader {
                 else if (key == "COMMENT") {}
                 else if (opens) {}   // top-level blocks handled below
                 else handled = false;
-            } else if (top == "SCENE") {
+            } else if (top == B_Scene) {
                 long long v;
                 if (key == "SCENE_FRAMESPEED" && IntAt(tk, 1, v) && v > 0 && v < 100000) frameSpeed = (int)v;
                 else if (key == "SCENE_TICKSPERFRAME" && IntAt(tk, 1, v) && v > 0 && v < 1000000) ticksPerFrame = (int)v;
                 else handled = false;
-            } else if (top == "MATERIAL_LIST") {
+            } else if (top == B_MaterialList) {
                 long long v;
                 if (key == "MATERIAL_COUNT" && IntAt(tk, 1, v) && v >= 0) {
                     if ((std::size_t)v > kMaxMaterials) return Fail("too many materials", ln);
                     declaredMaterials = v;
                 }
-            } else if (top == "MATERIAL" || top == "SUBMATERIAL") {
+            } else if (top == B_Material || top == B_SubMaterial) {
                 Material* m = CurMaterial(stack);
                 if (m) {
                     long long v; float f;
@@ -167,17 +352,17 @@ struct Reader {
                              key == "MATERIAL_XP_FALLOFF" || key == "MATERIAL_FALLOFF" || key == "MATERIAL_XP_TYPE" || key == "MATERIAL_TWOSIDED" || key == "MATERIAL_FACEMAP" || key == "MATERIAL_SELFILLUM") {}
                     else handled = false;
                 }
-            } else if (top.compare(0, 4, "MAP_") == 0 && stack.size() >= 2) {
+            } else if ((top == B_MapDiffuse || top == B_MapOther) && stack.size() >= 2) {
                 Material* m = CurMaterial(stack);
                 if (m) {
-                    if (key == "BITMAP" && tk.size() > 1) { if (top == "MAP_DIFFUSE") m->bitmap = tk[1]; else ++ignoredMaps; }
+                    if (key == "BITMAP" && tk.size() > 1) { if (top == B_MapDiffuse) m->bitmap = tk[1]; else ++ignoredMaps; }
                     else if (key == "UVW_U_OFFSET" || key == "UVW_V_OFFSET" || key == "UVW_U_TILING" || key == "UVW_V_TILING" || key == "UVW_ANGLE") {
                         float f;
-                        if (top == "MAP_DIFFUSE" && FloatAt(tk, 1, f) && ((key == "UVW_U_TILING" || key == "UVW_V_TILING") ? std::fabs(f - 1.0f) > 1e-4f : std::fabs(f) > 1e-4f)) ++uvTransforms;
+                        if (top == B_MapDiffuse && FloatAt(tk, 1, f) && ((key == "UVW_U_TILING" || key == "UVW_V_TILING") ? std::fabs(f - 1.0f) > 1e-4f : std::fabs(f) > 1e-4f)) ++uvTransforms;
                     }
                     else handled = false;
                 }
-            } else if (stack.size() >= 1 && (top == "GEOMOBJECT" || top == "HELPEROBJECT" || top == "CAMERAOBJECT" || top == "LIGHTOBJECT" || top == "SHAPEOBJECT")) {
+            } else if (top == B_Object) {
                 if (cur) {
                     long long v;
                     if (key == "NODE_NAME" && tk.size() > 1) cur->name = tk[1];
@@ -185,7 +370,7 @@ struct Reader {
                     else if (key == "MATERIAL_REF" && IntAt(tk, 1, v)) cur->matRef = (int)v;
                     else handled = false;
                 }
-            } else if (top == "NODE_TM" && cur) {
+            } else if (top == B_NodeTm && cur) {
                 if (key == "NODE_NAME") {
                     if (tk.size() > 1 && !cur->name.empty() && tk[1] != cur->name) { ++secondTm; tmSkip = true; } else tmSkip = false;
                 } else if (!tmSkip) {
@@ -198,7 +383,7 @@ struct Reader {
                         cur->hasTm = true;
                     }
                 }
-            } else if (top == "MESH" && cur) {
+            } else if (top == B_Mesh && cur) {
                 long long v;
                 if (key == "MESH_NUMVERTEX") {
                     if (!IntAt(tk, 1, v) || v < 0) return Fail("bad MESH_NUMVERTEX", ln);
@@ -218,7 +403,7 @@ struct Reader {
                 } else if (key == "MESH_NUMCVERTEX" || key == "MESH_NUMCVFACES") { /* vertex colors: counted at their lists */ }
                 else handled = false;
                 // the lists are blocks: the line opens one
-            } else if (top == "MESH_VERTEX_LIST" && cur) {
+            } else if (top == B_VertexList && cur) {
                 long long i; double x, y, z;
                 if (key != "MESH_VERTEX") handled = false;
                 else {
@@ -226,7 +411,7 @@ struct Reader {
                     if (i < 0 || i >= cur->numVertex) return Fail("vertex index out of range", ln);
                     cur->pos[(std::size_t)i] = Vec3{(float)x, (float)y, (float)z};
                 }
-            } else if (top == "MESH_FACE_LIST" && cur) {
+            } else if (top == B_FaceList && cur) {
                 if (key != "MESH_FACE") handled = false;
                 else {
                     long long i, a, b, c;
@@ -236,21 +421,11 @@ struct Reader {
                     f.v[0] = (int)std::max<long long>(-1, std::min<long long>(a, 2147483647)); f.v[1] = (int)std::max<long long>(-1, std::min<long long>(b, 2147483647)); f.v[2] = (int)std::max<long long>(-1, std::min<long long>(c, 2147483647));
                     f.sg = 0;
                     for (std::size_t k = 1; k + 1 < tk.size(); ++k) {
-                        if (tk[k] == "*MESH_SMOOTHING") {
-                            // "1" or "1,2,3": a list of group numbers (0 = none)
-                            const std::string_view s = tk[k + 1];
-                            std::size_t p = 0;
-                            while (p < s.size()) {
-                                std::size_t q = s.find(',', p);
-                                if (q == std::string::npos) q = s.size();
-                                long long g;
-                                if (ToInt(s.substr(p, q - p), g) && g > 0) { if (g > 32) ++sgOverflow; f.sg |= 1u << ((g - 1) % 32); }
-                                p = q + 1;
-                            }
-                        } else if (tk[k] == "*MESH_MTLID") { long long m; if (ToInt(tk[k + 1], m) && m >= 0) f.mtl = (int)std::min<long long>(m, 1000000); }
+                        if (tk[k] == "*MESH_SMOOTHING") Smoothing(tk[k + 1], f);
+                        else if (tk[k] == "*MESH_MTLID") { long long m; if (ToInt(tk[k + 1], m) && m >= 0) f.mtl = (int)std::min<long long>(m, 1000000); }
                     }
                 }
-            } else if (top == "MESH_TVERTLIST" && cur) {
+            } else if (top == B_TVertList && cur) {
                 long long i; float u, v;
                 if (key != "MESH_TVERT") handled = false;
                 else {
@@ -258,7 +433,7 @@ struct Reader {
                     if (i < 0 || i >= cur->numTVertex) return Fail("texture vertex index out of range", ln);
                     cur->tvert[(std::size_t)i] = Vec2{u, v};
                 }
-            } else if (top == "MESH_TFACELIST" && cur) {
+            } else if (top == B_TFaceList && cur) {
                 long long i, a, b, c;
                 if (key != "MESH_TFACE") handled = false;
                 else {
@@ -267,7 +442,7 @@ struct Reader {
                     Face& f = cur->faces[(std::size_t)i];
                     f.tv[0] = (int)a; f.tv[1] = (int)b; f.tv[2] = (int)c; f.hasTv = true;
                 }
-            } else if (top == "MESH_NORMALS" && cur) {
+            } else if (top == B_Normals && cur) {
                 if (cur->fnormals.empty() && cur->numFaces > 0) { cur->fnormals.assign((std::size_t)cur->numFaces, std::array<Vec3, 3>{Vec3{0, 0, 0}, Vec3{0, 0, 0}, Vec3{0, 0, 0}}); cur->fnHas.assign((std::size_t)cur->numFaces, 0); }
                 long long i; double x, y, z;
                 if (key == "MESH_FACENORMAL") {
@@ -280,22 +455,22 @@ struct Reader {
                         for (int k = 0; k < 3; ++k) if (f.v[k] == (int)i) { cur->fnormals[(std::size_t)cur->curNormalFace][(std::size_t)k] = Vec3{(float)x, (float)y, (float)z}; cur->fnHas[(std::size_t)cur->curNormalFace] |= (char)(1 << k); }
                     }
                 } else handled = false;
-            } else if (top == "TM_ANIMATION" && cur) {
+            } else if (top == B_TmAnimation && cur) {
                 // a target camera / light has a second TM_ANIMATION block named "<name>.Target": its keys are not for this node
                 if (key == "NODE_NAME") { animSkip = tk.size() > 1 && !cur->name.empty() && tk[1] != cur->name; if (animSkip) ++targetAnims; }
-            } else if (!animSkip && (top == "CONTROL_POS_TRACK" || top == "CONTROL_POS_TCB" || top == "CONTROL_POS_BEZIER") && cur) {
+            } else if (!animSkip && top == B_PosTrack && cur) {
                 double t, x, y, z;
                 if (key == "CONTROL_POS_SAMPLE" || key == "CONTROL_TCB_POS_KEY" || key == "CONTROL_BEZIER_POS_KEY") {
                     if (!NumAt(tk, 1, t) || !NumAt(tk, 2, x) || !NumAt(tk, 3, y) || !NumAt(tk, 4, z)) { ++shortSamples; }
                     else { if (++totalKeys > kMaxKeys) return Fail("too many animation keys", ln); cur->posKeys.push_back({t, Vec3{(float)x, (float)y, (float)z}}); if (key != "CONTROL_POS_SAMPLE") ++otherKeyKinds; }
                 } else handled = false;
-            } else if (!animSkip && (top == "CONTROL_SCALE_TRACK" || top == "CONTROL_SCALE_TCB" || top == "CONTROL_SCALE_BEZIER") && cur) {
+            } else if (!animSkip && top == B_ScaleTrack && cur) {
                 double t, x, y, z;
                 if (key == "CONTROL_SCALE_SAMPLE" || key == "CONTROL_TCB_SCALE_KEY" || key == "CONTROL_BEZIER_SCALE_KEY") {
                     if (!NumAt(tk, 1, t) || !NumAt(tk, 2, x) || !NumAt(tk, 3, y) || !NumAt(tk, 4, z)) { ++shortSamples; }
                     else { if (++totalKeys > kMaxKeys) return Fail("too many animation keys", ln); cur->sclKeys.push_back({t, Vec3{(float)x, (float)y, (float)z}}); if (key != "CONTROL_SCALE_SAMPLE") ++otherKeyKinds; }
                 } else handled = false;
-            } else if (!animSkip && (top == "CONTROL_ROT_TRACK" || top == "CONTROL_ROT_TCB" || top == "CONTROL_ROT_BEZIER") && cur) {
+            } else if (!animSkip && top == B_RotTrack && cur) {
                 double t, x, y, z, a;
                 if (key == "CONTROL_ROT_SAMPLE" || key == "CONTROL_TCB_ROT_KEY" || key == "CONTROL_BEZIER_ROT_KEY") {
                     if (!NumAt(tk, 1, t) || !NumAt(tk, 2, x) || !NumAt(tk, 3, y) || !NumAt(tk, 4, z) || !NumAt(tk, 5, a)) { ++shortSamples; }
@@ -324,6 +499,7 @@ struct Reader {
                 if (key == "MATERIAL" && stack.size() == 1 && stack[0] == "MATERIAL_LIST") { if (mats.size() >= kMaxMaterials) return Fail("too many materials", ln); mats.emplace_back(); }
                 if (key == "SUBMATERIAL" && !mats.empty()) { Material* m = &mats.back(); if (m->subs.size() >= kMaxMaterials) return Fail("too many sub-materials", ln); m->subs.emplace_back(); }
                 stack.emplace_back(key);
+                codes.push_back(BlockCode(key));
             } else if (!handled && tk.size() >= 1 && false) {}
         }
         if (!sawHeader) return Fail("not an ASE file (no *3DSMAX_ASCIIEXPORT line)");
@@ -489,7 +665,7 @@ struct Reader {
                 incident.resize(o.pos.size());
                 for (int fi : goodFaces) for (int k = 0; k < 3; ++k) { auto& l = incident[(std::size_t)o.faces[(std::size_t)fi].v[k]]; if (l.size() < kMaxIncident) l.push_back(fi); else ++incidentCapped; }
             }
-            struct PartAcc { ImportedPart part; std::unordered_map<std::string, int> weld; };
+            struct PartAcc { ImportedPart part; WeldMap weld; };
             std::unordered_map<int, PartAcc> parts;   // ImportedMaterial index (or -1) -> part
             std::vector<int> partOrder;
             const bool matOk = o.matRef >= 0 && (std::size_t)o.matRef < mats.size();
@@ -533,16 +709,13 @@ struct Reader {
                     const float fl[6] = {nrm.x, nrm.y, nrm.z, uv.x, uv.y, hasUv ? 1.0f : 0.0f};
                     for (int q = 0; q < 6; ++q) std::memcpy(&key[1 + q], &fl[q], 4);
                     key[7] = key[8] = 0;
-                    const std::string ks((const char*)key, sizeof key);
-                    auto it = pa.weld.find(ks);
-                    int vi;
-                    if (it == pa.weld.end()) {
-                        vi = (int)pa.part.mesh.vertices.size();
+                    bool added = false;
+                    const int vi = pa.weld.Get(key, (int)pa.part.mesh.vertices.size(), added);
+                    if (added) {
                         pa.part.mesh.vertices.push_back(lp[(std::size_t)f.v[k]]);
                         pa.part.mesh.normals.push_back(nrm);
                         pa.part.mesh.uvs.push_back(uv);
-                        pa.weld.emplace(ks, vi);
-                    } else vi = it->second;
+                    }
                     pa.part.mesh.triangles.push_back(vi);
                 }
             }

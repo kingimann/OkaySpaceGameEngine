@@ -477,7 +477,9 @@ TagsLayersResult DrawTagsLayers(const TagsLayersModel& m, TagsLayersState& st, f
                         }
                         if (!st.renameError.empty()) UI::TextColored(kBad[0], kBad[1], kBad[2], st.renameError.c_str());
                         Divider();
-                        res.popup = UI::Rect{res.renameField.x - 16.0f, res.renameField.y - 12.0f, 0.0f, 0.0f};
+                        // the popup's rectangle (its padding is 10 and 8; its width is MenuLook's), for a host that hands out the mouse
+                        const float popupW = 170.0f + 12.0f + UI::CalcTextWidth("Rename") + 24.0f + 32.0f;
+                        res.popup = UI::Rect{res.renameField.x - 10.0f, res.renameField.y - 8.0f, popupW, UI::GetCursorScreenPos().y - res.renameField.y + 8.0f};
                         UI::EndPopup();
                     }
                 }

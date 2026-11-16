@@ -11,6 +11,7 @@
 #include "okay/Audio/AudioMixer.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace oked {
 
@@ -34,6 +35,34 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
         OkayUI::PopTextScale();
     }
     ImGui::End();
+    return true;
+}
+
+// An OkayUI body inside part of an ImGui window (a section of Project Settings): a placeholder item as tall as the body drew on the
+// last frame, the part of it the window shows offered to OkayUI and used as the clip (the window scrolls it like any item), and
+// the popup the body has open offered too. `draw(x, y, w, h)` returns the body's height and its popup rectangle.
+struct SectionDrawn { float height = 0.0f; OkayUI::Rect popup; };
+template <class Draw>
+bool HostSection(const char* itemId, Draw draw) {
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    if (!win || okayuihost::PopupCoversRect(win->Pos.x, win->Pos.y, win->Size.x, win->Size.y)) return false;
+    float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), 300.0f);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f), h = std::max(*height, 8.0f);
+    ImGui::InvisibleButton(itemId, ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    const ImRect clip = win->InnerClipRect;
+    const float x0 = std::max(p.x, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
+    const float x1 = std::min(p.x + w, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
+    if (x1 <= x0 || y1 <= y0) return true;            // scrolled out of view: the space stays, nothing is drawn
+    OkayUIRegion().Offer(x0, y0, x1 - x0, y1 - y0, hovered);
+    OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
+    OkayUI::PushClipRect(x0, y0, x1 - x0, y1 - y0);
+    const SectionDrawn d = draw(p.x, p.y, w, h + 400.0f);   // room below: the height is measured, not cut
+    OkayUI::PopClipRect();
+    OkayUI::PopTextScale();
+    if (d.height > 1.0f && std::isfinite(d.height)) *height = std::min(d.height, 20000.0f);
+    if (d.popup.w > 0.0f && d.popup.h > 0.0f) OkayUIRegion().Offer(d.popup.x, d.popup.y, d.popup.w, d.popup.h, true);   // it is drawn over everything
     return true;
 }
 
@@ -100,6 +129,33 @@ bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypa
     });
 }
 
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
+    return HostSection("##okayui_tagslayers", [&](float x, float y, float w, float h) {
+        const okayuiscreens::TagsLayersResult r = okayuiscreens::DrawTagsLayers(model, state, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent) {
+    return HostSection("##okayui_physics", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PhysicsSettingsResult r = okayuiscreens::DrawPhysicsSettings(model, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent) {
+    return HostWindow("Profiler", open, "##okayui_profiler", [&](ImVec2 p, ImVec2 a) {
+        okaypanels::ProfilerModel model;
+        fill(model);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
+    });
+}
+
 } // namespace oked
 
 #else
@@ -109,5 +165,8 @@ bool DrawAudioMixerOkayUI(bool*) { return false; }
 bool DrawProblemsOkayUI(const char*, bool*, const okaypanels::ProblemsModel&, okaypanels::ProblemsState&, okaypanels::ProblemsIntent&) { return false; }
 bool DrawStatsOkayUI(bool*, const std::function<void(okaypanels::StatsModel&)>&) { return false; }
 bool DrawHistoryOkayUI(bool*, const okaypanels::HistoryModel&, okaypanels::HistoryIntent&) { return false; }
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
+bool DrawProfilerOkayUI(bool*, const std::function<void(okaypanels::ProfilerModel&)>&, okaypanels::ProfilerIntent&) { return false; }
 }
 #endif

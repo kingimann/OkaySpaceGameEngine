@@ -112,7 +112,7 @@ struct ProfilerData {
         };
         model.sections = {sec("Frame", 0.40, 7.90, 1, 0, 0.42, 0.9), sec("Scripts.Update", 2.10, 2.60, 1, 1, 2.0, 3.1),
                           sec("Scripts.Coroutines", 0.50, 0.50, 3, 2, 0.4, 0.8), sec("Physics.Step", 1.40, 1.40, 2, 1, 1.3, 2.2),
-                          sec("Render.Scene", 2.30, 2.90, 1, 1, 2.2, 4.0), sec("Render.Shadows", 0.60, 0.60, 1, 2, 0.6, 1.1),
+                          sec("Render.Scene", 2.50, 3.10, 1, 1, 2.2, 4.0), sec("Render.Shadows", 0.60, 0.60, 1, 2, 0.6, 1.1),
                           sec("UI.Editor", 0.60, 0.60, 1, 1, 0.7, 1.4)};
         model.playing = true;
     }

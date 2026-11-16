@@ -1,4 +1,5 @@
-// The editor's Problems, Stats and History panels drawn with OkayUI (okayui/screens/OkayUIEditorPanels). Driven headless the way
+// The editor's Problems, Stats, History, Tags and Layers, Physics and Profiler panels drawn with OkayUI
+// (okayui/screens/OkayUIEditorPanels), and the toolkit pieces they needed (docs/own_ui_toolkit.md sections 9 and 10). Driven headless the way
 // the editor drives them: every control is found by its rectangle in the result and used with synthetic input (clicks, typing,
 // the wheel, right-click menus); golden images (launcher look) pin what is drawn. The Dear ImGui versions are compared against
 // these in tests/test_okayui_editor_panels_imgui.cpp.
@@ -425,5 +426,361 @@ int main() {
         r.sim.Move(CX(res.list), CY(res.list)); r.sim.wheel = -6; r.Frame(); r.Frames(2);
         CHECK(res.rows[0].y < y0 - 20.0f);
     }
+    // ================= section 10: the toolkit pieces the next three panels needed =================
+    {   // SearchField: the text starts after the magnifier; the clear button empties it and drops the keyboard
+        Reset(); UI::UseLauncherLook(true); UI::Style().caretBlink = false;
+        Sim sim(400, 120);
+        char buf[32] = "";
+        UI::Rect field; bool changed = false;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("sf", 0, 0, 400, 120);
+            if (UI::SearchField("##s", "Search", buf, (int)sizeof(buf), -100.0f)) changed = true;
+            field = UI::GetItemRect();
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        CHECK(field.w > 250.0f && field.w < 310.0f);                       // the width left less 100
+        CHECK(CountNot(sim.Draw(30, 33, 41), (int)field.x + 4, (int)field.y + 4, (int)(field.x + field.h * 0.9f), (int)(field.y + field.h - 4), Rgba(30, 33, 41)) > 20);   // a magnifier
+        sim.Click(field.x + field.w * 0.5f, field.y + field.h * 0.5f, ui);
+        sim.Type("crate"); sim.Frame(ui);
+        CHECK(std::strcmp(buf, "crate") == 0 && changed);
+        changed = false;
+        sim.Click(field.x + field.w - field.h * 0.5f, field.y + field.h * 0.5f, ui);   // the cross
+        CHECK(buf[0] == '\0' && changed && UI::GetKeyboardFocusId() == 0);
+        sim.Type("x"); sim.Frame(ui);
+        CHECK(buf[0] == '\0');                                              // no longer typing into it
+        UI::UseLauncherLook(false);
+    }
+    {   // IsItemDeactivatedAfterEdit: once, after an edit, when the field loses the keyboard; not without an edit; Enter commits first
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 200);
+        char a[32] = "one", b[32] = "two";
+        UI::Rect ra, rb; int deactA = 0, deactB = 0, enterA = 0;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("de", 0, 0, 400, 200);
+            if (UI::InputText("##a", a, (int)sizeof(a), UI::InputText_EnterReturnsTrue)) ++enterA;
+            ra = UI::GetItemRect(); if (UI::IsItemDeactivatedAfterEdit()) ++deactA;
+            UI::InputText("##b", b, (int)sizeof(b)); rb = UI::GetItemRect(); if (UI::IsItemDeactivatedAfterEdit()) ++deactB;
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        sim.Click(ra.x + 10, ra.y + 10, ui);
+        sim.Click(rb.x + 10, rb.y + 10, ui);                               // focus moves without an edit
+        CHECK(deactA == 0);
+        sim.Type("!"); sim.Frame(ui);
+        sim.Click(390, 190, ui); sim.Frames(1, ui);                        // a click on empty space
+        CHECK(deactB == 1 && std::strchr(b, '!') != nullptr);
+        sim.Frames(3, ui);
+        CHECK(deactB == 1);                                                 // once
+        sim.Click(ra.x + 10, ra.y + 10, ui);
+        sim.Type("?"); sim.Frame(ui);
+        sim.Click(rb.x + 10, rb.y + 10, ui); sim.Frames(1, ui);            // another field takes the keyboard (drawn after it)
+        CHECK(deactA == 1);
+        sim.Click(ra.x + 10, ra.y + 10, ui);
+        sim.Type("#"); sim.Frame(ui); sim.Tap(Key_Enter, ui);
+        CHECK(enterA == 1);
+        sim.Click(390, 190, ui); sim.Frames(1, ui);
+        CHECK(deactA == 1);                                                 // Enter already committed it
+        sim.Click(ra.x + 10, ra.y + 10, ui);
+        sim.Type("$"); sim.Frame(ui); sim.Tap(Key_Escape, ui); sim.Frames(1, ui);
+        CHECK(deactA == 2);                                                 // Escape lets go too
+        UI::UseLauncherLook(false);
+    }
+    {   // 40 text fields: the caret keeps working in each (the slot table recycles the oldest, never the focused one)
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 2600);
+        char bufs[70][16] = {};
+        UI::Rect last;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("many", 0, 0, 400, 2600);
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{4.0f, 1.0f});
+            for (int i = 0; i < 70; ++i) { UI::PushID(i); UI::SetNextItemWidth(120); UI::InputText("##f", bufs[i], 16); if (i == 69) last = UI::GetItemRect(); UI::PopID(); }
+            UI::PopStyleVar();
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        sim.Click(last.x + 60, last.y + last.h * 0.5f, ui);
+        sim.Type("ab"); sim.Frame(ui); sim.Type("cd"); sim.Frame(ui);
+        CHECK(std::strcmp(bufs[69], "abcd") == 0);                          // typed in order (a lost caret typed "cdab")
+        UI::UseLauncherLook(false);
+    }
+    {   // formatted fields: the value centred in the given format, drag one per pixel times the speed, clamp, Ctrl+click types;
+        // "##" hides the rest of a label; the framed slider jumps to a click; FramePadding sets the frame height
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(500, 300);
+        float hz = 50.0f, g3[3] = {0.0f, -9.81f, 0.0f}; int it = 10;
+        UI::Rect rHz, rG, rIt; float hzW = 0;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("fmt", 0, 0, 500, 300);
+            UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+            UI::SetNextItemWidth(160.0f);
+            UI::DragFloat("##hz", &hz, 1.0f, 1.0f, 240.0f, "%.0f"); rHz = UI::GetItemRect();
+            UI::DragFloat3("Gravity 3D##g", g3, 0.05f, 0.0f, 0.0f, "%.3f"); rG = UI::GetItemRect();
+            UI::SetNextItemWidth(200.0f);
+            UI::SliderInt("##it", &it, 4, 30, "%d"); rIt = UI::GetItemRect();
+            UI::PopStyleVar();
+            hzW = rHz.w;
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        CHECK(rHz.h == UI::GetFontSize() + 16.0f && hzW == 160.0f);       // a text line plus 2 x 8; no label, so the frame is the width
+        sim.Move(rHz.x + 50, rHz.y + 10); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Move(rHz.x + 80, rHz.y + 10); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+        CHECK(hz == 80.0f);
+        sim.Move(rHz.x + 50, rHz.y + 10); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Move(rHz.x + 450, rHz.y + 10); sim.Frame(ui); sim.Up(); sim.Frame(ui);
+        CHECK(hz == 240.0f);                                               // clamped
+        sim.ctrl = true; sim.Click(rHz.x + 50, rHz.y + 10, ui); sim.ctrl = false;
+        sim.Press(Key_SelectAll); sim.Frame(ui); sim.Type("33"); sim.Frame(ui); sim.Tap(Key_Enter, ui);
+        CHECK(hz == 33.0f);
+        const Bitmap& b = sim.Draw(30, 33, 41);
+        CHECK(CountNot(b, (int)(rG.x + rG.w - 90), (int)rG.y, (int)(rG.x + rG.w), (int)(rG.y + rG.h), Rgba(30, 33, 41)) > 30);   // "Gravity 3D" drawn
+        sim.Click(rIt.x + rIt.w - 3, rIt.y + 10, ui);
+        CHECK(it == 30);
+        sim.Click(rIt.x + 3, rIt.y + 10, ui);
+        CHECK(it == 4);
+        UI::UseLauncherLook(false);
+    }
+    {   // the menu look (StyleVar_PopupPadding / PopupWidth, header rows) and Selectable_Header's colours
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 300);
+        UI::Rect row, item, sel;
+        bool picked = false;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("menu", 0, 0, 400, 300);
+            UI::PushStyleColor(UI::Col_Header, UI::RGBA(200, 0, 0));
+            UI::Selectable("selected row", true, UI::Selectable_Header, UI::Vec2{0.0f, 26.0f}); sel = UI::GetItemRect();
+            UI::Text("right-click me"); row = UI::GetItemRect();
+            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{10.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_PopupWidth, 150.0f);
+            if (UI::BeginPopupContextItem("##m")) {
+                if (UI::Selectable("Pick", false, UI::Selectable_Header | UI::Selectable_ClosePopup, UI::Vec2{0.0f, 26.0f})) picked = true;
+                item = UI::GetItemRect();
+                UI::EndPopup();
+            }
+            UI::PopStyleVar(2);
+            UI::PopStyleColor();
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        const Bitmap& b0 = sim.Draw(30, 33, 41);
+        CHECK(PixelAt(b0, (int)(sel.x + 2), (int)(sel.y + 2)) == Rgba(200, 0, 0));   // flat and square: the corner is the header colour
+        sim.Move(CX(row), CY(row)); sim.Frame(ui); sim.rdown = true; sim.Frame(ui); sim.rdown = false; sim.Frame(ui);
+        CHECK(item.w == 130.0f && item.x == CX(row) + 10.0f && item.y == CY(row) + 8.0f);   // 150 wide less 2 x 10; 10 and 8 in
+        sim.Click(CX(item), CY(item), ui);
+        CHECK(picked);
+        sim.Frames(1, ui);
+        CHECK(!UI::IsPopupOpen("##m"));
+        UI::UseLauncherLook(false);
+    }
+    {   // CenterNextOnLine, SameLine + SetCursorPosX keeping the line's height, the framed child, Table_BordersOuter, wrapped rows
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(400, 400);
+        UI::Rect tall, small, next, child, inner, w1, w2, tbl;
+        auto ui = [&] {
+            UI::BareNextWindow(); UI::Begin("lay", 0, 0, 400, 400);
+            UI::Button("Tall", UI::Vec2{60.0f, 40.0f}); tall = UI::GetItemRect();
+            UI::SameLine(); UI::SetCursorPosX(200.0f); UI::CenterNextOnLine();
+            UI::Button("s", UI::Vec2{30.0f, 16.0f}); small = UI::GetItemRect();
+            UI::Text("next"); next = UI::GetItemRect();
+            UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
+            UI::BeginChild("box", UI::Vec2{200.0f, 60.0f}, UI::ChildFlags_Borders); child = UI::Rect{UI::GetItemRectMin().x, 0, 0, 0};
+            UI::Text("in"); inner = UI::GetItemRect();
+            UI::EndChild(); child = UI::GetItemRect();
+            UI::PopStyleVar();
+            UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());
+            UI::PushTextWrapPos(0.0f);
+            UI::TextUnformatted("wrapped words wrapped words wrapped words wrapped words wrapped words wrapped words");
+            UI::PopTextWrapPos();
+            UI::PopStyleVar();
+            if (UI::BeginTable("t", 2, UI::Table_BordersOuter)) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("a"); UI::TableNextColumn(); UI::Text("b"); UI::EndTable(); }
+            tbl = UI::GetItemRect();
+            UI::End();
+        };
+        sim.Frames(3, ui);
+        CHECK(std::abs(CY(small) - CY(tall)) < 0.6f && small.x == 200.0f);
+        CHECK(next.y >= tall.y + tall.h);                                   // the next line is below the tall item, not the short one
+        CHECK(inner.x == child.x + 16.0f && inner.y == child.y + 12.0f);   // the pushed padding
+        const Bitmap& b = sim.Draw(30, 33, 41);
+        CHECK(PixelAt(b, (int)child.x + 100, (int)child.y) != Rgba(30, 33, 41));   // the outline
+        (void)w1; (void)w2; (void)tbl;
+        UI::UseLauncherLook(false);
+    }
+    {   // a host clip around a bare window: drawing and clicks only inside it (Project Settings' sections scrolled part out of view)
+        Reset(); UI::UseLauncherLook(true);
+        Sim sim(300, 300);
+        bool hitTop = false, hitLow = false;
+        UI::Rect a, c;
+        auto ui = [&] {
+            UI::PushClipRect(0, 0, 300, 100);
+            UI::BareNextWindow(); UI::Begin("clipped", 0, 0, 300, 300);
+            if (UI::Button("top")) hitTop = true;
+            a = UI::GetItemRect();
+            UI::SetCursorScreenPos(UI::Vec2{0.0f, 200.0f});
+            if (UI::Button("low")) hitLow = true;
+            c = UI::GetItemRect();
+            UI::End();
+            UI::PopClipRect();
+        };
+        sim.Frames(2, ui);
+        sim.Click(CX(a), CY(a), ui);
+        sim.Click(CX(c), CY(c), ui);
+        CHECK(hitTop && !hitLow);
+        CHECK(CountNot(sim.Draw(0, 0, 0), 0, 150, 300, 300, Rgba(0, 0, 0)) == 0);
+        UI::UseLauncherLook(false);
+    }
+
+    // ================= Tags and Layers =================
+    {   // the section, golden; Strict, Add them, Remove, Add tag, Reset, Reset all through the intent
+        P::TagsLayersModel m = panelfix::TagsLayers();
+        P::TagsLayersState st;
+        S::TagsLayersResult res;
+        P::TagsLayersIntent seen;
+        auto r = MakeRig(560, 780, [&](float x, float y, float w, float h) {
+            res = S::DrawTagsLayers(m, st, x, y, w, h);
+            const P::TagsLayersIntent& in = res.intent;
+            if (in.strict >= 0) seen.strict = in.strict;
+            if (in.addUnlisted) seen.addUnlisted = true;
+            if (in.removeTag >= 0) seen.removeTag = in.removeTag;
+            if (in.addTag) seen.addTag = true;
+            if (in.resetLayer >= 0) seen.resetLayer = in.resetLayer;
+            if (in.resetAllLayers) seen.resetAllLayers = true;
+            if (in.renameLayer >= 0) { seen.renameLayer = in.renameLayer; seen.layerName = in.layerName; }
+            if (in.renameTag >= 0) { seen.renameTag = in.renameTag; seen.renameTo = in.renameTo; }
+        });
+        r.Frames(3);
+        CHECK(res.removeButtons.size() == 4 && res.renameButtons.size() == 4 && res.layerFields.size() == 32);
+        CHECK(res.layerResets[4].w > 0 && res.layerResets[0].w == 0 && res.layerResets[8].w > 0);   // renamed built-in, default, new name
+        CHECK(res.contentHeight > 600.0f && UI::DroppedGeometry() == 0);
+        CHECK(std::strcmp(st.layerBuf[8], "Ground") == 0);                  // the fields take the model's names
+        Check("editorpanels_tagslayers", r.Draw());
+        r.Click(res.strictBox);        CHECK(seen.strict == 1);
+        r.Click(res.addUnlisted);      CHECK(seen.addUnlisted);
+        r.Click(res.removeButtons[2]); CHECK(seen.removeTag == 2);
+        r.Click(res.newTagField); r.sim.Type("Door"); r.Frame(); r.sim.Press(Key_Enter); r.Frame();
+        CHECK(seen.addTag && std::strcmp(st.newTag, "Door") == 0);
+        r.Click(res.layerResets[4]);   CHECK(seen.resetLayer == 4);
+        r.Click(res.resetAll);         CHECK(seen.resetAllLayers);
+        // a layer field: typing, then a click elsewhere commits it once; the field keeps the typed text until the model changes
+        r.Click(res.layerFields[5]); r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("Coins"); r.Frame();
+        CHECK(seen.renameLayer == -1);
+        r.sim.Move(540, 770); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frames(1);
+        CHECK(seen.renameLayer == 5 && seen.layerName == "Coins");
+        m.layers[5].name = "Coins"; r.Frames(2);                          // the host renamed it
+        CHECK(std::strcmp(st.layerBuf[5], "Coins") == 0);
+        m.layers[5].name = "UI"; r.Frames(1);                               // the host turned it down: the field shows the model's name again
+        CHECK(std::strcmp(st.layerBuf[5], "UI") == 0);
+        seen.renameLayer = -1;
+        r.Click(res.layerFields[3]); r.sim.Type("Glass"); r.Frame(); r.sim.Press(Key_Enter); r.Frame(); r.Frames(1);
+        CHECK(seen.renameLayer == 3 && seen.layerName == "Glass");
+        // the rename popup: opens with the tag's name, a new name asks for the rename, the host's error is shown, closeRename closes it
+        r.Click(res.renameButtons[0]); r.Frames(1);
+        CHECK(res.renameField.w > 0 && res.popup.w > 0 && std::strcmp(st.renameBuf, "Pickup") == 0 && st.renaming == 0);
+        Check("editorpanels_tagslayers_rename", r.Draw());
+        r.Click(res.renameField); r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("Loot"); r.Frame();
+        r.Click(res.renameButton);
+        CHECK(seen.renameTag == 0 && seen.renameTo == "Loot");
+        st.closeRename = true; r.Frames(2);
+        CHECK(res.renameField.w == 0 && !st.closeRename);
+    }
+    {   // empty lists, long names, hostile buffers
+        P::TagsLayersModel m;
+        P::TagsLayersState st;
+        std::memset(st.newTag, 'x', sizeof(st.newTag));                    // no terminator: the panel adds one
+        m.custom.push_back({std::string(300, 'L'), 1});
+        m.unlisted = {"a", "b", "c", "d", "e", "f"};
+        S::TagsLayersResult res;
+        auto r = MakeRig(400, 300, [&](float x, float y, float w, float h) { res = S::DrawTagsLayers(m, st, x, y, w, h); });
+        r.Frames(2);
+        CHECK(st.newTag[sizeof(st.newTag) - 1] == '\0' && res.layerFields.empty() && UI::DroppedGeometry() == 0);
+        CHECK(P::UnlistedTagsText(m.unlisted).find("a, b, c, d, ...") != std::string::npos);
+        char small[4]; P::CopyToBuf(small, sizeof(small), "\xC3\xA9\xC3\xA9");   // two two-byte characters into 3 bytes: one whole one
+        CHECK(std::strcmp(small, "\xC3\xA9") == 0);
+    }
+
+    // ================= Physics =================
+    {   // the section, golden; drags, the step-rate clamp, the quality list, the solver slider and the continuous box
+        panelfix::PhysicsData d;
+        S::PhysicsSettingsResult res;
+        P::PhysicsSettingsIntent seen;
+        float labelW = 0.0f;
+        auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) {
+            labelW = UI::CalcTextWidth("Gravity 2D");
+            res = S::DrawPhysicsSettings(d.model, x, y, w, h);
+            const P::PhysicsSettingsIntent& in = res.intent;
+            if (in.gravityChanged) seen.gravityChanged = true;
+            if (in.rateChanged) seen.rateChanged = true;
+            if (in.smoothChanged) seen.smoothChanged = true;
+            if (in.quality >= 0) seen.quality = in.quality;
+            if (in.solverIterations >= 0) seen.solverIterations = in.solverIterations;
+            if (in.autoContinuous >= 0) seen.autoContinuous = in.autoContinuous;
+            if (in.apply) seen.apply = true;
+        });
+        r.Frames(3);
+        CHECK(res.iterations.w > 0 && res.continuous.w > 0 && res.contentHeight > 300.0f);
+        CHECK(std::abs(res.gravity2D.w - (P::DefaultItemWidth(528.0f) + 8.0f + labelW)) < 1.0f);   // Dear ImGui's 65%, then the label
+        Check("editorpanels_physics", r.Draw());
+        // the first gravity cell: drag 20 pixels right, 0.05 a pixel
+        const float gx = res.gravity2D.x + 30.0f, gy = CY(res.gravity2D);
+        r.sim.Move(gx, gy); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(gx + 20.0f, gy); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(seen.gravityChanged && std::abs(d.g2[0] - 1.0f) < 1e-4f);
+        r.Click(res.smooth);  CHECK(seen.smoothChanged && !d.smooth);
+        r.Click(res.continuous); CHECK(seen.autoContinuous == 0);
+        r.sim.Move(res.iterations.x + 4.0f, CY(res.iterations)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(seen.solverIterations == 4);
+        r.Click(res.apply); CHECK(seen.apply);
+        // the quality list: open it, choose Classic; the solver rows go
+        r.Click(UI::Rect{res.quality.x, res.quality.y, 100.0f, res.quality.h});
+        r.Click(UI::Rect{res.quality.x, res.quality.y + res.quality.h, 100.0f, res.quality.h});
+        CHECK(seen.quality == 0);
+        d.model.quality = 0; r.Frames(2);
+        CHECK(res.iterations.w == 0 && res.continuous.w == 0);
+        CHECK(P::ClampStepsPerSecond(0.0f) == 1.0f && P::ClampStepsPerSecond(900.0f) == 500.0f && P::ClampStepsPerSecond(std::nanf("")) == 50.0f);
+    }
+    {   // missing pointers: those rows are not drawn
+        P::PhysicsSettingsModel m;
+        S::PhysicsSettingsResult res;
+        auto r = MakeRig(400, 300, [&](float x, float y, float w, float h) { res = S::DrawPhysicsSettings(m, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.gravity2D.w == 0 && res.stepRate.w == 0 && res.smooth.w == 0 && res.apply.w > 0);
+    }
+
+    // ================= Profiler =================
+    {   // the window, golden; the rules; Pause and the scrub slider; Copy CSV; the hot row; an empty profile
+        panelfix::ProfilerData d;
+        S::ProfilerResult res;
+        P::ProfilerIntent seen;
+        auto r = MakeRig(560, 780, [&](float x, float y, float w, float h) {
+            res = S::DrawProfiler(d.model, x, y, w, h);
+            if (res.intent.pauseChanged) seen.pauseChanged = true;
+            if (res.intent.selectChanged) seen.selectChanged = true;
+            if (res.intent.copyCsv) seen.copyCsv = true;
+        });
+        r.Frames(3);
+        CHECK(res.rows.size() == 7 && res.guide60 > res.framePlot.y && res.guide30 == 0.0f && res.scrubX == 0.0f && !res.empty);
+        CHECK(res.bars[2].w > 0 && UI::DroppedGeometry() == 0);
+        const std::vector<int> order = P::ProfilerRows(d.model);
+        CHECK(order[0] == 4 && order[1] == 1 && d.model.sections[(std::size_t)order.back()].name == "Frame");   // heaviest self first
+        CHECK(P::ProfilerHot(d.model, d.model.sections[4]) && !P::ProfilerHot(d.model, d.model.sections[0]));
+        CHECK(P::ProfilerDiagnosis(d.model) == "CPU-bound: Render is heaviest (top: Render.Scene).  Running smoothly (60+ FPS).");
+        CHECK(P::ProfilerCsv(d.model).find("Physics.Step,1.4000,1.4000,2,1.3000,1.1200,2.2000") != std::string::npos);
+        float frac = 0.0f;
+        CHECK(P::ProfilerBarText("Render", 2.9, 7.9, &frac) == "Render 2.90 ms (37%)" && std::abs(frac - 2.9f / 7.9f) < 1e-5f);
+        Check("editorpanels_profiler", r.Draw());
+        r.Click(UI::Rect{res.pauseBox.x, res.pauseBox.y, 30.0f, res.pauseBox.h});
+        r.Frames(1);
+        CHECK(d.paused && seen.pauseChanged && d.selected == 239 && res.frameSlider.w > 0 && res.scrubX > 0.0f);
+        r.sim.Move(res.frameSlider.x + 4.0f, CY(res.frameSlider)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        CHECK(seen.selectChanged && d.selected == 0);
+        Check("editorpanels_profiler_paused", r.Draw());
+        r.Click(res.copyCsv); CHECK(seen.copyCsv);
+    }
+    {   // nothing recorded yet, no pause pointer
+        P::ProfilerModel m;
+        S::ProfilerResult res;
+        auto r = MakeRig(560, 420, [&](float x, float y, float w, float h) { res = S::DrawProfiler(m, x, y, w, h); });
+        r.Frames(2);
+        CHECK(res.empty && res.rows.empty() && res.pauseBox.w == 0 && UI::DroppedGeometry() == 0);
+        CHECK(P::ProfilerDiagnosis(m) == "Waiting for frames..." && std::string(P::ProfilerEmptyText(m)).find("Press Play") == 0);
+    }
+
     TEST_MAIN_RESULT();
 }

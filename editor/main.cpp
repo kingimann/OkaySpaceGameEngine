@@ -89,8 +89,8 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
-#include "OkayPanels.hpp"                // Crash Log, Audio Mixer, Problems, Stats, History drawn by OkayUI (opt-in backend)
-#include "EditorPanelViews.hpp"          // the Dear ImGui bodies of Problems, Stats and History (models: shared/EditorPanelModels.hpp)
+#include "OkayPanels.hpp"                // Crash Log, Audio Mixer, Problems, Stats, History, Profiler, Tags and Layers, Physics by OkayUI (opt-in)
+#include "EditorPanelViews.hpp"          // their Dear ImGui bodies (models: shared/EditorPanelModels.hpp)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -19619,107 +19619,62 @@ void DrawAboutPopup() {
 
 // Project Settings > Tags and Layers: the project's tag list (okay::Tags, saved as tag= lines) with a Strict switch
 // (Tags::Strict: SetTag refuses a tag that is not listed) and the 32 layer names (okay::Layers, layer_name_N= lines).
-// Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists.
+// Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists. The section is
+// drawn from a model (shared/EditorPanelModels.hpp) by its Dear ImGui body (editor/EditorPanelViews.cpp) or, with the opt-in
+// OkayUI backend, by its OkayUI port (editor/OkayPanels.cpp); this function fills the model and carries out what was asked.
 static void DrawTagsAndLayersSettings(EditorState& ed) {
-    const ImVec4 bad(0.95f, 0.45f, 0.40f, 1.0f), warn(0.95f, 0.75f, 0.30f, 1.0f);
-    bool strict = okay::Tags::Strict();
-    if (ImGui::Checkbox("Strict tags##ps", &strict)) { okay::Tags::Strict() = strict; SaveProjectSettings(); }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("On: only tags on this list can be given to an object (the Inspector, scripts and SetTag refuse the rest),\nso a typo such as \"Enmey\" is caught. Off: any text is a valid tag.");
-    // Tags the open scene uses that the list lacks (an old scene, a typo): say so, and offer to list them.
-    const std::vector<std::string> unlisted = ed.scene().UnlistedTags();
-    if (!unlisted.empty()) {
-        std::string names;
-        for (std::size_t i = 0; i < unlisted.size() && i < 4; ++i) names += (i ? ", " : "") + unlisted[i];
-        if (unlisted.size() > 4) names += ", ...";
-        ImGui::TextColored(strict ? bad : warn, "%d tag%s in this scene %s not on the list: %s", (int)unlisted.size(),
-                           unlisted.size() == 1 ? "" : "s", unlisted.size() == 1 ? "is" : "are", names.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Add them##unlisted")) {
-            for (const std::string& t : unlisted) okay::Tags::Add(t);
-            SaveProjectSettings();
-        }
-    }
-    ImGui::Spacing();
-    ImGui::TextDisabled("Tags");
-    {   // built-in tags: always there, cannot be renamed or removed
-        std::string b;
-        for (const std::string& t : okay::Tags::Builtin()) b += (b.empty() ? "" : "  ") + t;
-        ImGui::TextWrapped("Built in: %s", b.c_str());
-    }
-    {
-        const std::vector<std::string> custom = okay::Tags::Custom();   // a copy: a row below edits the list
-        if (custom.empty()) ImGui::TextDisabled("No custom tags yet.");
-        const float rowH = ImGui::GetFrameHeightWithSpacing() + 2.0f;
-        if (!custom.empty()) ImGui::BeginChild("##pstags", ImVec2(0, std::min(rowH * 4.5f, 12.0f + rowH * (float)custom.size())), ImGuiChildFlags_Borders);
-        ImGuiListClipper clip;
-        clip.Begin((int)custom.size(), rowH);
-        while (clip.Step()) {
-            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
-                const std::string& t = custom[(std::size_t)i];
-                ImGui::PushID(i);
-                const int used = ed.scene().CountWithTag(t);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(t.c_str());
-                ImGui::SameLine(150.0f);
-                ImGui::TextDisabled("%d object%s", used, used == 1 ? "" : "s");
-                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 150.0f);
-                if (ImGui::SmallButton("Rename")) ImGui::OpenPopup("##pstagren");
-                if (ImGui::BeginPopup("##pstagren")) { TagRenameMenu(ed, t); ImGui::EndPopup(); }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Remove")) { okay::Tags::Remove(t); SaveProjectSettings(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take it off the list. Objects that carry it keep it.");
-                ImGui::PopID();
-            }
-        }
-        if (!custom.empty()) ImGui::EndChild();
-    }
-    static char newTag[okay::Tags::kMaxLength * 4 + 1] = "";
-    static std::string tagErr;
-    ImGui::SetNextItemWidth(190);
-    const bool enter = ImGui::InputTextWithHint("##psnewtag", "new tag name", newTag, sizeof(newTag), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (ImGui::Button("Add tag##ps") || enter) {
-        const std::string nt = newTag;
-        if (okay::Tags::Contains(nt)) tagErr = "that tag is already on the list";
-        else if (okay::Tags::Add(nt)) { SaveProjectSettings(); newTag[0] = '\0'; tagErr.clear(); }
-        else tagErr = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
-    }
-    if (!tagErr.empty()) ImGui::TextColored(bad, "%s", tagErr.c_str());
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Layers (0 to 31)");
-    ImGui::BeginChild("##pslayers", ImVec2(0, 300), ImGuiChildFlags_Borders);
-    static std::string layerErr;
-    static int layerErrAt = -1;
+    static okaypanels::TagsLayersState st;
+    okaypanels::TagsLayersModel m;
+    m.strict = okay::Tags::Strict();
+    m.builtin = okay::Tags::Builtin();
+    for (const std::string& t : okay::Tags::Custom()) m.custom.push_back({t, ed.scene().CountWithTag(t)});
+    m.unlisted = ed.scene().UnlistedTags();
+    m.layers.resize(okay::Layers::kCount);
     for (int i = 0; i < okay::Layers::kCount; ++i) {
-        ImGui::PushID(i);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%2d", i);
-        ImGui::SameLine(34.0f);
-        char buf[okay::Layers::kMaxNameLength * 4 + 1];
-        std::snprintf(buf, sizeof(buf), "%s", okay::Layers::IsNamed(i) ? okay::Layers::Name(i).c_str() : "");
-        const std::string hint = okay::Layers::DefaultName(i)[0] ? std::string(okay::Layers::DefaultName(i)) : "Layer " + std::to_string(i);
-        ImGui::SetNextItemWidth(200);
-        const bool enterHit = ImGui::InputTextWithHint("##lname", hint.c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (enterHit || ImGui::IsItemDeactivatedAfterEdit()) {
-            std::string e;
-            if (TryRenameLayer(i, buf, e)) { if (layerErrAt == i) layerErr.clear(); }
-            else { layerErr = e; layerErrAt = i; }
-        }
-        if (okay::Layers::IsNamed(i) && std::string(okay::Layers::DefaultName(i)) != okay::Layers::Name(i)) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) {
-                std::string e;
-                const std::string def = okay::Layers::DefaultName(i);
-                if (!TryRenameLayer(i, def, e)) { layerErr = e; layerErrAt = i; }
-            }
-        }
-        ImGui::PopID();
+        m.layers[(std::size_t)i].name = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        m.layers[(std::size_t)i].defaultName = okay::Layers::DefaultName(i);
     }
-    ImGui::EndChild();
-    if (!layerErr.empty()) ImGui::TextColored(bad, "Layer %d: %s", layerErrAt, layerErr.c_str());
-    if (ImGui::SmallButton("Reset all layer names##ps")) { okay::Layers::ResetNames(); layerErr.clear(); SaveProjectSettings(); }
+    okaypanels::TagsLayersIntent in;
+    if (!(UseOkayUIBackend() && DrawTagsLayersOkayUI(m, st, in)))   // the opt-in OkayUI port (editor/OkayPanels.cpp)
+        in = DrawTagsLayersBodyImGui(m, st, PanelViewHooks());       // editor/EditorPanelViews.cpp
+    if (in.strict >= 0) { okay::Tags::Strict() = in.strict == 1; SaveProjectSettings(); }
+    if (in.addUnlisted) {
+        for (const std::string& t : m.unlisted) okay::Tags::Add(t);
+        SaveProjectSettings();
+    }
+    if (in.addTag) {
+        const std::string nt = st.newTag;
+        if (okay::Tags::Contains(nt)) st.tagError = "that tag is already on the list";
+        else if (okay::Tags::Add(nt)) { SaveProjectSettings(); st.newTag[0] = '\0'; st.tagError.clear(); }
+        else st.tagError = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+    }
+    if (in.removeTag >= 0 && in.removeTag < (int)m.custom.size()) { okay::Tags::Remove(m.custom[(std::size_t)in.removeTag].name); SaveProjectSettings(); }
+    if (in.renameTag >= 0 && in.renameTag < (int)m.custom.size()) {   // the list, and the tag on every object of this scene that carries it
+        const std::string tag = m.custom[(std::size_t)in.renameTag].name, to = in.renameTo;
+        if (okay::Tags::Contains(to)) st.renameError = "that tag is already in the list";
+        else if (!okay::Tags::IsValidName(to)) st.renameError = okay::Tags::WhyInvalid(to);
+        else {
+            ed.PushUndo();   // the objects that carry the tag change too
+            if (okay::Tags::Rename(tag, to)) {
+                const int n = ed.scene().ReplaceTag(tag, to);
+                SaveProjectSettings();
+                ed.dirty = true;
+                ConsoleLog("Renamed tag " + tag + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+                st.closeRename = true;
+                st.renameError.clear();
+            } else st.renameError = "that tag cannot be renamed";
+        }
+    }
+    if (in.renameLayer >= 0) {
+        std::string e;
+        if (TryRenameLayer(in.renameLayer, in.layerName, e)) { if (st.layerErrorAt == in.renameLayer) st.layerError.clear(); }
+        else { st.layerError = e; st.layerErrorAt = in.renameLayer; }
+    }
+    if (in.resetLayer >= 0) {
+        std::string e;
+        if (!TryRenameLayer(in.resetLayer, okay::Layers::DefaultName(in.resetLayer), e)) { st.layerError = e; st.layerErrorAt = in.resetLayer; }
+    }
+    if (in.resetAllLayers) { okay::Layers::ResetNames(); st.layerError.clear(); SaveProjectSettings(); }
 }
 
 // Edit > Project Settings: project-wide defaults that builds inherit, plus
@@ -19745,12 +19700,19 @@ void DrawProjectSettings(EditorState& ed) {
             ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
-            ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
-            ImGui::SetNextItemWidth(160);
-            if (ImGui::DragFloat("Steps per second##ps", &g_project.physicsHz, 1.0f, 1.0f, 240.0f, "%.0f")) {
-                if (g_project.physicsHz < 1.0f) g_project.physicsHz = 1.0f;
-                if (g_project.physicsHz > 500.0f) g_project.physicsHz = 500.0f;
+            // Drawn from a model (shared/EditorPanelModels.hpp) by the Dear ImGui body (editor/EditorPanelViews.cpp) or, with the
+            // opt-in OkayUI backend, by its OkayUI port (editor/OkayPanels.cpp).
+            auto& p3 = ed.scene().physics3D();
+            okaypanels::PhysicsSettingsModel pm;
+            pm.gravity2D = g_project.gravity2D; pm.gravity3D = g_project.gravity3D;
+            pm.stepsPerSecond = &g_project.physicsHz; pm.smooth = &g_project.smoothPhysics;
+            pm.quality = p3.quality == okay::PhysicsQuality::Improved ? 1 : 0;
+            pm.solverIterations = p3.solverIterations;
+            pm.autoContinuous = p3.autoContinuous;
+            okaypanels::PhysicsSettingsIntent pin;
+            if (!(UseOkayUIBackend() && DrawPhysicsSettingsOkayUI(pm, pin))) pin = DrawPhysicsSettingsBodyImGui(pm, PanelViewHooks());
+            if (pin.rateChanged) {
+                g_project.physicsHz = okaypanels::ClampStepsPerSecond(g_project.physicsHz);
                 okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
                 if (ed.isPlaying()) {
                     ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
@@ -19758,47 +19720,21 @@ void DrawProjectSettings(EditorState& ed) {
                 }
                 SaveProjectSettings();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("How many times a second physics runs. 50 is the usual rate.\n"
-                                  "A drop lands in the same place at a low frame rate and a high one.\n"
-                                  "Saved with the project.");
-            if (ImGui::Checkbox("Smooth the motion##ps", &g_project.smoothPhysics)) {
+            if (pin.smoothChanged) {
                 okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
                 if (ed.isPlaying()) ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
                 SaveProjectSettings();
             }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
-                                  "so motion stays smooth when the frame rate and the step rate differ.");
-            ImGui::Separator();
-            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
-            {
-                auto& p3 = ed.scene().physics3D();
-                int q = (int)p3.quality;
-                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
-                ImGui::SetNextItemWidth(330);
-                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
-                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
-                    ed.scene().physics().quality = p3.quality;
-                    ed.dirty = true;
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
-                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
-                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
-                                      "New scenes start Improved. The setting is part of the scene file.");
-                if (p3.quality == okay::PhysicsQuality::Improved) {
-                    int it = p3.solverIterations;
-                    ImGui::SetNextItemWidth(160);
-                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
-                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
-                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
-                }
+            if (pin.quality >= 0) {
+                p3.quality = pin.quality == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
+                ed.scene().physics().quality = p3.quality;
+                ed.dirty = true;
             }
-            if (ImGui::Button("Apply to current scene##phys")) {
+            if (pin.solverIterations >= 0) {
+                p3.solverIterations = pin.solverIterations; ed.scene().physics().solverIterations = pin.solverIterations; ed.dirty = true;
+            }
+            if (pin.autoContinuous >= 0) { p3.autoContinuous = pin.autoContinuous == 1; ed.dirty = true; }
+            if (pin.apply) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
                 ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
@@ -47737,178 +47673,51 @@ void DrawUIThemer(EditorState& ed) {
 // editor; the window only enables timing while it's open.
 void DrawProfiler(EditorState& ed) {
     okay::Profiler& P = okay::Prof();
-    if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
-
-    // Live scene draw stats -> fed into this frame.
-    int objs = 0, tris = 0, parts = 0;
-    for (const auto& up : ed.scene().Objects()) {
-        if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
-        if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
-    }
-    P.Stat3(objs, tris, parts);
-
-    const int n = P.Count();
-    double avg = 0.0, peak = 0.0; P.Range(avg, peak);
-    float top = (float)(peak > 0.0 ? peak * 1.15 : 33.4);
-
-    // ---- Controls row ----
-    ImGui::Checkbox("Pause##prof", &P.paused);
-    ImGui::SameLine();
-    if (!P.paused) P.selected = -1;
-    if (P.paused) {
-        ImGui::SetNextItemWidth(220);
-        if (n > 1) ImGui::SliderInt("Frame##prof", &P.selected, 0, n - 1, "frame %d");
-        if (P.selected < 0) P.selected = n - 1;
-    } else ImGui::TextDisabled("(pause to scrub frames)");
-    ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
-
-    // ---- Timeline graphs (oldest -> newest) ----
-    static std::vector<float> gTotal, gGpu, gScripts, gPhysics, gRender, gOther;
-    gTotal.resize(n); gGpu.resize(n); gScripts.resize(n); gPhysics.resize(n); gRender.resize(n); gOther.resize(n);
-    for (int i = 0; i < n; ++i) {
-        const okay::Profiler::Frame& f = P.FrameAt(i);
-        gTotal[i] = (float)f.total; gGpu[i] = (float)f.gpu;
-        float sc = (float)okay::Profiler::CategorySelf(f, "Scripts");
-        float ph = (float)okay::Profiler::CategorySelf(f, "Physics");
-        float rd = (float)okay::Profiler::CategorySelf(f, "Render");
-        gScripts[i] = sc; gPhysics[i] = ph; gRender[i] = rd;
-        gOther[i] = (float)f.cpu - sc - ph - rd; if (gOther[i] < 0) gOther[i] = 0;
-    }
-    char ov[96];
-    std::snprintf(ov, sizeof(ov), "%.2f ms   %.0f FPS", P.lastFrameMs, P.lastFrameMs > 0.001 ? 1000.0 / P.lastFrameMs : 0.0);
-    ImGui::PlotLines("##frame", gTotal.empty() ? nullptr : gTotal.data(), n, 0, ov, 0.0f, top, ImVec2(-1, 80));
-    {   // Budget guide lines over the frame graph: green 60 FPS, amber 30 FPS —
-        // "is this frame over budget?" becomes visible instead of arithmetic.
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        ImDrawList* pdl = ImGui::GetWindowDrawList();
-        auto guide = [&](float ms, ImU32 col, const char* lbl) {
-            if (top <= ms) return;
-            float y = mx.y - (ms / top) * (mx.y - mn.y);
-            pdl->AddLine(ImVec2(mn.x, y), ImVec2(mx.x, y), col, 1.0f);
-            pdl->AddText(ImVec2(mn.x + 4.0f, y - ImGui::GetTextLineHeight() - 1.0f), col, lbl);
-        };
-        guide(16.7f, IM_COL32(110, 220, 130, 170), "16.7 (60)");
-        guide(33.3f, IM_COL32(240, 190, 80, 170), "33.3 (30)");
-        // Scrub marker: while paused, show which frame of the history is displayed.
-        if (P.paused && n > 1 && P.selected >= 0) {
-            float fx = mn.x + ((float)P.selected / (float)(n - 1)) * (mx.x - mn.x);
-            pdl->AddLine(ImVec2(fx, mn.y), ImVec2(fx, mx.y), IM_COL32(255, 210, 0, 220), 1.5f);
+    // The window's body is drawn from a model (shared/EditorPanelModels.hpp) by its Dear ImGui body (editor/EditorPanelViews.cpp)
+    // or, with the opt-in OkayUI backend, by its OkayUI port (editor/OkayPanels.cpp). The model is filled only while it is visible.
+    auto fill = [&](okaypanels::ProfilerModel& m) {
+        // Live scene draw stats -> fed into this frame.
+        int objs = 0, tris = 0, parts = 0;
+        for (const auto& up : ed.scene().Objects()) {
+            if (!up || !up->active) continue;
+            if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
+            if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
         }
-    }
-    ImGui::PlotLines("##gpu",   gGpu.empty()   ? nullptr : gGpu.data(),   n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
-
-    // ---- Readouts ----
-    const okay::Profiler::Frame& F = P.Displayed();
-    ImGui::Text("Frame %.2f ms (%.0f FPS)", F.total, F.total > 0.001 ? 1000.0 / F.total : 0.0);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f,0.8f,1,1), "CPU %.2f", F.cpu);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(1,0.78f,0.45f,1), "GPU %.2f", F.gpu);
-    ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", avg, peak);
-    ImGui::Text("Meshes %d    Triangles %d    Particles %d", F.objects, F.triangles, F.particles);
-
-    // ---- CPU category bars (this frame) ----
-    auto bar = [&](const char* label, double ms, ImVec4 col) {
-        float frac = F.cpu > 0.0001 ? (float)(ms / F.cpu) : 0.0f;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-        char t[48]; std::snprintf(t, sizeof(t), "%s %.2f ms (%.0f%%)", label, ms, frac * 100.0f);
-        ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
-        ImGui::PopStyleColor();
-    };
-    double cSc = okay::Profiler::CategorySelf(F, "Scripts");
-    double cPh = okay::Profiler::CategorySelf(F, "Physics");
-    double cRd = okay::Profiler::CategorySelf(F, "Render");
-    double cOt = F.cpu - cSc - cPh - cRd; if (cOt < 0) cOt = 0;
-    bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
-    bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
-    bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
-    bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
-
-    // Plain-language diagnosis: tell the user what to look at, so the profiler is
-    // actually actionable instead of just numbers.
-    {
-        const char* heaviestCat = "Scripts"; double cm = cSc;
-        if (cPh > cm) { cm = cPh; heaviestCat = "Physics"; }
-        if (cRd > cm) { cm = cRd; heaviestCat = "Render"; }
-        if (cOt > cm) { cm = cOt; heaviestCat = "Other (engine/UI)"; }
-        std::string heaviestSec; double hs = 0.0;
-        for (const auto& b : F.buckets) if (b.self > hs) { hs = b.self; heaviestSec = b.name; }
-        std::string diag;
-        if (F.total < 0.001) diag = "Waiting for frames...";
-        else if (F.gpu > F.cpu * 1.3) diag = "GPU-bound: rendering dominates. Lower resolution/AA, fewer triangles, or simpler shaders.";
-        else if (F.cpu > F.gpu * 1.3) diag = "CPU-bound: " + std::string(heaviestCat) + " is heaviest"
-                                              + (heaviestSec.empty() ? "" : " (top: " + heaviestSec + ").");
-        else diag = "Balanced CPU/GPU.";
-        if (F.total > 0.001) {
-            double fps = 1000.0 / F.total;
-            if (fps >= 58) diag += "  Running smoothly (60+ FPS).";
-            else if (fps >= 28) diag += "  ~30 FPS.";
-            else diag += "  Below 30 FPS — optimise the heaviest section above.";
-        }
-        ImGui::TextColored(ImVec4(0.85f,0.9f,1.0f,1.0f), "Diagnosis:");
-        ImGui::SameLine(); ImGui::TextWrapped("%s", diag.c_str());
-    }
-    ImGui::Separator();
-
-    // ---- CSV copy of the displayed frame ----
-    if (ImGui::SmallButton("Copy CSV##prof")) {
-        std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
+        P.Stat3(objs, tris, parts);
+        const int n = P.Count();
+        P.Range(m.avg, m.peak);
+        m.paused = &P.paused; m.selected = &P.selected;
+        m.total.resize((std::size_t)n); m.gpu.resize((std::size_t)n);
+        for (int i = 0; i < n; ++i) { const okay::Profiler::Frame& f = P.FrameAt(i); m.total[(std::size_t)i] = (float)f.total; m.gpu[(std::size_t)i] = (float)f.gpu; }
+        m.lastFrameMs = P.lastFrameMs;
+        if (!P.paused) P.selected = -1;   // the shown frame follows the scrub position (the body keeps it in range)
+        else if (P.selected < 0 || P.selected >= n) P.selected = n - 1;
+        const okay::Profiler::Frame& F = P.Displayed();
+        m.frameMs = F.total; m.cpuMs = F.cpu; m.gpuMs = F.gpu;
+        m.meshes = F.objects; m.triangles = F.triangles; m.particles = F.particles;
+        m.scriptsMs = okay::Profiler::CategorySelf(F, "Scripts");
+        m.physicsMs = okay::Profiler::CategorySelf(F, "Physics");
+        m.renderMs = okay::Profiler::CategorySelf(F, "Render");
         for (const auto& b : F.buckets) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            char line[256];
-            std::snprintf(line, sizeof(line), "%s,%.4f,%.4f,%d,%.4f,%.4f,%.4f\n",
-                          b.name.c_str(), b.self, b.inclusive, b.calls, st.avg, st.mn, st.mx);
-            csv += line;
+            const okay::Profiler::Stat st = P.SectionStat(b.name);
+            okaypanels::ProfilerSection s;
+            s.name = b.name; s.self = b.self; s.inclusive = b.inclusive; s.calls = b.calls; s.depth = b.depth;
+            s.min = st.mn; s.avg = st.avg; s.max = st.mx;
+            m.sections.push_back(std::move(s));
         }
-        ImGui::SetClipboardText(csv.c_str());
-        ConsoleLog("Profiler frame copied as CSV.");
+        m.playing = ed.isPlaying();
+    };
+    okaypanels::ProfilerIntent intent;
+    if (UseOkayUIBackend() && DrawProfilerOkayUI(&g_showProfiler, fill, intent)) {   // the opt-in OkayUI port (editor/OkayPanels.cpp)
+        if (intent.copyCsv) ConsoleLog("Profiler frame copied as CSV.");
+        return;
     }
-    ImGui::SameLine(); ImGui::TextDisabled("section breakdown  (?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Self ms  = time spent in this section, NOT counting nested sections.\n"
-                          "Total ms = time including everything it called (indented = nested).\n"
-                          "%%        = share of this frame's CPU.\n"
-                          "Calls    = how many times it ran this frame.\n"
-                          "Avg/Max  = over the recorded window.\n"
-                          "Red rows are 'hot' (>30%% of CPU) — start optimising there.");
-
-    // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
-    if (ImGui::BeginTable("profrows", 7,
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
-            ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
-        ImGui::TableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 2.2f);
-        ImGui::TableSetupColumn("Self ms");
-        ImGui::TableSetupColumn("Total ms");
-        ImGui::TableSetupColumn("%");
-        ImGui::TableSetupColumn("Calls");
-        ImGui::TableSetupColumn("Avg");
-        ImGui::TableSetupColumn("Max");
-        ImGui::TableHeadersRow();
-        std::vector<okay::Profiler::Bucket> rows(F.buckets.begin(), F.buckets.end());
-        std::sort(rows.begin(), rows.end(),
-                  [](const okay::Profiler::Bucket& a, const okay::Profiler::Bucket& b){ return a.self > b.self; });
-        for (const auto& b : rows) {
-            okay::Profiler::Stat st = P.SectionStat(b.name);
-            float frac = F.cpu > 0.0001 ? (float)(b.self / F.cpu) : 0.0f;
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            if (b.depth > 0) ImGui::Indent(b.depth * 12.0f);
-            // Hot sections (heavy self time) flagged red.
-            if (b.self > F.cpu * 0.30 && F.cpu > 0.5) ImGui::TextColored(ImVec4(1,0.5f,0.45f,1), "%s", b.name.c_str());
-            else ImGui::TextUnformatted(b.name.c_str());
-            if (b.depth > 0) ImGui::Unindent(b.depth * 12.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.self);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", b.inclusive);
-            ImGui::TableNextColumn(); ImGui::Text("%.0f%%", frac * 100.0f);
-            ImGui::TableNextColumn(); ImGui::Text("%d", b.calls);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.avg);
-            ImGui::TableNextColumn(); ImGui::Text("%.3f", st.mx);
-        }
-        ImGui::EndTable();
-    }
-    if (F.buckets.empty())
-        ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
-                                           : "Press Play to time Scripts/Physics; the editor render is always timed.");
+    if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
+    okaypanels::ProfilerModel m;
+    fill(m);
+    intent = DrawProfilerBodyImGui(m, PanelViewHooks());   // editor/EditorPanelViews.cpp
     ImGui::End();
+    if (intent.copyCsv) { ImGui::SetClipboardText(okaypanels::ProfilerCsv(m).c_str()); ConsoleLog("Profiler frame copied as CSV."); }
 }
 
 // The phone / tablet body behind the emulated screen (drawn before the game).

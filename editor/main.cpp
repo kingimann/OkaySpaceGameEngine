@@ -71,6 +71,10 @@
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
+#ifdef OKAY_EDITOR_HAVE_OKAYUI_RENDER
+#include "okay/UI/OkayUIRender.hpp"           // OkayUI's draw data on our painter (OKAY_EDITOR_RENDERER=own: no SDL_Renderer to hand it)
+#include "okay/UI/OkayUIRenderBackends.hpp"
+#endif
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -709,8 +713,8 @@ int main(int argc, char** argv) {
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
-#include "backends/imgui_impl_sdlrenderer2.h"
 #include "EditorPlatform.hpp"      // the platform seam: window, ImGui's platform side, the views' GL context (OKAY_EDITOR_PLATFORM)
+#include "EditorGfx.hpp"           // the drawing seam: painter, textures, the frame, ImGui's renderer side (OKAY_EDITOR_RENDERER)
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
@@ -977,6 +981,12 @@ ImU32 ToColor(const Color& c) {
 inline void OkayTrace(const char* s) { okaycrash::ctx::Breadcrumb(s); }
 #define OKAY_BREADCRUMB(s) OkayTrace(s)
 
+// The drawing seam (EditorGfx.hpp): OKAY_EDITOR_RENDERER=own (our GL painter, our ImGui renderer) or sdl (SDL_Renderer, the
+// default). Every texture a panel shows is a texture of its painter (okay::ui2d::Tex, ImGui's ImTextureID).
+std::unique_ptr<okay::editorgfx::EditorGfx> g_gfx;
+okay::platform::Painter* EditorPainter() { return g_gfx ? &g_gfx->Painter() : nullptr; }
+// SDL_Renderer* behind g_gfx on the sdl renderer, null on own: only for what still speaks SDL (multi-window panels, the
+// Direct3D 11 views drawn into SDL's textures, OkayUI::EndFrame).
 SDL_Renderer* g_sdlRenderer = nullptr;
 // GPU (OpenGL) 3D rendering. The scene is rasterized by the GPU
 // (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
@@ -1003,7 +1013,7 @@ bool          g_okayUIBack = false;      // Backspace pressed this frame (for Ok
 // would overwrite it and BOTH panels would show that content (the flicker seen
 // when splitting Scene + Game). A texture per slot keeps them independent.
 static const int kView3DSlots = 4;   // 0=Scene view, 1=Game view, 2=Camera preview, 3=Animation preview
-SDL_Texture* g_view3DTex[kView3DSlots] = {};
+okay::ui2d::Tex g_view3DTex[kView3DSlots] = {};   // painter textures (SDL_Texture* on the sdl renderer)
 bool g_view3DIsTarget[kView3DSlots] = {};   // created as a render target (direct GPU path)
 bool g_d3dDirect = false;                   // D3D11 renderer shares SDL's device: render into the view textures
 int g_view3DW[kView3DSlots] = {}, g_view3DH[kView3DSlots] = {};
@@ -1050,20 +1060,22 @@ bool g_showVisualScript = false;   // the node graph editor window (okay::editor
 // ---- Direct (zero-copy) viewport textures (Windows / D3D11) ------------------
 // The D3D11 texture behind each SDL render-target texture, found once by letting
 // SDL draw into it and reading the bound render target back off the device.
-static std::unordered_map<SDL_Texture*, void*> g_viewD3DTex;
+static std::unordered_map<okay::ui2d::Tex, void*> g_viewD3DTex;
 static void DestroyViewTexture(int slot) {
-    SDL_Texture* t = g_view3DTex[slot];
+    okay::ui2d::Tex t = g_view3DTex[slot];
     if (!t) return;
 #if defined(_WIN32)
     auto it = g_viewD3DTex.find(t);
     if (it != g_viewD3DTex.end()) { okay::D3D11Renderer::ReleaseCom(it->second); g_viewD3DTex.erase(it); }
 #endif
-    SDL_DestroyTexture(t);
+    if (g_gfx) g_gfx->DestroyTexture(t);
     g_view3DTex[slot] = nullptr; g_view3DW[slot] = g_view3DH[slot] = 0; g_view3DIsTarget[slot] = false;
 }
 #if defined(_WIN32)
+// (sdl renderer only: g_d3dDirect is never set without an SDL_Renderer, so the view textures are SDL_Textures here)
 static SDL_Texture* EnsureViewTarget(int slot, int w, int h) {
-    if (g_view3DTex[slot] && g_view3DIsTarget[slot] && g_view3DW[slot] == w && g_view3DH[slot] == h) return g_view3DTex[slot];
+    if (g_view3DTex[slot] && g_view3DIsTarget[slot] && g_view3DW[slot] == w && g_view3DH[slot] == h)
+        return static_cast<SDL_Texture*>(g_view3DTex[slot]);
     DestroyViewTexture(slot);
     SDL_Texture* t = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h);
     if (!t) return nullptr;
@@ -1100,9 +1112,9 @@ static void ResetViewTextures(bool deviceLost) {
 
 // Render the scene's solid meshes (z-buffered) at w*h into the slot's texture;
 // transparent where nothing is drawn (so a grid/background shows through).
-SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
+okay::ui2d::Tex Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye,
                              int w, int h, int slot = 0, const GameObject* ignore = nullptr) {
-    if (!g_sdlRenderer) return nullptr;
+    if (!g_gfx) return nullptr;
     OKAY_PROFILE("Render3D");
     if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w < 1 ? 1 : (w > 4096 ? 4096 : w);
@@ -1225,13 +1237,11 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, rw, rh);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
+        // streaming (re-uploaded every frame), blended, linear (smooth upscale)
+        g_view3DTex[slot] = g_gfx->CreateTexture(okay::editorgfx::TexDesc(rw, rh, true, true), nullptr);
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
+    g_gfx->UpdateTexture(g_view3DTex[slot], px, rw * 4);
     return g_view3DTex[slot];
 }
 
@@ -1276,8 +1286,8 @@ const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPa
 
 // The whole camera stack into one texture, or nullptr when a single camera
 // should keep the existing Render3DTexture path (identical pixels).
-SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, const GameObject* playIgnore) {
-    if (!g_sdlRenderer || w < 1 || h < 1) return nullptr;
+okay::ui2d::Tex RenderCameraStackView(const Scene& scene, int w, int h, int slot, const GameObject* playIgnore) {
+    if (!g_gfx || w < 1 || h < 1) return nullptr;
     if (slot < 0 || slot >= kView3DSlots) slot = 0;
     w = w > 4096 ? 4096 : w; h = h > 4096 ? 4096 : h;
     okay::ApplySceneLight(scene);
@@ -1288,47 +1298,37 @@ SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, c
         return nullptr;
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, w, h);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);
+        g_view3DTex[slot] = g_gfx->CreateTexture(okay::editorgfx::TexDesc(w, h, true, true), nullptr);
         g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, composited.data(), w * 4);
+    g_gfx->UpdateTexture(g_view3DTex[slot], composited.data(), w * 4);
     return g_view3DTex[slot];
 }
 
 // Cached image thumbnail for the Project browser: loads the file once and
-// uploads it as an SDL texture. okay::Image is tightly-packed RGBA8, which is
-// exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
-// if the image can't be loaded.
-SDL_Texture* GetThumb(const std::string& path) {
+// uploads it as a texture of the editor's painter. okay::Image is tightly-packed
+// RGBA8, which is what the painter takes. Returns nullptr if the image can't be loaded.
+okay::ui2d::Tex GetThumb(const std::string& path) {
     if (!path.empty() && path[0] == '@') return nullptr;   // a picture made in memory (a terrain's baked layers): no file to read
-    static std::unordered_map<std::string, SDL_Texture*> cache;
+    static std::unordered_map<std::string, okay::ui2d::Tex> cache;
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;
-    SDL_Texture* tex = nullptr;
+    okay::ui2d::Tex tex = nullptr;
     okay::Image img;
     if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
     else img.Load(path);
-    if (g_sdlRenderer && img.Width() > 0) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) {
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
-        }
-    }
+    if (g_gfx && img.Width() > 0)   // blended, nearest
+        tex = g_gfx->CreateTexture(okay::editorgfx::TexDesc(img.Width(), img.Height(), false), img.Pixels().data());
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
 }
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
-static SDL_Texture* ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
+static okay::ui2d::Tex ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
 
 // Item picture, or a colour tile with initials. Atlas definitions sample a UV cell.
 static void DrawItemIconIm(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& folder, const std::string& item) {
     const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
-    if (SDL_Texture* icon = ItemThumb(ref.path)) {
+    if (okay::ui2d::Tex icon = ItemThumb(ref.path)) {
         dl->AddImage((ImTextureID)icon, p0, p1, ImVec2(ref.u0, ref.v0), ImVec2(ref.u1, ref.v1));
         return;
     }
@@ -1400,7 +1400,7 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
         };
         for (const auto& d : db.Items()) {
             if (d.loose || !match(d)) continue;
-            if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
+            if (okay::ui2d::Tex t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
             if (ImGui::Selectable((d.DisplayName() + "##" + d.id).c_str(), d.id == id)) { id = d.id; changed = true; }
             if (ImGui::IsItemHovered() && !d.description.empty()) ImGui::SetTooltip("%s", d.description.c_str());
         }
@@ -1453,9 +1453,9 @@ static bool GetMaterialSwatch(const std::string& path, ImVec4& out) {
 // editor sun/ambient) and upload it as a texture. Shared by the prefab and
 // model thumbnails. Returns nullptr if nothing visible rendered (pure 2D/UI).
 static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius);   // defined with the Animation tab
-static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius);
-static SDL_Texture* RenderObjectThumb(okay::Scene& sc, GameObject* root) {
-    if (!root || !g_sdlRenderer) return nullptr;
+static okay::ui2d::Tex RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius);
+static okay::ui2d::Tex RenderObjectThumb(okay::Scene& sc, GameObject* root) {
+    if (!root || !g_gfx) return nullptr;
     sc.Update(0.0f);          // flush any deferred adoption (dt 0 = no simulation)
     Vec3 center; float radius;
     AnimFocusBounds(root, center, radius);
@@ -1483,17 +1483,11 @@ static okay::Image RenderFramedImage(okay::Scene& sc, const Vec3& center, float 
     std::memcpy(img.Data(), px, static_cast<std::size_t>(W) * H * 4);
     return img;
 }
-static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius) {
-    if (!g_sdlRenderer) return nullptr;
+static okay::ui2d::Tex RenderFramedThumb(okay::Scene& sc, const Vec3& center, float radius) {
+    if (!g_gfx) return nullptr;
     const okay::Image img = RenderFramedImage(sc, center, radius);
     if (!img.Valid()) return nullptr;
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
-    }
-    return tex;
+    return g_gfx->CreateTexture(okay::editorgfx::TexDesc(img.Width(), img.Height(), true), img.Data());   // blended, linear
 }
 
 // Pictures of prefabs, scenes, materials and models for the Project panel. Each one draws a throwaway scene into an
@@ -1576,22 +1570,22 @@ static okay::Image RenderMaterialImage(const std::string& path) {   // the mater
     return RenderFramedImage(sc, center, radius);
 }
 // A scene's picture for other windows (the Scene Manager): the Project panel's cached one. Null while it is not made yet.
-static SDL_Texture* ProjectThumb(const std::string& abs);
-SDL_Texture* GetSceneThumb(const std::string& path) { return ProjectThumb(path); }
+static okay::ui2d::Tex ProjectThumb(const std::string& abs);
+okay::ui2d::Tex GetSceneThumb(const std::string& path) { return ProjectThumb(path); }
 
 // Rendered thumbnail for a built-in primitive/prop mesh by name (the Modeling
 // panel's Add library). Rendered once per name, cached for the session, and
 // budgeted to a few renders per frame so opening a category never hitches —
 // missing tiles just fill in over the next frames.
-static SDL_Texture* GetPrimitiveThumb(const char* name) {
-    static std::unordered_map<std::string, SDL_Texture*> cache;
+static okay::ui2d::Tex GetPrimitiveThumb(const char* name) {
+    static std::unordered_map<std::string, okay::ui2d::Tex> cache;
     auto it = cache.find(name);
     if (it != cache.end()) return it->second;
     static int s_frame = -1, s_made = 0;
     if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
-    if (s_made >= 3 || !g_sdlRenderer) return nullptr;   // out of budget: retry next frame
+    if (s_made >= 3 || !g_gfx) return nullptr;   // out of budget: retry next frame
     ++s_made;
-    SDL_Texture* tex = nullptr;
+    okay::ui2d::Tex tex = nullptr;
     {
         okay::Scene sc;
         GameObject* g = sc.CreateGameObject(name);
@@ -3029,7 +3023,7 @@ static void LoadBuildProfiles(EditorState& ed) { LoadBuildProfilesFrom(ed.projec
 // inherits, edited via Edit > Project Settings. The struct is in ProjectState.hpp.
 ProjectSettings g_project;
 bool g_showProjectSettings = false;
-SDL_Texture* g_editorSplashLogo = nullptr;   // loaded from g_project.splashLogo at startup
+okay::ui2d::Tex g_editorSplashLogo = nullptr;   // loaded from g_project.splashLogo at startup
 
 // The project whose settings g_project holds (the folder project.okayproj is in; "" = none open, the
 // working folder's file as before projects had their own).
@@ -6358,7 +6352,7 @@ static oked::menubar::State MenuBarState(EditorState& ed) {
 static void DrawRecentMenuItems(EditorState& ed) {
     for (const std::string& p : g_recent) {
         // Tiny rendered preview beside each recent scene (cached snapshot).
-        if (SDL_Texture* stx = GetSceneThumb(p)) {
+        if (okay::ui2d::Tex stx = GetSceneThumb(p)) {
             ImGui::Image((ImTextureID)stx, ImVec2(22, 22));
             ImGui::SameLine();
         }
@@ -6559,7 +6553,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
-    if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
+    if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { if (g_gfx) g_gfx->SetVSync(g_vsync); SaveSettings(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
     if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
@@ -8946,7 +8940,7 @@ static void DrawAssetManager(EditorState& ed) {
     auto tile = [&](const DlAsset& a, float sz) {
         ImVec2 p = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        SDL_Texture* th = a.cat == 2 && a.size < 32ll * 1024 * 1024 ? GetThumb(a.path) : nullptr;
+        okay::ui2d::Tex th = a.cat == 2 && a.size < 32ll * 1024 * 1024 ? GetThumb(a.path) : nullptr;
         if (th) ImGui::Image((ImTextureID)th, ImVec2(sz, sz));
         else {
             ImGui::Dummy(ImVec2(sz, sz));
@@ -9683,8 +9677,8 @@ static void SetAssetLabel(const std::string& proj, const std::string& full, int 
 // the asset's GUID and content hash, kept on disk in <project>/.okay/thumbs, made lazily (a few milliseconds per frame,
 // see Browser::ThumbFrame) and shown as the type icon until their turn. Textures are decoded and shrunk, audio is drawn
 // as a waveform, and prefabs, scenes, materials, models and mesh files are rendered by the functions above. This file
-// only turns the cache's Image into an SDL texture, kept while it is used.
-struct ProjThumbTex { SDL_Texture* tex = nullptr; int lastUse = 0; };
+// only turns the cache's Image into a texture of the editor's painter, kept while it is used.
+struct ProjThumbTex { okay::ui2d::Tex tex = nullptr; int lastUse = 0; };
 static std::map<std::string, ProjThumbTex> g_thumbTex;   // "<guid>:<hash>" -> texture
 static int g_thumbFrame = 0;
 static bool g_thumbGensFor = false;
@@ -9707,8 +9701,8 @@ static bool ProjectHasThumb(const std::string& ext) {
         default: return false;
     }
 }
-static SDL_Texture* ProjectThumb(const std::string& abs) {
-    if (!g_pb || !g_sdlRenderer) return nullptr;
+static okay::ui2d::Tex ProjectThumb(const std::string& abs) {
+    if (!g_pb || !g_gfx) return nullptr;
     if (!ProjectHasThumb(Lower(std::filesystem::path(abs).extension().string()))) return nullptr;
     ProjectRegisterThumbGenerators();
     const okaypb::Browser::ThumbResult r = g_pb->Thumb(NativePath(abs));
@@ -9716,12 +9710,8 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
     auto it = g_thumbTex.find(r.key);
     if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
     if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, r.image->Width(), r.image->Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, r.image->Pixels().data(), r.image->Width() * 4);
-    }
+    okay::ui2d::Tex tex = g_gfx->CreateTexture(okay::editorgfx::TexDesc(r.image->Width(), r.image->Height(), true),
+                                               r.image->Pixels().data());   // blended, linear
     g_thumbTex[r.key] = {tex, g_thumbFrame};
     return tex;
 }
@@ -9732,7 +9722,7 @@ static void ProjectThumbFrame() {
     if (g_pb) g_pb->ThumbFrame(10.0);
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); }
+        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex && g_gfx) g_gfx->DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); }
         else ++it;
     }
 }
@@ -9744,7 +9734,7 @@ static void ProjectForgetThumb(const std::string& abs) {
     g_pb->ForgetThumb(NativePath(abs));
     const std::string pre = g.ToString() + ":";
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); } else ++it;
+        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex && g_gfx) g_gfx->DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); } else ++it;
     }
 }
 
@@ -10805,7 +10795,7 @@ void DrawProject(EditorState& ed) {
             // ---- Grid tile (thumbnail / icon + wrapped name) ----
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
-            SDL_Texture* thumb = isDir ? nullptr : ProjectThumb(full);   // from the database's thumbnail cache; the icon shows until it is made
+            okay::ui2d::Tex thumb = isDir ? nullptr : ProjectThumb(full);   // from the database's thumbnail cache; the icon shows until it is made
             ImVec4 matCol;
             bool isMat = !isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, matCol);
             if (thumb) {
@@ -10904,7 +10894,7 @@ void DrawProject(EditorState& ed) {
             ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
-            SDL_Texture* rowThumb = isDir ? nullptr : ProjectThumb(full);
+            okay::ui2d::Tex rowThumb = isDir ? nullptr : ProjectThumb(full);
             ImVec4 rowMat;
             if (rowThumb) dl->AddImage((ImTextureID)rowThumb, c0, c1);
             else if (!isDir && k.icon == AssetIcon::Material && GetMaterialSwatch(full, rowMat))
@@ -11001,7 +10991,7 @@ void DrawProject(EditorState& ed) {
         AssetKind sk = KindOf(sext, selDir);
         // Left: a larger preview — the real image for textures, else the type icon.
         const float pv = 68.0f;
-        SDL_Texture* pthumb = selDir ? nullptr : ProjectThumb(selected);
+        okay::ui2d::Tex pthumb = selDir ? nullptr : ProjectThumb(selected);
         ImVec4 pmat;
         bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
@@ -23703,7 +23693,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
     static Vec3 s_lastEye; static float s_lastW = 0.0f; static Uint32 s_lastAt = 0;
     const bool reuse = poseUnchanged && s_lastGo == go && s_lastW == w && g_view3DTex[3] &&
                        (s_lastEye - eye).Magnitude() < 1e-5f && okay::platform::TicksMs32() - s_lastAt < 500;
-    SDL_Texture* tex = nullptr;
+    okay::ui2d::Tex tex = nullptr;
     if (reuse) tex = g_view3DTex[3];
     else {
         if (pose) pose();
@@ -26378,7 +26368,7 @@ static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::siz
 // tooltip; right-click offers "Show in Project".
 static void TexFieldThumb(const std::string& path) {
     if (path.empty()) return;
-    SDL_Texture* t = GetThumb(path);
+    okay::ui2d::Tex t = GetThumb(path);
     if (!t) return;
     ImGui::PushID(path.c_str());
     ImGui::Image((ImTextureID)t, ImVec2(40, 40));
@@ -27548,7 +27538,7 @@ static void DrawUVEditor(EditorState& ed) {
     dl->PushClipRect(p0, p1, true);
     dl->AddRectFilled(p0, p1, IM_COL32(26, 28, 34, 255));
     const ImVec2 q0 = toScreen({0, 0}), q1 = toScreen({1, 1});
-    SDL_Texture* tex = (mr->texture.empty() || mr->texture[0] == '@') ? nullptr : GetThumb(mr->texture);   // '@...' is a picture made in memory (a terrain's baked layers): there is no file to show
+    okay::ui2d::Tex tex = (mr->texture.empty() || mr->texture[0] == '@') ? nullptr : GetThumb(mr->texture);   // '@...' is a picture made in memory (a terrain's baked layers): there is no file to show
     if (tex) dl->AddImage((ImTextureID)tex, q0, q1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
     else {   // checker in the 0-1 square
         const int n = 8;
@@ -27733,7 +27723,7 @@ void DrawModeling(EditorState& ed) {
             ImVec2 bmn = ImGui::GetItemRectMin(), bmx = ImGui::GetItemRectMax();
             ImDrawList* mdl = ImGui::GetWindowDrawList();
             float cx2 = (bmn.x + bmx.x) * 0.5f;
-            if (SDL_Texture* th = GetPrimitiveThumb(it))
+            if (okay::ui2d::Tex th = GetPrimitiveThumb(it))
                 mdl->AddImage((ImTextureID)th, ImVec2(cx2 - 22.0f, bmn.y + 2.0f),
                               ImVec2(cx2 + 22.0f, bmn.y + 46.0f));
             ImVec2 nts = ImGui::CalcTextSize(it);
@@ -29883,7 +29873,7 @@ void DrawInspector(EditorState& ed) {
                     int col = 0;
                     for (const std::string& pn : okay::ProcTextureNames()) {
                         std::string id = "proc:" + pn;
-                        if (SDL_Texture* th = GetThumb(id)) {
+                        if (okay::ui2d::Tex th = GetThumb(id)) {
                             if (ImGui::ImageButton(("##pt" + pn).c_str(), (ImTextureID)th, ImVec2(48, 48))) {
                                 ed.PushUndo(); mr->texture = id; ed.dirty = true; ImGui::CloseCurrentPopup();
                             }
@@ -39681,7 +39671,7 @@ void DrawInspector(EditorState& ed) {
             if (AssetSlot("uritex", ri->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(ri->texture);
             int tw = 0, th = 0;
-            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            if (okay::ui2d::Tex t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) g_gfx->QueryTexture(t, tw, th);
             if (tw > 0) {
                 if (ImGui::SmallButton("Set Native Size##uri")) {
                     ed.PushUndo();
@@ -39723,8 +39713,8 @@ void DrawInspector(EditorState& ed) {
             if (AssetSlot("uimtex", im->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(im->texture);
             if (!im->texture.empty()) {
-                if (SDL_Texture* t = GetThumb(im->texture)) {
-                    int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                if (okay::ui2d::Tex t = GetThumb(im->texture)) {
+                    int tw = 0, th = 0; g_gfx->QueryTexture(t, tw, th);
                     if (ImGui::SmallButton("Set Native Size##uim")) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the picture's own size (%d x %d)", tw, th);
                     ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
@@ -41031,16 +41021,16 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
-// A TTF font's glyph atlas as an SDL texture for the editor's ImGui draw lists
+// A TTF font's glyph atlas as a texture of the editor's painter for the editor's ImGui draw lists
 // (uploaded again when the font bakes new characters). nullptr if it can't be created.
-static SDL_Texture* TtfAtlasTexture(okay::TtfFont* f) {
-    return oked::PreviewFontAtlas(g_sdlRenderer, f);
+static okay::ui2d::Tex TtfAtlasTexture(okay::TtfFont* f) {
+    return oked::PreviewFontAtlas(EditorPainter(), f);
 }
 
 // Draw a string with a TTF font into an ImGui draw list (a textured quad per glyph,
 // tinted by `col`). Shares the font-pixel space of the bitmap path so callers don't
 // special-case sizing. Gradient is approximated as the flat top color.
-static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
+static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, okay::ui2d::Tex tex,
                         const std::string& text, float ox, float oy, float px,
                         ImU32 col, float letterSp, float lineSp, bool italic) {
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight(); // screen px per atlas px
@@ -41088,7 +41078,7 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     if (px < 0.15f) px = 0.15f;
     if (ttf && ttf->Valid()) {
         ttf->Prepare(text);   // bake new characters before the atlas is uploaded
-        if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
+        if (okay::ui2d::Tex tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
             return;
         }
@@ -41188,7 +41178,7 @@ static void DrawOverlayCmds(ImDrawList* dl, const std::vector<okay::LoadingDrawC
                                                       col(d.color2, d.alpha), col(d.color2, d.alpha)); break;
         case K::Outline:  dl->AddRect(p0, p1, col(d.color, d.alpha), d.radius); break;
         case K::Image:
-            if (SDL_Texture* tex = GetThumb(d.text))
+            if (okay::ui2d::Tex tex = GetThumb(d.text))
                 dl->AddImage((ImTextureID)tex, p0, p1, ImVec2(d.u0, d.v0), ImVec2(d.u1, d.v1),
                              IM_COL32(255, 255, 255, (int)(std::clamp(d.alpha, 0.0f, 1.0f) * 255)));
             break;
@@ -41259,7 +41249,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // WorldUI label and any world-space Canvas) projects through the UIWorld()
     // context the CALLER installed, so in-world UI lines up with this view's camera.
     {
-        oked::UIPreviewPainter painter(dl, canvasPos, g_sdlRenderer, &GetThumb);
+        oked::UIPreviewPainter painter(dl, canvasPos, EditorPainter(), &GetThumb);
         okay::ui2d::UIRenderOptions opt;
         opt.interactive = gameView && ed.isPlaying();
         opt.worldLabelsViaUIWorld = true;
@@ -42546,9 +42536,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
             if (sr->flipX) std::swap(u0, u1);
             if (sr->flipY) std::swap(v0, v1);
-            SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
-            if (stex) SDL_SetTextureScaleMode(stex,
-                sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+            okay::ui2d::Tex stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
+            if (stex) g_gfx->SetTextureLinear(stex, sr->texFilter != SpriteRenderer::TexFilter::Pixel);
             ImU32 col = ToColor(sr->color);
             if (stex) dl->AddImageQuad((ImTextureID)stex, pTL, pTR, pBR, pBL,
                                        ImVec2(u0, v0), ImVec2(u1, v0), ImVec2(u1, v1), ImVec2(u0, v1), col);
@@ -43687,7 +43676,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     } else {
         okay::visibility::RenderViewFovY() = g_editorFov;
     }
-    SDL_Texture* stackTex = nullptr;
+    okay::ui2d::Tex stackTex = nullptr;
     if (gameView) {
         const int fw = std::max(1, (int)(canvasSize.x * dpi));
         const int fh = std::max(1, (int)(canvasSize.y * dpi));
@@ -43695,7 +43684,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     if (stackTex)
         dl->AddImage((ImTextureID)stackTex, canvasPos, canvasEnd);
-    else if (SDL_Texture* tex = Render3DTexture(ed.scene(), vp, eye,
+    else if (okay::ui2d::Tex tex = Render3DTexture(ed.scene(), vp, eye,
                                            (int)(v3w * dpi), (int)(v3h * dpi),
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
@@ -43942,7 +43931,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                                    (int)(bg.b * 255), 255));
             Mat4 cvp = pc->ProjectionMatrix(pw / ph) * pc->ViewMatrix();
             Vec3 ceye = ed.selected()->transform->Position();
-            if (SDL_Texture* ptex = Render3DTexture(ed.scene(), cvp, ceye,
+            if (okay::ui2d::Tex ptex = Render3DTexture(ed.scene(), cvp, ceye,
                                                     (int)pw, (int)ph, 2, pc->ignoreObject))
                 dl->AddImage((ImTextureID)ptex, pmin, pmax);
             dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
@@ -46373,17 +46362,16 @@ static void SpriteFloodFill(okay::Image& img, int sx, int sy, const okay::Color&
     }
 }
 
-// Upload an okay::Image to a (recreated-on-resize) nearest-filtered SDL texture for
+// Upload an okay::Image to a (recreated-on-resize) nearest-filtered texture for
 // crisp 1:1 pixel preview in the Sprite Editor.
-static SDL_Texture* SpriteEdTexture(okay::Image& img, SDL_Texture*& tex, int& tw, int& th, bool& dirty) {
-    if (!g_sdlRenderer || img.Width() <= 0) return nullptr;
-    if (tex && (tw != img.Width() || th != img.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+static okay::ui2d::Tex SpriteEdTexture(okay::Image& img, okay::ui2d::Tex& tex, int& tw, int& th, bool& dirty) {
+    if (!g_gfx || img.Width() <= 0) return nullptr;
+    if (tex && (tw != img.Width() || th != img.Height())) { g_gfx->DestroyTexture(tex); tex = nullptr; }
     if (!tex) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) { SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest); }
+        tex = g_gfx->CreateTexture(okay::editorgfx::TexDesc(img.Width(), img.Height(), false), nullptr);   // blended, nearest
         tw = img.Width(); th = img.Height(); dirty = true;
     }
-    if (tex && dirty) { SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
+    if (tex && dirty) { g_gfx->UpdateTexture(tex, img.Pixels().data(), img.Width() * 4); dirty = false; }
     return tex;
 }
 
@@ -46395,7 +46383,7 @@ void DrawSpriteEditor(EditorState& ed) {
     namespace fs = std::filesystem;
     if (!ImGui::Begin("Sprite Editor", &g_showSpriteEditor)) { ImGui::End(); return; }
     static okay::Image img(32, 32);
-    static SDL_Texture* tex = nullptr; static int texW = 0, texH = 0; static bool texDirty = true;
+    static okay::ui2d::Tex tex = nullptr; static int texW = 0, texH = 0; static bool texDirty = true;
     static float pri[4] = {0.90f, 0.32f, 0.36f, 1.0f};
     static int tool = 0;          // 0 pencil, 1 eraser, 2 fill, 3 eyedropper
     static int zoom = 12;         // display px per texel
@@ -46474,7 +46462,7 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", img.Width(), img.Height());
 
     // ---- Canvas ----
-    SDL_Texture* t = SpriteEdTexture(img, tex, texW, texH, texDirty);
+    okay::ui2d::Tex t = SpriteEdTexture(img, tex, texW, texH, texDirty);
     ImVec2 origin = ImGui::GetCursorScreenPos();
     float disp = (float)zoom;
     ImVec2 canvasSz(img.Width() * disp, img.Height() * disp);
@@ -48196,6 +48184,39 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
 
 int RunVsGraphShot(int argc, char** argv);
 
+#ifdef OKAY_HAVE_OKAYUI
+#ifdef OKAY_EDITOR_HAVE_OKAYUI_RENDER
+static std::unique_ptr<OkayUI::render::Backend> g_okayRenderBackend;   // the own renderer: OkayUI on the editor's painter
+static std::unique_ptr<OkayUI::render::Renderer> g_okayRenderer;
+static void EditorOkayUIRenderRelease() {
+    if (g_okayRenderer) g_okayRenderer->ReleaseAll();
+    g_okayRenderer.reset();
+    g_okayRenderBackend.reset();
+}
+#endif
+// After ImGui's draw data: OkayUI on top. The sdl renderer hands OkayUI its SDL_Renderer (as before); the own one draws OkayUI's
+// draw data on the editor's painter through OkayUI's render interface (when the build has it; otherwise OkayUI is not drawn).
+static void EditorOkayUIEndFrame() {
+    if (g_sdlRenderer) { OkayUI::EndFrame(g_sdlRenderer); return; }
+    int ww = 0, wh = 0, fw = 0, fh = 0;
+    if (okay::platform::Window* w = g_edPlat ? g_edPlat->MainWindow() : nullptr) w->GetSize(ww, wh);
+    if (g_gfx) g_gfx->OutputSize(fw, fh);
+    OkayUI::EndFrameData(ww, wh);
+#ifdef OKAY_EDITOR_HAVE_OKAYUI_RENDER
+    if (!g_gfx || ww <= 0 || wh <= 0 || fw <= 0 || fh <= 0) return;
+    if (!g_okayRenderer) {
+        g_okayRenderBackend = OkayUI::render::CreatePainterBackend(g_gfx->Painter());
+        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend));
+    }
+    OkayUI::render::FrameInfo fi;
+    fi.fbWidth = fw; fi.fbHeight = fh; fi.dpi = (float)fw / (float)ww;
+    const OkayUI::render::Stats st = g_okayRenderer->Render(OkayUI::GetDrawData(), fi);
+    static bool said = false;
+    if (st.refused && !said) { said = true; ConsoleLog("An OkayUI frame was not drawn: " + st.message, 1); }
+#endif
+}
+#endif
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
@@ -48297,27 +48318,27 @@ int main(int argc, char** argv) {
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
     // frame while hidden and then reveal the window already showing the splash.
-    SDL_Window* window = static_cast<SDL_Window*>(g_edPlat->CreateMainWindow("OkayEngine", 1280, 800));
+    // The drawing seam: OKAY_EDITOR_RENDERER=own (our GL painter on the main window, our ImGui renderer; only together with
+    // OKAY_EDITOR_PLATFORM=own) or sdl (SDL_Renderer, the default). The own renderer needs a main window with OpenGL.
+    const bool wantOwnRenderer = okay::editorgfx::OwnRendererAllowed(
+        okay::editorgfx::ParseRenderer(std::getenv("OKAY_EDITOR_RENDERER")),
+        g_edPlat->Kind() == okay::editorplat::PlatformKind::Own);
+    SDL_Window* window = static_cast<SDL_Window*>(g_edPlat->CreateMainWindow("OkayEngine", 1280, 800, wantOwnRenderer));
     if (!window) { std::cerr << "CreateWindow failed: " << g_edPlat->LastError() << "\n"; return 1; }
     okay::platform::Window& mainWin = *g_edPlat->MainWindow();   // okay::platform's view of it (id, focus, show / raise)
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
-    // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
-#if defined(_WIN32)
-    // Direct3D 11 (SDL's default on Windows is Direct3D 9), so the 3D renderer can
-    // share its device and draw the viewports straight into the textures the UI
-    // shows — no GPU->CPU read-back and re-upload every frame. OKAY_RENDER_DRIVER
-    // overrides (e.g. "direct3d", "opengl", "software").
-    if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
-    else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
-#endif
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED); }
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
-    // VSync off by default = uncapped FPS (no 60 Hz limit). Toggle in View > VSync.
-    SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
-    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
-    g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    // What draws the window: SDL's 2D renderer (Direct3D 11 on Windows so the 3D renderer can share its device and draw the
+    // viewports straight into the textures the UI shows; OKAY_RENDER_DRIVER overrides; VSync off by default = uncapped FPS,
+    // toggled in View > VSync), or our own GL painter (EditorGfx.hpp). Every texture below is one of its painter's.
+    std::string gfxNote, gfxErr;
+    g_gfx = okay::editorgfx::CreateEditorGfxFromEnv(window, g_edPlat->MainWindow(), g_edPlat->MainWindowBackend(),
+                                                    g_edPlat->Kind() == okay::editorplat::PlatformKind::Own, g_vsync,
+                                                    &gfxNote, &gfxErr);
+    if (!g_gfx) { std::cerr << "CreateRenderer failed: " << gfxErr << "\n"; return 1; }
+    std::cerr << gfxNote << "\n";
+    SDL_Renderer* renderer = static_cast<SDL_Renderer*>(g_gfx->SdlRenderer());   // null on own
+    g_sdlRenderer = renderer;
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
     // the project's custom splash: logo, colours, accent. The project is the one being opened (--open
     // gives its scene); a new project or none starts from the defaults. It's a pure file read, safe
@@ -48334,16 +48355,11 @@ int main(int argc, char** argv) {
         LoadProjectSettingsFrom(startDir);
         NoteProjectFilesSaved();
     }
-    // Decode the custom splash logo (if set) into an SDL texture for the splash.
+    // Decode the custom splash logo (if set) into a texture for the splash (blended, nearest).
     if (g_project.splashLogo[0]) {
         okay::Image img;
-        if (img.Load(g_project.splashLogo) && img.Valid()) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
-                    (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_editorSplashLogo = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
-        }
+        if (img.Load(g_project.splashLogo) && img.Valid())
+            g_editorSplashLogo = g_gfx->CreateTexture(okay::editorgfx::TexDesc(img.Width(), img.Height(), false), img.Data());
     }
     // Build the splash style from the project's loading-screen settings.
     auto splashStyle = [&]() {
@@ -48363,11 +48379,11 @@ int main(int argc, char** argv) {
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        int sw = 1280, sh = 800; g_gfx->OutputSize(sw, sh);
+        okay::DrawSplashStyled(&g_gfx->Painter(), sw, sh, splashStyle());
         mainWin.Show();
         mainWin.Raise();
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        okay::DrawSplashStyled(&g_gfx->Painter(), sw, sh, splashStyle());
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
 
@@ -48421,8 +48437,8 @@ int main(int argc, char** argv) {
     // Re-present the (animated) splash between heavy init steps so the loading
     // frame keeps moving instead of sitting frozen until the first real frame.
     auto splashTick = [&]() {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
-        okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
+        int sw = 1280, sh = 800; g_gfx->OutputSize(sw, sh);
+        okay::DrawSplashStyled(&g_gfx->Painter(), sw, sh, splashStyle());
         SDL_PumpEvents();
     };
     splashTick();
@@ -48553,8 +48569,9 @@ int main(int argc, char** argv) {
     ApplyTheme();
     g_edPlat->InitImGui(renderer);   // ImGui's platform side: ImGui's SDL2 backend (sdl) or our glue (own)
     ConsoleLog(platNote);
-    ImGui_ImplSDLRenderer2_Init(renderer);
-    OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
+    g_gfx->InitImGui();              // ImGui's renderer side: ImGui's SDL_Renderer backend (sdl) or our renderer (own)
+    ConsoleLog(gfxNote);
+    if (renderer) OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels; SDL_Renderer only)
 
 #ifdef OKAY_HAVE_OKAYUI
     // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
@@ -48562,7 +48579,7 @@ int main(int argc, char** argv) {
     // here in the editor during Play — the same code path the shipped player uses.
     // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
     static okay::OkayUIScriptBridge g_editorUIBridge;
-    g_editorUIBridge.SetRenderer(renderer);   // dialogue portraits as textures
+    g_editorUIBridge.painter = &g_gfx->Painter();   // dialogue portraits as textures of the editor's painter
     okay::SetScriptUI(&g_editorUIBridge);
 #endif
 
@@ -48587,8 +48604,7 @@ int main(int argc, char** argv) {
                         auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
                         gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
                     }
-                    SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
-                    if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + ri.name;
+                    gpu += std::string(gpu.empty() ? "" : " | ") + "UI renderer " + g_gfx->DriverName();
                     okaycrash::ctx::SetGpu(gpu.c_str());
                 }
             }
@@ -48599,9 +48615,8 @@ int main(int argc, char** argv) {
         else ConsoleLog("OpenGL context: " + g_edPlat->LastError(), 1);
         if (!g_glReady) {
             ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
-            SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
             std::string gpu = "OpenGL renderer unavailable";
-            if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(" | SDL renderer ") + ri.name;
+            gpu += std::string(" | UI renderer ") + g_gfx->DriverName();
             okaycrash::ctx::SetGpu(gpu.c_str());
         }
     }
@@ -48613,7 +48628,7 @@ int main(int argc, char** argv) {
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
         bool ok = false;
-        if (ID3D11Device* sdlDev = SDL_RenderGetD3D11Device(renderer)) {
+        if (ID3D11Device* sdlDev = renderer ? SDL_RenderGetD3D11Device(renderer) : nullptr) {   // none on the own renderer
             ok = g_d3dRenderer->InitShared(sdlDev);
             okay::D3D11Renderer::ReleaseCom(sdlDev);   // (SDL_RenderGetD3D11Device adds a reference)
             g_d3dDirect = ok && !std::getenv("OKAY_NO_DIRECT_VIEW");
@@ -49028,7 +49043,7 @@ int main(int argc, char** argv) {
             if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
                 int ww = 0, wh = 0, ow = 0, oh = 0;
                 SDL_GetWindowSize(window, &ww, &wh);
-                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                g_gfx->OutputSize(ow, oh);
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                 int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
@@ -49074,7 +49089,7 @@ int main(int argc, char** argv) {
                     // click on Stop. A click there grabs the mouse again.
                     int ww = 0, wh = 0, ow = 0, oh = 0;
                     SDL_GetWindowSize(window, &ww, &wh);
-                    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                    g_gfx->OutputSize(ow, oh);
                     float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
                     int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
@@ -49229,7 +49244,7 @@ int main(int argc, char** argv) {
                     s_dispGen = gen;
                     if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
-                    if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
+                    g_gfx->SetVSync(g_vsync);
                     okay::DisplaySettings::ApplyQuality();
                 }
             }
@@ -49393,7 +49408,7 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        ImGui_ImplSDLRenderer2_NewFrame();
+        g_gfx->NewFrame();
         g_edPlat->NewFrame();
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
@@ -50155,10 +50170,8 @@ int main(int argc, char** argv) {
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
-        SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-        SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
-        SDL_RenderClear(renderer);
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        g_gfx->BeginFrame(io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y, 30, 30, 34);   // scale, clear
+        if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) && renderer) {   // (multi-window needs SDL_Renderer: sdl only)
             // Multi-window mode: draw data is in absolute desktop coordinates,
             // which the stock SDL_Renderer backend can't offset — process the
             // texture updates it owns, then draw through our rebasing renderer.
@@ -50166,10 +50179,10 @@ int main(int argc, char** argv) {
             if (mdd && mdd->Textures)
                 for (ImTextureData* tx : *mdd->Textures)
                     if (tx->Status != ImTextureStatus_OK)
-                        ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+                        g_gfx->UpdateImGuiTexture(tx);
             OkayRenderDrawData(mdd, renderer, nullptr);
         } else {
-            { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
+            { OKAY_PROFILE("ImGui.Draw"); g_gfx->RenderImGui(ImGui::GetDrawData()); }
         }
 #ifdef OKAY_HAVE_OKAYUI
         // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
@@ -50222,7 +50235,7 @@ int main(int argc, char** argv) {
             OkayUI::SetFont(OkayUI::FontDefault());
         }
         // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
-        OkayUI::EndFrame(renderer);
+        EditorOkayUIEndFrame();
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
@@ -50231,38 +50244,29 @@ int main(int argc, char** argv) {
             static int shotFrames = 0;
             if (++shotFrames == 160 && shot[0]) {
                 int sw = 0, sh = 0;
-                SDL_GetRendererOutputSize(renderer, &sw, &sh);
-                if (sw > 0 && sh > 0) {
-                    std::vector<std::uint8_t> px((std::size_t)sw * sh * 4);
-                    if (SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), sw * 4) == 0) {
-                        okay::Image img;
-                        img.Set(sw, sh, std::move(px));
-                        img.SavePNG(shot);
-                        ConsoleLog(std::string("Saved screenshot ") + shot);
-                        std::fflush(stdout);
-                    }
+                std::vector<std::uint8_t> px;   // RGBA8, top row first
+                if (g_gfx->ReadPixels(px, sw, sh) && sw > 0 && sh > 0) {
+                    okay::Image img;
+                    img.Set(sw, sh, std::move(px));
+                    img.SavePNG(shot);
+                    ConsoleLog(std::string("Saved screenshot ") + shot);
+                    std::fflush(stdout);
                 }
                 if (std::getenv("OKAY_UI_QUIT")) std::exit(0);
             }
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
             int sw = 0, sh = 0;
-            SDL_GetRendererOutputSize(renderer, &sw, &sh);
-            SDL_Surface* surface = (sw > 0 && sh > 0)
-                ? SDL_CreateRGBSurfaceWithFormat(0, sw, sh, 32, SDL_PIXELFORMAT_RGBA32) : nullptr;
-            if (surface && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch) == 0) {
-                okay::Image img(sw, sh);
-                for (int y = 0; y < sh; ++y)
-                    std::memcpy(img.Data() + (std::size_t)y * sw * 4,
-                                static_cast<unsigned char*>(surface->pixels) + y * surface->pitch,
-                                (std::size_t)sw * 4);
+            std::vector<std::uint8_t> px;   // RGBA8, top row first
+            if (g_gfx->ReadPixels(px, sw, sh) && sw > 0 && sh > 0) {
+                okay::Image img;
+                img.Set(sw, sh, std::move(px));
                 img.SavePNG(shot);
                 std::printf("[diag-shot] %s (%dx%d)\n", shot.c_str(), sw, sh);
                 std::fflush(stdout);
             }
-            if (surface) SDL_FreeSurface(surface);
         }
-        { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
+        { OKAY_PROFILE("Present"); g_gfx->Present(); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
         // dragged out of the editor). Also applies a runtime toggle from the
@@ -50304,7 +50308,10 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    ImGui_ImplSDLRenderer2_Shutdown();
+#if defined(OKAY_HAVE_OKAYUI) && defined(OKAY_EDITOR_HAVE_OKAYUI_RENDER)
+    EditorOkayUIRenderRelease();   // OkayUI's textures on the painter go before it
+#endif
+    g_gfx->ShutdownImGui();
     g_edPlat->ShutdownImGui();
     ImGui::DestroyContext();
     // Tear down the optional GPU renderer: free its GL objects with its own context
@@ -50322,7 +50329,9 @@ int main(int argc, char** argv) {
 #endif
     g_pads.CloseAll();
     audioDev.reset();
-    SDL_DestroyRenderer(renderer);
+    g_editorSplashLogo = nullptr;
+    g_sdlRenderer = nullptr;
+    g_gfx.reset();   // the renderer (sdl) or the GL painter and its context (own), with every texture it made
     g_edPlat->DestroyMainWindow();
     g_edPlat.reset();
     SDL_Quit();

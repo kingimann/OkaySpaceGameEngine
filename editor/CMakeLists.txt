@@ -118,6 +118,11 @@ if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
+# OkayUI's render interface (okayui/render): with OKAY_EDITOR_RENDERER=own (no SDL_Renderer) OkayUI draws on the editor's painter.
+if(TARGET okay_ui AND TARGET okay_ui_render)
+    target_link_libraries(okay-editor PRIVATE okay_ui_render)
+    target_compile_definitions(okay-editor PRIVATE OKAY_EDITOR_HAVE_OKAYUI_RENDER=1)
+endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()

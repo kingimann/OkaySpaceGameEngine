@@ -3,6 +3,7 @@
 // This list shrinks as main.cpp is split further; each entry moves to the
 // header of the module that ends up owning it.
 #include "imgui.h"
+#include "okay/UI/UIPainter.hpp"   // okay::ui2d::Tex: a texture of the editor's painter (EditorGfx), ImGui's ImTextureID
 #include <functional>
 #include <string>
 
@@ -10,7 +11,7 @@ namespace okay { class GameObject; namespace editor { class EditorState; } }
 #ifdef OKAY_HAVE_OKAYUI
 namespace okayuihost { class Region; }
 #endif
-struct SDL_Texture;
+namespace okay::platform { class Painter; }
 
 namespace oked {
 
@@ -70,7 +71,10 @@ void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* m
 extern bool  g_snap;
 extern float g_snapSize;
 extern bool  g_gizmoLocal;
-// An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
-SDL_Texture* GetThumb(const std::string& path);
+// An image file (or "proc:" texture) as a cached texture of the editor's painter, null when it can't load.
+okay::ui2d::Tex GetThumb(const std::string& path);
+// The painter that draws the editor's window (EditorGfx: the sdl2 painter over SDL_Renderer, or our GL painter with
+// OKAY_EDITOR_RENDERER=own). Null before the window exists.
+okay::platform::Painter* EditorPainter();
 
 } // namespace oked

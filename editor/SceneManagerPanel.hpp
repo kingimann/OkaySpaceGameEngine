@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-struct SDL_Texture;
 
 namespace okay { namespace editor { class EditorState; } }
 
@@ -27,6 +26,6 @@ void SceneBuildSync(okay::editor::EditorState& ed);
 std::vector<SceneBuildEntry> SceneBuildSnapshot();
 void SceneBuildApply(okay::editor::EditorState& ed, const std::vector<SceneBuildEntry>& entries);
 
-SDL_Texture* GetSceneThumb(const std::string& path);
+void* GetSceneThumb(const std::string& path);   // an okay::ui2d::Tex of the editor's painter (ImGui's ImTextureID)
 
 } // namespace oked

@@ -136,6 +136,50 @@ int main() {
             for (int i = 0; i < 100; ++i) longMulti += "\xE2\x9C\x93";
             CHECK(CheckName(SanitizeName(longMulti)).ok());   // cut on a character boundary
         }
+        // #888 finding 49: the cut to 64 characters must not leave a trailing dot or space.
+        {
+            const std::string dot = SanitizeName(std::string(63, 'a') + ".b");
+            CHECK(CheckName(dot).ok() && CheckName(dot).folder == dot);
+            CHECK(dot == std::string(63, 'a'));
+            const std::string sp = SanitizeName(std::string(63, 'a') + " b");
+            CHECK(CheckName(sp).ok() && CheckName(sp).folder == sp);
+            CHECK(sp == std::string(63, 'a'));
+            // 70 characters with the 64th a dot (the docs/try_it.md case)
+            const std::string seventy = std::string(63, 'G') + "." + "ABCDEF";
+            CHECK(CheckName(SanitizeName(seventy)).ok() && SanitizeName(seventy) == std::string(63, 'G'));
+            // a long run of dots and spaces after the cut point trims back past all of them
+            const std::string runs = std::string(60, 'x') + ". . . . . . . . . . ";
+            CHECK(CheckName(SanitizeName(runs)).ok() && SanitizeName(runs) == std::string(60, 'x'));
+            // a cut that leaves a reserved name falls back
+            CHECK(SanitizeName("CON" + std::string(61, ' ') + "zz") == "MyGame");
+            // a multi-byte character at the cut point is never split
+            const std::string mb = std::string(63, 'a') + "\xC3\xA9\xC3\xA9";
+            CHECK(SanitizeName(mb) == std::string(63, 'a') + "\xC3\xA9");
+        }
+        // Property: for any input, CheckName accepts SanitizeName's result unchanged.
+        {
+            std::uint32_t seed = 0x5A17u;
+            auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+            static const char* const pieces[] = {
+                ".", " ", "\t", "a", "Z", "-", "..", "/", "\\", ":", "\x01", "\x7F", "CON", "nul", "Com1", "LPT9",
+                "\xC3\xA9", "\xE2\x80\x8B", "\xF0\x9F\x8E\xAE", "\xE2\x9C\x93", "x.y", " . ", "\x80", "\xC3"};
+            const std::size_t np = sizeof(pieces) / sizeof(pieces[0]);
+            int bad = 0;
+            std::string firstBad;
+            for (int i = 0; i < 100000; ++i) {
+                std::string x;
+                const std::uint32_t len = (rnd() % 4 == 0) ? rnd() % 200 : rnd() % 80;
+                for (std::uint32_t k = 0; k < len; ++k) x += pieces[rnd() % np];
+                const std::string s = SanitizeName(x);
+                const NameCheck c = CheckName(s);
+                if (!c.ok() || c.folder != s || s.empty()) {
+                    if (bad++ == 0) firstBad = x;
+                }
+            }
+            if (bad) std::cerr << "  sanitize fuzz: " << bad << " of 100000 results rejected or changed by CheckName (first input "
+                               << firstBad.size() << " bytes)\n";
+            CHECK(bad == 0);
+        }
     }
 
     // ---- locations ---------------------------------------------------------------------------------------

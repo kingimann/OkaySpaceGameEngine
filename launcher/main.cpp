@@ -20208,8 +20208,17 @@ int main(int argc, char** argv) {
                         ImGui::TextUnformatted("Project name");
                         ImGui::SetNextItemWidth(-1);
                         const bool nameEnter = ImGui::InputText("##wizname", npName, sizeof(npName), ImGuiInputTextFlags_EnterReturnsTrue);
-                        if (!s_plan.nameProblem.empty()) ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.nameProblem.c_str());
-                        else if (s_plan.renamed) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
+                        if (!s_plan.nameProblem.empty()) {
+                            ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1), "%s", s_plan.nameProblem.c_str());
+                            // One click turns the name into one that is allowed (illegal characters become '-',
+                            // the ends are trimmed, a long name is cut to 64 characters).
+                            const std::string fixedName = okayproj::SanitizeName(npName);
+                            if (fixedName != npName && okayproj::CheckName(fixedName).ok() && ImGui::SmallButton("Fix the name")) {
+                                std::snprintf(npName, sizeof(npName), "%s", fixedName.c_str());
+                                s_planAt = 0;
+                                s_planKey.clear();
+                            }
+                        } else if (s_plan.renamed) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "That folder is taken, so this one will be called %s.", s_plan.folder.c_str());
                         ImGui::Dummy(ImVec2(0, 6));
                         ImGui::TextUnformatted("Location");
                         const bool stack = ImGui::GetContentRegionAvail().x < 460.0f;

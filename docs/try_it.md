@@ -798,6 +798,26 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## New Project: "Fix the name" for a long name (branch `claude2/project-name-sanitize`, not merged or released yet)
+
+Bug #888 finding 49: the name fixer (`okayproj::SanitizeName`) cut a long name to 64 characters after trimming dots and
+spaces, so the cut could leave a name ending in a dot, which the Create check then refused. It now cuts first and trims
+after, on whole characters, and the launcher has a **Fix the name** button that uses it.
+
+1. Open the launcher, click **+ New Project**, pick any template, and go to the Details step.
+2. In **Project name**, paste this 70-character name (63 `G`, then a dot, then `ABCDEF`; the 64th character is the dot):
+   `GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG.ABCDEF`
+3. You should see "That name is too long (at most 64 characters)." and a small **Fix the name** button under it.
+4. Click **Fix the name**. The name becomes the 63 `G` letters (no dot at the end) and the red text goes away.
+5. Click **Next**, then **Create**. The project is created in a folder with that name.
+
+The button shows only when the name has a problem that it can fix (bad characters such as `:` or `?`, dots or spaces at
+the ends, too long). A name that is fine is never changed.
+
+**Status.** The name rules are tested headless (`test_project_create`, a 100000-input random test plus the exact case
+from the finding, run on Linux). `launcher/main.cpp` was only syntax-checked, not built or run (no SDL window here);
+the button is unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

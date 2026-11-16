@@ -94,19 +94,27 @@ inline NameCheck CheckName(const std::string& raw) {
 }
 
 /// Turn any text into a name CheckName accepts: illegal characters become '-', the ends are
-/// trimmed, a reserved or empty result falls back to "MyGame". For callers (the launcher) that
-/// silently fix a name instead of refusing it.
+/// trimmed, a name longer than kMaxNameChars is cut on a character boundary, and a reserved or
+/// empty result falls back to "MyGame". For callers (the launcher's "Fix the name" button) that
+/// fix a name instead of refusing it. The cut comes before the trim and both repeat until nothing
+/// changes, so a cut can never leave a trailing dot or space (#888 finding 49).
 inline std::string SanitizeName(const std::string& raw) {
     std::string s;
     for (unsigned char c : raw) s += (c < 0x20 || c == 0x7F || std::strchr("/\\:*?\"<>|", c)) ? '-' : (char)c;
-    while (!s.empty() && (s.back() == ' ' || s.back() == '.' || s.back() == '\t')) s.pop_back();
-    std::size_t b = 0;
-    while (b < s.size() && (s[b] == ' ' || s[b] == '\t' || s[b] == '.')) ++b;
-    s = s.substr(b);
-    while (Utf8Length(s) > kMaxNameChars) {   // cut whole characters off the end
-        std::size_t cut = s.size() - 1;
-        while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) --cut;
-        s.erase(cut);
+    auto edge = [](char c) { return c == ' ' || c == '.' || c == '\t'; };
+    for (;;) {
+        const std::string before = s;
+        // Leading dots and spaces first, so the cut keeps as much of the real name as it can.
+        std::size_t b = 0;
+        while (b < s.size() && edge(s[b])) ++b;
+        s.erase(0, b);
+        while (Utf8Length(s) > kMaxNameChars) {   // cut whole characters off the end
+            std::size_t cut = s.size() - 1;
+            while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) --cut;
+            s.erase(cut);
+        }
+        while (!s.empty() && edge(s.back())) s.pop_back();
+        if (s == before) break;
     }
     if (s.empty() || IsReservedDeviceName(s)) s = "MyGame";
     return s;

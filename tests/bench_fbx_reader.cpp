@@ -1,6 +1,6 @@
 // Speed and memory of our own FBX reader (okay::fbx) against ufbx, on the same files.
 //
-// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest] [--only WHAT] <file.fbx | directory> ...
+// Run:  bench_fbx_reader [--runs N] [--quiet] [--digest | --import-digest] [--only WHAT] <file.fbx | directory> ...
 //       (a directory is searched recursively for .fbx files; with no argument it reads $OKAY_MODEL_CORPUS and the
 //        fixtures in tests/assets/fbx)
 //
@@ -19,13 +19,15 @@
 //
 // Not part of ctest: it prints numbers, it does not check them. Correctness is checked by fbx_reader and
 // model_corpus (docs/model_corpus.md). `--digest` prints, per file, a hash of every field our reader produced (bit for
-// bit), to show that a speed change did not change the output. `--only own-tree|own-load|ufbx-load|import-own|
+// bit), to show that a speed change did not change the output; `--import-digest` does the same for the whole imported
+// scene (our reader on), hashed as SceneSerializer writes it. `--only own-tree|own-load|ufbx-load|import-own|
 // import-ufbx` runs just that, once per file, for a profiler (valgrind --tool=callgrind). Large synthetic files: python3 scripts/gen_fbx_bench.py <dir>.
 // Written for this project; the counting allocator and the statistics are our own.
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Log.hpp"
 #include "ufbx.h"
 
@@ -200,8 +202,10 @@ std::uint64_t Digest(const fbx::Scene& s) {
         h.Str(m.name); h.Pod(m.controlPoints); h.Pod(m.hasNormals); h.Pod(m.hasUV); h.Pod(m.hasColors);
         h.Pod(m.parts.size());
         for (const fbx::Part& p : m.parts) {
-            h.Pod(p.slot); h.Pod(p.corners.size());
-            for (const fbx::Corner& c : p.corners) { h.Pod(c.p); h.Pod(c.n); h.Pod(c.uv); h.Pod(c.color); h.Pod(c.cp); }
+            // the triangle list corner by corner (as it was hashed when parts were unindexed), so the hash is the
+            // same whatever the vertex sharing
+            h.Pod(p.slot); h.Pod(p.cornerCount());
+            for (std::size_t i = 0; i < p.cornerCount(); ++i) { const fbx::Corner& c = p.corner(i); h.Pod(c.p); h.Pod(c.n); h.Pod(c.uv); h.Pod(c.color); h.Pod(c.cp); }
         }
         h.Vec(m.materials);
         h.Pod(m.clusters.size());
@@ -243,7 +247,7 @@ std::uint64_t Digest(const fbx::Scene& s) {
 
 int main(int argc, char** argv) {
     int runs = 5;
-    bool quiet = false, digest = false;
+    bool quiet = false, digest = false, importDigest = false;
     std::string only;   // --only own-tree|own-load|ufbx-load|import-own|import-ufbx: run that once per file (for a profiler)
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
@@ -251,6 +255,7 @@ int main(int argc, char** argv) {
         if (a == "--runs" && i + 1 < argc) runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--quiet") quiet = true;
         else if (a == "--digest") digest = true;
+        else if (a == "--import-digest") importDigest = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "-h" || a == "--help") { std::printf("bench_fbx_reader [--runs N] [--quiet] <file.fbx|dir> ...\n"); return 0; }
         else Collect(a, files);
@@ -273,6 +278,30 @@ int main(int argc, char** argv) {
         return 0;
     }
     Log::Configure("error");   // the import path logs per file; keep the table readable
+    if (importDigest) {   // one line per file: a hash of the whole imported scene (our reader on), as the scene file writes it
+        for (const std::string& path : files) {
+            fbx::SetOwnReaderEnabled(true);
+            Scene sc("digest"); bool ok = false;
+            ImportModelScene(sc, path, &ok);
+            fbx::SetOwnReaderEnabled(false);
+            // every line but the random object guids
+            std::string text;
+            {
+                const std::string all = SceneSerializer::Serialize(sc);
+                std::size_t at = 0;
+                while (at < all.size()) {
+                    std::size_t e = all.find('\n', at); if (e == std::string::npos) e = all.size();
+                    const std::size_t b = all.find_first_not_of(' ', at);
+                    if (!(b < e && all.compare(b, 5, "guid ") == 0)) text.append(all, at, e - at + 1);
+                    at = e + 1;
+                }
+            }
+            Hasher h; h.Str(text);
+            if (const char* d = std::getenv("OKAY_BENCH_DUMP")) { std::ofstream(d, std::ios::binary) << text; }
+            std::printf("%s %s %016llx\n", fs::path(path).filename().string().c_str(), ok ? "ok" : "fail", (unsigned long long)h.h);
+        }
+        return 0;
+    }
 
     std::vector<Row> rows;
     for (const std::string& path : files) {

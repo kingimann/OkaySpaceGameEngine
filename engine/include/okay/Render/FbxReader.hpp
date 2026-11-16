@@ -183,9 +183,23 @@ struct Corner {
     std::uint32_t cp = 0;          ///< control point (vertex) index, for skin / blend shapes
 };
 
+static_assert(sizeof(Corner) == 52, "Corner is compared and hashed byte for byte: no padding");
+
+/// The triangles of one material slot, indexed: corner i of the triangle list is vertices[indices[i]]. Corners that
+/// are equal byte for byte share one vertex, numbered in order of first use (so the importer's own de-duplication
+/// gives the same vertex order as it did on the unindexed list).
 struct Part {
     int slot = 0;                  ///< material slot (index into Mesh::materials)
-    std::vector<Corner> corners;   ///< 3 per triangle
+    std::vector<Corner> vertices;  ///< distinct corners, in order of first use
+    std::vector<std::uint32_t> indices;   ///< 3 per triangle, into `vertices`
+    std::size_t cornerCount() const { return indices.size(); }
+    const Corner& corner(std::size_t i) const { return vertices[indices[i]]; }
+    /// The unindexed list (3 corners per triangle), for tests and tools.
+    std::vector<Corner> ExpandCorners() const {
+        std::vector<Corner> out; out.reserve(indices.size());
+        for (std::uint32_t i : indices) out.push_back(vertices[i]);
+        return out;
+    }
 };
 
 struct Influence { std::uint32_t cluster; float weight; };
@@ -213,7 +227,7 @@ struct Mesh {
     /// per control point: influences, strongest first
     std::vector<std::vector<Influence>> skinWeights;
     std::vector<BlendChannel> channels;
-    std::uint32_t triangleCount() const { std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.corners.size() / 3); return t; }
+    std::uint32_t triangleCount() const { std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.indices.size() / 3); return t; }
 };
 
 struct SceneNode {

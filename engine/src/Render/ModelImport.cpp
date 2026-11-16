@@ -1668,13 +1668,17 @@ int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
 }
 
 // One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+// The reader already shares corners that are equal byte for byte (numbered in order of first use), so the engine
+// vertex is built once per reader vertex; reader vertices that differ only in what the engine drops (vertex colour)
+// are merged here. Numbering by first use of the reader vertices is the same as numbering by first use of the
+// corners, so the result is the one the unindexed corner list gave.
 Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
                   std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
                   std::vector<uint32_t>* outVi) {
     Mesh out;
     std::vector<FbxVert> verts;
-    verts.reserve(part.corners.size());
-    for (const fbx::Corner& c : part.corners) {
+    verts.reserve(part.vertices.size());
+    for (const fbx::Corner& c : part.vertices) {
         FbxVert fv{};
         fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
         fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
@@ -1691,11 +1695,10 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
         }
         verts.push_back(fv);
     }
-    if (verts.empty()) return out;
+    if (verts.empty() || part.indices.empty()) return out;
     // Equal vertices (byte for byte) share one index, numbered in first-occurrence order. An open-addressing table of
-    // indices into `verts` (power-of-two size, at least twice the corner count, linear probing): no allocation per
-    // corner, unlike a map keyed by a copy of the bytes, and the same result.
-    std::vector<uint32_t> indices(verts.size());
+    // indices into `verts` (power-of-two size, at least twice the vertex count, linear probing).
+    std::vector<uint32_t> remap(verts.size());
     std::vector<uint32_t> unique;
     {
         std::size_t cap = 16;
@@ -1715,13 +1718,18 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
             std::size_t slot = (std::size_t)h & (cap - 1);
             for (;;) {
                 const uint32_t u = table[slot];
-                if (u == kEmpty) { table[slot] = (uint32_t)unique.size(); indices[i] = (uint32_t)unique.size(); unique.push_back((uint32_t)i); break; }
-                if (std::memcmp(&verts[unique[u]], b, sizeof(FbxVert)) == 0) { indices[i] = u; break; }
+                if (u == kEmpty) { table[slot] = (uint32_t)unique.size(); remap[i] = (uint32_t)unique.size(); unique.push_back((uint32_t)i); break; }
+                if (std::memcmp(&verts[unique[u]], b, sizeof(FbxVert)) == 0) { remap[i] = u; break; }
                 slot = (slot + 1) & (cap - 1);
             }
         }
     }
     const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
+    out.vertices.reserve(unique.size());
+    if (hasN) out.normals.reserve(unique.size());
+    if (hasUV) out.uvs.reserve(unique.size());
+    if (jIdx) { jIdx->reserve(unique.size()); jWt->reserve(unique.size()); }
+    if (outVi) outVi->reserve(unique.size());
     for (uint32_t u : unique) {
         const FbxVert& v = verts[u];
         out.vertices.push_back(Vec3{v.px, v.py, v.pz});
@@ -1730,7 +1738,8 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
         if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
         if (outVi) outVi->push_back(v.vi);
     }
-    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    out.triangles.reserve(part.indices.size());
+    for (uint32_t ix : part.indices) out.triangles.push_back((int)remap[ix]);
     return out;
 }
 

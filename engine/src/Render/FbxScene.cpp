@@ -322,18 +322,19 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
     auto X = [&](int i) { return pts[(std::size_t)i][(std::size_t)u]; };
     auto Y = [&](int i) { return pts[(std::size_t)i][(std::size_t)v]; };
     auto cross = [&](int a, int b, int c) { return ((X(b) - X(a)) * (Y(c) - Y(a)) - (Y(b) - Y(a)) * (X(c) - X(a))) * orient; };
-    std::vector<int> idx((std::size_t)n);
-    for (int i = 0; i < n; ++i) idx[(std::size_t)i] = i;
+    int idx[256];   // n <= 256 here: the corners still to clip, on the stack (no allocation per polygon)
+    int cnt = n;
+    for (int i = 0; i < n; ++i) idx[i] = i;
     int guard = 0;
-    while (idx.size() > 3) {
-        const int m = (int)idx.size();
+    while (cnt > 3) {
+        const int m = cnt;
         int ear = -1;
         for (int i = 0; i < m && ear < 0; ++i) {
-            const int a = idx[(std::size_t)((i + m - 1) % m)], b = idx[(std::size_t)i], c = idx[(std::size_t)((i + 1) % m)];
+            const int a = idx[((i + m - 1) % m)], b = idx[i], c = idx[((i + 1) % m)];
             if (cross(a, b, c) <= 1e-18) continue;   // reflex or degenerate
             bool inside = false;
             for (int j = 0; j < m && !inside; ++j) {
-                const int p = idx[(std::size_t)j];
+                const int p = idx[j];
                 if (p == a || p == b || p == c) continue;
                 auto same = [&](int o) { return std::fabs(X(p) - X(o)) < 1e-12 && std::fabs(Y(p) - Y(o)) < 1e-12; };
                 if (same(a) || same(b) || same(c)) continue;   // a bridge into a hole repeats corners at the same spot: not inside
@@ -343,14 +344,14 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
         }
         if (ear < 0) {   // degenerate / self-touching input: clip the sharpest convex-ish vertex, never loop
             ear = 0; double best = -1e300;
-            for (int i = 0; i < m; ++i) { const double c = cross(idx[(std::size_t)((i + m - 1) % m)], idx[(std::size_t)i], idx[(std::size_t)((i + 1) % m)]); if (c > best) { best = c; ear = i; } }
+            for (int i = 0; i < m; ++i) { const double c = cross(idx[((i + m - 1) % m)], idx[i], idx[((i + 1) % m)]); if (c > best) { best = c; ear = i; } }
         }
-        const int a = idx[(std::size_t)((ear + m - 1) % m)], b = idx[(std::size_t)ear], c = idx[(std::size_t)((ear + 1) % m)];
+        const int a = idx[((ear + m - 1) % m)], b = idx[ear], c = idx[((ear + 1) % m)];
         emit(a, b, c);
-        idx.erase(idx.begin() + ear);
+        std::memmove(idx + ear, idx + ear + 1, sizeof(int) * (std::size_t)(cnt - ear - 1)); --cnt;
         if (++guard > n + 4) break;
     }
-    if (idx.size() == 3) emit(idx[0], idx[1], idx[2]);
+    if (cnt == 3) emit(idx[0], idx[1], idx[2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -715,8 +716,7 @@ struct Builder {
         m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated (flat, per polygon)
 
         // First pass: the material slot of every usable polygon and how many corners each slot will get, so each part's
-        // corner list is allocated once at its final size (growing it by doubling held up to three times the corners
-        // in memory at the moment of a reallocation). A polygon of n corners gives n - 2 triangles (Triangulate).
+        // index list is allocated once at its final size. A polygon of n corners gives n - 2 triangles (Triangulate).
         std::vector<int> slotOf(faces.size(), -1);   // -1 = polygon skipped
         std::map<int, std::size_t> cornersOfSlot;
         for (std::size_t fi = 0; fi < faces.size(); ++fi) {
@@ -736,8 +736,47 @@ struct Builder {
             for (const auto& kv : cornersOfSlot) total += kv.second;
             if (total > opt.limits.maxCorners - std::min(cornersBuilt, opt.limits.maxCorners)) return Fail("mesh too large");
         }
-        std::map<int, Part> parts;
-        for (const auto& kv : cornersOfSlot) parts[kv.first].corners.reserve(kv.second);
+        // Each part keeps its distinct corners and an index list. Equal corners (byte for byte) are found with an
+        // open-addressing table of vertex numbers (power-of-two size, at most half full, linear probing).
+        struct PartBuild { Part part; std::vector<std::uint32_t> table; };
+        const std::uint32_t kEmpty = 0xFFFFFFFFu;
+        std::map<int, PartBuild> parts;
+        for (const auto& kv : cornersOfSlot) {
+            PartBuild& pb = parts[kv.first];
+            pb.part.slot = kv.first;
+            pb.part.indices.reserve(kv.second);
+            const std::size_t guess = std::min(kv.second, ncp + 16);   // distinct corners: usually about the vertex count
+            pb.part.vertices.reserve(guess);
+            std::size_t cap = 64;
+            while (cap < guess * 2) cap <<= 1;
+            pb.table.assign(cap, kEmpty);
+        }
+        auto hashCorner = [](const Corner& c) {
+            std::uint32_t w[13]; std::memcpy(w, &c, sizeof(w));
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;
+            for (std::uint32_t x : w) { h = (h ^ x) * 0xFF51AFD7ED558CCDull; h ^= h >> 32; }
+            return h ^ (h >> 29);
+        };
+        auto addCorner = [&](PartBuild& pb, const Corner& c) {
+            std::vector<Corner>& vs = pb.part.vertices;
+            if ((vs.size() + 1) * 2 > pb.table.size()) {   // keep the table at most half full: double it and re-insert
+                pb.table.assign(pb.table.size() * 2, kEmpty);
+                const std::size_t mask = pb.table.size() - 1;
+                for (std::size_t v = 0; v < vs.size(); ++v) {
+                    std::size_t at = (std::size_t)hashCorner(vs[v]) & mask;
+                    while (pb.table[at] != kEmpty) at = (at + 1) & mask;
+                    pb.table[at] = (std::uint32_t)v;
+                }
+            }
+            const std::size_t mask = pb.table.size() - 1;
+            std::size_t at = (std::size_t)hashCorner(c) & mask;
+            for (;;) {
+                const std::uint32_t u = pb.table[at];
+                if (u == kEmpty) { pb.table[at] = (std::uint32_t)vs.size(); pb.part.indices.push_back((std::uint32_t)vs.size()); vs.push_back(c); return; }
+                if (std::memcmp(&vs[u], &c, sizeof(Corner)) == 0) { pb.part.indices.push_back(u); return; }
+                at = (at + 1) & mask;
+            }
+        };
         std::vector<std::array<double, 3>> pts;
         std::vector<int> tris;
         for (std::size_t fi = 0; fi < faces.size(); ++fi) {
@@ -758,7 +797,7 @@ struct Builder {
             Triangulate(pts, tris, false);
             if (cornersBuilt + tris.size() > opt.limits.maxCorners) return Fail("mesh too large");
             cornersBuilt += tris.size();
-            Part& part = parts[slot]; part.slot = slot;
+            PartBuild& part = parts[slot]; part.part.slot = slot;
             for (int t : tris) {
                 const std::size_t k = (std::size_t)t, pv = f.start + k;
                 const std::size_t cp = (std::size_t)cpOf[pv];
@@ -774,10 +813,10 @@ struct Builder {
                 if (lu.Ok() && Fetch(lu, pv, fi, cp, edgeOfCorner, uv)) { c.uv[0] = (float)uv[0]; c.uv[1] = (float)uv[1]; }
                 double col[4];
                 if (lc.Ok() && Fetch(lc, pv, fi, cp, edgeOfCorner, col)) for (int a = 0; a < 4; ++a) c.color[a] = (float)col[a];
-                part.corners.push_back(c);
+                addCorner(part, c);
             }
         }
-        for (auto& kv : parts) if (!kv.second.corners.empty()) m.parts.push_back(std::move(kv.second));
+        for (auto& kv : parts) if (!kv.second.part.indices.empty()) m.parts.push_back(std::move(kv.second.part));
 
         // material slots: materials connected to the model, in connection order
         {

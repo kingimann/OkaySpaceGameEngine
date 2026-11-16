@@ -55,6 +55,21 @@ int MuLawToLinear(unsigned u) {
 
 float Sane(float v) { return std::isfinite(v) ? v : 0.0f; }
 
+// A float64 sample as float: NaN and infinity become 0 (as Sane), and a finite value too large for a float becomes
+// the largest float of its sign instead of infinity (before 2026-11-16 it became infinity in DecodeWav's output).
+// Written as selects on bit patterns, without branches, so the loops over it vectorise: a float64 NaN or infinity
+// (exponent all ones) gives +0; otherwise a float that came out infinite can only be an overflow, and becomes
+// 0x7F7FFFFF (the largest float) with the sign kept.
+inline float F64Sample(double x) {
+    std::uint64_t u; std::memcpy(&u, &x, 8);
+    const float f = float(x);
+    std::uint32_t b; std::memcpy(&b, &f, 4);
+    b = (b & 0x7F800000u) == 0x7F800000u ? (b & 0x80000000u) | 0x7F7FFFFFu : b;
+    b = (u & 0x7FF0000000000000ull) == 0x7FF0000000000000ull ? 0u : b;
+    float r; std::memcpy(&r, &b, 4);
+    return r;
+}
+
 struct Fmt {
     unsigned tag = 0;          // effective format tag (sub-format for extensible)
     int channels = 0;
@@ -370,7 +385,7 @@ void DecodeFlat(const Plan& P, Sink& s, unsigned char* raw) {
             for (std::size_t i = 0; i < frames; ++i)
                 for (std::size_t c = 0; c < ch; ++c) {
                     double x; std::memcpy(&x, d + i * stride + c * 8, 8);
-                    s.Flt(i * ch + c, std::isfinite(x) ? float(x) : 0.0f);
+                    s.Flt(i * ch + c, F64Sample(x));
                 }
         }
         return;
@@ -418,10 +433,9 @@ bool DecodeFlatFloatPacked(const Plan& P, float* o) {
             }
             return true;
         }
-        for (std::size_t k = 0; k < n; ++k) {   // float64: non-finite (exponent all ones) becomes 0
-            std::uint64_t u; std::memcpy(&u, d + 8 * k, 8);
-            double x; std::memcpy(&x, &u, 8);
-            o[k] = (u & 0x7FF0000000000000ull) == 0x7FF0000000000000ull ? 0.0f : float(x);
+        for (std::size_t k = 0; k < n; ++k) {   // float64: see F64Sample
+            double x; std::memcpy(&x, d + 8 * k, 8);
+            o[k] = F64Sample(x);
         }
         return true;
     }
@@ -465,11 +479,9 @@ bool DecodeFlatS16Packed(const Plan& P, unsigned char* o) {
     const std::size_t n = std::size_t(P.total);
     if (P.isFloat) {
         if (P.sb != 8) return false;
-        for (std::size_t k = 0; k < n; ++k) {   // float64: non-finite becomes 0, then as RoundS16
-            std::uint64_t u; std::memcpy(&u, d + 8 * k, 8);
-            double x; std::memcpy(&x, &u, 8);
-            const float f = (u & 0x7FF0000000000000ull) == 0x7FF0000000000000ull ? 0.0f : float(x);
-            const std::int16_t v = RoundS16NoNaN(f);
+        for (std::size_t k = 0; k < n; ++k) {   // float64: F64Sample, then as RoundS16
+            double x; std::memcpy(&x, d + 8 * k, 8);
+            const std::int16_t v = RoundS16NoNaN(F64Sample(x));
             std::memcpy(o + 2 * k, &v, 2);
         }
         return true;

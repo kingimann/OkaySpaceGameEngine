@@ -5,13 +5,16 @@
 // (python3 optional: SKIP, unless OKAY_REQUIRE_DIFFERENTIAL=1).
 #include "test_framework.hpp"
 #include "okay/Audio/WavDecoder.hpp"
+#include "okay/Audio/WavPlayback.hpp"
 #include "okay/Audio/AudioClip.hpp"
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
 #ifndef _WIN32
@@ -84,6 +87,28 @@ static void TestPcm() {
         Bytes d2; const double x = -0.5; std::uint64_t u; std::memcpy(&u, &x, 8); P32(d2, std::uint32_t(u)); P32(d2, std::uint32_t(u >> 32));
         CHECK(Dec(Wav(Fmt(3, 1, 8000, 8, 64), d2), a));
         CHECK(a.samples.size() == 1 && a.samples[0] == -0.5f);
+        // float 64 too large for a float: the largest float of its sign, never infinity (packed, and with a block
+        // align of two samples, the general loop); NaN and infinity: 0. The 16-bit playback output clamps.
+        const double big[5] = {1e300, -1e300, std::nan(""), 1.0 / 0.0, 0.75};
+        Bytes d3, d4;
+        for (double v : big) {
+            std::uint64_t b; std::memcpy(&b, &v, 8);
+            P32(d3, std::uint32_t(b)); P32(d3, std::uint32_t(b >> 32));
+            P32(d4, std::uint32_t(b)); P32(d4, std::uint32_t(b >> 32)); P32(d4, 0); P32(d4, 0);
+        }
+        const float fm = std::numeric_limits<float>::max();
+        for (int strided = 0; strided < 2; ++strided) {
+            CHECK(Dec(Wav(Fmt(3, 1, 8000, strided ? 16 : 8, 64), strided ? d4 : d3), a));
+            CHECK(a.samples.size() == 5 && a.samples[0] == fm && a.samples[1] == -fm && a.samples[2] == 0.0f &&
+                  a.samples[3] == 0.0f && a.samples[4] == 0.75f);
+        }
+        const Bytes w3 = Wav(Fmt(3, 1, 8000, 8, 64), d3);
+        wav::PlaybackClip pc;
+        CHECK(wav::DecodeForPlayback(w3.data(), w3.size(), pc) && pc.bytes.size() == 10);
+        if (pc.bytes.size() == 10) {
+            std::int16_t v[5]; std::memcpy(v, pc.bytes.data(), 10);
+            CHECK(v[0] == 32767 && v[1] == -32768 && v[2] == 0 && v[3] == 0 && v[4] == 24576);
+        }
     }
     { // WAVE_FORMAT_EXTENSIBLE, PCM sub-format, stereo 16 bit
         Bytes x; P16(x, 22); P16(x, 16); P32(x, 3);

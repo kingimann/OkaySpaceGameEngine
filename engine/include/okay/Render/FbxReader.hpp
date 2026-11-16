@@ -19,7 +19,10 @@
 // ---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <new>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace okay {
@@ -46,29 +49,109 @@ struct Limits {
 };
 
 // ---- Layer 1: the element tree -------------------------------------------
+//
+// The tree does not copy the file: names, strings, raw blobs and uncompressed binary arrays are views into the
+// bytes given to Parse(), so those bytes must stay alive (and unchanged) as long as the Document is used.
+// LoadMemory / LoadFile keep them alive while they build the Scene. Only zlib arrays (inflated) and ASCII arrays
+// (parsed numbers) are stored in the Document itself. Every element and property sits in two flat arrays of the
+// Document (one allocation each, grown by doubling), not in a vector per element.
+
+/// A numeric array as the file stores it: little-endian elements of one type, read on demand (no conversion to
+/// double up front, so a float array stays 4 bytes per number).
+struct Array {
+    char type = 0;                 ///< 'd' f64, 'f' f32, 'l' i64, 'i' i32, 'b' bool (byte != 0), 'c' u8
+    std::uint32_t count = 0;
+    const std::uint8_t* data = nullptr;   ///< count elements, unaligned
+    std::size_t size() const { return count; }
+    bool empty() const { return count == 0; }
+    /// Element k as a double (exactly what the reader used to store: (double)value, bool as 0 / 1).
+    double operator[](std::size_t k) const {
+        const std::uint8_t* q = data;
+        switch (type) {
+            case 'd': { double v; std::memcpy(&v, q + k * 8, 8); return v; }
+            case 'f': { float v; std::memcpy(&v, q + k * 4, 4); return (double)v; }
+            case 'i': { std::int32_t v; std::memcpy(&v, q + k * 4, 4); return (double)v; }
+            case 'l': { std::int64_t v; std::memcpy(&v, q + k * 8, 8); return (double)v; }
+            case 'b': return q[k] != 0 ? 1.0 : 0.0;
+            default:  return (double)q[k];   // 'c'
+        }
+    }
+};
 
 struct Prop {
     char type = 0;                 ///< binary type letter: Y C I F D L S R, or 'a' = numeric array
-    std::int64_t i = 0;            ///< Y C I L
-    double d = 0;                  ///< F D
-    std::string s;                 ///< S R (raw bytes for R)
-    std::vector<double> arr;       ///< every numeric array (f d l i b), as doubles
+    std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes; empty for other types
+    union {                        ///< read the member the type says (or Num()): they share their bytes (40 bytes a property)
+        std::int64_t i = 0;        ///< Y C I L
+        double d;                  ///< F D
+        Array arr;                 ///< 'a': numeric arrays (f d l i b c)
+    };
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }
-    double Num() const { return (type == 'F' || type == 'D') ? d : (double)i; }
+    /// The number, or 0 for a string, raw or array property.
+    double Num() const { return (type == 'F' || type == 'D') ? d : IsNumber() ? (double)i : 0.0; }
+    /// Makes this an array property's storage (the union member `arr` becomes the one in use).
+    void SetArray(char elemType, std::uint32_t count, const std::uint8_t* data) {
+        Array a; a.type = elemType; a.count = count; a.data = data;
+        new (&arr) Array(a);
+    }
+};
+
+struct Elem;
+/// The properties of one element (a range of Document::props).
+struct PropList {
+    const Prop* p = nullptr; std::uint32_t n = 0;
+    std::uint32_t begin_ = 0;      ///< while parsing: index of the first property in Document::props (fills padding)
+    std::size_t size() const { return n; }
+    bool empty() const { return n == 0; }
+    const Prop& operator[](std::size_t k) const { return p[k]; }
+    const Prop* begin() const { return p; }
+    const Prop* end() const { return p + n; }
+};
+/// The children of one element, linked first child -> next sibling.
+struct ElemList {
+    const Elem* first = nullptr;
+    struct It {
+        const Elem* e;
+        const Elem& operator*() const { return *e; }
+        const Elem* operator->() const { return e; }
+        It& operator++();
+        bool operator==(const It& o) const { return e == o.e; }
+        bool operator!=(const It& o) const { return e != o.e; }
+    };
+    It begin() const { return {first}; }
+    It end() const { return {nullptr}; }
+    bool empty() const { return first == nullptr; }
 };
 
 struct Elem {
-    std::string name;
-    std::vector<Prop> props;
-    std::vector<Elem> children;
+    std::string_view name;
+    PropList props;
+    ElemList children;
+    union {
+        const Elem* next = nullptr;    ///< next sibling
+        /// while parsing: (first child + 1) << 32 | (next sibling + 1), indices into Document::elems, 0 = none; turned
+        /// into `children.first` and `next` when the tree is complete (48 bytes an element instead of 64)
+        std::uint64_t links_;
+    };
     const Elem* Find(const char* n) const;
 };
+inline ElemList::It& ElemList::It::operator++() { e = e->next; return *this; }
 
 struct Document {
     std::uint32_t version = 0;     ///< 7400, 7500, ... (0 for ASCII files without a header)
     bool binary = false;
     Elem root;                     ///< unnamed; its children are the top-level sections
     std::size_t elementCount = 0;
+    // storage (the pointers in the tree point into these)
+    std::vector<Elem> elems;
+    std::vector<Prop> props;
+    std::vector<std::vector<std::uint8_t>> inflated;   ///< decoded zlib arrays
+    std::vector<std::vector<double>> numbers;          ///< ASCII arrays (doubles, or int32 / float32 values packed in)
+    Document() = default;
+    Document(Document&&) = default;
+    Document& operator=(Document&&) = default;
+    Document(const Document&) = delete;
+    Document& operator=(const Document&) = delete;
 };
 
 bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim = Limits());
@@ -113,9 +196,23 @@ struct Corner {
     std::uint32_t cp = 0;          ///< control point (vertex) index, for skin / blend shapes
 };
 
+static_assert(sizeof(Corner) == 52, "Corner is compared and hashed byte for byte: no padding");
+
+/// The triangles of one material slot, indexed: corner i of the triangle list is vertices[indices[i]]. Corners that
+/// are equal byte for byte share one vertex, numbered in order of first use (so the importer's own de-duplication
+/// gives the same vertex order as it did on the unindexed list).
 struct Part {
     int slot = 0;                  ///< material slot (index into Mesh::materials)
-    std::vector<Corner> corners;   ///< 3 per triangle
+    std::vector<Corner> vertices;  ///< distinct corners, in order of first use
+    std::vector<std::uint32_t> indices;   ///< 3 per triangle, into `vertices`
+    std::size_t cornerCount() const { return indices.size(); }
+    const Corner& corner(std::size_t i) const { return vertices[indices[i]]; }
+    /// The unindexed list (3 corners per triangle), for tests and tools.
+    std::vector<Corner> ExpandCorners() const {
+        std::vector<Corner> out; out.reserve(indices.size());
+        for (std::uint32_t i : indices) out.push_back(vertices[i]);
+        return out;
+    }
 };
 
 struct Influence { std::uint32_t cluster; float weight; };
@@ -143,7 +240,7 @@ struct Mesh {
     /// per control point: influences, strongest first
     std::vector<std::vector<Influence>> skinWeights;
     std::vector<BlendChannel> channels;
-    std::uint32_t triangleCount() const { std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.corners.size() / 3); return t; }
+    std::uint32_t triangleCount() const { std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.indices.size() / 3); return t; }
 };
 
 struct SceneNode {

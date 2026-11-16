@@ -76,6 +76,14 @@ struct BitReader {
 
     BitReader(const uint8_t* d, size_t n) : src(d), len(n) {}
     void Refill() {
+        if (cnt <= 56 && len - pos >= 8) {   // whole bytes at once while 8 input bytes remain: one load, not a loop
+            uint64_t w;
+            std::memcpy(&w, src + pos, 8);   // little-endian host assumed (as everywhere in the engine)
+            const int take = (63 - cnt) >> 3;   // bytes that fit above `cnt`: 0 to 7, so the shift below is < 64
+            buf |= (w & ((uint64_t(1) << (take * 8)) - 1)) << cnt;   // keep the bits above the new `cnt` zero
+            pos += size_t(take); cnt += take * 8;
+            return;
+        }
         while (cnt <= 56 && pos < len) { buf |= uint64_t(src[pos++]) << cnt; cnt += 8; }
     }
     uint32_t Take(int n) {             // n <= 16
@@ -94,26 +102,39 @@ struct BitReader {
     size_t BytesUsed() const { return pos - size_t(cnt >> 3); }
 };
 
+// The low `bits` bits of v (bits <= 16) in reverse order: all 16 bits reversed by swapping ever larger groups
+// (single bits, pairs, nibbles, bytes), then shifted down.
 inline uint32_t Reverse(uint32_t v, int bits) {
-    uint32_t r = 0;
-    for (int i = 0; i < bits; ++i) { r = (r << 1) | (v & 1); v >>= 1; }
-    return r;
+    v &= (1u << bits) - 1u;   // only the low `bits` bits take part, as before
+    v = ((v >> 1) & 0x5555u) | ((v & 0x5555u) << 1);
+    v = ((v >> 2) & 0x3333u) | ((v & 0x3333u) << 2);
+    v = ((v >> 4) & 0x0F0Fu) | ((v & 0x0F0Fu) << 4);
+    v = ((v >> 8) & 0x00FFu) | ((v & 0x00FFu) << 8);
+    return v >> (16 - bits);
 }
 
 // ---- canonical Huffman decoder ---------------------------------------------------------------------
 constexpr int kFastBits = 10;
 constexpr int kMaxBits = 15;
 
-struct Decoder {
-    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low kFastBits of i, 0 if none
-    uint16_t quick[1 << kFastBits];
+struct DecoderBase {
+    enum class Shape { Oversubscribed, Incomplete, Complete };
+    enum : int { kBadCode = -1, kStarved = -2 };
+};
+
+// FastBits: the width of the direct lookup table. Literal/length and distance codes use kFastBits; the code-length
+// code (lengths of at most 7 bits) uses 7, so each dynamic block fills a 128-entry table for it instead of 1024.
+// Every code no longer than FastBits is found in the table, longer ones by the slow path, so the width changes
+// nothing but the work.
+template <int FastBits>
+struct DecoderT : DecoderBase {
+    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low FastBits of i, 0 if none
+    uint16_t quick[1 << FastBits];
     uint16_t sorted[288];                 // symbols ordered by (length, symbol)
     uint16_t lowestCode[kMaxBits + 1];     // first canonical code of each length
     uint16_t slotBase[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
     uint16_t countOf[kMaxBits + 1];
     int used = 0;                         // symbols that have a code
-
-    enum class Shape { Oversubscribed, Incomplete, Complete };
 
     Shape Build(const uint8_t* lens, int n) {
         std::memset(quick, 0, sizeof quick);
@@ -139,20 +160,18 @@ struct Decoder {
             if (!l) continue;
             sorted[slotBase[l] + fill[l]++] = uint16_t(sym);
             uint32_t c = next[l]++;
-            if (l <= kFastBits) {
+            if (l <= FastBits) {
                 uint32_t rev = Reverse(c, l);
-                for (uint32_t i = rev; i < (1u << kFastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
+                for (uint32_t i = rev; i < (1u << FastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
             }
         }
         return kraft == (1u << kMaxBits) ? Shape::Complete : Shape::Incomplete;
     }
 
-    enum : int { kBadCode = -1, kStarved = -2 };
-
     // Returns the symbol, kBadCode (no such code) or kStarved (the input ends inside the code).
     int Next(BitReader& br) const {
         if (br.cnt < kMaxBits) br.Refill();
-        uint16_t e = quick[br.buf & ((1u << kFastBits) - 1)];
+        uint16_t e = quick[br.buf & ((1u << FastBits) - 1)];
         if (e) {
             int l = e & 15;
             if (l > br.cnt) return kStarved;
@@ -162,7 +181,7 @@ struct Decoder {
         // slow path: compare the next 15 bits, as a most-significant-first number, with each length's range
         uint32_t v = uint32_t(br.buf & ((1u << kMaxBits) - 1));
         v = Reverse(v, kMaxBits);
-        for (int l = kFastBits + 1; l <= kMaxBits; ++l) {
+        for (int l = FastBits + 1; l <= kMaxBits; ++l) {
             uint32_t prefix = v >> (kMaxBits - l);
             uint32_t k = prefix - lowestCode[l];
             if (prefix >= lowestCode[l] && k < countOf[l]) {
@@ -175,6 +194,7 @@ struct Decoder {
         return br.cnt < kMaxBits && br.pos >= br.len ? kStarved : kBadCode;
     }
 };
+using Decoder = DecoderT<kFastBits>;
 
 struct FixedCodes {
     Decoder lit, dist;
@@ -226,10 +246,105 @@ struct Options {
 
 namespace detail {
 
+// Copies a match of `length` bytes that starts `back` bytes behind `d` (back >= 1; the bytes may overlap, which
+// repeats the last `back` bytes). Same result as copying one byte at a time; it only moves more bytes per step:
+// eight at a time while the source is at least eight bytes behind (each step then reads bytes already written),
+// one repeated byte as a fill, and a plain copy when the two ranges do not overlap at all.
+inline void CopyMatch(uint8_t* d, size_t back, size_t length) {
+    const uint8_t* s = d - back;
+    if (back >= length) { std::memcpy(d, s, length); return; }
+    if (back == 1) { std::memset(d, *s, length); return; }
+    size_t i = 0;
+    if (back >= 8) for (; i + 8 <= length; i += 8) { uint64_t w; std::memcpy(&w, s + i, 8); std::memcpy(d + i, &w, 8); }
+    for (; i < length; ++i) d[i] = s[i];
+}
+
+// CopyMatch for the fast path, where the output has at least `length + 8` bytes of room: it may write up to 7 bytes
+// past the end of the match (they are overwritten by what follows, or cut off when the output is trimmed), so short
+// matches take one or two 8-byte steps instead of a call. Each 8-byte step reads only bytes that are already final:
+// with back >= 8 the source of a step ends before the step's own destination begins.
+inline void CopyMatchFast(uint8_t* d, size_t back, size_t length) {
+    const uint8_t* s = d - back;
+    if (back >= 8) {
+        size_t i = 0;
+        do { uint64_t w; std::memcpy(&w, s + i, 8); std::memcpy(d + i, &w, 8); i += 8; } while (i < length);
+        return;
+    }
+    if (back == 1) { std::memset(d, *s, length); return; }
+    for (size_t i = 0; i < length; ++i) d[i] = s[i];
+}
+
 // Decodes the symbols of one Huffman-coded block until its end-of-block symbol.
 inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Output& out, const Options& op, std::string& why) {
     static const char* const kTooBig = "decoded body larger than the limit";
     for (;;) {
+        // Fast path, taken while at least 8 input bytes are left and the output has room for the longest match (258
+        // bytes, plus 8 for CopyMatchFast) without growing. The bit buffer is topped up to at least 48 bits before each symbol, which is what one
+        // length/distance pair can need (15 + 5 + 15 + 13), so no read below can run out of bits and the output never
+        // needs to grow: the same checks in the same order as the general path, without its refill and room tests.
+        // The reader and output state live in locals here (stores into the output bytes could otherwise alias them)
+        // and are written back before anything else looks at them.
+        if (br.len - br.pos >= 8 && out.v.size() - out.size >= 258 + 8) {
+            const uint8_t* const src = br.src;
+            const size_t inSafe = br.len - 8;
+            size_t pos = br.pos; uint64_t buf = br.buf; int cnt = br.cnt;
+            uint8_t* const o = out.v.data();
+            const size_t outSafe = out.v.size() - (258 + 8), limit = out.limit;
+            const bool stop = op.stopAtMax;
+            size_t size = out.size;
+            auto save = [&] { br.pos = pos; br.buf = buf; br.cnt = cnt; out.size = size; };
+            auto load = [&] { pos = br.pos; buf = br.buf; cnt = br.cnt; };
+            while (pos <= inSafe && size <= outSafe) {
+                if (cnt < 48) {   // whole bytes above `cnt` (the same refill as BitReader::Refill, 8 bytes are there)
+                    uint64_t w; std::memcpy(&w, src + pos, 8);
+                    const int take = (63 - cnt) >> 3;
+                    buf |= (w & ((uint64_t(1) << (take * 8)) - 1)) << cnt;
+                    pos += size_t(take); cnt += take * 8;
+                }
+                int sym;
+                if (const uint16_t e = lit.quick[buf & ((1u << kFastBits) - 1)]) { const int l = e & 15; buf >>= l; cnt -= l; sym = e >> 4; }
+                else {
+                    save(); sym = lit.Next(br); load();
+                    if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
+                }
+                if (sym < 256) {
+                    if (size >= limit) {
+                        save();
+                        if (stop) { out.capped = true; return true; }
+                        why = kTooBig; return false;
+                    }
+                    o[size++] = uint8_t(sym);
+                    if (stop && size == limit) { save(); out.capped = true; return true; }
+                    continue;
+                }
+                if (sym == 256) { save(); return true; }
+                const int li = sym - 257;
+                if (li >= 29) { save(); why = "invalid deflate length symbol"; return false; }
+                const int le = kSym.lenExtra[li];
+                size_t length = kSym.lenBase[li] + uint32_t(buf & ((uint64_t(1) << le) - 1));
+                buf >>= le; cnt -= le;
+                int ds;
+                if (const uint16_t e = dist.quick[buf & ((1u << kFastBits) - 1)]) { const int l = e & 15; buf >>= l; cnt -= l; ds = e >> 4; }
+                else {
+                    save(); ds = dist.Next(br); load();
+                    if (ds < 0) { why = ds == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
+                }
+                if (ds >= 30) { save(); why = "invalid deflate distance symbol"; return false; }
+                const int de = kSym.distExtra[ds];
+                const size_t back = kSym.distBase[ds] + uint32_t(buf & ((uint64_t(1) << de) - 1));
+                buf >>= de; cnt -= de;
+                if (back > size) { save(); why = "back-reference starts before the output"; return false; }
+                if (length > limit - size) {
+                    if (!stop) { save(); why = kTooBig; return false; }
+                    length = limit - size;   // keep the part that fits, then stop
+                }
+                CopyMatchFast(o + size, back, length);
+                size += length;
+                if (stop && size == limit) { save(); out.capped = true; return true; }
+            }
+            save();
+            continue;   // near the end of the input or of the output buffer: the general path below
+        }
         int sym = lit.Next(br);
         if (sym < 0) { why = sym == Decoder::kStarved ? "deflate data ends early" : "invalid deflate code"; return false; }
         if (sym < 256) {
@@ -258,10 +373,7 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
             length = out.limit - out.size;   // keep the part that fits, then stop
         }
         out.Room(length);
-        uint8_t* d = out.Data() + out.size;
-        const uint8_t* s = d - back;
-        if (back >= length) std::memcpy(d, s, length);
-        else for (size_t i = 0; i < length; ++i) d[i] = s[i];   // overlapping copy repeats the pattern
+        CopyMatch(out.Data() + out.size, back, length);   // an overlapping copy repeats the pattern
         out.size += length;
         if (op.stopAtMax && out.size == out.limit) { out.capped = true; return true; }
     }
@@ -301,7 +413,7 @@ inline bool DynamicBlock(BitReader& br, Output& out, const Options& op, std::str
     uint8_t clLens[19] = {0};
     for (int i = 0; i < hclen; ++i) clLens[kClOrder[i]] = uint8_t(br.Take(3));
     if (br.starved) { why = "deflate data ends early"; return false; }
-    Decoder cl;
+    DecoderT<7> cl;
     auto cs = cl.Build(clLens, 19);
     if (cs == Decoder::Shape::Oversubscribed || (op.strictCodes && cs != Decoder::Shape::Complete)) {
         why = "deflate code-length code is not a complete prefix code"; return false;

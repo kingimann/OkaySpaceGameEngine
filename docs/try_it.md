@@ -1392,6 +1392,30 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## FBX reader speed and memory (developer bench, not part of the Windows release)
+
+Compares our own FBX reader with ufbx on the same files: time and peak memory of the reader alone and of the whole import.
+It is a program in the test build, not something in `OkaySpace.exe`, so it cannot be tried from the release. Linux (or any
+build with tests on; the memory columns need glibc, elsewhere they print `-`):
+
+1. Build it: `cmake -B build -DOKAY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release`, then `ninja -C build bench_fbx_reader`.
+2. Make the large test files: `python3 scripts/gen_fbx_bench.py /tmp/fbxbench` (four files, 2.5 to 4.3 MB, a few seconds).
+3. Run it: `build/tests/bench_fbx_reader /tmp/fbxbench` (or a folder of your own `.fbx` files; with no argument it reads
+   `$OKAY_MODEL_CORPUS` and the fixtures in `tests/assets/fbx`).
+4. You should see a table, one row per file: milliseconds and peak MB for our reader and for ufbx, the ratio, the same for
+   the whole import, then totals and the five worst ratios. On the 204,800-triangle grid expect our import at about 0.6x
+   of ufbx's time with about a quarter of its peak memory, and our reader alone at about 2.5x ufbx's
+   (`docs/own_fbx_reader.md`, "Speed and memory"; a shared machine moves single numbers by 10 to 20 %).
+5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced, and
+   `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene; run them before and after a change to
+   the reader to show the output did not change (the lines must be identical).
+6. `build/tests/test_fbx_exact` (about a second) checks the reader's shortcuts against the plain code (matrices, curves,
+   Base64, ASCII numbers and arrays); expect `16 checks, 0 failures`.
+7. `build/tests/test_decimal_to_double` (about five seconds) checks our exact decimal-to-double conversion (used for every
+   ASCII FBX number) against the C library's `strtod` on 2 million inputs; expect `0 differ` on every line and
+   `11 checks, 0 failures`. `OKAY_DECIMAL_ITERS=100000000 build/tests/test_decimal_to_double` is the full run (about four
+   and a half minutes). Then `python3 scripts/gen_pow5_table.py --check` should print `Pow5Table.inc matches (651 entries)`.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

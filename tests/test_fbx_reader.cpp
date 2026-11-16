@@ -39,7 +39,7 @@ static double TriArea(const fbx::Corner* a) {
 }
 static double MeshArea(const fbx::Mesh& m) {
     double s = 0;
-    for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.corners.size(); i += 3) s += TriArea(&p.corners[i]);
+    for (const fbx::Part& p : m.parts) { const std::vector<fbx::Corner> cs = p.ExpandCorners(); for (std::size_t i = 0; i + 2 < cs.size(); i += 3) s += TriArea(&cs[i]); }
     return s;
 }
 static const fbx::SceneNode* FindNode(const fbx::Scene& s, const char* n) {
@@ -95,7 +95,7 @@ static void DirectTests() {
         CHECK(m.triangleCount() == 12 && a.meshes[0].triangleCount() == 12);
         CHECK(m.hasUV && m.hasNormals && m.parts.size() == 1);
         float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
-        for (const fbx::Corner& c : m.parts[0].corners) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
+        for (const fbx::Corner& c : m.parts[0].ExpandCorners()) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
         for (int k = 0; k < 3; ++k) { CHECK(Near(lo[k], -0.01, 1e-6)); CHECK(Near(hi[k], 0.01, 1e-6)); }
         CHECK(Near(MeshArea(m), 6 * 0.02 * 0.02, 1e-7));
         // Like ufbx: geometry and normals keep the file's axes, the root node carries the Y-up rotation.
@@ -106,10 +106,10 @@ static void DirectTests() {
         CHECK(Near(g2w.m[4] * in[0] + g2w.m[5] * in[1] + g2w.m[6] * in[2] + g2w.m[7], 0.30866025, 1e-6));
         CHECK(Near(g2w.m[8] * in[0] + g2w.m[9] * in[1] + g2w.m[10] * in[2] + g2w.m[11], -0.2, 1e-6));
         bool rawNormal = false;
-        for (const fbx::Corner& c : m.parts[0].corners) if (Near(c.n[2], 1.0, 1e-4)) rawNormal = true;
+        for (const fbx::Corner& c : m.parts[0].ExpandCorners()) if (Near(c.n[2], 1.0, 1e-4)) rawNormal = true;
         CHECK(rawNormal);
         // ascii and binary agree corner by corner
-        const auto& ca = a.meshes[0].parts[0].corners; const auto& cb = m.parts[0].corners;
+        const auto ca = a.meshes[0].parts[0].ExpandCorners(); const auto cb = m.parts[0].ExpandCorners();
         CHECK(ca.size() == cb.size());
         for (std::size_t i = 0; i < std::min(ca.size(), cb.size()); ++i) { CHECK(Near(ca[i].p[0], cb[i].p[0], 1e-7) && Near(ca[i].uv[1], cb[i].uv[1], 1e-7) && Near(ca[i].n[2], cb[i].n[2], 1e-6)); }
         // material, texture reference and embedded bytes
@@ -143,10 +143,10 @@ static void DirectTests() {
         CHECK(Near(MeshArea(m), (3.0 + pent + 0.5) * 1e-4, 1e-9));   // file is in cm
         CHECK(m.triangleCount() == 4 + 3 + 1);
         CHECK(m.parts.size() == 2 && m.parts[0].slot == 0 && m.parts[1].slot == 1);
-        if (m.parts.size() == 2) CHECK(m.parts[0].corners.size() / 3 == 4 && m.parts[1].corners.size() / 3 == 4);
+        if (m.parts.size() == 2) CHECK(m.parts[0].cornerCount() / 3 == 4 && m.parts[1].cornerCount() / 3 == 4);
         bool allUp = true;   // concave polygon: every triangle must keep the +Z winding
-        for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.corners.size(); i += 3) {
-            const fbx::Corner* c = &p.corners[i];
+        for (const fbx::Part& p : m.parts) for (std::size_t i = 0; i + 2 < p.cornerCount(); i += 3) {
+            const fbx::Corner c[3] = {p.corner(i), p.corner(i + 1), p.corner(i + 2)};
             const double z = (c[1].p[0] - c[0].p[0]) * (c[2].p[1] - c[0].p[1]) - (c[1].p[1] - c[0].p[1]) * (c[2].p[0] - c[0].p[0]);
             if (z <= 0) allUp = false;
         }
@@ -165,7 +165,7 @@ static void DirectTests() {
         CHECK(Near(pl.nodes[1].scale[0], 2.0, 1e-6));
         CHECK(pl.nodes[1].mesh == 0 && pl.meshes[0].triangleCount() == 3);   // the 2-corner polygon was skipped
         bool unit = true;
-        for (const fbx::Corner& c : pl.meshes[0].parts[0].corners) { const double l = std::sqrt(c.n[0] * c.n[0] + c.n[1] * c.n[1] + c.n[2] * c.n[2]); if (!Near(l, 1.0, 1e-4)) unit = false; }
+        for (const fbx::Corner& c : pl.meshes[0].parts[0].ExpandCorners()) { const double l = std::sqrt(c.n[0] * c.n[0] + c.n[1] * c.n[1] + c.n[2] * c.n[2]); if (!Near(l, 1.0, 1e-4)) unit = false; }
         CHECK(unit);
         CHECK(!pl.meshes[0].hasUV);
     }

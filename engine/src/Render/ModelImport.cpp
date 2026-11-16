@@ -13,6 +13,7 @@
 #include "okay/Render/LwoReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
+#include <cstring>
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1726,13 +1727,17 @@ int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
 }
 
 // One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+// The reader already shares corners that are equal byte for byte (numbered in order of first use), so the engine
+// vertex is built once per reader vertex; reader vertices that differ only in what the engine drops (vertex colour)
+// are merged here. Numbering by first use of the reader vertices is the same as numbering by first use of the
+// corners, so the result is the one the unindexed corner list gave.
 Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
                   std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
                   std::vector<uint32_t>* outVi) {
     Mesh out;
     std::vector<FbxVert> verts;
-    verts.reserve(part.corners.size());
-    for (const fbx::Corner& c : part.corners) {
+    verts.reserve(part.vertices.size());
+    for (const fbx::Corner& c : part.vertices) {
         FbxVert fv{};
         fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
         fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
@@ -1749,17 +1754,41 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
         }
         verts.push_back(fv);
     }
-    if (verts.empty()) return out;
-    std::unordered_map<std::string, uint32_t> seen;
-    seen.reserve(verts.size());
-    std::vector<uint32_t> indices(verts.size());
+    if (verts.empty() || part.indices.empty()) return out;
+    // Equal vertices (byte for byte) share one index, numbered in first-occurrence order. An open-addressing table of
+    // indices into `verts` (power-of-two size, at least twice the vertex count, linear probing).
+    std::vector<uint32_t> remap(verts.size());
     std::vector<uint32_t> unique;
-    for (std::size_t i = 0; i < verts.size(); ++i) {
-        auto ins = seen.emplace(std::string((const char*)&verts[i], sizeof(FbxVert)), (uint32_t)unique.size());
-        if (ins.second) unique.push_back((uint32_t)i);
-        indices[i] = ins.first->second;
+    {
+        std::size_t cap = 16;
+        while (cap < verts.size() * 2) cap <<= 1;
+        const uint32_t kEmpty = 0xFFFFFFFFu;
+        std::vector<uint32_t> table(cap, kEmpty);   // holds positions in `unique`
+        for (std::size_t i = 0; i < verts.size(); ++i) {
+            const unsigned char* b = (const unsigned char*)&verts[i];
+            static_assert(sizeof(FbxVert) % 4 == 0, "FbxVert is hashed 4 bytes at a time");
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;   // multiply-xor over 32-bit words, then a final mix
+            for (std::size_t k = 0; k < sizeof(FbxVert); k += 4) {
+                std::uint32_t w; std::memcpy(&w, b + k, 4);
+                h = (h ^ w) * 0xFF51AFD7ED558CCDull;
+                h ^= h >> 32;
+            }
+            h ^= h >> 29;
+            std::size_t slot = (std::size_t)h & (cap - 1);
+            for (;;) {
+                const uint32_t u = table[slot];
+                if (u == kEmpty) { table[slot] = (uint32_t)unique.size(); remap[i] = (uint32_t)unique.size(); unique.push_back((uint32_t)i); break; }
+                if (std::memcmp(&verts[unique[u]], b, sizeof(FbxVert)) == 0) { remap[i] = u; break; }
+                slot = (slot + 1) & (cap - 1);
+            }
+        }
     }
     const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
+    out.vertices.reserve(unique.size());
+    if (hasN) out.normals.reserve(unique.size());
+    if (hasUV) out.uvs.reserve(unique.size());
+    if (jIdx) { jIdx->reserve(unique.size()); jWt->reserve(unique.size()); }
+    if (outVi) outVi->reserve(unique.size());
     for (uint32_t u : unique) {
         const FbxVert& v = verts[u];
         out.vertices.push_back(Vec3{v.px, v.py, v.pz});
@@ -1768,7 +1797,8 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
         if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
         if (outVi) outVi->push_back(v.vi);
     }
-    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    out.triangles.reserve(part.indices.size());
+    for (uint32_t ix : part.indices) out.triangles.push_back((int)remap[ix]);
     return out;
 }
 
@@ -1934,24 +1964,29 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 clip.nodes.push_back({goOf[(std::size_t)bn.node]->name, AnimationClip{}});
                 AnimationClip& ac = clip.nodes.back().clip;
                 ac.smoothKeys = false;
-                for (const fbx::Key3& k : bn.translation) {
-                    const float t = (float)k.time;
-                    ac.AddKey("position.x", t, (float)k.v[0]); ac.AddKey("position.y", t, (float)k.v[1]); ac.AddKey("position.z", t, (float)k.v[2]);
+                // One array per channel, then each track gets all its keys at once; tracks are created in the same
+                // order as one AddKey per channel and sample did (the track table ends up the same).
+                std::vector<float> kt, c0, c1, c2, c3;
+                auto put3 = [&](const std::vector<fbx::Key3>& keys, const char* x, const char* y, const char* z) {
+                    kt.clear(); c0.clear(); c1.clear(); c2.clear();
+                    for (const fbx::Key3& k : keys) { kt.push_back((float)k.time); c0.push_back((float)k.v[0]); c1.push_back((float)k.v[1]); c2.push_back((float)k.v[2]); }
+                    ac.AddKeys(x, kt.data(), c0.data(), kt.size()); ac.AddKeys(y, kt.data(), c1.data(), kt.size()); ac.AddKeys(z, kt.data(), c2.data(), kt.size());
+                };
+                put3(bn.translation, "position.x", "position.y", "position.z");
+                {
+                    double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
+                    kt.clear(); c0.clear(); c1.clear(); c2.clear(); c3.clear();
+                    for (const fbx::Key4& k : bn.rotation) {
+                        double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
+                        if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
+                        for (int a = 0; a < 4; ++a) prev[a] = q[a];
+                        hasPrev = true;
+                        kt.push_back((float)k.time); c0.push_back((float)q[0]); c1.push_back((float)q[1]); c2.push_back((float)q[2]); c3.push_back((float)q[3]);
+                    }
+                    ac.AddKeys("rotation.qx", kt.data(), c0.data(), kt.size()); ac.AddKeys("rotation.qy", kt.data(), c1.data(), kt.size());
+                    ac.AddKeys("rotation.qz", kt.data(), c2.data(), kt.size()); ac.AddKeys("rotation.qw", kt.data(), c3.data(), kt.size());
                 }
-                double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
-                for (const fbx::Key4& k : bn.rotation) {
-                    double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
-                    if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
-                    for (int a = 0; a < 4; ++a) prev[a] = q[a];
-                    hasPrev = true;
-                    const float t = (float)k.time;
-                    ac.AddKey("rotation.qx", t, (float)q[0]); ac.AddKey("rotation.qy", t, (float)q[1]);
-                    ac.AddKey("rotation.qz", t, (float)q[2]); ac.AddKey("rotation.qw", t, (float)q[3]);
-                }
-                for (const fbx::Key3& k : bn.scale) {
-                    const float t = (float)k.time;
-                    ac.AddKey("scale.x", t, (float)k.v[0]); ac.AddKey("scale.y", t, (float)k.v[1]); ac.AddKey("scale.z", t, (float)k.v[2]);
-                }
+                put3(bn.scale, "scale.x", "scale.y", "scale.z");
                 if (ac.Tracks().empty()) clip.nodes.pop_back();
             }
             for (const fbx::BlendAnim& ba : fc.blends) {
@@ -1961,7 +1996,9 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
                 if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
                 const std::string track = "weights." + std::to_string(it->second.second);
-                for (const fbx::Key3& k : ba.percent) ncp->clip.AddKey(track, (float)k.time, (float)k.v[0] * 0.01f);
+                std::vector<float> bt, bv;
+                for (const fbx::Key3& k : ba.percent) { bt.push_back((float)k.time); bv.push_back((float)k.v[0] * 0.01f); }
+                ncp->clip.AddKeys(track, bt.data(), bv.data(), bt.size());
             }
             if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
         }

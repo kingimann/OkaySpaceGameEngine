@@ -119,7 +119,8 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Full UI component library (essential, game, app, layout, data-driven)
 - Improve the blocky character's arms, especially in first person
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
-- Per-face materials (renderer submeshes)
+- Per-face materials, the rest (renderer submeshes): material slots with a colour each are built (see [modeling.md](modeling.md), Material slots); slots can also carry a picture in the software renderer; per-slot pictures in OpenGL / Direct3D 11 / Direct3D 12, per-slot shaders, and separate draw calls per slot, are not built
+- Per-vertex colours: built (software, OpenGL, Direct3D 11, Direct3D 12 vertex paths; the three GPU paths were written but never run on a GPU); still open: a GPU look at them, per-slot textures and submeshes in the GPU renderers, reference images / blueprint planes, curve objects (bezier / NURBS) and text-to-mesh, live-preview booleans and bevel weights, quad remesh, retopology brushes; only per-face colours and slot colours exist, and every renderer would need a vertex colour stream first
 - Guided characters (7zk) gaps: no rig, skin weights or animation; clothes are shells not cloth; insect and spider legs are crude; Environment and Props not built
 - Guided vehicles and Detail (7zj) gaps: no opening doors, interiors or vehicle physics setup; motorcycles now have real frame geometry (rake, swingarm, shocks, engines, bars, fairings) but are still blocky shapes; box-only designs have no Low reduction ([guided_detail.md](guided_detail.md))
 - Guided architecture (7zi) gaps: no railings on landings; wall corners are butt-joined, not mitred; click-to-draw path has no preview line; per-face material slots (claude/modeling-more) not used yet beyond the stored numbers

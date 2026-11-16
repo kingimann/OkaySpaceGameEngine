@@ -279,6 +279,10 @@ add_library(okay_engine
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
     src/Modeling/EditTransform.cpp
+    src/Modeling/Measure.cpp
+    src/Modeling/SelectOps.cpp
+    src/Modeling/ScreenSelect.cpp
+    src/Modeling/MeshLibrary.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp

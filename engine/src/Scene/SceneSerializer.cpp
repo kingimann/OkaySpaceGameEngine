@@ -973,6 +973,51 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Material slots (per-face material: which slot each triangle uses, and each
+        // slot's colour). Separate records so older scenes still load; they follow the
+        // geometry so the triangle count lines up.
+        if (mr->mesh.HasSlots() && !generated) {
+            out << "  meshslots " << mr->mesh.triSlot.size();
+            for (int sl : mr->mesh.triSlot) out << " " << sl;
+            out << "\n  slotcolors " << mr->mesh.slotColors.size();
+            for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Subdivision creases (vertex pairs + sharpness), optional record.
+        if (!mr->mesh.creases.empty() && !generated) {
+            out << "  meshcreases " << mr->mesh.creases.size();
+            for (const EdgeCrease& c : mr->mesh.creases) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
+        // Per-vertex colours (smooth painting): optional record, follows the geometry so the count lines up.
+        if (mr->mesh.HasVertexColors() && !generated) {
+            out << "  meshvcolors " << mr->mesh.vertexColors.size();
+            for (const Color& c : mr->mesh.vertexColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Hidden faces (Hide / Isolate in edit mode): kept with the mesh so a saved scene still has them to reveal.
+        if (mr->mesh.HasHidden() && mr->mesh.HiddenConsistent() && !generated) {
+            const int hn = mr->mesh.HiddenTriangleCount();
+            const bool huv = !mr->mesh.hiddenUV.empty(), hco = !mr->mesh.hiddenColor.empty();
+            out << "  meshhidden " << hn << " " << (huv ? 1 : 0) << " " << (hco ? 1 : 0);
+            for (int t = 0; t < hn; ++t) {
+                for (int k = 0; k < 3; ++k) { const Vec3& p = mr->mesh.hiddenPos[t * 3 + k]; out << " " << p.x << " " << p.y << " " << p.z; }
+                out << " " << mr->mesh.hiddenSlot[t] << " " << mr->mesh.hiddenPoly[t];
+                if (huv) for (int k = 0; k < 3; ++k) out << " " << mr->mesh.hiddenUV[t * 3 + k].x << " " << mr->mesh.hiddenUV[t * 3 + k].y;
+                if (hco) { const Color& c = mr->mesh.hiddenColor[t]; out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; }
+            }
+            out << "\n";
+        }
+        // A picture per material slot (optional record; empty entries mean "no picture for this slot").
+        {
+            bool any = false;
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) any = true;
+            if (any) {
+                out << "  slottex " << mr->slotTextures.size();
+                for (const std::string& st : mr->slotTextures) out << " " << Quote(st);
+                out << "\n";
+            }
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -1043,6 +1088,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("w", m.width)("seg", m.segments)("ang", m.angle)
              .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
              ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+            if (m.type == MeshModifier::Type::CurveArray) {      // the curve: "x,y,z;x,y,z;..."
+                std::ostringstream pt;
+                for (std::size_t i = 0; i < m.path.size(); ++i)
+                    pt << (i ? ";" : "") << m.path[i].x << "," << m.path[i].y << "," << m.path[i].z;
+                k.b("align", m.align).str("path", pt.str());
+            }
             out << "\n";
         }
     }
@@ -4668,6 +4719,63 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     for (int i = 0; i < cc && in; ++i) {
                         Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
                     }
+                } else if (field == "meshslots") {
+                    // Per-triangle material slot; ignored later if the count doesn't match.
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    if (!in || !countOk(sc, 1)) return bad("meshslots: bad count");
+                    mr->mesh.triSlot.clear();
+                    mr->mesh.triSlot.reserve(sc > 0 ? sc : 0);
+                    for (int i = 0; i < sc && in; ++i) {
+                        int sl = 0; in >> sl;
+                        mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
+                    }
+                } else if (field == "meshcreases") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cn = 0; in >> cn;
+                    if (!in || cn < 0 || !countOk(cn, 6)) return bad("meshcreases: bad count");
+                    mr->mesh.creases.clear();
+                    for (int i = 0; i < cn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) mr->mesh.creases.push_back(c); }
+                } else if (field == "meshvcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int vc = 0; in >> vc;
+                    if (!in || vc < 0 || !countOk(vc, 4)) return bad("meshvcolors: bad count");
+                    mr->mesh.vertexColors.clear();
+                    mr->mesh.vertexColors.reserve((std::size_t)vc);
+                    for (int i = 0; i < vc && in; ++i) { Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.vertexColors.push_back(c); }
+                } else if (field == "meshhidden") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int hn = 0, huv = 0, hco = 0; in >> hn >> huv >> hco;
+                    if (!in || hn < 0 || hn > 2000000 || !countOk(hn, 20)) return bad("meshhidden: bad count");
+                    Mesh& hm = mr->mesh;
+                    hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear();
+                    for (int t = 0; t < hn && in; ++t) {
+                        for (int k = 0; k < 3; ++k) { Vec3 p; in >> p.x >> p.y >> p.z; hm.hiddenPos.push_back(p); }
+                        int sl = -1, pl = -1; in >> sl >> pl; hm.hiddenSlot.push_back(sl); hm.hiddenPoly.push_back(pl);
+                        if (huv) for (int k = 0; k < 3; ++k) { Vec2 u; in >> u.x >> u.y; hm.hiddenUV.push_back(u); }
+                        if (hco) { Color c; in >> c.r >> c.g >> c.b >> c.a; hm.hiddenColor.push_back(c); }
+                    }
+                    if (!in || !hm.HiddenConsistent()) { hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear(); return bad("meshhidden: damaged"); }
+                } else if (field == "slottex") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int tc = 0; in >> tc;
+                    if (!in || tc < 0 || tc > 256) return bad("slottex: bad count");
+                    mr->slotTextures.clear();
+                    for (int i = 0; i < tc && in; ++i) { in >> std::ws; mr->slotTextures.push_back(in.peek() == '"' ? ReadQuoted(in) : std::string()); }
+                } else if (field == "slotcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int kc = 0; in >> kc;
+                    if (!in || !countOk(kc, 4) || kc > 256) return bad("slotcolors: bad count");
+                    mr->mesh.slotColors.clear();
+                    for (int i = 0; i < kc && in; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.slotColors.push_back(c);
+                    }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
                     // names + inverse-bind matrices. Joints are re-resolved by name at
@@ -5217,6 +5325,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
                     k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
                     k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    if (m.type == MeshModifier::Type::CurveArray) {
+                        k.b("align", m.align);
+                        std::string pts; k.str("path", pts);
+                        std::stringstream ps(pts); std::string one;
+                        while (std::getline(ps, one, ';') && m.path.size() < 1000) {
+                            Vec3 v; char c1 = 0, c2 = 0;
+                            std::istringstream vs(one);
+                            if (vs >> v.x >> c1 >> v.y >> c2 >> v.z && c1 == ',' && c2 == ',') m.path.push_back(v);
+                        }
+                    }
                     mm->modifiers.push_back(m);
                 } else if (field == "meshenabled") {
                     int en = 1; in >> en;
@@ -9457,7 +9575,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* sr : go->GetComponents<SpriteRenderer>()) add(sr->texture);
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         for (auto* mp : go->GetComponents<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
+        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); for (const std::string& st : mr->slotTextures) add(st); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
         for (auto* terrain : go->GetComponents<Terrain>())         { add(terrain->texture); add(terrain->normalMap); for (const auto& l : terrain->layers) add(l.texture); }
         for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
         for (auto* de : go->GetComponents<Decal>())         add(de->texture);

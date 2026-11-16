@@ -53,8 +53,12 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
+| 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
+| 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 
 ---
 
@@ -334,6 +338,77 @@ the folder (the example-copy block of `scripts/build-windows-dist.sh` was run al
 in the output; `bash -n` of the whole script is clean). The editor code for the new Inspector rows and
 menu entry was only syntax-checked, not run. The pictures are headless renders, not screenshots of a window.
 
+## 7f. Crash reports: detailed report, sending, GitHub issues
+
+**What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
+scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent
+(names, folders, emails and addresses removed), tells you once that a sent report becomes a **public GitHub issue**, sends it for you (switch **on by
+default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](crash_reports.md).
+
+> **The server half (steps 9 and 10) cannot work until the owner has done two one-time steps, in the browser, in this order:**
+> - **Owner step A:** run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file,
+>   run it; it is safe to run again).
+> - **Owner step B:** set the repository variable `CRASH_ISSUES_ENABLED` to `true` (GitHub repository > **Settings > Secrets and variables >
+>   Actions > Variables > New repository variable**). Until it is `true`, the 30-minute schedule skips the job (it shows as skipped, never red).
+>
+> The GitHub secret `SUPABASE_SERVICE_KEY` must exist too (releases already use it, so it normally does). Never paste a key in chat.
+> Steps 1 to 8 and 11 need none of this.
+
+**Steps (Windows release).**
+1. **Quit the launcher first.** It is single-instance: a launcher that is already running (also in the tray) never passes `OKAY_TEST_CRASH_LATE` on
+   to the editor, so the test crash would not happen. Close the editor. Open **Command Prompt** in the folder with `OkaySpace.exe` (zip: the unzipped
+   folder; installer: `%LOCALAPPDATA%\OkaySpace`). To keep the files easy to find, first run: `set OKAY_CRASH_DIR=%TEMP%\crashtest` after
+   `mkdir %TEMP%\crashtest`.
+2. Run `set OKAY_TEST_CRASH_LATE=Test.Step` and then `OkaySpace.exe` (the launcher). The editor the launcher starts inherits both settings.
+3. In the launcher open the editor the way you normally do (it must be started from the launcher). After a couple of seconds, at the 120th frame, the editor crashes on purpose and the box
+   **OkaySpace crashed** appears. Click OK.
+   (`OKAY_TEST_CRASH=Test.Step` crashes before the window opens instead: the report then has no scene or graphics card yet.)
+4. **Where the report is:** `okay_crash.txt` (latest) and `okay_crashlog.txt` (all) in `%TEMP%\crashtest`, or, without `OKAY_CRASH_DIR`, next to
+   `OkayEngine.exe` (`Tools\`). Open it in Notepad: you should see `Version`, `Build`, `Last step: Test.Step`, `OS`, `CPU`, `GPU`, `Backtrace`, then
+   `--- Breadcrumbs`, `--- Console` (the last line says the crash was on purpose).
+5. In the launcher a notification "The editor crashed" appears. Open **Settings > Crash reports**. You should see a card "Access violation"
+   with the time and version and, after a dot, **waiting to be sent**. (Crash reports that were already on your computer before the launcher
+   first ran this version say "not sent (from before sending was switched on)" and are never sent; only crashes from now on are.) The switch card
+   above it shows the same words you will see in the next step: what is sent and that it becomes a **public** GitHub issue.
+6. **The one-time notice.** About 15 to 40 seconds after the crash, before anything is sent, a window **Crash reports are sent automatically**
+   opens in the launcher. It says what is sent, that it is published as a public issue on GitHub, that the server sees your connection address, and how
+   to turn it off. Nothing is sent until you answer. Click **OK, keep sending** to carry on (or **Turn it off**: the card then says "not sent (sending
+   is off)"). It appears once. To see it again: quit the launcher, open `launcher.cfg` (next to `OkaySpace.exe`) in Notepad, delete the line
+   `crash_notice=1`, save, start the launcher.
+7. Click **What would be sent** on the card (or **Preview** in the SENDING CRASH REPORTS card). You should see the report with your folders
+   shown as `%USERPROFILE%` where the editor was installed under your user folder, and the columns (report id, signature, version, ...). The test
+   report does not contain your computer name, so you will not see `<host>` in it; your login name or computer name would only show as `<user>` or
+   `<host>` if it appeared in the text (for example in a Console line). Nothing has been sent by looking.
+8. **Turn it off:** switch **Send crash reports automatically** off: the card says "not sent (sending is off)". (Or start the launcher with
+   `set OKAY_CRASH_UPLOAD=0`.) Crashes that happen while it is off are never sent later, even after you switch it on again or unset the variable.
+   Switch it on again to continue.
+9. **Sending** (needs owner step A): after you answered the notice the card changes to **sent** within about 20 seconds and a toast says "Crash report
+   sent. Thank you." If the table is missing, the page says "The server has no crash_reports table yet ... run docs/sql/crash_reports.sql" and the
+   report is kept. To see the row: Supabase > Table editor > `crash_reports` (or SQL editor:
+   `select created_at, signature, version, exception, top_frame, processed_at, issue_number from crash_reports order by created_at desc;`).
+10. **The issue** (needs owner steps A and B): GitHub > Actions > **Crash reports to issues** > Run workflow. The **dry run** box is ticked by default:
+    the log shows the issue text and changes nothing. Untick it to make the issue for real, or wait up to 30 minutes for the schedule once the variable is
+    `true`. An issue `Crash: Access violation in ...` appears with label `crash`; it says the text is untrusted data. Crash again the same way and send: the
+    issue gets a **comment**, not a second issue. (The schedule only runs once this change is on `main`.)
+11. **Report on GitHub** (no server needed): on the card click **Report on GitHub**. Your browser opens GitHub's new-issue page with the title, a table
+    and the backtrace filled in, and the whole cleaned report is on your clipboard: paste it into the issue. Read it, then Submit or close the tab.
+
+**Try the issue text without Windows or any secret** (any machine with Python): `python3 scripts/crash_to_issue.py --rows-file
+tests/data/crash_rows_sample.json --dry-run` prints the two issues and one comment the three sample rows would make (the third row had a name, an email,
+an address and a token left in; the output shows them removed).
+
+**How you know it worked.** The report has the lines in step 4; the card says what its sending state is; the notice appears once, before the first
+send; the preview has no folder with your name in it; with sending off nothing is ever sent, also later; one crash makes one issue, the same crash
+again a comment.
+
+**Status.** Verified here (Linux): the report builder, the parser and signature, the handler (a child process really faults: segmentation fault,
+divide by zero, abort, uncaught exception, stack overflow; the files are `0600` and a planted symlink is not followed), the scrubber, the upload logic
+against a fake server (the notice rule, the ledger that follows the switch), the SQL against a local PostgreSQL (insert-only, no reads, the caps,
+30 senders at once, the self-pruning, an upgrade from the first version), the issue script (72 unit tests, 16 over HTTP) and the workflow file's
+safety properties. **Unverified:** everything that needs Windows (the Windows handler, the message box, function names from dbghelp), the editor
+and launcher as running programs (they were only syntax-checked, so the notice window has not been seen on a screen), the upload to the real
+Supabase, the GitHub workflow on GitHub, the browser page of step 11, and `OKAY_TEST_CRASH_LATE` in a running editor.
+
 ---
 
 ## 16. Main menu bar (cleaned up)
@@ -410,7 +485,150 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
 items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+## 7h. Project panel right-click menus
 
+**What it is.** The right-click menus of the editor's Project panel were reworked and filled out: one list per place you can click
+(an asset, a folder, a folder in the tree on the left, a starred item, the empty space), with a tooltip on every item, greyed items that
+say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/project_panel.md`, section
+"Right-click menus". Code: `editor/ProjectContextModel.hpp` (the lists), `editor/ProjectPanelUI.cpp` (drawing, the Move to...
+picker, Properties), `DrawProject` in `editor/main.cpp`.
+
+**Getting there.** Open the editor (`Tools\OkayEngine.exe`, or from the launcher). **File > New Project...**, pick any template and
+create it (a project is needed: with none open the menus grey out and say "Open a project first."). The **Project** panel shows an
+**Assets** folder; if it is hidden use **View > Panels > Project**. Put a few files in it: drag a picture, a sound or a model from your file
+manager onto the editor window, or use the Project panel's **Import** button.
+
+**Steps.** (Each step says what you should see.)
+1. **An asset.** Right-click a picture. You should see Open (greyed for a picture; the tooltip says "No editor window opens this type. Use Open with Default App."), Rename (F2), Duplicate (Ctrl+D), Cut, Copy, Paste (greyed: "Nothing was
+   copied or cut yet."), **Move to...**, Delete, Find References, Show Dependencies, Reimport, Add to Favourites, Tags, Label, **Copy Text**,
+   Show in Explorer, **Properties...**, and **Open with Default App**. Hover an item for its tooltip.
+   * **Copy Text > Relative Path**, then paste into any text box (the Console filter, a script): `Assets/<your file>`.
+   * **Properties...** opens a window: type, folder, size, date in UTC with "N minutes ago", GUID, how many assets use it. **Close** closes it.
+   * **Open with Default App** opens the picture in your system's picture program.
+   * **Show in Explorer** opens the folder with the file selected.
+2. **Several items.** Click one file, Ctrl+click two more, right-click one of them. The first line says **3 items selected**; the items read
+   **Delete 3 Items**, **Duplicate 3 Items**, **Copy 3 Items**; Rename and Open are greyed ("Select one item to rename it." / "Select one item to open it."). **Copy Text > Relative Paths
+   (one per line)**, then paste into a multi-line box: one path per line. **Duplicate 3 Items** makes three copies ("name copy"); one Ctrl+Z takes all three away.
+   Select a folder and a file inside it (open the folder first and use the search box with `ext:png` to list both, or Ctrl+A in a search over the whole project),
+   then Duplicate: the folder is copied once (the copy has its own copy of the file); no second "copy" appears beside the original file.
+3. **Move to...** Right-click a file, **Move to...**, pick a folder in the window (your Assets folder and its folders; the file's own folder is greyed:
+   "It is already in that folder."), press **Move**. Ctrl+Z in the Project panel moves it back. Try it on a folder and pick that folder or a folder inside
+   it: they are greyed with "A folder can't be moved into itself." Try it with Ctrl+A in a big folder: the window opens at once.
+4. **A scene.** Right-click a `.okayscene` (File > New Scene, then save it into Assets): **Set as Start Scene** puts it first in Scenes In Build.
+   Check in **View > Panels > Scene Manager**: it shows "Start scene: <name>". Right-click it again: the item is greyed ("This scene already starts the game.").
+5. **A script or data file.** Right-click a script (Create > Script): **Open in External Editor** opens it in Visual Studio Code if you have it,
+   else in Notepad. The file is only opened for editing.
+6. **A program or script is never started.** In your file manager make a file `test.bat` (any text) in the project's `Assets` folder; wait a moment or press F5
+   in the Project panel. Right-click it: **Open with Default App** is greyed and the tooltip says "This file type can run code; open it from the file manager if you
+   trust it." There is no Open in External Editor for it. **Show in Explorer** still opens the folder with it selected. The same goes for `.exe .cmd .lnk .ps1 .vbs .js .hta .jar .msi .reg` (and `.sh .py`);
+   a picture named `photo.png.exe` counts as an exe. A file named with a `$`, `%` or `'` in it can be shown in Explorer and opened (a text file) like any other.
+7. **A folder.** Right-click a folder in the grid: **Create** (made inside that folder; the panel goes there), Paste Into, **Reimport All in Folder**, Expand /
+   Collapse. Right-click a folder in the **tree** on the left: the same list, and **Expand All Subfolders**, **Collapse All Subfolders**, **Collapse Other Folders**
+   change what the tree shows. Right-click **Assets** in the tree: Rename, Delete, Move and the others are greyed ("The Assets folder itself can't be changed.").
+   * **Reimport All in Folder:** put a picture in a folder, open the folder, then replace the picture with a different one in an image editor (keep the name) and save.
+     Right-click the folder > Reimport All in Folder. The Console says "Reimported 1 asset" (or more) and the tile shows the new picture and the strip at the bottom the new size.
+   * **Create from a folder's menu:** right-click a folder (not the one you are in) > Create > Folder. The name prompt opens; after you press Create the panel shows that folder with
+     the new one selected. **Create > Standard Folders** makes Scenes, Scripts, Prefabs, Materials, Models, Textures, Audio (the Console says how many); Ctrl+Z removes them all together.
+     **Create > Loot Table** (or Recipe Book) makes "Loot Table.okayloot" in that folder (no name prompt; F2 renames it) and opens the Items window on it.
+   * **The folder on screen goes away:** open a folder, then in the **tree** right-click that same folder > Rename and give it a new name: the panel follows to the renamed folder.
+     Now right-click it in the tree > Delete and confirm: the panel moves up to the folder above it, Create works there, and Ctrl+Z brings the folder back.
+   * **Tree actions leave your selection alone:** select a file in the grid, then in the tree right-click some other folder > Duplicate. The copy appears in that folder's parent,
+     and the file you selected is still the selected one (the strip at the bottom still shows it).
+8. **Favourites.** Add a file and a folder to Favourites. They appear under FAVOURITES on the left. Right-click one: **Show in Project** / **Open Folder**,
+   Remove from Favourites, Copy Text, Show in Explorer, Properties. Remove a starred file that is in another folder, then press Del: nothing is deleted (nothing was selected by that menu).
+9. **Prefab items.** Create > Prefab (or select an object in the Hierarchy first and use **Prefab from Selection**). Right-click the new `.okayprefab`:
+   * **Open Prefab** shows the prefab alone in the Scene view (double-click does the same).
+   * **Place in Scene** adds an instance: it appears in the Hierarchy and the Console says "Instantiated ...".
+   * **Place as Child of Selected** is greyed ("Select an object in the Hierarchy first.") until an object is selected; then the instance appears under that object.
+   * **Create Variant** makes "<name> Variant.okayprefab" next to it (the Console says so); **Validate Prefab** writes "Prefab <name> is fine (1 file checked)" to the Console.
+10. **Tags and Label.** Right-click a picture > **Tags > Add Tag...**, type `hero`, press Add. The strip at the bottom shows "Tags: hero"; type `l:hero` in the search box and the picture is listed.
+    **Tags > Remove "hero"** takes it off again. **Label > Red** puts a red dot at the top right of the tile and lists "Red 1" under LABELS on the left; **Label > None** clears it.
+11. **Empty space.** Right-click empty space in the grid. **Create** now also has **Dialogue**, **Quest File**, **Behavior Tree**, **Cutscene (Timeline)**:
+    each asks for a name, creates the file in the folder you are looking at and opens it in its own window (Dialogue, Dialogue > Quests tab, Behavior Tree, Timeline).
+    Also: **Paste** with a count, **Undo <what you did>**, **Import New Asset...** (the file picker), **Select All**, **View** (Grid, List, Small / Medium / Large
+    Tiles), **Sort By**, **Up One Folder**, **Open Project Folder in Explorer**, **Properties...** of the folder.
+    * **Refresh (F5):** with the Project panel focused press F5, or choose Refresh. The Console says "Refreshed the Project panel: N assets indexed". Copy a new file into `Assets` with your file
+      manager and press F5: it is listed at once (without F5 it can take a few seconds).
+    * **Select All (Ctrl+A):** every tile gets the accent outline and the strip at the bottom says "N items selected (Delete removes all)".
+12. **Smart view.** Click **All Models** (or another smart filter) on the left, then right-click empty space: Create, Paste, Import are greyed and say how to leave the view.
+
+**How you know it worked.** Each step names what you should see. Anything you right-click that does nothing, or an item that stays greyed without a reason in its
+tooltip, is a bug: tell us which item.
+
+**Left out on purpose.** Export Package (no package exporter exists), Select Dependencies, a Localization table and an Animation in Create: reasons in
+`docs/project_panel.md`.
+
+**Status.** The item lists, labels, greyed reasons, Copy Text, which file types run code, the Move to... rule, the path helpers (nested selections, the nearest folder that exists),
+Set as Start Scene, the dates and the Properties rows are tested headlessly (`project_context_model`, `project_menu_ops`). The new story and AI files are read back with the engine's parsers,
+and Standard Folders, Duplicate of a selection and the tags a menu lists are tested on temp folders, in `project_menu_ops`. The launcher that starts Notepad, the default app or Explorer
+(`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
+refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
+windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
+**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+
+---
+
+## 7d. Add Node menu: 70 topics instead of 19
+
+**What it is.** The panel that opens when you add a node to a visual script (right-click the canvas, press Space, press
+Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70
+specific topics in 14 sections, and every node is in the topic you would look in. Nothing was removed and your saved
+graphs are unchanged (a graph stores a node's type, never its topic). Code: `editor/VisualScriptCategories.hpp`,
+`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](visual_scripting_naming.md),
+every node under its topic in [visual_scripting_topics.md](visual_scripting_topics.md), and the before-and-after
+measurement in [visual_script_category_audit.md](visual_script_category_audit.md).
+
+**How to reach it.**
+
+1. Open the editor (`Tools\OkayEngine.exe`, or the launcher), make or open any project, select an object (for example
+   the cube of a new project) and add a **Visual Script** component in the Inspector.
+2. In the Inspector's Visual Script section press **Open in node editor** (or open **View > Editors & Tools > Visual
+   Script**).
+3. Right-click the empty canvas, or press **Space**. The Add Node panel opens.
+
+**What you should see.**
+
+1. On the left, under Starter, Recently used, All and Favourites, the topics in small groups under grey headings:
+   Events, Flow, Variables / Lists & Saving, Math, Text, Objects, Movement & Physics, Gameplay, Characters & AI,
+   Sound / Camera & Screen, Scenes & Environment, Input, Online, Debugging. Each topic shows how many nodes it holds.
+   **Click a heading to fold its topics** (click again to open them). Hover a topic for a one-line description.
+2. Click a topic with many nodes (for example Numbers, Tweens or Multiplayer): the subcategories appear under it
+   (Rounding & Snapping, Limits & Wrapping, ... ). Hover one for its description. Click one to see only its nodes.
+3. Twelve nodes and where to find each (the name on the node, then topic / subcategory):
+
+   | Node | Where it is |
+   |---|---|
+   | On Start, On Every Frame | Game Events |
+   | On Key Pressed | Input Events (it used to be under Input / Keys) |
+   | On Collision Start | Collision & Trigger Events |
+   | Wait Seconds | Waiting & Timers |
+   | Spawn | Create & Destroy |
+   | Move Towards | Move & Follow |
+   | Add Force | Forces & Velocity |
+   | Set Weather | Weather & Fog (it used to be under Scene / Atmosphere) |
+   | Play Sound | Sound Effects |
+   | Start Quest | Quests & Dialogue / Quests |
+   | Host Game | Multiplayer / Hosting & Joining |
+
+4. **Search still finds everything.** Type `weather`: Set Weather and its twin Weather Set are at the top, and both sit in
+   Weather & Fog. Type `scene` or
+   `atmosphere`: the nodes that used to be under Scene (Set Weather, Set Fog, Set Post Effect, ...) are in the list too,
+   because the old topic name is kept as a search word. Type `advanced`: the text-script functions that used to be in
+   the Advanced bucket are listed.
+5. **Favourites keep working.** Click the star on On Key Pressed, close the panel and open it again: the star is still
+   there (it is stored by node name in `okay_vsnodes.txt`, never by topic).
+
+Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
+the font and window frame differ from the editor):
+
+* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
+* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
+* [The Events section folded away](images/vs_palette_folded_section.png)
+
+Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
+names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
+counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
+how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
 
 ## Switches that are off by default (own code)
 
@@ -458,7 +676,8 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
   that works.
 * **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
-  (COLLADA). Tiny hand-written files from our tests, no outside source.
+  (COLLADA), `cube_gzip.blend` (gzip `.blend`) and `cube_compressed_arrays.fbx` (FBX with zlib arrays). Tiny files from our
+  tests (the last two written by our own `scripts/gen_blend_fixtures.py` and `scripts/gen_fbx_fixtures.py`), no outside source.
 * **Steps.**
   1. Start the editor with `set OKAY_OWN_OFF=1` (or `OKAY_OWN_STACK=1`), open **Help > About OkaySpace**. It should say
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
@@ -519,6 +738,41 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
+
+**What it is.** Compressed data in PNG pictures, gzip `.blend` files, `.x` MSZIP, `.zgl`, 3MF/AMF zip packages, the arrays
+in binary FBX files and gzip answers from our own HTTP client used to be decoded by three separate copies of the same
+decoder. Now there is one (`engine/include/okay/Core/Inflate.hpp`) and the others call it. Nothing should look different:
+this change is about having less code to get wrong. Plain words: if every picture and model that worked before still
+loads, it worked.
+
+**Steps.**
+1. **PNG (always on).** In the editor, **File > Import Model...** and choose `examples\obj_texture_paths\cube_ok.obj`. The
+   cube shows the grid texture. That texture is `grid.png`, a PNG, and every PNG goes through the shared decoder. Any
+   other PNG you drop in as a texture does the same.
+2. **gzip `.blend`.** `set OKAY_OWN_BLEND=1` (or `OKAY_OWN_STACK=1`), start the editor, **File > Import Model...**,
+   choose `examples\own_readers\cube_gzip.blend` (a Blender file saved with "Compress File", our own test file). A small model
+   appears (the `blend_reader` test checks its numbers). (Without Assimp in the build this reader is the only way a `.blend` loads at all.)
+3. **FBX with compressed arrays.** `set OKAY_OWN_FBX=1`, start the editor, import
+   `examples\own_readers\cube_compressed_arrays.fbx` (a binary FBX 7.4 whose vertex and index arrays are zlib packed).
+   A cube should appear. (The About popup should then list `fbx` among the own readers.)
+4. **Not shipped as samples:** `.x` with MSZIP, `.zgl`, 3MF and AMF. Their files are only built inside the tests
+   (`x_reader`, `xgl_reader`, `3mf_reader`, `amf_reader`). If you have your own `.x` (MSZIP), `.zgl` or `.3mf` file,
+   import it with `OKAY_OWN_X=1`, `OKAY_OWN_XGL=1` or `OKAY_OWN_3MF=1`.
+5. **gzip HTTP answers.** Only our own HTTP client uses this, and it cannot be tried on Windows (see 10). On Linux:
+   build with `-DOKAY_OWN_HTTP=ON`, run with `OKAY_OWN_HTTP=1`, and fetch a URL whose server sends
+   `Content-Encoding: gzip`; the program must get the plain bytes (the tests `own_http` and `own_http_net` do this).
+
+**How you know it worked.** There is no log line that names the decoder (it is a function, not a switch). What you can
+see: the grid texture on the cube (step 1), the cube from each file (steps 2 and 3), and, on a machine with a
+build, the test run `ctest -R inflate_differential` (and `ctest -R png_hint`), which prints how many damaged and valid
+streams it compared with an independent slow decoder and ends with `ok:`.
+
+**Status.** Verified here (Linux, headless): `inflate_differential` (about 67,000 streams, ASan and UBSan clean),
+`own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
+`fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
+real editor window), anything on Windows, real-world files other than our own samples.
 
 ---
 

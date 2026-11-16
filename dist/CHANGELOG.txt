@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v2.876.0
+  Editor
+  - A cleaner menu bar: File, Edit, GameObject, View, Plugins and Help.
+    There is one Examples submenu now (it was three). Edit has Cut, Copy,
+    Paste, Duplicate, Delete ("Delete 3 Objects" when three are selected),
+    Select All and Preferences. GameObject groups everything into 2D Object,
+    3D Object, Player, Light, Camera, Audio, Effects and UI. Help has
+    Documentation, Keyboard Shortcuts, Check for Updates and Report a Bug.
+    The old Engine and Window menus are gone; their items moved (the list is
+    in docs/editor_menus.md). A menu item that is greyed out now says why
+    when you hover it.
+  - Hierarchy right-click menus: Create Child offers every category, there is
+    an Add Component... item, Select > Same Type, plural labels, and a
+    Rig & IK submenu that only shows where it applies. Deleting an object in
+    the Hierarchy is safer (it used to remove the object while the list
+    below was still reading it), and Create Empty Child and
+    Deactivate/Activate can be undone with Ctrl+Z. Known gap:
+    Ctrl+X with several objects selected still keeps only one on the
+    clipboard (the new menu items are greyed out for several objects so they
+    cannot lose anything).
+
 v2.875.0
   Gameplay
   - Vehicles: you now sit in the car. Walk up, press E, and your character

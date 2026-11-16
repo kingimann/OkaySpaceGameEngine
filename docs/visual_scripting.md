@@ -298,11 +298,15 @@ Submit Score.
 - **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
   and the matched letters are highlighted.
 - **Keys:** **Up / Down** pick a result and **Enter** adds it.
-- **Sidebar:** browse by topic (Events, Flow, Variables, Math, and the rest in
-  [visual_scripting_naming.md](visual_scripting_naming.md)), by **Recent**, or by
-  **Favourites**. A large topic opens into subcategories. Click a node's star
-  to make it a favourite. Searching for an old group name ("Do something",
-  "Check something", "Engine API", "Transform") still finds those nodes.
+- **Sidebar:** the topics sit under small section headings (Events, Flow, Variables / Lists & Saving, Math,
+  Text, Objects, Movement & Physics, Gameplay, Characters & AI, Sound / Camera & Screen, Scenes & Environment,
+  Input, Online, Debugging). Click a heading to fold its topics. There are 70 topics, each with a short
+  description on hover; the full list is in [visual_scripting_naming.md](visual_scripting_naming.md) and every node
+  under its topic is in [visual_scripting_topics.md](visual_scripting_topics.md). Above the topics are **Starter**,
+  **Recently used**, **All** and **Favourites**. A topic with many nodes opens into subcategories when you click it.
+  Click a node's star to make it a favourite (favourites are kept by node name, so a node that moves keeps its
+  star). Searching for an old group name ("Do something", "Check something", "Engine API", "Transform") or for the
+  topic a node used to sit in ("Scene", "Atmosphere", "Advanced", "Survival") still finds those nodes.
 - **Details:** the strip at the bottom says what the highlighted node takes and
   gives.
 - **Dragging from a pin:** only the nodes that fit that pin are listed.
@@ -700,7 +704,7 @@ entry OnStart 0
 ## Engine API nodes
 
 Every property and method of the typed script language is a node in the topic it
-belongs to (Movement, Math, Physics, Input, and the rest). There is no separate
+belongs to (Position, Numbers, Forces & Velocity, Keyboard, and the rest). There is no separate
 Engine API group. Search for "engine api" still lists them. A binding that does
 the same job as a hand-written node (Mathf.Abs, Transform.Translate) is hidden
 while browsing and still appears in search. That language is `okayscript-next` in the Script Editor's
@@ -1118,6 +1122,7 @@ The keys work while the Visual Script window has focus.
 
 Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`).
 The Add Node menu uses the topics in [visual_scripting_naming.md](visual_scripting_naming.md), not the older group headings below.
+For where a node sits in the menu, see [visual_scripting_topics.md](visual_scripting_topics.md) (every node under its topic).
 The words in bold are the name on the node. The word in backticks is the type stored in a `.okayvs` file.
 Names follow [visual_scripting_naming.md](visual_scripting_naming.md). Searching for an older name (for example "On Collision" or "On Var Changed") still finds the node.
 Script-binding nodes are the generated list in [engine_api.md](engine_api.md): one node for each script property and method. They are not copied here.

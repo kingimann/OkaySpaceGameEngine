@@ -125,9 +125,10 @@ PolyMesh QuadRemesh(const Mesh& src, const QuadRemeshOptions& opt, QuadRemeshRep
             }
         std::vector<char> border((std::size_t)nv, 0);
         for (const auto& kv : edgeUse) if (kv.second == 1) border[kv.first.first] = border[kv.first.second] = 1;
+        std::vector<Vec3> np;   // reused each pass (one copy of the positions per pass is the relaxation's double buffer)
         for (int it = 0; it < std::max(iters, opt.snapToSource ? 1 : 0); ++it) {
             if (it < iters) {
-                std::vector<Vec3> np = pm.verts;
+                np = pm.verts;
                 for (int v = 0; v < nv; ++v) {
                     if (border[v] || nb[v].empty()) continue;
                     Vec3 avg{0, 0, 0}; for (int n : nb[v]) avg = avg + pm.verts[n];

@@ -812,17 +812,18 @@ class GitHub:
         self._api("POST", "/issues/%d/comments" % number, {"body": body})
 
 
-def default_supabase_url(root):
-    """The project URL baked into CMakeLists.txt (public: the launcher ships with it), as scripts/publish-supabase.sh reads it."""
+def default_supabase_url(root, env=None):
+    """The project URL: OKAY_DEFAULT_ACCOUNT_URL from the environment (optional override), else config/public-account.json
+    (the one place the address lives; the launcher is built with it)."""
+    env = os.environ if env is None else env
+    url = (env.get("OKAY_DEFAULT_ACCOUNT_URL") or "").strip()
+    if url:
+        return url
     try:
-        with open(os.path.join(root, "CMakeLists.txt"), encoding="utf-8") as f:
-            for line in f:
-                m = re.match(r'^set\(OKAY_DEFAULT_ACCOUNT_URL\s+"(https://[a-z0-9]+\.supabase\.co)"', line)
-                if m:
-                    return m.group(1)
-    except OSError:
-        pass
-    return ""
+        with open(os.path.join(root, "config", "public-account.json"), encoding="utf-8") as f:
+            return str(json.load(f).get("url", "")).strip()
+    except (OSError, ValueError, AttributeError):
+        return ""
 
 
 def check_supabase_url(url, allow_any=False):
@@ -870,7 +871,7 @@ def main(argv=None, env=None):
               "Nothing was done. (docs/crash_reports.md says how to add it.)")
         return 0
     _SECRETS.extend([key, env.get("GITHUB_TOKEN", "")])
-    url = env.get("SUPABASE_URL") or default_supabase_url(root)
+    url = env.get("SUPABASE_URL") or default_supabase_url(root, env)
     if not url or not check_supabase_url(url, args.allow_any_host):
         print("::error::SUPABASE_URL is missing or is not an https://<project>.supabase.co address.")
         return 1

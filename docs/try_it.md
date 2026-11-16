@@ -78,6 +78,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -1228,6 +1229,18 @@ Recycle Bin call and the clicks were not run on Windows.
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## hygiene1. Repository hygiene: one account config file, no built programs in git
+
+What changes for you:
+
+1. **Nothing is required in GitHub.** The Supabase address and publishable key are now in one plain file, `config/public-account.json` (explained in `config/README.md`). Every build reads it. The GitHub repository variables `OKAY_DEFAULT_ACCOUNT_URL` / `OKAY_DEFAULT_ACCOUNT_KEY` are an optional override; leave them unset.
+2. **Optional: rotate the key.** In the Supabase dashboard (Project Settings > API) create a new publishable key, edit `key` in `config/public-account.json`, commit, then disable the old key. Keep the row-level security policies correct: they are what protects the data.
+3. Try it: run a release or "Test build" as usual; sign in works as before. The build log shows "Account server baked in: yes (from config/public-account.json)" (the key is never printed). To see the empty case, build locally with the file removed: the launcher prints `[account] No account server is set in this build` and starts without online features.
+4. `dist/` no longer holds programs. Use the installer, the zip or the launcher from a release, or build with `scripts/build-windows-dist.sh` (output `build-win-dist/`).
+5. New check: a branch that adds an `.exe`/`.dll`/`.so`/archive or a big binary file fails "No built programs or big binary files in git" (`python3 scripts/branch_lint.py binaries`).
+
+**Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
 
 ## Team tooling (not part of the Windows release)
 

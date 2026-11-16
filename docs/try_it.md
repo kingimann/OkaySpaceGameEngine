@@ -983,3 +983,20 @@ hooks per material (the table has the fields, the digger still plays the one dig
 5. Dust colour follows the dug material (stone dust is grey, dirt dust brown). A per-material dig sound needs a Voxel Digger object
    with an Audio Source and a WAV file named in the material's table entry; this is unverified.
 Tests: `ctest -R voxel_more`.
+
+### 7t, tools, items, veins, sound (third pass)
+
+1. **Pickaxe and shovel.** Voxel Digger card: tick **Tools from inventory** (the list shows `shovel:2,pickaxe:5,iron_pickaxe:7`).
+   Play on a scene that has an Inventory (the player). With empty hands you can only dig soft ground (sand, snow); stone
+   will not dig. Give the player an item called `pickaxe` (Inventory card, or a pickup) and stone digs.
+2. **Stackable dirt you can pick up and place.** Tick **Give inventory items**, dig: stacks of `dirt`, `stone`, `ore`... arrive in
+   the bag (8 dirt per cubic metre, set in the Materials table). Tick **Build from items**: right mouse now builds with those items
+   and uses them up; with none it does nothing.
+3. **Ore veins.** Voxel Terrain card: set **Ore Veins** to 30, press **Regenerate layers**: long winding yellow veins appear in the stone
+   (dig a trench to see them). The same **Seed** gives the same veins. **Topsoil**, **Dirt Depth**, **Rock Slope** and **Ore Pockets** are
+   sliders for the layers.
+4. **Dig sound per material.** Put a WAV file path in a material's table entry (code: `materials[i].digSound`), add an Audio Source to the
+   digger's object: the first time that material is dug the file is loaded and plays while you dig it. Tested headless that the clip is
+   loaded; the actual sound output is unverified.
+5. The brush marker now matches the brush shape (cube, flat disc, can).
+Tests: `ctest -R "voxel_more|voxel_bughunt"`.

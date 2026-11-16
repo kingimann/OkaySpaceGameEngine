@@ -3172,6 +3172,7 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
+VoxelTerrain::LayerRules g_voxRules;      // voxel material layers: the sliders on the Voxel Terrain card
 int   g_voxSeed    = 2024;            // voxel generate: seed (the same seed gives the same ground)
 float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
@@ -30214,7 +30215,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
                 v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
-                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed);
+                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
                 v->Apply(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -30223,9 +30224,16 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
             SectionHeader("Materials");
+            ImGui::DragFloat("Topsoil (m)##voxlay", &g_voxRules.topsoil, 0.05f, 0.0f, 10.0f);
+            ImGui::DragFloat("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 0.1f, 0.0f, 40.0f);
+            ImGui::SliderFloat("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepness above which the surface is bare stone.");
+            ImGui::SliderFloat("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
+            ImGui::SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
             if (!v->UseMaterials()) {
                 ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
-                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed); v->Apply(); ed.dirty = true; }
+                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
                 ImGui::SameLine();
                 if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
@@ -30257,7 +30265,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
-                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed); v->Apply(); ed.dirty = true; }
+                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
                 ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
@@ -30342,6 +30350,16 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
                 if (ImGui::DragFloat("Debris Life (s)##vdg", &vd->debrisLife, 0.5f, 1.0f, 120.0f)) ed.dirty = true;
                 if (ImGui::Checkbox("Give inventory items##vdg", &vd->giveItems)) ed.dirty = true;
+                if (ImGui::Checkbox("Tools from inventory##vdg", &vd->toolsFromInventory)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
+                if (vd->toolsFromInventory) {
+                    char tl[160]; std::strncpy(tl, vd->tools.c_str(), sizeof(tl) - 1); tl[sizeof(tl) - 1] = '\0';
+                    if (ImGui::InputText("Tools##vdg", tl, sizeof(tl))) { vd->tools = tl; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
+                    if (ImGui::DragFloat("Bare Hands Power##vdg", &vd->bareHandsPower, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+                }
+                if (ImGui::Checkbox("Build from items##vdg", &vd->buildFromItems)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
                 char hud[96]; std::strncpy(hud, vd->hudTarget.c_str(), sizeof(hud) - 1); hud[sizeof(hud) - 1] = '\0';
                 if (ImGui::InputText("Count Text Object##vdg", hud, sizeof(hud))) { vd->hudTarget = hud; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");

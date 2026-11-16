@@ -10,6 +10,8 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Audio/AudioLoad.hpp"
+#include <memory>
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -72,6 +74,29 @@ public:
     int   slumpPasses = 1;         ///< slump passes per frame (each moves at most 40 voxels): more = an avalanche that runs farther
     bool  collapse = false;        ///< pieces cut loose by a dig fall as debris instead of vanishing
     bool  giveItems = false;       ///< also hand `drop` items to the scene's Inventory when volume is stored
+    /// Tools from the inventory (OFF by default). On: the tool power is the best `tools` entry whose item the scene's Inventory holds
+    /// (`pickaxe:5` = an item called pickaxe digs materials up to hardness 5), or `bareHandsPower` with none. `power` is then ignored.
+    bool  toolsFromInventory = false;
+    std::string tools = "shovel:2,pickaxe:5,iron_pickaxe:7";
+    float bareHandsPower = 0.8f;
+    /// Building spends the material's `drop` items from the Inventory (`dropPerM3` items per cubic metre), and does nothing
+    /// without them. Dug ground arrives as the same items when `giveItems` is on, so a stack can be picked up and placed again.
+    bool  buildFromItems = false;
+    float CurrentPower() const {
+        if (!toolsFromInventory) return power;
+        Scene* sc = GetScene(); Inventory* inv = sc ? sc->FindObjectOfType<Inventory>() : nullptr;
+        float best = bareHandsPower;
+        if (!inv) return best;
+        std::size_t i = 0;
+        while (i < tools.size()) {
+            std::size_t e = tools.find(',', i); if (e == std::string::npos) e = tools.size();
+            const std::string one = tools.substr(i, e - i); i = e + 1;
+            const std::size_t c = one.find(':'); if (c == std::string::npos || c == 0) continue;
+            const float pw = (float)std::atof(one.c_str() + c + 1);
+            if (pw > best && inv->Has(one.substr(0, c))) best = pw;
+        }
+        return best;
+    }
     std::string hudTarget;         ///< name of a Text object that lists the store
     int  lastDigMaterial = -1;     ///< the material most of the last dig stroke took (-1 = none yet); also picks the dust colour and sound
     std::vector<double> store;     ///< cubic metres per material id
@@ -101,7 +126,7 @@ public:
     /// Undo the last stroke (Ctrl+Z while playing does this).
     bool UndoLastStroke() { VoxelTerrain* v = FindVoxel(); if (!v || !v->UndoStroke()) return false; v->Apply(); return true; }
     bool UsesRealLife(const VoxelTerrain& v) const {
-        return v.UseMaterials() || collect != Collect::Vanish || needsMaterial || creative || power < 1.0e8f || hardnessScale != 1.0f ||
+        return v.UseMaterials() || collect != Collect::Vanish || needsMaterial || creative || power < 1.0e8f || toolsFromInventory || buildFromItems || hardnessScale != 1.0f ||
                shape != VoxelTerrain::EditOptions::Shape::Sphere || depthLimit > 0.0f || protectBelow >= 0.0f || snapToGrid || slump || collapse;
     }
 
@@ -233,6 +258,8 @@ private:
     float strokeY_ = 0.0f;
     bool hudDirty_ = true;
     std::map<int, double> itemFrac_;
+    double buildFrac_ = 0.0;
+    std::map<std::string, std::shared_ptr<const AudioClip>> clipCache_;   // digSound files already loaded (or failed)
 
     void RefreshHud() {
         if (!hudDirty_ || hudTarget.empty()) return;
@@ -253,7 +280,7 @@ private:
     /// The Dig / Add brush with materials, hardness, shapes and conservation of volume.
     bool RealEdit(VoxelTerrain& vox, const Vec3& local, float amt, bool dig) {
         VoxelTerrain::EditOptions o;
-        o.shape = shape; o.hardnessScale = hardnessScale; o.power = power; o.snap = snapToGrid;
+        o.shape = shape; o.hardnessScale = hardnessScale; o.power = CurrentPower(); o.snap = snapToGrid;
         o.protectBelowY = protectBelow; if (depthLimit > 0.0f) { o.maxDepth = depthLimit; o.depthOriginY = strokeY_; }
         o.addMaterial = vox.UseMaterials() ? addMaterial : -1;
         if (dig) {
@@ -270,8 +297,19 @@ private:
         // building: from the store when it is needed, an unlimited supply otherwise
         const int mid = vox.UseMaterials() ? addMaterial : 0;
         if (needsMaterial && !creative && Stored(mid) <= 1e-6) return false;
+        Inventory* binv = nullptr; const VoxelTerrain::VoxelMaterial* bm = nullptr;
+        if (buildFromItems && vox.UseMaterials() && mid < (int)vox.materials.size() && !vox.materials[(std::size_t)mid].drop.empty()) {
+            bm = &vox.materials[(std::size_t)mid];
+            Scene* sc = GetScene(); binv = sc ? sc->FindObjectOfType<Inventory>() : nullptr;
+            if (!binv || !binv->Has(bm->drop)) return false;               // nothing to build with
+        }
         const auto r = vox.Edit(local, radius, -amt, o);
         if (!r.changed) return false;
+        if (binv && bm) {
+            buildFrac_ += r.added * bm->dropPerM3;
+            const int whole = (int)buildFrac_;
+            if (whole > 0) { binv->Remove(bm->drop, std::min(whole, binv->Count(bm->drop))); buildFrac_ -= whole; }
+        }
         if (needsMaterial && !creative) { store[(std::size_t)mid] = std::max(0.0, store[(std::size_t)mid] - r.added); hudDirty_ = true; }
         return true;
     }
@@ -334,6 +372,7 @@ private:
     }
     GameObject* brush_ = nullptr;
     GameObject* debris_ = nullptr;
+    int  brushShapeShown_ = 0;   ///< which marker mesh the brush object has (a VoxelTerrain::EditOptions::Shape)
     bool m_wasActing = false;   ///< were we digging last frame? (to clean up crumbs on release)
     mutable std::uint64_t voxOwner_ = 0;   ///< InstanceId of the object that holds the VoxelTerrain (when it is not this one)
     bool soundHeld_ = false;
@@ -347,8 +386,18 @@ private:
         b->active = true;
         b->transform->localPosition = vox.gameObject->transform->TransformPoint(local);
         float dscale = radius * 2.0f;   // sphere mesh has radius 0.5
-        b->transform->localScale = {dscale, dscale, dscale};
-        if (auto* mr = b->GetComponent<MeshRenderer>()) mr->color = brushColor;
+        // the marker follows the brush shape: a cube for Cube, a squashed disc for Plane, a tall can for Cylinder
+        float sx = dscale, sy = dscale, sz = dscale;
+        if (shape == VoxelTerrain::EditOptions::Shape::Plane) sy = dscale / 3.0f;
+        else if (shape == VoxelTerrain::EditOptions::Shape::Cylinder) sy = dscale;
+        b->transform->localScale = {sx, sy, sz};
+        if (auto* mr = b->GetComponent<MeshRenderer>()) {
+            mr->color = brushColor;
+            if (brushShapeShown_ != (int)shape) {
+                brushShapeShown_ = (int)shape;
+                mr->mesh = shape == VoxelTerrain::EditOptions::Shape::Cube ? Mesh::Cube() : (shape == VoxelTerrain::EditOptions::Shape::Cylinder ? Mesh::Cylinder(0.5f, 1.0f, 16) : Mesh::Sphere(0.5f, 8, 12));
+            }
+        }
     }
     void HideBrush() { if (brush_) brush_->active = false; }
 
@@ -405,10 +454,17 @@ private:
     void DigSound(bool acting) {
         AudioSource* au = gameObject ? gameObject->GetComponent<AudioSource>() : nullptr;
         if (!au) { soundHeld_ = false; return; }
-        if (acting && lastDigMaterial >= 0) {      // the dug material's own clip, when the table names one
+        if (acting && lastDigMaterial >= 0) {      // the dug material's own clip, loaded the first time it is used
             if (VoxelTerrain* vt = FindVoxel()) if (vt->UseMaterials() && lastDigMaterial < (int)vt->materials.size()) {
                 const std::string& want = vt->materials[(std::size_t)lastDigMaterial].digSound;
-                if (!want.empty() && au->clipPath != want) { if (soundHeld_ && soundStarted_) au->Stop(); au->clipPath = want; au->clip = AudioClip(); soundHeld_ = false; }
+                if (!want.empty() && au->clipPath != want) {
+                    if (soundHeld_ && soundStarted_) au->Stop();
+                    auto it = clipCache_.find(want);
+                    if (it == clipCache_.end()) it = clipCache_.emplace(want, LoadAudioFile(want)).first;   // an empty pointer = tried, failed: not retried every frame
+                    au->clipPath = want;
+                    if (it->second) { au->clip = *it->second; soundHeld_ = false; }
+                    else { au->clip = AudioClip(); soundHeld_ = false; }
+                }
             }
         }
         if (acting) {

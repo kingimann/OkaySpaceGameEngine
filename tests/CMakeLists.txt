@@ -1144,7 +1144,12 @@ add_test(NAME voxel_digger_real COMMAND test_voxel_digger_real)
 
 add_executable(test_voxel_more test_voxel_more.cpp)
 target_link_libraries(test_voxel_more PRIVATE okay::engine)
+target_compile_definitions(test_voxel_more PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME voxel_more COMMAND test_voxel_more)
+
+add_executable(test_voxel_bughunt test_voxel_bughunt.cpp)
+target_link_libraries(test_voxel_bughunt PRIVATE okay::engine)
+add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
 add_executable(test_voxel_chunks test_voxel_chunks.cpp)
 target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
 add_test(NAME voxel_chunks COMMAND test_voxel_chunks)

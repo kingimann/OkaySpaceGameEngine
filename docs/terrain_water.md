@@ -101,6 +101,17 @@ tool); Arcade = everything vanishes, building is free (the old behaviour); Creat
 * **Avalanche** (`slumpPasses`): several bounded slump passes per frame, so loose ground runs farther down a slope.
 * **Seed**: the Voxel Terrain card has a Seed field; the same seed gives the same ground and layers.
 
+**Third pass.**
+* **Tools from the inventory** (`toolsFromInventory`, `tools` = `item:power` list, `bareHandsPower`): the dig power is the best listed
+  item the scene's Inventory holds. **Build from items** (`buildFromItems`): building spends the material's `drop` items
+  (`dropPerM3` per cubic metre) and does nothing without them; `giveItems` makes dug ground arrive as the same items, so a stack
+  can be picked up and placed again. Both are off by default and saved.
+* **Ore veins** (`LayerRules::oreVeins`, `veinThickness`): winding worms of ore through the stone, deterministic for the seed.
+  The Voxel Terrain card has sliders for topsoil, dirt depth, rock slope, ore pockets and veins.
+* **Dig sound**: the digger loads the dug material's `digSound` file through the audio loader the first time it is used and
+  plays it on its Audio Source.
+* A tool too weak for the ground no longer erodes the surface at all (it used to lower the air cells next to it).
+
 Costs (CPU only, Linux, `-O2` build, per `Scene::Update` while holding the mouse; `bench_voxel_real`): the old digger 0.4 to 0.6 ms
 median, the Realistic preset 1.0 to 1.3 ms, debris-heavy (150 live bodies, big brush) 4 to 8 ms, mostly physics. The frame that
 carries a collapse costs more (p95 5 ms). Limits: one body per piece uses a box collider (a piece lands on its bounding box), and

@@ -1425,7 +1425,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
-            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << "\n";
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7473,7 +7474,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                            >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
                         vd->hudTarget = ReadQuoted(in);
                         in >> std::ws;
-                        if (std::isdigit(in.peek())) { in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses)); }
+                        if (std::isdigit(in.peek())) {
+                            int tf = 0, bf = 0;
+                            in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses));
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0; }
+                        }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
                         vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));

@@ -66,6 +66,27 @@ and a few probes ran against an `-O0` library, said where). No GPU, no Windows. 
 | Foliage ray cost on voxel meshes | 1.1 ms per ray single, 0.32 ms chunked | LIMIT | measured earlier | listed |
 | Network | dig edits are local only: in multiplayer each player's terrain would differ | LIMIT | by reading: `VoxelTerrain` has no replication, edits are not sent | listed (the host would have to own the field and send `Edit` calls) |
 
+## Bug hunt (third pass, `tests/test_voxel_bughunt.cpp` and `tests/test_voxel_more.cpp`)
+
+Each row was tried with a test. "OK" means the test passed without a change.
+
+| Way to break it | Result | Done |
+|---|---|---|
+| Grids of 0, 1, 2, 3x1x5 cells: every brush, slump, loose pieces, undo, save, load, Update | OK (a grid is never smaller than 2 cells per side, `Resize` clamps) | - |
+| NaN, infinite, enormous (1e30) and tiny (1e-30) radius, centre, amount, tool power, bedrock height, depth limit, volume | OK, the field stays finite; `AddVolume` of 1e12 stops | - |
+| Edits on every grid corner, edge and just outside the grid, with and without materials, then compare the drawn surface with a full rebuild | OK, 0 triangles differ (the chunked surface and normals at the borders agree) | - |
+| 3000 fast random edits in one stroke with slumps, then Ctrl+Z | OK, exact restore of density and materials | - |
+| A stroke begun twice without ending | OK | - |
+| Save, load, save, load | OK, worst density error 0.015, no drift on later round trips, materials equal | - |
+| Play, dig with the Realistic digger, Stop (snapshot restored) | OK, field back within 0.05, no undo history, store not saved, debris not saved | - |
+| Two terrains in one scene, camera over the second | OK, only the aimed terrain changes; destroying one leaves the other's chunks | - |
+| Terrain under an inactive parent | OK, reactivating shows the dug terrain | - |
+| A tool too weak for the ground (`power` below the hardness) | **BUG**: it still lowered the air cells beside the surface, so the surface eroded a little although `removed` was 0 | an air cell may now only change if a solid neighbour is a material the tool can dig |
+| Brush marker with Cube, Cylinder or Plane brush | **BUG** (looks): the marker was always a sphere | the marker mesh and scale follow the shape |
+| Editor undo and redo of voxel edits | UNVERIFIED: the Inspector buttons (Generate, Solid Slab, Clear, Layered ground) are scene edits; Ctrl+Z in Play belongs to the digger. No headless way to press the editor's undo | listed |
+| Streaming of edited voxel cells | covered by the first audit (`editCount` keeps the cell) | - |
+| Dig edits over the network | LIMIT: not replicated | listed |
+
 ## What is not covered
 
 Physics core (another lane), the player controller (another lane), vegetation placement quality, heightmap terrain save size, Direct3D 12.

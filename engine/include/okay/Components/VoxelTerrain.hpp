@@ -166,6 +166,8 @@ public:
         float sandBelow = -1.0f;                      ///< local height under which the top is sand (-1 = 12% of the height)
         float snowAbove = -1.0f;                      ///< local height over which the top is snow (-1 = the top 15% of the field)
         float oreAmount = 0.06f, clayAmount = 0.08f;  ///< share of the stone / dirt that is ore / clay
+        int   oreVeins = 0;                           ///< long winding veins of ore through the stone (0 = none); each is a worm about 3 voxels thick and up to 60 long
+        float veinThickness = 1.2f;                   ///< vein radius in voxels
     };
     void GenerateMaterials(unsigned seed, const LayerRules& rules);
     void GenerateMaterials(unsigned seed) { GenerateMaterials(seed, LayerRules{}); }

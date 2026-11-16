@@ -106,6 +106,30 @@ void VoxelTerrain::GenerateMaterials(unsigned seed, const LayerRules& r) {
                 material[idx] = (unsigned char)id;
             }
         }
+    // ore veins: random walks through the stone, deterministic for the seed
+    if (r.oreVeins > 0 && nx > 2 && ny > 2 && nz > 2) {
+        for (int k = 0; k < r.oreVeins && k < 500; ++k) {
+            float px = Hash01(k, 1, 7, seed) * (nx - 1), py = Hash01(k, 2, 7, seed) * (ny - 1) * 0.7f, pz = Hash01(k, 3, 7, seed) * (nz - 1);
+            float ax = Hash01(k, 4, 7, seed) * 6.2831853f, ay = (Hash01(k, 5, 7, seed) - 0.5f) * 1.2f;
+            const float rad = std::max(0.5f, r.veinThickness);
+            for (int step = 0; step < 60; ++step) {
+                const int x0 = (int)std::floor(px - rad), x1 = (int)std::ceil(px + rad), y0 = (int)std::floor(py - rad), y1 = (int)std::ceil(py + rad),
+                          z0 = (int)std::floor(pz - rad), z1 = (int)std::ceil(pz + rad);
+                for (int z = std::max(0, z0); z <= std::min(nz - 1, z1); ++z)
+                    for (int y = std::max(0, y0); y <= std::min(ny - 1, y1); ++y)
+                        for (int x = std::max(0, x0); x <= std::min(nx - 1, x1); ++x) {
+                            const float dx = x - px, dy = y - py, dz = z - pz;
+                            if (dx * dx + dy * dy + dz * dz > rad * rad) continue;
+                            const int idx = Index(x, y, z);
+                            if (density[idx] > iso && material[idx] == stone) material[idx] = (unsigned char)ore;
+                        }
+                ax += (Hash01(k, step, 11, seed) - 0.5f) * 0.9f; ay += (Hash01(k, step, 13, seed) - 0.5f) * 0.5f;
+                ay = std::max(-0.8f, std::min(0.8f, ay));
+                px += std::cos(ax) * std::cos(ay); py += std::sin(ay); pz += std::sin(ax) * std::cos(ay);
+                if (px < 0 || py < 0 || pz < 0 || px > nx - 1 || py > ny - 1 || pz > nz - 1) break;
+            }
+        }
+    }
     ++matRev_; mcAllDirty_ = true;
 }
 
@@ -169,6 +193,21 @@ VoxelTerrain::EditResult VoxelTerrain::Edit(const Vec3& localIn, float radius, f
                 float& cell = density[(std::size_t)idx];
                 const int mid = mats ? (int)material[(std::size_t)idx] : 0;
                 float eff = amount * fall;
+                if (dig && cell <= iso && mats && o.power < 1.0e8f) {
+                    // an air cell beside the surface moves the surface when it is lowered, so a tool too weak for the ground it
+                    // touches must not lower it either: it may only change if some solid neighbour is a material the tool can dig
+                    bool can = false;
+                    static const int nb[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+                    for (const auto& n : nb) {
+                        const int ax = x + n[0], ay = y + n[1], az = z + n[2];
+                        if (!InBounds(ax, ay, az)) continue;
+                        const int ni = Index(ax, ay, az);
+                        if (density[(std::size_t)ni] <= iso) continue;
+                        const int nm = material[(std::size_t)ni];
+                        if (nm >= (int)materials.size() || o.power >= materials[(std::size_t)nm].hardness) { can = true; break; }
+                    }
+                    if (!can) continue;
+                }
                 if (dig && cell > iso) {                         // only solid ground resists
                     const float hard = mats && mid < (int)materials.size() ? materials[(std::size_t)mid].hardness : 1.0f;
                     if (o.power < hard) continue;                // the tool is too weak for this material

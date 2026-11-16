@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 
 using namespace okay;
@@ -100,7 +101,16 @@ int main() {
         const int stone = w.v->MaterialIndex("Stone");
         for (auto& m : w.v->material) m = (unsigned char)stone;
         w.v->materials[(std::size_t)stone].particle = Color::FromBytes(10, 200, 30);
-        w.v->materials[(std::size_t)stone].digSound = "sounds/pick_stone.wav";
+        const std::string wav = std::string(OKAY_TEST_OUTPUT_DIR) + "/voxel_pick_stone.wav";
+        {   // a 0.1 s, 16-bit mono, 8 kHz WAV written by hand
+            const int n = 800; std::string d((std::size_t)n * 2, '\0');
+            for (int i = 0; i < n; ++i) { const short v = (short)(8000.0 * std::sin(i * 0.3)); d[(std::size_t)i * 2] = (char)(v & 255); d[(std::size_t)i * 2 + 1] = (char)((v >> 8) & 255); }
+            auto le = [](std::string& o, unsigned x, int bytes) { for (int b = 0; b < bytes; ++b) o.push_back((char)((x >> (8 * b)) & 255)); };
+            std::string f = "RIFF"; le(f, 36 + (unsigned)d.size(), 4); f += "WAVEfmt "; le(f, 16, 4); le(f, 1, 2); le(f, 1, 2); le(f, 8000, 4); le(f, 16000, 4); le(f, 2, 2); le(f, 16, 2);
+            f += "data"; le(f, (unsigned)d.size(), 4); f += d;
+            std::ofstream(wav, std::ios::binary) << f;
+        }
+        w.v->materials[(std::size_t)stone].digSound = wav;
         auto* au = w.tg->AddComponent<AudioSource>();
         w.d->ApplyPreset(VoxelDigger::Preset::Arcade); w.d->power = 9.0f; w.d->shape = VoxelTerrain::EditOptions::Shape::Sphere;
         w.d->collect = VoxelDigger::Collect::Store;
@@ -113,7 +123,73 @@ int main() {
         auto* ps = dust ? dust->GetComponent<ParticleSystem>() : nullptr;
         CHECK(ps != nullptr);
         if (ps) CHECK(ps->startColor.g > 0.7f && ps->startColor.r < 0.1f);
-        CHECK(au->clipPath == "sounds/pick_stone.wav");
+        CHECK(au->clipPath == wav);
+        CHECK(!au->Clip().samples.empty());                                  // loaded the first time the material was dug
+    }
+
+    // --- tools and building items come from the inventory ----------------------------------------------------------------------------------
+    {
+        World w({0, 0, 0}, 0.0f, 1.0f);
+        GameObject* pl = w.s.CreateGameObject("Player");
+        auto* inv = pl->AddComponent<Inventory>();
+        const int stone = w.v->MaterialIndex("Stone"), dirt = w.v->MaterialIndex("Dirt");
+        for (auto& m : w.v->material) m = (unsigned char)stone;
+        w.d->collect = VoxelDigger::Collect::Store; w.d->giveItems = true; w.d->toolsFromInventory = true;
+        w.d->shape = VoxelTerrain::EditOptions::Shape::Sphere;
+        w.AimAtLocal({0, 15.0f, 0});
+        const std::vector<float> d0 = w.v->density;
+        Input::FeedMouse({0, 0}, 1u);
+        for (int i = 0; i < 30; ++i) w.s.Update(1.0f / 60.0f);
+        Input::FeedMouse({0, 0}, 0u); w.s.Update(1.0f / 60.0f);
+        CHECK(w.d->CurrentPower() < 1.0f);
+        CHECK(w.v->density == d0);                                          // bare hands cannot dig stone
+        inv->AddPartial("pickaxe", 1);
+        CHECK(w.d->CurrentPower() >= 5.0f);
+        Input::FeedMouse({0, 0}, 1u);
+        for (int i = 0; i < 60; ++i) w.s.Update(1.0f / 60.0f);
+        Input::FeedMouse({0, 0}, 0u); w.s.Update(1.0f / 60.0f);
+        CHECK(w.v->density != d0);                                          // a pickaxe can
+        const int gotStone = inv->Count("stone");
+        std::cout << "  pickaxe dug stone: " << gotStone << " stone items in the bag\n";
+        CHECK(gotStone > 0);
+        // building spends the items; with none it does nothing
+        w.d->buildFromItems = true; w.d->addMaterial = dirt; w.d->toolsFromInventory = false;
+        const std::vector<float> d1 = w.v->density;
+        Input::FeedMouse({0, 0}, 2u);
+        for (int i = 0; i < 20; ++i) w.s.Update(1.0f / 60.0f);
+        Input::FeedMouse({0, 0}, 0u); w.s.Update(1.0f / 60.0f);
+        CHECK(w.v->density == d1);                                          // no dirt items: nothing to build with
+        inv->AddPartial("dirt", 40);
+        Input::FeedMouse({0, 0}, 2u);
+        for (int i = 0; i < 40; ++i) w.s.Update(1.0f / 60.0f);
+        Input::FeedMouse({0, 0}, 0u); w.s.Update(1.0f / 60.0f);
+        std::cout << "  built from items: 40 dirt -> " << inv->Count("dirt") << "\n";
+        CHECK(w.v->density != d1 && inv->Count("dirt") < 40);
+        // saved
+        const std::string text = SceneSerializer::Serialize(w.s);
+        Scene s2("L"); s2.physicsEnabled = false;
+        w.d->toolsFromInventory = true; w.d->tools = "spade:3"; w.d->bareHandsPower = 1.5f;
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(w.s)));
+        auto* d2 = s2.Find("Terrain")->GetComponent<VoxelDigger>();
+        CHECK(d2->toolsFromInventory && d2->buildFromItems && d2->tools == "spade:3" && d2->bareHandsPower == 1.5f);
+        (void)text;
+    }
+
+    // --- ore veins in the generator --------------------------------------------------------------------------------------------------------
+    {
+        auto ore = [](int veins, unsigned seed) {
+            VoxelTerrain v; v.Resize(50, 40, 50); v.voxelSize = 1.0f; v.Generate(0.6f, 5.0f, 0.0f, 3u);
+            VoxelTerrain::LayerRules r; r.oreAmount = 0.0f; r.oreVeins = veins;
+            v.GenerateMaterials(seed, r);
+            std::vector<unsigned char> m = v.material; int n = 0; const int id = v.MaterialIndex("Ore");
+            for (std::size_t i = 0; i < m.size(); ++i) if (m[i] == id && v.density[i] > v.iso) ++n;
+            return std::make_pair(n, m);
+        };
+        const auto none = ore(0, 5u), some = ore(25, 5u), again = ore(25, 5u), other = ore(25, 6u);
+        std::cout << "  ore voxels: no veins " << none.first << ", 25 veins " << some.first << "\n";
+        CHECK(none.first == 0 && some.first > 150);
+        CHECK(some.second == again.second);                                  // same seed, same veins
+        CHECK(some.second != other.second);
     }
 
     // --- the catch is saved --------------------------------------------------------------------------------------------------------

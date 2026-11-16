@@ -98,7 +98,9 @@ int main() {
 #if !defined(__SANITIZE_THREAD__) && !defined(__SANITIZE_ADDRESS__)
     {
         bool threw = false;
-        try { char* big = new char[static_cast<std::size_t>(-1) / 4]; g_sink = big; delete[] big; }
+        // the size is a run-time value: as a constant, clang rejects the array type as too large
+        volatile std::size_t hugeCount = static_cast<std::size_t>(-1) / 4;
+        try { char* big = new char[hugeCount]; g_sink = big; delete[] big; }
         catch (const std::bad_alloc&) { threw = true; }
         CHECK(threw);
         CHECK(::operator new(static_cast<std::size_t>(-1) / 4, std::nothrow) == nullptr);

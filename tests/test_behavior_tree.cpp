@@ -829,6 +829,10 @@ int main() {
     // build directory, or the test directory. Reads only: nothing is written there.
     auto repoFile = [](const std::string& rel) {
         namespace fs = std::filesystem;
+#ifdef OKAY_SOURCE_DIR
+        // The source folder first: a build folder outside the checkout has no examples/ above it.
+        if (fs::exists(fs::path(OKAY_SOURCE_DIR) / rel)) return (fs::path(OKAY_SOURCE_DIR) / rel).string();
+#endif
         fs::path p = fs::current_path();
         for (int i = 0; i < 8; ++i) {
             if (fs::exists(p / rel)) return (p / rel).string();

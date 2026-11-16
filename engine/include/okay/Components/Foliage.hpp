@@ -99,7 +99,11 @@ public:
     void OnDestroy() override;
 
     /// Chunk of a local XZ point (for tests).
-    static long long ChunkKey(int cx, int cz) { return ((long long)cx << 32) ^ (unsigned)cz; }
+    /// Packs cx in the high 32 bits and cz in the low 32 bits. Done in unsigned arithmetic: shifting a negative signed
+    /// value left is undefined in C++17, and chunks left of or behind the origin have negative indices.
+    static long long ChunkKey(int cx, int cz) {
+        return (long long)(((unsigned long long)(unsigned)cx << 32) | (unsigned long long)(unsigned)cz);
+    }
 
 private:
     struct Chunk { std::uint64_t objectId = 0; };

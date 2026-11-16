@@ -64,7 +64,8 @@ std::vector<unsigned char> WavBytes(int fmt, int ch, int rate, int bits, const s
     Put32(v, (std::uint32_t)(36 + data.size()));
     v.insert(v.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
     Put32(v, 16); Put16(v, (std::uint32_t)fmt); Put16(v, (std::uint32_t)ch); Put32(v, (std::uint32_t)rate);
-    Put32(v, (std::uint32_t)(rate * ch * bits / 8)); Put16(v, (std::uint32_t)(ch * bits / 8)); Put16(v, (std::uint32_t)bits);
+    Put32(v, (std::uint32_t)((std::uint64_t)(std::uint32_t)rate * (std::uint32_t)ch * (std::uint32_t)bits / 8));
+    Put16(v, (std::uint32_t)(ch * bits / 8)); Put16(v, (std::uint32_t)bits);
     v.insert(v.end(), {'d', 'a', 't', 'a'});
     Put32(v, declaredData == 0xFFFFFFFEu ? (std::uint32_t)data.size() : declaredData);
     v.insert(v.end(), data.begin(), data.end());

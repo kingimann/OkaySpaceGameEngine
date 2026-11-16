@@ -1,3 +1,5 @@
+#include "okay/Render/Culling.hpp"
+#include <chrono>
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -77,8 +79,27 @@ std::vector<std::string> FrameOverlay::Format(const FrameStatsSnapshot& st, cons
     return out;
 }
 
+VoxelOverlayStats& FrameOverlay::Voxel() { static VoxelOverlayStats v; return v; }
+
+double FrameOverlay::NowSeconds() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 std::vector<std::string> FrameOverlay::Lines(const GameLoop& loop) {
-    return Format(loop.Stats().Snapshot(), StateOf(loop));
+    std::vector<std::string> out = Format(loop.Stats().Snapshot(), StateOf(loop));
+    // Where the time goes in a voxel scene: only while a voxel terrain is running (it reported within the last second).
+    const VoxelOverlayStats& v = Voxel();
+    if (NowSeconds() - v.seenAt < 1.0) {
+        out.push_back("voxel: " + std::to_string(v.terrains) + (v.terrains == 1 ? " terrain, " : " terrains, ") + std::to_string((long long)v.triangles) +
+                      " triangles, " + (v.chunkObjects > 0 ? std::to_string(v.chunkObjects) + " chunk objects of " + std::to_string(v.chunksTotal) : "one combined mesh (" + std::to_string(v.chunksTotal) + " chunks)"));
+        out.push_back("voxel: terrain " + Num("%.2f", v.updateMs) + " ms/frame, digger " + Num("%.2f", v.digMs) + " ms/frame, last rebuild " +
+                      Num("%.2f", v.lastMeshMs) + " ms (" + std::to_string(v.lastChunksRemeshed) + " chunks)" + (v.oldRemesh ? "  OLD REMESH ON" : ""));
+        const CullCounters& c = LastCullCounters();
+        if (c.drawn + c.culled > 0)
+            out.push_back("draw: " + std::to_string(c.drawn) + " drawn, " + std::to_string(c.culled) + " frustum-culled, " + std::to_string(c.occluded) +
+                          " occluded, " + std::to_string(c.batches) + " batches");
+    }
+    return out;
 }
 
 std::string FrameOverlay::Text(const std::vector<std::string>& lines) {

@@ -51,8 +51,27 @@ struct FrameOverlayState {
     std::vector<std::string> pausedBy; ///< Game::PauseReasons(), oldest first (empty = running)
 };
 
+/// What the voxel terrain reports about itself for the overlay (written by VoxelTerrain / VoxelDigger each frame, read by Lines()).
+/// `seenAt` is a steady-clock second count; the overlay shows the voxel lines only while it is recent.
+struct VoxelOverlayStats {
+    double seenAt = -1e9;
+    int    terrains = 0;
+    int    chunkObjects = 0;        ///< renderer objects drawing the surface (0 = one combined mesh)
+    int    chunksTotal = 0;
+    long   triangles = 0;           ///< triangles of the terrain's meshes
+    double updateMs = 0.0;          ///< the terrain's own per-frame work (Update, fluid, footprints, generation), smoothed
+    double digMs = 0.0;             ///< the digger's per-frame work, smoothed
+    double lastMeshMs = 0.0;        ///< the last surface rebuild (marching cubes and hand-off)
+    int    lastChunksRemeshed = 0;
+    bool   oldRemesh = false;       ///< OKAY_VOXEL_OLD_REMESH is on
+};
+
 class FrameOverlay {
 public:
+    /// The voxel terrain's numbers for the overlay.
+    static VoxelOverlayStats& Voxel();
+    /// The seconds on the clock the overlay uses (steady).
+    static double NowSeconds();
     /// The state of the loop, Time and Game right now.
     static FrameOverlayState StateOf(const GameLoop& loop);
 

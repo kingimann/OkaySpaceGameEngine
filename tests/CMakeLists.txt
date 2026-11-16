@@ -2305,7 +2305,7 @@ add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
 # The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
 if(SDL2_FOUND)
-    add_executable(test_voice_races test_voice_races.cpp)
+    add_executable(test_voice_races test_voice_races.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)   # VoiceChat.hpp uses the launcher's own threads
     target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME voice_races COMMAND test_voice_races)

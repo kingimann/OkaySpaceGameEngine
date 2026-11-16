@@ -16,6 +16,7 @@
 #pragma once
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "LauncherThreads.hpp"          // threads, mutexes and atomics: our own, in place of SDL's
 #include "okay/Crypto/Sha256.hpp"     // SHA-256 for the room key (the engine's one copy)
 #include "okay/Net/RelayHello.hpp"      // the shared relay hello (version 4: cookie + nonce) and welcome check
 #include <algorithm>
@@ -200,7 +201,7 @@ public:
     bool Start(const std::string& relayHost, std::uint16_t relayPort, const std::string& room,
                const std::string& keyText, const std::string& myUid, const std::string& myName) {
         Stop();
-        if (!m_mx) m_mx = SDL_CreateMutex();
+        if (!m_mx) m_mx = okay::lt::NewMutex();
         m_room = room; m_uid = myUid; m_name = myName;
         m_key = Sha256("okayspace-voice-v1|" + keyText);
         std::random_device rd; m_sid = ((std::uint32_t)rd() << 1) | 1u; m_seq = 0;
@@ -220,7 +221,7 @@ public:
         if (!m_play) { Fail("No audio output device"); Stop(); return false; }
         if (!m_cap) SetError("No microphone found \xE2\x80\x94 you can listen but not talk");
         m_run = true;
-        m_thread = SDL_CreateThread(&Session::NetThread, "okay-voice", this);
+        m_thread = okay::lt::StartThread(&Session::NetThread, "okay-voice", this);
         if (m_cap) m_cap->Pause(false);
         m_play->Pause(false);
         return true;
@@ -228,12 +229,12 @@ public:
     void Stop() {
         if (m_run) {
             m_run = false;
-            if (m_thread) { SDL_WaitThread(m_thread, nullptr); m_thread = nullptr; }
+            if (m_thread) { okay::lt::WaitThread(m_thread, nullptr); m_thread = nullptr; }
         }
         m_cap.reset();
         m_play.reset();
         m_udp.Close();
-        if (m_mx) { SDL_LockMutex(m_mx); m_peers.clear(); m_capQ.clear(); SDL_UnlockMutex(m_mx); }
+        if (m_mx) { okay::lt::LockMutex(m_mx); m_peers.clear(); m_capQ.clear(); okay::lt::UnlockMutex(m_mx); }
         if (m_state != Failed) m_state = Idle;
         m_room.clear();
     }
@@ -257,7 +258,7 @@ public:
     std::vector<PeerView> Peers() {
         std::vector<PeerView> out;
         if (!m_mx) return out;
-        SDL_LockMutex(m_mx);
+        okay::lt::LockMutex(m_mx);
         const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) {
             if (now - p.lastHeard > 5000) continue;
@@ -265,14 +266,14 @@ public:
             v.speaking = now - p.lastVoice < 300; v.muted = p.muted; v.deafened = p.deaf;
             out.push_back(v);
         }
-        SDL_UnlockMutex(m_mx);
+        okay::lt::UnlockMutex(m_mx);
         return out;
     }
 
 private:
     struct Guard {
-        SDL_mutex* m; explicit Guard(SDL_mutex* mx) : m(mx) { if (m) SDL_LockMutex(m); }
-        ~Guard() { if (m) SDL_UnlockMutex(m); }
+        okay::lt::Mutex* m; explicit Guard(okay::lt::Mutex* mx) : m(mx) { if (m) okay::lt::LockMutex(m); }
+        ~Guard() { if (m) okay::lt::UnlockMutex(m); }
     };
     void SetError(const std::string& e) { Guard g(m_mx); m_error = e; }
     void Fail(const std::string& e) { Guard g(m_mx); m_error = e; m_state = Failed; }   // the text is visible before the state flips
@@ -294,7 +295,7 @@ private:
         const std::int16_t* smp = (const std::int16_t*)stream;
         const int n = len / 2;
         const float g = s->m_inGain;
-        SDL_LockMutex(s->m_mx);
+        okay::lt::LockMutex(s->m_mx);
         for (int i = 0; i < n; ++i) {
             // Gain + a gentle high-pass (removes rumble / DC offset before the gate).
             const float x = smp[i] * g;
@@ -305,14 +306,14 @@ private:
                 s->m_capFill = 0;
             }
         }
-        SDL_UnlockMutex(s->m_mx);
+        okay::lt::UnlockMutex(s->m_mx);
     }
     static void PlayCb(void* ud, Uint8* stream, int len) {
         Session* s = (Session*)ud;
         std::int16_t* out = (std::int16_t*)stream;
         const int n = len / 2;
         std::vector<int> mix((std::size_t)n, 0);
-        SDL_LockMutex(s->m_mx);
+        okay::lt::LockMutex(s->m_mx);
         for (auto& [slot, p] : s->m_peers) {
             if (!p.primed) { if (p.jitter.size() >= 3) p.primed = true; else continue; }   // 60 ms cushion
             for (int i = 0; i < n; ++i) {
@@ -321,7 +322,7 @@ private:
                 if (p.readPos == kFrame) { p.jitter.pop_front(); p.readPos = 0; }
             }
         }
-        SDL_UnlockMutex(s->m_mx);
+        okay::lt::UnlockMutex(s->m_mx);
         const bool deaf = s->m_deaf;
         const float vol = s->m_outVol;
         for (int i = 0; i < n; ++i) out[i] = deaf ? 0 : (std::int16_t)std::clamp((int)(mix[(std::size_t)i] * vol), -32768, 32767);
@@ -355,10 +356,10 @@ private:
         if (m_mySlot != m_hubSlot) { SendTo(m_hubSlot, kind, 0, body); return; }
         // I'm the hub: send to every member I've heard from.
         std::vector<std::uint32_t> dests;
-        SDL_LockMutex(m_mx);
+        okay::lt::LockMutex(m_mx);
         const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) if (now - p.lastHeard < 5000) dests.push_back(slot);
-        SDL_UnlockMutex(m_mx);
+        okay::lt::UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
     }
     // Relay protocol v4 (engine/include/okay/Net/RelayHello.hpp, the same builder the
@@ -396,11 +397,11 @@ private:
         const bool amHub = m_mySlot != 0 && m_mySlot == m_hubSlot;
         if (amHub && src != m_mySlot) {   // relay it to everyone else in the room
             std::vector<std::uint32_t> dests;
-            SDL_LockMutex(m_mx);
+            okay::lt::LockMutex(m_mx);
             const Uint32 now = okay::platform::TicksMs32();
             m_peers[src].lastHeard = now;
             for (auto& [slot, p] : m_peers) if (slot != src && now - p.lastHeard < 5000) dests.push_back(slot);
-            SDL_UnlockMutex(m_mx);
+            okay::lt::UnlockMutex(m_mx);
             for (std::uint32_t d : dests) Forward(d, app, n, origin);
         }
         std::vector<std::uint8_t> body(app + 14, app + n);
@@ -408,7 +409,7 @@ private:
         ChaCha20Xor(m_key, nonce, body.data(), body.size());
         if (body.size() < 4 || std::memcmp(body.data(), "OKV1", 4) != 0) { ++m_badKey; return; }   // wrong key
         const std::uint8_t* b = body.data() + 4; const std::size_t bl = body.size() - 4;
-        SDL_LockMutex(m_mx);
+        okay::lt::LockMutex(m_mx);
         Peer& p = m_peers[origin];
         p.lastHeard = okay::platform::TicksMs32();
         if (p.sid != sid) { p.sid = sid; p.dec = AdpcmState{}; p.lastSeq = 0; p.jitter.clear(); p.primed = false; }
@@ -433,7 +434,7 @@ private:
         } else if (kind == kLeave) {
             m_peers.erase(origin);
         }
-        SDL_UnlockMutex(m_mx);
+        okay::lt::UnlockMutex(m_mx);
     }
 
     static int NetThread(void* ud) {
@@ -459,7 +460,7 @@ private:
                     if (!okay::net::ParseRelayWelcome(buf.data(), (std::size_t)n, s->m_nonce, s->m_v1Hello, w)) { ++s->m_badWelcome; continue; }
                     s->m_relayAnswered = true;
                     const std::uint32_t mine = w.slot, hub = w.hostSlot;
-                    if (hub != s->m_hubSlot) { SDL_LockMutex(s->m_mx); s->m_peers.clear(); SDL_UnlockMutex(s->m_mx); }
+                    if (hub != s->m_hubSlot) { okay::lt::LockMutex(s->m_mx); s->m_peers.clear(); okay::lt::UnlockMutex(s->m_mx); }
                     s->m_mySlot = mine; s->m_hubSlot = hub; lastWelcome = now;
                     if (s->m_state != Connected) { s->m_state = Connected; s->m_since = now; nextInfo = 0; }
                 } else if (buf[0] == kData && n >= 5) {
@@ -481,10 +482,10 @@ private:
             // Microphone frames: gate on loudness (with a short hang-over), encode, send.
             for (;;) {
                 std::array<std::int16_t, kFrame> fr;
-                SDL_LockMutex(s->m_mx);
+                okay::lt::LockMutex(s->m_mx);
                 const bool have = !s->m_capQ.empty();
                 if (have) { fr = s->m_capQ.front(); s->m_capQ.pop_front(); }
-                SDL_UnlockMutex(s->m_mx);
+                okay::lt::UnlockMutex(s->m_mx);
                 if (!have) break;
                 double e = 0; for (std::int16_t v : fr) e += (double)v * v;
                 const float rms = (float)std::sqrt(e / kFrame);
@@ -507,8 +508,8 @@ private:
     }
 
     Udp m_udp;
-    SDL_mutex* m_mx = nullptr;
-    SDL_Thread* m_thread = nullptr;
+    okay::lt::Mutex* m_mx = nullptr;
+    okay::lt::Thread* m_thread = nullptr;
     std::atomic<bool> m_run{false};
     std::unique_ptr<okay::platform::AudioDevice> m_cap, m_play;
     std::array<std::uint8_t, 32> m_key{};

@@ -3633,6 +3633,24 @@ add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
 add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# The "Assimp gap" readers: OGRE binary .mesh and ZAE (fixtures, truncation, mutation sweep, memory and time caps; reader sources and
+# the engine's inflate only, so it also builds by hand under -fsanitize=address,undefined; OKAY_GAP_FUZZ_ITERS raises the sweep),
+# and the import seam's slots 43 to 45 (.mesh, .zae, .xml by root element), which needs the whole engine.
+add_executable(test_gap_readers test_gap_readers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ZaeReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ColladaReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_gap_readers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_gap_readers PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME gap_readers COMMAND test_gap_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gap_readers PROPERTIES TIMEOUT 600)
+add_executable(test_own_dispatch_gap test_own_dispatch_gap.cpp)
+target_link_libraries(test_own_dispatch_gap PRIVATE okay::engine)
+target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

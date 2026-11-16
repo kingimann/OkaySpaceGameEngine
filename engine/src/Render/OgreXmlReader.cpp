@@ -384,6 +384,16 @@ bool ReadGeometry(Reader& R, Geom& g, Build& b) {
             bufs.push_back(bf);
         } else break;
     }
+    // the positions must be in a buffer before anything is allocated from the count (the buffers were checked to fit the file,
+    // and a position takes 12 bytes of its vertex, so the arrays below are bounded by the file's size)
+    if (vc > 0) {
+        bool backed = false;
+        for (const Elem& e : elems) {
+            if (e.semantic != kSemPosition || e.type < 2 || e.type > kFloat4) continue;
+            for (const Buf& x : bufs) if (x.bind == e.source && (std::size_t)e.offset + (std::size_t)TypeSize(e.type) <= x.size) backed = true;
+        }
+        if (!backed) return R.Bad("the geometry has no 32-bit float positions inside a vertex buffer");
+    }
     g.count = vc;
     const std::size_t n = vc;
     g.pos.assign(n, Vec3{0, 0, 0}); g.nrm.assign(n, Vec3{0, 0, 0}); g.uv.assign(n, Vec2{0, 0});
@@ -409,6 +419,7 @@ bool ReadGeometry(Reader& R, Geom& g, Build& b) {
         for (std::size_t k = 0; k < n; ++k) {
             float f[3] = {0, 0, 0};
             std::memcpy(f, base + k * bf->size, (std::size_t)std::min(comps, 3) * 4);
+            if (!std::isfinite(f[0]) || !std::isfinite(f[1]) || !std::isfinite(f[2])) return R.Bad("vertex " + std::to_string(k) + " holds a value that is not a finite number");
             if (e.semantic == kSemPosition) { g.pos[k] = Vec3{f[0], f[1], f[2]}; g.hasPos[k] = 1; }
             else if (e.semantic == kSemNormal) { g.nrm[k] = Vec3{f[0], f[1], f[2]}; g.hasNrm[k] = 1; }
             else { g.uv[k] = Vec2{f[0], comps >= 2 ? f[1] : 0.0f}; g.hasUv[k] = 1; }

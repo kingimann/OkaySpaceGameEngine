@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x ac ogre xgl irr nff; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x ac ogre xgl irr nff ter q3d lws; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf / blend rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -431,3 +431,24 @@ nff	models/NFF/NFF/tetrahedron.nff	ok	area=115.4700	meshes=1	tris=4	bones=0	skin
 # ter: own Terragen reader
 ter	models/TER/RealisticTerrain.ter	ok	area=75029649.9144	meshes=1	tris=131072	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,-78.987,-7680.000,7680.000,874.531,0.000	verts=66049	tex=0	nodes=1	uv=1	nrm=1
 ter	models/TER/RealisticTerrain_Large.ter	ok	area=138372472.3154	meshes=1	tris=524288	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,-226.736,-10000.000,10000.000,1170.394,0.000	verts=263169	tex=0	nodes=1	uv=1	nrm=1
+# q3d: own Quick3D reader (.q3o, .q3s; read since the layout was checked against these four files)
+q3d	models/Q3D/E-AT-AT.q3o	ok	area=13926112.7403	meshes=35	tris=11156	bones=0	skinned=0	clips=0	dur=0.000	mat=7	bbox=-476.358,-1514.391,-0.000,476.359,761.872,1920.000	verts=6262	tex=0	nodes=35	uv=0	nrm=1
+q3d	models/Q3D/WusonOrange.q3o	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=3205	tex=0	nodes=1	uv=0	nrm=1
+q3d	models/Q3D/WusonOrange.q3s	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=3205	tex=0	nodes=1	uv=0	nrm=1
+q3d	models/Q3D/earth.q3o	ok	area=399.5139	meshes=2	tris=2937	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-4.990,-4.990,-4.986,4.973,4.990,4.986	verts=2231	tex=0	nodes=2	uv=0	nrm=1
+# lws: own LightWave scene reader (the objects through the own LWO reader); QuickDraw v.2.2.lws reads since object paths may name a LightWave object one folder up and PivotPosition is applied
+lws	models/LWS/move_x.lws	ok	area=26.2652	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.333	mat=1	bbox=-1.421,-0.040,-0.859,1.225,1.643,1.146	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_oldformat_56.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_oldformat_6.lws	ok	area=26.2652	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.333	mat=1	bbox=-1.421,-0.040,-0.859,1.225,1.643,1.146	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_post_constant.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_post_linear.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_post_offset_repeat.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_post_repeat.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_post_reset.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_xz_bezier.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_xz_hermite.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_xz_linear.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_xz_spline.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_xz_stepped.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=2.967	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_y_pre_ofrep_post_osc.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.700	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models-nonbsd/LWS/QuickDraw v.2.2.lws	ok	area=230.2034	meshes=31	tris=22144	bones=0	skinned=0	clips=1	dur=1.000	mat=31	bbox=-2.358,-0.097,-3.647,2.358,4.607,6.791	verts=16864	tex=0	nodes=45	uv=0	nrm=1

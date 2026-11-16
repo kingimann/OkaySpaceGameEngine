@@ -187,7 +187,7 @@ int main() {
     // ---- object files stay inside the scene's folder, and a scene cannot load a scene ----
     {
         const std::string s = "LWSC\n3\n"
-            "LoadObject ../secret.lwo\nLoadObjectLayer 1 /etc/passwd\nLoadObject C:\\x.lwo\nLoadObject Objects/../../x.lwo\nLoadObject \\\\host\\s\\x.lwo\n"
+            "LoadObject ../../secret.lwo\nLoadObjectLayer 1 /etc/passwd\nLoadObject C:\\x.lwo\nLoadObject Objects/../../x.lwo\nLoadObject \\\\host\\s\\x.lwo\n"
             "LoadObject self.lws\nLoadObject sub/more.MOT\nLoadObject My Objects/a b.lwo\nLoadObjectLayer 2 10000009 good/ok.lwo\nLoadObject missing.lwo\nLoadObject ./up.lwo\n";
         fx::FakeLoad fake; const IrrMeshLoader l = fake.Fn();
         ImportedModel m; std::string err;
@@ -199,12 +199,18 @@ int main() {
         CHECK(HasNote(m, "5 object file(s) refused") && HasNote(m, "2 object reference(s) to a scene file refused") && HasNote(m, "8 object(s) whose file could not be read"));
         CHECK(m.parts.size() == 3);
         // nothing readable: the scene is refused and says which file was first
-        CHECK(Refused("LWSC\n3\nLoadObject ../x.lwo\n", "first that could not be read: ../x.lwo (refused", &l));
+        CHECK(Refused("LWSC\n3\nLoadObject ../../x.lwo\n", "first that could not be read: ../../x.lwo (refused", &l));
+        CHECK(Refused("LWSC\n3\nLoadObject ../x.obj\n", "first that could not be read: ../x.obj (refused", &l));   // only LightWave objects from the folder above
         CHECK(Refused("LWSC\n3\nLoadObject me.lws\n", "a scene may not load another scene", &l));
         CHECK(Refused("LWSC\n3\nLoadObject missing.lwo\n", "no such file", &l));
         // the items a refused path would have created are still nodes
         ImportedModel m2; std::string e2;
-        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../x.lwo\nLoadObject Objects/ok.lwo\n", "dir/", m2, &e2, &l) && m2.nodes.size() == 4 && m2.parts.size() == 1);
+        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../../x.lwo\nLoadObject Objects/ok.lwo\n", "dir/", m2, &e2, &l) && m2.nodes.size() == 4 && m2.parts.size() == 1);
+        // one leading ../ to a LightWave object: LightWave's content directory, the folder above the scene (QuickDraw v.2.2.lws)
+        fake.paths.clear();
+        ImportedModel m3; std::string e3;
+        CHECK(ReadLwsBuffer("LWSC\n3\nLoadObject ../LWO/a.lwo\nLoadObject ..\\LWO\\b.LXO\n", "dir/", m3, &e3, &l) && m3.parts.size() == 2);
+        CHECK(fake.paths == (std::vector<std::string>{"dir/../LWO/a.lwo", "dir/../LWO/b.LXO"}) && HasNote(m3, "2 object path(s) read from the folder above the scene"));
     }
     TEST_MAIN_RESULT();
 }

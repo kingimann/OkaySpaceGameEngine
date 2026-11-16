@@ -3,13 +3,14 @@
 // AddLight / AddBone items, ParentItem, the NumChannels / Channel / { Envelope / Key / Behaviors blocks with channels 0 to 8 as
 // position, heading, pitch, bank and scale) and from reasoning about that structure; no code, table or snippet of any other
 // importer was read. Each item is a node; the objects it names are read through a loader the caller supplies, and only from
-// inside the scene's own folder. No real LWS file was available to check it against (docs/own_lws_reader.md). Bounds-checked,
+// inside the scene's own folder (LightWave objects also from the folder just above it: ResolveInContentDir). No real LWS file was available to check it against (docs/own_lws_reader.md). Bounds-checked,
 // capped, no recursion. See okay/Render/ModelData.hpp.
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -23,6 +24,22 @@ namespace okay {
 
 namespace {
 namespace lws {
+
+// LightWave names object files relative to its content directory, and a scene is normally saved one folder below it
+// (Content/Scenes/x.lws naming Objects/y.lwo, or, as the corpus scene "QuickDraw v.2.2.lws" does, ../LWO/y.lwo relative to the
+// scene). A path the scene-folder rule (ResolveInsideDir) refuses only because it climbs out is given one more chance here: a
+// LightWave object file (.lwo or .lxo, never another format and never a scene) that starts with exactly one "../" is looked up
+// in the scene folder's parent, with the same rule there (no further "..", no absolute path, no link out of that folder). So a
+// scene can reach at most one folder above its own, and only LightWave objects in it.
+bool ResolveInContentDir(const std::string& baseDir, std::string ref, std::string& out, std::string& why) {
+    for (char& c : ref) if (c == '\\') c = '/';
+    std::string low = ref;
+    for (char& c : low) c = (char)std::tolower((unsigned char)c);
+    auto ends = [&](const char* e) { const std::size_t k = std::strlen(e); return low.size() >= k && low.compare(low.size() - k, k, e) == 0; };
+    if (!ends(".lwo") && !ends(".lxo")) { why = "only a LightWave object (.lwo, .lxo) may be named from the folder above the scene"; return false; }
+    if (ref.compare(0, 3, "../") != 0) { why = "not a path into the folder above the scene"; return false; }
+    return detail::ResolveInsideDir(baseDir + "../", ref.substr(3), out, why);
+}
 
 constexpr std::size_t kMaxFileBytes = 64u * 1024u * 1024u;
 constexpr std::size_t kMaxLine = 65536;                    // a longer line is skipped, never split into tokens
@@ -78,6 +95,10 @@ struct Item {
     std::string name, path;
     std::int64_t id = -1, parent = -1;
     std::vector<Key> ch[9];
+    // PivotPosition, in the file's left-handed axes: the point of the item's own space that its position, rotation and scale act on.
+    // An item's matrix is T(position) R S T(-pivot); a child's position is in that space (the corpus scene "QuickDraw v.2.2.lws":
+    // every part is modelled where it sits, with position == pivot, and its children carry the same absolute positions).
+    double pivot[3] = {0, 0, 0};
 };
 
 double Eval(const std::vector<Key>& k, double t, double def) {
@@ -146,6 +167,7 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
     std::vector<Key>* sink = nullptr;
     std::size_t totalKeys = 0, envDeclared = 0;
     int objCount = 0, lightCount = 0, camCount = 0, boneCount = 0;
+    int pivots = 0, badPivots = 0;
     int longPaths = 0, badKeys = 0, nonLinear = 0, longLines = 0, ignoredLines = 0, strayChannels = 0, strayParents = 0, badParentLines = 0, behaviors = 0, unclosedEnv = 0, strayKeys = 0;
     double fps = 30;
     auto isItemCmd = [&](const Tk& t) { return Is(line, t, "LoadObject") || Is(line, t, "LoadObjectLayer") || Is(line, t, "AddNullObject") || Is(line, t, "AddCamera") || Is(line, t, "AddLight") || Is(line, t, "AddBone") || Is(line, t, "Channel") || Is(line, t, "ParentItem"); };
@@ -236,6 +258,16 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
             else ++badParentLines;
             continue;
         }
+        if (Is(line, tk[0], "PivotPosition")) {
+            double v[3];
+            if (cur < 0 || isMotion) ++ignoredLines;
+            else if (n >= 4 && Num(line, tk[1], v[0]) && Num(line, tk[2], v[1]) && Num(line, tk[3], v[2]) && std::fabs(v[0]) <= 1e15 && std::fabs(v[1]) <= 1e15 && std::fabs(v[2]) <= 1e15) {
+                Item& it = items[(std::size_t)cur];
+                for (int k = 0; k < 3; ++k) it.pivot[k] = v[k];
+                if (v[0] != 0 || v[1] != 0 || v[2] != 0) ++pivots;
+            } else ++badPivots;
+            continue;
+        }
         if (Is(line, tk[0], "FramesPerSecond") && n >= 2) { double v; if (Num(line, tk[1], v) && v > 0 && v <= 100000) fps = v; continue; }
         if (cur >= 0 && n >= 2 && (Is(line, tk[0], "CameraName") || Is(line, tk[0], "LightName") || Is(line, tk[0], "BoneName") || Is(line, tk[0], "ObjectName"))) {
             Item& it = items[(std::size_t)cur];
@@ -284,6 +316,8 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
         c.swap(d);
     }
     std::vector<std::string> nodeName(items.size());
+    static const double kNoPivot[3] = {0, 0, 0};
+    auto parentPivot = [&](std::size_t i) -> const double* { return par[i] < 0 ? kNoPivot : items[(std::size_t)par[i]].pivot; };
     for (int ii : order) {
         const Item& it = items[(std::size_t)ii];
         std::string nm = it.name;
@@ -293,7 +327,8 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
         ImportedNode nd;
         nd.name = nm;
         nd.parent = par[(std::size_t)ii] < 0 ? 0 : nodeOf[(std::size_t)par[(std::size_t)ii]];
-        nd.position = Vec3{(float)Eval(it.ch[0], 0, 0), (float)Eval(it.ch[1], 0, 0), (float)-Eval(it.ch[2], 0, 0)};
+        const double* pp = parentPivot(ii);
+        nd.position = Vec3{(float)(Eval(it.ch[0], 0, 0) - pp[0]), (float)(Eval(it.ch[1], 0, 0) - pp[1]), (float)-(Eval(it.ch[2], 0, 0) - pp[2])};
         nd.rotation = RotOf(Eval(it.ch[3], 0, 0), Eval(it.ch[4], 0, 0), Eval(it.ch[5], 0, 0));
         nd.scale = Vec3{(float)Eval(it.ch[6], 0, 1), (float)Eval(it.ch[7], 0, 1), (float)Eval(it.ch[8], 0, 1)};
         if (!std::isfinite(nd.position.x + nd.position.y + nd.position.z + nd.scale.x + nd.scale.y + nd.scale.z)) return Fail(err, "item '" + it.name + "' has a transform that is not finite");
@@ -313,7 +348,7 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
             return t;
         };
         if (!it.ch[0].empty() || !it.ch[1].empty() || !it.ch[2].empty())
-            for (double t : times(0)) chn.position.push_back({(float)t, Vec3{(float)Eval(it.ch[0], t, 0), (float)Eval(it.ch[1], t, 0), (float)-Eval(it.ch[2], t, 0)}});
+            for (double t : times(0)) { const double* pp = parentPivot(ii); chn.position.push_back({(float)t, Vec3{(float)(Eval(it.ch[0], t, 0) - pp[0]), (float)(Eval(it.ch[1], t, 0) - pp[1]), (float)-(Eval(it.ch[2], t, 0) - pp[2])}}); }
         if (!it.ch[3].empty() || !it.ch[4].empty() || !it.ch[5].empty()) {
             for (double t : times(3)) {
                 Quat q = RotOf(Eval(it.ch[3], t, 0), Eval(it.ch[4], t, 0), Eval(it.ch[5], t, 0));
@@ -330,7 +365,7 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
     if (!clip.channels.empty()) out.clips.push_back(std::move(clip));
 
     // ---- the object files ----
-    int refused = 0, unreadable = 0, noLoader = 0, droppedClips = 0, sceneRefs = 0;
+    int refused = 0, unreadable = 0, noLoader = 0, droppedClips = 0, sceneRefs = 0, fromParent = 0;
     std::string firstMissing;
     std::map<std::string, std::unique_ptr<Loaded>> loadedFiles;
     std::size_t loadedVerts = 0, loadedTris = 0, outVerts = 0, outTris = 0, placedBones = 0, placedBoneBytes = 0;
@@ -343,7 +378,11 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
         auto ends = [&](const char* e) { const std::size_t k = std::strlen(e); return lp.size() >= k && lp.compare(lp.size() - k, k, e) == 0; };
         if (ends(".lws") || ends(".mot") || ends(".irr")) { ++sceneRefs; ++unreadable; if (firstMissing.empty()) firstMissing = it.path + " (a scene may not load another scene)"; continue; }
         std::string path, whyNot;
-        if (!detail::ResolveInsideDir(baseDir, it.path, path, whyNot)) { ++refused; ++unreadable; if (firstMissing.empty()) firstMissing = it.path + " (refused: " + whyNot + ")"; continue; }
+        if (!detail::ResolveInsideDir(baseDir, it.path, path, whyNot)) {
+            std::string why2;
+            if (lws::ResolveInContentDir(baseDir, it.path, path, why2)) ++fromParent;
+            else { ++refused; ++unreadable; if (firstMissing.empty()) firstMissing = it.path + " (refused: " + whyNot + ")"; continue; }
+        }
         auto f = loadedFiles.find(path);
         if (f == loadedFiles.end()) {
             if (loadedFiles.size() >= kMaxLoadedFiles) return Fail(err, "more than " + std::to_string(kMaxLoadedFiles) + " different object files (budget)");
@@ -366,6 +405,7 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
         const int me = nodeOf[ii];
         for (std::size_t i = 0; i < L.m.nodes.size(); ++i) {
             ImportedNode c = L.m.nodes[i];
+            if (c.parent < 0) c.position = c.position - Vec3{(float)it.pivot[0], (float)it.pivot[1], (float)-it.pivot[2]};   // T(-pivot), z mirrored
             c.parent = c.parent >= 0 ? base + c.parent : me;
             out.nodes.push_back(c);
         }
@@ -393,6 +433,9 @@ static bool ReadLwsImpl(std::string text, const std::string& baseDir, ImportedMo
     auto note = [&](const std::string& s) { out.notes.push_back("LWS: " + s); };
     note(std::string(isMotion ? "motion file" : "scene") + " version " + std::to_string(version) + ": positions are metres as written, z mirrored (left-handed to right-handed, like the LWO reader); angles in the envelopes are read as radians and applied as heading (Y), pitch (X), bank (Z) with the bank first; key times are seconds as written (the scene's rate is " + std::to_string((int)fps) + " frames per second). No real LightWave scene was available to check these conventions");
     if (!isMotion) note("object files are looked up inside the scene's own folder only (not in LightWave's content directory), so a path like \"Objects/Cube.lwo\" works when that folder is next to the scene");
+    if (fromParent) note(std::to_string(fromParent) + " object path(s) read from the folder above the scene (one leading ../, LightWave objects only: LightWave's usual content directory)");
+    if (pivots) note(std::to_string(pivots) + " item pivot(s) applied (PivotPosition: the item turns and scales about it, and its object and children are placed relative to it)");
+    if (badPivots) note(std::to_string(badPivots) + " PivotPosition line(s) that are not three numbers skipped");
     if (version < 3) note("version " + std::to_string(version) + " scene: read with the version 3 layout (unchecked)");
     if (refused) note(std::to_string(refused) + " object file(s) refused: a scene may only name files inside its own folder (no absolute path, no .. out of it, no link out of it)");
     if (sceneRefs) note(std::to_string(sceneRefs) + " object reference(s) to a scene file refused: a scene may not load another scene");

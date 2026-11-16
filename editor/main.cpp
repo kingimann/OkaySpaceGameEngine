@@ -727,6 +727,7 @@ int main(int argc, char** argv) {
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
+#include "OwnImGuiFontLoader.hpp" // OKAY_OWN_FONT_RASTER=1: the atlas uses our own TrueType rasteriser
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
@@ -42128,13 +42129,17 @@ static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px; // top -> baseline, screen px
     const float slant = italic ? 0.30f : 0.0f;
     float penX = ox, penY = oy;
+    const bool kern = f->HasKerning();
+    std::uint32_t prev = 0;
     const char* p = text.c_str();
     const char* const end = p + text.size();
     while (p < end) {   // UTF-8: accented letters, Cyrillic, CJK... (DrawBitmapText baked them)
         const std::uint32_t cp = okay::utf8::Next(p, end);
-        if (cp == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        if (cp == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; prev = 0; continue; }
         const okay::TtfFont::Glyph* g = f->GlyphFor(cp);
-        if (!g) { penX += px * 4.0f; continue; }
+        if (!g) { penX += px * 4.0f; prev = 0; continue; }
+        if (kern && prev) penX += f->Kerning(prev, cp) * s;   // pair kerning, as the game's UIRenderer draws it
+        prev = cp;
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             float x0 = penX + g->xoff * s, y0 = penY + baseline + g->yoff * s;
@@ -49793,6 +49798,9 @@ int main(int argc, char** argv) {
     // Crisper at any zoom and far more legible across the whole editor. Falls back
     // to the default font if the atlas build ever fails.
     {
+        // OKAY_OWN_FONT_RASTER=1: every glyph of this atlas comes from our own rasteriser (off by default).
+        if (okay::imguifont::InstallIfRequested(io.Fonts))
+            ConsoleLog("Fonts: OKAY_OWN_FONT_RASTER=1, the editor's text is drawn by OkaySpace's own TrueType rasteriser");
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         // (Dear ImGui 1.92 loads glyphs on demand from the TTF, so punctuation like

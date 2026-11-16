@@ -21,6 +21,7 @@ struct Glyph {
 struct Size {
     float px = 0;          // bake height (ascent - descent)
     float ascent = 0;      // pen-top to baseline (bake px)
+    float scale = 0;       // bake px per font unit (for Kerning)
     int   count = 0;
     Glyph glyphs[256];
     const Glyph* Find(unsigned cp) const;   // binary search; nullptr if not baked
@@ -40,6 +41,10 @@ struct Atlas {
 
 /// Build (once) and return the atlas; ok == false if the font couldn't be baked.
 const Atlas& Get();
+
+/// Pair kerning between two code points of the atlas font, in font units (multiply by
+/// Size::scale for bake px); from the font's GPOS / kern data, 0 when it has none.
+int KerningUnits(unsigned left, unsigned right);
 
 /// Next code point from UTF-8 (advances *s; returns 0 at the end).
 unsigned NextCodepoint(const char** s);

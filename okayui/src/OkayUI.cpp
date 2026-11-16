@@ -472,10 +472,12 @@ inline float fMeasure(const char* s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
         float w = 0.0f;
+        unsigned prev = 0;
         for (const char* p = s; *p;) {
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
-            if (g) w += g->advance;
+            if (g && prev) w += (float)fontatlas::KerningUnits(prev, g->cp) * z.scale;   // as drawText places them
+            if (g) { w += g->advance; prev = g->cp; } else prev = 0;
         }
         return w * 8.0f / z.px;
     }
@@ -741,9 +743,13 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     int&        ni = g_toOverlay ? g_oni : g_ni;
     bindTexture(tex);
     float pen = x;
+    std::uint32_t prev = 0;
     for (const char* p = str; *p;) {
-        const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
-        if (!g) continue;
+        const unsigned cp = fontatlas::NextCodepoint(&p);
+        const okay::TtfFont::Glyph* g = f->GlyphFor(cp);
+        if (!g) { prev = 0; continue; }
+        if (prev) pen += f->Kerning(prev, cp) * k;   // f->Measure (fMeasure) counts the same kerning
+        prev = cp;
         if (g->x1 > g->x0 && g->y1 > g->y0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
         if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
             const float x0 = pen + g->xoff * k, y0 = base + g->yoff * k;
@@ -780,13 +786,19 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         int&        nv = g_toOverlay ? g_onv : g_nv;
         int&        ni = g_toOverlay ? g_oni : g_ni;
         const SDL_Color sc = toColor(c);
+        unsigned prev = 0;
         for (const char* p = str; *p;) {
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
-            if (!g) continue;
+            if (!g) { prev = 0; continue; }
+            if (prev) pen += (float)fontatlas::KerningUnits(prev, g->cp) * z.scale * k;   // pair kerning (fMeasure counts it too)
+            prev = g->cp;
             if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
-                const float x0 = pen + g->x0 * k, y0 = base + g->y0 * k, x1 = pen + g->x1 * k, y1 = base + g->y1 * k;
+                // At the baked size each glyph bitmap was rasterised for a whole-pixel pen: snap the
+                // quad to the pixel grid so linear filtering does not blur it (the pen keeps its fraction).
+                const float gx = exact ? SDL_floorf(pen + 0.5f) : pen;
+                const float x0 = gx + g->x0 * k, y0 = base + g->y0 * k, x1 = gx + g->x1 * k, y1 = base + g->y1 * k;
                 const int b0 = nv;
                 SDL_Vertex v; v.color = sc;
                 v.position.x = x0; v.position.y = y0; v.tex_coord.x = g->u0; v.tex_coord.y = g->v0; V[nv++] = v;

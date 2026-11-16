@@ -187,11 +187,15 @@ public:
         if (TtfFont* tf = Font()) {
             float best = 0.0f, cur = 0.0f;
             float adv = letterSpacing; // extra spacing per glyph, in font pixels
+            const float k = tf->ScaleFor((float)Font8x8::Height);
+            std::uint32_t prev = 0;
             for (std::size_t i = 0; i < s.size();) {
                 const std::uint32_t ch = utf8::Next(s, i);
-                if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; continue; }
+                if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; prev = 0; continue; }
                 const TtfFont::Glyph* g = tf->GlyphFor(ch);
-                cur += (g ? g->xadvance * tf->ScaleFor((float)Font8x8::Height) : 0.0f) + adv;
+                if (g && prev) cur += tf->Kerning(prev, ch) * k;   // pair kerning, as DrawTtfText applies it
+                prev = g ? ch : 0;
+                cur += (g ? g->xadvance * k : 0.0f) + adv;
             }
             return (int)std::ceil(std::max(best, cur));
         }

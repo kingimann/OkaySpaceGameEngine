@@ -53,6 +53,7 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
+#include "OwnImGuiFontLoader.hpp" // OKAY_OWN_FONT_RASTER=1: the atlas uses our own TrueType rasteriser
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
 // Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
@@ -16714,6 +16715,7 @@ static bool ChatHostCreate() {
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::GetIO().ConfigDebugHighlightIdConflicts = false;
     {   // same fonts as the launcher (each renderer needs its own atlas texture)
+        okay::imguifont::InstallIfRequested(ImGui::GetIO().Fonts);   // OKAY_OWN_FONT_RASTER=1, like the main window
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
@@ -18225,6 +18227,9 @@ int main(int argc, char** argv) {
     // Same embedded Roboto Medium font as the editor, so the launcher and editor
     // read as one product (crisp, modern text instead of the tiny bitmap default).
     {
+        // OKAY_OWN_FONT_RASTER=1: every glyph of this atlas comes from our own rasteriser (off by default).
+        if (okay::imguifont::InstallIfRequested(ImGui::GetIO().Fonts))
+            std::fprintf(stderr, "[launcher] OKAY_OWN_FONT_RASTER=1: text is drawn by OkaySpace's own TrueType rasteriser\n");
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(

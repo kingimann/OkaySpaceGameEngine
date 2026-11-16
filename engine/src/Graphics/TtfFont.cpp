@@ -146,12 +146,12 @@ const TtfFont::Glyph* TtfFont::GlyphFor(std::uint32_t cp) const {
     const ttf::Face& face = m_info->face;
     const int gi = face.FindGlyph(cp);
     const float scale = m_info->scale;
-    int x0 = 0, y0 = 0, x1 = 0, y1 = 0, adv = 0, lsb = 0;
-    face.GlyphBox(gi, scale, x0, y0, x1, y1);
+    int x0 = 0, y0 = 0, w = 0, h = 0, adv = 0, lsb = 0;
+    std::vector<unsigned char> cov;
+    face.RenderGlyph(gi, scale, cov, x0, y0, w, h);
     face.HMetrics(gi, adv, lsb);
     Glyph g;
     g.xoff = (float)x0; g.yoff = (float)y0; g.xadvance = (float)adv * scale;
-    const int w = x1 - x0, h = y1 - y0;
     if (w > 0 && h > 0) {
         int px = 0, py = 0;
         if (!Place(w, h, px, py)) {
@@ -162,8 +162,6 @@ const TtfFont::Glyph* TtfFont::GlyphFor(std::uint32_t cp) const {
             m_has[cp] = false;
             return nullptr;
         }
-        std::vector<unsigned char> cov((std::size_t)w * h, 0);
-        face.Render(gi, scale, cov.data(), w, h, w);
         const int W = m_atlas.Width();
         std::uint8_t* dst = m_atlas.Data();
         for (int row = 0; row < h; ++row)
@@ -196,16 +194,33 @@ void TtfFont::Prepare(const std::string& text) const {
     for (std::size_t i = 0; i < text.size();) GlyphFor(utf8::Next(text, i));
 }
 
+float TtfFont::Kerning(std::uint32_t left, std::uint32_t right) const {
+    if (!m_valid || !m_info || m_info->face.KerningSource() == 0) return 0.0f;
+    const ttf::Face& face = m_info->face;
+    const int k = face.Kerning(face.FindGlyph(left), face.FindGlyph(right));
+    return (float)k * m_info->scale;
+}
+
+bool TtfFont::HasKerning() const { return m_valid && m_info && m_info->face.KerningSource() != 0; }
+
 float TtfFont::Measure(const char* text, float pixelHeight) const {
     if (!text || !m_valid) return 0.0f;
     float scale = ScaleFor(pixelHeight);
     float maxW = 0.0f, lineW = 0.0f;
+    const bool kern = HasKerning();
+    std::uint32_t prev = 0;
     const char* end = text + std::strlen(text);
     for (const char* p = text; p < end;) {
         const std::uint32_t cp = utf8::Next(p, end);
-        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; continue; }
-        if (const Glyph* g = GlyphFor(cp)) lineW += g->xadvance * scale;
-        else if (cp >= (std::uint32_t)kFirst) lineW += pixelHeight * 0.5f;   // the gap a missing glyph leaves
+        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; prev = 0; continue; }
+        if (const Glyph* g = GlyphFor(cp)) {
+            if (kern && prev) lineW += Kerning(prev, cp) * scale;
+            lineW += g->xadvance * scale;
+            prev = cp;
+        } else {
+            if (cp >= (std::uint32_t)kFirst) lineW += pixelHeight * 0.5f;   // the gap a missing glyph leaves
+            prev = 0;
+        }
     }
     if (lineW > maxW) maxW = lineW;
     return maxW;
@@ -253,6 +268,72 @@ TtfFont* BuiltinUIFont() {
         }
     }
     return font.get();
+}
+
+TtfFont* BuiltinCodeFont() {
+    static std::unique_ptr<TtfFont> font;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        std::vector<unsigned char> bytes;
+        if (EmbeddedCodeFontData(bytes)) {
+            auto f = std::make_unique<TtfFont>();
+            if (f->LoadFromMemory(bytes.data(), bytes.size(), 64.0f, "the built-in code font")) font = std::move(f);
+        }
+    }
+    return font.get();
+}
+
+// ---- Per-character fallback chain -------------------------------------------------
+FontChain::FontChain(std::vector<TtfFont*> fonts) { for (TtfFont* f : fonts) Add(f); }
+
+void FontChain::Add(TtfFont* f) {
+    if (f && f->Valid() && std::find(m_fonts.begin(), m_fonts.end(), f) == m_fonts.end()) m_fonts.push_back(f);
+}
+
+TtfFont* FontChain::FontFor(std::uint32_t cp) const {
+    if (m_fonts.empty()) return nullptr;
+    if (cp <= (std::uint32_t)TtfFont::kFirst) return m_fonts.front();
+    for (TtfFont* f : m_fonts) if (f->Has(cp)) return f;
+    return nullptr;
+}
+
+float FontChain::Measure(const char* text, float pixelHeight) const {
+    if (!text || m_fonts.empty()) return 0.0f;
+    float maxW = 0.0f, lineW = 0.0f;
+    std::uint32_t prev = 0;
+    const TtfFont* prevFont = nullptr;
+    const char* end = text + std::strlen(text);
+    for (const char* p = text; p < end;) {
+        const std::uint32_t cp = utf8::Next(p, end);
+        if (cp == '\n') { maxW = std::max(maxW, lineW); lineW = 0.0f; prev = 0; prevFont = nullptr; continue; }
+        TtfFont* f = FontFor(cp);
+        const TtfFont::Glyph* g = f ? f->GlyphFor(cp) : nullptr;
+        if (!g) {
+            if (cp >= (std::uint32_t)TtfFont::kFirst) lineW += pixelHeight * 0.5f;
+            prev = 0; prevFont = nullptr;
+            continue;
+        }
+        const float scale = f->ScaleFor(pixelHeight);
+        if (prevFont == f && prev) lineW += f->Kerning(prev, cp) * scale;
+        lineW += g->xadvance * scale;
+        prev = cp; prevFont = f;
+    }
+    return std::max(maxW, lineW);
+}
+
+std::vector<FontChain::Run> FontChain::Split(const std::string& text) const {
+    std::vector<Run> runs;
+    TtfFont* cur = nullptr;
+    bool open = false;
+    for (std::size_t i = 0; i < text.size();) {
+        const std::size_t start = i;
+        const std::uint32_t cp = utf8::Next(text, i);
+        TtfFont* f = (cp == '\n' && open) ? cur : FontFor(cp);
+        if (!open || f != cur) { runs.push_back({f, std::string()}); cur = f; open = true; }
+        runs.back().text.append(text, start, i - start);
+    }
+    return runs;
 }
 
 TtfFont* SceneUIFont(const std::string& uiFont) {

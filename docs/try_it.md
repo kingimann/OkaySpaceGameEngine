@@ -687,6 +687,7 @@ More new steps (same branch):
 - **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
 - **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
 - **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+- **Mirror and Undo fixes** (Edit Mesh): add a Mirror modifier to a half model that has UVs or material slots; the mirrored half now keeps its picture and colours. In Edit Mesh, add a modifier from the Inspector, change the mesh, then press Ctrl+Z: the modifier list goes back together with the mesh (Ctrl+Y brings both back). Edge snapping ignores the hidden diagonal inside a quad.
 
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button

@@ -43,6 +43,7 @@
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
+#include "okay/Modeling/MeshUndo.hpp"       // mesh-edit undo steps (mesh, selection, modifier list)
 #include "okay/Modeling/MeshLibrary.hpp"        // browse .okaymesh parts in the project
 #include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
 #include "okay/Modeling/Curve.hpp"           // Bezier curves to pipes, ribbons and swept profiles
@@ -3378,48 +3379,31 @@ static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* m
 // Each edit-mode step stores a copy of just that mesh (and the selection), not
 // a text snapshot of the whole scene, so undo stays instant on big meshes.
 // Leaving edit mode turns the whole session into one scene undo step.
-struct MeshUndoStep {
-    Mesh mesh;
-    std::vector<int> verts, faces;
-    std::vector<std::pair<int, int>> edges;
-    std::string label;   // what was done after this state (the Undo history list shows it)
-};
+using MeshUndoStep = okay::modeling::MeshUndoStep;   // engine/include/okay/Modeling/MeshUndo.hpp (tested headless)
 std::vector<MeshUndoStep> g_meshUndo, g_meshRedo;
 Mesh g_meshEditStart;            // the mesh as it was when edit mode began
 bool g_meshEditStartSet = false;
-static MeshUndoStep MeshUndoCapture(const Mesh& m) { return {m, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges}; }
-static void MeshUndoRestore(Mesh& m, MeshUndoStep& s) {
-    m = std::move(s.mesh);
-    g_meshSelVerts = std::move(s.verts); g_meshSelFaces = std::move(s.faces); g_meshSelEdges = std::move(s.edges);
+// The live state a step reads and writes: the mesh, the selection and the object's modifier list.
+static okay::modeling::MeshUndoTarget MeshUndoTargetFor(Mesh& m) {
+    okay::modeling::MeshUndoTarget t;
+    t.mesh = &m; t.verts = &g_meshSelVerts; t.faces = &g_meshSelFaces; t.edges = &g_meshSelEdges;
+    if (g_meshEditObj) if (auto* mm = g_meshEditObj->GetComponent<okay::MeshModifiers>()) t.mods = &mm->modifiers;
+    return t;
 }
+static void MeshUndoRestore(Mesh& m, MeshUndoStep& s) { okay::modeling::RestoreMeshUndo(MeshUndoTargetFor(m), s); }
 static MeshRenderer* EditedRenderer() { return g_meshEdit && g_meshEditObj ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr; }
 // Call before changing a mesh: one undo step. In edit mode on this mesh it's a
 // mesh step; otherwise an ordinary scene undo step.
 static void EditUndoPoint(EditorState& ed, MeshRenderer* mr) {
     if (!mr || mr != EditedRenderer()) { ed.PushUndo(); return; }
-    g_meshUndo.push_back(MeshUndoCapture(mr->mesh));
-    g_meshUndo.back().label = g_nextUndoLabel.empty() ? std::string("Edit") : g_nextUndoLabel;
+    okay::modeling::PushMeshUndo(g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), g_nextUndoLabel);
     g_nextUndoLabel.clear();
-    g_meshRedo.clear();
-    // Keep it bounded: at most 100 steps and about 4 million stored vertices.
-    std::size_t total = 0;
-    for (const auto& s : g_meshUndo) total += s.mesh.vertices.size();
-    while (g_meshUndo.size() > 1 && (g_meshUndo.size() > 100 || total > 4000000)) {
-        total -= g_meshUndo.front().mesh.vertices.size();
-        g_meshUndo.erase(g_meshUndo.begin());
-    }
 }
 // Ctrl+Z / Ctrl+Y in edit mode. Returns false when there's no mesh step to take
 // (then the ordinary scene undo applies).
 static bool MeshUndo(bool redo) {
     MeshRenderer* mr = EditedRenderer();
-    auto& from = redo ? g_meshRedo : g_meshUndo;
-    auto& to = redo ? g_meshUndo : g_meshRedo;
-    if (!mr || from.empty()) return false;
-    to.push_back(MeshUndoCapture(mr->mesh));
-    MeshUndoRestore(mr->mesh, from.back());
-    from.pop_back();
-    return true;
+    return mr && okay::modeling::StepMeshUndo(g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), redo);
 }
 // Leaving edit mode: if the mesh changed, record the whole session as one scene
 // undo step (the scene snapshot taken with the mesh as it was on entry).

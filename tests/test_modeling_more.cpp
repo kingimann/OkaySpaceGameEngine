@@ -2,6 +2,7 @@
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
+#include "okay/Modeling/MeshUndo.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
 #include "okay/Modeling/Curve.hpp"
 #include "okay/Modeling/Remesh.hpp"
@@ -1252,6 +1253,31 @@ int main() {
         all.push_back(timeIt("SnapToGeometry edge", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Edge, 0.05f); }));
         all.push_back(timeIt("SnapToGeometry face", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Face, 0.05f); }));
         for (double ms : all) CHECK(ms < 5000.0);
+    }
+    RUN_SUITE("mesh edit undo steps carry the modifier list");
+    {
+        using namespace okay::modeling;
+        Mesh mesh = Mesh::Cube(); std::vector<int> v{0, 1}, f{2}; std::vector<std::pair<int, int>> e{{0, 1}};
+        std::vector<MeshModifier> mods(1); mods[0].type = MeshModifier::Type::Mirror;
+        MeshUndoTarget tg; tg.mesh = &mesh; tg.verts = &v; tg.faces = &f; tg.edges = &e; tg.mods = &mods;
+        std::vector<MeshUndoStep> undo, redo;
+        PushMeshUndo(undo, redo, tg, "Add Array");                       // step: mesh + [Mirror]
+        MeshModifier arr; arr.type = MeshModifier::Type::Array; arr.count = 5; mods.push_back(arr);   // the artist adds an Array...
+        mesh.vertices[0].x += 2.0f; v = {3};                              // ...and moves a vertex
+        CHECK(StepMeshUndo(undo, redo, tg, false));
+        CHECK(mods.size() == 1 && mods[0].type == MeshModifier::Type::Mirror);    // the modifier change is undone with the mesh
+        CHECK(mesh.vertices[0].x < 1.0f && v.size() == 2);
+        CHECK(redo.size() == 1 && redo[0].label == "Add Array");
+        CHECK(StepMeshUndo(undo, redo, tg, true));                        // redo brings both back
+        CHECK(mods.size() == 2 && mods[1].count == 5 && mesh.vertices[0].x > 1.0f && v.size() == 1);
+        CHECK(!StepMeshUndo(undo, redo, tg, true));
+        // An object without modifiers: steps still work and the pointer stays null.
+        MeshUndoTarget tn = tg; tn.mods = nullptr; std::vector<MeshUndoStep> u2, r2;
+        PushMeshUndo(u2, r2, tn, ""); CHECK(u2[0].label == "Edit");
+        CHECK(StepMeshUndo(u2, r2, tn, false));
+        // Bounded history.
+        std::vector<MeshUndoStep> u3, r3; for (int i = 0; i < 250; ++i) PushMeshUndo(u3, r3, tg, "x", 100);
+        CHECK(u3.size() == 100);
     }
     TEST_MAIN_RESULT();
 }

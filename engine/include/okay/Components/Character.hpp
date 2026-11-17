@@ -6,6 +6,7 @@
 #include "okay/Components/AnimClip.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/NaturalGait.hpp"
+#include "okay/Components/FpViewmodelMotion.hpp"
 #include <cctype>
 #include <cmath>
 #include <unordered_map>
@@ -206,6 +207,21 @@ public:
     /// does not drag it. The shared hips and torso are never zeroed for this.
     /// Set by FirstPersonHand.
     bool  fpSteady = false;
+
+    // ---- First-person motion layer (idle breathing, bob, sprint / crouch / land poses, grips, named events) ----
+    // See FpViewmodelMotion.hpp and docs/fp_hand.md. Everything here is the owner's viewmodel only.
+    /// Play a named first-person animation: "equip" "unequip" "use" "swing" "fire" "reload" (aliases: "dig" and
+    /// "hit" swing, "place" and "interact" use, "shoot" fire). Returns false for a name it does not know.
+    /// Safe to call from scripts or from gameplay code every frame (a name already playing keeps playing).
+    bool  TriggerFpEvent(const std::string& name, float strength = 1.0f) { return m_fpMotion.Trigger(name, strength); }
+    /// Aim down sights (pistol and rifle grips move the hands to the centre).
+    void  SetFpAim(bool on) { m_fpAim = on; }
+    bool  FpAiming() const { return m_fpAim; }
+    /// The grip pose the hands are in right now (from the held item), and the motion layer itself.
+    FpGripKind CurrentFpGrip() const { return m_fpGrip; }
+    const FpViewmodelMotion& FpMotion() const { return m_fpMotion; }
+    /// How far a surface in front of the lens pulled the hands back this frame, 0..1.
+    float FpWallPull() const { return m_fpMotion.WallWeight(); }
 
     /// True while this character is holding an object, so the real hands (the
     /// ones the hold poses) stay the hands everyone sees, including the owner.
@@ -774,6 +790,15 @@ private:
     int m_ownerArmBase2 = -2;
     bool m_fpSecond = false;
     float m_fpDt = 0.016f;
+    FpViewmodelMotion m_fpMotion;
+    FpGripKind m_fpGrip = FpGripKind::Empty;
+    bool  m_fpAim = false;
+    GameObject* m_fpPrevHeldSeen = nullptr;   // detects a new item or a dropped one (auto equip / unequip)
+    bool  m_fpHeldKnown = false;
+    float m_fpWallRaw = 0.0f;
+    float m_fpBobW = 0.0f;                    // eased 0..1: the older stride bob fades in and out instead of starting at a footfall
+    void  StepFpMotion(float dt);
+    void  ApplyFpMotion(class Camera* cam);
     float m_fpPrevYaw = 0.0f, m_fpPrevPitch = 0.0f;
     float m_fpTrailYaw = 0.0f, m_fpTrailPitch = 0.0f;
     bool  m_fpTrailInit = false;

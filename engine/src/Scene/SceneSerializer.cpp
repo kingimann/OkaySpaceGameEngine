@@ -1583,6 +1583,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         // Presets, click swing and shirt colours came later. A scene without this line is the Old look.
         out << "  fphands3 " << (int)hh->preset << " " << (hh->swingOnClick ? 1 : 0) << " " << hh->attackButton
             << " " << (hh->right.matchShirt ? 1 : 0) << " " << (hh->left.matchShirt ? 1 : 0) << "\n";
+        // Item actions (fire / aim / reload keys) came later. A scene without this line has them off.
+        out << "  fphands4 " << (hh->itemActions ? 1 : 0) << " " << hh->aimButton << " " << (int)(unsigned char)hh->reloadKey << "\n";
     }
     for (auto* ps : go->GetComponents<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -7836,6 +7838,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     hh->attackButton = ab < 0 ? 0 : ab > 7 ? 7 : ab;
                     hh->right.matchShirt = mr != 0;
                     hh->left.matchShirt = ml != 0;
+                } else if (field == "fphands4") {
+                    auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    int ia = 0, ab = 1, rk = 'r';
+                    in >> ia >> ab >> rk;
+                    hh->itemActions = ia != 0;
+                    hh->aimButton = ab < 0 ? 0 : ab > 7 ? 7 : ab;
+                    hh->reloadKey = (rk >= 0 && rk < 128) ? (char)rk : 'r';
                 } else if (field == "fphands2") {
                     auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
                     if (!hh) hh = go->AddComponent<FirstPersonHands>();

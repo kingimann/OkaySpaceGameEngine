@@ -133,7 +133,7 @@ inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, floa
 inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
     if (!player) return;
     if (player->tag.empty()) player->tag = "Player";
-    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>()->itemActions = true;
     if (!player->GetComponent<ProceduralObjectHolding>()) player->AddComponent<ProceduralObjectHolding>();
     if (!player->GetComponent<HoldPrompt>()) {
         auto* prompt = player->AddComponent<HoldPrompt>();
@@ -197,7 +197,7 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
 inline PlayerView* AddSharedView(GameObject* player, PlayerView::View start, float shoulder = 0.0f) {
     auto* pc = PlayerController::Of(player);
     if (!pc) pc = PlayerController::Add(player, PlayerController::ViewMode::Both, start);
-    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>()->itemActions = true;
     PlayerView* pv = pc->toggle();
     if (pv) { pv->defaultView = start; pv->shoulderOffset = shoulder; }
     return pv;

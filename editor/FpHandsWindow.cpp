@@ -207,6 +207,8 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The look before presets, for comparing.");
         if (ImGui::Checkbox("Left click swings the arm", &h->swingOnClick)) dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Others see the same swing on the real arm.");
+        if (ImGui::Checkbox("Pistol / rifle: click fires, right mouse aims, R reloads", &h->itemActions)) dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays the fire, aim and reload hand animations when a pistol or rifle is in your hands. Off: a click swings as usual.");
         ImGui::Separator();
     }
     if (ImGui::Button("Open Preview")) {

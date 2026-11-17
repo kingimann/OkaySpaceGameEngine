@@ -1851,6 +1851,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - hair physics (52.1)
 - hair style (4.9, 30.1)
 - hand FOV (4.7)
+- Hand motion layer (4.7.6)
 - handbook (57.1)
 - handbrake (4.5)
 - Handle (1.18, 2.11)

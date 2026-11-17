@@ -120,7 +120,146 @@ int WriteExampleScene(const char* path) {
     return SceneSerializer::SaveToFile(sc, path) ? 0 : 1;
 }
 
+// examples/fp_hand/fp_hands_motion.okayscene: a small gym for the first-person hand MOTION (breathing, bob, sprint,
+// crouch, jump and land, strafe, aim, wall pull-back) and the held-item grips (pistol, rifle, flashlight, crate).
+// Written with the scene writer: fp_hand_shot --motion-scene <out.okayscene>
+static GameObject* MotionProp(Scene& sc, const char* name, Vec3 pos, Vec3 scale, Color col) {
+    GameObject* g = sc.CreateGameObject(name);
+    g->transform->localPosition = pos;
+    g->transform->localScale = scale;
+    auto* mr = g->AddComponent<MeshRenderer>();
+    mr->mesh = Mesh::Cube(1.0f);
+    mr->color = col;
+    g->AddComponent<BoxCollider3D>();
+    g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Dynamic;
+    g->AddComponent<HoldableObject>()->weight = 0.8f;   // style stays Automatic: the name picks the grip
+    auto* pk = g->AddComponent<ItemPickup>();
+    pk->item = name; pk->holdInHands = true; pk->interactKey = 'e';
+    pk->pickupOnTouch = false; pk->autoRadius = 0.0f; pk->interactRange = 3.0f;
+    return g;
+}
+static void BuildMotionGym(Scene& sc) {
+    BuildWorld(sc);
+    auto block = [&](const char* n, Vec3 p, Vec3 sc3, Color c, bool solid) {
+        GameObject* g = sc.CreateGameObject(n);
+        g->transform->localPosition = p; g->transform->localScale = sc3;
+        auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(1.0f); mr->color = c;
+        if (solid) { g->AddComponent<BoxCollider3D>(); g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static; }
+    };
+    block("Wall To Walk Into", {0, 1.2f, -1.9f}, {2.4f, 2.4f, 0.3f}, Color::FromBytes(200, 190, 170), true);
+    block("Step", {3.0f, 0.3f, -2.0f}, {1.5f, 0.6f, 1.5f}, Color::FromBytes(150, 120, 90), true);
+    block("Low Beam", {-3.5f, 1.35f, -1.5f}, {1.2f, 0.25f, 3.0f}, Color::FromBytes(110, 110, 130), true);
+}
+int WriteMotionScene(const char* path) {
+    Scene sc("FP Hands Motion");
+    BuildMotionGym(sc);
+    GameObject* player = Templates::AddFirstPersonPlayer(sc, {0, 0.05f, 2.0f});
+    Templates::AddTemplateHoldables(sc, player);
+    // The generic template blocks stay out of the way; the gym has its own items.
+    MotionProp(sc, "Pistol", {-0.6f, 0.1f, 0.6f}, {0.08f, 0.14f, 0.28f}, Color::FromBytes(60, 60, 70));
+    MotionProp(sc, "Rifle", {0.6f, 0.1f, 0.6f}, {0.09f, 0.12f, 0.9f}, Color::FromBytes(80, 70, 55));
+    MotionProp(sc, "Flashlight", {-1.6f, 0.1f, 0.9f}, {0.07f, 0.07f, 0.32f}, Color::FromBytes(210, 190, 70));
+    MotionProp(sc, "Crate", {1.7f, 0.2f, 1.0f}, {0.45f, 0.4f, 0.45f}, Color::FromBytes(160, 120, 70));
+    GameObject* mir = sc.CreateGameObject("Mirror Camera");
+    mir->transform->SetParent(player->transform, false);
+    mir->transform->localPosition = {0.0f, 1.3f, -3.2f};
+    mir->transform->localRotation = Quat::Euler(0.0f, 180.0f, 0.0f);
+    auto* mc = mir->AddComponent<Camera>();
+    mc->main = false; mc->depth = 5.0f; mc->fieldOfView = 40.0f;
+    mc->rectX = 0.68f; mc->rectY = 0.04f; mc->rectW = 0.30f; mc->rectH = 0.34f;
+    mc->clearFlags = Camera::ClearFlags::Skybox;
+    GameObject* help = sc.CreateGameObject("What to look for");
+    auto* t = help->AddComponent<TextRenderer>();
+    t->text = "FIRST PERSON HANDS: MOTION. Stand still: the hand breathes. W: it bobs with your steps. Shift: sprint pose. Ctrl: it lowers. "
+              "Space: kick on take-off and landing. A / D: it tilts. Walk into the wall ahead: the hand pulls back and down. "
+              "E picks up Pistol, Rifle, Flashlight, Crate (each is held differently). With a gun: click fires, right mouse aims, R reloads. "
+              "Settings > Accessibility > Reduce motion turns the sway, bob and tilt off.";
+    t->screenSpace = true; t->anchor = UIAnchor::StretchHorizontal;
+    t->screenPos = {12, 48}; t->size = {360, 170}; t->vcenter = false; t->wrap = true;
+    t->pixelSize = 2.0f; t->outline = true;
+    return SceneSerializer::SaveToFile(sc, path) ? 0 : 1;
+}
+
+// Strips of the owner's own camera for the motion states. Headless software renders.
+// fp_hand_shot --strips <outdir>
+int MotionStrips(const std::string& outdir) {
+    struct Shot { const char* name; };
+    auto build = [&](Scene& sc, GameObject*& player) {
+        BuildMotionGym(sc);
+        player = Templates::AddFirstPersonPlayer(sc, {0, 0.05f, 2.0f});
+        Templates::AddTemplateHoldables(sc, player);
+        MotionProp(sc, "Pistol", {-0.4f, 0.3f, 1.3f}, {0.08f, 0.14f, 0.28f}, Color::FromBytes(60, 60, 70));
+        MotionProp(sc, "Rifle", {0.4f, 0.3f, 1.3f}, {0.09f, 0.12f, 0.9f}, Color::FromBytes(80, 70, 55));
+        MotionProp(sc, "Flashlight", {-0.9f, 0.3f, 1.3f}, {0.07f, 0.07f, 0.32f}, Color::FromBytes(210, 190, 70));
+        MotionProp(sc, "Crate", {0.9f, 0.3f, 1.3f}, {0.45f, 0.4f, 0.45f}, Color::FromBytes(160, 120, 70));
+        for (const auto& o : sc.Objects())
+            if (auto* cm = o->GetComponent<Camera>()) if (o->IsSelfOrDescendantOf(player)) cm->viewportAspect = (float)kW / kH;
+        sc.Start();
+        Input::FeedKeys({});
+        for (int i = 0; i < 40; ++i) sc.Update(1.0f / 60.0f);
+    };
+    struct Row { const char* file; std::vector<const char*> cells; };
+    const std::vector<Row> rows = {
+        {"states", {"idle", "walk", "sprint", "crouch", "air", "land", "strafe", "wall"}},
+        {"grips", {"empty", "flashlight", "crate", "pistol", "rifle", "rifle_aim"}},
+        {"events", {"swing", "use", "fire", "reload", "equip"}},
+    };
+    for (const Row& row : rows) {
+        const int n = (int)row.cells.size();
+        std::vector<std::uint8_t> img((std::size_t)kW * n * kH * 4, 0);
+        int col = 0;
+        for (const char* cell : row.cells) {
+            Scene sc("FpStrip");
+            GameObject* player = nullptr;
+            build(sc, player);
+            const std::string c = cell;
+            auto* ch = player->GetComponent<Character>();
+            auto* hold = player->GetComponent<ProceduralObjectHolding>();
+            auto* hands = player->GetComponent<FirstPersonHands>();
+            auto step = [&](int frames, std::vector<char> keys = {}) { for (int i = 0; i < frames; ++i) { Input::FeedKeys(keys); sc.Update(1.0f / 60.0f); } };
+            auto grab = [&](const char* name) { if (GameObject* g = sc.Find(name)) hold->Pickup(g); step(60); };
+            if (c == "sprint") hands->showWhileRunning = true;
+            if (c == "flashlight") grab("Flashlight");
+            if (c == "crate") grab("Crate");
+            if (c == "pistol" || c == "fire" || c == "reload" || c == "equip" || c == "use") grab("Pistol");
+            if (c == "rifle" || c == "rifle_aim") grab("Rifle");
+            if (c == "idle" || c == "empty") step(60);
+            if (c == "walk") step(37, {'w'});
+            if (c == "sprint") step(40, {'w', Input::KeyShift});
+            if (c == "crouch") step(45, {Input::KeyCtrl});
+            if (c == "air") { step(20, {'w'}); step(6, {' '}); step(4, {'w'}); }
+            if (c == "land") { step(20, {'w'}); step(6, {' '}); step(75, {'w'}); }
+            if (c == "strafe") step(40, {'d'});
+            if (c == "wall") { player->transform->localPosition = {0, 0.05f, -0.75f}; step(10); step(60, {}); }
+            if (c == "rifle_aim") { ch->SetFpAim(true); step(40); }
+            if (c == "swing") { ch->TriggerFpEvent("swing"); step(9); }
+            if (c == "use") { ch->TriggerFpEvent("use"); step(8); }
+            if (c == "fire") { ch->TriggerFpEvent("fire"); step(4); }
+            if (c == "reload") { ch->TriggerFpEvent("reload"); step(50); }
+            if (c == "equip") { ch->TriggerFpEvent("equip"); step(6); }
+            Camera* own = nullptr;
+            for (const auto& o : sc.Objects())
+                if (auto* cm = o->GetComponent<Camera>()) if (cm->enabled && o->IsSelfOrDescendantOf(player)) own = cm;
+            Raster r;
+            if (own) {
+                const float aspect = (float)kW / kH;
+                Render(r, sc, own->ProjectionMatrix(aspect) * own->ViewMatrix(), own->RenderPosition(), own->ignoreObject);
+                Blit(img, kW * n, kW * col, 0, r);
+            }
+            ++col;
+        }
+        Image im; im.Set(kW * n, kH, img);
+        im.SavePNG(outdir + "/" + row.file + ".png");
+        std::printf("wrote %s/%s.png (%d cells: ", outdir.c_str(), row.file, n);
+        for (const char* cell : row.cells) std::printf("%s ", cell);
+        std::printf(")\n");
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--motion-scene") return WriteMotionScene(argv[2]);
+    if (argc >= 3 && std::string(argv[1]) == "--strips") return MotionStrips(argv[2]);
     if (argc >= 3 && std::string(argv[1]) == "--scene") return WriteExampleScene(argv[2]);
     if (argc < 2) { std::fprintf(stderr, "usage: fp_hand_shot <outdir> [old|normal]\n"); return 2; }
     const std::string outdir = argv[1];

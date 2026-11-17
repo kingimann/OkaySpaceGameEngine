@@ -1,0 +1,232 @@
+okayscene 3
+name "FP Hands Motion"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Ground"
+  guid "cdb9523bd44d031b632b471f90342186"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 40 1 40
+  mesh "Cube" 0.3764706 0.50980395 0.36078432 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 1 "Wall"
+  guid "5793f4f6a83cfef777f7b9b75fb3227b"
+  active 1
+  parent -1
+  transform 0 1.5 -6 0 0 0 1 8 3 0.4
+  mesh "Cube" 0.6666667 0.627451 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "PostL"
+  guid "deca33459af8f903deade0863707896e"
+  active 1
+  parent -1
+  transform -2.5 0.5 -3.5 0 0 0 1 0.3 1 0.3
+  mesh "Cube" 0.7058824 0.3529412 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "PostR"
+  guid "b1cff7c357561b39c8804554c2167f93"
+  active 1
+  parent -1
+  transform 2.5 0.5 -3.5 0 0 0 1 0.3 1 0.3
+  mesh "Cube" 0.3137255 0.43137255 0.74509805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Sun"
+  guid "50e2f9f6fe6fb573065d7a954e57f2bc"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 5 "Wall To Walk Into"
+  guid "f85c8a02347bdc4afc534354b53dc730"
+  active 1
+  parent -1
+  transform 0 1.2 -1.9 0 0 0 1 2.4 2.4 0.3
+  mesh "Cube" 0.78431374 0.74509805 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 6 "Step"
+  guid "af2039f714666b6048b4b7485daa91c4"
+  active 1
+  parent -1
+  transform 3 0.3 -2 0 0 0 1 1.5 0.6 1.5
+  mesh "Cube" 0.5882353 0.47058824 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 7 "Low Beam"
+  guid "0639b35a57c774ae084268bc0949e42c"
+  active 1
+  parent -1
+  transform -3.5 1.35 -1.5 0 0 0 1 1.2 0.25 3
+  mesh "Cube" 0.43137255 0.43137255 0.50980395 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 8 "Player"
+  guid "f64464224e66be4ee9ec792c2b1c0a25"
+  active 1
+  tag "Player"
+  parent -1
+  transform 0 0.05 2 0 0 0 1 1 1 1
+  animsm "Idle" 48 "Idle" "Idle" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Walk" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.28 "Run" 3 "run" 0 0.22 "Run" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.22 "Walk" 4 "run" 0 0.22 "Crouch" "Crouch" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "CrouchWalk" 1 "speed" 0.35 0.2 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "CrouchWalk" "" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "Crouch" 2 "speed" 0.2 0.2 "Prone" "Prone" 1 1 4 "Crawl" 1 "speed" 0.35 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "GetUp" 4 "prone" 0 0.1 "Crawl" "" 1 1 6 "Prone" 2 "speed" 0.2 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "Run" 4 "prone" 0 0.8 "Walk" 4 "prone" 0 0.8 "GetUp" 4 "prone" 0 0.1 "GetUp" "GetUp" 1.25 0 7 "Prone" 3 "prone" 0 0.75 "Crouch" 3 "crouch" 0 0.25 "CrouchWalk" 0 "" 0 0.25 "Crouch" 0 "" 0 0.25 "Run" 0 "" 0 0.15 "Walk" 0 "" 0 0.15 "Idle" 0 "" 0 0.15 "Drop" "Drop" 1.3333334 0 4 "Crouch" 4 "prone" 0 0.25 "Idle" 4 "prone" 0 0.2 "Crawl" 0 "" 0 0.75 "Prone" 0 "" 0 0.75 "Jump" "Jump" 1 0 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Fall" "Fall" 1 1 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Land" "Land" 1 0 7 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Idle" 0 "" 0 0.28 "Hang" "Hang" 1 1 9 "Death" 5 "die" 0 0.12 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 2 "airTime" 0.12 0.25 "Crouch" 2 "airTime" 0.12 0.25 "Run" 2 "airTime" 0.12 0.2 "Walk" 2 "airTime" 0.12 0.2 "Idle" 2 "airTime" 0.12 0.2 "Fall" 4 "hanging" 0 0.12 "Wave" "Wave" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Point" "Point" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Clap" "Clap" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "ThumbsUp" "ThumbsUp" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Salute" "Salute" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "WaveBoth" "WaveBoth" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Cheer" "Cheer" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Sad" "Sad" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Angry" "Angry" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Think" "Think" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Death" "" 1 0 2 "GetUp" 4 "dead" 0 0.8 "DeadHold" 0 "" 0 0.5 "DeadHold" "" 1 1 1 "GetUp" 4 "dead" 0 0.8 "Dive" "Dive" 1 0 4 "Death" 5 "die" 0 0.2 "DiveLand" 0 "" 0 0.5 "Crawl" 0 "" 0 0.5 "Prone" 0 "" 0 0.5 "DiveLand" "DiveLand" 1 0 3 "Death" 5 "die" 0 0.2 "Crawl" 3 "grounded" 0 0.5 "Prone" 3 "grounded" 0 0.5 "SitDown" "" 1 0 1 "Sit" 0 "" 0 0.15 "Sit" "" 1 1 1 "StandUp" 4 "sitting" 0 0.12 "StandUp" "" 1 0 1 "Idle" 0 "" 0 0.2 "HitHeavy" "" 1 0 1 "Idle" 0 "" 0 0.1 "Hit_Crouch" "Hit_Crouch" 1 0 1 "Crouch" 0 "" 0 0.1 "Hit_Prone" "Hit_Prone" 1 0 1 "Prone" 0 "" 0 0.1 "Roll" "Roll_F" 1 0 1 "Idle" 0 "" 0 0.12 "Dodge" "" 1 0 1 "Idle" 0 "" 0 0.12 "Slide" "Slide" 1 1 1 "SlideEnd" 4 "slide" 0 0.1 "SlideEnd" "SlideEnd" 1 0 2 "Run" 0 "" 0 0.12 "Crouch" 0 "" 0 0.12 "Vault" "Vault" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleLow" "Mantle_Low" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleHigh" "Mantle_High" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LedgeGrab" "LedgeGrab" 1 0 2 "Death" 5 "die" 0 0.12 "Hang" 0 "" 0 0.15 "ClimbUp" "ClimbUp" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LetGo" "LetGo" 1 0 2 "Death" 5 "die" 0 0.12 "Fall" 0 "" 0 0.15 "HangShimmy" "" 1 1 2 "Death" 5 "die" 0 0.12 "Hang" 2 "shimmy" 0.2 0.25 "Swim" "" 1 1 2 "Death" 5 "die" 0 0.2 "Idle" 4 "swimming" 0 0.8 "Emote_Nod" "Emote_Nod" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shake" "Emote_Shake" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shrug" "Emote_Shrug" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15
+  animsmpos 48 40 40 40 130 40 220 260 40 260 130 480 40 480 130 480 220 480 310 700 40 700 130 700 220 700 310 920 40 920 130 920 220 920 310 920 400 920 490 920 580 920 670 920 760 920 850 1140 40 1140 130 1360 40 1360 130 1580 40 1580 130 1580 220 1800 40 1800 130 1800 220 2020 40 2020 130 2020 220 2020 310 2240 40 2240 130 2240 220 2240 310 2240 400 2240 490 2240 580 2460 40 2680 40 2680 130 2680 220
+  animsmparams 37 "speed" 0 "airTime" 0 "verticalSpeed" 0 "gaitX" 0 "gaitZ" 0 "gaitSpeed" 0 "run" 1 "crouch" 1 "prone" 1 "dive" 2 "grounded" 1 "sprint" 1 "deathDir" 0 "dead" 1 "die" 2 "sitting" 1 "sitType" 0 "sit" 2 "hit" 2 "hitDir" 0 "hitHeavy" 1 "staggerScale" 0 "dodgeDir" 0 "roll" 2 "dodge" 2 "slide" 1 "vault" 2 "mantle" 2 "ledgeGrab" 2 "climbUp" 2 "letGo" 2 "hanging" 1 "shimmy" 0 "swimSpeed" 0 "swimming" 1 "emoteId" 3 "emote" 2
+  animsmx 48 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "gaitX" 40 "Walk_0.3_F" 0 "Walk_0.3_FR" 0.21213204 "Walk_0.3_R" 0.3 "Walk_0.3_BR" 0.21213204 "Walk_0.3_B" -2.6226834e-08 "Walk_0.3_BL" -0.21213204 "Walk_0.3_L" -0.3 "Walk_0.3_FL" -0.21213204 "Walk_1_F" 0 "Walk_1_FR" 0.70710677 "Walk_1_R" 1 "Walk_1_BR" 0.70710677 "Walk_1_B" -8.742278e-08 "Walk_1_BL" -0.70710677 "Walk_1_L" -1 "Walk_1_FL" -0.70710677 "Walk_2_F" 0 "Walk_2_FR" 1.4142135 "Walk_2_R" 2 "Walk_2_BR" 1.4142135 "Walk_2_B" -1.7484555e-07 "Walk_2_BL" -1.4142135 "Walk_2_L" -2 "Walk_2_FL" -1.4142135 "Walk_3_F" 0 "Walk_3_FR" 2.1213202 "Walk_3_R" 3 "Walk_3_BR" 2.1213202 "Walk_3_B" -2.6226832e-07 "Walk_3_BL" -2.1213202 "Walk_3_L" -3 "Walk_3_FL" -2.1213202 "Walk_4.5_F" 0 "Walk_4.5_FR" 3.1819804 "Walk_4.5_R" 4.5 "Walk_4.5_BR" 3.1819804 "Walk_4.5_B" -3.934025e-07 "Walk_4.5_BL" -3.1819804 "Walk_4.5_L" -4.5 "Walk_4.5_FL" -3.1819804 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 1 "gaitX" 40 "Run_3_F" 0 "Run_3_FR" 2.1213202 "Run_3_R" 3 "Run_3_BR" 2.1213202 "Run_3_B" -2.6226832e-07 "Run_3_BL" -2.1213202 "Run_3_L" -3 "Run_3_FL" -2.1213202 "Run_4_F" 0 "Run_4_FR" 2.828427 "Run_4_R" 4 "Run_4_BR" 2.828427 "Run_4_B" -3.496911e-07 "Run_4_BL" -2.828427 "Run_4_L" -4 "Run_4_FL" -2.828427 "Run_5.5_F" 0 "Run_5.5_FR" 3.8890872 "Run_5.5_R" 5.5 "Run_5.5_BR" 3.8890872 "Run_5.5_B" -4.808253e-07 "Run_5.5_BL" -3.8890872 "Run_5.5_L" -5.5 "Run_5.5_FL" -3.8890872 "Run_7_F" 0 "Run_7_FR" 4.9497476 "Run_7_R" 7 "Run_7_BR" 4.9497476 "Run_7_B" -6.119594e-07 "Run_7_BL" -4.9497476 "Run_7_L" -7 "Run_7_FL" -4.9497476 "Run_8.5_F" 0 "Run_8.5_FR" 6.0104074 "Run_8.5_R" 8.5 "Run_8.5_BR" 6.0104074 "Run_8.5_B" -7.430936e-07 "Run_8.5_BL" -6.0104074 "Run_8.5_L" -8.5 "Run_8.5_FL" -6.0104074 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "gaitX" 24 "CrouchWalk_0.3_F" 0 "CrouchWalk_0.3_FR" 0.21213204 "CrouchWalk_0.3_R" 0.3 "CrouchWalk_0.3_BR" 0.21213204 "CrouchWalk_0.3_B" -2.6226834e-08 "CrouchWalk_0.3_BL" -0.21213204 "CrouchWalk_0.3_L" -0.3 "CrouchWalk_0.3_FL" -0.21213204 "CrouchWalk_1_F" 0 "CrouchWalk_1_FR" 0.70710677 "CrouchWalk_1_R" 1 "CrouchWalk_1_BR" 0.70710677 "CrouchWalk_1_B" -8.742278e-08 "CrouchWalk_1_BL" -0.70710677 "CrouchWalk_1_L" -1 "CrouchWalk_1_FL" -0.70710677 "CrouchWalk_2_F" 0 "CrouchWalk_2_FR" 1.4142135 "CrouchWalk_2_R" 2 "CrouchWalk_2_BR" 1.4142135 "CrouchWalk_2_B" -1.7484555e-07 "CrouchWalk_2_BL" -1.4142135 "CrouchWalk_2_L" -2 "CrouchWalk_2_FL" -1.4142135 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 1 "speed" 0.2 3 "run" 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 "" 0 4 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 0 1 "gaitX" 4 "Crawl" 0 "Crawl_R" 0.8 "Crawl_B" 0 "Crawl_L" -0.8 6 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 0 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 4 0 1 0 1 3 "crouch" 0 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 1 0 0 0 "" 0 9 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "deathDir" 4 "Death_F" 0 "Death_B" 1 "Death_L" 2 "Death_R" 3 2 0 1 0 0 1 1 0 0 1 "deathDir" 4 "DeadHold_F" 0 "DeadHold_B" 1 "DeadHold_L" 2 "DeadHold_R" 3 1 0 1 0 0 0 "" 0 4 0 1 0 0 1 1 0 1 4 "grounded" 0 1 1 0 2 3 "grounded" 0 1 "speed" 0.35 1 1 0 1 3 "grounded" 0 0 "" 0 3 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "sitType" 2 "SitDown_Chair" 0 "SitDown_Ground" 1 1 1 1 0 0 1 "sitType" 3 "Sit_Chair" 0 "Sit_Ground" 1 "Sit_Ground_Knees" 2 1 0 1 0 0 1 "sitType" 2 "StandUp_Chair" 0 "StandUp_Ground" 1 1 1 1 0 0 1 "hitDir" 2 "Hit_Heavy_F" 0 "Hit_Heavy_B" 1 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 1 "dodgeDir" 4 "Roll_F" 0 "Dodge_B" 1 "Dodge_L" 2 "Dodge_R" 3 1 1 1 0 0 0 "" 0 1 0 1 0 0 0 "" 0 2 1 1 0 2 3 "sprint" 0 4 "crouch" 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 1 "shimmy" 2 "Hang_Shimmy_L" -1 "Hang_Shimmy_R" 1 2 0 1 0 0 0 1 0 1 1 "shimmy" -0.2 1 "swimSpeed" 2 "Swim_Tread" 0 "Swim_Fwd" 1.5 2 0 1 0 0 0 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0
+  animsmany 22 "Swim" 3 "swimming" 0 0.5 0 1 0 0 "Jump" 1 "airTime" 0.12 0.12 0 1 0 2 1 "verticalSpeed" 0.4 4 "prone" 0 "Fall" 1 "airTime" 0.12 0.12 0 1 0 2 2 "verticalSpeed" 0.4 4 "prone" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "sprint" 0 3 "grounded" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "run" 0 3 "grounded" 0 "Death" 5 "die" 0 0.25 0 1 0 0 "SitDown" 5 "sit" 0 0.2 0 1 0 0 "Hit_Prone" 5 "hit" 0 0.25 0 1 1 1 3 "prone" 0 "Hit_Crouch" 5 "hit" 0 0.25 0 1 1 2 3 "crouch" 0 4 "prone" 0 "HitHeavy" 5 "hit" 0 0.25 0 1 1 3 3 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0 "Roll" 5 "roll" 0 0.1 0 1 1 0 "Dodge" 5 "dodge" 0 0.1 0 1 1 0 "Slide" 3 "slide" 0 0.1 0 1 0 0 "Vault" 5 "vault" 0 0.12 0 1 0 0 "MantleLow" 5 "mantle" 0 0.12 0 1 0 0 "LedgeGrab" 5 "ledgeGrab" 0 0.12 0 1 0 0 "ClimbUp" 5 "climbUp" 0 0.12 0 1 0 0 "LetGo" 5 "letGo" 0 0.12 0 1 0 0 "Hang" 3 "hanging" 0 0.12 0 1 0 0 "Emote_Nod" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 0 "Emote_Shake" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 1 "Emote_Shrug" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 2
+  animsm2d 48 1 "" "" 0 2 "gaitZ" "gaitSpeed" 40 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 3 2.1213202 -1.3113416e-07 -2.1213202 -3 -2.1213202 -1.3113416e-07 2.1213202 4.5 3.1819804 -1.9670125e-07 -3.1819804 -4.5 -3.1819804 -1.9670125e-07 3.1819804 2 "gaitZ" "gaitSpeed" 40 3 2.1213202 -1.3113416e-07 -2.1213202 -3 -2.1213202 -1.3113416e-07 2.1213202 4 2.828427 -1.7484555e-07 -2.828427 -4 -2.828427 -1.7484555e-07 2.828427 5.5 3.8890872 -2.4041265e-07 -3.8890872 -5.5 -3.8890872 -2.4041265e-07 3.8890872 7 4.9497476 -3.059797e-07 -4.9497476 -7 -4.9497476 -3.059797e-07 4.9497476 8.5 6.0104074 -3.715468e-07 -6.0104074 -8.5 -6.0104074 -3.715468e-07 6.0104074 1 "" "" 0 2 "gaitZ" "gaitSpeed" 24 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 1 "" "" 0 2 "gaitZ" "gaitSpeed" 4 0.8 0 -0.8 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 3 0 0 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0
+  animsmev 48 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0.31 0.14124998 0.29 0 "" "" 1 6 0 0 0 0 0 0 "" "" 0 4 0 0 0 0 "" "" 0 6 0 0 0 0 0 0 "" "" 0 7 0 0 0.31 0 0.14124998 0.29 0 "" "" 0 4 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0.31 0 0.14124998 0.29 0 "" "" 1 9 0 0 0 0.31 0 0.14124998 0.29 0 0 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 1 6 0 0 0.31 0 0.14124998 0.29 "" "" 0 2 0 0 "" "" 0 1 0 "" "" 0 4 0 0 0 0 "" "" 0 3 0 0 0 "" "" 0 1 0 "sit" "" 0 1 0 "stand" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmfb 48 -1 -1 -1 -1 -1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 0 0 0 1 1 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 -1 -1 -1
+  animsmlk 48 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmint 48 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 4 0 4 4 4 6 4 4 4 4 4 0 4 0 4 4 0 6 0 4 4 4 4 0 7 4 4 4 4 0 0 0 4 4 0 4 4 7 0 0 0 0 4 4 4 7 0 0 0 0 4 4 4 7 4 0 4 4 4 4 4 9 1 4 0 4 4 0 0 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 2 0 0 1 0 4 0 0 0 0 3 0 0 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 2 0 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 3 0 0 0 3 0 0 0 3 0 0 0
+  animsmmatch 48 0 1 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmactions 8
+  animsmnoint 48 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1
+  animsmanyint 22 1 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmlayer 1 0 "Torso"
+  animsm "Off" 2 "Off" "Hit_Off" 1 1 0 "Hit" "" 1 0 1 "Off" 0 "" 0 0.1
+  animsmpos 2 40 40 40 140
+  animsmx 2 0 "" 0 0 1 "hitDir" 4 "Hit_F" 0 "Hit_B" 1 "Hit_L" 2 "Hit_R" 3 1 1 1 0 0
+  animsmany 1 "Hit" 5 "hit" 0 0.1 0 1 1 3 4 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0
+  animsmanyint 1 1
+  fphands 1 0 1 1 1 0 0 0 0 0 0 0 1 0 1 -0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 1 0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0
+  fphands2 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0
+  fphands3 0 1 0 1 1
+  fphands4 1 1 114
+  character 1 0.862745 0.690196 0.588235 0.235294 0.372549 0.294118 0.156863 0.164706 0.215686 0.14902 0.137255 0.14902 0.313726 0.196078 0.117647 0.117647 0.101961 0.109804 0.588235 0.176471 0.176471 0.294118 0.235294 0.176471 0.176471 0.156863 0.137255 0.27451 0.27451 0.313726 0.137255 0.109804 0.0862745 1 0 0 2 0 1 0 0 0 0 0 0 0 0 0 0 1 1 "-" - 0 1 0 - - - 0.15 0 - - - 0 0 0 0.05 0.12 28 50 0.22 32 0.45 1 5 - 0
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  objholding hand=1 style=0 armIK=1 transition=0.3 body=1 carry=0 throwKey=103 throwMouse=2 throwPad=2 charge=0.75 tmin=4 tmax=16 reach=2
+  holdprompt drop=101 alt=103 prompt="Hold Prompt"
+  boxcollider3d 0.6 1.8 0.6 0 0.9 0 0 0 0
+  playercontroller view=2 allow=1 start=0 key=118 pad=4 blend=0.3 ease=1 snap=0 ex=0 ey=0 ez=0 dist=-1 shoulder=0 presetKeys=0
+  pcfirst 2 5.5 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 1 0.5 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  pcfirstfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
+  pcfirststance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=0 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+  pcthird 2 5.5 6 0.2 24 5 1.5 1 1 0 0 2 12 1 0 20 -20 70 0 130 90 0.78 0.12 0.12 1 0.3 16 0 17 122 1 1 0.5 0.4 1.1 12 113 101 12 0.5 10 1 0 20 10 0.6 0.05 0.2 4294967295 30 6
+  pcthirdstance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.2 capPx=220 slope=50 step=0.35 fallY=-100 swim=2.2 swimUp=2.4 swimDown=2.2 varJump=0 jumpCut=0.5 climb=2.5 hardLand=12 preset=0 stickRamp=0
+  pcthirdfeel 0 6 7 1 2.2 0.65 48 0.6 10 0 1.5 2.5 0.25 1.5 1 10 0.75 1 1 0 0 7.5 0.35 0.55 18 0 0 0 0 1
+  comporder "Character" "MeshRenderer" "AnimStateMachine" "AnimStateMachine" "Rigidbody3D" "BoxCollider3D" "PlayerController" "FirstPersonController" "ThirdPersonController" "PlayerView" "FirstPersonHands" "ProceduralObjectHolding" "HoldPrompt"
+end
+gameobject 9 "Player Camera"
+  guid "ac9a08d2301c140e31219744658fe446"
+  active 1
+  parent 8
+  transform 0 1.6 -0.2 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 10 "Block"
+  guid "8b67e1edba24e13cca7a4a501777a248"
+  active 1
+  parent -1
+  transform 0.55 0.16 -2.4 0 0 0 1 0.28 0.28 0.28
+  mesh "Cube" 0.8392157 0.54901963 0.1882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=9 support=0 two=0 weight=0.3 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=0 tpZ=0 tpRX=0 tpRY=0 tpRZ=0 lOn=0 lPX=0 lPY=0 lPZ=0 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=1 rPX=0 rPY=-0.5 rPZ=0 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="block" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 11 "Carry Crate"
+  guid "880d487917e8128baecaea2f732c3d08"
+  active 1
+  parent -1
+  transform -2.8 0.26 -2.6 0 0 0 1 0.62 0.48 0.48
+  mesh "Cube" 0.6901961 0.47843137 0.28235295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=12 support=0 two=1 weight=3 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=-0.05 tpZ=0.02 tpRX=0 tpRY=0 tpRZ=0 lOn=1 lPX=-0.5 lPY=0 lPZ=0.1 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=1 rPX=0.5 rPY=0 rPZ=0.1 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="crate" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 12 "Hold Prompt"
+  guid "56bf4181d9b7b4d07c4214746f210c14"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "" 1 1 1 1 2.4 1 0 -72 7 1 0 0 0 0.78431374 1 1 1 1 0 0 0 0.9019608 0 640 48 1 0 0 0 0 0.6666667 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 13 "Pistol"
+  guid "7e876072569fdb3a74ec65608a993849"
+  active 1
+  parent -1
+  transform -0.6 0.1 0.6 0 0 0 1 0.08 0.14 0.28
+  mesh "Cube" 0.23529412 0.23529412 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=0 support=0 two=0 weight=0.8 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=0 tpZ=0 tpRX=0 tpRY=0 tpRZ=0 lOn=0 lPX=0 lPY=0 lPZ=0 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=0 rPX=0 rPY=0 rPZ=0 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="Pistol" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 14 "Rifle"
+  guid "0313715847207563f9316fb068512c57"
+  active 1
+  parent -1
+  transform 0.6 0.1 0.6 0 0 0 1 0.09 0.12 0.9
+  mesh "Cube" 0.3137255 0.27450982 0.21568628 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=0 support=0 two=0 weight=0.8 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=0 tpZ=0 tpRX=0 tpRY=0 tpRZ=0 lOn=0 lPX=0 lPY=0 lPZ=0 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=0 rPX=0 rPY=0 rPZ=0 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="Rifle" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 15 "Flashlight"
+  guid "0765aa4029a30f9531fe87268575f7a0"
+  active 1
+  parent -1
+  transform -1.6 0.1 0.9 0 0 0 1 0.07 0.07 0.32
+  mesh "Cube" 0.8235294 0.74509805 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=0 support=0 two=0 weight=0.8 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=0 tpZ=0 tpRX=0 tpRY=0 tpRZ=0 lOn=0 lPX=0 lPY=0 lPZ=0 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=0 rPX=0 rPY=0 rPZ=0 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="Flashlight" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 16 "Crate"
+  guid "b529549f5249d7c107224f0fcbc1bd0d"
+  active 1
+  parent -1
+  transform 1.7 0.2 1 0 0 0 1 0.45 0.4 0.45
+  mesh "Cube" 0.627451 0.47058824 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  holdable style=0 support=0 two=0 weight=0.8 socket="" offX=0 offY=-0.25 offZ=0.35 rotX=0 rotY=0 rotZ=0 handScale=1 fpX=0 fpY=0 fpZ=0 fpRX=0 fpRY=0 fpRZ=0 fpS=1 tpX=0 tpY=0 tpZ=0 tpRX=0 tpRY=0 tpRZ=0 lOn=0 lPX=0 lPY=0 lPZ=0 lRX=0 lRY=0 lRZ=0 lCurl=0.6 rOn=0 rPX=0 rPY=0 rPZ=0 rRX=0 rRY=0 rRZ=0 rCurl=0.6
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  itempickup item="Crate" count=1 tag="Player" touch=0 auto=0 key=101 range=3 magnet=0 magnetSpeed=6 hold=1
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "HoldableObject" "ItemPickup"
+end
+gameobject 17 "Mirror Camera"
+  guid "1f406f4f7e0803a0e8093cadeec07243"
+  active 1
+  parent 8
+  transform 0 1.3 -3.2 0 1 0 -4.371139e-08 1 1 1
+  camera 1 5 40 0.19215687 0.3019608 0.4745098 1 0 0 5 0.3 4000 0 0.68 0.04 0.3 0.34 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 18 "What to look for"
+  guid "d61274c7bb130558b07c358d687cd804"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "FIRST PERSON HANDS: MOTION. Stand still: the hand breathes. W: it bobs with your steps. Shift: sprint pose. Ctrl: it lowers. Space: kick on take-off and landing. A / D: it tilts. Walk into the wall ahead: the hand pulls back and down. E picks up Pistol, Rifle, Flashlight, Crate (each is held differently). With a gun: click fires, right mouse aims, R reloads. Settings > Accessibility > Reduce motion turns the sway, bob and tilt off." 1 1 1 1 2 1 12 48 9 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 360 170 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

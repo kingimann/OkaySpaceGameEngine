@@ -11014,7 +11014,18 @@ struct OkayScriptVM::Impl {
                 if (m == "Get") return Value{sv->Get()};
                 return Value{};
             }
-            if (t == "FirstPersonHands") { FpHandsCall(g->GetComponent<FirstPersonHands>(), m); return Value{}; }
+            if (t == "FirstPersonHands") {
+                // FirstPersonHands.Event("swing" | "dig" | "place" | "use" | "fire" | "reload" | "equip" | "unequip" [, strength])
+                // plays that first-person hand animation (true when the name is known); FirstPersonHands.Aim(true / false).
+                if (m == "Event" || m == "TriggerEvent") {
+                    Character* ch = g->GetComponent<Character>();
+                    if (ch && !rest.empty()) return Value{ch->TriggerFpEvent(arg(0).AsString(), rest.size() > 1 ? arg(1).AsFloat() : 1.0f)};
+                    return Value{false};
+                }
+                if (m == "Aim") { if (Character* ch = g->GetComponent<Character>()) ch->SetFpAim(!rest.empty() && arg(0).AsBool()); return Value{}; }
+                FpHandsCall(g->GetComponent<FirstPersonHands>(), m);
+                return Value{};
+            }
             if (t == "Transform") {
                 std::vector<Value> x = rest;
                 return rt.Call("transform." + m, x);

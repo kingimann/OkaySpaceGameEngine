@@ -966,6 +966,14 @@ add_executable(test_fp_hand test_fp_hand.cpp)
 target_link_libraries(test_fp_hand PRIVATE okay::engine)
 add_test(NAME fp_hand COMMAND test_fp_hand)
 
+add_executable(test_fp_motion test_fp_motion.cpp)
+target_link_libraries(test_fp_motion PRIVATE okay::engine)
+add_test(NAME fp_motion COMMAND test_fp_motion)
+
+add_executable(test_fp_motion_char test_fp_motion_char.cpp)
+target_link_libraries(test_fp_motion_char PRIVATE okay::engine)
+add_test(NAME fp_motion_char COMMAND test_fp_motion_char)
+
 add_executable(test_fp_hand_normal test_fp_hand_normal.cpp)
 target_link_libraries(test_fp_hand_normal PRIVATE okay::engine)
 add_test(NAME fp_hand_normal COMMAND test_fp_hand_normal)

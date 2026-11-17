@@ -6,6 +6,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/FirstPersonHands.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/PlayerView.hpp"
@@ -1586,14 +1587,25 @@ void Character::RefreshOwnerArm() {
 // A click swings the real arm (Character::Punch), so the owner's arm copy swings and other players
 // see the same swing. Only in first person: a third person body has no viewmodel to swing.
 void FirstPersonHands::Update(float) {
-    if (!swingOnClick || Game::Paused() || !gameObject) return;
+    if (Game::Paused() || !gameObject) return;
     Character* c = gameObject->GetComponent<Character>();
     if (!c) return;
     bool first = false;
     if (auto* v = gameObject->GetComponent<PlayerView>()) first = v->Driving() ? v->FirstAmount() > 0.35f : v->TargetFirst();
     else first = gameObject->GetComponent<FirstPersonController>() != nullptr;
-    if (!first) return;
-    if (GameInputBlocked(gameObject->scene())) return;
+    if (!first) { c->SetFpAim(false); return; }
+    const bool blocked = GameInputBlocked(gameObject->scene());
+    // A pistol or rifle in hand: click fires, the aim button aims, the reload key reloads (the viewmodel kicks).
+    const FpGripKind grip = c->CurrentFpGrip();
+    const bool gun = itemActions && (grip == FpGripKind::Pistol || grip == FpGripKind::Rifle);
+    if (itemActions) c->SetFpAim(gun && !blocked && Input::GetMouseButton(aimButton));
+    if (blocked) return;
+    if (gun) {
+        if (Input::GetMouseButtonDown(attackButton)) c->TriggerFpEvent("fire");
+        if (reloadKey && Input::GetKeyDown(reloadKey)) c->TriggerFpEvent("reload");
+        return;
+    }
+    if (!swingOnClick) return;
     if (Input::GetMouseButtonDown(attackButton) && !c->Punching()) c->Punch();
 }
 
@@ -1750,6 +1762,10 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         snap *= fpHands->punchAmount;
         fpSide = base >= B_RUPARM ? &fpHands->left : &fpHands->right;
     }
+    // Reduce motion: the older stride bob and the look lag go away too (the motion layer does its own scaling).
+    const bool reduceMotion = Accessibility::Get().reduceMotion;
+    bobS *= m_fpBobW; bobC *= m_fpBobW;
+    if (reduceMotion) { bobS = 0.0f; bobC = 0.0f; }
     // Long axis toward screen centre. The broad face is turned up toward the
     // key light and only a little back at the lens: a face square to the lens
     // is in shadow, because the light sits in front of the camera.
@@ -1916,7 +1932,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         camOff = camOff + fpSide->position + fpSide->wristOffset;
         camOff.z -= fpSide->reach;
     }
-    const float sway = fpHands ? fpHands->swayAmount : 1.0f;
+    const float sway = Accessibility::Get().reduceMotion ? 0.0f : (fpHands ? fpHands->swayAmount : 1.0f);
     const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
     camOff = lag * camOff;
     m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
@@ -1947,7 +1963,98 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
     if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
     else DeactivateOwnerArm2();
+    ApplyFpMotion(cam);
     BlendHeldTowardGrip();
+}
+
+// The motion layer (FpViewmodelMotion): gather what the body is doing, advance the springs once per frame.
+void Character::StepFpMotion(float dt) {
+    FirstPersonHands* h = FirstPersonHands::FindOn(gameObject);
+    if (h && !h->enabled) h = nullptr;
+    FpMotionInput in;
+    in.dt = dt;
+    const float runSpeed = std::max(0.5f, NaturalGait::RunSpeed());
+    const bool stepping = anim == 2 || anim == 3 || anim == 7 || anim == 17 || (anim == 6 && std::fabs(m_gaitSpeed) > 0.2f);
+    in.stepping = stepping && std::fabs(m_gaitSpeed) > 0.05f;
+    m_fpBobW += ((in.stepping ? 1.0f : 0.0f) - m_fpBobW) * (1.0f - std::exp(-dt * 9.0f));
+    in.speed01 = m_gaitSpeed < 0.0f ? 0.0f : std::min(1.4f, std::fabs(m_gaitSpeed) / runSpeed);
+    in.phase = m_gaitPhase;
+    in.sprint = m_runW;
+    in.airborne = anim == 5 || anim == 18;
+    in.rising = anim == 5;
+    in.landK = m_landK;
+    in.jumpCrouch = m_jumpCrouchW;
+    in.stance = m_stanceLevel;
+    in.strafe = std::sin(m_lowerYaw * 0.0174532925f) * (in.speed01 > 0.05f ? 1.0f : 0.0f);
+    in.aim = m_fpAim;
+    in.side = fpArmBase >= B_RUPARM ? -1.0f : 1.0f;
+    if (h) { in.bobAmount = h->bobAmount; in.swayAmount = h->swayAmount; in.punchAmount = h->punchAmount; }
+    if (!fpArmBob || fpSteady) in.bobAmount = 0.0f;
+    in.reduceMotion = Accessibility::Get().reduceMotion;
+
+    // What is held decides the grip pose. A new item or a dropped one plays equip / unequip by itself.
+    ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
+    GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+    if (held && held->IsDestroyed()) held = nullptr;
+    m_fpGrip = held ? FpGripKindFor(held->GetComponent<HoldableObject>()) : FpGripKind::Empty;
+    if (m_fpHeldKnown && held != m_fpPrevHeldSeen) m_fpMotion.Trigger(held ? FpEventKind::Equip : FpEventKind::Unequip);
+    m_fpPrevHeldSeen = held;
+    m_fpHeldKnown = true;
+    in.grip = m_fpGrip;
+
+    // A surface in front of the lens: one short ray from the camera along the look.
+    float wall = 0.0f;
+    const bool shown = firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.02f;
+    if (shown && gameObject && gameObject->scene()) {
+        if (Camera* cam = OwnerCamera(gameObject)) if (cam->transform) {
+            Scene* sc = gameObject->scene();
+            const float reach = 0.85f;
+            Physics3D::IgnoreHierarchy own(gameObject);
+            RaycastHit3D hit = sc->physics3D().Raycast(*sc, cam->transform->Position(),
+                cam->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f}, reach, gameObject, Physics3D::kAllLayers, false);
+            if (hit.hit) wall = Mathf::Clamp((reach - hit.distance) / (reach - 0.30f), 0.0f, 1.0f);
+        }
+    }
+    in.wall = wall;
+    m_fpMotion.Step(in);
+}
+
+// Lay the motion on the whole viewmodel as one rigid camera-space move, so the item and both hands bob together.
+void Character::ApplyFpMotion(Camera* cam) {
+    if (!cam || !cam->transform || !m_ownerArm || !m_ownerArm->transform) return;
+    const FpMotionPose& mp = m_fpMotion.Pose();
+    const Quat cr = cam->transform->Rotation();
+    const Quat crInv = cr.Conjugate();
+    const Quat R = Quat::Euler(mp.euler);
+    const Vec3 pivot{0.0f, -0.25f, -0.55f};
+    std::vector<GameObject*> set;
+    auto add = [&](GameObject* g) { if (g && g->transform && g->active) set.push_back(g); };
+    add(m_ownerArm);
+    if (m_fpSecond) add(m_ownerArm2);
+    if (m_ownerItem && m_ownerItem->active && m_ownerHand && m_ownerItem->transform->Parent() != m_ownerHand->transform) add(m_ownerItem);
+    for (GameObject* g : set) {
+        const Vec3 c = cam->transform->InverseTransformPoint(g->transform->Position());
+        g->transform->SetPosition(cam->transform->TransformPoint(pivot + R * (c - pivot) + mp.pos));
+        g->transform->SetRotation(cr * R * (crInv * g->transform->Rotation()));
+    }
+    // The move must not put anything through the near plane. Same rule as the pose itself.
+    const float near = std::max(cam->nearClip, 0.04f);
+    const float keep = std::max(0.18f, near + 0.12f);
+    float minAhead = 1.0e9f;
+    auto consider = [&](GameObject* g) {
+        if (!g || !g->transform || !g->active) return;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr) return;
+        for (const Vec3& v : mr->mesh.vertices)
+            minAhead = std::min(minAhead, -cam->transform->InverseTransformPoint(g->transform->TransformPoint(v)).z);
+    };
+    consider(m_ownerArm); consider(m_ownerHand); consider(m_ownerFore);
+    if (m_fpSecond) { consider(m_ownerArm2); consider(m_ownerHand2); consider(m_ownerFore2); }
+    if (m_ownerItem && m_ownerItem->active) consider(m_ownerItem);
+    if (minAhead < keep) {
+        const Vec3 push = cr * Vec3{0.0f, 0.0f, -1.0f} * (keep - minAhead);
+        for (GameObject* g : set) g->transform->SetPosition(g->transform->Position() + push);
+    }
 }
 
 void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS, float bobC) {
@@ -1990,7 +2097,7 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
     ProceduralObjectHolding* ph = gameObject->GetComponent<ProceduralObjectHolding>();
     GameObject* held = (ph && ph->IsHolding()) ? ph->Held() : nullptr;
     const bool have = held && held->transform && !held->IsDestroyed() && m_ownerItem && m_ownerItem->transform;
-    const float sway = settings ? settings->swayAmount : 1.0f;
+    const float sway = Accessibility::Get().reduceMotion ? 0.0f : (settings ? settings->swayAmount : 1.0f);
     const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
     const float slide = 1.0f - m_fpShown;
 
@@ -2535,7 +2642,7 @@ void Character::BlendHeldTowardGrip() {
 }
 
 void Character::EaseFirstPersonArm(float dt) {
-    if (dt > 0.0f) m_fpDt = dt;
+    if (dt > 0.0f) { m_fpDt = dt; StepFpMotion(dt); }
     const float want = (firstPersonArm && fpArmBase >= 0)
         ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
     if (fpViewWeight >= 0.0f) {

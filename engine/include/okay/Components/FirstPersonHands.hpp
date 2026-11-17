@@ -105,6 +105,12 @@ public:
     Preset preset = Preset::Normal;       ///< the last preset applied (a label only)
     bool  swingOnClick = true;            ///< the attack button swings the arm (the real arm, so others see it)
     int   attackButton = 0;               ///< mouse button that swings (0 = left)
+    /// Item actions in first person (off for a component added by hand, on in the starter players):
+    /// with a pistol or rifle in hand, the attack button plays the "fire" kick, the aim button (right mouse) aims
+    /// down the sights and the reload key plays "reload". Other items keep the click swing. Not part of a preset.
+    bool  itemActions = false;
+    int   aimButton = 1;                  ///< mouse button that aims (1 = right)
+    char  reloadKey = 'r';                ///< 0 = no reload key
     bool  showWhenEmpty = true;           ///< arms in view with nothing held (Old look: only while holding)
     bool  showWhileRunning = false;
     float bobAmount = 1.0f;
@@ -172,6 +178,9 @@ public:
         preset = o.preset;
         swingOnClick = o.swingOnClick;
         attackButton = o.attackButton;
+        itemActions = o.itemActions;
+        aimButton = o.aimButton;
+        reloadKey = o.reloadKey;
         showWhenEmpty = o.showWhenEmpty;
         showWhileRunning = o.showWhileRunning;
         bobAmount = o.bobAmount;

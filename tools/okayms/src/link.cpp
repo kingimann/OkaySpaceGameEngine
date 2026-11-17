@@ -1,7 +1,10 @@
 #include "okayms/link.hpp"
 
-#include <map>
+#include "okayms/archive.hpp"
+
 #include <cstring>
+#include <map>
+#include <set>
 
 namespace okayms {
 namespace {
@@ -98,6 +101,85 @@ struct ImportGroup {
 };
 
 }  // namespace
+
+namespace {
+
+std::set<std::string> undefined_externals(const std::vector<ObjectFile>& objects, const LinkOptions& options) {
+    std::set<std::string> defined;
+    std::set<std::string> pending;
+    for (const ObjectFile& object : objects) {
+        for (const Symbol& symbol : object.symbols) {
+            if (symbol.storage != kClassExternal) continue;
+            if (symbol.section > 0 || symbol.section == kSectionAbsolute) defined.insert(symbol.name);
+            else if (symbol.section == 0) pending.insert(symbol.name);
+        }
+    }
+    for (const ImportedSymbol& imported : options.imports) {
+        defined.insert(imported.name);
+        defined.insert("__imp_" + imported.name);
+    }
+    std::set<std::string> need;
+    for (const std::string& name : pending) {
+        if (defined.find(name) == defined.end()) need.insert(name);
+    }
+    return need;
+}
+
+bool member_provides(const ArchiveMember& member, const std::string& name) {
+    if (member.is_import) {
+        return name == member.import.symbol || name == "__imp_" + member.import.symbol;
+    }
+    for (const Symbol& symbol : member.object.symbols) {
+        if (symbol.storage == kClassExternal && (symbol.section > 0 || symbol.section == kSectionAbsolute) &&
+            symbol.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects, const std::vector<Archive>& libraries,
+                                                 LinkOptions options) {
+    std::vector<std::vector<char>> taken;
+    for (const Archive& library : libraries) taken.emplace_back(library.members.size(), 0);
+    bool progressed = true;
+    while (progressed) {
+        progressed = false;
+        const std::set<std::string> need = undefined_externals(objects, options);
+        if (need.empty()) break;
+        for (size_t li = 0; li < libraries.size(); ++li) {
+            for (size_t mi = 0; mi < libraries[li].members.size(); ++mi) {
+                if (taken[li][mi]) continue;
+                const ArchiveMember& member = libraries[li].members[mi];
+                bool useful = false;
+                for (const std::string& name : need) {
+                    if (member_provides(member, name)) useful = true;
+                }
+                if (!useful) continue;
+                taken[li][mi] = 1;
+                progressed = true;
+                if (member.is_import) {
+                    if (member.import.machine != kMachineAmd64) {
+                        return Result<std::vector<uint8_t>>::fail("archive member machine is not AMD64");
+                    }
+                    ImportedSymbol imported;
+                    imported.dll = member.import.dll;
+                    imported.name = member.import.symbol;
+                    imported.hint = member.import.hint_or_ordinal;
+                    options.imports.push_back(std::move(imported));
+                } else {
+                    if (member.object.machine != kMachineAmd64) {
+                        return Result<std::vector<uint8_t>>::fail("archive member machine is not AMD64");
+                    }
+                    objects.push_back(member.object);
+                }
+            }
+        }
+    }
+    return link_executable(std::move(objects), options);
+}
 
 Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options) {
     if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {

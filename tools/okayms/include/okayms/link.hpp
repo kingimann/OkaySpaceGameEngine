@@ -4,6 +4,7 @@
 // "PE Format" document. Relocation numbers are the AMD64 values from
 // that document.
 
+#include "okayms/archive.hpp"
 #include "okayms/coff.hpp"
 
 #include <cstdint>
@@ -46,5 +47,11 @@ struct LinkOptions {
 
 Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects,
                                              const LinkOptions& options);
+
+// Reads archives, pulls members that define a symbol still missing from
+// `objects`, and links the result. A short import member becomes an import.
+Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects,
+                                                 const std::vector<Archive>& libraries,
+                                                 LinkOptions options);
 
 }  // namespace okayms

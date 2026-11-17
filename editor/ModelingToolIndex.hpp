@@ -12,18 +12,18 @@
 
 namespace oked::modeltools {
 
-struct Page { int legacy; const char* name; const char* desc; const char* job; };   // legacy = the page number the window and OKAY_UI_MODELPAGE use
+struct Page { int legacy; const char* name; const char* desc; const char* job; const char* abbr; };   // abbr: the two letters on the folded strip   // legacy = the page number the window and OKAY_UI_MODELPAGE use
 /// The pages in the order of the sidebar, under their job headings.
 inline const std::vector<Page>& Pages() {
     static const std::vector<Page> p = {
-        {0, "Add",       "Add a shape or a prop",              "Create"},
-        {7, "Guided",    "Fences, buildings, cars",        "Create"},
-        {4, "Generate",  "Spin, pipes and curves",      "Create"},
-        {1, "Shape",     "Shape, colour, collision",        "Shape and size"},
-        {2, "Edit",      "Detail, deform, pivot",    "Shape and size"},
-        {5, "Edit Mesh", "Pick, sculpt, paint, UVs",     "Edit parts"},
-        {3, "Modifiers", "Array, joins, remesh",       "Effects"},
-        {6, "Import",    "Bring in and save files",      "Files"},
+        {0, "Add",       "Add a shape or a prop",              "Create", "Ad"},
+        {7, "Guided",    "Fences, buildings, cars",        "Create", "Gd"},
+        {4, "Generate",  "Spin, pipes and curves",      "Create", "Ge"},
+        {1, "Shape",     "Shape, colour, collision",        "Shape and size", "Sh"},
+        {2, "Edit",      "Detail, deform, pivot",    "Shape and size", "Ed"},
+        {5, "Edit Mesh", "Pick, sculpt, paint, UVs",     "Edit parts", "EM"},
+        {3, "Modifiers", "Array, joins, remesh",       "Effects", "Mo"},
+        {6, "Import",    "Bring in and save files",      "Files", "Im"},
     };
     return p;
 }

@@ -3,6 +3,7 @@
 // using editor/ModelingToolIndex.hpp. The page body is built from the tool index (one button per tool, grouped by section), NOT the
 // real page code, which lives in editor/main.cpp and cannot be run headless. Build like tests/modeling_easy_shot.cpp.
 #include "ModelingToolIndex.hpp"
+#include "ModelingSidebar.hpp"
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include <SDL.h>
@@ -14,12 +15,15 @@ static void Save(SDL_Renderer* r, int w, int h, const std::string& path) {
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
     SDL_SaveBMP(s, path.c_str()); SDL_FreeSurface(s);
 }
-static void Draw(int page, const std::string& query, const std::string& hint) {
+static void Draw(int page, const std::string& query, const std::string& hint, bool folded = false) {
+    mt::SidebarState sb; sb.folded = folded;
     ImGui::SetNextWindowPos(ImVec2(0, 0)); ImGui::SetNextWindowSize(ImVec2(1280, 720));
     ImGui::Begin("Modeling", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-    ImGui::BeginChild("##nav", ImVec2(196, 0), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##nav", ImVec2(mt::SidebarWidth(sb, 1280), 0), ImGuiChildFlags_Borders);
+    ImGui::Button(folded ? ">##fold" : "<##fold", ImVec2(32, 32));
     const char* lastJob = "";
     for (const mt::Page& pi : mt::Pages()) {
+        if (folded) { ImGui::PushID(pi.legacy); ImGui::Selectable(pi.abbr, page == pi.legacy, 0, ImVec2(0, 34)); ImGui::PopID(); continue; }
         if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
         ImGui::PushID(pi.legacy);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
@@ -63,11 +67,11 @@ int main(int argc, char** argv) {
     ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.IniFilename = nullptr;
     if (argc > 2) io.Fonts->AddFontFromFileTTF(argv[2], 16.0f);
     ImGui_ImplSDL2_InitForSDLRenderer(win, rd); ImGui_ImplSDLRenderer2_Init(rd);
-    struct S { const char* name; int page; const char* q; const char* hint; };
-    const S shots[] = {{"04_advanced_edit_mesh_search_round", 5, "round", "Bevel: Round off sharp edges (a bevel)."}, {"05_advanced_edit_page", 2, "", ""}, {"06_advanced_search_boolean", 3, "boolean", ""}};
+    struct S { const char* name; int page; const char* q; const char* hint; bool folded; };
+    const S shots[] = {{"07_advanced_edit_mesh_unfolded", 5, "", "", false}, {"07_advanced_edit_mesh_folded", 5, "", "", true}, {"07_advanced_search_round_folded", 5, "round", "Bevel: Round off sharp edges (a bevel).", true}};
     for (const S& s : shots) for (int f = 0; f < 3; ++f) {
         ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
-        Draw(s.page, s.q, s.hint); ImGui::Render();
+        Draw(s.page, s.q, s.hint, s.folded); ImGui::Render();
         SDL_SetRenderDrawColor(rd, 30, 30, 34, 255); SDL_RenderClear(rd);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), rd);
         if (f == 2) Save(rd, 1280, 720, out + "/" + s.name + ".bmp");

@@ -3986,3 +3986,8 @@ add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
 target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
+
+# Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
+target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)

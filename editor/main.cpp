@@ -63,6 +63,7 @@
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
 #include "ModelingHighlight.hpp"            // button wrappers: outline matches of the tool search
+#include "ModelingSidebar.hpp"              // fold state and widths of the advanced Modeling window's page list
 #include "ModelingToolIndex.hpp"            // the advanced Modeling window as data: pages by job, search, hints
 #include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
@@ -28344,13 +28345,27 @@ void DrawModeling(EditorState& ed) {
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
-    ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
-    ImGui::Dummy(ImVec2(0, 4));
+    static oked::modeltools::SidebarState s_sb = oked::modeltools::SidebarFromPref(g_view.modelingSidebar);
+    const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
+    // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
     const char* lastJob = "";
     for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
         const int i = pi.legacy;
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
+        if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
+            ImGui::PushID(i); ImGui::BeginDisabled(!usable);
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            ImGui::PopID();
+            continue;
+        }
         if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);

@@ -97,7 +97,7 @@ The same calls are the visual-script nodes `Fn.ui_set_rotation`, `Fn.ui_get_rota
 
 ## Text fields
 
-An **Input Field** takes typed text. Click it to focus. Backspace deletes the last character, Enter submits (a sibling script's `on_submit`) unless the field is multiline, and Escape leaves the field.
+An **Input Field** takes typed text. Click it to focus. Typing goes in at the caret; Left and Right move it, Home and End jump to the start and end (of the line, in a multiline field). Backspace deletes the character before the caret and Delete the one after it; Backspace, Delete, Left and Right repeat while held. Enter submits (a sibling script's `on_submit`) unless the field is multiline, and Escape leaves the field.
 
 While it is focused, Ctrl or Command with C copies the whole value, X cuts it, and V pastes. The field has no caret selection, so there is no select-all shortcut. A password field does not copy or cut. Pasted text stops at the field's character limit. Control characters are removed. A newline is kept only when the field is multiline.
 

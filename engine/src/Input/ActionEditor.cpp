@@ -5,7 +5,7 @@
 namespace okay {
 namespace {
 bool Spaced(const std::string& s) { return s.empty() || s.find_first_of(" \t\r\n") != std::string::npos; }
-std::string Num(float f) { char b[32]; std::snprintf(b, sizeof b, "%.2f", f); return b; }
+std::string Num(float f) { if (f > -0.005f && f < 0.005f) f = 0.0f; char b[32]; std::snprintf(b, sizeof b, "%.2f", f); return b; }
 std::size_t PartCount(BindingSpec::Kind k) { return k == BindingSpec::Kind::Single ? 1 : k == BindingSpec::Kind::Vector2 ? 4 : k == BindingSpec::Kind::Vector3 ? 6 : k == BindingSpec::Kind::Axis1D ? 2 : 2; }
 }
 

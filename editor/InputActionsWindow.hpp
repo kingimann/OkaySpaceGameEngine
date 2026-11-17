@@ -6,16 +6,24 @@
 #include "okay/Input/ActionEditor.hpp"
 #include "okay/Input/InputRuntime.hpp"
 #include <imgui.h>
+#include <algorithm>
 #include <cstring>
 #include <string>
 
 namespace okay::editor {
 
+namespace detail {   // state the window keeps; a screenshot tool can select an action or a tab through these
+inline std::string& IaSelected() { static std::string s; return s; }
+inline int& IaForceTab() { static int t = -1; return t; }   // 0 Action, 1 Check, 2 Live; -1 = leave alone
+inline ImGuiTabItemFlags IaTabFlag(int tab) { return IaForceTab() == tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; }
+}
+
 inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
     if (!open || !*open) return;
     static ActionEditor ed;
     static bool started = false;
-    static std::string sel, status, filePath;
+    std::string& sel = detail::IaSelected();
+    static std::string status, filePath;
     static char nameBuf[64] = "";
     static char partBuf[160] = "", procBuf[160] = "", interBuf[96] = "";
     if (!started) { started = true; ed.NewFromDefault(); ed.dirty = false; filePath = projectDir.empty() ? "default.okayinput" : projectDir + "/Assets/input.okayinput"; }
@@ -24,9 +32,8 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
 
     // File row.
     char fp[512]; std::snprintf(fp, sizeof fp, "%s", filePath.c_str());
-    ImGui::SetNextItemWidth(360);
+    ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##inputfile", fp, sizeof fp)) filePath = fp;
-    ImGui::SameLine();
     if (ImGui::Button("Load")) { std::string err; status = ed.Load(filePath, &err) ? "Loaded." : err; sel.clear(); }
     ImGui::SameLine();
     if (ImGui::Button("Save")) status = ed.SaveAs(filePath) ? "Saved." : "Could not write the file.";
@@ -42,11 +49,10 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
     if (!status.empty()) ImGui::TextDisabled("%s", status.c_str());
 
     ImGui::Separator();
-    ImGui::BeginChild("##ia_left", ImVec2(300, 0), true);
+    ImGui::BeginChild("##ia_left", ImVec2(ImGui::GetFontSize() * 21.0f, 0), true);
     ImGui::TextDisabled("Schemes");
     for (const ControlScheme& c : ed.set.Schemes()) ImGui::BulletText("%s%s%s%s%s", c.name.c_str(), c.keyboard ? " keyboard" : "", c.mouse ? " mouse" : "", c.gamepad ? " gamepad" : "", c.touch ? " touch" : "");
-    ImGui::SetNextItemWidth(150); ImGui::InputText("##newname", nameBuf, sizeof nameBuf);
-    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##newname", "name (no spaces)", nameBuf, sizeof nameBuf);
     if (ImGui::SmallButton("+ Map")) status = ed.AddMap(nameBuf) ? "Map added." : "Map name taken, empty or has a space.";
     ImGui::SameLine();
     if (ImGui::SmallButton("+ Scheme")) status = ed.AddScheme(nameBuf, true, true, false, false) ? "Scheme added (keyboard and mouse; edit the file for others)." : "Scheme name taken, empty or has a space.";
@@ -58,9 +64,7 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
             const std::string label = "    " + a.name + "  [" + ValueTypeName(a.type) + "]##" + m.name + a.name;
             if (ImGui::Selectable(label.c_str(), sel == a.name)) { sel = a.name; procBuf[0] = 0; }
         }
-        ImGui::SameLine(0, 0);
     }
-    ImGui::NewLine();
     ImGui::Separator();
     static int newType = 0;
     ImGui::SetNextItemWidth(110); ImGui::Combo("##newtype", &newType, "button\0axis\0vector2\0vector3\0");
@@ -76,11 +80,11 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
 
     ImGui::BeginChild("##ia_right", ImVec2(0, 0), true);
     if (ImGui::BeginTabBar("##iatabs")) {
-        if (ImGui::BeginTabItem("Action")) {
+        if (ImGui::BeginTabItem("Action", nullptr, detail::IaTabFlag(0))) {
             ActionDef* a = ed.set.Find(sel);
             if (!a) ImGui::TextDisabled("Pick an action on the left.");
             else {
-                for (const std::string& l : ed.Describe(sel)) ImGui::TextUnformatted(l.c_str());
+                for (const std::string& l : ed.Describe(sel)) ImGui::TextWrapped("%s", l.c_str());
                 ImGui::Separator();
                 for (int b = 0; b < (int)a->bindings.size(); ++b) {
                     ImGui::PushID(b);
@@ -89,14 +93,14 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
                     for (int p = 0; p < (int)bs.parts.size(); ++p) {
                         ImGui::PushID(p);
                         std::snprintf(partBuf, sizeof partBuf, "%s", bs.parts[(std::size_t)p].c_str());
-                        ImGui::SetNextItemWidth(220);
+                        ImGui::SetNextItemWidth(std::max(70.0f, (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * (float)bs.parts.size()) / (float)bs.parts.size() - 4.0f));
                         if (ImGui::InputText("##part", partBuf, sizeof partBuf, ImGuiInputTextFlags_EnterReturnsTrue))
                             status = ed.SetPart(sel, b, p, partBuf) ? "Input changed." : "That is not an input (try key:w, pad:a, stick:left, mouse:left).";
-                        ImGui::PopID(); ImGui::SameLine();
+                        ImGui::PopID();
+                        if (p + 1 < (int)bs.parts.size()) ImGui::SameLine();
                     }
-                    ImGui::NewLine();
                     std::snprintf(procBuf, sizeof procBuf, "%s", ProcessorsToString(bs.processors).c_str());
-                    ImGui::SetNextItemWidth(300);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
                     if (ImGui::InputText("processors", procBuf, sizeof procBuf, ImGuiInputTextFlags_EnterReturnsTrue))
                         status = ed.SetProcessors(sel, b, procBuf) ? "Processors changed." : "Cannot read the processors (deadzone(0.2) invert(y) scale(2) ...).";
                     ImGui::SameLine();
@@ -108,8 +112,8 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
                 for (int i = 0; i < 5; ++i) { if (i) ImGui::SameLine(); if (ImGui::SmallButton(kinds[i])) ed.AddBinding(sel, ks[i]); }
                 ImGui::Separator();
                 std::snprintf(interBuf, sizeof interBuf, "%s", "");
-                ImGui::SetNextItemWidth(220);
-                if (ImGui::InputTextWithHint("##inter", "add interaction: hold(0.5) tap multitap(2) repeat(0.1) ...", interBuf, sizeof interBuf, ImGuiInputTextFlags_EnterReturnsTrue))
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::InputTextWithHint("##inter", "add interaction (Enter): hold(0.5)  tap(0.2)  multitap(2)  repeat(0.1)  press  release", interBuf, sizeof interBuf, ImGuiInputTextFlags_EnterReturnsTrue))
                     status = ed.AddInteraction(sel, interBuf) ? "Interaction added." : "Cannot read the interaction.";
                 for (int i = 0; i < (int)a->interactions.size(); ++i) {
                     ImGui::PushID(1000 + i);
@@ -121,14 +125,14 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Check")) {
+        if (ImGui::BeginTabItem("Check", nullptr, detail::IaTabFlag(1))) {
             const auto problems = ed.Validate();
             if (problems.empty()) ImGui::TextDisabled("No problems found.");
             for (const std::string& p : problems) ImGui::BulletText("%s", p.c_str());
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Live")) {
-            for (const std::string& l : ControllerDebugLines()) ImGui::TextUnformatted(l.c_str());
+        if (ImGui::BeginTabItem("Live", nullptr, detail::IaTabFlag(2))) {
+            for (const std::string& l : ControllerDebugLines()) ImGui::TextWrapped("%s", l.c_str());
             ImGui::Separator();
             PlayerInputManager& pm = InputRuntime::Players();
             if (pm.Count() == 0) ImGui::TextDisabled("No local player yet: a script that reads an action (ia_x, ia_down ...) joins one, or call ia_join().");
@@ -136,7 +140,7 @@ inline void DrawInputActionsWindow(bool* open, const std::string& projectDir) {
                 const ActionSet* s = pm.Player(p);
                 if (!s) continue;
                 ImGui::Text("Player %d", p + 1);
-                for (const std::string& l : ActionSetDebugLines(*s)) ImGui::TextUnformatted(l.c_str());
+                for (const std::string& l : ActionSetDebugLines(*s)) ImGui::TextWrapped("%s", l.c_str());
             }
             ImGui::EndTabItem();
         }

@@ -90,6 +90,14 @@ public:
                          const FPoint* center, int flip) = 0;
     virtual void Geometry(Tex t, const Vertex* verts, int numVerts, const int* indices, int numIndices) = 0;
 
+    /// How images (LoadTexture results) are sampled when they are drawn at another size than
+    /// their own: linear (smooth, the UI default) or nearest (pixel-art). RenderSceneUI sets it
+    /// at the start of each pass from the scene's UI look (Scene::uiFont "pixel" = nearest).
+    /// Backends that cannot choose ignore it (the default).
+    virtual void SetImageFilter(bool linear) { (void)linear; }
+    /// Same for one texture handle (an atlas page the batcher uploaded, say).
+    virtual void SetTextureFilter(Tex t, bool linear) { (void)t; (void)linear; }
+
     /// Told when a widget names a texture that can't be loaded, with the rect it
     /// would fill (after the widget drew its fallback). Editors label it; the game
     /// ignores it.

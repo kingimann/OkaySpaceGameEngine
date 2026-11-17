@@ -6,6 +6,8 @@
 // Scene::uiFont == "pixel" is the retro option: the built-in 8x8 bitmap and
 // nearest filtering, with hard shape edges. It is never the default.
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace okay {
@@ -27,6 +29,14 @@ inline int UIGlyphBakePixels(float devicePixels) {
     int h = (int)std::lround(devicePixels);
     if (h < 4) h = 4;
     if (h > 256) h = 256;
+    // Up to 32 px every whole size gets its own bake (exact, the sharpest). Above that the sizes
+    // step by about 6% (so the glyph is drawn at most 3% off its baked size and stays sharp),
+    // which keeps the number of baked faces bounded while the editor zoom is dragged smoothly.
+    if (h > 32) {
+        const double steps = std::round(std::log((double)h / 32.0) / std::log(1.06));
+        h = (int)std::lround(32.0 * std::pow(1.06, steps));
+        if (h > 256) h = 256;
+    }
     return h;
 }
 
@@ -46,6 +56,23 @@ inline UITextRaster UITextRasterFor(const std::string& uiFont, float fontPx, flo
     const float px = fontPx > 0.0f ? fontPx : 1.0f;
     r.pixelHeight = (float)UIGlyphBakePixels(px * 8.0f * scale);
     return r;
+}
+
+/// UI filtering: true = Smooth (anti-aliased shapes, linear-filtered images, TrueType text; the
+/// default), false = Pixel-art (hard shape edges, nearest images, bitmap text). The scene's UI font
+/// "pixel" picks pixel-art; the environment variable OKAY_UI_FILTER=pixel or =smooth overrides it
+/// (the escape hatch if something looks wrong: OKAY_UI_FILTER=pixel restores hard edges and nearest
+/// images; the text font stays the scene's).
+inline bool UISmoothFilteringFor(const std::string& uiFont) {
+    static const int env = [] {
+        const char* v = std::getenv("OKAY_UI_FILTER");
+        if (!v) return -1;
+        if (!std::strcmp(v, "pixel")) return 0;
+        if (!std::strcmp(v, "smooth")) return 1;
+        return -1;
+    }();
+    if (env >= 0) return env == 1;
+    return uiFont != "pixel";
 }
 
 /// Glyph atlases (TrueType) are uploaded with linear sampling. The bitmap font

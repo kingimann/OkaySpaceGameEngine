@@ -1,0 +1,12 @@
+# Merge helpers (docs/ci_failures.md, "Merge conflicts"). These only change what a LOCAL `git merge` does; GitHub's own
+# "Update branch" and merge button ignore the custom driver (see docs/ci_failures.md for what that means).
+#
+# Lists where every line is independent: keep both sides' added lines (git's built-in "union" driver, nothing to install).
+scripts/dist_example_dirs.txt merge=union
+#
+# Generated pages: on a conflict keep OUR copy, then regenerate. The driver "regen" is `true` (keeps the current branch's file and
+# reports success); scripts/preflight.sh installs it with `git config merge.regen.driver true`. After every merge run:
+#   python3 scripts/gen_feature_map.py && python3 scripts/gen_try_it.py
+docs/FEATURE_MAP.md merge=regen
+docs/feature_map/*.md merge=regen
+docs/try_it.md merge=regen

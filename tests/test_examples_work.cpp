@@ -142,17 +142,15 @@ void RunScene(const fs::path& copyRoot, const fs::path& scene, Result& r) {
 // ---- the packaging: which example folders the Windows release carries ---------------------------------------------------
 
 std::vector<std::string> DistExampleDirs() {
+    // One folder per line in scripts/dist_example_dirs.txt (the file scripts/build-windows-dist.sh reads); blank lines and # lines are ignored.
     std::vector<std::string> dirs;
-    std::istringstream in(ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "build-windows-dist.sh"));
+    std::istringstream in(ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "dist_example_dirs.txt"));
     std::string line;
     while (std::getline(in, line)) {
-        const std::string key = "EXAMPLE_DIRS=\"";
-        if (line.rfind(key, 0) != 0) continue;
-        std::string list = line.substr(key.size());
-        list = list.substr(0, list.find('"'));
-        std::istringstream words(list);
+        std::istringstream words(line);
         std::string w;
-        while (words >> w) dirs.push_back(w);
+        if (!(words >> w) || w[0] == '#') continue;
+        dirs.push_back(w);
     }
     return dirs;
 }
@@ -171,7 +169,7 @@ int main() {
         CHECK(!dist.empty());   // if the script's list moved, update DistExampleDirs() (this must not skip silently)
         for (const std::string& d : dist) {
             CHECK(fs::is_directory(fs::path(OKAY_EXAMPLES_DIR) / d, ec));   // a listed folder that is not there breaks the release build
-            if (!fs::is_directory(fs::path(OKAY_EXAMPLES_DIR) / d, ec)) std::fprintf(stderr, "  scripts/build-windows-dist.sh lists examples/%s, which is not there\n", d.c_str());
+            if (!fs::is_directory(fs::path(OKAY_EXAMPLES_DIR) / d, ec)) std::fprintf(stderr, "  scripts/dist_example_dirs.txt lists examples/%s, which is not there\n", d.c_str());
         }
         // The folders the File > Examples menu opens scenes from must be in the release.
         for (const char* needed : {"node_playground", "visual_script/playground"}) {

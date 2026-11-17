@@ -167,9 +167,10 @@ fi
 # File > Examples > Visual Script Node Playground opens its scenes from (tests/test_examples_work.cpp checks that every
 # folder a File > Examples entry needs is listed here). Left out on purpose: account-server (a Python server), netdemo
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
-EXAMPLE_DIRS="security_paths vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground ui_text ui_library voxel modeling modeling_tools fp_hand player"
+# The folders come from scripts/dist_example_dirs.txt, one per line (so two PRs that add a folder do not conflict).
+EXAMPLE_DIRS=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' scripts/dist_example_dirs.txt) || { echo "error: scripts/dist_example_dirs.txt is missing or empty" >&2; exit 1; }
 for d in $EXAMPLE_DIRS; do
-    [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
+    [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit scripts/dist_example_dirs.txt)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"
     for f in examples/$d/*; do
         case "$f" in *.py|*.cpp|*.hpp|*.txt|*.pyc|*/__pycache__) continue ;; esac

@@ -185,7 +185,11 @@ def check_tests_syntax(root, base, head, rev=None, workers=4, files=None):
     files = [f for f in files if f.startswith("tests/") and f.endswith(".cpp") and os.path.exists(os.path.join(root, f))]
     if not files or not cxx:
         print("tests: nothing to check" if not files else "tests: no C++ compiler; skipped", file=sys.stderr); return []
-    inc = ["-Iengine/include", "-Iengine/src", "-Ishared", "-Iokayui/include", "-Ilauncher", "-Ieditor", "-Itests", f"-DOKAY_SOURCE_DIR=\"{root}\""]
+    inc = ["-Iengine/include", "-Iengine/src", "-Ishared", "-Iokayui/include", "-Ilauncher", "-Ieditor", "-Itests"]
+    # tests/CMakeLists.txt gives some tests string macros (OKAY_SOURCE_DIR="...", OKAY_EXAMPLES_DIR="..."): define each as a dummy string
+    try: names = sorted(set(re.findall(r"\b(OKAY_[A-Z0-9_]+)=", open(os.path.join(root, "tests", "CMakeLists.txt"), encoding="utf-8").read())))
+    except OSError: names = []
+    inc += [f'-D{n}="{root}"' for n in names]
     def one(f):
         p = subprocess.run([cxx, "-std=c++17", "-fsyntax-only", "-w", *inc, f], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=300)
         return f, p.returncode, p.stderr

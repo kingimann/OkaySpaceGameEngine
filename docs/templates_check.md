@@ -92,7 +92,7 @@ owner's call: nothing was added to the launcher here.
   selects exists, some object runs the graph, and every playground scene is offered by some demo (`coverage.okayscene` is the
   fixture of another test).
 * File > Examples > Node Playground (flow and variables): `NodePlaygroundScenes()` finds exactly the scenes in the folder.
-* The Windows release: every folder a File > Examples entry opens scenes from is in `EXAMPLE_DIRS` of
+* The Windows release: every folder a File > Examples entry opens scenes from is in `scripts/dist_example_dirs.txt` (read by
   `scripts/build-windows-dist.sh`, and every listed folder exists.
 
 A scene that cannot run in a plain headless build goes in `kSkips` in the test, with its reason. The list is empty today.
@@ -123,7 +123,7 @@ Put it in `examples/<folder>/`. Three things the test caught in the scenes that 
   called "0" and the loader warns about it.
 * A scene needs a main camera. The physics example had none.
 
-If the folder should be in the Windows release, add it to `EXAMPLE_DIRS` in `scripts/build-windows-dist.sh`. Then
+If the folder should be in the Windows release, add a line to `scripts/dist_example_dirs.txt`. Then
 `ctest -R examples_work` must pass.
 
 ## Known failures (kept in the test, in `kKnownFailures`)

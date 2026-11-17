@@ -161,15 +161,9 @@
 #include <vector>
 
 
-// Script-supplied file names must stay inside the game's own folders: no
-// absolute paths, no "..". Refusals are logged so the game's author sees why.
+#include "okay/Core/ScriptPaths.hpp"   // ScriptPathOk: the one gate for script-supplied file names
+
 namespace okay {
-static bool ScriptPathOk(const std::string& name, const char* api) {
-    if (Save::IsSafeRelative(name)) return true;
-    OKAY_ERROR("[script] ", api, ": refusing file '", name,
-               "' (use a name or a relative path; absolute paths and '..' aren't allowed)");
-    return false;
-}
 // A file that used to live beside the game (before saves moved to the save
 // folder): read it from there if the new place has nothing yet.
 static std::string ScriptReadPath(const std::string& name) {
@@ -4045,6 +4039,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
             if (!sc) return Value{false};
+            if (!ScriptAssetPathOk(a[0].AsString(), "spawn")) return Value{false};
             GameObject* go = SceneSerializer::InstantiateFromFile(*sc, a[0].AsString(), nullptr);
             if (!go) return Value{false};
             if (go->transform)
@@ -4057,6 +4052,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
             if (!sc) return Value{false};
+            if (!ScriptAssetPathOk(a[0].AsString(), "spawn3")) return Value{false};
             GameObject* go = SceneSerializer::InstantiateFromFile(*sc, a[0].AsString(), nullptr);
             if (!go) return Value{false};
             if (go->transform)
@@ -4654,6 +4650,7 @@ struct OkayScriptVM::Impl {
             Scene* s = sceneOf(); if (!s) return Value{false};
             GameObject* tgt = s->Find(a[0].AsString()); if (!tgt || !tgt->transform) return Value{false};
             Vec3 me = rt.host->gameObject->transform->Position();
+            if (!ScriptAssetPathOk(a[1].AsString(), "shoot_at")) return Value{false};
             GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[1].AsString(), nullptr);
             if (!go || !go->transform) return Value{false};
             go->transform->localPosition = me;
@@ -4675,6 +4672,7 @@ struct OkayScriptVM::Impl {
             float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
             Vec3 c = rt.host->gameObject->transform->Position();
             int made = 0;
+            if (!ScriptAssetPathOk(a[0].AsString(), "spawn_wave")) return Value{0.0f};
             for (int i = 0; i < count; ++i) {
                 GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[0].AsString(), nullptr);
                 if (!go || !go->transform) continue;

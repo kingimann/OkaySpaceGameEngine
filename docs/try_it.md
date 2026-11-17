@@ -90,6 +90,7 @@ release job or the installer build for this change.
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
+| security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -1462,6 +1463,34 @@ What changes for you:
 
 **Status.** Tested headless on Linux (`input_deep`, `input_playground`; the playground test presses H, 0 and K and renders a software picture). Unverified: Windows, a real controller (rumble was only checked as the request the host takes), a real AZERTY keyboard. No Settings-screen toggle yet.
 
+## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
+
+Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+
+**Script file paths (try it in the editor).**
+
+1. Open the editor from the Windows release, **File > Open...**, open `examples\security_paths\script_paths.okayscene` (in the `examples`
+   folder next to the program) and press Play.
+2. Open the Console. You should see seven lines: the first six file names (`NUL`, `con.txt`, `C:/x`, `slot.okaysave:hidden`,
+   `../escape.okaysave`, `/etc/evil.okaysave`) end with `false`, and `slot_ok.okaysave` ends with `true`. Above them the Console
+   shows `[script] save file: refusing file 'NUL': a reserved device name (CON, NUL, COM1 ...)` and one like it per refused name.
+
+**Update signature status (visible now, OFF until you add a key).**
+
+1. Open the launcher, **Settings > About**: under the version you should see `update signature check: OFF (no key configured)` in amber.
+   In the editor, **Help > About** shows the same line. (Start the launcher from a terminal, or open `okay_update.log` beside
+   `OkaySpace.exe`, to see it printed at start-up too.)
+2. To turn it ON: add the GitHub secret `OKAY_UPDATE_SIGNING_SEED` and the variable `OKAY_UPDATE_TRUSTED_KEYS` (steps in security.md section 3),
+   release, install that release: the line turns green and says `ON (1 key built in)`.
+
+**Relay caps and reactions SQL (owner steps, nothing to click in the Windows release).** The relay is a Linux server program; its new
+caps are checked by `ctest -R relay_security`. The reactions fix is `docs/sql/reactions_privacy.sql`: Supabase dashboard > SQL Editor >
+paste it > Run. Check it with `select * from public.reaction_counts('dm', array[1]);` (no user column in the answer).
+
+**Unverified.** Checked on Linux only: the tests `path_safety`, `script_paths`, `update_security`, `update_signature`, `relay_security`,
+`sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
+in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
@@ -1473,6 +1502,35 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+
+All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+
+1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
+   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
+   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
+2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
+   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
+   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
+3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
+   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
+   UV **tile** field.
+4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
+   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
+5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
+   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
+   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
+   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
+   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
+   the same reader but was not tried by hand.)
+6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
+   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
+   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+
+What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
+`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
+Mesh (it creates a second object).
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 

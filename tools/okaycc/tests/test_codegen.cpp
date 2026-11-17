@@ -112,6 +112,17 @@ int main() {
                "int main(){struct C c; c.a=65; c.b=66; return c.a+c.b;}\n",
                131);
 
+    {
+        std::string as;
+        int got = runExit("int add(int a, int b){return a+b;} int main(){return add(20, 22);}\n", &as);
+        if (got != 42 || as.find("%rbx") == std::string::npos) {
+            std::fprintf(stderr, "FAIL regalloc exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+
     DIR* dir = opendir("tests/progs");
     if (!dir) {
         std::fprintf(stderr, "FAIL cannot open tests/progs\n");

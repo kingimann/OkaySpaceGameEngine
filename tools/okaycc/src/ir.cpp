@@ -336,6 +336,43 @@ void optimizeModule(Module& m) {
     }
 }
 
+RegHomes assignRegs(const Function& f) {
+    std::vector<char> used;
+    std::vector<char> mem;
+    auto touch = [&](int r) {
+        if (r < 0) return;
+        if (r >= static_cast<int>(used.size())) used.resize(static_cast<std::size_t>(r + 1), 0);
+        used[static_cast<std::size_t>(r)] = 1;
+    };
+    auto markMem = [&](int r) {
+        touch(r);
+        if (r >= static_cast<int>(mem.size())) mem.resize(static_cast<std::size_t>(r + 1), 0);
+        mem[static_cast<std::size_t>(r)] = 1;
+    };
+    int n = f.params;
+    if (n > 0) used.assign(static_cast<std::size_t>(n), 1);
+    for (const Block& b : f.blocks) {
+        for (const Inst& in : b.code) {
+            touch(in.dst);
+            if (in.a.kind == Operand::Kind::Reg) touch(in.a.reg);
+            if (in.b.kind == Operand::Kind::Reg) touch(in.b.reg);
+            for (const Operand& arg : in.args)
+                if (arg.kind == Operand::Kind::Reg) touch(arg.reg);
+            for (const Operand& word : in.stack)
+                if (word.kind == Operand::Kind::Reg) touch(word.reg);
+            if (in.op == Inst::Op::Lea && in.a.kind == Operand::Kind::Reg) markMem(in.a.reg);
+        }
+    }
+    RegHomes h;
+    h.home.assign(used.size(), -1);
+    for (int i = 0; i < static_cast<int>(used.size()) && h.count < 3; ++i) {
+        if (!used[static_cast<std::size_t>(i)]) continue;
+        if (i < static_cast<int>(mem.size()) && mem[static_cast<std::size_t>(i)]) continue;
+        h.home[static_cast<std::size_t>(i)] = h.count++;
+    }
+    return h;
+}
+
 std::string irText(const std::string& source, Diagnostics& diags, const std::string& file) {
     return printModule(lowerSource(source, diags, file));
 }

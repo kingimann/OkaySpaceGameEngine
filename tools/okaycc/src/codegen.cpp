@@ -6,6 +6,13 @@ namespace okaycc {
 namespace {
 
 const char* kArgReg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+const char* kPhys[] = {"%rbx", "%r12", "%r13"};
+const RegHomes* curHomes = nullptr;
+
+int homeOf(int v) {
+    if (!curHomes || v < 0 || v >= static_cast<int>(curHomes->home.size())) return -1;
+    return curHomes->home[static_cast<std::size_t>(v)];
+}
 
 int slotCount(const Function& f) {
     int n = f.params;
@@ -38,18 +45,20 @@ void load(std::string& s, const Operand& o, const char* reg) {
         s += "\n";
         return;
     }
+    int h = homeOf(o.reg);
     s += "  movq ";
-    s += slot(o.reg);
+    s += h >= 0 ? kPhys[h] : slot(o.reg);
     s += ", ";
     s += reg;
     s += "\n";
 }
 
 void store(std::string& s, const char* reg, int dst) {
+    int h = homeOf(dst);
     s += "  movq ";
     s += reg;
     s += ", ";
-    s += slot(dst);
+    s += h >= 0 ? kPhys[h] : slot(dst);
     s += "\n";
 }
 
@@ -299,11 +308,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             s += ", %rsp\n";
         }
         if (in.dst >= 0) store(s, "%rax", in.dst);
-        if (in.b.kind == Operand::Kind::Reg) {
-            s += "  movq %rdx, ";
-            s += slot(in.b.reg);
-            s += "\n";
-        }
+        if (in.b.kind == Operand::Kind::Reg) store(s, "%rdx", in.b.reg);
         break;
     }
     case Inst::Op::Ret:
@@ -381,36 +386,9 @@ void emitMem(std::string& s, const Inst& in, int localOff) {
 }
 
 std::string emitFunction(const Function& f) {
+    RegHomes homes = assignRegs(f);
+    curHomes = &homes;
     int slots = slotCount(f);
-    int frame = slots * 8;
-    if (frame % 16) frame += 8;
-    std::string s;
-    s += ".globl ";
-    s += f.name;
-    s += "\n";
-    s += f.name;
-    s += ":\n  pushq %rbp\n  movq %rsp, %rbp\n";
-    if (frame) {
-        s += "  subq $";
-        s += std::to_string(frame);
-        s += ", %rsp\n";
-    }
-    int nreg = f.params < 6 ? f.params : 6;
-    for (int i = 0; i < nreg; ++i) {
-        s += "  movq ";
-        s += kArgReg[i];
-        s += ", ";
-        s += slot(i);
-        s += "\n";
-    }
-    for (int i = 6; i < f.params; ++i) {
-        int disp = 16 + 8 * (i - 6);
-        s += "  movq ";
-        s += std::to_string(disp);
-        s += "(%rbp), %rax\n  movq %rax, ";
-        s += slot(i);
-        s += "\n";
-    }
     int cursor = slots * 8;
     std::vector<int> localOff;
     for (const Block& b : f.blocks) {
@@ -423,25 +401,45 @@ std::string emitFunction(const Function& f) {
             localOff.push_back(-cursor);
         }
     }
+    int saveBase = cursor;
+    cursor += homes.count * 8;
     int memFrame = cursor;
     if (memFrame % 16) memFrame += 8;
-    if (memFrame > frame) {
-        // The prologue was emitted with `frame`. Patch is harder, so recompute
-        // by rewriting the subq we already printed when locals exist.
+    std::vector<int> saveDisp;
+    for (int i = 0; i < homes.count; ++i) saveDisp.push_back(-(saveBase + 8 * (i + 1)));
+    std::string s;
+    s += ".globl ";
+    s += f.name;
+    s += "\n";
+    s += f.name;
+    s += ":\n  pushq %rbp\n  movq %rsp, %rbp\n";
+    if (memFrame) {
+        s += "  subq $";
+        s += std::to_string(memFrame);
+        s += ", %rsp\n";
     }
-    if (memFrame != frame && memFrame > 0) {
-        auto pos = s.rfind("subq $");
-        if (pos == std::string::npos) {
-            auto at = s.find("movq %rsp, %rbp\n");
-            if (at != std::string::npos) {
-                at += std::string("movq %rsp, %rbp\n").size();
-                s.insert(at, "  subq $" + std::to_string(memFrame) + ", %rsp\n");
-            }
-        } else {
-            auto end = s.find(", %rsp\n", pos);
-            if (end != std::string::npos)
-                s.replace(pos, end - pos, "subq $" + std::to_string(memFrame));
-        }
+    for (int i = 0; i < homes.count; ++i) {
+        s += "  movq ";
+        s += kPhys[i];
+        s += ", ";
+        s += std::to_string(saveDisp[static_cast<std::size_t>(i)]);
+        s += "(%rbp)\n";
+    }
+    int nreg = f.params < 6 ? f.params : 6;
+    for (int i = 0; i < nreg; ++i) {
+        s += "  movq ";
+        s += kArgReg[i];
+        s += ", ";
+        int h = homeOf(i);
+        s += h >= 0 ? kPhys[h] : slot(i);
+        s += "\n";
+    }
+    for (int i = 6; i < f.params; ++i) {
+        int disp = 16 + 8 * (i - 6);
+        s += "  movq ";
+        s += std::to_string(disp);
+        s += "(%rbp), %rax\n";
+        store(s, "%rax", i);
     }
     if (f.vaNamed >= 0 && !localOff.empty()) {
         int base = localOff[0];
@@ -470,7 +468,16 @@ std::string emitFunction(const Function& f) {
         }
     }
     s += f.name;
-    s += "_epilogue:\n  movq %rbp, %rsp\n  popq %rbp\n  ret\n";
+    s += "_epilogue:\n";
+    for (int i = 0; i < homes.count; ++i) {
+        s += "  movq ";
+        s += std::to_string(saveDisp[static_cast<std::size_t>(i)]);
+        s += "(%rbp), ";
+        s += kPhys[i];
+        s += "\n";
+    }
+    s += "  movq %rbp, %rsp\n  popq %rbp\n  ret\n";
+    curHomes = nullptr;
     return s;
 }
 

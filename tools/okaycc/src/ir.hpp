@@ -83,6 +83,14 @@ std::string printModule(const Module& m);
 // in ISO/IEC 9899 and two's-complement wrapping.
 void optimizeModule(Module& m);
 
+// Up to three callee-saved registers (rbx, r12, r13) for values whose address
+// is not taken. home[v] is -1 when v stays in its stack slot, otherwise 0, 1, or 2.
+struct RegHomes {
+    std::vector<int> home;
+    int count = 0;
+};
+RegHomes assignRegs(const Function& f);
+
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",
                    const std::vector<std::string>& includes = {});

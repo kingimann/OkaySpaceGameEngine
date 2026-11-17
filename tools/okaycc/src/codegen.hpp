@@ -7,8 +7,8 @@
 
 namespace okaycc {
 
-// AT&T x86-64 assembly for the System V AMD64 ABI. Every value lives in a
-// stack slot; the only registers used as scratch are caller-saved.
+// AT&T x86-64 assembly for the System V AMD64 ABI. Address-taken values live
+// in stack slots. Up to three others live in rbx, r12, and r13.
 std::string emitAssembly(const Module& m);
 std::string compileToAssembly(const std::string& source, Diagnostics& diags,
                                const std::string& file = "t.c");

@@ -15,9 +15,16 @@ constexpr std::size_t kHeader = 64;
 constexpr std::size_t kPhdr = 56;
 constexpr std::size_t kLoadOff = kHeader + kPhdr;
 
-enum Reg { Rax = 0, Rcx = 1, Rdx = 2, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7, R8 = 8, R9 = 9 };
+enum Reg { Rax = 0, Rcx = 1, Rdx = 2, Rbx = 3, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7, R8 = 8, R9 = 9, R12 = 12, R13 = 13 };
 
 const int kArg[] = {Rdi, Rsi, Rdx, Rcx, R8, R9};
+const int kPhys[] = {Rbx, R12, R13};
+const RegHomes* curHomes = nullptr;
+
+int homeOf(int v) {
+    if (!curHomes || v < 0 || v >= static_cast<int>(curHomes->home.size())) return -1;
+    return curHomes->home[static_cast<std::size_t>(v)];
+}
 
 enum class FixKind { Rel32, Plt32, Pc32, Abs64 };
 
@@ -194,6 +201,11 @@ void movRcxSlot(Image& im, int slot) {
 }
 
 void movSlotRax(Image& im, int slot) {
+    int h = homeOf(slot);
+    if (h >= 0) {
+        movReg(im, kPhys[h], Rax);
+        return;
+    }
     rexW(im, Rax, Rbp);
     u8(im, 0x89);
     u8(im, modrm(2, Rax, Rbp));
@@ -202,11 +214,13 @@ void movSlotRax(Image& im, int slot) {
 
 void loadRax(Image& im, const Operand& o) {
     if (o.kind == Operand::Kind::Imm) movImm(im, Rax, o.imm);
+    else if (homeOf(o.reg) >= 0) movReg(im, Rax, kPhys[homeOf(o.reg)]);
     else movRaxSlot(im, o.reg);
 }
 
 void loadRcx(Image& im, const Operand& o) {
     if (o.kind == Operand::Kind::Imm) movImm(im, Rcx, o.imm);
+    else if (homeOf(o.reg) >= 0) movReg(im, Rcx, kPhys[homeOf(o.reg)]);
     else movRcxSlot(im, o.reg);
 }
 
@@ -507,21 +521,26 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         }
         if (in.dst >= 0) movSlotRax(im, in.dst);
         if (in.b.kind == Operand::Kind::Reg) {
-            rexW(im, Rdx, Rbp);
-            u8(im, 0x89);
-            u8(im, modrm(2, Rdx, Rbp));
-            i32(im, -8 * (in.b.reg + 1));
+            int h = homeOf(in.b.reg);
+            if (h >= 0) movReg(im, kPhys[h], Rdx);
+            else {
+                rexW(im, Rdx, Rbp);
+                u8(im, 0x89);
+                u8(im, modrm(2, Rdx, Rbp));
+                i32(im, slotDisp(in.b.reg));
+            }
         }
         break;
     }
     case Inst::Op::Ret:
         if (in.b.kind != Operand::Kind::None) {
             if (in.b.kind == Operand::Kind::Imm) movImm(im, Rdx, in.b.imm);
+            else if (homeOf(in.b.reg) >= 0) movReg(im, Rdx, kPhys[homeOf(in.b.reg)]);
             else {
                 rexW(im, Rdx, Rbp);
                 u8(im, 0x8B);
                 u8(im, modrm(2, Rdx, Rbp));
-                i32(im, -8 * (in.b.reg + 1));
+                i32(im, slotDisp(in.b.reg));
             }
         }
         if (in.a.kind != Operand::Kind::None) {
@@ -572,7 +591,16 @@ void emitMem(Image& im, const Inst& in, int localOff) {
     }
 }
 
+void movDisp(Image& im, int disp, int reg, bool store) {
+    rexW(im, reg, Rbp);
+    u8(im, store ? 0x89 : 0x8B);
+    u8(im, modrm(2, reg, Rbp));
+    i32(im, disp);
+}
+
 void emitFunction(Image& im, const Function& f) {
+    RegHomes homes = assignRegs(f);
+    curHomes = &homes;
     std::size_t start = im.bytes.size();
     im.labels[f.name] = start;
     int slots = slotCount(f);
@@ -588,11 +616,16 @@ void emitFunction(Image& im, const Function& f) {
             localOff.push_back(-cursor);
         }
     }
+    int saveBase = cursor;
+    cursor += homes.count * 8;
     int used = cursor;
     if (used % 16) used += 8;
+    std::vector<int> saveDisp;
+    for (int i = 0; i < homes.count; ++i) saveDisp.push_back(-(saveBase + 8 * (i + 1)));
     pushReg(im, Rbp);
     movReg(im, Rbp, Rsp);
     if (used) aluImm(im, Rsp, used, 5);
+    for (int i = 0; i < homes.count; ++i) movDisp(im, saveDisp[static_cast<std::size_t>(i)], kPhys[i], true);
     int nreg = f.params < 6 ? f.params : 6;
     for (int i = 0; i < nreg; ++i) {
         movReg(im, Rax, kArg[i]);
@@ -632,9 +665,11 @@ void emitFunction(Image& im, const Function& f) {
         }
     }
     im.labels[f.name + "_epilogue"] = im.bytes.size();
+    for (int i = 0; i < homes.count; ++i) movDisp(im, saveDisp[static_cast<std::size_t>(i)], kPhys[i], false);
     movReg(im, Rsp, Rbp);
     popReg(im, Rbp);
     u8(im, 0xC3);
+    curHomes = nullptr;
     Image::Pub p;
     p.name = f.name;
     p.off = start;

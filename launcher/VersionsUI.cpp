@@ -931,9 +931,9 @@ void BuildOkayUIModel(const Host& h, okayuiscreens::VersionsModel& m) {
             if (r.lts) sub += "  \xC2\xB7  only gets fixes";
             if (mine) {
                 std::string file;
-                SDL_LockMutex(st.job->mu);
+                okay::lt::LockMutex(st.job->mu);
                 file = st.job->file;
-                SDL_UnlockMutex(st.job->mu);
+                okay::lt::UnlockMutex(st.job->mu);
                 sub = st.job->cancel ? std::string("Cancelling\xE2\x80\xA6") : "Downloading " + file + " (" + std::to_string(st.job->fileIndex.load()) + " of " + std::to_string(st.job->fileCount.load()) + ")";
                 const std::uint64_t done = st.job->doneBytes.load(), total = st.job->totalBytes.load();
                 char overlay[64];

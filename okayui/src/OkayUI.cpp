@@ -686,8 +686,10 @@ inline bool aaOn() { return g_theme.antiAliased; }   // Theme::antiAliased (the 
 // batch is active (main, or overlay when g_toOverlay is set).
 // Wholly outside the current clip rectangle of the main batch: nothing of it would show, so its geometry is not emitted (a long list in
 // a scrolling child, a section scrolled out of view). The overlay batch has no clip and is never culled.
+// A DrawList::Cached drawing being made (> 0): nothing is culled, that copy may later land in view (culledY below too).
+int g_cachedDepth = 0;
 inline bool clippedAway(float x0, float y0, float x1, float y1) {
-    if (g_toOverlay || !g_curClipOn) return false;
+    if (g_toOverlay || !g_curClipOn || g_cachedDepth > 0) return false;
     const okay::ui2d::Rect& r = g_curClipRect;
     return x1 <= (float)r.x || y1 <= (float)r.y || x0 >= (float)(r.x + r.w) || y0 >= (float)(r.y + r.h);
 }
@@ -2426,10 +2428,10 @@ void EndFrame(SDL_Renderer* r) {
         if (count <= 0) return;
         // The whole index list in one call (a page under one clip): every index is below g_nv already, so the vertices are
         // handed over as they are, without looking through the indices first.
-        if (idx == g_idx && count == g_ni) { SDL_RenderGeometry(r, tex, g_verts, g_nv, idx, count); return; }
+        if (idx == g_idx && count == g_ni) { SDL_RenderGeometry(r, tex, (const SDL_Vertex*)g_verts, g_nv, idx, count); return; }
         int lo = idx[0], hi = idx[0];
         for (int i = 1; i < count; ++i) { const int v = idx[i]; lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
-        if (lo == 0) { SDL_RenderGeometry(r, tex, g_verts, hi + 1, idx, count); return; }   // already relative: no copy
+        if (lo == 0) { SDL_RenderGeometry(r, tex, (const SDL_Vertex*)g_verts, hi + 1, idx, count); return; }   // already relative: no copy
         for (int i = 0; i < count; ++i) scratch[i] = idx[i] - lo;
         SDL_RenderGeometry(r, tex, (const SDL_Vertex*)(g_verts + lo), hi - lo + 1, scratch, count);
     };
@@ -6355,7 +6357,6 @@ void unpack(Color32 c, unsigned char out[4]) {
 // A window-list shape wholly above or below the current clip rectangle is not emitted at all: it would be scissored away, and
 // a long page (Community, the Friends list) lays out much more than it shows. Only on the main list, and never while a
 // DrawList::Cached drawing is being made (that copy may later land in view).
-int g_cachedDepth = 0;
 inline bool culledY(float y0, float y1) {
     if (g_toOverlay || g_clipTop <= 0 || g_cachedDepth > 0) return false;
     const okay::ui2d::Rect& c = g_clipStack[g_clipTop - 1];

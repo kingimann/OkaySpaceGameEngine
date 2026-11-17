@@ -562,6 +562,7 @@ int main() {
             UI::PopStyleColor();
             UI::End();
         };
+        sim.Move(390.0f, 290.0f);   // the pointer off the row (the test kit starts it at 0,0, the row's own corner: a hover there is right)
         sim.Frames(2, ui);
         const Bitmap& b0 = sim.Draw(30, 33, 41);
         CHECK(PixelAt(b0, (int)(sel.x + 2), (int)(sel.y + 2)) == Rgba(200, 0, 0));   // flat and square: the corner is the header colour

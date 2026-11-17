@@ -37,7 +37,8 @@ struct MetricsFromImGui {
 };
 
 // The ImGui window stays: it is the dock tab and the close box, and hands its free area to OkayUI as one rectangle (the same
-// arrangement as the Console panel). Returns false when an ImGui popup covers the window.
+// arrangement as the Console panel). Returns false when an ImGui popup or another ImGui window in front covers the window (OkayUI
+// is drawn after ImGui and would paint over it), and the caller then draws the Dear ImGui version, which ImGui layers correctly.
 //
 // The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to an OkayUI body. `fitBody`, when
 // given, is the panel's Dear ImGui body: a window that does not exist yet and has no saved place is fitted by Dear ImGui to what its
@@ -46,7 +47,7 @@ struct MetricsFromImGui {
 template <class Draw>
 bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, const std::function<void()>& fitBody = {}) {
     const ImGuiWindow* cw = ImGui::FindWindowByName(title);
-    if (cw && okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;
+    if (cw && okayuihost::CoveredInImGui(cw, cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;   // a popup or window in front
     if (okayuihost::OutsideMainWindow(cw)) return false;
     if (fitBody && !cw && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
         if (ImGui::Begin(title, open)) fitBody();   // the hidden first frame: Dear ImGui measures it, nobody sees it
@@ -77,9 +78,17 @@ struct SectionDrawn { float height = 0.0f; OkayUI::Rect popup; };
 template <class Draw>
 bool HostSection(const char* itemId, Draw draw) {
     ImGuiWindow* win = ImGui::GetCurrentWindow();
-    if (!win || okayuihost::PopupCoversRect(win->Pos.x, win->Pos.y, win->Size.x, win->Size.y)) return false;
-    if (okayuihost::OutsideMainWindow(win)) return false;
+    if (!win || okayuihost::OutsideMainWindow(win)) return false;
     float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
+    {
+        // The part of the window this section would show: when a popup or another ImGui window in front overlaps it, the Dear ImGui
+        // body is drawn instead (ImGui layers it under that window; OkayUI would paint over it). Not measured yet: the whole window.
+        const ImVec2 sp = ImGui::GetCursorScreenPos();
+        ImRect r = win->InnerClipRect;
+        if (*height >= 0.0f) r.ClipWithFull(ImRect(sp.x, sp.y, sp.x + std::max(ImGui::GetContentRegionAvail().x, 8.0f), sp.y + std::max(*height, 8.0f)));
+        else r = win->Rect();
+        if (okayuihost::CoveredInImGui(win, r.Min.x, r.Min.y, r.GetWidth(), r.GetHeight())) return false;
+    }
     const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
     const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
     MetricsFromImGui metrics_;

@@ -73,6 +73,35 @@ int p_hex(unsigned v) {
     }
     return n;
 }
+int p_fixed(double v) {
+    int n;
+    int ip;
+    int frac;
+    int place;
+    int dig;
+    n = 0;
+    if (v < 0) {
+        n = n + p_char('-');
+        v = 0.0 - v;
+    }
+    ip = (int)v;
+    frac = (int)((v - (double)ip) * 1000000.0 + 0.5);
+    if (frac >= 1000000) {
+        frac = frac - 1000000;
+        ip = ip + 1;
+    }
+    if (frac < 0) frac = 0;
+    n = n + p_dec(ip);
+    n = n + p_char('.');
+    place = 100000;
+    while (place > 0) {
+        dig = frac / place;
+        n = n + p_char(48 + dig);
+        frac = frac - dig * place;
+        place = place / 10;
+    }
+    return n;
+}
 int printf(char *fmt, ...) {
     va_list ap;
     int i;
@@ -94,6 +123,9 @@ int printf(char *fmt, ...) {
                 i = i + 1;
             } else if (fmt[i] == 'x') {
                 n = n + p_hex(va_arg(ap, unsigned));
+                i = i + 1;
+            } else if (fmt[i] == 'f') {
+                n = n + p_fixed(va_arg(ap, double));
                 i = i + 1;
             } else if (fmt[i] == 'c') {
                 n = n + p_char(va_arg(ap, int));

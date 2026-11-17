@@ -565,6 +565,13 @@ std::string emitFunction(const Function& f) {
             s += std::to_string(base + 8 * i);
             s += "(%rbp)\n";
         }
+        for (int i = 0; i < 8; ++i) {
+            s += "  movdqu %xmm";
+            s += std::to_string(i);
+            s += ", ";
+            s += std::to_string(base + 48 + 16 * i);
+            s += "(%rbp)\n";
+        }
     }
     int localIndex = 0;
     for (const Block& b : f.blocks) {

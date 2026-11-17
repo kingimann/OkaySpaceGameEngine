@@ -1692,6 +1692,10 @@ private:
                 r.type = prim(Type::Kind::Int);
                 return r;
             }
+            if ((e.text == "-" || e.text == "+") && inner.type && isFp(*inner.type)) {
+                r.type = cloneType(*inner.type);
+                return r;
+            }
             if (!inner.type || !isIntish(*inner.type)) {
                 err(e.line, e.col, "operand is not an integer");
                 return bad(e.line, e.col);
@@ -3165,6 +3169,27 @@ private:
         if (e.text == "+") return lowerExpr(*e.kids[0]);
         Val a = lowerExpr(*e.kids[0]);
         if (e.text == "-") {
+            if (a.fpw) {
+                std::uint64_t sign = a.fpw <= 4 ? 0x80000000ull : 0x8000000000000000ull;
+                if (a.op.kind == Operand::Kind::Imm) {
+                    Val o = a;
+                    o.op = Operand::number(static_cast<std::int64_t>(static_cast<std::uint64_t>(a.op.imm) ^ sign));
+                    return o;
+                }
+                int dst = fresh();
+                Inst in;
+                in.op = Inst::Op::Xor;
+                in.fp = true;
+                in.extra = a.fpw;
+                in.dst = dst;
+                in.a = a.op;
+                in.b = Operand::number(static_cast<std::int64_t>(sign));
+                emit(in);
+                Val o;
+                o.op = Operand::vreg(dst);
+                o.fpw = a.fpw;
+                return o;
+            }
             if (a.op.kind == Operand::Kind::Imm && a.op.imm != std::numeric_limits<std::int64_t>::min())
                 return Val{Operand::number(-a.op.imm), 0, 0};
             int dst = fresh();
@@ -3461,23 +3486,32 @@ private:
         if (fname == "__va_start") {
             int named = fn_.vaNamed < 0 ? 0 : fn_.vaNamed;
             storeBits(ap, Operand::number(named * 8), 4);
-            storeBits(addAddr(ap, 4), Operand::number(48), 4);
+            storeBits(addAddr(ap, 4), Operand::number(48 + 16 * fn_.vaXmm), 4);
             storeBits(addAddr(ap, 8), frameAddr(16), 8);
             storeBits(addAddr(ap, 16), Operand::vreg(vaSave_), 8);
             return {};
         }
         int step = 8;
-        if (e.kids.size() >= 3 && e.kids[2]) {
+        bool fpArg = false;
+        if (fname == "__va_argp" && e.kids.size() >= 3 && e.kids[2] && e.kids[2]->checked &&
+            e.kids[2]->checked->kind == Type::Kind::Pointer && e.kids[2]->checked->inner &&
+            isFp(*e.kids[2]->checked->inner))
+            fpArg = true;
+        if (!fpArg && e.kids.size() >= 3 && e.kids[2]) {
             Operand sz = lowerExpr(*e.kids[2]).op;
             if (sz.kind == Operand::Kind::Imm && sz.imm > 8) step = (static_cast<int>(sz.imm) + 7) & ~7;
         }
+        int offAt = fpArg ? 4 : 0;
+        int limit = fpArg ? 176 : 48;
+        int bump = fpArg ? 16 : step;
+        int stackBump = fpArg ? 8 : step;
         std::string id = std::to_string(tmpN_++);
         std::string regL = "va" + id + "_reg";
         std::string stkL = "va" + id + "_stk";
         std::string endL = "va" + id + "_end";
-        Operand gp = loadBits(ap, 4);
+        Operand gp = loadBits(addAddr(ap, offAt), 4);
         int cmp = fresh();
-        emitBin(Inst::Op::Cge, cmp, gp, Operand::number(48), true);
+        emitBin(Inst::Op::Cge, cmp, gp, Operand::number(limit), true);
         emitBr(cmp, stkL, regL);
         int result = fresh();
         startBlock(regL);
@@ -3485,15 +3519,15 @@ private:
         int ptr = fresh();
         emitBin(Inst::Op::Add, ptr, save, gp);
         int gp2 = fresh();
-        emitBin(Inst::Op::Add, gp2, gp, Operand::number(8));
-        storeBits(ap, Operand::vreg(gp2), 4);
+        emitBin(Inst::Op::Add, gp2, gp, Operand::number(bump));
+        storeBits(addAddr(ap, offAt), Operand::vreg(gp2), 4);
         emitMov(result, Operand::vreg(ptr));
         emitJmp(endL);
         startBlock(stkL);
         Operand ov = loadBits(addAddr(ap, 8), 8);
         emitMov(result, ov);
         int ov2 = fresh();
-        emitBin(Inst::Op::Add, ov2, ov, Operand::number(step));
+        emitBin(Inst::Op::Add, ov2, ov, Operand::number(stackBump));
         storeBits(addAddr(ap, 8), Operand::vreg(ov2), 8);
         emitJmp(endL);
         startBlock(endL);
@@ -3518,7 +3552,7 @@ private:
                 fname = e.kids[0]->text;
             }
         }
-        if (direct && (fname == "__va_start" || fname == "__va_arg")) return lowerVa(e, fname);
+        if (direct && (fname == "__va_start" || fname == "__va_arg" || fname == "__va_argp")) return lowerVa(e, fname);
         if (!direct) target = lowerExpr(*e.kids[0]).op;
         int reg = 0;
         bool retRec = e.checked &&
@@ -4030,6 +4064,7 @@ private:
         }
         fn_.params = reg;
         fn_.vaNamed = d.type && d.type->variadic ? reg : -1;
+        fn_.vaXmm = d.type && d.type->variadic ? xm : 0;
         nextReg_ = reg;
         startBlock("entry");
         if (fn_.vaNamed >= 0) {
@@ -4037,7 +4072,7 @@ private:
             Inst loc;
             loc.op = Inst::Op::Local;
             loc.dst = save;
-            loc.a = Operand::number(48);
+            loc.a = Operand::number(176);
             emit(loc);
             vaSave_ = save;
         }

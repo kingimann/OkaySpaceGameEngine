@@ -16,13 +16,14 @@
 static int gOk = 0;
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
-    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c"};
+    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c"};
+    std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
         std::ifstream in(path);
         std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         okaycc::Diagnostics d;
-        auto obj = okaycc::compileToObject(src, d, path);
+        auto obj = okaycc::compileToObject(src, d, path, inc);
         if (!d.ok() || obj.empty()) return {};
         objs.push_back(std::move(obj));
     }

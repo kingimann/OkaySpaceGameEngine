@@ -28,11 +28,12 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 }
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
-    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c"};
+    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c"};
+    std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {
         okaycc::Diagnostics d;
-        auto obj = okaycc::compileToObject(readFile(path), d, path);
+        auto obj = okaycc::compileToObject(readFile(path), d, path, inc);
         if (!d.ok() || obj.empty()) return {};
         objs.push_back(std::move(obj));
     }

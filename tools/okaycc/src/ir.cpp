@@ -371,7 +371,8 @@ RegHomes assignRegs(const Function& f) {
                 if (in.a.kind == Operand::Kind::Reg && in.extra != 0) markMem(in.a.reg);
                 if (in.b.kind == Operand::Kind::Reg) markMem(in.b.reg);
                 bool fpDst = in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul ||
-                             in.op == Inst::Op::Div || in.op == Inst::Op::Mov || in.op == Inst::Op::Call;
+                             in.op == Inst::Op::Div || in.op == Inst::Op::Mov || in.op == Inst::Op::Call ||
+                             in.op == Inst::Op::Xor;
                 if (in.op == Inst::Op::Cvt && (in.b.kind == Operand::Kind::Imm && (in.b.imm == 4 || in.b.imm == 8)))
                     fpDst = true;
                 if (fpDst) markMem(in.dst);

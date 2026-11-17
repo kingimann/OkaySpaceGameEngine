@@ -777,6 +777,16 @@ void emitFunction(Image& im, const Function& f) {
     }
     if (f.vaNamed >= 0 && !localOff.empty()) {
         int base = localOff[0];
+        for (int i = 0; i < 8; ++i) {
+            u8(im, 0xF3);
+            u8(im, 0x0F);
+            u8(im, 0x7F);
+            u8(im, modrm(2, i, Rbp));
+            i32(im, base + 48 + 16 * i);
+        }
+    }
+    if (f.vaNamed >= 0 && !localOff.empty()) {
+        int base = localOff[0];
         for (int i = 0; i < 6; ++i) {
             rexW(im, kArg[i], Rbp);
             u8(im, 0x89);

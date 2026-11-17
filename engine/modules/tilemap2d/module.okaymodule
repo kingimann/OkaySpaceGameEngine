@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=tilemap2d
+title=2D tilemaps
+area=World
+description=Tilemaps and sprite animation.
+default=on
+core=0
+requires=physics2d
+provides=
+components=SpriteAnimator,Tilemap
+serializers=tilemap
+vs_group=
+editor=
+sources=include/okay/Components/Tilemap.hpp include/okay/Components/SpriteAnimator.hpp

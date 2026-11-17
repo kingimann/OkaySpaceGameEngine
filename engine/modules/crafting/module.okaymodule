@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=crafting
+title=Crafting
+area=Gameplay
+description=Recipes, crafting stations, chests.
+default=on
+core=0
+requires=inventory
+provides=
+components=ChestInventory,Crafting,CraftingMenu,CraftingStation
+serializers=chestinventory,crafting,craftingstation
+vs_group=
+editor=
+sources=include/okay/Components/Crafting.hpp include/okay/Components/CraftingMenu.hpp include/okay/Components/CraftingStation.hpp include/okay/Components/ChestInventory.hpp include/okay/Inventory/Recipe.hpp src/Inventory/Recipe.cpp

@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=anticheat
+title=Anti-cheat
+area=Multiplayer
+description=Hit validation, rate rules, clock checks.
+default=on
+core=0
+requires=networking
+provides=
+components=AntiCheatConfig,NetValidator
+serializers=netvalidator
+vs_group=
+editor=
+sources=include/okay/Net/AntiCheat* include/okay/Net/CheatDetect.hpp include/okay/Net/CheatSim.hpp include/okay/Net/ClockCheck.hpp include/okay/Net/DetectInspector.hpp src/Net/AntiCheat* src/Net/CheatDetect.cpp src/Net/CheatSim.cpp src/Net/ClockCheck.cpp include/okay/Components/AntiCheatConfig.hpp include/okay/Components/NetValidator.hpp src/Components/AntiCheatConfig.cpp

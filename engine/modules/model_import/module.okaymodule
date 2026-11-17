@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=model_import
+title=Model import
+area=Tools
+description=FBX, glTF, Collada and other model readers (editor time).
+default=on
+core=0
+requires=core
+provides=IModelImport
+components=
+serializers=
+vs_group=
+editor=
+sources=include/okay/Render/*Reader.hpp src/Render/*Reader.cpp include/okay/Render/Gltf.hpp include/okay/Render/ModelImport.hpp src/Render/ModelImport*.cpp src/Render/FbxScene.cpp include/okay/Render/ModelData.hpp

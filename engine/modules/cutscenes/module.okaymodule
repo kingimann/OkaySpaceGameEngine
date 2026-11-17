@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=cutscenes
+title=Cutscenes and cameras
+area=Animation
+description=Sequences, virtual cameras, camera brain, camera follow.
+default=on
+core=0
+requires=animation
+provides=
+components=CameraFollow,CinemachineBrain,SequencePlayer,VirtualCamera
+serializers=camerafollow,sequenceplayer
+vs_group=
+editor=
+sources=include/okay/Components/Sequence.hpp include/okay/Components/SequencePlayer.hpp include/okay/Components/VirtualCamera.hpp include/okay/Components/CinemachineBrain.hpp include/okay/Components/CameraFollow.hpp include/okay/Components/PlayerCamera.hpp src/Components/Sequence.cpp src/Components/SequencePlayer.cpp

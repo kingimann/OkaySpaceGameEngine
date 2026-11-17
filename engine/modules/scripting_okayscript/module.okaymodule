@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=scripting_okayscript
+title=OkayScript
+area=Scripting
+description=OkayScript language, VM, script component, action lists.
+default=on
+core=0
+requires=core
+provides=IScripting
+components=ActionList,Collectible,DamageOnTouch,JumpPad,ScriptComponent,Teleporter,TriggerZone
+serializers=collectible,jumppad,teleporter,triggerzone
+vs_group=
+editor=
+sources=include/okay/Scripting/* src/Scripting/* include/okay/Script/* src/Script/* include/okay/Components/ScriptComponent.hpp include/okay/Components/ActionList.hpp include/okay/Components/NoCode.hpp src/Components/ScriptComponent.cpp src/Components/ActionList.cpp

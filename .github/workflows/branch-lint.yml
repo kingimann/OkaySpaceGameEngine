@@ -68,6 +68,10 @@ jobs:
             echo "::warning title=Feature map::docs/FEATURE_MAP.md is out of date. Run: python3 scripts/gen_feature_map.py (rule 5). If main changed the map after you branched, merge main first."
           fi
 
+      - name: "Module dependency check (fatal: no new forbidden include)"
+        if: always()
+        run: python3 scripts/check_modules.py
+
       - name: "Bug-class patterns (warning)"
         if: always()
         run: python3 scripts/bug_patterns.py --base origin/main --head HEAD --github | tee bug_patterns.txt

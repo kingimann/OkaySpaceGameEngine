@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=save_games
+title=Save games
+area=Gameplay
+description=Save framework, game saves, auto save.
+default=on
+core=0
+requires=core
+provides=ISave
+components=AutoSave
+serializers=autosave
+vs_group=
+editor=
+sources=include/okay/Core/Save* src/Core/Save* include/okay/Core/GameSaves.hpp src/Core/GameSaves.cpp include/okay/Components/AutoSave.hpp

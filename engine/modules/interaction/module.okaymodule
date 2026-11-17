@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=interaction
+title=Interaction
+area=Gameplay
+description=Interactables, prompts, pickups, loot, holdable objects.
+default=on
+core=0
+requires=core
+provides=IInteractable
+components=HoldPrompt,HoldableObject,InventoryInteractable,ItemPickup,LogicSource,LogicTarget,LootSource,ProceduralObjectHolding
+serializers=holdprompt,itempickup,logicsource,logictarget,lootsource
+vs_group=
+editor=
+sources=include/okay/Components/HoldPrompt.hpp include/okay/Components/HoldableObject.hpp include/okay/Components/ProceduralObjectHolding.hpp include/okay/Components/ItemPickup.hpp include/okay/Components/LootSource.hpp include/okay/Components/InventoryPlayer.hpp include/okay/Components/LogicLinks.hpp

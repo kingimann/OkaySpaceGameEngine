@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=networking
+title=Networking
+area=Multiplayer
+description=Network manager, sync, transports, matchmaking, dedicated server.
+default=on
+core=0
+requires=core
+provides=INet
+components=NetworkAvatarMotion,NetworkObject,NetworkPlayerSpawner,NetworkSync,NetworkTransform,SyncVar
+serializers=syncvar
+vs_group=
+editor=Net sim window
+sources=include/okay/Net/* src/Net/* include/okay/Components/NetworkObject.hpp include/okay/Components/NetworkPlayerSpawner.hpp include/okay/Components/NetworkSync.hpp include/okay/Components/NetworkAvatarMotion.hpp src/Components/NetworkObject.cpp include/okay/Platform/Servers.hpp include/okay/Platform/GameIpc.hpp

@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=ai_behavior
+title=AI behaviour
+area=AI
+description=Behaviour trees, NPC controller, perception.
+default=on
+core=0
+requires=ai_navigation,health_damage
+provides=IPerception
+components=BehaviorTreeRunner,NPCController
+serializers=
+vs_group=
+editor=Behaviour tree window
+sources=include/okay/AI/BehaviorTree.hpp include/okay/AI/Perception.hpp src/AI/BehaviorTree*.cpp src/AI/Perception.cpp include/okay/Components/BehaviorTreeRunner.hpp include/okay/Components/NPCController.hpp

@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=physics3d
+title=3D physics
+area=Physics
+description=Rigid bodies, colliders, joints, mesh colliders.
+default=on
+core=0
+requires=core
+provides=IPhysics3D
+components=DebrisEmitter,Joint3D,VoxelDebris
+serializers=joint3d
+vs_group=physics
+editor=
+sources=include/okay/Physics/Physics3D.hpp include/okay/Physics/Collider3D.hpp include/okay/Physics/Rigidbody3D.hpp include/okay/Physics/TriMesh.hpp include/okay/Physics/ContactSolver.hpp include/okay/Physics/ConvexContact.hpp include/okay/Physics/BoxManifold.hpp include/okay/Physics/BodyPose.hpp include/okay/Physics/PoseHistory.hpp include/okay/Physics/PlayerCollision.hpp include/okay/Physics/PhysicsDebug.hpp include/okay/Physics/PhysicsMaterial.hpp include/okay/Physics/PhysicsQuality.hpp include/okay/Physics/ColliderFit.hpp include/okay/Physics/DebrisPool.hpp include/okay/Physics/ForceMode.hpp src/Physics/Physics3D.cpp src/Physics/TriMesh.cpp src/Physics/MeshCollider3D.cpp include/okay/Components/Joint3D.hpp include/okay/Components/VoxelDebris.hpp include/okay/Components/DebrisEmitter.hpp

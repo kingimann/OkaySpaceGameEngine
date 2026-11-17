@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=splines
+title=Splines
+area=World
+description=Splines, spline meshes, dolly paths.
+default=on
+core=0
+requires=core
+provides=
+components=DollyCart,DollyPath,Spline,SplineFollower,SplineInstancer,SplineMesh
+serializers=dollycart,dollypath,spline,splinefollower,splineinstancer,splinemesh
+vs_group=
+editor=
+sources=include/okay/Components/Spline.hpp include/okay/Components/SplineMesh.hpp include/okay/Components/DollyPath.hpp src/Components/Spline.cpp src/Components/SplineMesh.cpp

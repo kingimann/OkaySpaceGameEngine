@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=audio
+title=Audio
+area=Audio
+description=Mixer, decoders, audio sources, music player.
+default=on
+core=0
+requires=core
+provides=IAudio
+components=AudioSource,MusicPlayer
+serializers=
+vs_group=
+editor=
+sources=include/okay/Audio/* src/Audio/* include/okay/Components/AudioSource.hpp include/okay/Components/MusicPlayer.hpp

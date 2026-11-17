@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=sky_weather
+title=Sky and weather
+area=World
+description=Day-night cycle, atmosphere, stars, weather, wind.
+default=on
+core=0
+requires=core
+provides=
+components=DayNightCycle
+serializers=
+vs_group=
+editor=
+sources=include/okay/Components/DayNightCycle.hpp include/okay/Environment/* include/okay/Render/Atmosphere.hpp include/okay/Render/SkyStars.hpp

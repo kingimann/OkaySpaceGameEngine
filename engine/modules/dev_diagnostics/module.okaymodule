@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=dev_diagnostics
+title=Developer diagnostics
+area=Tools
+description=Profiling overlays, frame history, scene validation, play tests.
+default=on
+core=0
+requires=core
+provides=
+components=
+serializers=
+vs_group=
+editor=
+sources=include/okay/Debug/* src/Debug/* include/okay/Testing/* src/Testing/* include/okay/Core/Profiler.hpp

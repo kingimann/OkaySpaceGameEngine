@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=core
+title=Core
+area=Core
+description=Math, scene, components, input, base renderer, platform, crypto. Always on.
+default=on
+core=1
+requires=
+provides=
+components=
+serializers=
+vs_group=
+editor=Hierarchy,Inspector,Console,Project panel,Build Settings
+sources=

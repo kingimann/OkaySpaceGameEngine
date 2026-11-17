@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=health_damage
+title=Health and damage
+area=Gameplay
+description=Health, damage events, death, destructibles.
+default=on
+core=0
+requires=core
+provides=IHealth,IDamageable
+components=HealthStat,HitZones,Destructible
+serializers=destructible,hitzones,stat_health
+vs_group=
+editor=Add Component > HitZones
+sources=include/okay/Components/HitZones.hpp include/okay/Components/DeathLock.hpp include/okay/Components/Destructible.hpp include/okay/Components/SurvivalComponents.hpp

@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=ragdoll
+title=Ragdoll
+area=Physics
+description=Verlet ragdoll over the humanoid bones.
+default=on
+core=0
+requires=animation,physics3d
+provides=
+components=Ragdoll
+serializers=ragdoll
+vs_group=
+editor=
+sources=include/okay/Components/Ragdoll.hpp src/Components/Ragdoll.cpp

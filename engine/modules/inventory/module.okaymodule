@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=inventory
+title=Inventory
+area=Gameplay
+description=Slot and grid inventories, equipment, item database.
+default=on
+core=0
+requires=interaction
+provides=IAmmoSource,IItems
+components=Consumables,Equipment,GridInventory,GridInventoryUI,Inventory,InventoryUI,NetInventory
+serializers=consumables,equipment,gridinventory,gridinventoryui,inventory,inventoryui,netinventory
+vs_group=
+editor=
+sources=include/okay/Components/Inventory.hpp include/okay/Components/GridInventory.hpp include/okay/Components/GridInventoryUI.hpp include/okay/Components/InventoryUI.hpp include/okay/Components/Equipment.hpp include/okay/Components/Consumables.hpp include/okay/Components/NetInventory.hpp include/okay/Inventory/* src/Inventory/* src/UI/InventoryInput.cpp

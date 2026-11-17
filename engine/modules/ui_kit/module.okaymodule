@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=ui_kit
+title=UI kit
+area=UI
+description=Canvas, widgets, layout, text, pause menu, settings screen, minimap.
+default=on
+core=0
+requires=core
+provides=IUI
+components=Canvas,CaptionOverlay,Draggable,DropZone,EventSystem,LoadingScreen,Minimap,MinimapBlip,PauseMenu,SettingsScreen,TextRenderer,TweenAnimation,UIAccordion,UIAnimation,UIAspectRatio,UIBarBind,UIBottomSheet,UIBreadcrumbs,UIButton,UIColorPicker,UIContextMenu,UIDamageNumbers,UIDateTimePicker,UIDocument,UIDraggable,UIDropTarget,UIDropdown,UIFilePicker,UIFlexItem,UIFrame,UIImage,UIInputField,UIInputValidator,UIInventoryBind,UIKeybindField,UILayoutGroup,UIListView,UIMask,UIModal,UIPagination,UIPanel,UIProgressBar,UIRadialProgress,UIRangeSlider,UIRating,UIRawImage,UISafeArea,UIScrollView,UISearchBar,UISkeleton,UISlider,UISlotGrid,UIStepper,UIStyleVariant,UITabs,UITextBind,UITheme,UIToast,UIToastItem,UIToggle,UITooltip,WorldSpaceUI,WorldUI
+serializers=canvas,draggable,dropzone,eventsystem,loadingscreen,minimap,minimapblip,pausemenu,uibarbind,uibutton,uicolorpicker,uidocument,uidraggable,uidroptarget,uidropdown,uiflexitem,uiframe,uiimage,uimask,uimodal,uipanel,uirating,uirawimage,uisafearea,uislider,uislotgrid,uistepper,uitabs,uitheme,uitoast,uitoggle,uitooltip,worldui
+vs_group=
+editor=
+sources=include/okay/Components/UI*.hpp src/Components/UI*.cpp include/okay/UI/* src/UI/* include/okay/Scene/UI*.hpp include/okay/Components/Canvas.hpp include/okay/Components/EventSystem.hpp include/okay/Components/TextRenderer.hpp include/okay/Components/WorldUI.hpp include/okay/Components/WorldSpaceUI.hpp include/okay/Components/PauseMenu.hpp include/okay/Components/SettingsScreen.hpp include/okay/Components/LoadingScreen.hpp include/okay/Components/LoadingScreenLayout.hpp include/okay/Components/Minimap.hpp include/okay/Components/CaptionOverlay.hpp include/okay/Components/NativeUIActions.hpp include/okay/Components/TweenAnimation.hpp include/okay/Components/Draggable.hpp src/Components/Draggable.cpp

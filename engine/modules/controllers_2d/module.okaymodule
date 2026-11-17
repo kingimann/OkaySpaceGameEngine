@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=controllers_2d
+title=2D character controllers
+area=Gameplay
+description=Platformer and top-down 2D characters and a 2D camera follow.
+default=on
+core=0
+requires=physics2d
+provides=IController
+components=CharacterController2D,TopDownController2D,FollowTarget2D
+serializers=
+vs_group=
+editor=
+sources=include/okay/Components/CharacterController2D.hpp include/okay/Components/TopDownController2D.hpp include/okay/Components/FollowTarget2D.hpp

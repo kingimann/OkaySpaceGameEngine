@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=relay_online
+title=Online services
+area=Multiplayer
+description=Relay client, accounts, friends, parties, store glue.
+default=on
+core=0
+requires=networking
+provides=
+components=SteamManager
+serializers=
+vs_group=
+editor=
+sources=include/okay/Platform/Account* include/okay/Platform/Friends.hpp include/okay/Platform/Parties.hpp include/okay/Platform/Profiles.hpp include/okay/Platform/Messages.hpp include/okay/Platform/Forums.hpp include/okay/Platform/BlockList.hpp include/okay/Platform/Privacy.hpp include/okay/Platform/Achievements.hpp include/okay/Platform/Admin.hpp include/okay/Platform/PlayFab* include/okay/Platform/Steam* include/okay/Platform/Workshop.hpp src/Platform/Account* src/Platform/Steam* include/okay/Components/SteamManager.hpp src/Components/SteamManager.cpp

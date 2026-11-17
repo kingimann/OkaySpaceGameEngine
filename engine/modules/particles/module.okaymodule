@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=particles
+title=Particles
+area=Rendering
+description=Particle systems.
+default=on
+core=0
+requires=core
+provides=IFx
+components=ParticleSystem
+serializers=
+vs_group=
+editor=
+sources=include/okay/Components/ParticleSystem.hpp

@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=localization_tools
+title=Localization tools
+area=Tools
+description=Scan, check, preview, subtitles, scene localization.
+default=on
+core=0
+requires=core
+provides=
+components=
+serializers=
+vs_group=
+editor=
+sources=include/okay/Core/Loc* src/Core/Loc* include/okay/Core/Subtitles.hpp include/okay/Scene/SceneLocalization.hpp src/Scene/SceneLocalization.cpp

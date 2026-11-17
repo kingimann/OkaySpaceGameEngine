@@ -1,0 +1,14 @@
+# Module manifest. Format: docs/modular_engine.md. One key per line, lists are comma separated.
+name=ik
+title=Inverse kinematics
+area=Animation
+description=Foot, look-at, aim, limb and full-body IK.
+default=on
+core=0
+requires=animation
+provides=
+components=AimIK,ChainIK,FootIK,FullBodyIK,IKTarget,LimbIK,LookAtIK
+serializers=aimik,chainik,footik,iktarget,limbik,lookatik
+vs_group=
+editor=
+sources=include/okay/Components/CharacterIK.hpp include/okay/Components/ChainIK.hpp include/okay/Components/FootIK.hpp include/okay/Components/FullBodyIK.hpp include/okay/Components/LimbIK.hpp include/okay/Components/LookAtIK.hpp include/okay/Components/AimIK.hpp include/okay/Components/IKTarget.hpp include/okay/Components/IKBones.hpp include/okay/Components/IKPose.hpp include/okay/Components/IKRestore.hpp src/Components/LookAtIK.cpp include/okay/Script/AnimIkTools.hpp

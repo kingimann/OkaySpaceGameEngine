@@ -125,6 +125,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [accounts.md](accounts.md): player accounts.
 - [anticheat_quickstart.md](anticheat_quickstart.md): add anti-cheat to your game in 5 minutes (presets, checklist), and what it does not do.
 - [anticheat.md](anticheat.md): anti-cheat.
+- [anticheat_hardening_status.md](anticheat_hardening_status.md): every item of the 2026-10-26 hardening audit and the server-side topics, done or not, with proof; the cheat simulator.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 - [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.
 - [account_data.md](account_data.md): download my data and delete my account.

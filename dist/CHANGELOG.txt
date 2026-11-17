@@ -1,5 +1,41 @@
 OkaySpace Game Engine — Changelog
 
+v2.881.0
+  New things
+  - Anti-cheat hardening for multiplayer games: the server can keep a ban
+    list, writes an audit log of what it decided and why, caps how many
+    packets one player can send, and spots bots and macros by how
+    regular their inputs are. For testing there is a cheat simulator:
+    run the player with --cheat-sim to see the server catch fake players.
+  - In-game UI library, first part: a range slider (two handles), input
+    validation for text fields, an aspect-ratio box that keeps its shape on
+    any screen, and more building blocks for your game's menus and HUD.
+  - Missing from the last notes (it was already in v2.880.0): player
+    controller presets (Classic, Modern, Arcade, Realistic, Shooter) with
+    camera and gamepad options, a per-system frame cost readout, and faster
+    scene queries.
+
+v2.880.0
+  Fixes and new things
+  - File > Examples now works in the Windows release: clicking an example
+    opens it. If one cannot be opened you now get a message saying why.
+  - First person: your hand and arm now look like a normal arm, for you and
+    for the other players. There are presets to compare and an example scene.
+  - Guided modeling: the settings no longer make the editor lag. New
+    designs for environment and props, a finer Detail setting, a reworked
+    motorcycle, character styles, hairstyles and clothes, and a character
+    skeleton that is ready to animate.
+  - Modeler: tools now keep your UVs, vertex colours and material slots
+    when you edit. Fixes for mirror, snapping and undo. You can remove and
+    reorder material slots, and curves and bevel weights work better.
+  - Sandbox (voxel) games run faster after you dig, and F3 shows more
+    information about speed.
+  - Five old templates (Snake, Brick Breaker, Humanoid, Inventory and Coin
+    Collector) are no longer in the create-project lists.
+  - Behind the scenes: the account address and key used for updates now live
+    in one plain file (config/public-account.json), and programs are no
+    longer stored in the source code.
+
 v2.879.0
   Modeling
   - Guided modeling, built into the existing 3D modeler: pick a category

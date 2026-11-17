@@ -1,11 +1,13 @@
 // okay-build: prototype of our own build tool (docs/own_build_plan.md). OFF by default, dev tool only.
 // Written from general knowledge of how build systems work (action graph, compiler-made depfiles,
-// content hashes, a ready queue with worker threads). No code from any other build tool was used.
-// POSIX only (fork/exec). Not built by CMake or CI.
+// content hashes, a ready queue). No code from any other build tool was used.
+// POSIX uses fork/exec and worker threads. Windows (_WIN32) uses CreateProcessW and waits on
+// process handles from one thread, so it does not include <thread>, <mutex> or <condition_variable>.
+// Not built by CMake or CI.
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cerrno>
@@ -14,22 +16,59 @@
 #include <fstream>
 #include <functional>
 #include <map>
-#include <mutex>
 #include <set>
 #include <unordered_map>
-#include <sys/stat.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <condition_variable>
+#include <mutex>
 #include <thread>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
-#include <vector>
+#endif
 
 namespace fs = std::filesystem;
 using std::string;
 using std::vector;
+
+#ifdef _WIN32
+static std::wstring widen(const string& s) {
+    if (s.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    if (n <= 0) return L"";
+    std::wstring w((size_t)n, 0);
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+    return w;
+}
+// Absolute Unix paths (Wine maps / to Z:) become Z:\... when that file exists. Relative paths stay relative.
+static std::wstring widePath(const string& p) {
+    string s = p;
+    for (char& c : s) if (c == '/') c = '\\';
+    if (!(s.size() >= 2 && s[1] == ':') && !s.empty() && s[0] == '\\') {
+        string z = "Z:" + s;
+        if (GetFileAttributesW(widen(z).c_str()) != INVALID_FILE_ATTRIBUTES) s = z;
+    }
+    return widen(s);
+}
+static int gHashMu = 0, gStateMu = 0;
+#define OK_LOCK(name, mu) int name = ((void)(mu), 0); (void)name
+#else
+static std::mutex gHashMu, gStateMu;
+#define OK_LOCK(name, mu) std::lock_guard<std::mutex> name(mu)
+#endif
 
 struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 
@@ -194,40 +233,82 @@ static uint64_t fnv(const char* p, size_t n, uint64_t h = 1469598103934665603ull
     for (size_t i = 0; i < n; ++i) { h ^= (unsigned char)p[i]; h *= 1099511628211ull; }
     return h;
 }
-static std::mutex gHashMu; static std::unordered_map<string, FileSig> gCache, gPrev; // this run / loaded from state
+static std::unordered_map<string, FileSig> gCache, gPrev; // this run / loaded from state
 static std::atomic<int> gHashed{0}, gTrusted{0};
 static bool gUseStat = true;
+static long long clockNs() {
+#ifdef _WIN32
+    FILETIME ft; GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER u; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime;
+    return (long long)u.QuadPart * 100; // nanoseconds since 1601, same epoch as file stamps below
+#else
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    return (long long)ts.tv_sec * 1000000000ll + ts.tv_nsec;
+#endif
+}
+static bool stampOf(const string& p, long long& size, long long& mtime) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(widePath(p).c_str(), GetFileExInfoStandard, &d)) return false;
+    size = ((long long)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+    ULARGE_INTEGER u; u.LowPart = d.ftLastWriteTime.dwLowDateTime; u.HighPart = d.ftLastWriteTime.dwHighDateTime;
+    mtime = (long long)u.QuadPart * 100;
+    return true;
+#else
+    struct stat st; if (::stat(p.c_str(), &st) != 0) return false;
+    size = (long long)st.st_size; mtime = (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec;
+    return true;
+#endif
+}
+static bool hashContents(const string& p, uint64_t& h) {
+    h = 1469598103934665603ull;
+#ifdef _WIN32
+    HANDLE f = CreateFileW(widePath(p).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    char buf[65536];
+    for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(f, buf, sizeof buf, &n, nullptr)) { CloseHandle(f); return false; }
+        if (n == 0) break;
+        h = fnv(buf, n, h);
+    }
+    CloseHandle(f);
+    return true;
+#else
+    int fd = ::open(p.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    char buf[65536];
+    for (;;) {
+        ssize_t n = ::read(fd, buf, sizeof buf);
+        if (n < 0) { if (errno == EINTR) continue; ::close(fd); return false; }
+        if (n == 0) break;
+        h = fnv(buf, (size_t)n, h);
+    }
+    ::close(fd);
+    return true;
+#endif
+}
 // Shortcut: same size and mtime as the record means the bytes did not change, so reuse the stored hash.
 // A stamp with sub-millisecond digits cannot survive an ordinary later write, so it is trusted at once.
 // A whole-second or whole-millisecond stamp might be shared by two writes (coarse clocks), so it is trusted
 // only once it was already 2 s old when it was recorded. Forged timestamps with the same size are not detected.
 static bool hashFile(const string& p, FileSig& out) {
     FileSig prev; bool havePrev = false;
-    { std::lock_guard<std::mutex> l(gHashMu); auto it = gCache.find(p); if (it != gCache.end()) { out = it->second; return true; }
+    { OK_LOCK(l, gHashMu); auto it = gCache.find(p); if (it != gCache.end()) { out = it->second; return true; }
       auto pv = gPrev.find(p); if (pv != gPrev.end()) { prev = pv->second; havePrev = true; } }
-    struct stat st; if (::stat(p.c_str(), &st) != 0) return false;
-    FileSig s; s.size = (long long)st.st_size; s.mtime = (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec;
+    FileSig s; if (!stampOf(p, s.size, s.mtime)) return false;
     long long nsec = s.mtime % 1000000000ll;
     bool fine = nsec % 1000000ll != 0;
     bool settled = prev.mtime + 2000000000ll < prev.at;
     if (gUseStat && havePrev && prev.size == s.size && prev.mtime == s.mtime && (fine || settled)) {
         s = prev; ++gTrusted;
     } else {
-        int fd = ::open(p.c_str(), O_RDONLY);
-        if (fd < 0) return false;
-        uint64_t h = 1469598103934665603ull; char buf[65536];
-        for (;;) {
-            ssize_t n = ::read(fd, buf, sizeof buf);
-            if (n < 0) { if (errno == EINTR) continue; ::close(fd); return false; }
-            if (n == 0) break;
-            h = fnv(buf, (size_t)n, h);
-        }
-        ::close(fd);
-        s.hash = hex64(h); { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); s.at = (long long)ts.tv_sec * 1000000000ll + ts.tv_nsec; } ++gHashed;
+        uint64_t h = 0; if (!hashContents(p, h)) return false;
+        s.hash = hex64(h); s.at = clockNs(); ++gHashed;
     }
-    out = s; std::lock_guard<std::mutex> l(gHashMu); gCache[p] = s; return true;
+    out = s; OK_LOCK(l, gHashMu); gCache[p] = s; return true;
 }
-static void forgetHash(const string& p) { std::lock_guard<std::mutex> l(gHashMu); gCache.erase(p); }
+static void forgetHash(const string& p) { OK_LOCK(l, gHashMu); gCache.erase(p); }
 static string hashStr(const string& s) { return hex64(fnv(s.data(), s.size())); }
 static string hashArgv(const vector<string>& a) { uint64_t h = 1469598103934665603ull; for (auto& s : a) { h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h); } return hex64(h); }
 
@@ -410,7 +491,7 @@ static vector<string> parseDepfile(const string& path) {
 
 // ---------------------------------------------------------------- state
 struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs, produced; };
-static std::map<string, Rec> gState; static std::mutex gStateMu;
+static std::map<string, Rec> gState;
 static string statePath() { return under(".okaybuild/state"); }
 static void loadState() {
     std::ifstream f(statePath(), std::ios::binary); string l; Rec* cur = nullptr;
@@ -436,14 +517,29 @@ static void saveState() {
     fs::rename(tmp, statePath());
 }
 
-static bool fileMissing(const string& p) { struct stat st; return ::stat(p.c_str(), &st) != 0; }
+static bool fileMissing(const string& p) {
+#ifdef _WIN32
+    return GetFileAttributesW(widePath(p).c_str()) == INVALID_FILE_ATTRIBUTES;
+#else
+    struct stat st; return ::stat(p.c_str(), &st) != 0;
+#endif
+}
 // restat: the command rewrote an output with the same bytes. Put the previous mtime back so dependents,
 // and anything else looking at mtimes, see no change. Content hashes already skip the rebuild.
 static void restoreMtime(const string& p, long long mtime) {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(widePath(p).c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    ULARGE_INTEGER u; u.QuadPart = (unsigned long long)(mtime / 100);
+    FILETIME ft; ft.dwLowDateTime = u.LowPart; ft.dwHighDateTime = u.HighPart;
+    SetFileTime(h, nullptr, nullptr, &ft);
+    CloseHandle(h);
+#else
     struct timespec ts[2];
     ts[0].tv_sec = 0; ts[0].tv_nsec = UTIME_OMIT;
     ts[1].tv_sec = (time_t)(mtime / 1000000000ll); ts[1].tv_nsec = (long)(mtime % 1000000000ll);
     utimensat(AT_FDCWD, p.c_str(), ts, 0);
+#endif
 }
 static void noteOutputs(const Action& a, Rec& rec, const vector<std::pair<string, FileSig>>& oldProduced, string& out, bool& ok) {
     for (auto& o : a.outputs) {
@@ -458,7 +554,7 @@ static void noteOutputs(const Action& a, Rec& rec, const vector<std::pair<string
 static bool dirty(const Action& a, string& why) {
     if (a.outputs.empty()) { why = "no declared output (always runs)"; return true; }
     for (auto& o : a.outputs) if (fileMissing(o)) { why = "output " + o + " is missing"; return true; }
-    const Rec* rp; { std::lock_guard<std::mutex> l(gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } rp = &it->second; } // map nodes are stable
+    const Rec* rp; { OK_LOCK(l, gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } rp = &it->second; } // map nodes are stable
     const Rec& r = *rp;
     if (r.cmd != a.cmdHash) { why = "command line changed"; return true; }
     for (auto& i : a.inputs) {
@@ -473,6 +569,91 @@ static bool dirty(const Action& a, string& why) {
 }
 
 // ---------------------------------------------------------------- running commands
+static long long nowNs();
+#ifdef _WIN32
+struct Live {
+    HANDLE proc = nullptr;
+    HANDLE pipe = nullptr;
+    int id = -1;
+    string out;
+    bool stream = false;
+    long long started = 0;
+};
+static string winQuote(const string& s) {
+    bool need = s.empty();
+    for (char c : s) if (c == ' ' || c == '\t' || c == '"') need = true;
+    if (!need) return s;
+    string r = "\"";
+    int bs = 0;
+    for (char c : s) {
+        if (c == '\\') { ++bs; r += c; continue; }
+        if (c == '"') { for (int i = 0; i < bs; ++i) r += '\\'; bs = 0; r += '\\'; r += '"'; continue; }
+        bs = 0; r += c;
+    }
+    for (int i = 0; i < bs; ++i) r += '\\';
+    r += '"';
+    return r;
+}
+static string winJoin(const vector<string>& argv) {
+    string r; for (auto& s : argv) { if (!r.empty()) r += ' '; r += winQuote(s); } return r;
+}
+static void drainLive(Live& L) {
+    if (L.stream || !L.pipe) return;
+    for (;;) {
+        DWORD avail = 0;
+        if (!PeekNamedPipe(L.pipe, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
+        char buf[4096]; DWORD n = 0; DWORD chunk = avail > sizeof buf ? (DWORD)sizeof buf : avail;
+        if (!ReadFile(L.pipe, buf, chunk, &n, nullptr) || n == 0) break;
+        L.out.append(buf, n);
+    }
+}
+static bool spawnLive(const string& cmdline, const string& dir, bool stream, Live& L, string& err) {
+    SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE;
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!stream) {
+        if (!CreatePipe(&rd, &wr, &sa, 1 << 20)) { err = "okay-build: CreatePipe failed\n"; return false; }
+        SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    }
+    STARTUPINFOW si{}; si.cb = sizeof si; si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = stream ? GetStdHandle(STD_OUTPUT_HANDLE) : wr;
+    si.hStdError = stream ? GetStdHandle(STD_ERROR_HANDLE) : wr;
+    std::wstring wcmd = widen(cmdline);
+    std::vector<wchar_t> buf(wcmd.begin(), wcmd.end()); buf.push_back(0);
+    string dirNative = dir;
+    for (char& c : dirNative) if (c == '/') c = '\\';
+    if (!dirNative.empty() && dirNative[0] == '\\' && !(dirNative.size() >= 2 && dirNative[1] == ':')) {
+        string z = "Z:" + dirNative;
+        if (GetFileAttributesW(widen(z).c_str()) != INVALID_FILE_ATTRIBUTES) dirNative = z;
+    }
+    std::wstring wdir = widen(dirNative);
+    PROCESS_INFORMATION pi{};
+    DWORD flags = stream ? 0 : CREATE_NO_WINDOW;
+    BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, flags, nullptr, wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+    if (wr) CloseHandle(wr);
+    if (!ok) {
+        if (rd) CloseHandle(rd);
+        err = "okay-build: CreateProcessW failed (" + std::to_string(GetLastError()) + ")\n";
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    L.proc = pi.hProcess; L.pipe = rd; L.stream = stream; L.started = nowNs();
+    return true;
+}
+static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
+    Live L; string err;
+    if (!spawnLive(winJoin(argv), "", stream, L, err)) { out += err; return 127; }
+    for (;;) {
+        drainLive(L);
+        if (WaitForSingleObject(L.proc, 20) == WAIT_OBJECT_0) break;
+    }
+    drainLive(L);
+    DWORD code = 1; GetExitCodeProcess(L.proc, &code);
+    CloseHandle(L.proc); if (L.pipe) CloseHandle(L.pipe);
+    out += L.out;
+    return (int)code;
+}
+#else
 static int waitChild(pid_t pid) {
     int st = 0; while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) return 128; }
     return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
@@ -492,6 +673,7 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     close(fd[1]); char b[4096]; ssize_t n; while ((n = read(fd[0], b, sizeof b)) > 0) out.append(b, (size_t)n);
     close(fd[0]); return waitChild(pid);
 }
+#endif
 
 static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
 static long long nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -641,7 +823,201 @@ static string effectivePool(const Action& a) {
     return a.kind == "LD" ? "link" : "-";
 }
 
+#ifdef _WIN32
+static string writeRsp(const string& key, const vector<string>& args, size_t head) {
+    string rf = under(".okaybuild/rsp/" + hashStr(key.empty() ? "cmd" : key) + ".rsp");
+    fs::create_directories(fs::path(rf).parent_path());
+    std::ofstream r(rf, std::ios::binary);
+    for (size_t i = head; i < args.size(); ++i) {
+        for (char c : args[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; }
+        r << "\r\n";
+    }
+    return rf;
+}
+static bool shellMeta(const string& body) {
+    bool q = false;
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] == '"') q = !q;
+        if (q) continue;
+        if (body[i] == '>' || body[i] == '<' || body[i] == '|') return true;
+        if (body[i] == '&' && i + 1 < body.size() && body[i + 1] == '&') return true;
+    }
+    return false;
+}
+static string trimCopy(const string& s) {
+    size_t a = s.find_first_not_of(" \t"); if (a == string::npos) return "";
+    size_t b = s.find_last_not_of(" \t"); return s.substr(a, b - a + 1);
+}
+// A cmd.exe line dies around 8191 characters. A long tool invocation (no shell operators) is
+// rewritten to `tool @response` so CreateProcess stays under the 32767-character limit.
+static string shortenShell(const string& body) {
+    if (body.size() < 7000) return body;
+    vector<string> segs; string cur; bool q = false;
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] == '"') q = !q;
+        if (!q && i + 1 < body.size() && body[i] == '&' && body[i + 1] == '&') { segs.push_back(cur); cur.clear(); ++i; continue; }
+        cur += body[i];
+    }
+    segs.push_back(cur);
+    string out;
+    for (size_t si = 0; si < segs.size(); ++si) {
+        string t = trimCopy(segs[si]);
+        if (t.size() > 7000 && !shellMeta(t)) {
+            auto w = shellWords(t);
+            if (w.size() > 1) {
+                string rf = writeRsp(t, w, 1);
+                for (char& c : rf) if (c == '/') c = '\\';
+                t = winQuote(w[0]) + " @" + winQuote(rf);
+            }
+        }
+        if (si) out += " && ";
+        out += t;
+    }
+    return out;
+}
+static string commandLineFor(const Action& a, string& err) {
+    if (!a.rawCmd.empty()) {
+        string body = shortenShell(a.rawCmd);
+        string script = under(".okaybuild/cmd/" + hashStr(body) + ".cmd");
+        fs::create_directories(fs::path(script).parent_path());
+        { std::ofstream o(script, std::ios::binary); o << "@echo off\r\n" << body << "\r\n"; }
+        for (char& c : script) if (c == '/') c = '\\';
+        return "cmd.exe /C " + winQuote(script);
+    }
+    vector<string> av = a.argv;
+    size_t limit = a.rspThreshold ? a.rspThreshold : 30000;
+    if (limit > 30000) limit = 30000;
+    size_t head = a.rspHead > 0 ? a.rspHead : 1;
+    if (av.size() > head && winJoin(av).size() > limit) {
+        string rf = writeRsp(a.output.empty() ? a.desc : a.output, av, head);
+        av.resize(head);
+        for (char& c : rf) if (c == '/') c = '\\';
+        av.push_back("@" + rf);
+    }
+    string line = winJoin(av);
+    if (line.size() > 32000) err = "okay-build: command line exceeds the Windows 32767-character limit\n";
+    return line;
+}
+static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
+    long long tStart = nowNs(); Graph g = plan(m, want); loadState();
+    long long tPlan = nowNs() - tStart;
+    int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
+    bool anyFail = false, stop = false;
+    vector<PoolUse> pools = {{"link", 1, 0}, {"console", 1, 0}};
+    for (auto& d : m.pools) { int i = findPool(pools, d.name); if (i < 0) pools.push_back({d.name, d.depth, 0}); else pools[i].depth = d.depth; }
+    vector<int> poolIdx(total, -1);
+    for (auto& a : g.acts) {
+        if (a.pool == "none") continue;
+        string n = a.pool.empty() ? (a.kind == "LD" ? "link" : "") : a.pool;
+        if (n.empty()) continue;
+        int i = findPool(pools, n);
+        if (i < 0) throw Fail("action '" + a.desc + "' uses unknown pool '" + n + "'");
+        poolIdx[a.id] = i;
+    }
+    if (!o.dry) {
+        bool anyDirty = false; long long t0 = nowNs();
+        for (auto& a : g.acts) { string why; if (dirty(a, why)) { anyDirty = true; break; } }
+        gNsDirty += nowNs() - t0;
+        if (!anyDirty) {
+            upToDate = total;
+            if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
+            printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
+            if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+            if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command 0, depfile+hash 0; wall %lld\n", gNsDirty / 1000000, (nowNs() - tStart) / 1000000);
+            if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
+            return 0;
+        }
+    }
+    vector<int> pending(total); vector<char> wouldRun(total, 0); vector<int> ready;
+    for (auto& a : g.acts) { pending[a.id] = (int)a.deps.size(); if (a.deps.empty()) ready.push_back(a.id); }
+    SYSTEM_INFO info; GetSystemInfo(&info);
+    int jobs = o.jobs > 0 ? o.jobs : (int)info.dwNumberOfProcessors;
+    if (jobs > total && total > 0) jobs = total;
+    if (jobs < 1) jobs = 1;
+    if (jobs > 64) jobs = 64; // WaitForMultipleObjects accepts at most 64 handles
+    auto blocked = [&](int id) { int p = poolIdx[id]; return p >= 0 && pools[p].used >= pools[p].depth; };
+    auto take = [&]() -> int {
+        for (int i = (int)ready.size() - 1; i >= 0; --i) if (!blocked(ready[i])) { int id = ready[i]; ready.erase(ready.begin() + i); return id; }
+        return -1;
+    };
+    auto done = [&](int id, bool ok, const string& msg, bool held) {
+        if (held && poolIdx[id] >= 0) --pools[poolIdx[id]].used;
+        ++finished;
+        if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(msg.c_str(), stderr); } }
+        else if (!stop) for (int r : g.acts[id].rdeps) if (--pending[r] == 0) ready.push_back(r);
+    };
+    vector<Live> live;
+    for (;;) {
+        while ((int)live.size() < jobs && !stop) {
+            int id = take();
+            if (id < 0) break;
+            const Action& a = g.acts[id];
+            string why, out;
+            try {
+                long long t0 = nowNs(); bool d = dirty(a, why); gNsDirty += nowNs() - t0;
+                if (!d && o.dry) for (int dep : a.deps) if (wouldRun[dep]) { d = true; why = "input " + g.acts[dep].output + " would be rebuilt"; }
+                if (!d) { ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); done(id, true, "", false); continue; }
+                ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
+                if (o.explain) printf("        because: %s\n", why.c_str());
+                if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                fflush(stdout);
+                if (o.dry) { wouldRun[id] = 1; done(id, true, "", false); continue; }
+                for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
+                if (a.kind == "AR" && !a.output.empty()) fs::remove(a.output);
+                string err; string line = commandLineFor(a, err);
+                if (!err.empty()) { done(id, false, err, false); continue; }
+                bool stream = poolIdx[id] >= 0 && pools[poolIdx[id]].name == "console";
+                Live L; L.id = id;
+                if (!spawnLive(line, a.dir, stream, L, err)) { done(id, false, err, false); continue; }
+                if (poolIdx[id] >= 0) ++pools[poolIdx[id]].used;
+                live.push_back(L);
+            } catch (const std::exception& e) { done(id, false, string("okay-build: ") + e.what() + "\n", false); }
+        }
+        if (live.empty()) {
+            if (!ready.empty() && !stop) { anyFail = true; stop = true; fprintf(stderr, "okay-build: steps are waiting on a pool but none is free\n"); }
+            break;
+        }
+        HANDLE hs[64]; int n = (int)live.size(); if (n > 64) n = 64;
+        for (int i = 0; i < n; ++i) hs[i] = live[(size_t)i].proc;
+        for (auto& L : live) drainLive(L);
+        DWORD w = WaitForMultipleObjects((DWORD)n, hs, FALSE, 20);
+        for (auto& L : live) drainLive(L);
+        if (w < WAIT_OBJECT_0 || w >= WAIT_OBJECT_0 + (DWORD)n) continue;
+        int idx = (int)(w - WAIT_OBJECT_0);
+        Live L = live[(size_t)idx]; live.erase(live.begin() + idx);
+        drainLive(L);
+        DWORD code = 1; GetExitCodeProcess(L.proc, &code);
+        CloseHandle(L.proc); if (L.pipe) CloseHandle(L.pipe);
+        gNsSpawn += nowNs() - L.started;
+        const Action& a = g.acts[L.id];
+        bool ok = code == 0; string out = L.out;
+        if (ok && !a.outputs.empty()) {
+            long long ts = nowNs();
+            Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
+            if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
+            for (auto& pth : a.outputs) forgetHash(pth);
+            for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, sig}); }
+            vector<std::pair<string, FileSig>> oldProduced;
+            if (ok && a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
+            if (ok) noteOutputs(a, rec, oldProduced, out, ok);
+            if (ok) gState[a.output] = rec;
+            gNsPost += nowNs() - ts;
+        } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+        done(L.id, ok, out, true);
+    }
+    if (!o.dry) saveState();
+    if (anyFail) { fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
+    if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+    if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
+    if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
+    return 0;
+}
+#endif
 static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
+#ifdef _WIN32
+    return buildOnWindows(m, want, o);
+#else
     long long tStart = nowNs(); Graph g = plan(m, want); loadState();
     long long tPlan = nowNs() - tStart;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
@@ -749,6 +1125,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
+#endif
 }
 
 static void listTargets(const Graph& g) {

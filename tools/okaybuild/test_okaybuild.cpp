@@ -365,6 +365,46 @@ static void testRegenManifest() {
     check(rc == 0 && ran(o) == 0 && countLines(gRoot / "regen.log") == 3, "depfile input change regenerates without a rebuild", o);
 }
 
+static string capture(const string& cmd, int* rc = nullptr) {
+    string out; char b[4096]; FILE* p = popen(cmd.c_str(), "r"); if (!p) { if (rc) *rc = 127; return "popen failed"; }
+    size_t n; while ((n = fread(b, 1, sizeof b, p)) > 0) out.append(b, n);
+    int st = pclose(p); if (rc) *rc = WEXITSTATUS(st); return out;
+}
+// Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
+// win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testWindowsHost() {
+    printf("test: okay-build compiles as a Windows program and runs under wine\n");
+    fs::path cpp = fs::path(__FILE__).parent_path() / "okay-build.cpp";
+    if (!fs::exists(cpp)) { printf("  skipped (okay-build.cpp not beside the test)\n"); return; }
+    if (system("x86_64-w64-mingw32-g++-win32 -v >/dev/null 2>&1") != 0) { printf("  skipped (no mingw)\n"); return; }
+    fs::path exe = fs::temp_directory_path() / "okay-build-win-host.exe";
+    string compile = "x86_64-w64-mingw32-g++-win32 -std=c++17 -O2 -static-libgcc -static-libstdc++ \"" + cpp.string() + "\" -o \"" + exe.string() + "\" 2>&1";
+    int rc; string o = capture(compile, &rc);
+    check(rc == 0 && fs::exists(exe), "win32 MinGW cross-compile of okay-build", o);
+    if (rc != 0) return;
+    FILE* ff = popen(("file '" + exe.string() + "'").c_str(), "r");
+    char fb[256] = {}; if (ff) { size_t n = fread(fb, 1, sizeof fb - 1, ff); pclose(ff); fb[n] = 0; }
+    check(std::string(fb).find("PE32+") != std::string::npos, "Windows okay-build is PE32+", fb);
+    if (system("command -v wine >/dev/null 2>&1") != 0) { printf("  wine not installed, runtime skipped\n"); return; }
+    fresh("winhost");
+    write("build.okay",
+          "pool link\n  depth = 1\nend\n"
+          "action\n  cmd = echo hi> hello.txt\n  output = hello.txt\nend\n"
+          "action\n  cmd = echo side> side.txt\n  output = side.txt\n  inputs = hello.txt\nend\n");
+    string run = "cd '" + gRoot.string() + "' && WINEDEBUG=-all WINEPREFIX=$HOME/.wine-okay wine '" + exe.string() + "' -j2 2>&1";
+    o = capture(run, &rc);
+    check(rc == 0 && ran(o) == 2, "wine ran both cmd steps", o);
+    check(readFile(gRoot / "hello.txt").find("hi") != string::npos, "cmd.exe wrote hello.txt", readFile(gRoot / "hello.txt") + o);
+    check(readFile(gRoot / "side.txt").find("side") != string::npos, "dependent step ran after its input", readFile(gRoot / "side.txt"));
+    write("build.okay",
+          "action\n  cmd = echo ok> good.txt\n  output = good.txt\nend\n"
+          "action\n  cmd = exit /b 1\n  output = bad.txt\nend\n"
+          "action\n  cmd = echo dep> dep.txt\n  output = dep.txt\n  inputs = bad.txt\nend\n");
+    fs::remove(gRoot / "good.txt");
+    o = capture("cd '" + gRoot.string() + "' && WINEDEBUG=-all WINEPREFIX=$HOME/.wine-okay wine '" + exe.string() + "' -j1 -k 2>&1", &rc);
+    check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
+}
+
 static void testGraphTargets() {
     printf("test: targets and graph listings, including the link pool\n");
     fresh("graph"); basicProject();
@@ -389,6 +429,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testWindowsHost(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

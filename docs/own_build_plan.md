@@ -114,7 +114,18 @@ Byte comparison of every `.o`, the three archives (`libokay_engine.a`, `libokay_
 and `tests/test_math`: 339 files, 339 identical. The okay-build program also printed `15 checks, 0 failures`.
 `libokay_engine.a` is 463,143,278 bytes on both sides. No-op of that tree was not re-timed.
 
-## Windows host design note (2026-11-17, checked, not implemented)
+## Windows host (2026-11-17, implemented, POSIX path unchanged)
+`okay-build.cpp` compiles with `x86_64-w64-mingw32-g++-win32` (`-std=c++17 -O2 -static-libgcc -static-libstdc++`).
+The Windows build does not include `<thread>`, `<mutex>`, `<condition_variable>` or `std::call_once`. Jobs are
+started with CreateProcessW and the one thread waits on their handles with WaitForMultipleObjects (at most 64),
+draining the stdout/stderr pipe every 20 ms so a full pipe cannot stall the child. Raw commands are written to a
+`.cmd` file and run with `cmd.exe /C`, with the manifest `dir` as the process working directory. A tool invocation
+longer than about 7000 characters, or any direct argv longer than 30000 (and never past 32767), is put in a
+response file. File stamps use `GetFileAttributesExW` (100 ns ticks). A leading `/` path is tried as `Z:\...`
+because Wine maps `/` to `Z:`. Under Wine (`WINEPREFIX=$HOME/.wine-okay`) a two-step `echo` graph and `-k` both
+passed. The program was not tried on a real Windows machine.
+
+## Windows host design note (2026-11-17, the plan this was written from)
 The `toolchain mingw` block already names `x86_64-w64-mingw32-gcc-win32`, `g++-win32` and `x86_64-w64-mingw32-ar`,
 object suffix `.o`, executable suffix `.exe`. On this machine that compiler linked a two-file static library and a
 program. `file` reported `PE32+ executable (console) x86-64, for MS Windows`. The program was not run (no Wine).

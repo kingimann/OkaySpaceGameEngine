@@ -30,9 +30,10 @@ void usage(std::ostream& out) {
         << "okay-cc --ir [file]\n"
         << "okay-cc --asm [file]\n"
         << "okay-cc --elf outfile [file]\n"
+        << "okay-cc --obj outfile [file]\n"
         << "  --lex tokens, --pp preprocessor, --ast tree, --check types,\n"
         << "  --ir three-address code, --asm System V x86-64 assembly,\n"
-        << "  --elf a static executable written by this compiler.\n"
+        << "  --elf a static executable, --obj a relocatable object.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
     bool ir = false;
     bool asmm = false;
     bool elf = false;
+    bool obj = false;
     std::string elfOut;
     std::string path;
     std::vector<std::string> includes;
@@ -70,6 +72,13 @@ int main(int argc, char** argv) {
                 return 2;
             }
             elfOut = argv[++i];
+        } else if (a == "--obj") {
+            obj = true;
+            if (i + 1 >= argc) {
+                std::cerr << "--obj needs an output path\n";
+                return 2;
+            }
+            elfOut = argv[++i];
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -90,7 +99,7 @@ int main(int argc, char** argv) {
         }
     }
     int modes = static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) +
-                static_cast<int>(ir) + static_cast<int>(asmm) + static_cast<int>(elf);
+                static_cast<int>(ir) + static_cast<int>(asmm) + static_cast<int>(elf) + static_cast<int>(obj);
     if (modes != 1) {
         usage(std::cerr);
         return 2;
@@ -111,8 +120,9 @@ int main(int argc, char** argv) {
 
     okaycc::Diagnostics diags;
     std::string name = path.empty() ? "<stdin>" : path;
-    if (elf) {
-        std::vector<unsigned char> bin = okaycc::compileToElf(src, diags, name);
+    if (elf || obj) {
+        std::vector<unsigned char> bin = obj ? okaycc::compileToObject(src, diags, name)
+                                             : okaycc::compileToElf(src, diags, name);
         if (diags.ok()) {
             std::ofstream out(elfOut, std::ios::binary);
             if (!out) {

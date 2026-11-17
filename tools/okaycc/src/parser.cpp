@@ -68,6 +68,7 @@ struct Decl {
     std::unique_ptr<Expr> init;
     std::unique_ptr<Stmt> body;
     bool function = false;
+    bool isExtern = false;
     int line = 1;
     int col = 1;
     std::string file;
@@ -468,6 +469,7 @@ private:
     bool isTypeKw(const Token& t) const {
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
             isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
+            isKwTok(t, "extern") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
             isKwTok(t, "typedef"))
             return true;
@@ -824,6 +826,7 @@ private:
     }
 
     void parseExternal(Tu& tu) {
+        bool ext = eatKw("extern");
         bool td = eatKw("typedef");
         auto base = parseBase();
         if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
@@ -842,7 +845,11 @@ private:
         }
         auto keep = [&](Parsed& d, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
             if (td) addTypedef(d.name, std::move(type));
-            else tu.decls.push_back(makeDecl(d, std::move(type), std::move(init)));
+            else {
+                auto decl = makeDecl(d, std::move(type), std::move(init));
+                if (ext && !decl->init) decl->isExtern = true;
+                tu.decls.push_back(std::move(decl));
+            }
         };
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
@@ -2476,6 +2483,14 @@ private:
 
     void addGlobal(Decl& d) {
         if (!d.type) return;
+        if (d.isExtern) {
+            Sym s;
+            s.global = true;
+            s.gname = d.name;
+            describe(s, d.type.get());
+            globals_[d.name] = s;
+            return;
+        }
         inferBound(d);
         Sym s;
         s.global = true;

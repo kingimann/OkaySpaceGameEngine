@@ -19,7 +19,7 @@ enum Reg { Rax = 0, Rcx = 1, Rdx = 2, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7, R8 = 8
 
 const int kArg[] = {Rdi, Rsi, Rdx, Rcx, R8, R9};
 
-enum class FixKind { Rel32, Abs64 };
+enum class FixKind { Rel32, Plt32, Pc32, Abs64 };
 
 struct Fix {
     FixKind kind;
@@ -33,6 +33,20 @@ struct Image {
     std::vector<Fix> fixes;
     bool bad = false;
     std::string why;
+    std::size_t textEnd = 0;
+    std::size_t roStart = 0;
+    std::size_t roEnd = 0;
+    std::size_t dataStart = 0;
+    std::size_t dataEnd = 0;
+    struct Pub {
+        std::string name;
+        std::size_t off = 0;
+        int sec = 1;
+        int size = 0;
+        bool func = false;
+        bool global = true;
+    };
+    std::vector<Pub> pubs;
 };
 
 void u8(Image& im, unsigned v) { im.bytes.push_back(static_cast<unsigned char>(v)); }
@@ -128,9 +142,9 @@ void movzxAl(Image& im) {
     u8(im, modrm(3, Rax, Rax));
 }
 
-void rel32(Image& im, const std::string& target) {
+void rel32(Image& im, const std::string& target, FixKind kind = FixKind::Rel32) {
     Fix f;
-    f.kind = FixKind::Rel32;
+    f.kind = kind;
     f.at = im.bytes.size();
     f.target = target;
     im.fixes.push_back(f);
@@ -139,18 +153,18 @@ void rel32(Image& im, const std::string& target) {
 
 void jmpRel(Image& im, const std::string& target) {
     u8(im, 0xE9);
-    rel32(im, target);
+    rel32(im, target, FixKind::Rel32);
 }
 
 void jneRel(Image& im, const std::string& target) {
     u8(im, 0x0F);
     u8(im, 0x85);
-    rel32(im, target);
+    rel32(im, target, FixKind::Rel32);
 }
 
 void callRel(Image& im, const std::string& target) {
     u8(im, 0xE8);
-    rel32(im, target);
+    rel32(im, target, FixKind::Plt32);
 }
 
 void pushReg(Image& im, int reg) {
@@ -207,21 +221,21 @@ void leaRaxRip(Image& im, const std::string& target) {
     rexW(im, Rax, Rbp);
     u8(im, 0x8D);
     u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
+    rel32(im, target, FixKind::Pc32);
 }
 
 void movRaxRip(Image& im, const std::string& target) {
     rexW(im, Rax, Rbp);
     u8(im, 0x8B);
     u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
+    rel32(im, target, FixKind::Pc32);
 }
 
 void movRipRax(Image& im, const std::string& target) {
     rexW(im, Rax, Rbp);
     u8(im, 0x89);
     u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
+    rel32(im, target, FixKind::Pc32);
 }
 
 void movRaxMemRax(Image& im) {
@@ -265,20 +279,20 @@ void loadRipRax(Image& im, const std::string& target, int width, bool uns) {
     if (uns && width == 4) {
         u8(im, 0x8B);
         u8(im, modrm(0, Rax, Rbp));
-        rel32(im, target);
+        rel32(im, target, FixKind::Pc32);
         return;
     }
     rexW(im, Rax, Rbp);
     if (!uns && width == 4) {
         u8(im, 0x63);
         u8(im, modrm(0, Rax, Rbp));
-        rel32(im, target);
+        rel32(im, target, FixKind::Pc32);
         return;
     }
     u8(im, 0x0F);
     u8(im, uns ? (width == 1 ? 0xB6 : 0xB7) : (width == 1 ? 0xBE : 0xBF));
     u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
+    rel32(im, target, FixKind::Pc32);
 }
 
 void storeMemRcx(Image& im, int width) {
@@ -299,7 +313,7 @@ void storeRipRax(Image& im, const std::string& target, int width) {
     if (width == 2) u8(im, 0x66);
     u8(im, width == 1 ? 0x88 : 0x89);
     u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
+    rel32(im, target, FixKind::Pc32);
 }
 
 std::string blockName(const std::string& func, const std::string& block) { return func + "_" + block; }
@@ -540,7 +554,8 @@ void emitMem(Image& im, const Inst& in, int localOff) {
 }
 
 void emitFunction(Image& im, const Function& f) {
-    im.labels[f.name] = im.bytes.size();
+    std::size_t start = im.bytes.size();
+    im.labels[f.name] = start;
     int slots = slotCount(f);
     int cursor = slots * 8;
     std::vector<int> localOff;
@@ -592,12 +607,30 @@ void emitFunction(Image& im, const Function& f) {
     movReg(im, Rsp, Rbp);
     popReg(im, Rbp);
     u8(im, 0xC3);
+    Image::Pub p;
+    p.name = f.name;
+    p.off = start;
+    p.sec = 1;
+    p.size = static_cast<int>(im.bytes.size() - start);
+    p.func = true;
+    p.global = true;
+    im.pubs.push_back(p);
 }
 
 void emitData(Image& im, const Module& m) {
     for (const Global& g : m.globals) {
-        while (im.bytes.size() % 8) u8(im, 0);
+        bool ro = g.rodata;
+        if (ro) {
+            if (im.roStart == im.roEnd) im.roStart = im.bytes.size();
+            else
+                while (im.bytes.size() % 8) u8(im, 0);
+        } else {
+            if (im.dataStart == im.dataEnd) im.dataStart = im.bytes.size();
+            else
+                while (im.bytes.size() % 8) u8(im, 0);
+        }
         im.labels[g.name] = im.bytes.size();
+        std::size_t item = im.bytes.size();
         if (!g.reloc.empty()) {
             Fix f;
             f.kind = FixKind::Abs64;
@@ -605,19 +638,30 @@ void emitData(Image& im, const Module& m) {
             f.target = g.reloc;
             im.fixes.push_back(f);
             u64(im, 0);
-            continue;
-        }
-        if (!g.bytes.empty()) {
+        } else if (!g.bytes.empty()) {
             bool zero = true;
             for (unsigned char c : g.bytes)
                 if (c) zero = false;
             if (!zero) {
                 for (unsigned char c : g.bytes) u8(im, c);
-                continue;
+            } else {
+                int n = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
+                for (int i = 0; i < n; ++i) u8(im, 0);
             }
+        } else {
+            int n = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
+            for (int i = 0; i < n; ++i) u8(im, 0);
         }
-        int n = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
-        for (int i = 0; i < n; ++i) u8(im, 0);
+        if (ro) im.roEnd = im.bytes.size();
+        else im.dataEnd = im.bytes.size();
+        Image::Pub p;
+        p.name = g.name;
+        p.off = item - (ro ? im.roStart : im.dataStart);
+        p.sec = ro ? 2 : 3;
+        p.size = static_cast<int>(im.bytes.size() - item);
+        p.func = false;
+        p.global = g.name.empty() || g.name[0] != '.';
+        im.pubs.push_back(p);
     }
 }
 
@@ -629,7 +673,7 @@ bool patch(Image& im) {
             im.why = "missing symbol " + f.target;
             return false;
         }
-        if (f.kind == FixKind::Rel32) {
+        if (f.kind == FixKind::Rel32 || f.kind == FixKind::Plt32 || f.kind == FixKind::Pc32) {
             auto rel = static_cast<std::int64_t>(it->second) - static_cast<std::int64_t>(f.at + 4);
             if (rel < -2147483648LL || rel > 2147483647LL) {
                 im.bad = true;
@@ -645,6 +689,200 @@ bool patch(Image& im) {
         }
     }
     return true;
+}
+
+bool patchLocal(Image& im) {
+    for (const Fix& f : im.fixes) {
+        if (f.kind != FixKind::Rel32) continue;
+        auto it = im.labels.find(f.target);
+        if (it == im.labels.end()) {
+            im.bad = true;
+            im.why = "missing label " + f.target;
+            return false;
+        }
+        auto rel = static_cast<std::int64_t>(it->second) - static_cast<std::int64_t>(f.at + 4);
+        auto u = static_cast<std::uint32_t>(static_cast<std::int32_t>(rel));
+        for (int i = 0; i < 4; ++i)
+            im.bytes[f.at + static_cast<std::size_t>(i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
+    }
+    return true;
+}
+
+struct StrTab {
+    std::string bytes = std::string(1, '\0');
+    std::uint32_t add(const std::string& s) {
+        auto at = static_cast<std::uint32_t>(bytes.size());
+        bytes += s;
+        bytes.push_back('\0');
+        return at;
+    }
+};
+
+void au32(std::vector<unsigned char>& o, std::uint32_t v) {
+    for (int i = 0; i < 4; ++i) o.push_back(static_cast<unsigned char>((v >> (8 * i)) & 0xffu));
+}
+void au64(std::vector<unsigned char>& o, std::uint64_t v) {
+    for (int i = 0; i < 8; ++i) o.push_back(static_cast<unsigned char>((v >> (8 * i)) & 0xffu));
+}
+void ai64(std::vector<unsigned char>& o, std::int64_t v) { au64(o, static_cast<std::uint64_t>(v)); }
+
+void shdr(std::vector<unsigned char>& o, std::uint32_t name, std::uint32_t type, std::uint64_t flags,
+          std::uint64_t off, std::uint64_t size, std::uint32_t link, std::uint32_t info, std::uint64_t align,
+          std::uint64_t entsize) {
+    au32(o, name);
+    au32(o, type);
+    au64(o, flags);
+    au64(o, 0);
+    au64(o, off);
+    au64(o, size);
+    au32(o, link);
+    au32(o, info);
+    au64(o, align);
+    au64(o, entsize);
+}
+
+std::vector<unsigned char> writeObject(Image& im) {
+    std::vector<unsigned char> text(im.bytes.begin(), im.bytes.begin() + static_cast<std::ptrdiff_t>(im.textEnd));
+    std::vector<unsigned char> ro;
+    std::vector<unsigned char> data;
+    if (im.roEnd > im.roStart)
+        ro.assign(im.bytes.begin() + static_cast<std::ptrdiff_t>(im.roStart),
+                  im.bytes.begin() + static_cast<std::ptrdiff_t>(im.roEnd));
+    if (im.dataEnd > im.dataStart)
+        data.assign(im.bytes.begin() + static_cast<std::ptrdiff_t>(im.dataStart),
+                    im.bytes.begin() + static_cast<std::ptrdiff_t>(im.dataEnd));
+
+    StrTab strs;
+    std::vector<unsigned char> syms;
+    auto addSym = [&](std::uint32_t name, unsigned bind, unsigned type, std::uint16_t shndx, std::uint64_t value,
+                      std::uint64_t size) {
+        au32(syms, name);
+        syms.push_back(static_cast<unsigned char>((bind << 4) | (type & 0xf)));
+        syms.push_back(0);
+        syms.push_back(static_cast<unsigned char>(shndx & 0xff));
+        syms.push_back(static_cast<unsigned char>((shndx >> 8) & 0xff));
+        au64(syms, value);
+        au64(syms, size);
+    };
+    addSym(0, 0, 0, 0, 0, 0);
+    addSym(0, 0, 3, 1, 0, 0);
+    addSym(0, 0, 3, 2, 0, 0);
+    addSym(0, 0, 3, 3, 0, 0);
+    std::map<std::string, std::uint32_t> idx;
+    for (const Image::Pub& p : im.pubs) {
+        if (p.global) continue;
+        idx[p.name] = static_cast<std::uint32_t>(syms.size() / 24);
+        addSym(strs.add(p.name), 0, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
+    }
+    auto firstGlobal = static_cast<std::uint32_t>(syms.size() / 24);
+    for (const Image::Pub& p : im.pubs) {
+        if (!p.global) continue;
+        idx[p.name] = static_cast<std::uint32_t>(syms.size() / 24);
+        addSym(strs.add(p.name), 1, p.func ? 2 : 1, static_cast<std::uint16_t>(p.sec), p.off, static_cast<std::uint64_t>(p.size));
+    }
+    auto ensure = [&](const std::string& name) {
+        if (idx.count(name)) return idx[name];
+        auto id = static_cast<std::uint32_t>(syms.size() / 24);
+        idx[name] = id;
+        addSym(strs.add(name), 1, 0, 0, 0, 0);
+        return id;
+    };
+    std::vector<unsigned char> relaText, relaRo, relaData;
+    auto addRela = [&](std::vector<unsigned char>& r, std::uint64_t off, std::uint32_t sym, std::uint32_t type,
+                       std::int64_t addend) {
+        au64(r, off);
+        au64(r, (static_cast<std::uint64_t>(sym) << 32) | type);
+        ai64(r, addend);
+    };
+    for (const Fix& f : im.fixes) {
+        if (f.kind == FixKind::Rel32) continue;
+        std::uint32_t sym = ensure(f.target);
+        if (f.kind == FixKind::Abs64) {
+            if (f.at >= im.dataStart && f.at < im.dataEnd)
+                addRela(relaData, f.at - im.dataStart, sym, 1, 0);
+            else if (f.at >= im.roStart && f.at < im.roEnd)
+                addRela(relaRo, f.at - im.roStart, sym, 1, 0);
+        } else if (f.at < im.textEnd) {
+            std::uint32_t type = f.kind == FixKind::Plt32 ? 4u : 2u;
+            addRela(relaText, f.at, sym, type, -4);
+        }
+    }
+    StrTab sh;
+    auto nText = sh.add(".text");
+    auto nRo = sh.add(".rodata");
+    auto nData = sh.add(".data");
+    auto nRelaT = sh.add(".rela.text");
+    auto nRelaR = sh.add(".rela.rodata");
+    auto nRelaD = sh.add(".rela.data");
+    auto nSym = sh.add(".symtab");
+    auto nStr = sh.add(".strtab");
+    auto nSh = sh.add(".shstrtab");
+    auto align8 = [](std::size_t n) { return (n + 7) & ~std::size_t{7}; };
+    std::size_t off = 64;
+    auto place = [&](std::size_t n) {
+        off = align8(off);
+        std::size_t at = off;
+        off += n;
+        return at;
+    };
+    std::size_t oText = place(text.size());
+    std::size_t oRo = place(ro.size());
+    std::size_t oData = place(data.size());
+    std::size_t oRelaT = place(relaText.size());
+    std::size_t oRelaR = place(relaRo.size());
+    std::size_t oRelaD = place(relaData.size());
+    std::size_t oSym = place(syms.size());
+    std::size_t oStr = place(strs.bytes.size());
+    std::size_t oSh = place(sh.bytes.size());
+    off = align8(off);
+    std::size_t oShdr = off;
+    std::vector<unsigned char> out(oShdr + 10 * 64, 0);
+    out[0] = 0x7f;
+    out[1] = 'E';
+    out[2] = 'L';
+    out[3] = 'F';
+    out[4] = 2;
+    out[5] = 1;
+    out[6] = 1;
+    auto poke = [&](std::size_t at, std::uint64_t v, int n) {
+        for (int i = 0; i < n; ++i) out[at + static_cast<std::size_t>(i)] = static_cast<unsigned char>((v >> (8 * i)) & 0xffu);
+    };
+    poke(16, 1, 2);
+    poke(18, 62, 2);
+    poke(20, 1, 4);
+    poke(40, oShdr, 8);
+    poke(52, 64, 2);
+    poke(58, 64, 2);
+    poke(60, 10, 2);
+    poke(62, 9, 2);
+    auto copyAt = [&](std::size_t at, const std::vector<unsigned char>& b) {
+        for (std::size_t i = 0; i < b.size(); ++i) out[at + i] = b[i];
+    };
+    auto copyStr = [&](std::size_t at, const std::string& s) {
+        for (std::size_t i = 0; i < s.size(); ++i) out[at + i] = static_cast<unsigned char>(s[i]);
+    };
+    copyAt(oText, text);
+    copyAt(oRo, ro);
+    copyAt(oData, data);
+    copyAt(oRelaT, relaText);
+    copyAt(oRelaR, relaRo);
+    copyAt(oRelaD, relaData);
+    copyAt(oSym, syms);
+    copyStr(oStr, strs.bytes);
+    copyStr(oSh, sh.bytes);
+    std::vector<unsigned char> headers;
+    shdr(headers, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    shdr(headers, nText, 1, 6, oText, text.size(), 0, 0, 16, 0);
+    shdr(headers, nRo, 1, 2, oRo, ro.size(), 0, 0, 8, 0);
+    shdr(headers, nData, 1, 3, oData, data.size(), 0, 0, 8, 0);
+    shdr(headers, nRelaT, 4, 0, oRelaT, relaText.size(), 7, 1, 8, 24);
+    shdr(headers, nRelaR, 4, 0, oRelaR, relaRo.size(), 7, 2, 8, 24);
+    shdr(headers, nRelaD, 4, 0, oRelaD, relaData.size(), 7, 3, 8, 24);
+    shdr(headers, nSym, 2, 0, oSym, syms.size(), 8, firstGlobal, 8, 24);
+    shdr(headers, nStr, 3, 0, oStr, strs.bytes.size(), 0, 0, 1, 0);
+    shdr(headers, nSh, 3, 0, oSh, sh.bytes.size(), 0, 0, 1, 0);
+    for (std::size_t i = 0; i < headers.size(); ++i) out[oShdr + i] = headers[i];
+    return out;
 }
 
 void put(std::vector<unsigned char>& o, std::size_t at, std::uint64_t v, int n) {
@@ -683,6 +921,20 @@ std::vector<unsigned char> wrapElf(const std::vector<unsigned char>& payload, st
 }
 
 }  // namespace
+
+std::vector<unsigned char> compileToObject(const std::string& source, Diagnostics& diags, const std::string& file) {
+    Module m = lowerSource(source, diags, file);
+    if (!diags.ok()) return {};
+    Image im;
+    for (const Function& f : m.funcs) emitFunction(im, f);
+    im.textEnd = im.bytes.size();
+    emitData(im, m);
+    if (!patchLocal(im)) {
+        diags.error(file, 1, 1, im.why);
+        return {};
+    }
+    return writeObject(im);
+}
 
 std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags, const std::string& file) {
     Module m = lowerSource(source, diags, file);

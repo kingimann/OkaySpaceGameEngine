@@ -13,4 +13,8 @@ namespace okaycc {
 std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags,
                                         const std::string& file = "t.c");
 
+// A relocatable ELF64 object. Undefined names stay unresolved.
+std::vector<unsigned char> compileToObject(const std::string& source, Diagnostics& diags,
+                                           const std::string& file = "t.c");
+
 }  // namespace okaycc

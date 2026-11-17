@@ -2109,3 +2109,150 @@ Windows; other UI scales and the Compact density; an object dragged from the Hie
 with curves (Dear ImGui's body is drawn then, not checked in the real editor); the Character Controller 2D, the Polygon and Capsule
 Collider 2D and the Sprite Animator's frame and clip lists in the real editor (headless and in the comparison only, or not at all for the
 Character Controller 2D's platformer rows); Browse... file dialogs.
+
+## 17. The Inspector, stage 4: Text and the UI components, Nav Mesh Agent, Terrain, Visual Script, the Particle System's gradient and curves
+
+More component bodies as field rows, behind the same developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`); Dear ImGui stays the
+default and the fallback. Written from the editor's own Dear ImGui bodies and helpers (`editor/main.cpp` DrawInspector, UIStyleBar,
+AnchorCombo, AssetSlot, ShapeCombo, UIRectFields, CornerMaskEditor, ParticleGradientEditor, ParticleCurveEditor; `editor/NavigationWindow.cpp`
+AreaMaskCombo; `editor/LevelTools.cpp` DrawTerrainLayersUI and DrawTerrainScatterUI; `editor/LocalizationWindow.cpp` LocalizedTextField;
+`editor/UIInspectorLayout.cpp` DrawLayoutGroupFlexFields), Dear ImGui's documented widget behaviour and measurements of both pictures; no
+code from any other project.
+
+### 17.1 New row kinds (`shared/InspectorFieldsModel.hpp`)
+
+| Kind | What it is | Drawn by both versions |
+|---|---|---|
+| `InspRowGradient` | a colour gradient: the check under the bar, 32 strips, a marker per stop (the selected one in the accent); a click on the bar adds a stop with the colour showing there, a drag moves it, a right-click deletes one | `InspGradientAt` (the engine's `ParticleGradient::Evaluate` rule, written again on plain floats), `InspNearestStop`, `InspAddStop`, `InspRemoveAt` |
+| `InspRowCurve` | a curve of multipliers: the 64-pixel plot, the x1 line, quarter lines, the curve, a dot per key; the top frozen while a key is dragged | `InspCurveAt`, `InspCurveTop`, `InspNearestKey`, `InspAddKey` |
+| `InspRowAnchor` | AnchorCombo: the anchor's name on a button with its little picture, the 3 x 3 grid and the stretch cells in a popup; Shift is reported (`axes`) so the host can move the widget onto the anchor | `InspAnchorFill`, `kInspAnchorNames` |
+| `InspRowSlot` | AssetSlot: "None (Font)" or the file name on a button 28 short of the region, a small "x"; set only by a drop from the Project panel | |
+| `InspRowRadio` | Dear ImGui's RadioButton (the terrain's paint layer) | |
+| `InspRowRange` | DragFloatRange2 (two cells kept on their side of each other, two formats) | |
+| mask presets | `InspRowMask` with `presetNames` / `presetBits`: small buttons on one line at the top of the open list instead of Everything and Nothing, `count` bits named by `items`, the closed text from `preview` (the Nav Mesh Agent's Area Mask) | |
+| list headings | `InspRowCombo::heads`: the editor's section heading before an item inside the open list (the UI Button's Function: "Native (gameplay)", "Script") | |
+| swatch-only colour | `InspRow::noInputs`: ColorEdit3 with NoInputs (the terrain's layer colours) | |
+
+Also: a note can sit on a frame-tall line (`alignFrame`, the style bar's "Look"); a multi-line text takes its height in lines (`texH`); a
+negative width is now the room left from where the row starts (after SameLine and indents), as Dear ImGui's SetNextItemWidth(-n) is; a group
+title (SeparatorText) takes its padding and rule thickness from the host's style (`EditorMetrics::sepTextPadding`, `sepTextBorder`: the
+editor's 22 / 8 / 1; it was drawn with Dear ImGui's defaults, 11 pixels shorter than the editor's).
+
+### 17.2 What is ported
+
+| Component | Builder | Notes |
+|---|---|---|
+| Text | `DrawTextWithOkayUI` | the style bar (screen text), Localized (while off), the three-line text box, the six colour swatches, every row; the Anchor grid keeps the text where it is on screen (ReanchorKeepRect), Fit to Text |
+| Canvas | `DrawCanvasWithOkayUI` | every row, the resolution presets, Add Safe Area |
+| UI Button | `DrawUIButtonWithOkayUI` | the style bar, Label or "Text is the child object", Target Object (an object dragged from the Hierarchy gives its name), the Function list with its headings, Amount, Anchor, Shape, the font slot, every style and behaviour row |
+| UI Image | `DrawUIImageWithOkayUI` | Anchor, Pos / Size or the four margins of a stretched widget, the image slot and thumbnail, Set Native Size, Shape and the rounded-corner boxes |
+| UI Slider, UI Toggle, UI Input Field | `DrawUISliderWithOkayUI`, `DrawUIToggleWithOkayUI`, `DrawUIInputFieldWithOkayUI` | every row, the style bar, Localized |
+| UI Layout Group | `DrawUILayoutGroupWithOkayUI` | Direction, the flex rows, Columns, Origin, the gaps, Anchor, Arrange Now |
+| Nav Mesh Agent | `NavigationWindow.cpp` DrawNavAgentRows (drawn through main.cpp's `DrawRowsOkayUI`, registered with `SetNavRowsDrawer`) | every row; Area Mask with its two presets inside the list; the Play-mode state lines and Stop / Resume |
+| Terrain | `DrawTerrainWithOkayUI` and `LevelTools.cpp` AddTerrainToolRows | the terrain's rows, the sculpt brush, Generate, erosion, Normalize / Invert, heightmaps, the auto-colour layers, the texture layers (paint layer radio, name, tint, tiling, Remove, texture) and Scatter |
+| Visual Script | `DrawVisualScriptWithOkayUI` | the graph's name, error or node count, Open in node editor, Reload, each declared number, bool, vector, colour, text or object variable; edits go through `ApplyVsVarEdit` (shared with Dear ImGui's body) |
+| Particle System | `DrawParticleSystemWithOkayUI` | now also with a gradient and curves on: `AddGradientRows` / `AddCurveRows` (the bar or plot, Stop Color and Stop Time, Key (time, x), Smooth, the counts); the selected stop or key is kept per object and editor id, so an undo keeps it |
+
+Still Dear ImGui by choice: a Text, UI Button, Toggle or Input Field whose Localized box is ticked (the string-table key picker is not a
+row), and a Visual Script with a list, map or struct variable.
+
+**Counts.** About 223 hand-written bodies (section 16.1). **Ported to field rows: 33** (stages 1 to 3: 22; stage 4: Text, Canvas, UI
+Button, UI Image, UI Slider, UI Toggle, UI Input Field, UI Layout Group, Nav Mesh Agent, Terrain, Visual Script; the Particle System is now
+whole). **Generic card: 8** (unchanged). **Still Dear ImGui: about 190.**
+
+**What the example scenes use** (`examples/**/*.okayscene`, 70 scenes; scenes / objects): Text 31 / 57 and Visual Script 25 / 29 (both
+ported now), Camera 47 / 48 and Light 19 / 19 (stage 2), then Player Controller 6 / 6, Character 6 / 6, the animation state machine 6 / 12,
+Holdable Object 5 / 9, Object Holding 5 / 5, Water, Voxel Terrain, Voxel Digger, UV animation, Reflection probe, Pause Menu, Ground Shadow,
+FP Hand and Flashlight 4 each: these are the next to port (the Player Controller and the Character have sub-parts with their own headers).
+
+### 17.3 Bug fixed: Ctrl+A just before digits dropped the first digit
+
+The host (`shared/OkayUIHost.hpp`) gathers one frame's key presses without their order. OkayUI's text field applied the typed text first and
+select-all after it, so Ctrl+A and "2" arriving in one frame (xdotool, a fast typist) selected the "2" just typed, and the ".5" of the next
+frame replaced it: 0.5 instead of 2.5. Select-all now comes before the text, in `InputText` and in `CodeEdit` (multi-line fields).
+`okayui_behaviour` has a check that fails without the fix (two failures) and passes with it. In the real editor: double-click Box Size,
+Ctrl+A, "300", Enter gives 300 in both toolkits (`<scratchpad>/shots/oi4/steps-text-edit.png`).
+
+### 17.4 Found and fixed in the pictures
+
+- **Both versions:** a cut "T" right of the Text component's text box (Dear ImGui drew the "Text" label past the region-wide box; it has no
+  label now); cut notes in the UI Button ("…greyed out", "…component to call.") and the Terrain layers ("One ground texture today…", "The
+  layers replace…"), now wrapped; the Terrain's Invert button ran out of the Inspector (Terrace, Normalize and Invert now wrap to the next
+  line when they do not fit); the Terrain's "Heightmap (World Machine / Gaea / Photoshop)" heading was cut, now "Heightmap (PNG import /
+  export)".
+- **OkayUI:** a swatch-only colour's label was a text-line item, so a row of them drifted down; a Range row's label made the Normalize button
+  sit lower; the Area Mask's "Everything" ran out of its list (the list now fits its presets); the gradient bar and curve plots were 6 pixels
+  wider than the region (the right-most marker was cut); the gradient's selected stop went back to the first after an undo; the anchor grid's
+  rows were closer together than Dear ImGui's.
+
+### 17.5 Tests
+
+- `okayui_behaviour`: the Ctrl+A check (17.3).
+- `okayui_inspector` (261 checks; 5 new golden images: `inspector_text`, `_uibutton`, `_navagent`, `_curves`, `_terrain`): the style bar wraps
+  inside the region with the first preset on the "Look" line; the text box is the region wide; the anchor grid opens and a pick sets the
+  anchor and closes it; the Function list has 5 rows with a heading gap and a pick sets the function; the font slot leaves room for its
+  "x", which clears it; the Area Mask's presets and a tick; a click on the gradient bar adds a stop with the colour showing there, a drag moves
+  it, a right-click deletes it; a click on the curve plot adds a key under the pointer, a right-click deletes it; a terrain radio picks the
+  layer; a range's low cell stays under the high one; the swatch-only colours share a line.
+- `okayui_inspector_imgui` (50 checks): 11 more bodies in both toolkits; a gradient click and a curve click give the same stop and key in both;
+  Generate is the same click in both.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector|prefab"`: 47 of 47 pass (one editor tree, Release with `-O1 -g0`).
+
+### 17.6 Speed and pixels
+
+Instructions (callgrind, 200 frames, per frame): Text 434,413 against 330,083 (24% fewer), Terrain 450,538 against 422,670 (6% fewer),
+Particle System gradient and curves 311,440 against 272,948 (12% fewer), Nav Mesh Agent 166,810 against 115,337 (31% fewer). Wall time
+(median of 150 frames) and pixels:
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Text | 147.8 us | 92.2 us | 58.2 ms | 16.6 ms | 2.56% |
+| Canvas | 101.3 us | 39.3 us | 48.7 ms | 7.3 ms | 1.53% |
+| UI Button | 148.6 us | 97.2 us | 61.1 ms | 19.3 ms | 4.54% |
+| UI Image | 113.8 us | 51.1 us | 51.1 ms | 10.1 ms | 1.25% |
+| UI Slider | 129.4 us | 66.2 us | 55.6 ms | 13.6 ms | 1.86% |
+| UI Toggle | 118.6 us | 54.2 us | 51.5 ms | 10.0 ms | 1.28% |
+| UI Input Field | 116.7 us | 51.8 us | 52.0 ms | 10.4 ms | 1.32% |
+| UI Layout Group | 88.9 us | 32.4 us | 48.5 ms | 6.9 ms | 0.81% |
+| Nav Mesh Agent | 90.9 us | 33.2 us | 50.4 ms | 8.4 ms | 1.15% |
+| Terrain | 145.5 us | 106.6 us | 58.7 ms | 16.5 ms | 3.90% |
+| Particle System (gradient, curves) | 120.3 us | 56.2 us | 54.1 ms | 10.4 ms | 1.18% |
+
+The gate is 12%; every picture is under it. Two are over the 4% aim's neighbourhood: the UI Button (4.54%) and the Terrain (3.90%) are
+taller than the comparison canvas, so Dear ImGui adds a scroll bar there and its value column is narrower (seen side by side in
+`<scratchpad>/shots/oi4/compare/`); in the real editor, where both have the scroll bar, the rows line up (17.7). The stage 1 to 3
+pictures are unchanged.
+
+### 17.7 In the real editor
+
+Built (Linux, the editor tree) and run under Xvfb at 1920 x 1200, both toolkits side by side, on the physics playground with the stage 3
+objects and twelve more (made by `<scratchpad>/oi4-logs/gen/gen_scene.cpp` with the engine's own serializer: a screen Text, a Canvas with a
+Button, Image, Slider, Toggle, Input Field and Layout Group, a Nav Mesh Agent, a Terrain, a Particle System with a gradient and two curves;
+and the Counter object of `examples/node_playground/variables.okayscene` for a Visual Script). Pictures in `<scratchpad>/shots/oi4/`
+(`side-*`: the two Inspectors next to each other, `steps-*`: before and after). Done and looked at:
+
+- **Text** (`side-01-text.png`, `side-02-text-down.png`): row for row the same. A 40-pixel drag on Font Size (0.1 to 4.1), double-click
+  Box Size, Ctrl+A, "300", Enter, Ctrl+Z twice: the same in both (`steps-text-edit.png`). The Title preset (`side-48-title.png`: Font
+  Size 5, Bold, the colour) and Ctrl+Z (`side-49-title-undo.png`). The Anchor grid (`side-05-anchor-open.png`), the middle cell: Center and
+  the same new Offset in both (`side-06-anchor-center.png`), Ctrl+Z (`side-07-anchor-undo.png`).
+- **UI Button, Canvas, UI Image, Slider, Toggle, Input Field, Layout Group** (`side-08`, `side-20` to `side-31`): the same rows; the
+  Function list opens (only "(none)": the button's object has no script, so the headings were seen headless only).
+- **Nav Mesh Agent** (`side-10-agent.png`, `side-52-mask-open.png`): the Area Mask list with its two presets; Everything, the same closed
+  text in both (`side-53-everything.png`).
+- **Terrain** (`side-12` to `side-14`, `side-55`, `side-56`): the wrapped buttons and notes; Add Layers (two layers), the first layer's
+  round button, Ctrl+Z (`steps-terrain-layers.png`).
+- **Particle System** (`side-32-fire.png`, `side-33-fire-grad.png`): a drag on the middle gradient marker and Ctrl+Z (`steps-gradient.png`);
+  a click on the speed curve adds the same key in both, 0.714 x 0.629 (`side-60-curve-add.png`).
+- **Visual Script** (`side-41-vscript-body.png`): a drag on the Number variable (0 to 2), Ctrl+Z (`steps-vscript.png`,
+  `side-44-vs-undo-down.png`).
+
+Seen and not changed: the OkayUI multi-line text box shows its text a few pixels higher than Dear ImGui's; OkayUI's selected radio button
+is a ring with a small dot where Dear ImGui's is a filled disc; Dear ImGui's popups open left of the Inspector under Xvfb; the UI frame card
+above the Transform (Dear ImGui in both) shows its selected anchor dot only in the Dear ImGui build (not looked into).
+
+### 17.8 Not verified
+
+Windows; other UI scales and the Compact density; the Function list's headings, the Target Object drop from the Hierarchy and the font
+slot drop in the real editor; localized texts (Dear ImGui's body by design); a Visual Script in Play mode (its live variables tree) and its
+vector, colour and text variables in the real editor; the Terrain's Scatter, erosion, heightmap import and export in the real editor;
+Shift+click on the anchor grid.

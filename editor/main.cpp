@@ -763,6 +763,7 @@ struct SDL_Texture;
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
 #include "CodeEditorChoice.hpp"   // OKAY_CODE_EDITOR=own|imgui: which code widget the script editor uses
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
+#include "ScriptAutoPair.hpp"     // bracket / quote pairing, decided from the characters the code editor types this frame
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -16660,7 +16661,9 @@ void DrawScriptEditor(EditorState& ed) {
         bool acKeyUp    = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
         bool acKeyDown  = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
         bool acKeyEsc   = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
-        if (acKeyTab || acKeyEnter || acKeyUp || acKeyDown || acKeyEsc)
+        // (Escape alone leaves our own editor its keys: it only drops a selection on Escape, and turning its keys off would also
+        // drop a character typed in the same frame, which Dear ImGui's queue would have kept for the next frame.)
+        if (acKeyTab || acKeyEnter || acKeyUp || acKeyDown || (acKeyEsc && !te.UsingOkayUI()))
             te.SetHandleKeyboardInputs(false);
         // Tab with no suggestion and no selection indents with spaces (the file's
         // style, shown as "Spaces" in the status bar), as one undo step.
@@ -16683,23 +16686,32 @@ void DrawScriptEditor(EditorState& ed) {
         static bool s_codeFocus = false;
         const bool s_autoPair = g_scriptAutoPair;
         char pairOpen = 0; bool stepOver = false, braceEnter = false;
-        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
+        // Escape alone (closing the autocomplete list) does not stop pairing: the list is going away, and a `)` typed in the same
+        // frame must still step over the auto-inserted one, as it does on the ImGui editor (whose queue gets it a frame later).
+        const bool acBlocksPairing = acWasOpen && !(acKeyEsc && !acKeyTab && !acKeyEnter && !acKeyUp && !acKeyDown);
+        if (s_autoPair && s_codeFocus && !acBlocksPairing && !te.HasSelection()) {
             ImGuiIO& kio = ImGui::GetIO();
             const std::string line = te.GetCurrentLineText();
             const int col = te.GetCursorPosition().mColumn;
             const char next = col < (int)line.size() ? line[col] : 0;
             const char prev = col > 0 && col - 1 < (int)line.size() ? line[col - 1] : 0;
-            if (kio.InputQueueCharacters.Size == 1 && !kio.KeyCtrl) {
-                const ImWchar ch = kio.InputQueueCharacters[0];
-                if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
+            // The characters the code editor types this frame, from the queue it reads (editor/ScriptAutoPair.hpp: OkayUI's and
+            // ImGui's can differ for a frame, and deciding from the wrong one doubled the `)`).
+#ifdef OKAY_HAVE_OKAYUI
+            const char* okText = te.UsingOkayUI() ? OkayUI::GetFrameInput().text : nullptr;
+#else
+            const char* okText = nullptr;
+#endif
+            const std::string typed = scriptpair::TypedForPairing(te.UsingOkayUI(), okText, kio.InputQueueCharacters.Data,
+                                                                  kio.InputQueueCharacters.Size);
+            if (!kio.KeyCtrl) {
+                const scriptpair::Decision pd = scriptpair::Decide(line, col, typed);
+                if (pd.stepOver) {
                     kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
-                    te.DropTypedText();                   // (our own editor reads the character from SDL, not from ImGui's queue)
+                    te.DropTypedText();                   // (our own editor reads the character from OkayUI's input, not ImGui's queue)
                     stepOver = true;
-                } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
-                    bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
-                    if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's / x"
-                    if (ok) pairOpen = (char)ch;
                 }
+                pairOpen = pd.open;                       // the closer to insert after the opener
             }
             if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) &&
                 prev == '{' && next == '}')
@@ -16926,7 +16938,7 @@ void DrawScriptEditor(EditorState& ed) {
             te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
         }
         if (pairOpen) {
-            const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
+            const char close = pairOpen;
             ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.InsertTextUndoable(std::string(1, close));
             te.SetCursorPosition(c);

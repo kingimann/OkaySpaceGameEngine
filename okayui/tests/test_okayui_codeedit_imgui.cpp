@@ -14,6 +14,7 @@
 #include "OkayUITestKit.hpp"
 #include "OkayUIInImGui.hpp"
 #include "ScriptEditorCodeEdit.hpp"
+#include "ScriptAutoPair.hpp"
 #include "imgui.h"
 #include "imgui_impl_sdlrenderer2.h"
 
@@ -334,6 +335,87 @@ void KeyboardClaimTests() {
     CHECK(otherPressed == 1);
     CHECK(!wantText);
 }
+
+// Bracket pairing as editor/main.cpp runs it around our editor (editor/ScriptAutoPair.hpp). Typing `)` right before the `)`
+// that `(` inserted steps over it, also in the frame where Escape closes the autocomplete list. Dear ImGui keeps a character
+// for the next frame when the mouse moved or a key changed before it in the same frame ("trickling"), while OkayUI's frame
+// input has it at once and our editor types it at once. Deciding from ImGui's queue then missed the step-over and our editor
+// typed a second `)`: "zz(1))" (seen in the editor with OKAY_CODE_EDITOR=own). The decision now reads the queue the editor
+// types from.
+void PairingTests() {
+    Rig r;
+    r.popup = false;
+    ImGuiIO& io = ImGui::GetIO();
+    r.se.SetText("");
+    bool fromImGuiQueue = false;     // the old decision source, for the contrast case
+    std::string imguiSaw, okaySaw;   // what each queue held in the last frame
+    auto frame = [&] {
+        ImGui_ImplSDLRenderer2_NewFrame();
+        r.sim.Frame([&] {
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(10, 10));
+            ImGui::SetNextWindowSize(ImVec2(460, 300));
+            ImGui::Begin("Script", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+            const ImVec2 a = ImGui::GetContentRegionAvail(), p = ImGui::GetCursorScreenPos();
+            r.codeMin = p; r.codeMax = ImVec2(p.x + a.x, p.y + a.y);
+            // the script editor's pairing step, before the code editor takes the frame's typing
+            const std::string line = r.se.GetCurrentLineText();
+            const int col = r.se.GetCursorPosition().mColumn;
+            imguiSaw = scriptpair::TypedForPairing(false, nullptr, io.InputQueueCharacters.Data, io.InputQueueCharacters.Size);
+            okaySaw = scriptpair::TypedForPairing(true, OkayUI::GetFrameInput().text, io.InputQueueCharacters.Data, 0);
+            const scriptpair::Decision d = scriptpair::Decide(line, col, fromImGuiQueue ? imguiSaw : okaySaw);
+            if (d.stepOver) r.se.Edit().DropTypedText();
+            ImGui::InvisibleButton("##code", a);
+            okayimgui::StyleLikeImGuiChild(r.se.Edit(), ImGui::GetStyle());
+            okayimgui::DrawOkayUIHere("##code", p, a, [&] { r.se.Edit().Draw("##codeedit", a.x, a.y); },
+                                      okayimgui::SdlRendererTextures(r.ren), r.geo);
+            const scripteditor::Coord c = r.se.GetCursorPosition();
+            if (d.stepOver) r.se.SetCursorPosition(scripteditor::Coord(c.mLine, c.mColumn + 1));
+            if (d.open) { r.se.InsertTextUndoable(std::string(1, d.open)); r.se.SetCursorPosition(c); }
+            ImGui::End();
+            ImGui::Render();
+        });
+    };
+    auto type = [&](const char* t) { for (const char* q = t; *q; ++q) { io.AddInputCharacter((unsigned)*q); r.sim.Type(std::string(1, *q)); frame(); } };
+    // focus the code (a click), then type zz(1
+    frame();                                                     // lays the editor out (codeMin)
+    r.sim.Move(r.codeMin.x + 60, r.codeMin.y + 20); frame(); r.sim.Down(); frame(); r.sim.Up(); frame();
+    CHECK(r.se.Edit().Focused());
+    type("zz(");
+    CHECK(r.se.GetText() == "zz()\n");                        // ( got its closer
+    type("1");
+    CHECK(r.se.GetText() == "zz(1)\n");
+    CHECK(r.se.GetCursorPosition().mColumn == 4);
+    // Escape (closing the autocomplete list) and a mouse move, then `)` in the same frame: ImGui holds the `)` back a frame.
+    io.AddMousePosEvent(r.codeMin.x + 61, r.codeMin.y + 21);
+    io.AddKeyEvent(ImGuiKey_Escape, true); io.AddKeyEvent(ImGuiKey_Escape, false);
+    io.AddInputCharacter(')'); r.sim.Type(")");
+    frame();
+    CHECK(imguiSaw.empty());                                     // ImGui's queue: nothing yet (trickled)
+    CHECK(okaySaw == ")");                                       // what our editor types this frame
+    CHECK(r.se.GetText() == "zz(1)\n");                         // stepped over: no second `)`
+    CHECK(r.se.GetCursorPosition().mColumn == 5);
+    frame();                                                     // ImGui's queue gets the `)` now; our editor typed nothing
+    CHECK(imguiSaw == ")" && okaySaw.empty());
+    CHECK(r.se.GetText() == "zz(1)\n");
+    // Contrast: deciding from ImGui's queue (the bug) types the second `)`.
+    fromImGuiQueue = true;
+    r.se.SetText("zz()");
+    r.se.SetCursorPosition(scripteditor::Coord(0, 3));
+    type("1");
+    io.AddMousePosEvent(r.codeMin.x + 62, r.codeMin.y + 22);
+    io.AddKeyEvent(ImGuiKey_Escape, true); io.AddKeyEvent(ImGuiKey_Escape, false);
+    io.AddInputCharacter(')'); r.sim.Type(")");
+    frame(); frame();
+    CHECK(r.se.GetText() == "zz(1))\n");
+    // The decision itself
+    CHECK(scriptpair::Decide("f()", 2, ")").stepOver);
+    CHECK(!scriptpair::Decide("f()", 3, ")").stepOver);
+    CHECK(scriptpair::Decide("f", 1, "(").open == ')');
+    CHECK(scriptpair::Decide("x", 1, "\"").open == 0);         // x" : no pair after a letter
+    CHECK(scriptpair::Decide("a[]", 2, "]").stepOver);
+    CHECK(!scriptpair::Decide("f()", 2, "))").stepOver);         // two characters in one frame: no pairing
+}
 } // namespace
 
 int main() {
@@ -344,6 +426,7 @@ int main() {
     TooltipLayerTests();
     CursorTests();
     KeyboardClaimTests();
+    PairingTests();
     std::cout << okaytest::g_checks << " checks, " << okaytest::g_failures << " failures\n";
     SDL_Quit();
     return okaytest::g_failures == 0 ? 0 : 1;

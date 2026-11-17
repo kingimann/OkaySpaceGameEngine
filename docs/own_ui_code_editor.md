@@ -404,6 +404,7 @@ build was not run. Not covered: the single `.exe` files the release uploads for 
 | Enter after `{` with the cursor before `}` (auto-pair on) | the widget copies the indent, then the script editor adds a level and pushes `}` down | **the block was opened twice** (ours did both, then the script editor did it again) | the script editor's way: the widget copies the indent only (`SetBracketIndent(false)`) |
 | Enter after `{` otherwise | copies the indent | copied the indent plus one level | copies the indent |
 | Typing `)` before a `)` (auto-pair on) | steps over it | **doubled it** (ours reads typed text from SDL, not from ImGui's queue the script editor empties) | steps over it (`DropTypedText`) |
+| `)` before an auto-inserted `)` in the frame Escape closed the suggestion list (or the mouse moved) | steps over it (ImGui holds the character back a frame, then the list is closed) | **doubled it: `zz(1))`** (the pairing step read ImGui's queue, which was empty that frame, while ours typed the `)` at once; and Escape with the list open turned our keys off) | steps over it: the pairing step reads the characters the code editor really types this frame (`editor/ScriptAutoPair.hpp`, OkayUI's frame text for ours), Escape alone no longer turns our keys off (2026-11-17) |
 | Alt+1 (show / hide the scripts list) | does not type the 1 | typed it where SDL sends it | does not (`DropTypedText`) |
 | Drag after a double click / triple click | extends by words / lines | extended by characters | by words / lines |
 | The pointer over the code | the I-beam | the arrow (the editor never read OkayUI's cursor) | the I-beam (`okayimgui::CursorOf`, `SetImGuiCursor`) |
@@ -416,7 +417,8 @@ build was not run. Not covered: the single `.exe` files the release uploads for 
 | Caret | blinks after 400 ms | shown at once | unchanged (step 29) |
 
 Tested in `test_okayui_codeedit` (`ParityTests`), `test_okayui_script_adapter` (user types) and `test_okayui_codeedit_imgui`
-(`CursorTests`). The fuzz test found one bug in the new drag code (an edit between the click and the drag left the clicked word past the
+(`CursorTests`; `PairingTests`: `zz(1`, then Escape, a mouse move and `)` in one frame gives `zz(1)` with the caret after it, and
+deciding from ImGui's queue gives the old `zz(1))`). The fuzz test found one bug in the new drag code (an edit between the click and the drag left the clicked word past the
 end of the text); fixed and run with 12 seeds.
 
 ### Speed after (`codeedit_bench bench 1000 10000 100000`, Release, this machine with a load of about 6)

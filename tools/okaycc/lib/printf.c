@@ -115,19 +115,119 @@ int printf(char *fmt, ...) {
             i = i + 1;
         } else {
             i = i + 1;
-            if (fmt[i] == 'd') {
-                n = n + p_dec(va_arg(ap, int));
-                i = i + 1;
-            } else if (fmt[i] == 's') {
-                n = n + p_str(va_arg(ap, char *));
-                i = i + 1;
-            } else if (fmt[i] == 'x') {
-                n = n + p_hex(va_arg(ap, unsigned));
-                i = i + 1;
-            } else if (fmt[i] == 'f') {
-                n = n + p_fixed(va_arg(ap, double));
-                i = i + 1;
-            } else if (fmt[i] == 'c') {
+            {
+                int left;
+                int zero;
+                int width;
+                int islong;
+                left = 0;
+                zero = 0;
+                width = 0;
+                islong = 0;
+                if (fmt[i] == '-') {
+                    left = 1;
+                    i = i + 1;
+                }
+                if (fmt[i] == '0') {
+                    zero = 1;
+                    i = i + 1;
+                }
+                while (fmt[i] >= '0' && fmt[i] <= '9') {
+                    width = width * 10 + (fmt[i] - '0');
+                    i = i + 1;
+                }
+                if (fmt[i] == 'l') {
+                    islong = 1;
+                    i = i + 1;
+                }
+                if (fmt[i] == 'd' || fmt[i] == 'u' || fmt[i] == 'x') {
+                    char buf[32];
+                    int len;
+                    int k;
+                    unsigned u;
+                    int neg;
+                    int base;
+                    char *digits;
+                    neg = 0;
+                    base = 10;
+                    digits = "0123456789abcdef";
+                    if (fmt[i] == 'x') base = 16;
+                    if (fmt[i] == 'd') {
+                        long v;
+                        if (islong) v = va_arg(ap, long);
+                        else v = va_arg(ap, int);
+                        if (v < 0) {
+                            neg = 1;
+                            u = (unsigned)0 - (unsigned)v;
+                        } else {
+                            u = (unsigned)v;
+                        }
+                    } else if (islong) {
+                        u = (unsigned)va_arg(ap, long);
+                    } else {
+                        u = va_arg(ap, unsigned);
+                    }
+                    len = 0;
+                    if (u == 0) {
+                        buf[0] = '0';
+                        len = 1;
+                    }
+                    while (u != 0) {
+                        buf[len] = digits[u % (unsigned)base];
+                        len = len + 1;
+                        u = u / (unsigned)base;
+                    }
+                    if (neg) {
+                        n = n + p_char('-');
+                    }
+                    k = width - len;
+                    if (neg) k = k - 1;
+                    if (k < 0) k = 0;
+                    if (!left) {
+                        while (k > 0) {
+                            n = n + p_char(zero ? '0' : ' ');
+                            k = k - 1;
+                        }
+                    }
+                    while (len > 0) {
+                        len = len - 1;
+                        n = n + p_char(buf[len]);
+                    }
+                    if (left) {
+                        while (k > 0) {
+                            n = n + p_char(' ');
+                            k = k - 1;
+                        }
+                    }
+                    i = i + 1;
+                } else if (fmt[i] == 's') {
+                    char *str;
+                    int len;
+                    int k;
+                    str = va_arg(ap, char *);
+                    if (str == 0) str = "(null)";
+                    len = 0;
+                    while (str[len] != 0) len = len + 1;
+                    k = width - len;
+                    if (k < 0) k = 0;
+                    if (!left) {
+                        while (k > 0) {
+                            n = n + p_char(' ');
+                            k = k - 1;
+                        }
+                    }
+                    n = n + p_str(str);
+                    if (left) {
+                        while (k > 0) {
+                            n = n + p_char(' ');
+                            k = k - 1;
+                        }
+                    }
+                    i = i + 1;
+                } else if (fmt[i] == 'f') {
+                    n = n + p_fixed(va_arg(ap, double));
+                    i = i + 1;
+                } else if (fmt[i] == 'c') {
                 n = n + p_char(va_arg(ap, int));
                 i = i + 1;
             } else if (fmt[i] == '%') {
@@ -139,6 +239,7 @@ int printf(char *fmt, ...) {
                 n = n + p_char('%');
                 n = n + p_char(fmt[i]);
                 i = i + 1;
+            }
             }
         }
     }

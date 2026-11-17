@@ -268,3 +268,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Words:** guided, procedural, template, fence, parts, recipe, regenerate, picket, wrought iron, chain link, gate, user part, convert to regular mesh
 - **Seen as:** the Guided page asks what to do with parts you edited; a model made here still edits like any mesh; a fence changed height but one post did not
 - **Ask me like:** "add a wall template"; "let me draw the fence path in the 3D view"; "add a collider to a guided model"
+
+### 3.12 Simple view of the Modeling window (beginner mode)
+- **What:** The Modeling window opens in a simple view by default: Undo / Redo / Do again always on top, the model's size, a "What do I click next?" line that follows the selection, "Pick parts" (corners, edges, faces; one click turns edit mode on), up to six quick actions for what is selected, the last four tools used, and five tabs named by what you want to do (Shape with seven one-click starter models, Reshape, Details, Colour, Finish). Every tool has a plain name, a one-sentence tip, an example and its shortcut; tools that cannot run are greyed out with the reason. "Show advanced tools" switches to the old full window (remembered as `modelingadvanced` in okay_settings.txt). Tools run the existing operations (no second copy). Click counts for eight beginner jobs, old window to new (walked through the code, not timed with a person): box with a roof 9 to 1, round a corner 6 to 3, window hole 7 to 3, symmetric face 4 to 1, stretch 3 to 1, table legs 10 to 1, smooth a rock 5 to 2, paint two colours 9 to 4.
+- **Code:** `editor/ModelingEasy.hpp` (catalogue, jargon check, hints, quick actions, recent tools, job counts), `editor/ModelingEasyOps.hpp` (tool to mesh operation), `editor/ModelingStarters.hpp`, `editor/ModelingEasyUi.cpp`, `editor/main.cpp` (DrawModelingSimple)
+- **API:** `oked::easymodel::Tools`, `NextHint`, `QuickActions`, `WhyNot`, `RunMeshTool`, `BuildStarter`
+- **Editor:** Modeling window (opens in the simple view); the "Show advanced tools" switch
+- **Docs:** none yet (internal note only)
+- **Tests:** `modeling_easy`, `modeling_easy_ops`, `modeling_starters`, `editor_layout`
+- **Status:** Partial - the logic is tested headlessly and the widgets were drawn headless at 1280x720; the editor was not run on a real desktop or Windows
+- **Open:** not built: live preview and apply-on-release for the strength slider, drag a face to pull it out without a mode switch, double-click to select a part, click-drag paint select, select similar, mirror on by default for new models, snapping on by default with a visible grid size; starter tiles have no picture in the headless shots; the Save model button still says "Mesh Asset" in the advanced window
+- **Related:** 3.1, 3.5, 3.10, 3.11
+- **Words:** beginner, simple view, easy modeling, quick actions, starters, tree, house, car, sword, table, rocket, what do I click next, show advanced tools

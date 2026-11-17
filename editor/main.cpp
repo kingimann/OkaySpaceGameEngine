@@ -61,6 +61,8 @@
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
+#include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
+#include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -3369,9 +3371,9 @@ static void LoadMeshFileInto(EditorState& ed, MeshRenderer* mr) {
 // "Save as Mesh Asset": write the object's mesh to <project>/Assets/<name>.okaymesh
 // (quads kept as quads) and point the object at it, so other objects and scenes
 // can use the same model. Saving the scene later writes edits back to the file.
-static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+static void SaveMeshAssetNow(EditorState& ed, GameObject* go, MeshRenderer* mr) {
     const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
-    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) {
+    {
         std::filesystem::path path;
         if (isAsset) path = mr->meshPath;
         else {
@@ -3402,6 +3404,10 @@ static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* m
             ConsoleLog("Couldn't save the mesh asset: " + err, 2);
         }
     }
+}
+static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+    const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
+    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) SaveMeshAssetNow(ed, go, mr);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(isAsset ? "Write this mesh back to %s now (saving the scene does it too)."
                                   : "Save this mesh as a .okaymesh file in the project's Assets folder and use it from there,\nso other objects and scenes can share the model. Quads are kept as quads.",
@@ -28220,12 +28226,78 @@ static void DrawUVEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The simple (beginner) view of the Modeling window: logic in ModelingEasy*.hpp, drawing in ModelingEasyUi.cpp; this only lends it
+// the selection, undo and the editor's own operations. Pick-mode numbers differ: ours are 0 corners, 1 edges, 2 faces.
+static void DrawModelingSimple(EditorState& ed) {
+    namespace em = oked::easymodel;
+    GameObject* go = ed.selected();
+    MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    const bool editing = mr && g_meshEdit && g_meshEditObj == go;
+    oked::easymodel_ui::Host h;
+    h.mesh = mr ? &mr->mesh : nullptr;
+    h.state.haveObject = mr != nullptr;
+    h.state.editMode = editing;
+    h.state.selMode = g_meshSelMode == 1 ? 2 : g_meshSelMode == 2 ? 1 : 0;
+    h.state.selCount = !editing ? 0 : (int)(g_meshSelMode == 1 ? g_meshSelFaces.size() : g_meshSelMode == 2 ? g_meshSelEdges.size() : g_meshSelVerts.size());
+    h.state.modalActive = editing && g_meModal.Active();
+    h.addShape = [&](const std::string& n) { ed.CreateMesh(n); ed.view3D = true; ed.dirty = true; ConsoleLog("Created " + n); };
+    h.addModel = [&](const Mesh& m, const std::string& n) {
+        GameObject* g = ed.CreateMesh("Cube");
+        if (MeshRenderer* r = g ? g->GetComponent<MeshRenderer>() : nullptr) { r->mesh = m; r->meshPath.clear(); r->color = okay::Color{1, 1, 1, 1}; g->name = n; FitColliders(g); }
+        ed.view3D = true; ed.dirty = true;
+    };
+    h.meshOp = [&](const std::string& label, const std::function<void(Mesh&)>& fn) { if (mr) ModelOp(ed, mr, label.c_str(), fn); };
+    h.args = [&] {
+        em::ToolArgs a;
+        if (editing && g_meshSelMode == 1) a.faces = g_meshSelFaces;
+        if (editing && g_meshSelMode == 0) a.corners = g_meshSelVerts;
+        return a;
+    };
+    h.setGizmo = [](int t) { g_tool = t == 0 ? Tool::Move : t == 1 ? Tool::Rotate : Tool::Scale; };
+    h.pickMode = [&](bool on, int mode) {
+        if (!go || !mr) return;
+        if (on) { if (!editing) SetMeshEditMode(ed, go, true); g_meshSelMode = mode == 2 ? 1 : mode == 1 ? 2 : 0; }
+        else if (editing) SetMeshEditMode(ed, go, false);
+    };
+    h.canUndo = [&] { return editing ? (!g_meshUndo.empty() || ed.CanUndo()) : ed.CanUndo(); };
+    h.canRedo = [&] { return editing ? (!g_meshRedo.empty() || ed.CanRedo()) : ed.CanRedo(); };
+    h.undo = [&] { if (!(editing && MeshUndo(false))) ed.Undo(); };
+    h.redo = [&] { if (!(editing && MeshUndo(true))) ed.Redo(); };
+    h.addSolid = [&] {
+        if (!go) return;
+        for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+        go->AddComponent<MeshCollider3D>(); ed.dirty = true;
+    };
+    h.saveAsset = [&] { if (go && mr) SaveMeshAssetNow(ed, go, mr); };
+    h.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+        static std::unordered_map<std::string, SDL_Texture*> cache;
+        auto it = cache.find(key);
+        if (it != cache.end()) return it->second;
+        static int s_frame = -1, s_made = 0;
+        if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+        if (s_made >= 2 || !g_sdlRenderer) return nullptr;
+        ++s_made;
+        okay::Scene sc;
+        GameObject* g = sc.CreateGameObject("easy thumb");
+        MeshRenderer* m = g->AddComponent<MeshRenderer>();
+        m->mesh = build(); m->color = okay::Color{1, 1, 1, 1};
+        sc.Update(0.0f);
+        SDL_Texture* tex = RenderObjectThumb(sc, g);
+        cache[key] = tex;
+        return tex;
+    };
+    h.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
+}
+
 void DrawModeling(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
+    if (!g_view.modelingAdvanced) { DrawModelingSimple(ed); ImGui::End(); return; }   // the simple view is the default
+    if (ImGui::SmallButton("Back to the simple view##mdl")) g_view.modelingAdvanced = false;
 
     // One page at a time, picked from a sidebar (instead of a tab strip under an
     // always-open Add library): Add, then the mesh tools in the order you use them.

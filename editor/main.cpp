@@ -1031,6 +1031,7 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // OFF by default for speed: 2x supersample renders 4x the pixels,
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
+extern bool g_showGame;   // (defined with the panel flags below)
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 // View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
 int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
@@ -51777,7 +51778,7 @@ int main(int argc, char** argv) {
                 for (ImTextureData* tx : *mdd->Textures)
                     if (tx->Status != ImTextureStatus_OK)
                         ImGui_ImplSDLRenderer2_UpdateTexture(tx);
-            OkayRenderDrawData(mdd, renderer, nullptr);
+            { OKAY_PROFILE("ImGui.Draw"); OkayRenderDrawData(mdd, renderer, nullptr); }   // (this multi-window branch is the default one: it was not timed, so its cost showed as "not timed")
         } else {
             { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
         }

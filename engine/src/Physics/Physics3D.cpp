@@ -595,14 +595,14 @@ bool CatchTunneledFloor(Scene& scene, Rigidbody3D* rb, DownRays* rays) {
     if (!rb->enabled || !rb->gameObject->ActiveInHierarchy()) return false;
     if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return false;
     Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
-    if (!col || !col->enabled || col->isTrigger) return;
+    if (!col || !col->enabled || col->isTrigger) return false;
     const Vec3 pos = rb->transform->Position();
-    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return;
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return false;
     // The foot is the lowest point of the shape, and the floor is looked for under THAT point. (It used to be the bottom of the
     // bounding box under the body's centre, which on a slope is always "below the floor": every step the body was lifted and its
     // downward speed cleared, so nothing could slide down a ramp.)
     const Vec3 foot = SupportOf(col, Vec3{0.0f, -1.0f, 0.0f});
-    if (!std::isfinite(foot.x + foot.y + foot.z)) return;
+    if (!std::isfinite(foot.x + foot.y + foot.z)) return false;
     float footOff = pos.y - foot.y;
     if (footOff < 0.0f) footOff = 0.0f;
     const float curFoot = foot.y;

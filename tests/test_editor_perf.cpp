@@ -133,5 +133,5 @@ int main() {
         CHECK(r.find("100 FPS") != std::string::npos && r.find("performance mode on") != std::string::npos);
         CHECK(r.find("3D view render") != std::string::npos && r.find("60.0%") != std::string::npos);
     }
-    return 0;
+    TEST_MAIN_RESULT();
 }

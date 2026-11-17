@@ -1366,7 +1366,7 @@ Recycle Bin call and the clicks were not run on Windows.
 cheaper. All switches are off until you turn them on. Guide: `docs/editor_performance.md`.
 
 **Steps (read the numbers).**
-1. Open the editor (`Tools\OkayEngine.exe`). Open a project or **File > Open...** `<install folder>\examples\perf\many_lights.okayscene`.
+1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.
 2. Open the menu **View**, then **Rendering**. Click **Frame-time overlay**. A window called "Frame time" appears at the top right.
    Drag it where you like. It stays open the next time you start the editor.
 3. Leave the mouse over the Scene view for a few seconds, then orbit the camera (hold the right mouse button and move).
@@ -1388,7 +1388,9 @@ cheaper. All switches are off until you turn them on. Guide: `docs/editor_perfor
 (the line "Not timed" is what no timer covers).
 
 **Status.** Logic tested headless on Linux (`test_editor_perf`: section maths, history numbers, idle and limiter decisions,
-scale, performance mode). The window itself was built and run on Linux with a virtual screen and the software renderer only;
+scale, performance mode). The editor was built and started on Linux with a virtual screen and SDL's software 2D renderer: the
+frame limiter was seen working (a 10 FPS cap gave 99.7 ms frames with a "Frame limiter sleep" section) and the sections add up.
+The overlay window was drawn only with the profiler data path (not looked at on screen), no scene viewport was exercised, and
 nothing was run on Windows or a real GPU, so the Direct3D 11 numbers are unverified until you send the report.
 
 ## File > Examples opens the examples (fix)

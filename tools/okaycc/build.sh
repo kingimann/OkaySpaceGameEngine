@@ -10,7 +10,7 @@ FLAGS=(-std=c++17 -Wall -Wextra -Wpedantic -Wshadow -g -O0 -I src)
 mkdir -p build
 
 objs=()
-for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp; do
+for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp; do
   obj="build/$(basename "${src%.cpp}").o"
   "$CXX" "${FLAGS[@]}" -c "$src" -o "$obj"
   objs+=("$obj")
@@ -19,7 +19,9 @@ done
 "$CXX" "${FLAGS[@]}" -o build/okay-cc src/main.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_lexer tests/test_lexer.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_preproc tests/test_preproc.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_parser tests/test_parser.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
+./build/test_parser
 tests/test_plan.sh

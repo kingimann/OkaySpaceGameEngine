@@ -1,6 +1,7 @@
 #include "diag.hpp"
 #include "files.hpp"
 #include "lexer.hpp"
+#include "parser.hpp"
 #include "preproc.hpp"
 #include "token.hpp"
 
@@ -21,7 +22,8 @@ std::string readAll(std::istream& in) {
 void usage(std::ostream& out) {
     out << "okay-cc --lex [file]\n"
         << "okay-cc --pp [-I dir]... [file]\n"
-        << "  --lex  print tokens.  --pp  run the preprocessor and print the text.\n"
+        << "okay-cc --ast [-I dir]... [file]\n"
+        << "  --lex prints tokens, --pp runs the preprocessor, --ast prints the tree.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -30,6 +32,7 @@ void usage(std::ostream& out) {
 int main(int argc, char** argv) {
     bool lex = false;
     bool pp = false;
+    bool ast = false;
     std::string path;
     std::vector<std::string> includes;
     for (int i = 1; i < argc; ++i) {
@@ -38,6 +41,8 @@ int main(int argc, char** argv) {
             lex = true;
         } else if (a == "--pp") {
             pp = true;
+        } else if (a == "--ast") {
+            ast = true;
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -57,7 +62,7 @@ int main(int argc, char** argv) {
             path = a;
         }
     }
-    if (lex == pp) {
+    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) != 1) {
         usage(std::cerr);
         return 2;
     }
@@ -76,7 +81,16 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
-    if (lex) {
+    if (ast) {
+        if (path.empty()) {
+            okaycc::MemoryFiles mem;
+            mem.add("<stdin>", src);
+            std::cout << okaycc::astOfFile(mem, "<stdin>", includes, diags);
+        } else {
+            okaycc::DiskFiles disk;
+            std::cout << okaycc::astOfFile(disk, path, includes, diags);
+        }
+    } else if (lex) {
         okaycc::Lexer lexer(file, src, diags);
         for (;;) {
             okaycc::Token t = lexer.next();

@@ -15,7 +15,11 @@ have something of our own to build toward. It does not replace them.
   search, object-like and function-like macros including `#` and `##`, `#undef`, the
   `#if` family with `defined` and constant expressions, `#error`, `__LINE__` and `__FILE__`.
   Nesting stops at 64 includes.
-- Parser, type checker, and every later stage: not started.
+- Parser: implemented for a C subset (`okay-cc --ast`). Types are `void`, `char`, and
+  `int`, plus pointers and arrays. Declarations, functions, `if`/`else`, `while`, `for`,
+  `return`, `break`, `continue`, and expressions at C precedence. An empty `()` parameter
+  list means zero parameters.
+- Type checker and every later stage: not started.
 
 ## Rules for the code
 

@@ -1,0 +1,1080 @@
+#include "parser.hpp"
+
+#include "files.hpp"
+#include "preproc.hpp"
+#include "token.hpp"
+
+#include <cstdio>
+#include <initializer_list>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace okaycc {
+namespace {
+
+struct Expr;
+struct Type;
+struct Stmt;
+struct Decl;
+
+struct Param {
+    std::string name;
+    std::unique_ptr<Type> type;
+    Param();
+    Param(Param&&) noexcept;
+    ~Param();
+};
+
+struct Expr {
+    enum class Kind {
+        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Cast, Comma, Brace
+    } kind = Kind::Int;
+    std::string text;
+    std::uint64_t ival = 0;
+    int line = 1;
+    int col = 1;
+    std::vector<std::unique_ptr<Expr>> kids;
+    std::unique_ptr<Type> ty;
+    Expr();
+    ~Expr();
+};
+
+struct Type {
+    enum class Kind { Void, Char, Int, Pointer, Array, Function } kind = Kind::Int;
+    std::unique_ptr<Type> inner;
+    std::unique_ptr<Expr> bound;
+    bool unsized = false;
+    std::vector<Param> params;
+    Type();
+    ~Type();
+};
+
+struct Decl {
+    std::string name;
+    std::unique_ptr<Type> type;
+    std::unique_ptr<Expr> init;
+    std::unique_ptr<Stmt> body;
+    bool function = false;
+    int line = 1;
+    int col = 1;
+    Decl();
+    ~Decl();
+};
+
+struct Stmt {
+    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl } kind = Kind::Empty;
+    int line = 1;
+    int col = 1;
+    std::vector<std::unique_ptr<Stmt>> stmts;
+    std::unique_ptr<Expr> expr;
+    std::unique_ptr<Expr> expr2;
+    std::unique_ptr<Expr> expr3;
+    std::unique_ptr<Stmt> thenS;
+    std::unique_ptr<Stmt> elseS;
+    std::unique_ptr<Stmt> body;
+    std::unique_ptr<Stmt> init;
+    std::unique_ptr<Decl> decl;
+    Stmt();
+    ~Stmt();
+};
+
+struct Tu {
+    std::vector<std::unique_ptr<Decl>> decls;
+};
+
+Param::Param() = default;
+Param::Param(Param&&) noexcept = default;
+Param::~Param() = default;
+Expr::Expr() = default;
+Expr::~Expr() = default;
+Type::Type() = default;
+Type::~Type() = default;
+Decl::Decl() = default;
+Decl::~Decl() = default;
+Stmt::Stmt() = default;
+Stmt::~Stmt() = default;
+
+std::unique_ptr<Type> cloneType(const Type& t);
+std::unique_ptr<Expr> cloneExpr(const Expr& e);
+
+std::unique_ptr<Expr> cloneExpr(const Expr& e) {
+    auto n = std::make_unique<Expr>();
+    n->kind = e.kind;
+    n->text = e.text;
+    n->ival = e.ival;
+    n->line = e.line;
+    n->col = e.col;
+    for (const auto& k : e.kids)
+        if (k) n->kids.push_back(cloneExpr(*k));
+    if (e.ty) n->ty = cloneType(*e.ty);
+    return n;
+}
+
+std::unique_ptr<Type> cloneType(const Type& t) {
+    auto n = std::make_unique<Type>();
+    n->kind = t.kind;
+    n->unsized = t.unsized;
+    if (t.inner) n->inner = cloneType(*t.inner);
+    if (t.bound) n->bound = cloneExpr(*t.bound);
+    for (const Param& p : t.params) {
+        Param c;
+        c.name = p.name;
+        if (p.type) c.type = cloneType(*p.type);
+        n->params.push_back(std::move(c));
+    }
+    return n;
+}
+
+std::string exprStr(const Expr& e);
+std::string typeStr(const Type& t);
+
+std::string esc(const std::string& in) {
+    std::string o;
+    for (unsigned char c : in) {
+        if (c == '\\') o += "\\\\";
+        else if (c == '"') o += "\\\"";
+        else if (c == '\n') o += "\\n";
+        else if (c == '\t') o += "\\t";
+        else if (c == '\r') o += "\\r";
+        else if (c < 32 || c > 126) {
+            char b[8];
+            std::snprintf(b, sizeof b, "\\x%02x", c);
+            o += b;
+        } else {
+            o.push_back(static_cast<char>(c));
+        }
+    }
+    return o;
+}
+
+std::string typeStr(const Type& t) {
+    switch (t.kind) {
+    case Type::Kind::Void: return "void";
+    case Type::Kind::Char: return "char";
+    case Type::Kind::Int: return "int";
+    case Type::Kind::Pointer: return "(ptr " + typeStr(*t.inner) + ")";
+    case Type::Kind::Array: {
+        std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
+        return "(arr " + typeStr(*t.inner) + " " + b + ")";
+    }
+    case Type::Kind::Function: {
+        std::string s = "(fn " + typeStr(*t.inner);
+        for (const Param& p : t.params) {
+            s += " (p ";
+            s += p.name.empty() ? "_" : p.name;
+            s += " ";
+            s += p.type ? typeStr(*p.type) : "?";
+            s += ")";
+        }
+        s += ")";
+        return s;
+    }
+    }
+    return "?";
+}
+
+std::string exprStr(const Expr& e) {
+    auto kid = [&](std::size_t i) { return i < e.kids.size() && e.kids[i] ? exprStr(*e.kids[i]) : "(int 0)"; };
+    switch (e.kind) {
+    case Expr::Kind::Int: return "(int " + std::to_string(e.ival) + ")";
+    case Expr::Kind::Char: return "(char " + std::to_string(e.ival) + ")";
+    case Expr::Kind::String: return "(string \"" + esc(e.text) + "\")";
+    case Expr::Kind::Name: return "(name " + e.text + ")";
+    case Expr::Kind::Unary: return "(unary " + e.text + " " + kid(0) + ")";
+    case Expr::Kind::Pre: return "(pre " + e.text + " " + kid(0) + ")";
+    case Expr::Kind::Post: return "(post " + e.text + " " + kid(0) + ")";
+    case Expr::Kind::Bin: return "(bin " + e.text + " " + kid(0) + " " + kid(1) + ")";
+    case Expr::Kind::Assign: return "(assign " + e.text + " " + kid(0) + " " + kid(1) + ")";
+    case Expr::Kind::Cond: return "(cond " + kid(0) + " " + kid(1) + " " + kid(2) + ")";
+    case Expr::Kind::Index: return "(index " + kid(0) + " " + kid(1) + ")";
+    case Expr::Kind::Cast: return "(cast " + (e.ty ? typeStr(*e.ty) : "?") + " " + kid(0) + ")";
+    case Expr::Kind::Call: {
+        std::string s = "(call";
+        for (const auto& k : e.kids)
+            if (k) s += " " + exprStr(*k);
+        s += ")";
+        return s;
+    }
+    case Expr::Kind::Comma: {
+        std::string s = "(comma";
+        for (const auto& k : e.kids)
+            if (k) s += " " + exprStr(*k);
+        s += ")";
+        return s;
+    }
+    case Expr::Kind::Brace: {
+        std::string s = "(brace";
+        for (const auto& k : e.kids)
+            if (k) s += " " + exprStr(*k);
+        s += ")";
+        return s;
+    }
+    }
+    return "(int 0)";
+}
+
+struct Pr {
+    std::string s;
+    void line(int ind, const std::string& text) {
+        s.append(static_cast<std::size_t>(ind) * 2, ' ');
+        s += text;
+        s += "\n";
+    }
+};
+
+void printStmt(Pr& p, int ind, const Stmt& st);
+void printDecl(Pr& p, int ind, const Decl& d);
+
+void printParams(Pr& p, int ind, const std::vector<Param>& params) {
+    if (params.empty()) {
+        p.line(ind, "(params)");
+        return;
+    }
+    p.line(ind, "(params");
+    for (const Param& param : params) {
+        p.line(ind + 1, "(p " + (param.name.empty() ? "_" : param.name) + " " +
+                            (param.type ? typeStr(*param.type) : "?") + ")");
+    }
+    p.line(ind, ")");
+}
+
+void printDecl(Pr& p, int ind, const Decl& d) {
+    if (d.function) {
+        const Type* ret = d.type && d.type->inner ? d.type->inner.get() : nullptr;
+        p.line(ind, std::string(d.body ? "(fn " : "(fdecl ") + d.name);
+        p.line(ind + 1, "(type " + (ret ? typeStr(*ret) : "?") + ")");
+        if (d.type) printParams(p, ind + 1, d.type->params);
+        else printParams(p, ind + 1, {});
+        if (d.body) {
+            p.line(ind + 1, "(body");
+            printStmt(p, ind + 2, *d.body);
+            p.line(ind + 1, ")");
+        }
+        p.line(ind, ")");
+        return;
+    }
+    p.line(ind, "(var " + d.name);
+    p.line(ind + 1, "(type " + (d.type ? typeStr(*d.type) : "?") + ")");
+    if (d.init) {
+        p.line(ind + 1, "(init");
+        p.line(ind + 2, exprStr(*d.init));
+        p.line(ind + 1, ")");
+    }
+    p.line(ind, ")");
+}
+
+void printStmt(Pr& p, int ind, const Stmt& st) {
+    switch (st.kind) {
+    case Stmt::Kind::Block:
+        p.line(ind, "(block");
+        for (const auto& s : st.stmts)
+            if (s) printStmt(p, ind + 1, *s);
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::Empty:
+        p.line(ind, "(empty)");
+        break;
+    case Stmt::Kind::Expr:
+        p.line(ind, "(expr");
+        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::Return:
+        p.line(ind, "(return");
+        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::If:
+        p.line(ind, "(if");
+        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
+        if (st.thenS) printStmt(p, ind + 1, *st.thenS);
+        if (st.elseS) {
+            p.line(ind + 1, "(else");
+            printStmt(p, ind + 2, *st.elseS);
+            p.line(ind + 1, ")");
+        }
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::While:
+        p.line(ind, "(while");
+        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
+        if (st.body) printStmt(p, ind + 1, *st.body);
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::For:
+        p.line(ind, "(for");
+        if (!st.init) p.line(ind + 1, "(init none)");
+        else {
+            p.line(ind + 1, "(init");
+            printStmt(p, ind + 2, *st.init);
+            p.line(ind + 1, ")");
+        }
+        if (!st.expr) p.line(ind + 1, "(cond none)");
+        else p.line(ind + 1, "(cond " + exprStr(*st.expr) + ")");
+        if (!st.expr2) p.line(ind + 1, "(step none)");
+        else p.line(ind + 1, "(step " + exprStr(*st.expr2) + ")");
+        if (st.body) printStmt(p, ind + 1, *st.body);
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::Break:
+        p.line(ind, "(break)");
+        break;
+    case Stmt::Kind::Continue:
+        p.line(ind, "(continue)");
+        break;
+    case Stmt::Kind::Decl:
+        if (st.decl) printDecl(p, ind, *st.decl);
+        break;
+    }
+}
+
+std::string printTu(const Tu& tu) {
+    if (tu.decls.empty()) return "(tu)\n";
+    Pr p;
+    p.line(0, "(tu");
+    for (const auto& d : tu.decls)
+        if (d) printDecl(p, 1, *d);
+    p.line(0, ")");
+    return p.s;
+}
+
+struct Mod {
+    enum class Kind { Ptr, Arr, Func } kind = Kind::Ptr;
+    std::unique_ptr<Expr> bound;
+    bool unsized = false;
+    std::vector<Param> params;
+};
+
+struct Parsed {
+    std::string name;
+    int line = 1;
+    int col = 1;
+    std::vector<Mod> mods;
+};
+
+class Parser {
+public:
+    Parser(std::vector<Token> toks, Diagnostics& diags) : toks_(std::move(toks)), diags_(diags) {}
+
+    Tu parseTu() {
+        Tu tu;
+        while (!atEnd()) {
+            if (isUnsupported()) {
+                err("'" + cur().text + "' is not in this subset");
+                syncSemi();
+                continue;
+            }
+            if (!isTypeKw(cur())) {
+                err("expected a declaration");
+                syncSemi();
+                continue;
+            }
+            parseExternal(tu);
+        }
+        return tu;
+    }
+
+private:
+    std::vector<Token> toks_;
+    Diagnostics& diags_;
+    std::size_t i_ = 0;
+    bool reported_ = false;
+
+    const Token& cur() const { return toks_[i_]; }
+    bool atEnd() const { return i_ >= toks_.size() || toks_[i_].kind == Tok::End; }
+    void advance() {
+        if (i_ < toks_.size()) ++i_;
+    }
+    bool isP(const Token& t, const char* s) const {
+        if (t.kind != Tok::Punct) return false;
+        if (t.text == s) return true;
+        if (std::string(s) == "[" && t.text == "<:") return true;
+        if (std::string(s) == "]" && t.text == ":>") return true;
+        if (std::string(s) == "{" && t.text == "<%") return true;
+        if (std::string(s) == "}" && t.text == "%>") return true;
+        return false;
+    }
+    bool isP(const char* s) const { return !atEnd() && isP(cur(), s); }
+    bool isKwTok(const Token& t, const char* s) const {
+        return (t.kind == Tok::Keyword || t.kind == Tok::Ident) && t.text == s;
+    }
+    bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
+    bool isTypeKw(const Token& t) const {
+        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "int");
+    }
+    bool isUnsupported() const {
+        if (atEnd() || cur().kind != Tok::Keyword) return false;
+        return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") &&
+               !isKw("return") && !isKw("break") && !isKw("continue");
+    }
+    bool eatP(const char* s) {
+        if (!isP(s)) return false;
+        advance();
+        return true;
+    }
+    bool eatKw(const char* s) {
+        if (!isKw(s)) return false;
+        advance();
+        return true;
+    }
+    void err(const std::string& msg) {
+        const Token& t = i_ < toks_.size() ? toks_[i_] : toks_.back();
+        diags_.error(t.file.empty() ? "t.c" : t.file, t.line, t.column, msg);
+        reported_ = true;
+    }
+    void expectP(const char* s, const char* what) {
+        if (!eatP(s)) err(std::string("expected '") + what + "'");
+    }
+    void syncSemi() {
+        while (!atEnd() && !isP(";") && !isP("}") && !isP("{")) advance();
+        if (isP(";")) advance();
+    }
+
+    std::unique_ptr<Expr> ex(Expr::Kind k, const Token& at) {
+        auto e = std::make_unique<Expr>();
+        e->kind = k;
+        e->line = at.line;
+        e->col = at.column;
+        return e;
+    }
+    std::unique_ptr<Expr> leafName(const Token& t) {
+        auto e = ex(Expr::Kind::Name, t);
+        e->text = t.text;
+        return e;
+    }
+    std::unique_ptr<Expr> leafInt(const Token& t) {
+        auto e = ex(Expr::Kind::Int, t);
+        e->ival = t.uval;
+        return e;
+    }
+    std::unique_ptr<Expr> zeroAt() {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Int;
+        return e;
+    }
+
+    std::unique_ptr<Type> ty(Type::Kind k) {
+        auto t = std::make_unique<Type>();
+        t->kind = k;
+        return t;
+    }
+
+    std::unique_ptr<Type> parseBase() {
+        if (eatKw("void")) return ty(Type::Kind::Void);
+        if (eatKw("char")) return ty(Type::Kind::Char);
+        if (eatKw("int")) return ty(Type::Kind::Int);
+        if (!atEnd() && cur().kind == Tok::Keyword) {
+            err("'" + cur().text + "' is not in this subset");
+            advance();
+        } else {
+            err("expected a type");
+        }
+        return ty(Type::Kind::Int);
+    }
+
+    Parsed parseDeclarator(bool needName) {
+        int stars = 0;
+        while (eatP("*")) ++stars;
+        Parsed d = parseDirect(needName);
+        for (int n = 0; n < stars; ++n) {
+            Mod m;
+            m.kind = Mod::Kind::Ptr;
+            d.mods.push_back(std::move(m));
+        }
+        return d;
+    }
+
+    Parsed parseDirect(bool needName) {
+        Parsed d;
+        if (eatP("(")) {
+            d = parseDeclarator(needName);
+            expectP(")", ")");
+        } else if (!atEnd() && cur().kind == Tok::Ident) {
+            d.name = cur().text;
+            d.line = cur().line;
+            d.col = cur().column;
+            advance();
+        } else if (needName) {
+            err("expected a name");
+            d.line = atEnd() ? 1 : cur().line;
+            d.col = atEnd() ? 1 : cur().column;
+        }
+        while (true) {
+            if (eatP("[")) {
+                Mod m;
+                m.kind = Mod::Kind::Arr;
+                if (!isP("]")) m.bound = parseAssign();
+                else m.unsized = true;
+                expectP("]", "]");
+                d.mods.push_back(std::move(m));
+                continue;
+            }
+            if (eatP("(")) {
+                Mod m;
+                m.kind = Mod::Kind::Func;
+                m.params = parseParams();
+                d.mods.push_back(std::move(m));
+                continue;
+            }
+            break;
+        }
+        return d;
+    }
+
+    std::unique_ptr<Type> adjustParam(std::unique_ptr<Type> t) {
+        if (!t) return t;
+        if (t->kind == Type::Kind::Array) {
+            auto p = ty(Type::Kind::Pointer);
+            p->inner = std::move(t->inner);
+            return p;
+        }
+        if (t->kind == Type::Kind::Function) {
+            auto p = ty(Type::Kind::Pointer);
+            p->inner = std::move(t);
+            return p;
+        }
+        return t;
+    }
+
+    std::vector<Param> parseParams() {
+        std::vector<Param> params;
+        if (eatP(")")) return params;
+        if (isKw("void")) {
+            std::size_t save = i_;
+            advance();
+            if (eatP(")")) return params;
+            i_ = save;
+        }
+        while (!atEnd()) {
+            if (!isTypeKw(cur())) {
+                err("expected ')'");
+                if (isP(")")) advance();
+                break;
+            }
+            auto base = parseBase();
+            Parsed d = parseDeclarator(false);
+            Param p;
+            p.name = d.name;
+            p.type = adjustParam(apply(std::move(base), d.mods));
+            params.push_back(std::move(p));
+            if (eatP(")")) break;
+            if (eatP(",")) continue;
+            err("expected ')'");
+            break;
+        }
+        return params;
+    }
+
+    std::unique_ptr<Type> apply(std::unique_ptr<Type> base, std::vector<Mod>& mods) {
+        for (int n = static_cast<int>(mods.size()) - 1; n >= 0; --n) {
+            auto t = std::make_unique<Type>();
+            Mod& m = mods[static_cast<std::size_t>(n)];
+            if (m.kind == Mod::Kind::Ptr) {
+                t->kind = Type::Kind::Pointer;
+                t->inner = std::move(base);
+            } else if (m.kind == Mod::Kind::Arr) {
+                t->kind = Type::Kind::Array;
+                t->inner = std::move(base);
+                t->bound = std::move(m.bound);
+                t->unsized = m.unsized || !t->bound;
+            } else {
+                t->kind = Type::Kind::Function;
+                t->inner = std::move(base);
+                t->params = std::move(m.params);
+            }
+            base = std::move(t);
+        }
+        return base;
+    }
+
+    std::unique_ptr<Decl> makeDecl(Parsed& d, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
+        auto decl = std::make_unique<Decl>();
+        decl->name = d.name;
+        decl->line = d.line;
+        decl->col = d.col;
+        decl->type = std::move(type);
+        decl->init = std::move(init);
+        decl->function = decl->type && decl->type->kind == Type::Kind::Function;
+        return decl;
+    }
+
+    void parseExternal(Tu& tu) {
+        auto base = parseBase();
+        if (atEnd()) {
+            err("expected a declarator");
+            return;
+        }
+        Parsed d = parseDeclarator(true);
+        auto type = apply(cloneType(*base), d.mods);
+        if (type && type->kind == Type::Kind::Function && isP("{")) {
+            auto decl = makeDecl(d, std::move(type), nullptr);
+            decl->body = parseCompound();
+            tu.decls.push_back(std::move(decl));
+            return;
+        }
+        std::unique_ptr<Expr> init;
+        if (eatP("=")) init = parseInitializer();
+        tu.decls.push_back(makeDecl(d, std::move(type), std::move(init)));
+        while (eatP(",")) {
+            Parsed d2 = parseDeclarator(true);
+            auto t2 = apply(cloneType(*base), d2.mods);
+            std::unique_ptr<Expr> init2;
+            if (eatP("=")) init2 = parseInitializer();
+            tu.decls.push_back(makeDecl(d2, std::move(t2), std::move(init2)));
+        }
+        expectP(";", ";");
+    }
+
+    std::unique_ptr<Stmt> declStmt(std::unique_ptr<Decl> d) {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Decl;
+        s->line = d->line;
+        s->col = d->col;
+        s->decl = std::move(d);
+        return s;
+    }
+
+    void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        auto type = apply(cloneType(*base), d.mods);
+        if (type && type->kind == Type::Kind::Function && isP("{")) {
+            err("a function definition is not allowed here");
+            return;
+        }
+        std::unique_ptr<Expr> init;
+        if (eatP("=")) init = parseInitializer();
+        out.push_back(declStmt(makeDecl(d, std::move(type), std::move(init))));
+        while (eatP(",")) {
+            Parsed d2 = parseDeclarator(true);
+            auto t2 = apply(cloneType(*base), d2.mods);
+            std::unique_ptr<Expr> init2;
+            if (eatP("=")) init2 = parseInitializer();
+            out.push_back(declStmt(makeDecl(d2, std::move(t2), std::move(init2))));
+        }
+        expectP(";", ";");
+        (void)forInit;
+    }
+
+    std::unique_ptr<Expr> parseInitializer() {
+        if (eatP("{")) {
+            auto e = std::make_unique<Expr>();
+            e->kind = Expr::Kind::Brace;
+            if (!eatP("}")) {
+                e->kids.push_back(parseAssign());
+                while (eatP(",")) {
+                    if (isP("}")) break;
+                    e->kids.push_back(parseAssign());
+                }
+                expectP("}", "}");
+            }
+            return e;
+        }
+        return parseAssign();
+    }
+
+    std::unique_ptr<Stmt> parseCompound() {
+        auto saved = cur();
+        expectP("{", "{");
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Block;
+        s->line = saved.line;
+        s->col = saved.column;
+        while (!atEnd() && !isP("}")) {
+            if (isUnsupported()) {
+                err("'" + cur().text + "' is not in this subset");
+                syncSemi();
+                continue;
+            }
+            if (!atEnd() && isTypeKw(cur())) {
+                parseDeclInto(s->stmts, false);
+                continue;
+            }
+            s->stmts.push_back(parseStmt());
+        }
+        expectP("}", "}");
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseStmt() {
+        if (isP("{")) return parseCompound();
+        if (isKw("if")) return parseIf();
+        if (isKw("while")) return parseWhile();
+        if (isKw("for")) return parseFor();
+        if (isKw("return")) return parseReturn();
+        if (eatKw("break")) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Break;
+            s->line = cur().line;
+            expectP(";", ";");
+            return s;
+        }
+        if (eatKw("continue")) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Continue;
+            expectP(";", ";");
+            return s;
+        }
+        if (isUnsupported()) {
+            err("'" + cur().text + "' is not in this subset");
+            advance();
+            return std::make_unique<Stmt>();
+        }
+        if (eatP(";")) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Empty;
+            return s;
+        }
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Expr;
+        s->line = atEnd() ? 1 : cur().line;
+        s->expr = parseExpr();
+        expectP(";", ";");
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseIf() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::If;
+        s->line = cur().line;
+        s->col = cur().column;
+        advance();
+        expectP("(", "(");
+        s->expr = parseExpr();
+        expectP(")", ")");
+        s->thenS = parseStmt();
+        if (eatKw("else")) s->elseS = parseStmt();
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseWhile() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::While;
+        s->line = cur().line;
+        advance();
+        expectP("(", "(");
+        s->expr = parseExpr();
+        expectP(")", ")");
+        s->body = parseStmt();
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseFor() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::For;
+        s->line = cur().line;
+        advance();
+        expectP("(", "(");
+        if (eatP(";")) {
+            s->init = nullptr;
+        } else if (!atEnd() && isTypeKw(cur())) {
+            std::vector<std::unique_ptr<Stmt>> decls;
+            parseDeclInto(decls, true);
+            if (decls.size() == 1) s->init = std::move(decls[0]);
+            else {
+                auto block = std::make_unique<Stmt>();
+                block->kind = Stmt::Kind::Block;
+                block->stmts = std::move(decls);
+                s->init = std::move(block);
+            }
+        } else {
+            auto st = std::make_unique<Stmt>();
+            st->kind = Stmt::Kind::Expr;
+            st->expr = parseExpr();
+            expectP(";", ";");
+            s->init = std::move(st);
+        }
+        if (!eatP(";")) {
+            s->expr = parseExpr();
+            expectP(";", ";");
+        }
+        if (!isP(")")) s->expr2 = parseExpr();
+        expectP(")", ")");
+        s->body = parseStmt();
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseReturn() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Return;
+        s->line = cur().line;
+        s->col = cur().column;
+        advance();
+        if (!isP(";")) s->expr = parseExpr();
+        expectP(";", ";");
+        return s;
+    }
+
+    std::unique_ptr<Expr> parseExpr() {
+        auto e = parseAssign();
+        if (!isP(",")) return e;
+        auto c = std::make_unique<Expr>();
+        c->kind = Expr::Kind::Comma;
+        c->line = e->line;
+        c->col = e->col;
+        c->kids.push_back(std::move(e));
+        while (eatP(",")) c->kids.push_back(parseAssign());
+        return c;
+    }
+
+    bool isAssignOp() const {
+        if (atEnd() || cur().kind != Tok::Punct) return false;
+        const std::string& t = cur().text;
+        return t == "=" || t == "+=" || t == "-=" || t == "*=" || t == "/=" || t == "%=" || t == "&=" ||
+               t == "|=" || t == "^=" || t == "<<=" || t == ">>=";
+    }
+
+    std::unique_ptr<Expr> parseAssign() {
+        auto e = parseCond();
+        if (!isAssignOp()) return e;
+        Token op = cur();
+        advance();
+        auto r = parseAssign();
+        auto a = ex(Expr::Kind::Assign, op);
+        a->text = op.text;
+        a->kids.push_back(std::move(e));
+        a->kids.push_back(std::move(r));
+        return a;
+    }
+
+    std::unique_ptr<Expr> parseCond() {
+        auto e = parseLor();
+        if (!eatP("?")) return e;
+        auto a = parseExpr();
+        expectP(":", ":");
+        auto b = parseCond();
+        auto c = std::make_unique<Expr>();
+        c->kind = Expr::Kind::Cond;
+        c->line = e->line;
+        c->kids.push_back(std::move(e));
+        c->kids.push_back(std::move(a));
+        c->kids.push_back(std::move(b));
+        return c;
+    }
+
+    std::unique_ptr<Expr> parseLeft(std::unique_ptr<Expr> (Parser::*next)(),
+                                    std::initializer_list<const char*> ops) {
+        auto e = (this->*next)();
+        for (;;) {
+            const char* found = nullptr;
+            for (const char* op : ops) {
+                if (isP(op)) {
+                    found = op;
+                    break;
+                }
+            }
+            if (!found) break;
+            Token op = cur();
+            advance();
+            auto r = (this->*next)();
+            auto b = ex(Expr::Kind::Bin, op);
+            b->text = found;
+            b->kids.push_back(std::move(e));
+            b->kids.push_back(std::move(r));
+            e = std::move(b);
+        }
+        return e;
+    }
+
+    std::unique_ptr<Expr> parseLor() { return parseLeft(&Parser::parseLand, {"||"}); }
+    std::unique_ptr<Expr> parseLand() { return parseLeft(&Parser::parseBor, {"&&"}); }
+    std::unique_ptr<Expr> parseBor() { return parseLeft(&Parser::parseXor, {"|"}); }
+    std::unique_ptr<Expr> parseXor() { return parseLeft(&Parser::parseBand, {"^"}); }
+    std::unique_ptr<Expr> parseBand() { return parseLeft(&Parser::parseEq, {"&"}); }
+    std::unique_ptr<Expr> parseEq() { return parseLeft(&Parser::parseRel, {"==", "!="}); }
+    std::unique_ptr<Expr> parseRel() { return parseLeft(&Parser::parseShift, {"<", ">", "<=", ">="}); }
+    std::unique_ptr<Expr> parseShift() { return parseLeft(&Parser::parseAdd, {"<<", ">>"}); }
+    std::unique_ptr<Expr> parseAdd() { return parseLeft(&Parser::parseMul, {"+", "-"}); }
+    std::unique_ptr<Expr> parseMul() { return parseLeft(&Parser::parseCast, {"*", "/", "%"}); }
+
+    bool looksLikeCast() const {
+        if (!isP("(")) return false;
+        for (std::size_t k = i_ + 1; k < toks_.size(); ++k) {
+            if (toks_[k].kind == Tok::Newline) continue;
+            return isTypeKw(toks_[k]);
+        }
+        return false;
+    }
+
+    std::unique_ptr<Type> parseTypeName() {
+        auto base = parseBase();
+        if (isP("*") || isP("(") || isP("[")) {
+            Parsed d = parseDeclarator(false);
+            return apply(std::move(base), d.mods);
+        }
+        return base;
+    }
+
+    std::unique_ptr<Expr> parseCast() {
+        if (!looksLikeCast()) return parseUnary();
+        Token at = cur();
+        eatP("(");
+        auto tyName = parseTypeName();
+        expectP(")", ")");
+        auto inner = parseCast();
+        auto e = ex(Expr::Kind::Cast, at);
+        e->ty = std::move(tyName);
+        e->kids.push_back(std::move(inner));
+        return e;
+    }
+
+    std::unique_ptr<Expr> parseUnary() {
+        if (atEnd()) {
+            err("expected an expression");
+            return zeroAt();
+        }
+        if (isP("++") || isP("--")) {
+            Token op = cur();
+            advance();
+            auto inner = parseUnary();
+            auto e = ex(Expr::Kind::Pre, op);
+            e->text = op.text;
+            e->kids.push_back(std::move(inner));
+            return e;
+        }
+        if (isP("&") || isP("*") || isP("+") || isP("-") || isP("~") || isP("!")) {
+            Token op = cur();
+            advance();
+            auto inner = parseCast();
+            auto e = ex(Expr::Kind::Unary, op);
+            e->text = op.text;
+            e->kids.push_back(std::move(inner));
+            return e;
+        }
+        return parsePostfix();
+    }
+
+    std::unique_ptr<Expr> parsePostfix() {
+        auto e = parsePrimary();
+        while (!atEnd()) {
+            if (eatP("[")) {
+                Token at = cur();
+                auto idx = parseExpr();
+                expectP("]", "]");
+                auto n = ex(Expr::Kind::Index, at);
+                n->kids.push_back(std::move(e));
+                n->kids.push_back(std::move(idx));
+                e = std::move(n);
+                continue;
+            }
+            if (eatP("(")) {
+                auto n = std::make_unique<Expr>();
+                n->kind = Expr::Kind::Call;
+                n->line = e->line;
+                n->col = e->col;
+                n->kids.push_back(std::move(e));
+                if (!eatP(")")) {
+                    n->kids.push_back(parseAssign());
+                    while (eatP(",")) n->kids.push_back(parseAssign());
+                    expectP(")", ")");
+                }
+                e = std::move(n);
+                continue;
+            }
+            if (isP("++") || isP("--")) {
+                Token op = cur();
+                advance();
+                auto n = ex(Expr::Kind::Post, op);
+                n->text = op.text;
+                n->kids.push_back(std::move(e));
+                e = std::move(n);
+                continue;
+            }
+            if (isP(".") || isP("->")) {
+                err("structs are not in this subset");
+                advance();
+                if (!atEnd() && cur().kind == Tok::Ident) advance();
+                continue;
+            }
+            break;
+        }
+        return e;
+    }
+
+    std::unique_ptr<Expr> parsePrimary() {
+        if (atEnd()) {
+            err("expected an expression");
+            return zeroAt();
+        }
+        if (cur().kind == Tok::Ident) {
+            auto e = leafName(cur());
+            advance();
+            return e;
+        }
+        if (cur().kind == Tok::Int) {
+            auto e = leafInt(cur());
+            advance();
+            return e;
+        }
+        if (cur().kind == Tok::CharLit) {
+            auto e = ex(Expr::Kind::Char, cur());
+            e->ival = cur().charValue;
+            advance();
+            return e;
+        }
+        if (cur().kind == Tok::StringLit) {
+            auto e = ex(Expr::Kind::String, cur());
+            e->text = cur().decoded;
+            advance();
+            return e;
+        }
+        if (eatP("(")) {
+            auto e = parseExpr();
+            expectP(")", ")");
+            return e;
+        }
+        if (cur().kind == Tok::Keyword) {
+            err("'" + cur().text + "' is not in this subset");
+            advance();
+            return zeroAt();
+        }
+        err("expected an expression");
+        advance();
+        return zeroAt();
+    }
+
+};
+
+
+}  // namespace
+
+std::string astFromRaw(std::vector<Token> raw, Diagnostics& diags) {
+    std::string file = "t.c";
+    int line = 1;
+    int col = 1;
+    if (!raw.empty()) {
+        line = raw.back().line;
+        col = raw.back().column;
+        if (!raw.back().file.empty()) file = raw.back().file;
+    }
+    std::vector<Token> toks;
+    for (Token& t : raw) {
+        if (!t.file.empty()) file = t.file;
+        if (t.kind != Tok::Newline) toks.push_back(std::move(t));
+    }
+    Token end;
+    end.kind = Tok::End;
+    end.file = file;
+    end.line = line;
+    end.column = col;
+    toks.push_back(std::move(end));
+    Parser parser(std::move(toks), diags);
+    Tu tu = parser.parseTu();
+    return printTu(tu);
+}
+
+std::string astOf(const std::string& source, Diagnostics& diags) {
+    MemoryFiles files;
+    files.add("t.c", source);
+    return astFromRaw(preprocessTokens(files, "t.c", {}, diags), diags);
+}
+
+std::string astOfFile(FileStore& files, const std::string& path, const std::vector<std::string>& includePaths,
+                      Diagnostics& diags) {
+    return astFromRaw(preprocessTokens(files, path, includePaths, diags), diags);
+}
+
+
+}  // namespace okaycc

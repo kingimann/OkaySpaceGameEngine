@@ -1247,10 +1247,15 @@ private:
 
 }  // namespace
 
+std::vector<Token> preprocessTokens(FileStore& files, const std::string& path,
+                                    const std::vector<std::string>& includePaths, Diagnostics& diags) {
+    Preprocessor pp(files, diags, includePaths);
+    return pp.run(path);
+}
+
 std::string preprocess(FileStore& files, const std::string& path, const std::vector<std::string>& includePaths,
                        Diagnostics& diags) {
-    Preprocessor pp(files, diags, includePaths);
-    return printTokens(pp.run(path));
+    return printTokens(preprocessTokens(files, path, includePaths, diags));
 }
 
 }  // namespace okaycc

@@ -144,6 +144,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -155,6 +156,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 
@@ -637,6 +639,79 @@ inline bool IsNullish(const Value& v) {
     return v.IsNumber() && v.AsFloat() == 0.0f;
 }
 
+// ---- Object references (#888 Findings 108 and 111) ----------------------------
+// A reference to a scene object is the object's instance id (a VsValue object),
+// not its name: spawned copies all share one name, so a name alone picks the
+// first copy. A reference still prints, concatenates and compares with text as
+// the object's name. A plain name (old scripts, "Enemy") still works and means
+// the first object with that name, exactly as before.
+inline Value ObjectRef(const GameObject* g) { return g ? Value::Object(g->InstanceId()) : Value{}; }
+/// The object `v` refers to: by instance id first (nullptr once destroyed), else
+/// by name in `s` (the first object with that name).
+inline GameObject* ResolveObject(Scene* s, const Value& v) {
+    if (v.IsObject()) return v.AsObjectId() ? GameObject::FromInstanceId(v.AsObjectId()) : nullptr;
+    return s ? s->Find(v.AsString()) : nullptr;
+}
+/// A member of a referenced object: other.name, other.tag, other.transform (the
+/// reference itself), other.transform.position, ... False when it isn't one.
+inline bool ObjectMember(GameObject* o, const Value& ref, const std::string& prop, Value& out) {
+    if (prop == "gameObject" || prop == "transform" || prop == "collider") { out = ref; return true; }
+    if (prop == "name") { out = Value{o ? o->name : (ref.IsObject() ? std::string() : ref.AsString())}; return true; }
+    if (!o) return false;
+    if (prop == "tag") { out = Value{o->tag}; return true; }
+    if (prop == "activeSelf" || prop == "active") { out = Value{(bool)o->active}; return true; }
+    if (prop == "activeInHierarchy") { out = Value{o->ActiveInHierarchy()}; return true; }
+    Transform* t = o->transform;
+    if (!t) return false;
+    if (prop == "position")      { out = Value{t->Position()}; return true; }
+    if (prop == "localPosition") { out = Value{t->localPosition}; return true; }
+    if (prop == "localScale")    { out = Value{t->localScale}; return true; }
+    if (prop == "eulerAngles" || prop == "localEulerAngles") { out = Value{t->localRotation.ToEuler()}; return true; }
+    if (prop == "forward") { out = Value{t->Forward()}; return true; }
+    if (prop == "up")      { out = Value{t->Up()}; return true; }
+    if (prop == "right")   { out = Value{t->Right()}; return true; }
+    return false;
+}
+/// Write a member of a referenced object: door.transform.position = v,
+/// other.transform.localScale = v, door.transform.position.x = 3. False when
+/// `path` isn't one that can be written.
+inline bool SetObjectMember(GameObject* o, std::string path, const Value& v) {
+    if (!o) return false;
+    if (path.rfind("transform.", 0) == 0) path = path.substr(10);
+    Transform* t = o->transform;
+    if (!t) return false;
+    auto axis = [&](const std::string& base, Vec3 cur, Vec3& out) -> bool {
+        if (path == base) { out = v.AsVec3(); return true; }
+        if (path.size() == base.size() + 2 && path.compare(0, base.size(), base) == 0 && path[base.size()] == '.') {
+            const char c = path.back();
+            if (c == 'x') cur.x = v.AsFloat(); else if (c == 'y') cur.y = v.AsFloat(); else if (c == 'z') cur.z = v.AsFloat();
+            else return false;
+            out = cur; return true;
+        }
+        return false;
+    };
+    Vec3 nv;
+    if (axis("position", t->Position(), nv))   { t->SetPosition(nv); return true; }
+    if (axis("localPosition", t->localPosition, nv)) { t->localPosition = nv; return true; }
+    if (axis("localScale", t->localScale, nv)) { t->localScale = nv; return true; }
+    if (path == "eulerAngles" || path == "localEulerAngles") { t->localRotation = Quat::Euler(v.AsVec3()); return true; }
+    return false;
+}
+/// While alive, the script's host acts as `o` (its gameObject and transform), so
+/// a builtin written for "this object" (transform.Translate, add_force3, the
+/// Animator calls, ...) runs on another object. Restores the host on exit.
+struct ActAsObject {
+    ScriptHost* h; Transform* t = nullptr; GameObject* g = nullptr;
+    ActAsObject(ScriptHost* host, GameObject* o) : h(host && o && o != host->gameObject ? host : nullptr) {
+        if (!h) return;
+        t = h->transform; g = h->gameObject;
+        h->gameObject = o; h->transform = o->transform;
+    }
+    ~ActAsObject() { if (h) { h->transform = t; h->gameObject = g; } }
+    ActAsObject(const ActAsObject&) = delete;
+    ActAsObject& operator=(const ActAsObject&) = delete;
+};
+
 inline const char* ValueKindName(const Value& v) {
     if (v.IsString()) return "text";
     if (v.IsBool()) return "true/false";
@@ -672,9 +747,13 @@ inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string&
         case KBool:
             if (v.IsBool()) return v;
             if (v.IsNumber()) return Value{v.AsFloat() != 0.0f};
+            if (v.IsObject()) return Value{v.AsBool()};   // an object reference: true while it exists
             return fail("");
         case KString:
             if (v.IsString()) return v;
+            // `void OnCollisionEnter(string other)`: an object reference keeps its
+            // identity in a string variable and still reads as the object's name.
+            if (v.IsObject()) return v;
             return fail(" (turn it into text with $\"{value}\" or .ToString())");
         default: return v;
     }
@@ -735,6 +814,9 @@ struct Runtime {
     std::string selfClass;
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
+    /// ref.Method(args) on an object reference (other.SetActive(false),
+    /// door.transform.Translate(1, 0, 0), other.GetComponent<Rigidbody>()).
+    Value CallOnObject(const Value& ref, const std::string& method, std::vector<Value>& args);
 
     // Details of the most recent raycast()/raycast3() call, exposed to scripts
     // through ray_object()/ray_x()/ray_dist()/... accessors.
@@ -753,8 +835,8 @@ struct Runtime {
     struct Timer { float remaining; float interval; std::string fn; bool dead; };
     std::vector<Timer> timers;
 
-    // Destroy(obj, seconds): {seconds left, object name ("" = this object)}.
-    std::vector<std::pair<float, std::string>> pendingDestroy;
+    // Destroy(obj, seconds): {seconds left, object reference or name ("" = this object)}.
+    std::vector<std::pair<float, Value>> pendingDestroy;
 
     // ---- C#-style coroutines -------------------------------------------------
     // StartCoroutine(Routine()) runs Routine on its own thread, but only one side
@@ -1039,8 +1121,8 @@ struct VarExpr    : Expr {
             bool ok = false; Value v = r.GetDotted(key, ok);
             if (ok) return v;
         }
-        // Bare `gameObject` (as in Destroy(gameObject)) is this object's name.
-        if (key == "gameObject" && r.selfClass.empty() && !r.Has(key) && r.host && r.host->gameObject) return Value{r.host->gameObject->name};
+        // Bare `gameObject` (as in Destroy(gameObject)) is a reference to this object (prints as its name).
+        if (key == "gameObject" && r.selfClass.empty() && !r.Has(key) && r.host && r.host->gameObject) return ObjectRef(r.host->gameObject);
         return r.Get(key);
     }
 };
@@ -1154,6 +1236,7 @@ struct BinaryExpr : Expr {
 // ---- C#-style members and methods on values ----------------------------------
 // s.Length, list.Count, dict.Keys, v.magnitude ... — false when `prop` isn't one.
 bool ValueProperty(const Value& v, const std::string& prop, Value& out) {
+    if (v.IsObject()) return ValueProperty(Value{v.AsString()}, prop, out);   // other.Length: its name's
     if (v.IsString()) {
         if (prop == "Length" || prop == "length") { out = Value{(float)v.AsString().size()}; return true; }
         return false;
@@ -1190,6 +1273,16 @@ bool ValuesEqual(const Value& a, const Value& b) {
     if (IsClassInstance(a) || IsClassInstance(b)) {
         if (IsClassInstance(a) && IsClassInstance(b)) return a.AsMap().get() == b.AsMap().get();
         return false;
+    }
+    // Object references: the same object, or (against text) the same name, so
+    // `other == "Target"` keeps working. A destroyed object equals null.
+    if (a.IsObject() || b.IsObject()) {
+        if (a.IsObject() && b.IsObject()) return a.AsObjectId() == b.AsObjectId() || (IsNullish(a) && IsNullish(b));
+        const Value& o = a.IsObject() ? a : b;
+        const Value& x = a.IsObject() ? b : a;
+        if (x.IsString()) return o.AsString() == x.AsString();
+        if (x.IsBool()) return o.AsBool() == x.AsBool();
+        return IsNullish(o) && IsNullish(x);
     }
     if (a.IsString() || b.IsString()) return a.AsString() == b.AsString();
     return a.AsFloat() == b.AsFloat();
@@ -1350,7 +1443,8 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
     return false;
 }
 
-// A component reference returned by GetComponent<T>(): the string "@T".
+// A component reference returned by GetComponent<T>(): the string "@T" for this
+// object's own component, "@T#<instance id>" for another object's (other.GetComponent<T>()).
 inline bool IsComponentRef(const Value& v) {
     return v.IsString() && v.AsString().size() > 1 && v.AsString()[0] == '@';
 }
@@ -1363,6 +1457,11 @@ struct MemberExpr : Expr {
         if (safe && IsNullish(v)) return Value{};
         if (IsClassInstance(v)) return rt.GetMember(v, name, true);
         if (IsComponentRef(v)) { std::vector<Value> a{Value{v.AsString().substr(1)}, Value{name}}; return rt.Call("__get_component", a); }
+        if (v.IsObject()) {   // GameObject.Find("Door").transform.position
+            GameObject* o = ResolveObject(nullptr, v);
+            if (ObjectMember(o, v, name, out)) return out;
+            if (!o) throw ScriptError("can't read '" + name + "': the object no longer exists");
+        }
         if (ValueProperty(v, name, out)) return out;
         throw ScriptError("no property '" + name + "' on this value");
     }
@@ -1374,6 +1473,12 @@ struct MemberAssignExpr : Expr {
     Value Eval(Runtime& rt) override {
         Value target = obj->Eval(rt), v = value->Eval(rt);
         if (IsClassInstance(target)) { rt.SetMember(target, name, v, true); return v; }
+        if (target.IsObject()) {   // GameObject.Find("Door").transform.position = v
+            GameObject* o = ResolveObject(nullptr, target);
+            if (!o) throw ScriptError("can't set '" + name + "': the object no longer exists");
+            if (!SetObjectMember(o, name, v)) throw ScriptError("can't set '" + name + "' on an object");
+            return v;
+        }
         if (!IsComponentRef(target))
             throw ScriptError(target.IsNumber() && target.AsFloat() == 0.0f
                 ? "can't set '" + name + "': the object is null (e.g. GetComponent found no such component)"
@@ -1414,6 +1519,7 @@ struct MethodCallExpr : Expr {
             vals.insert(vals.begin(), {Value{v.AsString().substr(1)}, Value{name}});
             return rt.Call("__call_component", vals);
         }
+        if (v.IsObject()) return rt.CallOnObject(v, name, vals);   // GameObject.Find("Door").SetActive(false)
         LambdaInvoker inv = [&rt](const Value& f, std::vector<Value>& xs) { return rt.CallLambda(f, xs); };
         if (CallValueMethod(v, name, vals, out, &inv)) return out;
         throw ScriptError("no method '" + name + "' on this value");
@@ -1995,6 +2101,16 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std
                 a.insert(a.end(), args.begin(), args.end());
                 return Call("__call_component", a);
             }
+            if (ok && obj.IsObject()) return CallOnObject(obj, method, args);   // other.SetActive(false)
+            // door.transform.Translate(...) where `door` is a plain object name.
+            if (ok && obj.IsString() && base.size() > 10 && base.compare(base.size() - 10, 10, ".transform") == 0 &&
+                builtins.count("transform." + method)) {
+                GameObject* me = host ? host->gameObject : nullptr;
+                GameObject* o = ResolveObject(me ? me->scene() : nullptr, obj);
+                if (!o) throw ScriptError("can't call '" + method + "': no object named '" + obj.AsString() + "'");
+                ActAsObject as(host, o);
+                return Call("transform." + method, args);
+            }
             if (ok && (method == "CompareTag" || method == "GetComponent" || method == "SetActive")) {
                 // `other` in a collision handler is the other object's name.
                 std::vector<Value> a{obj};
@@ -2094,6 +2210,27 @@ float EulerZ(const Quat& q) {
 }
 } // namespace
 
+Value Runtime::CallOnObject(const Value& ref, const std::string& method, std::vector<Value>& args) {
+    if (method == "CompareTag" || method == "GetComponent" || method == "SetActive") {
+        std::vector<Value> a{ref};
+        a.insert(a.end(), args.begin(), args.end());
+        return Call("__object_" + method, a);
+    }
+    // ref.transform.Translate(...), ref.transform.LookAt(...): this object's
+    // transform calls, run on the referenced object.
+    if (builtins.count("transform." + method)) {
+        GameObject* o = ResolveObject(nullptr, ref);
+        if (!o) throw ScriptError("can't call '" + method + "': the object no longer exists");
+        ActAsObject as(host, o);
+        return Call("transform." + method, args);
+    }
+    // Text methods on its name: other.StartsWith("Enemy"), other.ToString().
+    Value out, nm{ref.AsString()};
+    LambdaInvoker inv = [this](const Value& fv, std::vector<Value>& xs) { return CallLambda(fv, xs); };
+    if (CallValueMethod(nm, method, args, out, &inv)) return out;
+    throw ScriptError("no method '" + method + "' on an object reference");
+}
+
 Value Runtime::GetDotted(const std::string& name, bool& ok) {
     ok = true;
     Transform* t = host ? host->transform : nullptr;
@@ -2126,6 +2263,17 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Time.hitchCount")          return Value{(float)(GameLoop::Current() ? GameLoop::Current()->HitchCount() : 0)};
     if (name == "Space.World")     return Value{1.0f};
     if (name == "Space.Self")      return Value{0.0f};
+    // ForceMode (3D) uses the engine's ForceMode order; ForceMode2D.Impulse is 1,
+    // the same as the ForceMode2D.Impulse() call. #888 F109: these read as 0 before.
+    if (name == "ForceMode.Force")          return Value{0.0f};
+    if (name == "ForceMode.Acceleration")   return Value{1.0f};
+    if (name == "ForceMode.Impulse")        return Value{2.0f};
+    if (name == "ForceMode.VelocityChange") return Value{3.0f};
+    if (name == "ForceMode2D.Force")        return Value{0.0f};
+    if (name == "ForceMode2D.Impulse")      return Value{1.0f};
+    if (name == "RigidbodyType2D.Dynamic")   return Value{0.0f};
+    if (name == "RigidbodyType2D.Kinematic") return Value{1.0f};
+    if (name == "RigidbodyType2D.Static")    return Value{2.0f};
     if (name == "null")            return Value{};
     // Mathf constants
     if (name == "Mathf.PI")        return Value{Mathf::PI};
@@ -2206,6 +2354,11 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
                 Value out, bv = Get(base);
                 if (IsClassInstance(bv)) return GetMember(bv, prop, true);
                 if (IsComponentRef(bv)) { std::vector<Value> a{Value{bv.AsString().substr(1)}, Value{prop}}; return Call("__get_component", a); }
+                if (bv.IsObject()) {   // other.tag, other.transform, other.name
+                    GameObject* o = ResolveObject(nullptr, bv);
+                    if (ObjectMember(o, bv, prop, out)) return out;
+                    if (!o) throw ScriptError("can't read '" + name + "': the object no longer exists");
+                }
                 if (ValueProperty(bv, prop, out)) return out;
                 // An object's name (e.g. `other` in a collision handler): other.name, other.tag,
                 // other.gameObject, other.transform.position.
@@ -2222,6 +2375,11 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
                 bool inner = false;
                 Value bv = GetDotted(base, inner), out;
                 if (inner && IsClassInstance(bv)) return GetMember(bv, prop, true);
+                if (inner && bv.IsObject()) {   // other.transform.position
+                    GameObject* o = ResolveObject(nullptr, bv);
+                    if (ObjectMember(o, bv, prop, out)) return out;
+                    if (!o) throw ScriptError("can't read '" + name + "': the object no longer exists");
+                }
                 if (inner && ValueProperty(bv, prop, out)) return out;
                 if (inner && bv.IsString() && g && g->scene() && base.rfind(".transform") == base.size() - 10)
                     if (GameObject* o = g->scene()->Find(bv.AsString()))   // other.transform.position
@@ -2250,6 +2408,24 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
     if (name == "Time.smoothPhysics") {
         if (Scene* sc = g ? g->scene() : nullptr) sc->SetSmoothPhysics(v.AsBool());
         return true;
+    }
+    // door.transform.position = v / other.transform.localScale = v through an
+    // object reference (or a plain object name, for transform members) held in
+    // a variable. Before #888 F111 these writes were dropped without a word.
+    if (auto dot = name.find('.'); dot != std::string::npos) {
+        const std::string base = name.substr(0, dot), rest = name.substr(dot + 1);
+        if (base.find('.') == std::string::npos && !(base == "this" && IsClassInstance(self)) && Has(base)) {
+            Value bv = Get(base);
+            if (bv.IsObject()) {
+                GameObject* o = ResolveObject(nullptr, bv);
+                if (!o) throw ScriptError("can't set '" + name + "': the object no longer exists");
+                if (!SetObjectMember(o, rest, v)) throw ScriptError("can't set '" + rest + "' on an object");
+                return true;
+            }
+            if (bv.IsString() && !IsComponentRef(bv) && rest.rfind("transform.", 0) == 0 && g && g->scene()) {
+                if (GameObject* o = ResolveObject(g->scene(), bv)) if (SetObjectMember(o, rest, v)) return true;
+            }
+        }
     }
     // rb.velocity = ... on a GetComponent<T>() reference held in a variable.
     if (auto dot = name.find('.'); dot != std::string::npos && name.find('.', dot + 1) == std::string::npos) {
@@ -3967,7 +4143,7 @@ struct OkayScriptVM::Impl {
             if (go->transform)
                 go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f, 0.0f};
-            return Value{true};
+            return ObjectRef(go);   // a reference to the new copy (true in an if; prints as its name)
         };
         // spawn3(prefab, x, y, z): like spawn but places the new object in 3D.
         b["spawn3"] = [this](std::vector<Value>& a) {
@@ -3981,7 +4157,7 @@ struct OkayScriptVM::Impl {
                 go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f,
                                                  a.size() > 3 ? a[3].AsFloat() : 0.0f};
-            return Value{true};
+            return ObjectRef(go);
         };
         // ---- Object pools: reuse spawned objects instead of creating and freeing each one ----
         // pool_get("Bullet.okayprefab", x, y [, z]) is spawn / spawn3 taken from this scene's pool for that prefab: an
@@ -4000,7 +4176,7 @@ struct OkayScriptVM::Impl {
                 go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f,
                                                  a.size() > 3 ? a[3].AsFloat() : 0.0f};
-            return Value{true};
+            return ObjectRef(go);
         };
         b["pool_release"] = [this](std::vector<Value>&) {
             GameObject* go = rt.host ? rt.host->gameObject : nullptr;
@@ -4031,28 +4207,32 @@ struct OkayScriptVM::Impl {
             return (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
         };
         b["activate"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) g->active = true;
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) g->active = true;
             return Value{};
         };
         b["deactivate"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) g->active = false;
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) g->active = false;
             return Value{};
         };
         b["exists"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) return Value{s->Find(a[0].AsString()) != nullptr};
+            if (!a.empty()) if (Scene* s = sceneOf()) return Value{ResolveObject(s, a[0]) != nullptr};
             return Value{false};
         };
         // ---- Named-object helpers (also what visual-graph code export uses) ----
-        auto findNamed = [this, sceneOf](const std::string& n) -> GameObject* {
+        // An object reference resolves by its id; a name ("" / "self" = this object)
+        // by the first object with that name, as it always did.
+        auto findNamed = [this, sceneOf](const Value& v) -> GameObject* {
+            if (v.IsObject()) return ResolveObject(nullptr, v);
+            const std::string n = v.AsString();
             if (n.empty() || n == "self") return rt.host ? rt.host->gameObject : nullptr;
             Scene* s = sceneOf(); return s ? s->Find(n) : nullptr;
         };
         b["position_of"] = [findNamed](std::vector<Value>& a) {
-            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]);
             return Value{(g && g->transform) ? g->transform->Position() : Vec3{0, 0, 0}};
         };
         b["tag_of"] = [findNamed](std::vector<Value>& a) {
-            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]);
             return Value{g ? g->tag : std::string()};
         };
         b["set_active_of"] = [sceneOf](std::vector<Value>& a) {   // finds inactive objects too
@@ -4063,13 +4243,13 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["set_text_of"] = [findNamed](std::vector<Value>& a) {
-            if (GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString()))
+            if (GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]))
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = a.size() > 1 ? a[1].AsString() : std::string();
             return Value{};
         };
         b["move_toward_object"] = [this, findNamed](std::vector<Value>& a) {   // (name, speed) in 2D or 3D
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
-            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]);
             if (!me || !g || g == me || !me->transform || !g->transform) return Value{};
             Vec3 d = g->transform->Position() - me->transform->Position();
             float dist = d.Magnitude(), step = (a.size() > 1 ? a[1].AsFloat() : 2.0f) * rt.host->deltaTime;
@@ -4078,7 +4258,7 @@ struct OkayScriptVM::Impl {
         };
         b["face"] = [this, findNamed](std::vector<Value>& a) {   // turn toward a named object (3D yaw, else 2D Z)
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
-            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
+            GameObject* g = findNamed(a.empty() ? Value{std::string()} : a[0]);
             if (!me || !g || g == me || !me->transform || !g->transform) return Value{};
             Vec3 d = g->transform->Position() - me->transform->Position();
             if (std::fabs(d.z) > 1e-4f) me->transform->localRotation = Quat::LookRotation(Vec3{-d.x, 0.0f, -d.z}.Normalized());
@@ -4086,7 +4266,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["is_active"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) return Value{g->active};
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) return Value{g->active};
             return Value{false};
         };
         // Parent this object under a named one (pick up items, mount turrets on a
@@ -4095,7 +4275,7 @@ struct OkayScriptVM::Impl {
         b["set_parent"] = [this, sceneOf](std::vector<Value>& a) {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{};
             if (Scene* s = sceneOf())
-                if (GameObject* p = s->Find(a[0].AsString()))
+                if (GameObject* p = ResolveObject(s, a[0]))
                     rt.host->gameObject->transform->SetParent(p->transform, true);
             return Value{};
         };
@@ -4111,12 +4291,12 @@ struct OkayScriptVM::Impl {
         // Hierarchy queries by object name: child_count("Ship"), get_child("Ship", 0)
         // (the child's name, "" if out of range) and parent_of("Gun") ("" if none).
         b["child_count"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 return Value{(float)g->transform->ChildCount()};
             return Value{0.0f};
         };
         b["get_child"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 int i = SafeInt(a[1].AsFloat());
                 if (i >= 0 && i < g->transform->ChildCount() && g->transform->Children()[i]->gameObject)
                     return Value{g->transform->Children()[i]->gameObject->name};
@@ -4124,7 +4304,7 @@ struct OkayScriptVM::Impl {
             return Value{std::string{}};
         };
         b["parent_of"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (Transform* p = g->transform->Parent(); p && p->gameObject) return Value{p->gameObject->name};
             return Value{std::string{}};
         };
@@ -4132,33 +4312,33 @@ struct OkayScriptVM::Impl {
         // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp. Work on a
         // Stats or a SurvivalStats component, whichever the object has.
         b["hurt"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(a[1].AsFloat()); return Value{true}; }
                 if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(a[1].AsFloat()); return Value{true}; }
             }
             return Value{false};
         };
         b["heal"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) { st->Heal(a[1].AsFloat()); return Value{true}; }
                 if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Heal(a[1].AsFloat()); return Value{true}; }
             }
             return Value{false};
         };
         b["add_xp"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* st = g->GetComponent<Stats>()) { st->AddXP(SafeInt(a[1].AsFloat())); return Value{true}; }
             return Value{false};
         };
         b["get_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->health};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->health};
             }
             return Value{0.0f};
         };
         b["get_max_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* st = g->GetComponent<Stats>()) return Value{st->maxHealth};
                 if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->maxHealth};
             }
@@ -4167,17 +4347,17 @@ struct OkayScriptVM::Impl {
         // Read another object's world position by name (enemy AI chasing the
         // player, doors tracking a key, cameras following a target…).
         b["obj_x"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 return Value{g->transform->Position().x};
             return Value{0.0f};
         };
         b["obj_y"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 return Value{g->transform->Position().y};
             return Value{0.0f};
         };
         b["obj_z"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 return Value{g->transform->Position().z};
             return Value{0.0f};
         };
@@ -4338,7 +4518,7 @@ struct OkayScriptVM::Impl {
         b["dist_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Scene* s = sceneOf(); if (!s) return Value{0.0f};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{0.0f};
             Vec3 me = rt.host->gameObject->transform->Position();
             Vec3 ot = g->transform->Position();
             float dx = ot.x - me.x, dy = ot.y - me.y;
@@ -4349,7 +4529,7 @@ struct OkayScriptVM::Impl {
         b["vel_toward"] = [this, sceneOf](std::vector<Value>& a) {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{};
             Scene* s = sceneOf(); if (!s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{};
             auto* rb = rt.host->gameObject->GetComponent<Rigidbody2D>(); if (!rb) return Value{};
             Vec3 me = rt.host->gameObject->transform->Position();
             Vec3 ot = g->transform->Position();
@@ -4365,7 +4545,7 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{};
             Vec3 me = rt.host->gameObject->transform->Position();
             Vec3 ot = g->transform->Position();
             float deg = std::atan2(ot.y - me.y, ot.x - me.x) * 57.2957795f;
@@ -4402,7 +4582,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g || !g->transform) return Value{};
             float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
             float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
             Vec3 me = t->Position(), ot = g->transform->Position();
@@ -4419,7 +4599,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g || !g->transform) return Value{};
             float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
             float stop  = a.size() > 2 ? a[2].AsFloat() : 0.0f;
             Vec3 d = g->transform->Position() - t->Position();
@@ -4435,7 +4615,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g || !g->transform) return Value{};
             float speed = a.size() > 1 ? a[1].AsFloat() : 3.0f;
             Vec3 me = t->Position(), ot = g->transform->Position();
             float dx = me.x - ot.x, dy = me.y - ot.y;
@@ -4484,7 +4664,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g || !g->transform) return Value{};
             float speed = a.size() > 1 ? a[1].AsFloat() : 4.0f;
             float k = 1.0f - std::exp(-speed * rt.host->deltaTime);   // 0..1 ease factor
             Vec3 me = t->Position(), ot = g->transform->Position();
@@ -4527,7 +4707,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g || !g->transform) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g || !g->transform) return Value{};
             float radius = a.size() > 1 ? a[1].AsFloat() : 2.0f;
             float spd    = a.size() > 2 ? a[2].AsFloat() : 90.0f;
             Vec3 c = g->transform->Position(), me = t->Position();
@@ -4570,7 +4750,7 @@ struct OkayScriptVM::Impl {
             // toward the target (sets the new object's Rigidbody velocity).
             if (a.size() < 2 || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* s = sceneOf(); if (!s) return Value{false};
-            GameObject* tgt = s->Find(a[0].AsString()); if (!tgt || !tgt->transform) return Value{false};
+            GameObject* tgt = ResolveObject(s, a[0]); if (!tgt || !tgt->transform) return Value{false};
             Vec3 me = rt.host->gameObject->transform->Position();
             if (!ScriptAssetPathOk(a[1].AsString(), "shoot_at")) return Value{false};
             GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[1].AsString(), nullptr);
@@ -4697,7 +4877,7 @@ struct OkayScriptVM::Impl {
         // set_light_range, set_light_angle (spot cone, degrees), set_light_color(name, r, g, b).
         auto lightOf = [this](std::vector<Value>& a, size_t need) -> Light* {
             if (a.size() < need || !rt.host || !rt.host->gameObject || !rt.host->gameObject->scene()) return nullptr;
-            GameObject* g = rt.host->gameObject->scene()->Find(a[0].AsString());
+            GameObject* g = ResolveObject(rt.host->gameObject->scene(), a[0]);
             return g ? g->GetComponent<Light>() : nullptr;
         };
         b["set_light_intensity"] = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->intensity = a[1].AsFloat(); return Value{}; };
@@ -4766,7 +4946,7 @@ struct OkayScriptVM::Impl {
         // All take the GameObject name as the first argument so one script can
         // wire up a whole menu. Missing objects/components are no-ops / defaults.
         b["ui_set_text"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = a[1].AsString();
                 else if (auto* bt = g->GetComponent<UIButton>()) bt->label = a[1].AsString();
                 else if (auto* in = g->GetComponent<UIInputField>()) in->text = a[1].AsString();
@@ -4778,11 +4958,11 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{0.0f};
             Scene* s = sceneOf();
             if (!s) return Value{0.0f};
-            GameObject* g = s->Find(a[0].AsString());
+            GameObject* g = ResolveObject(s, a[0]);
             return Value{g && SetUIFocus(g) ? 1.0f : 0.0f};
         };
         b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 if (auto* tr = g->GetComponent<TextRenderer>()) return Value{tr->text};
                 if (auto* in = g->GetComponent<UIInputField>()) return Value{in->text};
                 if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->label};
@@ -4797,182 +4977,182 @@ struct OkayScriptVM::Impl {
             return Value{SetClipboardText(t) ? 1.0f : 0.0f};
         };
         b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->WasClicked()};
             return Value{false};
         };
         b["ui_set_interactable"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* bt = g->GetComponent<UIButton>()) bt->interactable = a[1].AsBool();
             return Value{};
         };
         b["ui_slider_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sl = g->GetComponent<UISlider>()) return Value{sl->value};
             return Value{0.0f};
         };
         b["ui_set_slider"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sl = g->GetComponent<UISlider>()) sl->value = a[1].AsFloat();
             return Value{};
         };
         b["ui_toggle_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
             return Value{false};
         };
         b["ui_set_toggle"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tg = g->GetComponent<UIToggle>()) tg->on = a[1].AsBool();
             return Value{};
         };
         b["ui_dropdown_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) return Value{(float)dd->value};
             return Value{0.0f};
         };
         b["ui_dropdown_text"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) return Value{dd->Selected()};
             return Value{std::string{}};
         };
         b["ui_set_dropdown"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         // Tab bars: read / select the tab (fires on_change), badge a tab (0 none,
         // -1 dot, N number) and enable / disable a tab. Tab indices are 0-based.
         b["ui_tab_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) return Value{(float)tb->value};
             return Value{0.0f};
         };
         b["ui_tab_text"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) return Value{tb->SelectedLabel()};
             return Value{std::string{}};
         };
         b["ui_set_tab"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) tb->Select(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_badge"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_enabled"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[1].AsFloat()), a[2].AsBool());
             return Value{};
         };
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
         // App widgets. A missing object is a no-op so a graph can call them safely.
         b["ui_search_query"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UISearchBar>()) return Value{w->query};
             return Value{std::string{}};
         };
         b["ui_set_search"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UISearchBar>()) w->SetQuery(a[1].AsString());
             return Value{};
         };
         b["ui_search_count"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UISearchBar>()) return Value{(float)w->MatchCount()};
             return Value{0.0f};
         };
         b["ui_set_date"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 4) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 4) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIDateTimePicker>())
                     w->SetDate(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), SafeInt(a[3].AsFloat()));
             return Value{};
         };
         b["ui_set_time"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIDateTimePicker>())
                     w->SetTime(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["ui_date_text"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIDateTimePicker>()) return Value{w->Text()};
             return Value{std::string{}};
         };
         b["ui_file_set_root"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIFilePicker>()) w->SetRoot(a[1].AsString());
             return Value{};
         };
         b["ui_file_open"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIFilePicker>()) w->Open(a[1].AsString());
             return Value{};
         };
         b["ui_file_selected"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIFilePicker>()) return Value{w->selected};
             return Value{std::string{}};
         };
         b["ui_accordion_toggle"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIAccordion>()) w->Toggle(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_accordion_open"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIAccordion>()) return Value{w->IsExpanded(SafeInt(a[1].AsFloat()))};
             return Value{false};
         };
         b["ui_breadcrumb_select"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIBreadcrumbs>()) w->Select(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_breadcrumb_path"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIBreadcrumbs>()) return Value{w->Path()};
             return Value{std::string{}};
         };
         b["ui_page"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->Page()};
             return Value{0.0f};
         };
         b["ui_page_count"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->PageCount()};
             return Value{0.0f};
         };
         b["ui_set_page"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIPagination>()) w->SetPage(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_set_loading"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UISkeleton>()) w->SetLoading(a[1].AsBool());
             return Value{};
         };
         b["ui_sheet_open"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIBottomSheet>()) w->Open();
             return Value{};
         };
         b["ui_sheet_close"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIBottomSheet>()) w->Close();
             return Value{};
         };
         b["ui_sheet_open_state"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* w = g->GetComponent<UIBottomSheet>()) return Value{w->IsOpen()};
             return Value{false};
         };
@@ -5012,7 +5192,7 @@ struct OkayScriptVM::Impl {
         b["ui_set_variant"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() < 2) return Value{0.0f};
             Scene* s = sceneOf();
-            GameObject* g = s ? s->Find(a[0].AsString()) : nullptr;
+            GameObject* g = s ? ResolveObject(s, a[0]) : nullptr;
             if (!g) return Value{0.0f};
             int v = a[1].IsNumber() ? SafeInt(a[1].AsFloat()) : UITheme::VariantFromName(a[1].AsString());
             if (v < 0 || v >= UITheme::kVariantCount) return Value{0.0f};
@@ -5039,7 +5219,7 @@ struct OkayScriptVM::Impl {
         };
         // ui_set_rich("Label", true): read [color=...] [b] [i] [size=N] tags in that text (screen or world text).
         b["ui_set_rich"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tr = g->GetComponent<TextRenderer>()) tr->richText = a[1].AsBool();
             return Value{};
         };
@@ -5068,7 +5248,7 @@ struct OkayScriptVM::Impl {
             return Value{-1.0f};
         };
         b["ui_set_radio"] = [sceneOf](std::vector<Value>& a) {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tg = g->GetComponent<UIToggle>()) tg->Select();
             return Value{};
         };
@@ -5106,139 +5286,139 @@ struct OkayScriptVM::Impl {
         };
         // grok/ui-color — pick a swatch on a named color picker (fires on_change).
         b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["swatch_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* cp = g->GetComponent<UIColorPicker>()) return Value{(float)cp->Value()};
             return Value{-1.0f};
         };
         // grok/ui-hud — crosshair recovery, radial options, and the slot grid, by object name.
         b["kick_spread"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* cr = g->GetComponent<Crosshair>()) cr->KickSpread(a[1].AsFloat());
             return Value{};
         };
         b["set_spread"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpread(a[1].AsFloat());
             return Value{};
         };
         b["set_spread_recover"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpreadRecover(a[1].AsFloat());
             return Value{};
         };
         b["set_radial"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(a[1].AsFloat());
             return Value{};
         };
         b["set_radial_thickness"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetThickness(a[1].AsFloat());
             return Value{};
         };
         b["set_radial_start"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetStartAngle(a[1].AsFloat());
             return Value{};
         };
         b["set_radial_spin"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetSpin(a[1].AsBool());
             return Value{};
         };
         b["set_radial_clockwise"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetClockwise(a[1].AsBool());
             return Value{};
         };
         b["set_radial_percent"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetShowPercent(a[1].AsBool());
             return Value{};
         };
         b["set_slot"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["slot_value"] = [sceneOf](std::vector<Value>& a) -> Value {
-            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sg = g->GetComponent<UISlotGrid>()) return Value{(float)sg->Value()};
             return Value{-1.0f};
         };
         // grok/ui-controls: the options added on top of dropdown, scroll, tabs, tooltip and text fields.
         b["set_dropdown_search"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetSearchable(a[1].AsBool());
             return Value{};
         };
         b["set_dropdown_max"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_dropdown_icon"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon(SafeInt(a[1].AsFloat()), a[2].AsString());
             return Value{};
         };
         b["set_scroll_inertia"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetInertia(a[1].AsFloat());
             return Value{};
         };
         b["set_scroll_elastic"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetElastic(a[1].AsBool());
             return Value{};
         };
         b["set_scroll_bar"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tabs_closable"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) tb->SetClosable(a[1].AsBool());
             return Value{};
         };
         b["close_tab"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tooltip_rich"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tt = g->GetComponent<UITooltip>()) tt->SetRichText(a[1].AsBool());
             return Value{};
         };
         b["set_tooltip_offset"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tt = g->GetComponent<UITooltip>()) tt->SetOffset(a[1].AsFloat(), a[2].AsFloat());
             return Value{};
         };
         b["set_tooltip_delay"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* tt = g->GetComponent<UITooltip>()) tt->SetDelay(a[1].AsFloat());
             return Value{};
         };
         b["set_input_multiline"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* in = g->GetComponent<UIInputField>()) in->SetMultiline(a[1].AsBool());
             return Value{};
         };
         b["set_input_limit"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_input_type"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType(SafeInt(a[1].AsFloat()));
             return Value{};
         };
@@ -5302,7 +5482,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
             return Value{};
         };
@@ -5389,12 +5569,12 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ui_set_slider_step"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sl = g->GetComponent<UISlider>()) sl->step = a[1].AsFloat();
             return Value{};
         };
         b["ui_set_slider_format"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* sl = g->GetComponent<UISlider>()) sl->valueFormat = a[1].AsString();
             return Value{};
         };
@@ -5417,17 +5597,17 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ui_set_bar_segments"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = SafeInt(a[1].AsFloat());
             return Value{};
         };
         b["ui_set_bar_trail"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->trailDelay = a[1].AsFloat();
             return Value{};
         };
         b["ui_set_bar_format"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->textFormat = a[1].AsString();
             return Value{};
         };
@@ -5440,7 +5620,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ui_set_button_ease"] = [sceneOf](std::vector<Value>& a) {
-            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
                 if (auto* bt = g->GetComponent<UIButton>()) {
                     bt->transitionEase = SafeInt(a[1].AsFloat());
                     if (a.size() >= 3) bt->transitionDuration = a[2].AsFloat();
@@ -5991,7 +6171,7 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && a[0].IsString()) {
                 first = 1;
                 Scene* s = sceneOf();
-                g = s ? s->Find(a[0].AsString()) : nullptr;
+                g = s ? ResolveObject(s, a[0]) : nullptr;
             }
             return g ? g->GetComponent<NavMeshAgent>() : nullptr;
         };
@@ -6023,7 +6203,7 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && a[0].IsString()) {
                 first = 1;
                 Scene* s = sceneOf();
-                g = s ? s->Find(a[0].AsString()) : nullptr;
+                g = s ? ResolveObject(s, a[0]) : nullptr;
             }
             return g ? g->GetComponent<GridPathAgent2D>() : nullptr;
         };
@@ -6033,7 +6213,7 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && a[0].IsString()) {
                 first = 1;
                 Scene* s = sceneOf();
-                g = s ? s->Find(a[0].AsString()) : nullptr;
+                g = s ? ResolveObject(s, a[0]) : nullptr;
             }
             return g;
         };
@@ -6150,7 +6330,7 @@ struct OkayScriptVM::Impl {
             if (a.size() > need && a[0].IsString()) {
                 first = 1;
                 Scene* s = sceneOf();
-                g = s ? s->Find(a[0].AsString()) : nullptr;
+                g = s ? ResolveObject(s, a[0]) : nullptr;
             }
             return g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
         };
@@ -6196,7 +6376,7 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && a[0].IsString()) {
                 first = 1;
                 Scene* s = sceneOf();
-                g = s ? s->Find(a[0].AsString()) : nullptr;
+                g = s ? ResolveObject(s, a[0]) : nullptr;
             }
             return g;
         };
@@ -6508,7 +6688,7 @@ struct OkayScriptVM::Impl {
             if (!theme) return Value{0.0f};
             GameObject* root = theme->gameObject;
             if (a.size() >= 2) {
-                if (GameObject* named = g->scene()->Find(a[1].AsString())) root = named;
+                if (GameObject* named = ResolveObject(g->scene(), a[1])) root = named;
             }
             theme->ApplyTo(root);
             return Value{1.0f};
@@ -6659,7 +6839,7 @@ struct OkayScriptVM::Impl {
         b["is_dead"] = [selfObj](std::vector<Value>& a) {
             if (!a.empty() && a[0].IsString()) {
                 GameObject* me = selfObj();
-                if (GameObject* g = me && me->scene() ? me->scene()->Find(a[0].AsString()) : nullptr) {
+                if (GameObject* g = me && me->scene() ? ResolveObject(me->scene(), a[0]) : nullptr) {
                     if (auto* st = g->GetComponent<Stats>()) return Value{st->IsDead() ? 1.0f : 0.0f};
                     if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->dead ? 1.0f : 0.0f};
                 }
@@ -6888,7 +7068,7 @@ struct OkayScriptVM::Impl {
             if (!a.empty() && a[0].IsString()) {
                 GameObject* g = selfObj();
                 if (a.size() >= 2 && a[1].IsString()) {
-                    GameObject* named = (g && g->scene()) ? g->scene()->Find(a[1].AsString()) : nullptr;
+                    GameObject* named = (g && g->scene()) ? ResolveObject(g->scene(), a[1]) : nullptr;
                     if (!named) return Value{0.0f};
                     return Value{SetIkLimbTarget(g, a[0].AsString(), named, nullptr) ? 1.0f : 0.0f};
                 }
@@ -6934,7 +7114,7 @@ struct OkayScriptVM::Impl {
         b["ik_look_at"] = [selfObj](std::vector<Value>& a) {
             GameObject* g = selfObj();
             if (!g || !g->scene() || a.empty()) return Value{0.0f};
-            GameObject* tgt = g->scene()->Find(a[0].AsString());
+            GameObject* tgt = ResolveObject(g->scene(), a[0]);
             if (!tgt) return Value{0.0f};
             GameObject* host = g;
             for (Transform* t = g->transform; t; t = t->Parent()) {
@@ -7044,7 +7224,7 @@ struct OkayScriptVM::Impl {
         b["hold_pickup"] = [this, holder](std::vector<Value>& a) {
             ProceduralObjectHolding* h = holder();
             Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
-            GameObject* obj = (sc && !a.empty()) ? sc->Find(a[0].AsString()) : nullptr;
+            GameObject* obj = (sc && !a.empty()) ? ResolveObject(sc, a[0]) : nullptr;
             return Value{h && h->Pickup(obj) ? 1.0f : 0.0f};
         };
         b["hold_nearest"] = [holder](std::vector<Value>& a) {
@@ -7075,7 +7255,7 @@ struct OkayScriptVM::Impl {
         auto invHost = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
         auto invObj = [invHost](std::vector<Value>& a, std::size_t k) -> GameObject* {
             GameObject* host = invHost();
-            if (a.size() > k && host && host->scene()) return host->scene()->Find(a[k].AsString());
+            if (a.size() > k && host && host->scene()) return ResolveObject(host->scene(), a[k]);
             return host;
         };
         auto invAt = [invObj](std::vector<Value>& a, std::size_t k) -> Inventory* {
@@ -7149,7 +7329,7 @@ struct OkayScriptVM::Impl {
         };
         b["inv_transfer"] = [invAt, invHost, itemArg, intArg](std::vector<Value>& a) {   // (target, item, n) -> moved
             Inventory* src = invAt(a, 3);
-            GameObject* tg = invHost() && invHost()->scene() && !a.empty() ? invHost()->scene()->Find(a[0].AsString()) : nullptr;
+            GameObject* tg = invHost() && invHost()->scene() && !a.empty() ? ResolveObject(invHost()->scene(), a[0]) : nullptr;
             Inventory* dst = ItemPickup::InventoryOf(tg);
             const std::string item = itemArg(a, 1);
             int left = intArg(a, 2, 1), moved = 0;
@@ -7575,7 +7755,7 @@ struct OkayScriptVM::Impl {
             NetworkManager* n = Net();
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             if (!n || !s || a.empty()) return Value{0.0f};
-            GameObject* go = a[0].AsString().empty() ? rt.host->gameObject : s->Find(a[0].AsString());
+            GameObject* go = a[0].AsString().empty() ? rt.host->gameObject : ResolveObject(s, a[0]);
             n->SetPawn(go);
             return Value{go ? 1.0f : 0.0f};
         };
@@ -8988,7 +9168,7 @@ struct OkayScriptVM::Impl {
         b["dist3_to"] = [this, sceneOf](std::vector<Value>& a) -> Value {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Scene* s = sceneOf(); if (!s) return Value{0.0f};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{0.0f};
             Vec3 d = g->transform->Position() - rt.host->gameObject->transform->Position();
             return Value{d.Magnitude()};
         };
@@ -8998,7 +9178,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{0.0f};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{0.0f};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{0.0f};
             Vec3 me = rt.host->gameObject->transform->Position();
             Vec3 to = g->transform->Position() - me;
             float d = to.Magnitude();
@@ -9013,7 +9193,7 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{};
             Transform* t = tf(); Scene* s = sceneOf();
             if (!t || !s) return Value{};
-            GameObject* g = s->Find(a[0].AsString()); if (!g) return Value{};
+            GameObject* g = ResolveObject(s, a[0]); if (!g) return Value{};
             Vec3 dir = g->transform->Position() - rt.host->gameObject->transform->Position();
             float len = dir.Magnitude();
             if (len < 1e-6f) return Value{};
@@ -9146,7 +9326,7 @@ struct OkayScriptVM::Impl {
         // Destroy a named object (e.g. a collected pickup, a defeated enemy).
         b["destroy_obj"] = [sceneOf](std::vector<Value>& a) {
             if (!a.empty()) if (Scene* s = sceneOf())
-                if (GameObject* g = s->Find(a[0].AsString())) s->Destroy(g);
+                if (GameObject* g = ResolveObject(s, a[0])) s->Destroy(g);
             return Value{};
         };
 
@@ -9578,9 +9758,11 @@ struct OkayScriptVM::Impl {
         // --- Custom events + object variables shared with visual-script graphs ---
         // send_event("Target", "Hit", value): runs the target's On Custom Event "Hit"
         // graph nodes and its scripts' OnEvent_Hit(value). "" / "self" = this object.
-        auto evTarget = [this](const std::string& name) -> GameObject* {
+        auto evTarget = [this](const Value& ref) -> GameObject* {
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
             if (!me) return nullptr;
+            if (ref.IsObject()) return ResolveObject(nullptr, ref);   // send_event(other, ...) hits that copy
+            const std::string name = ref.AsString();
             if (name.empty() || name == "self") return me;
             return me->scene() ? me->scene()->Find(name) : nullptr;
         };
@@ -9593,7 +9775,7 @@ struct OkayScriptVM::Impl {
         };
         b["send_event"] = [evTarget, deliverEvent](std::vector<Value>& a) {
             if (a.size() < 2) return Value{};
-            deliverEvent(evTarget(a[0].AsString()), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
+            deliverEvent(evTarget(a[0]), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
             return Value{};
         };
         // raise("OnHurt", 3) runs this script's += listeners for that name, and a
@@ -9653,7 +9835,7 @@ struct OkayScriptVM::Impl {
         // blackboard variable or a script's global on another object.
         b["set_object_var"] = [evTarget](std::vector<Value>& a) {
             if (a.size() < 3) return Value{};
-            if (GameObject* o = evTarget(a[0].AsString())) {
+            if (GameObject* o = evTarget(a[0])) {
                 for (auto* vc : o->GetComponents<VisualScriptComponent>()) vc->SetVariable(a[1].AsString(), a[2]);
                 for (auto* sc : o->GetComponents<ScriptComponent>()) if (sc->VM()) sc->VM()->SetGlobal(a[1].AsString(), a[2]);
             }
@@ -9661,7 +9843,7 @@ struct OkayScriptVM::Impl {
         };
         b["get_object_var"] = [evTarget](std::vector<Value>& a) -> Value {
             if (a.size() < 2) return Value{};
-            if (GameObject* o = evTarget(a[0].AsString())) {
+            if (GameObject* o = evTarget(a[0])) {
                 if (auto* vc = o->GetComponent<VisualScriptComponent>()) return vc->GetVariable(a[1].AsString());
                 if (auto* sc = o->GetComponent<ScriptComponent>()) if (sc->VM()) return sc->VM()->GetGlobal(a[1].AsString());
             }
@@ -9670,7 +9852,7 @@ struct OkayScriptVM::Impl {
         // set_object_position("Door", x, y, z): a non-number axis keeps its value.
         b["set_object_position"] = [evTarget](std::vector<Value>& a) {
             if (a.empty()) return Value{};
-            GameObject* o = evTarget(a[0].AsString());
+            GameObject* o = evTarget(a[0]);
             if (!o || !o->transform) return Value{};
             Vec3 p = o->transform->Position();
             if (a.size() > 1 && !a[1].IsString()) p.x = a[1].AsFloat();
@@ -9683,21 +9865,21 @@ struct OkayScriptVM::Impl {
         // plays its outro then hides it (instantly when it has no UI Animation),
         // ui_play("Menu") replays the intro.
         b["ui_show"] = [evTarget](std::vector<Value>& a) {
-            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString())) {
+            if (GameObject* o = evTarget(a.empty() ? Value{std::string()} : a[0])) {
                 o->active = true;
                 if (auto* ua = o->GetComponent<UIAnimation>()) ua->Play();
             }
             return Value{};
         };
         b["ui_hide"] = [evTarget](std::vector<Value>& a) {
-            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString())) {
+            if (GameObject* o = evTarget(a.empty() ? Value{std::string()} : a[0])) {
                 if (auto* ua = o->GetComponent<UIAnimation>(); ua && o->active) ua->PlayOut();
                 else o->active = false;
             }
             return Value{};
         };
         b["ui_play"] = [evTarget](std::vector<Value>& a) {
-            if (GameObject* o = evTarget(a.empty() ? std::string() : a[0].AsString()))
+            if (GameObject* o = evTarget(a.empty() ? Value{std::string()} : a[0]))
                 if (auto* ua = o->GetComponent<UIAnimation>()) ua->Play();
             return Value{};
         };
@@ -10722,11 +10904,13 @@ struct OkayScriptVM::Impl {
 
         // ---- Objects: Destroy(obj[, seconds]), Instantiate(prefab, pos, rot), CompareTag ----
         b["Destroy"] = [this, findNamed](std::vector<Value>& a) {
-            std::string target = a.empty() ? std::string() : a[0].AsString();
-            if (IsComponentRef(a.empty() ? Value{} : a[0])) return Value{};   // Destroy(component): ignore
+            Value target = a.empty() ? Value{std::string()} : a[0];
+            if (IsComponentRef(target)) return Value{};   // Destroy(component): ignore
             const float delay = a.size() > 1 ? a[1].AsFloat() : 0.0f;
             GameObject* me = rt.host ? rt.host->gameObject : nullptr;
-            if (me && target == me->name) target.clear();
+            // A plain name equal to this object's own name means this object (as before);
+            // a reference always means exactly the object it names.
+            if (me && !target.IsObject() && target.AsString() == me->name) target = Value{std::string()};
             if (delay > 0.0f) { rt.pendingDestroy.push_back({delay, target}); return Value{}; }
             GameObject* g = findNamed(target);
             if (g && g->scene()) g->scene()->Destroy(g);
@@ -10743,22 +10927,34 @@ struct OkayScriptVM::Impl {
             return rt.Call("spawn", a);
         };
         alias("Object.Instantiate", "Instantiate");
-        // GameObject.Find("Enemy") -> a reference to it (its name), or null.
-        b["GameObject.Find"] = [findNamed](std::vector<Value>& a) -> Value {
+        // GameObject.Find("Enemy") -> a reference to the first ACTIVE object with that
+        // name (or a "Parent/Child" path), or null. #888 F110: it used to return a
+        // switched-off object too. FindIncludingInactive is the explicit "any" variant.
+        b["GameObject.Find"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.empty() || a[0].AsString().empty()) return Value{};
-            GameObject* g = findNamed(a[0].AsString());
-            return g ? Value{g->name} : Value{};
+            Scene* s = sceneOf(); if (!s) return Value{};
+            if (a[0].IsObject()) { GameObject* g = ResolveObject(s, a[0]); return g && g->ActiveInHierarchy() ? ObjectRef(g) : Value{}; }
+            const std::string n = a[0].AsString();
+            for (const auto& up : s->Objects()) if (up && up->name == n && up->ActiveInHierarchy()) return ObjectRef(up.get());
+            if (n.find('/') != std::string::npos)
+                if (GameObject* g = s->Find(n); g && g->ActiveInHierarchy()) return ObjectRef(g);
+            return Value{};
+        };
+        b["GameObject.FindIncludingInactive"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty() || a[0].AsString().empty()) return Value{};
+            Scene* s = sceneOf();
+            return ObjectRef(ResolveObject(s, a[0]));
         };
         b["GameObject.FindWithTag"] = [this](std::vector<Value>& a) -> Value {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) for (const auto& up : s->Objects()) if (up && up->active && up->tag == a[0].AsString()) return Value{up->name};
+            if (s && !a.empty()) for (const auto& up : s->Objects()) if (up && up->ActiveInHierarchy() && up->tag == a[0].AsString()) return ObjectRef(up.get());
             return Value{};
         };
         alias("GameObject.FindGameObjectWithTag", "GameObject.FindWithTag");
         b["GameObject.FindGameObjectsWithTag"] = [this](std::vector<Value>& a) -> Value {
             Value out = Value::MakeArray();
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) for (const auto& up : s->Objects()) if (up && up->active && up->tag == a[0].AsString()) out.AsArray()->push_back(Value{up->name});
+            if (s && !a.empty()) for (const auto& up : s->Objects()) if (up && up->ActiveInHierarchy() && up->tag == a[0].AsString()) out.AsArray()->push_back(ObjectRef(up.get()));
             return out;
         };
         b["CompareTag"] = [go](std::vector<Value>& a) {
@@ -10766,14 +10962,18 @@ struct OkayScriptVM::Impl {
         };
         alias("gameObject.CompareTag", "CompareTag");
         b["__object_CompareTag"] = [findNamed](std::vector<Value>& a) {
-            GameObject* g = a.empty() ? nullptr : findNamed(a[0].AsString());
+            GameObject* g = a.empty() ? nullptr : findNamed(a[0]);
             return Value{g && a.size() > 1 && g->tag == a[1].AsString()};
         };
         b["__object_SetActive"] = [this](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            if (a[0].IsObject()) {   // exactly the referenced object
+                if (GameObject* g = ResolveObject(nullptr, a[0])) g->active = a.size() < 2 || a[1].AsBool();
+                return Value{};
+            }
             if (Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr)
-                if (!a.empty())
-                    for (const auto& up : s->Objects())
-                        if (up && up->name == a[0].AsString()) { up->active = a.size() < 2 || a[1].AsBool(); break; }
+                for (const auto& up : s->Objects())
+                    if (up && up->name == a[0].AsString()) { up->active = a.size() < 2 || a[1].AsBool(); break; }
             return Value{};
         };
         b["transform.LookAt"] = [this, tf](std::vector<Value>& a) {
@@ -10829,13 +11029,36 @@ struct OkayScriptVM::Impl {
         };
         alias("gameObject.GetComponent", "GetComponent");
         alias("TryGetComponent", "GetComponent");
-        b["__object_GetComponent"] = [findNamed, compOf](std::vector<Value>& a) -> Value {
-            GameObject* g = a.empty() ? nullptr : findNamed(a[0].AsString());
-            return (g && a.size() > 1 && compOf(g, a[1].AsString())) ? Value{"@" + a[1].AsString()} : Value{};
+        // other.GetComponent<T>(): "@T#<id>" names that object's component, so
+        // what is done with it lands on `other` (#888 F111: it used to be "@T",
+        // which every handler below read as this script's own component).
+        b["__object_GetComponent"] = [findNamed, compOf, go](std::vector<Value>& a) -> Value {
+            GameObject* g = a.empty() ? nullptr : findNamed(a[0]);
+            if (!g || a.size() < 2 || !compOf(g, a[1].AsString())) return Value{};
+            if (g == go()) return Value{"@" + a[1].AsString()};
+            return Value{"@" + a[1].AsString() + "#" + std::to_string(g->InstanceId())};
         };
-        b["__get_component"] = [this, go, compPtr](std::vector<Value>& a) -> Value {
-            GameObject* g = go(); if (!g || a.size() < 2) return Value{};
-            const std::string t = a[0].AsString(), p = a[1].AsString();
+        // The object and type a component reference names: "T" is this object's,
+        // "T#<id>" another object's (nullptr once that object is gone).
+        auto compTarget = [go](const Value& ref, std::string& type) -> GameObject* {
+            const std::string body = ref.AsString();
+            const auto hash = body.find('#');
+            if (hash == std::string::npos) { type = body; return go(); }
+            type = body.substr(0, hash);
+            return GameObject::FromInstanceId(std::strtoull(body.c_str() + hash + 1, nullptr, 10));
+        };
+        // Rigidbody / Rigidbody2D members a script used that don't exist: said once each.
+        auto unknownMember = [](const std::string& type, const std::string& member) {
+            static std::unordered_set<std::string> told;
+            if (told.insert(type + "." + member).second)
+                Log::Warning("[script] ", type, " has no property '", member, "' (ignored)");
+        };
+        b["__get_component"] = [this, compTarget, compPtr, unknownMember](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{};
+            std::string t;
+            GameObject* g = compTarget(a[0], t); if (!g) return Value{};
+            ActAsObject as(rt.host, g);   // Transform / Animator members read the referenced object
+            const std::string p = a[1].AsString();
             auto rgb = [](const Color& c) { return Value{Vec3{c.r, c.g, c.b}}; };
             if (t == "Transform") { bool ok = false; Value v = rt.GetDotted("transform." + p, ok); return v; }
             if (p == "enabled") { Component* c = compPtr(g, t); return Value{c ? c->enabled : true}; }
@@ -10852,9 +11075,38 @@ struct OkayScriptVM::Impl {
             if (auto* rb = g->GetComponent<Rigidbody2D>(); rb && t == "Rigidbody2D") {
                 if (p == "velocity" || p == "linearVelocity") return Value{Vec3{rb->velocity.x, rb->velocity.y, 0.0f}};
                 if (p == "gravityScale") return Value{rb->gravityScale};
+                if (p == "angularVelocity") return Value{rb->angularVelocity};   // degrees per second
+                if (p == "mass") return Value{rb->mass};
+                if (p == "drag" || p == "linearDamping") return Value{rb->drag};
+                if (p == "angularDrag" || p == "angularDamping") return Value{rb->angularDrag};
+                if (p == "isKinematic") return Value{rb->bodyType == Rigidbody2D::BodyType::Kinematic};
+                if (p == "bodyType") return Value{(float)(int)rb->bodyType};
+                if (p == "freezeRotation") return Value{rb->freezeRotation};
+                if (p == "bounciness") return Value{rb->bounciness};
+                if (p == "friction") return Value{rb->friction};
+                if (p == "position") return Value{g->transform ? g->transform->Position() : Vec3::Zero};
+                if (p == "sleeping" || p == "isSleeping") return Value{rb->sleeping};
+                unknownMember("Rigidbody2D", p);
+                return Value{};
             }
-            if (auto* rb = g->GetComponent<Rigidbody3D>(); rb && t == "Rigidbody")
+            if (auto* rb = g->GetComponent<Rigidbody3D>(); rb && t == "Rigidbody") {
                 if (p == "velocity" || p == "linearVelocity") return Value{rb->velocity};
+                if (p == "angularVelocity") return Value{rb->angularVelocity};   // radians per second
+                if (p == "mass") return Value{rb->mass};
+                if (p == "drag" || p == "linearDamping") return Value{rb->drag};
+                if (p == "angularDrag" || p == "angularDamping") return Value{rb->angularDrag};
+                if (p == "gravityScale") return Value{rb->gravityScale};
+                if (p == "useGravity") return Value{rb->gravityScale != 0.0f};
+                if (p == "isKinematic") return Value{rb->bodyType == Rigidbody3D::BodyType::Kinematic};
+                if (p == "freezeRotation") return Value{rb->freezeRotation};
+                if (p == "bounciness") return Value{rb->bounciness};
+                if (p == "friction") return Value{rb->friction};
+                if (p == "maxFallSpeed") return Value{rb->maxFallSpeed};
+                if (p == "position") return Value{g->transform ? g->transform->Position() : Vec3::Zero};
+                if (p == "sleeping" || p == "isSleeping") return Value{rb->sleeping};
+                unknownMember("Rigidbody", p);
+                return Value{};
+            }
             if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource") {
                 if (p == "volume") return Value{au->volume};
                 if (p == "pitch") return Value{au->pitch};
@@ -10881,9 +11133,12 @@ struct OkayScriptVM::Impl {
             if (t == "FirstPersonHands") return FpHandsGet(g->GetComponent<FirstPersonHands>(), p);
             return Value{};
         };
-        b["__set_component"] = [this, go, compPtr](std::vector<Value>& a) -> Value {
-            GameObject* g = go(); if (!g || a.size() < 3) return Value{};
-            const std::string t = a[0].AsString(), p = a[1].AsString();
+        b["__set_component"] = [this, compTarget, compPtr, unknownMember](std::vector<Value>& a) -> Value {
+            if (a.size() < 3) return Value{};
+            std::string t;
+            GameObject* g = compTarget(a[0], t); if (!g) return Value{};
+            ActAsObject as(rt.host, g);   // Transform members write the referenced object
+            const std::string p = a[1].AsString();
             const Value& v = a[2];
             auto col = [&](const Color& old) {
                 if (v.IsVec3()) { Vec3 c = v.AsVec3(); return Color{c.x, c.y, c.z, old.a}; }
@@ -10900,11 +11155,52 @@ struct OkayScriptVM::Impl {
             if (p == "flipX") if (auto* sr = g->GetComponent<SpriteRenderer>()) sr->flipX = v.AsBool();
             if (p == "text") if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = v.AsString();
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {
-                if (p == "velocity" || p == "linearVelocity") { Vec3 q = v.AsVec3(); rb->velocity = {q.x, q.y}; }
-                if (p == "gravityScale") rb->gravityScale = v.AsFloat();
+                if (p == "velocity" || p == "linearVelocity") { Vec3 q = v.AsVec3(); rb->velocity = {q.x, q.y}; rb->WakeUp(); }
+                else if (p == "gravityScale") { rb->gravityScale = v.AsFloat(); rb->WakeUp(); }
+                else if (p == "angularVelocity") { rb->angularVelocity = v.AsFloat(); rb->WakeUp(); }
+                else if (p == "mass") {
+                    if (!(v.AsFloat() > 0.0f)) throw ScriptError("Rigidbody2D mass must be more than 0");
+                    rb->mass = v.AsFloat();
+                }
+                else if (p == "drag" || p == "linearDamping") rb->drag = std::max(0.0f, v.AsFloat());
+                else if (p == "angularDrag" || p == "angularDamping") rb->angularDrag = std::max(0.0f, v.AsFloat());
+                else if (p == "isKinematic") { rb->bodyType = v.AsBool() ? Rigidbody2D::BodyType::Kinematic : Rigidbody2D::BodyType::Dynamic; rb->WakeUp(); }
+                else if (p == "bodyType") {
+                    const int k = SafeInt(v.AsFloat());
+                    rb->bodyType = k == 1 ? Rigidbody2D::BodyType::Kinematic : k == 2 ? Rigidbody2D::BodyType::Static : Rigidbody2D::BodyType::Dynamic;
+                    rb->WakeUp();
+                }
+                else if (p == "freezeRotation") rb->freezeRotation = v.AsBool();
+                else if (p == "bounciness") rb->bounciness = v.AsFloat();
+                else if (p == "friction") rb->friction = v.AsFloat();
+                else if (p == "position") { if (g->transform) g->transform->SetPosition(v.AsVec3()); rb->WakeUp(); }
+                else if (p != "enabled") unknownMember("Rigidbody2D", p);
+                return Value{};
             }
-            if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>())
-                if (p == "velocity" || p == "linearVelocity") rb->velocity = v.AsVec3();
+            if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>()) {
+                if (p == "velocity" || p == "linearVelocity") { rb->velocity = v.AsVec3(); rb->WakeUp(); }
+                else if (p == "angularVelocity") { rb->angularVelocity = v.AsVec3(); rb->WakeUp(); }
+                else if (p == "mass") {
+                    if (!(v.AsFloat() > 0.0f)) throw ScriptError("Rigidbody mass must be more than 0");
+                    rb->mass = v.AsFloat();
+                }
+                else if (p == "drag" || p == "linearDamping") rb->drag = std::max(0.0f, v.AsFloat());
+                else if (p == "angularDrag" || p == "angularDamping") rb->angularDrag = std::max(0.0f, v.AsFloat());
+                else if (p == "gravityScale") { rb->gravityScale = v.AsFloat(); rb->WakeUp(); }
+                else if (p == "useGravity") {   // off = gravityScale 0; on = 1 unless a scale is already set
+                    if (!v.AsBool()) rb->gravityScale = 0.0f;
+                    else if (rb->gravityScale == 0.0f) rb->gravityScale = 1.0f;
+                    rb->WakeUp();
+                }
+                else if (p == "isKinematic") { rb->bodyType = v.AsBool() ? Rigidbody3D::BodyType::Kinematic : Rigidbody3D::BodyType::Dynamic; rb->WakeUp(); }
+                else if (p == "freezeRotation") rb->freezeRotation = v.AsBool();
+                else if (p == "bounciness") rb->bounciness = v.AsFloat();
+                else if (p == "friction") rb->friction = v.AsFloat();
+                else if (p == "maxFallSpeed") rb->maxFallSpeed = std::max(0.0f, v.AsFloat());
+                else if (p == "position") { if (g->transform) g->transform->SetPosition(v.AsVec3()); rb->WakeUp(); }
+                else if (p != "enabled") unknownMember("Rigidbody", p);
+                return Value{};
+            }
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (p == "volume") au->volume = v.AsFloat();
                 if (p == "pitch") au->pitch = v.AsFloat();
@@ -10930,9 +11226,12 @@ struct OkayScriptVM::Impl {
             if (t == "FirstPersonHands") FpHandsSet(g->GetComponent<FirstPersonHands>(), p, v);
             return Value{};
         };
-        b["__call_component"] = [this, go](std::vector<Value>& a) -> Value {
-            GameObject* g = go(); if (!g || a.size() < 2) return Value{};
-            const std::string t = a[0].AsString(), m = a[1].AsString();
+        b["__call_component"] = [this, compTarget](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{};
+            std::string t;
+            GameObject* g = compTarget(a[0], t); if (!g) return Value{};
+            ActAsObject as(rt.host, g);   // Animator / IK / Transform calls run on the referenced object
+            const std::string m = a[1].AsString();
             std::vector<Value> rest(a.begin() + 2, a.end());
             auto arg = [&](std::size_t i) { return i < rest.size() ? rest[i] : Value{}; };
             if (t == "Animator" || t == "Animation") {
@@ -10962,9 +11261,38 @@ struct OkayScriptVM::Impl {
                 return Value{};
             }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {
-                Vec3 f = arg(0).IsVec3() ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), 0.0f};
-                const bool impulse = rest.size() >= 2 && arg(0).IsVec3() && arg(1).AsFloat() != 0.0f;   // ForceMode2D.Impulse
-                if (m == "AddForce") { if (impulse) rb->AddImpulse({f.x, f.y}); else rb->AddForce({f.x, f.y}); }
+                // A force is a vector or two numbers, then an optional mode: ForceMode2D.Force (0) /
+                // ForceMode2D.Impulse (1); ForceMode.Impulse (2) and VelocityChange (3) are taken too.
+                const bool vecFirst = arg(0).IsVec3();
+                Vec3 f = vecFirst ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), 0.0f};
+                const std::size_t modeAt = vecFirst ? 1 : 2;
+                const int mode = rest.size() > modeAt ? SafeInt(arg(modeAt).AsFloat()) : 0;
+                const ForceMode fm = mode == 3 ? ForceMode::VelocityChange : (mode == 1 || mode == 2) ? ForceMode::Impulse : ForceMode::Force;
+                if (m == "AddForce") { rb->AddForce(Vec2{f.x, f.y}, fm); return Value{}; }
+                if (m == "AddRelativeForce") {   // in the body's own axes
+                    Vec3 w = g->transform ? g->transform->Rotation() * Vec3{f.x, f.y, 0.0f} : f;
+                    rb->AddForce(Vec2{w.x, w.y}, fm); return Value{};
+                }
+                if (m == "AddImpulse") { rb->AddImpulse(Vec2{f.x, f.y}); return Value{}; }
+                if (m == "AddTorque") {   // (torque [, mode]); an impulse is spread over one physics step
+                    const float tq = arg(0).AsFloat();
+                    const int md = rest.size() > 1 ? SafeInt(arg(1).AsFloat()) : 0;
+                    const float step = Time::FixedDeltaTime() > 0.0f ? Time::FixedDeltaTime() : 1.0f / 60.0f;
+                    rb->AddTorque(md == 0 ? tq : tq / step);
+                    return Value{};
+                }
+                if (m == "AddForceAtPosition") {
+                    Vec3 pt = vecFirst ? arg(1).AsVec3() : Vec3{arg(2).AsFloat(), arg(3).AsFloat(), 0.0f};
+                    rb->AddForceAtPosition(Vec2{f.x, f.y}, Vec2{pt.x, pt.y});
+                    return Value{};
+                }
+                if (m == "MoveRotation") { if (g->transform) g->transform->localRotation = Quat::Euler({0, 0, arg(0).AsFloat()}); return Value{}; }
+                if (m == "WakeUp") { rb->WakeUp(); return Value{}; }
+                if (m == "Sleep") { rb->sleeping = true; return Value{}; }
+                if (m == "IsSleeping") return Value{rb->sleeping};
+                if (m == "IsAwake") return Value{!rb->sleeping};
+                if (m != "AddExplosionForce" && m != "MovePosition")
+                    throw ScriptError("Rigidbody2D has no method '" + m + "'");
                 if (m == "AddExplosionForce") {
                     float up = 0.0f;
                     Vec2 c; float force = 0.0f, radius = 0.0f;
@@ -10985,11 +11313,53 @@ struct OkayScriptVM::Impl {
                 if (m == "MovePosition" && g->transform) g->transform->localPosition = {f.x, f.y, g->transform->localPosition.z};
                 return Value{};
             }
-            if (t == "Rigidbody") if (g->GetComponent<Rigidbody3D>()) {
-                Vec3 f = arg(0).IsVec3() ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), arg(2).AsFloat()};
-                if (m == "AddForce") { std::vector<Value> x{Value{f.x}, Value{f.y}, Value{f.z}}; return rt.Call("add_force3", x); }
-                if (m == "MovePosition" && g->transform) g->transform->localPosition = f;
-                return Value{};
+            if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>()) {
+                // #888 F109: only AddForce (without its ForceMode) and MovePosition worked; the rest
+                // returned null without a word. A force is a vector or three numbers, then an optional
+                // ForceMode (Force 0, Acceleration 1, Impulse 2, VelocityChange 3).
+                const bool vecFirst = arg(0).IsVec3();
+                Vec3 f = vecFirst ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), arg(2).AsFloat()};
+                const std::size_t next = vecFirst ? 1 : 3;   // the argument after the force
+                auto modeAt = [&](std::size_t i) {
+                    const int md = rest.size() > i ? SafeInt(arg(i).AsFloat()) : 0;
+                    return md == 1 ? ForceMode::Acceleration : md == 2 ? ForceMode::Impulse
+                         : md == 3 ? ForceMode::VelocityChange : ForceMode::Force;
+                };
+                auto local = [&](const Vec3& v) { return g->transform ? g->transform->Rotation() * v : v; };
+                // Torque: Force adds to the step's torque; an Impulse is spread over one physics
+                // step; Acceleration and VelocityChange change the spin directly (radians per second).
+                auto torque = [&](const Vec3& tq, ForceMode md) {
+                    const float step = Time::FixedDeltaTime() > 0.0f ? Time::FixedDeltaTime() : 1.0f / 60.0f;
+                    if (md == ForceMode::Force) rb->AddTorque(tq);
+                    else if (md == ForceMode::Impulse) rb->AddTorque(tq * (1.0f / step));
+                    else if (md == ForceMode::Acceleration) { rb->angularVelocity = rb->angularVelocity + tq * step; rb->WakeUp(); }
+                    else { rb->angularVelocity = rb->angularVelocity + tq; rb->WakeUp(); }
+                };
+                if (m == "AddForce") { rb->AddForce(f, modeAt(next)); return Value{}; }
+                if (m == "AddRelativeForce") { rb->AddForce(local(f), modeAt(next)); return Value{}; }
+                if (m == "AddImpulse") { rb->AddImpulse(f); return Value{}; }
+                if (m == "AddTorque") { torque(f, modeAt(next)); return Value{}; }
+                if (m == "AddRelativeTorque") { torque(local(f), modeAt(next)); return Value{}; }
+                if (m == "AddForceAtPosition") {   // (force, point [, mode]); Impulse / VelocityChange kick at once
+                    const Vec3 pt = vecFirst ? arg(1).AsVec3() : Vec3{arg(3).AsFloat(), arg(4).AsFloat(), arg(5).AsFloat()};
+                    const ForceMode md = modeAt(vecFirst ? 2 : 6);
+                    const float step = Time::FixedDeltaTime() > 0.0f ? Time::FixedDeltaTime() : 1.0f / 60.0f;
+                    const float scale = (md == ForceMode::Impulse || md == ForceMode::VelocityChange) ? 1.0f / step : 1.0f;
+                    rb->AddForceAtPosition(f * scale, pt);
+                    return Value{};
+                }
+                if (m == "AddExplosionForce") {   // (force, center, radius [, upwards])
+                    const Vec3 c = arg(1).AsVec3();
+                    rb->AddExplosionForce(arg(0).AsFloat(), c, arg(2).AsFloat(), rest.size() > 3 ? arg(3).AsFloat() : 0.0f);
+                    return Value{};
+                }
+                if (m == "MovePosition") { if (g->transform) g->transform->localPosition = f; return Value{}; }
+                if (m == "MoveRotation") { if (g->transform) g->transform->localRotation = Quat::Euler(arg(0).AsVec3()); return Value{}; }
+                if (m == "WakeUp") { rb->WakeUp(); return Value{}; }
+                if (m == "Sleep") { rb->sleeping = true; return Value{}; }
+                if (m == "IsSleeping") return Value{rb->sleeping};
+                if (m == "IsAwake") return Value{!rb->sleeping};
+                throw ScriptError("Rigidbody has no method '" + m + "'");
             }
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (m == "Play") au->Play();
@@ -11209,13 +11579,13 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     // Destroy(obj, seconds) countdowns.
     if (!rt.pendingDestroy.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene()) {
         Scene* sc = rt.host->gameObject->scene();
-        std::vector<std::string> due;
+        std::vector<Value> due;
         for (auto& pd : rt.pendingDestroy) { pd.first -= deltaTime; if (pd.first <= 0.0f) due.push_back(pd.second); }
         rt.pendingDestroy.erase(std::remove_if(rt.pendingDestroy.begin(), rt.pendingDestroy.end(),
                                                [](const auto& pd) { return pd.first <= 0.0f; }), rt.pendingDestroy.end());
         GameObject* me = rt.host->gameObject;
         for (const auto& n : due) {
-            GameObject* g = n.empty() ? me : sc->Find(n);
+            GameObject* g = (!n.IsObject() && n.AsString().empty()) ? me : ResolveObject(sc, n);
             if (g) sc->Destroy(g);
             if (g == me) break;   // this script is going away with its object
         }

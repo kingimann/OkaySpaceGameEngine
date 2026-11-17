@@ -1622,6 +1622,13 @@ add_executable(test_okayscript_csharp test_okayscript_csharp.cpp)
 target_link_libraries(test_okayscript_csharp PRIVATE okay::engine)
 add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)
 
+# OkayScript object references carry the object's id (#888 Findings 108-111): spawned copies with one
+# name, the 3D Rigidbody API, Find skipping inactive objects, other.GetComponent<T>() on the other object.
+add_executable(test_okayscript_object_refs test_okayscript_object_refs.cpp)
+target_link_libraries(test_okayscript_object_refs PRIVATE okay::engine)
+target_compile_definitions(test_okayscript_object_refs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayscript_object_refs COMMAND test_okayscript_object_refs)
+
 # Built-in animations on imported rigs: humanoid bone matching (Mixamo / UE / Rigify).
 add_executable(test_humanoid_retarget test_humanoid_retarget.cpp)
 target_link_libraries(test_humanoid_retarget PRIVATE okay::engine)

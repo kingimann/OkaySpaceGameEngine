@@ -113,7 +113,7 @@ IEnumerator Hop()
 | `Update()` / `LateUpdate()` | Every frame (`Time.deltaTime` is the seconds since the last). |
 | `FixedUpdate()` | 50 times a second, however fast the game draws. |
 | `OnDisable()`, `OnDestroy()` | When the object is destroyed. |
-| `OnCollisionEnter/Stay/Exit(string other)`, `OnTriggerEnter/Stay/Exit(string other)` | Physics contacts, 2D and 3D. `other` is the other object (`other.name`, `other.CompareTag(..)`, `other.transform.position`). |
+| `OnCollisionEnter/Stay/Exit(string other)`, `OnTriggerEnter/Stay/Exit(string other)` | Physics contacts, 2D and 3D. `other` is a reference to the exact object that was touched, even when several copies share its name (`other.name`, `other.CompareTag(..)`, `other.transform.position`, `other.GetComponent<Rigidbody>()`, `Destroy(other)`). |
 | `OnMouseDown/Up/Enter/Exit/Over()`, `OnClick()` | Pointer events on the object. |
 
 ### Syntax that does nothing
@@ -136,12 +136,55 @@ each one with a warning saying what to delete:
 | Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (var kv in d)` |
 | Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
 | Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)` (`WaitForSecondsRealtime` ignores time scale), `yield return new WaitUntil(() => cond)`, `yield return new WaitWhile(() => cond)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
-| Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
-| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Time.sessionTime/sessionFrameCount/unscaledDeltaTime/fps/paused`, `Time.HitStop/SlowMotion/RampTimeScale`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+| Components | `GetComponent<T>()` returns a usable reference (`other.GetComponent<T>()` is the other object's component): `Rigidbody` (see below), `Rigidbody2D` (`velocity`, `angularVelocity`, `mass`, `drag`, `gravityScale`, `isKinematic`, `bodyType`, `AddForce(v [, ForceMode2D.Impulse])`, `AddTorque`, `AddImpulse`, `AddRelativeForce`, `AddForceAtPosition`, `AddExplosionForce`, `MovePosition`, `MoveRotation`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
+| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Time.sessionTime/sessionFrameCount/unscaledDeltaTime/fps/paused`, `Time.HitStop/SlowMotion/RampTimeScale`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag/FindGameObjectsWithTag` (active objects only), `GameObject.FindIncludingInactive`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
-Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
-returns a reference you can pass to `Destroy`, compare with `null`, or read
-`.tag` / `.transform.position` from. Not supported: your own classes as types
+### Object references
+
+`other` in a collision or trigger handler, `GameObject.Find(..)`,
+`FindWithTag(..)`, each entry of `FindGameObjectsWithTag(..)`, `gameObject`,
+and what `Instantiate(..)` / `spawn(..)` return are **references**: they carry
+the object's unique instance id, so they always mean that one object, even when
+spawned copies all have the same name ("Enemy", "Enemy", "Enemy"). A bullet
+that runs `Destroy(other)` destroys the enemy it hit, and a loop over
+`FindGameObjectsWithTag("Foe")` reaches every enemy.
+
+A reference still behaves like the object's name where text is expected:
+`print(other)` and `$"{other}"` show the name, `other == "Target"` compares the
+name, and `string other` parameters keep working. Two references are equal only
+when they are the same object, and a destroyed object's reference equals `null`.
+
+What you can do through a reference: read `.name`, `.tag`, `.activeSelf`,
+`.transform.position` / `localPosition` / `localScale` / `eulerAngles` /
+`forward`; write `.transform.position` (and `.x` / `.y` / `.z`),
+`localPosition`, `localScale`, `eulerAngles`; call `.CompareTag(..)`,
+`.SetActive(..)`, `.GetComponent<T>()` and `.transform.Translate / Rotate /
+LookAt(..)`; and pass it to `Destroy`, `send_event` and most builtins that take
+an object name. (A few builtins, such as the NPC, Spawner, logic and UI-frame
+helpers, still look the name up and so use the first object with that name.)
+
+A plain name in quotes (`Destroy("Enemy")`) still means the **first** object
+with that name, exactly as before. `GameObject.Find`, `FindWithTag` and
+`FindGameObjectsWithTag` skip switched-off (inactive) objects, as the API docs
+say; `GameObject.FindIncludingInactive("Door")` finds a hidden one.
+
+### Rigidbody (3D) from a script
+
+`Rigidbody rb = GetComponent<Rigidbody>();` (or `other.GetComponent<Rigidbody>()`)
+gives the body. Properties: `velocity`, `angularVelocity` (radians per second),
+`mass` (more than 0), `drag`, `angularDrag`, `gravityScale`, `useGravity`
+(off sets `gravityScale` to 0), `isKinematic`, `freezeRotation`, `bounciness`,
+`friction`, `maxFallSpeed`, `position`, `isSleeping`. Methods:
+`AddForce(v [, ForceMode.Force / Acceleration / Impulse / VelocityChange])`,
+`AddRelativeForce`, `AddImpulse`, `AddTorque(v [, mode])`, `AddRelativeTorque`,
+`AddForceAtPosition(force, point [, mode])`, `AddExplosionForce(force, center,
+radius [, upwards])`, `MovePosition` (moves the transform directly, it does not
+sweep through physics), `MoveRotation`, `WakeUp`, `Sleep`, `IsSleeping`.
+Torque in `Impulse` mode is spread over one physics step. A method the body
+doesn't have is an error; a property it doesn't have is ignored with a warning in
+the Console (once).
+
+Not supported: your own classes as types
 you `new`, generics you declare yourself, `ref`/`out` parameters, LINQ query
 syntax, and properties with bodies.
 

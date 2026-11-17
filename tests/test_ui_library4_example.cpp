@@ -4,6 +4,9 @@
 //
 // The files are made by this test: run it with OKAY_WRITE_UI_LIBRARY_EXAMPLE4=<folder> to write them there (after a change to the builders
 // or the serializer). Without it the test only reads the committed files. Written for this engine; no other project's code or assets.
+#include <cmath>
+#include <cstdlib>
+#include <algorithm>
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/UILibrary.hpp"
@@ -26,19 +29,47 @@ static std::string WithoutGuids(const std::string& text) {
 
 // Same text, ignoring guids. On a difference it prints the first few differing lines (a loaded file against a freshly built scene), so a failure
 // on another compiler or machine says which property differs instead of only "not equal".
+// Same scene, ignoring guids. Words are compared one by one; a number may differ by a relative 2e-6 (a few last-place float digits), because the
+// committed scene text was written on another machine and a compiler may round a computed colour one step differently (the scene text itself only
+// keeps 8 digits). Names, structure and every non-number word must match exactly. On a difference the first few differing lines are printed.
+static bool SameWord(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    char *ea = nullptr, *eb = nullptr;
+    const double x = std::strtod(a.c_str(), &ea), y = std::strtod(b.c_str(), &eb);
+    if (a.empty() || b.empty() || *ea || *eb) return false;
+    const double m = std::max(std::fabs(x), std::fabs(y));
+    return std::fabs(x - y) <= 2e-6 * std::max(1.0, m);
+}
+static bool SameLine(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    std::size_t i = 0, j = 0;
+    while (true) {
+        while (i < a.size() && a[i] == ' ') ++i;
+        while (j < b.size() && b[j] == ' ') ++j;
+        if (i >= a.size() || j >= b.size()) return i >= a.size() && j >= b.size();
+        // a quoted word is taken whole, so a name with spaces is compared exactly
+        auto word = [](const std::string& t, std::size_t& k) {
+            const std::size_t st = k;
+            if (t[k] == '"') { ++k; while (k < t.size() && t[k] != '"') ++k; if (k < t.size()) ++k; }
+            else while (k < t.size() && t[k] != ' ') ++k;
+            return t.substr(st, k - st);
+        };
+        if (!SameWord(word(a, i), word(b, j))) return false;
+    }
+}
 static bool SameScene(const std::string& a, const std::string& b) {
     const std::string x = WithoutGuids(a), y = WithoutGuids(b);
     if (x == y) return true;
-    std::size_t pa = 0, pb = 0; int shown = 0;
-    while ((pa < x.size() || pb < y.size()) && shown < 6) {
+    std::size_t pa = 0, pb = 0; int shown = 0; bool same = true;
+    while (pa < x.size() || pb < y.size()) {
         const std::size_t ea = x.find('\n', pa), eb = y.find('\n', pb);
         const std::string la = pa < x.size() ? x.substr(pa, ea == std::string::npos ? std::string::npos : ea - pa) : std::string("<end>");
         const std::string lb = pb < y.size() ? y.substr(pb, eb == std::string::npos ? std::string::npos : eb - pb) : std::string("<end>");
-        if (la != lb) { std::printf("  scene differs: [%s] vs [%s]\n", la.c_str(), lb.c_str()); ++shown; }
+        if (!SameLine(la, lb)) { same = false; if (shown < 6) { std::printf("  scene differs: [%s] vs [%s]\n", la.c_str(), lb.c_str()); ++shown; } }
         pa = ea == std::string::npos ? x.size() : ea + 1;
         pb = eb == std::string::npos ? y.size() : eb + 1;
     }
-    return false;
+    return same;
 }
 
 static GameObject* Under(GameObject* root, const std::string& name) {

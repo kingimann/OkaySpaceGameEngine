@@ -901,6 +901,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
@@ -1037,7 +1038,8 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
-bool g_vsync = false;    // false = uncapped FPS (no 60 Hz limit); true = vsync
+bool g_vsync = false;    // the VSync in effect (resolved from g_vsyncMode at start-up and when the setting changes)
+int  g_aaMode = 0, g_vsyncMode = 0;   // 0 Auto (default), 1 Off, 2 On (see AutoPerf.hpp); saved as "aamode" / "vsyncmode"
 bool g_smoothFrameTime = true;   // Play steps by an evened-out frame time (Time::SmoothDelta)
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
@@ -2210,7 +2212,7 @@ okayuihost::Region g_okayRegion;          // where the hosted panel was last fra
 okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
 #endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
-int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
+bool g_darkMode = true;         // Edit > Dark Mode / Light Mode (the only theme choice); saved as "darkmode"
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
@@ -2243,7 +2245,6 @@ bool g_uiSmartSnap = true;       // UI editor: alignment snapping + blue guide l
 bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
 int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
 int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
-int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Theme accent, category tints and toolbar widgets: EditorWidgets.cpp / .hpp.
 // A layer mask as the friendly list the physics accepts ("" = every layer).
@@ -2471,9 +2472,10 @@ void LoadSettings() {
         else if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "uibackend") g_uiBackendSetting = okayuibackend::FromSettingInt(v);
         else if (k == "autoperf") g_autoPerf = (v != 0);
-        else if (k == "vsync") g_vsync = (v != 0);
+        else if (k == "aamode") g_aaMode = oked::autoperf::ClampMode(v);
+        else if (k == "vsyncmode") g_vsyncMode = oked::autoperf::ClampMode(v);
+        // Old "vsync" / "ssaa" lines were written for everyone (default or not), so they are ignored: everyone starts on Auto.
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
-        else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
@@ -2490,9 +2492,9 @@ void LoadSettings() {
         else if (g_view.Apply(k, v)) {}   // camera overlay, stats line, names, toolbar labels, density
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
-        else if (k == "theme") g_theme = (v < 0 ? 0 : (v > 2 ? 2 : v));
-        else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
-        else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
+        else if (k == "darkmode") g_darkMode = (v != 0);
+        else if (k == "theme") g_darkMode = oked::menubar::LegacyThemeIsDark(v);   // old files: 0 Slate, 1 Light, 2 Classic
+        // Old "accent" and "uiscalepct" lines (accent colour, UI scale) are read and ignored: those choices are gone.
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "meshsymdefault") g_symDefaultMask = (v < 0 ? 0 : (v > 7 ? 7 : v));
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
@@ -2529,7 +2531,7 @@ void LoadSettings() {
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
     // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
     // user's own choices stick afterward.
-    if (ver < 3) { g_ssaa = 1; g_editorFov = 60.0f; SaveSettings(); }
+    if (ver < 3) { g_editorFov = 60.0f; SaveSettings(); }
     // Multi-window panels are always on now (no toggle) — the old coordinate-space
     // bug that forced them off in v2.623 is fixed. g_multiWindow stays true.
 }
@@ -2540,9 +2542,9 @@ void SaveSettings() {
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << (g_uiBackendSetting.empty() ? std::string() : std::string("uibackend ") + std::to_string(okayuibackend::ToSettingInt(g_uiBackendSetting)) + "\n")
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
-      << "vsync "      << (g_vsync ? 1 : 0) << "\n"
+      << "vsyncmode "  << g_vsyncMode << "\n"
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
-      << "ssaa "       << g_ssaa << "\n"
+      << "aamode "     << g_aaMode << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
       << "showvolumes " << (oked::g_showVolumes ? 1 : 0) << "\n"
@@ -2555,9 +2557,7 @@ void SaveSettings() {
       << g_view.Write()
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
       << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
-      << "theme " << g_theme << "\n"
-      << "accent " << g_accent << "\n"
-      << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
+      << "darkmode " << (g_darkMode ? 1 : 0) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "meshsymdefault " << g_symDefaultMask << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
@@ -5365,9 +5365,8 @@ builder::BuildReport g_buildReport;   // per-file size breakdown of the last bui
 
 // ---- Editor theme (default: the shared Slate palette) ----------------------
 void ApplyTheme() {
-    if (g_theme == 1)      ImGui::StyleColorsLight();
-    else if (g_theme == 2) ImGui::StyleColorsClassic();
-    else                   ImGui::StyleColorsDark();
+    if (g_darkMode) ImGui::StyleColorsDark();
+    else            ImGui::StyleColorsLight();
     ImGuiStyle& s = ImGui::GetStyle();
     // One spacing system for every panel: readable type, room between controls,
     // and hit targets you can land on. View > UI Scale still scales all of this.
@@ -5383,7 +5382,7 @@ void ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
-    if (g_theme == 0) {   // Slate: rounded controls + hairline borders (shared with the launcher)
+    {   // rounded controls + hairline borders (shared with the launcher), in both modes
         okaytheme::ApplySlateMetrics(s);
         s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
     }
@@ -5398,21 +5397,16 @@ void ApplyTheme() {
     s.TabBarBorderSize   = 1.0f;
     s.TabMinWidthBase    = 92.0f;
     s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
-    if (g_theme == 0) s.TabRounding = 6.0f;
-    // Density (Appearance > Density): Compact trims the vertical padding of every panel; Comfortable is the metrics above.
-    if (g_view.density == (int)okay::edlayout::Density::Compact) {
-        s.FramePadding.y *= 0.6f; s.ItemSpacing.y *= 0.7f; s.CellPadding.y *= 0.7f; s.WindowPadding.y *= 0.75f;
-    }
+    s.TabRounding = 6.0f;
     // Apply the global UI scale LAST so every metric above is scaled together.
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
 
-    // Light / Classic keep ImGui's own palette (only the metrics above apply).
-    if (g_theme != 0) return;
+    // Light mode keeps ImGui's own light palette (only the metrics above apply).
+    if (!g_darkMode) return;
 
-    // The shared OkaySpace "Slate" palette (same as the launcher and its chat),
-    // with the user's chosen accent colour.
-    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
+    // The shared OkaySpace "Slate" palette (same as the launcher and its chat), with the default accent colour.
+    const AccentPreset& ap = kAccents[0];
     okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
     // The selected tab of every group matches the panel under it (so it reads as
     // "connected"), focused or not; only the overline says which group has focus.
@@ -6877,6 +6871,7 @@ static oked::menubar::State MenuBarState(EditorState& ed) {
     s.recentCount = (int)g_recent.size();
     s.assimp = okay::AssimpAvailable();
     s.isolating = g_isolate != nullptr;
+    s.darkMode = g_darkMode;
     return s;
 }
 
@@ -6981,45 +6976,6 @@ static void DrawAutosaveMenuItems() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
 }
 
-// Edit > Preferences: how the editor looks (these four were View > Appearance).
-static void DrawPreferencesMenuItems() {
-    if (ImGui::BeginMenu("UI Scale")) {
-        struct { const char* n; float s; } presets[] = {
-            {"Compact (90%)", 0.9f}, {"Normal (100%)", 1.0f},
-            {"Comfortable (110%)", 1.1f}, {"Large (125%)", 1.25f}, {"Huge (150%)", 1.5f}};
-        for (auto& p : presets)
-            if (ImGui::MenuItem(p.n, nullptr, std::fabs(g_uiScale - p.s) < 0.01f))
-                { g_uiScale = p.s; ApplyTheme(); SaveSettings(); }
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Density")) {
-        for (int d = 0; d < 2; ++d)
-            if (ImGui::MenuItem(okay::edlayout::DensityName(d), nullptr, g_view.density == d)) { g_view.density = d; ApplyTheme(); SaveSettings(); }
-        ImGui::Separator();
-        ImGui::TextDisabled("Row spacing and field height in the Inspector and every panel.");
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Theme")) {
-        if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
-        if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
-        if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Accent color")) {
-        for (int i = 0; i < kAccentCount; ++i) {
-            char albl[48]; std::snprintf(albl, sizeof(albl), "     %s", kAccents[i].name);
-            if (ImGui::MenuItem(albl, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
-            // Drawn swatch dot in the leading space, in that accent's color.
-            ImVec2 amn = ImGui::GetItemRectMin(), amx = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddCircleFilled(
-                ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
-                ImGui::GetFontSize() * 0.28f,
-                ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
-        }
-        ImGui::EndMenu();
-    }
-}
-
 static void DrawSceneOverlayMenuItems(EditorState& ed) {
     ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
     oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
@@ -7068,11 +7024,39 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
     }
 }
 
+// What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
+static oked::autoperf::Hardware ReadHardware() {
+    oked::autoperf::Hardware h;
+    if (g_sdlRenderer) { SDL_RendererInfo ri; if (SDL_GetRendererInfo(g_sdlRenderer, &ri) == 0) h.gpuRenderer = (ri.flags & SDL_RENDERER_ACCELERATED) != 0; }
+    h.cpuCores = SDL_GetCPUCount();
+    h.ramMB = SDL_GetSystemRAM();
+    SDL_DisplayMode dm;
+    if (SDL_GetDesktopDisplayMode(0, &dm) == 0) h.displayHz = dm.refresh_rate;
+    return h;
+}
+// Turn the saved modes into the values in use (g_ssaa, g_vsync). Called at start-up and when the user changes a mode.
+static void ResolveAutoRendering() {
+    const oked::autoperf::Hardware h = ReadHardware();
+    g_ssaa = oked::autoperf::Resolve(g_aaMode, oked::autoperf::AutoAntiAliasing(h)) ? 2 : 1;
+    g_vsync = oked::autoperf::Resolve(g_vsyncMode, oked::autoperf::AutoVSync(h));
+    if (g_sdlRenderer) SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0);
+}
+// One Auto / Off / On submenu; the title shows what is in effect ("3D Anti-aliasing: Auto (On)").
+static void DrawAutoModeMenu(const char* name, int& mode, bool effective, const char* tip) {
+    using namespace oked::autoperf;
+    const std::string title = std::string(name) + ": " + Label(mode, effective);
+    if (ImGui::BeginMenu(title.c_str())) {
+        const char* names[3] = {"Auto (best for this PC)", "Off", "On"};
+        for (int m = 0; m < 3; ++m)
+            if (ImGui::MenuItem(names[m], nullptr, mode == m) && mode != m) { mode = m; ResolveAutoRendering(); SaveSettings(); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+}
+
 static void DrawRenderingMenuItems(EditorState& ed) {
     (void)ed;
-    bool aa = g_ssaa > 1;
-    if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+    DrawAutoModeMenu("3D Anti-aliasing (2x)", g_aaMode, g_ssaa > 1, "Smoother edges. Auto turns it on for PCs with a GPU, 4+ cores and 8 GB or more of memory; pick Off to boost FPS.");
     {
         // One toggle; the backend is auto-selected for this system: Direct3D 11 on
         // Windows, OpenGL elsewhere (whichever initialized), then software.
@@ -7121,8 +7105,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
-    if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
+    DrawAutoModeMenu("VSync", g_vsyncMode, g_vsync, "Off = uncapped FPS (no 60 Hz limit). On = no tearing. Auto turns it on when the GPU draws the editor and off for the software renderer.");
     if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
@@ -7509,7 +7492,6 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
     else if (id == "file.examples") DrawExampleMenuItems(ed);
     else if (id == "file.upgrade") ProjectUpgradeMenuItem(ed);   // upgrade this project to the editor's version, or restore a backup
     else if (id == "file.autosave") DrawAutosaveMenuItems();
-    else if (id == "edit.preferences") DrawPreferencesMenuItems();
     else if (id == "view.overlays") DrawSceneOverlayMenuItems(ed);
     else if (id == "view.bookmarks") DrawCameraBookmarkMenuItems(ed);
     else if (id == "view.rendering") DrawRenderingMenuItems(ed);
@@ -7572,6 +7554,7 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
         HierSelectMany(ed, all);
     }
     else if (id == "edit.deselect") ed.Select(nullptr);
+    else if (id == "edit.darkmode" || id == "edit.lightmode") { g_darkMode = (id == "edit.darkmode"); ApplyTheme(); SaveSettings(); }
     else if (id == "edit.projectsettings") g_showProjectSettings = true;
     // GameObject
     else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
@@ -7646,7 +7629,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
     // theme (its palette constants are known); reset exactly on stop.
-    if (g_theme == 0) {
+    if (g_darkMode) {
         ImGuiStyle& st = ImGui::GetStyle();
         if (ed.isPlaying()) {
             st.Colors[ImGuiCol_WindowBg]  = okaytheme::Mix(okaytheme::kBase, ImVec4(0, 0, 0, 1), 0.22f);
@@ -49912,10 +49895,9 @@ int main(int argc, char** argv) {
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED); }
     if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
-    // VSync off by default = uncapped FPS (no 60 Hz limit). Toggle in View > VSync.
-    SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
+    ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
     // the project's custom splash: logo, colours, accent. The project is the one being opened (--open
     // gives its scene); a new project or none starts from the defaults. It's a pure file read, safe
@@ -50278,6 +50260,8 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    ResolveAutoRendering();   // the saved Auto / Off / On modes are known now
+    g_view.density = 0;   // the Density choice is gone: always Comfortable, even if an old settings file saved Compact
     LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —

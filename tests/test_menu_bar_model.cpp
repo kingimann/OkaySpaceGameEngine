@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "MenuBarModel.hpp"
+#include "AutoPerf.hpp"
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -184,8 +185,18 @@ int main() {
         State s;
         CHECK((Ids(EditMenu(s)) == std::vector<std::string>{
             "edit.undo", "edit.redo", "---", "edit.cut", "edit.copy", "edit.paste", "edit.duplicate", "edit.delete", "---",
-            "edit.selectall", "edit.deselect", "---", "edit.preferences", "edit.projectsettings"}));
+            "edit.selectall", "edit.deselect", "---", "edit.darkmode", "edit.lightmode", "edit.projectsettings"}));
         CHECK(FindId(EditMenu(s), "edit.undo")->label == "Undo");
+        // One look choice: Dark Mode / Light Mode. The mode that is on is greyed with a reason; no Preferences menu is left.
+        CHECK(FindId(EditMenu(s), "edit.preferences") == nullptr);
+        CHECK(FindId(EditMenu(s), "edit.darkmode")->label == "Dark Mode");
+        CHECK(FindId(EditMenu(s), "edit.lightmode")->label == "Light Mode");
+        CHECK(!FindId(EditMenu(s), "edit.darkmode")->enabled && FindId(EditMenu(s), "edit.lightmode")->enabled);
+        CHECK(FindId(EditMenu(s), "edit.darkmode")->reason == "The editor is already in dark mode.");
+        { State l; l.darkMode = false;
+          CHECK(FindId(EditMenu(l), "edit.darkmode")->enabled && !FindId(EditMenu(l), "edit.lightmode")->enabled); }
+        // Old settings files: theme 0 Slate and 2 Classic are dark, 1 Light is light, unknown values fall back to dark.
+        CHECK(LegacyThemeIsDark(0) && !LegacyThemeIsDark(1) && LegacyThemeIsDark(2) && LegacyThemeIsDark(99));
         CHECK(!FindId(EditMenu(s), "edit.undo")->enabled);
         CHECK(FindId(EditMenu(s), "edit.undo")->reason == "Nothing to undo yet.");
         CHECK(FindId(EditMenu(s), "edit.redo")->reason == "Nothing to redo.");
@@ -304,7 +315,7 @@ int main() {
             {"Edit", "Undo", "edit.undo"}, {"Edit", "Redo", "edit.redo"}, {"Edit", "Project Settings...", "edit.projectsettings"},
             {"View", "Panels", "view.panels"}, {"View", "Editors & Tools", "view.tools"},
             {"View", "Rendering & Performance", "view.rendering"}, {"View", "Scene Overlays", "view.overlays"},
-            {"View", "Appearance", "edit.preferences"}, {"View", "Camera Bookmarks", "view.bookmarks"},
+            {"View", "Appearance", "edit.darkmode"}, {"View", "Camera Bookmarks", "view.bookmarks"},
             {"View", "Layout", "view.layout"}, {"View", "Reset Layout", "view.layout"},
             {"View > Editors & Tools", "UI Editing Mode", "view.uionly"},
             {"Window", "Items, Loot & Recipes", "tool.items"},   // the Window menu held only this duplicate
@@ -360,5 +371,18 @@ int main() {
         }
     }
 
+    {   // Auto for Rendering & Performance: best value for this PC, shown as "Auto (On)"; the user can still force a value.
+        using namespace oked::autoperf;
+        Hardware strong; strong.gpuRenderer = true; strong.cpuCores = 8; strong.ramMB = 16000; strong.displayHz = 144;
+        Hardware weak;   weak.gpuRenderer = false;  weak.cpuCores = 2;   weak.ramMB = 4000;
+        Hardware midGpu = strong; midGpu.cpuCores = 2;
+        Hardware unknown;
+        CHECK(AutoAntiAliasing(strong) && !AutoAntiAliasing(weak) && !AutoAntiAliasing(midGpu) && !AutoAntiAliasing(unknown));
+        CHECK(AutoVSync(strong) && !AutoVSync(weak) && !AutoVSync(unknown));
+        CHECK(Resolve(Auto, true) && !Resolve(Auto, false));
+        CHECK(!Resolve(ForceOff, true) && Resolve(ForceOn, false));   // an override beats Auto
+        CHECK(ClampMode(-1) == Auto && ClampMode(7) == Auto && ClampMode(2) == ForceOn);
+        CHECK(Label(Auto, true) == "Auto (On)" && Label(Auto, false) == "Auto (Off)" && Label(ForceOff, false) == "Off" && Label(ForceOn, true) == "On");
+    }
     TEST_MAIN_RESULT();
 }

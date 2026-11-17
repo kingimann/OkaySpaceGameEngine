@@ -8,7 +8,7 @@ namespace oked {
 // The current accent colour, for panels that want to tint their own widgets to
 // match the theme (component headers, the Add Component button, ...).
 ImVec4 AccentCol(float alpha) {
-    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
+    const AccentPreset& ap = kAccents[0];
     return ImVec4(ap.r, ap.g, ap.b, alpha);
 }
 // A tasteful category tint for a component header, derived from its label — so the

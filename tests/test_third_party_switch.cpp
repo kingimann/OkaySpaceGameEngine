@@ -37,8 +37,8 @@ static void Words() {
     RUN_SUITE("OKAY_THIRD_PARTY: the words");
     Unset("OKAY_THIRD_PARTY");
     CHECK(!okay::ThirdPartyForced());
-    for (const char* on : {"1", "on", "ON", "yes", "True"}) { Set("OKAY_THIRD_PARTY", on); CHECK(okay::ThirdPartyForced()); }
-    for (const char* off : {"0", "off", "no", "2", "onn", "truetruetrue", " 1"}) { Set("OKAY_THIRD_PARTY", off); CHECK(!okay::ThirdPartyForced()); }
+    Set("OKAY_THIRD_PARTY", "1"); CHECK(okay::ThirdPartyForced());   // exactly "1" (okay/Core/ThirdParty.hpp, shared with PR #982)
+    for (const char* off : {"0", "on", "yes", "true", "2", "11", " 1", "1 "}) { Set("OKAY_THIRD_PARTY", off); CHECK(!okay::ThirdPartyForced()); }
     Unset("OKAY_THIRD_PARTY");
 }
 

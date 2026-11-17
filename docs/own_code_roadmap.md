@@ -12,7 +12,7 @@ The owner wrote in chat on **2026-11-17**: "start switching them so i can test t
 rule 17) for the items below, given so the owner can test them in the Windows release; it is recorded here per item. The criteria of
 step 3 are **not** all met (none of these has run on real Windows), and the approval does not unlock step 5: the third-party code
 stays compiled in and selectable, and no library is deleted until the owner says it worked. Every item has its own way back and
-`OKAY_THIRD_PARTY=1` (`engine/include/okay/Core/ThirdPartySwitch.hpp`) sends all of them back at once; if our own window, GL context
+`OKAY_THIRD_PARTY=1` (exactly "1": `okay::ThirdPartyForced` in `engine/include/okay/Core/ThirdParty.hpp`, shared with the readers PR #982) sends all of them back at once; if our own window, GL context
 or renderer cannot start, the program starts on SDL by itself. Each program writes one line saying what is ours
 (`own: ...; third party: libsodium ...`). Steps: `docs/try_it.md` section 0b. Branch: `claude2/own-switch-on`.
 

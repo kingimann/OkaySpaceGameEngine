@@ -212,7 +212,7 @@ void TestSwitch() {
 }
 
 
-// OKAY_EDITOR_RENDERER read by CreateEditorGfxFromEnv: own needs the own platform; anything else is sdl.
+// OKAY_EDITOR_RENDERER read by CreateEditorGfxFromEnv: own (or unset) needs the own platform; anything else is sdl.
 void TestFromEnv() {
     RUN_SUITE("CreateEditorGfxFromEnv");
     for (int ownPlat = 0; ownPlat < 2; ++ownPlat)
@@ -220,7 +220,7 @@ void TestFromEnv() {
             std::unique_ptr<ep::EditorPlatform> p = ownPlat ? ep::CreateOwnEditorPlatform() : ep::CreateSdlEditorPlatform();
             CHECK(p != nullptr);
             if (!p) continue;
-            const bool wantOwn = v && std::strcmp(v, "own") == 0;
+            const bool wantOwn = eg::ParseRenderer(v) == eg::RendererKind::Own;   // unset is own too (the default since 2026-11-17)
             void* win = p->CreateMainWindow("editor-gfx-env", 160, 120, ownPlat && wantOwn);
             CHECK(win != nullptr);
             if (!win) continue;
@@ -236,7 +236,7 @@ void TestFromEnv() {
                 CHECK((g->SdlRenderer() == nullptr) == own);
                 CHECK(note.rfind("editor: renderer ", 0) == 0);
                 CHECK((note.find("could not start") != std::string::npos) == (wantOwn && !own));
-                if (wantOwn && !own) CHECK(note.find("needs OKAY_EDITOR_PLATFORM=own") != std::string::npos);
+                if (wantOwn && !own) CHECK(note.find("needs the own platform side") != std::string::npos);
             }
             g.reset();
             p->DestroyMainWindow();

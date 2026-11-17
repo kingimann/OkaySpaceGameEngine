@@ -2,7 +2,7 @@
 // The one master switch back to the third-party code (owner decision 2026-11-17: our own replacements are the default, each with
 // a way back; docs/own_code_roadmap.md, docs/try_it.md "Testing our own replacements").
 //
-//   OKAY_THIRD_PARTY=1   every own replacement that has a third-party twin goes back to it for this run: the platform layer and
+//   OKAY_THIRD_PARTY=1   (exactly "1"; okay::ThirdPartyForced in okay/Core/ThirdParty.hpp) every own replacement that has a third-party twin goes back to it for this run: the platform layer and
 //                        renderers (SDL), the WAV reader (SDL_LoadWAV / the old engine reader), the font rasteriser (Dear ImGui's),
 //                        the script code editor (ImGuiColorTextEdit) and the ported screens (Dear ImGui).
 //
@@ -14,19 +14,9 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace okay {
+#include "okay/Core/ThirdParty.hpp"   // okay::ThirdPartyForced(): exactly OKAY_THIRD_PARTY=1 (shared with the readers branch, PR #982)
 
-/// True when OKAY_THIRD_PARTY is set to "1", "on", "yes" or "true" (any case): use the old third-party paths. Read each call
-/// (cheap; the tests change it at run time).
-inline bool ThirdPartyForced() {
-    const char* e = std::getenv("OKAY_THIRD_PARTY");
-    if (!e || !*e) return false;
-    char b[8] = {};
-    std::size_t n = 0;
-    for (; e[n] && n + 1 < sizeof b; ++n) b[n] = (e[n] >= 'A' && e[n] <= 'Z') ? (char)(e[n] + 32) : e[n];
-    if (e[n]) return false;   // longer than any accepted word
-    return !std::strcmp(b, "1") || !std::strcmp(b, "on") || !std::strcmp(b, "yes") || !std::strcmp(b, "true");
-}
+namespace okay {
 
 /// Test hook for the automatic fallback: OKAY_TEST_OWN_FAIL makes our own start of `part` fail on purpose, so a test can see the
 /// program log it and start on SDL instead. Its value is "1" or "all" (every part), or a comma list of parts: "window" (the own

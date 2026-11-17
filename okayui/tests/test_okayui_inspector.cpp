@@ -1242,5 +1242,49 @@ int main() {
         Check("inspector_btrunner", b.Draw());
     }
 
+    // ================= stage 9 (section 22): the stage 8 gaps =================
+    {   // a right-click on a modifier's fold-out opens the same menu as its "..."; a pick comes back on the fold-out's row
+        BRig r(inspbody::BodyModifiers, 460.0f, 900.0f);
+        r.Frames(3);
+        const int t1 = r.Row("Array Along Curve###mod1");
+        const UI::Rect tree = r.res.rows[(std::size_t)t1];
+        CHECK(r.res.listRows.empty());
+        r.RightClick(tree.x + 30.0f, CY(tree)); r.Frames(2);
+        CHECK(r.res.listRows.size() >= 5);
+        Check("inspector_modifiers_rightmenu", r.Draw());
+        r.Click(r.res.listRows[1]);   // Move Down
+        CHECK(r.v.mdPicked == "down");
+        CHECK(r.L.rows[(std::size_t)t1].changed || r.v.mdPicked == "down");
+    }
+    {   // a closed modifier keeps its cost line, unindented under its line (Dear ImGui draws it outside the fold-out's `if (open)`)
+        BRig r(inspbody::BodyModifiers, 460.0f, 900.0f);
+        r.Frames(3);
+        const int t0 = r.Row("Mirror###mod0");
+        const UI::Rect tree = r.res.rows[(std::size_t)t0];
+        // a fold-out keeps its state by its label across rigs (the stage 8 check above leaves the Mirror closed): open it first
+        if (r.R("Merge at the mirror##mm").w == 0.0f) r.Click(tree.x + 30.0f, CY(tree));
+        CHECK(r.R("Merge at the mirror##mm").w > 0.0f);
+        const float boxX = r.res.rows[(std::size_t)t0 - 1].x;                 // the modifier's on box
+        const UI::Rect costOpen = r.res.rows[(std::size_t)t0 + 2];
+        CHECK(costOpen.w > 0.0f && costOpen.x > boxX + 4.0f);                 // open: inside the fold-out, indented
+        r.Click(tree.x + 30.0f, CY(tree));                                     // fold the Mirror
+        const UI::Rect cost = r.res.rows[(std::size_t)t0 + 2];
+        CHECK(cost.w > 0.0f && cost.y > tree.y + tree.h - 1.0f);               // still drawn, on the next line
+        CHECK(std::fabs(cost.x - boxX) < 0.5f);                                // at the check box's x: not indented
+        CHECK(r.R("X##mx").w == 0.0f && r.R("Merge at the mirror##mm").w == 0.0f);
+        // the next modifier's separator comes right under the cost line
+        const UI::Rect sep = r.res.rows[(std::size_t)r.Row("Array Along Curve###mod1") - 2];
+        CHECK(sep.y >= cost.y + cost.h && sep.y < cost.y + cost.h + 20.0f);   // one item spacing (and the rule's own) below
+        Check("inspector_modifiers_closed", r.Draw());
+    }
+    {   // First Person Hands: each preset in the open list shows its help on hover
+        BRig r(inspbody::BodyFpHands, 460.0f, 900.0f);
+        r.Frames(3);
+        r.Click(r.R("Preset"));
+        CHECK(r.res.listRows.size() == 5);
+        r.sim.Move(CX(r.res.listRows[1]), CY(r.res.listRows[1])); r.Frames(3);
+        Check("inspector_fphands_presettip", r.Draw());
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -1397,11 +1397,14 @@ ImVec4 FromU32(std::uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c | 0xff
 
 void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
     int skip = 0;
-    std::size_t closedAt = (std::size_t)-1;   // the closed fold-out's row: a row put on its line is still drawn (the Modifiers' "...")
+    // a closed fold-out's line: the rows put on it (the Modifiers' "...") and the rows marked keepClosed right after it (the Modifiers'
+    // cost, stage 9) are still drawn
+    bool closedLead = false;
     for (std::size_t k = 0; k < list.rows.size(); ++k) {
         InspRow& r = list.rows[k];
-        if (skip == 1 && k == closedAt + 1 && r.sameLine) {
+        if (skip == 1 && closedLead && (r.sameLine || r.keepClosed)) {
         } else if (skip > 0) {
+            closedLead = false;
             if (r.kind == InspRowTree) ++skip;
             else if (r.kind == InspRowTreeEnd) --skip;
             continue;
@@ -1516,6 +1519,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
                     }
                     ImGui::PushID(q);
                     if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
+                    if (r.itemTips && r.itemTips[q] && *r.itemTips[q] && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.itemTips[q]);
                     ImGui::PopID();
                 }
                 if (find[0] && !exact && ImGui::Selectable((std::string("Use \"") + find + "\"").c_str())) { r.sv = find; *cur = -1; r.changed = true; }
@@ -1525,6 +1529,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
                     if (r.heads && r.heads[q]) SectionHeaderImGui(r.heads[q], hooks);
                     ImGui::PushID(q);
                     if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
+                    if (r.itemTips && r.itemTips[q] && *r.itemTips[q] && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.itemTips[q]);
                     ImGui::PopID();
                 }
                 ImGui::EndCombo();
@@ -1722,7 +1727,18 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             if (r.on) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             const bool open = r.collapsing ? ImGui::CollapsingHeader(r.label) : ImGui::TreeNode(r.label);
             *r.B() = open;
-            if (!open) { skip = 1; closedAt = k; }
+            if (r.menu) {   // stage 9: a right-click on the fold-out opens its menu (the Modifiers': the same as its "...")
+                ImGui::PushID((int)k);
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##treemenu");
+                if (ImGui::BeginPopup("##treemenu")) {
+                    std::string chosen;
+                    HierMenuEntries(*r.menu, chosen);
+                    if (!chosen.empty()) { r.sv = chosen; r.changed = true; }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
+            }
+            if (!open) { skip = 1; closedLead = !r.collapsing; }
             break;
         }
         case InspRowTreeEnd: if (!r.collapsing) ImGui::TreePop(); break;

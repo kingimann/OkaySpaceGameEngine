@@ -232,11 +232,16 @@ bool DrawFpHandsBodyOkayUI(EditorState& ed, FirstPersonHands* h, bool& remove) {
     L.rows.reserve(160);
     L.Note("Your own arm in first person. Other players always see the full character. "
            "Pick a Preset to compare looks; the Preview window updates as you change it.", false, true);
-    static std::vector<const char*> presets;
-    if (presets.empty()) for (int i = 0; i < FirstPersonHands::kPresetCount; ++i) presets.push_back(FirstPersonHands::PresetName((FirstPersonHands::Preset)i));
+    static std::vector<const char*> presets, presetTips;
+    if (presets.empty())
+        for (int i = 0; i < FirstPersonHands::kPresetCount; ++i) {
+            presets.push_back(FirstPersonHands::PresetName((FirstPersonHands::Preset)i));
+            presetTips.push_back(FirstPersonHands::PresetHelp((FirstPersonHands::Preset)i));
+        }
     int preset = (int)h->preset;
     const int kPreset = L.Combo("Preset", &preset, presets.data(), (int)presets.size());
     L.Last().preview = FirstPersonHands::PresetName(h->preset);
+    L.Last().itemTips = presetTips.data();   // each preset's help on hover, as Dear ImGui's list (stage 9)
     L.Note(FirstPersonHands::PresetHelp(h->preset), false, true);
     const int kNormal = L.Button("Use normal first-person arms"); L.Tip("Sets every player-view number to the Normal preset. Ctrl+Z puts it back.");
     L.SameLine(); const int kOld = L.Button("Old look"); L.Tip("The look before presets, for comparing.");

@@ -1154,6 +1154,10 @@ static bool noteEdit(bool changed) {
     return changed;
 }
 
+namespace {
+void flushTooltip();   // the frame's tooltip (asked for with SetTooltip / Tooltip), drawn last by finalizeFrame
+void dropTooltip();
+} // namespace
 void BeginFrame(const Input& in) {
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
@@ -1180,6 +1184,7 @@ void BeginFrame(const Input& in) {
     g_popupTop = 0;
     PopStyleVar(32);                                // an unbalanced PushStyleVar never leaks into the next frame
     ++g_frameCount;
+    dropTooltip();   // a tooltip belongs to the frame that asked for it
     if (g_winBaseScale > 0.0f) { g_theme.textScale = g_winBaseScale; g_winBaseScale = 0.0f; }   // a window left open never keeps its font scale
     g_cursor = MouseCursor_Arrow;
     g_ime = ImeRect();
@@ -1855,6 +1860,7 @@ void finalizeFrame() {
         if (!g_tddExtSeen || g_tddExtReleased) { g_tddExt = false; g_tdd = TypedDrag(); }
         g_tddExtSeen = false; g_tddExtReleased = false;
     } else if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; g_tdd.active = false; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.preview[0] = 0; }
+    flushTooltip();                                  // the frame's tooltip, over everything
     reorderWindows();                                // windows in stacking order, then the overlay on top
     mergeOverlay();
     // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
@@ -3524,7 +3530,29 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
 
 namespace {
 // A tooltip box next to the cursor: several lines ("\n"), kept inside the display (flipped to the left / above when it would run off).
+// A tooltip is drawn at the end of the frame, on top of everything (as Dear ImGui's tooltip window is): drawn where it was asked for, a
+// tooltip inside an open list was painted over by the list's later rows, and it switched the overlay off for them, so they went under
+// the list (stage 9: the First Person Hands presets lost their last three rows while one was hovered). The last one asked for in a
+// frame is the one shown, as Dear ImGui's SetTooltip replaces an earlier one. The text scale it was asked with is kept.
+struct PendingTip { char text[1024]; float scale; bool on; };
+PendingTip g_pendingTip = {{0}, 1.0f, false};
+void paintTooltipBox(const char* text);
 void drawTooltipBox(const char* text) {
+    if (!text || !*text) return;
+    std::snprintf(g_pendingTip.text, sizeof g_pendingTip.text, "%s", text);
+    g_pendingTip.scale = g_theme.textScale;
+    g_pendingTip.on = true;
+}
+void flushTooltip() {
+    if (!g_pendingTip.on) return;
+    g_pendingTip.on = false;
+    const float was = g_theme.textScale;
+    g_theme.textScale = g_pendingTip.scale;
+    paintTooltipBox(g_pendingTip.text);
+    g_theme.textScale = was;
+}
+void dropTooltip() { g_pendingTip.on = false; }
+void paintTooltipBox(const char* text) {
     if (!text || !*text) return;
     const float s = g_theme.textScale, th = textH(), lineGap = 2.0f;
     int lines = 1; float tw = 0.0f;

@@ -1356,16 +1356,16 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Note("Base 12 tris  ->  result 96 tris", false, false);
         L.Combo("##addmod", &v.mdAdd, kTypes, 9); L.Last().width = 160.0f; L.Last().preview = "+ Add Modifier";
         L.SameLine(); L.SmallButton("Apply All##mods");
-        L.Separator(); L.Check("##on", &v.mdOn[0]); L.SameLine(); L.Tree("Mirror###mod0"); L.Last().on = true;
+        L.Separator(); L.Check("##on", &v.mdOn[0]); L.SameLine(); L.Tree("Mirror###mod0"); L.Last().on = true; L.Last().menu = &menu;
         L.SameLine(); L.MenuButton("...", &menu); L.Last().alignRight = true;
-        L.Note("0.04 ms");
+        L.Note("0.04 ms"); L.Last().keepClosed = true;
         L.Check("X##mx", &v.mdX); L.SameLine(); L.Check("Y##my", &v.mdY); L.SameLine(); L.Check("Z##mz", &v.mdZ);
         L.SameLine(); L.Note("axes"); L.Last().alignFrame = true;
         L.Check("Merge at the mirror##mm", &v.mdMerge); L.Check("Show in edit mode##se", &v.mdShow[0]);
         L.TreeEnd();
-        L.Separator(); L.Check("##on", &v.mdOn[1]); L.SameLine(); L.Tree("Array Along Curve###mod1"); L.Last().on = true;
+        L.Separator(); L.Check("##on", &v.mdOn[1]); L.SameLine(); L.Tree("Array Along Curve###mod1"); L.Last().on = true; L.Last().menu = &menu;
         L.SameLine(); L.MenuButton("...", &menu); L.Last().alignRight = true;
-        L.Note("0.31 ms");
+        L.Note("0.31 ms"); L.Last().keepClosed = true;
         L.DragInt("Count##cac", &v.mdCount, 0.1f, 1, 1000); L.Check("Follow the curve##caa", &v.mdAlign);
         L.Note("Curve points (x, y, z), start to end:");
         for (int i = 0; i < 3; ++i) { L.Drag("##cp", v.mdPath[i], 3, 0.02f, -1000.0f, 1000.0f, "%.2f"); L.Last().width = 190.0f; L.SameLine(); L.SmallButton("X##cpx"); }
@@ -1397,7 +1397,9 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         static const char* const kPresets[] = {"Normal", "Both arms", "Right hand only", "Minimal", "Old look"};
         static const char* const kModes[] = {"One hand (right)", "One hand (left)", "Two hands"};
         L.Note("Your own arm in first person. Other players always see the full character. Pick a Preset to compare looks; the Preview window updates as you change it.", false, true);
-        L.Combo("Preset", &v.fsPreset, kPresets, 5);
+        static const char* const kPresetTips[] = {"Normal: both hands, the usual size and place.", "Both arms: the forearms and sleeves too.",
+                                                  "Right hand only: the left hand hidden.", "Minimal: small hands, no arms.", "Old look: the look before presets."};
+        L.Combo("Preset", &v.fsPreset, kPresets, 5); L.Last().itemTips = kPresetTips;
         L.Note("Normal: both hands, the usual size and place.", false, true);
         L.Button("Use normal first-person arms"); L.SameLine(); L.Button("Old look");
         L.Check("Left click swings the arm", &v.fsSwing);

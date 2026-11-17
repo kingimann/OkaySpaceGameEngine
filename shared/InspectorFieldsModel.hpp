@@ -129,6 +129,13 @@ struct InspRow {
     const std::vector<PanelMenuEntry>* menu = nullptr;
     const char* searchHint = nullptr;
     const char* const* searchKeys = nullptr;
+    // stage 9 (docs/own_ui_toolkit.md section 22): InspRowTree with `menu`: a right-click on the fold-out opens these entries (the same
+    // menu as its "..."); the picked entry's id goes in `sv` and the row is marked changed. `keepClosed`: a row right after a fold-out's
+    // line that is drawn even while the fold-out is closed, unindented (Dear ImGui draws the Modifiers' cost line after TreeNode, outside
+    // its `if (open)`). InspRowCombo with `itemTips` (count entries, null for none): each list row's tooltip on hover (the First Person
+    // Hands presets).
+    bool keepClosed = false;
+    const char* const* itemTips = nullptr;
     // InspRowMask with presets (the Nav Mesh Agent's Area Mask): small buttons on one line at the top of the open list instead of
     // Everything and Nothing; a click sets the bits. `count` bits are listed (0: 32), named by `items` when set.
     const char* const* presetNames = nullptr;

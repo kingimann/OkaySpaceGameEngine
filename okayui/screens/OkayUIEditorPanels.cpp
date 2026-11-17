@@ -2561,11 +2561,14 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             return s_trees.back().second;
         };
         auto setPopup = [&](const UI::Rect& r) { if (r.w > 0.0f) res.popup = r; };
-        std::size_t closedAt = (std::size_t)-1;   // the closed fold-out's row: a row put on its line is still drawn (the Modifiers' "...")
+        // a closed fold-out's line: the rows put on it (the Modifiers' "...") and the rows marked keepClosed right after it (the
+        // Modifiers' cost, stage 9) are still drawn
+        bool closedLead = false;
         for (std::size_t k = 0; k < list.rows.size(); ++k) {
             InspRow& r = list.rows[k];
-            if (skipDepth == 1 && k == closedAt + 1 && r.sameLine) {
+            if (skipDepth == 1 && closedLead && (r.sameLine || r.keepClosed)) {
             } else if (skipDepth > 0) {
+                closedLead = false;
                 if (r.kind == InspRowTree) ++skipDepth;
                 else if (r.kind == InspRowTreeEnd) --skipDepth;
                 continue;
@@ -2703,6 +2706,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         UI::PushID(q);
                         if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
                         res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        if (r.itemTips && r.itemTips[q] && *r.itemTips[q] && UI::IsItemHovered()) UI::SetTooltip("%s", r.itemTips[q]);
                         UI::PopID();
                     });
                     bool useTyped = false;
@@ -2728,6 +2732,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         UI::PushID(q);
                         if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
                         res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        if (r.itemTips && r.itemTips[q] && *r.itemTips[q] && UI::IsItemHovered()) UI::SetTooltip("%s", r.itemTips[q]);
                         UI::PopID();
                     }
                     UI::Dummy(0.0f, 0.0f);   // the last row inside the list (see the search list above)
@@ -2741,6 +2746,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         UI::PushID(q);
                         if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
                         res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        if (r.itemTips && r.itemTips[q] && *r.itemTips[q] && UI::IsItemHovered()) UI::SetTooltip("%s", r.itemTips[q]);
                         UI::PopID();
                     });
                     UI::Dummy(0.0f, 0.0f);   // the last row inside the list: it was cut by the list's edge ("Slider (prismatic)", stage 7)
@@ -3176,7 +3182,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     InspArrow(UI::GetWindowDrawList(), regionX + g_metrics.framePadding.x, p.y + g_metrics.framePadding.y, fs, open, UI::GetColorU32(UI::Col_Text));
                     UI::GetWindowDrawList().AddText(UI::Vec2{regionX + fs + 3.0f * g_metrics.framePadding.x, p.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
                     *r.B() = open;
-                    if (!open) skipDepth = 1;
+                    if (!open) { skipDepth = 1; closedLead = false; }
                     break;
                 }
                 const std::string vis = Visible(r.label);
@@ -3196,8 +3202,28 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 InspArrow(UI::GetWindowDrawList(), p.x + g_metrics.framePadding.x + 0.15f * fs, p.y, 0.7f * fs, open, UI::GetColorU32(UI::Col_Text));
                 UI::GetWindowDrawList().AddText(UI::Vec2{p.x + fs + g_metrics.framePadding.x * 2.0f, p.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
                 *r.B() = open;
+                if (r.menu) {   // stage 9: a right-click on the fold-out opens its menu (the Modifiers': the same as its "...")
+                    if (UI::IsItemClicked(1)) UI::OpenPopup("##treemenu");
+                    if (UI::IsPopupOpen("##treemenu")) {
+                        MenuLook look_(PanelMenuWidth(*r.menu));
+                        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+                        UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+                        if (UI::BeginPopup("##treemenu")) {
+                            std::string pick;
+                            std::vector<std::string> ids; std::vector<UI::Rect> mrows;
+                            const UI::Vec2 mp = UI::GetCursorScreenPos();
+                            DrawPanelMenu(*r.menu, pick, &ids, &mrows);
+                            const UI::Vec2 me = UI::GetCursorScreenPos();
+                            setPopup(UI::Rect{mp.x - 16.0f, mp.y - 12.0f, PanelMenuWidth(*r.menu) + 32.0f, me.y - mp.y + 24.0f});
+                            res.listRows = mrows;
+                            if (!pick.empty()) { r.sv = pick; r.changed = true; }
+                            UI::EndPopup();
+                        }
+                        UI::PopStyleVar(2);
+                    }
+                }
                 if (open) { UI::Indent(g_metrics.indentSpacing); ++indent; }
-                else { skipDepth = 1; closedAt = k; }
+                else { skipDepth = 1; closedLead = true; }
                 break;
             }
             case InspRowTreeEnd:

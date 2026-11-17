@@ -239,19 +239,8 @@ std::string typeStr(const Type& t) {
     return "?";
 }
 
-std::string mangleTag(const std::string& qualified) {
-    std::string out;
-    std::size_t i = 0;
-    while (i < qualified.size()) {
-        std::size_t j = qualified.find("::", i);
-        std::string part = qualified.substr(i, j == std::string::npos ? std::string::npos : j - i);
-        out += std::to_string(part.size());
-        out += part;
-        if (j == std::string::npos) break;
-        i = j + 2;
-    }
-    return out;
-}
+std::string mangleNested(const std::string& qualified);
+std::string mangleTag(const std::string& qualified) { return mangleNested(qualified); }
 
 std::string mangleType(const Type& t) {
     switch (t.kind) {
@@ -274,14 +263,26 @@ std::string mangleType(const Type& t) {
     }
 }
 
+// One source-level name part. A class template instance is spelled "Box<i,Pc>" where each
+// argument is already mangled; it becomes <name> I <args> E (Itanium C++ ABI 5.1.5).
+std::string manglePart(const std::string& part) {
+    std::size_t lt = part.find('<');
+    if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;
+    std::string name = part.substr(0, lt);
+    std::string args = part.substr(lt + 1, part.size() - lt - 2);
+    std::string joined;
+    for (char c : args)
+        if (c != ',') joined += c;
+    return std::to_string(name.size()) + name + "I" + joined + "E";
+}
+
 std::string mangleNested(const std::string& qualified) {
     std::string out;
     std::size_t i = 0;
     while (i < qualified.size()) {
         std::size_t j = qualified.find("::", i);
         std::string part = qualified.substr(i, j == std::string::npos ? std::string::npos : j - i);
-        out += std::to_string(part.size());
-        out += part;
+        out += manglePart(part);
         if (j == std::string::npos) break;
         i = j + 2;
     }
@@ -518,6 +519,88 @@ struct Parsed {
 std::map<std::string, std::unique_ptr<Type>>& canonStructs();
 bool sameType(const Type& a, const Type& b);
 
+// ---- Templates ----
+// A function or class template is kept as a range of tokens. An instance is made by parsing those
+// tokens again with each template parameter bound (a type parameter becomes a typedef, a value
+// parameter becomes a constant). This is the model of ISO/IEC 14882 [temp.inst]. Function
+// templates called without explicit arguments are instantiated after the checker deduces the
+// arguments from the call, then the whole file is parsed again with the new requests.
+struct TArg {
+    std::unique_ptr<Type> type;
+    std::int64_t value = 0;
+    bool isValue = false;
+};
+
+std::vector<TArg> cloneArgs(const std::vector<TArg>& in) {
+    std::vector<TArg> out;
+    for (const TArg& a : in) {
+        TArg c;
+        if (a.type) c.type = cloneType(*a.type);
+        c.value = a.value;
+        c.isValue = a.isValue;
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+struct TemplateSig {
+    std::vector<std::string> names;
+    std::vector<bool> isType;
+    std::unique_ptr<Type> fn;  // prototype, a type parameter T appears as a struct with tag "\x02T"
+};
+
+std::map<std::string, TemplateSig>& funcTemplateSigs() {
+    static std::map<std::string, TemplateSig> m;
+    return m;
+}
+
+struct InstReq {
+    std::string tmpl;
+    std::vector<TArg> args;
+    std::string name;
+};
+
+std::vector<InstReq>& instRequests() {
+    static std::vector<InstReq> v;
+    return v;
+}
+
+bool& instDirty() {
+    static bool d = false;
+    return d;
+}
+
+std::string argMangle(const TArg& a) {
+    if (a.isValue) return "Li" + std::to_string(a.value) + "E";
+    return a.type ? mangleType(*a.type) : "i";
+}
+
+std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const std::vector<TArg>& args) {
+    if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
+        for (std::size_t i = 0; i < sig.names.size() && i < args.size(); ++i)
+            if (sig.names[i] == pat.tag.substr(1) && args[i].type) return cloneType(*args[i].type);
+        return cloneType(pat);
+    }
+    auto n = cloneType(pat);
+    if (pat.inner) n->inner = substType(*pat.inner, sig, args);
+    for (std::size_t i = 0; i < pat.params.size(); ++i)
+        if (pat.params[i].type) n->params[i].type = substType(*pat.params[i].type, sig, args);
+    return n;
+}
+
+// Name of a function template instance: _Z <name> I <arguments> E <parameter types>.
+std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args) {
+    std::string out = "_Z" + mangleNested(tmpl) + "I";
+    for (const TArg& a : args) out += argMangle(a);
+    out += "E";
+    if (!sig.fn || sig.fn->params.empty()) return out + "v";
+    for (const Param& p : sig.fn->params) {
+        auto t = p.type ? substType(*p.type, sig, args) : nullptr;
+        out += t ? mangleType(*t) : "i";
+    }
+    return out;
+}
+
 class Parser {
 public:
     Parser(std::vector<Token> toks, Diagnostics& diags) : toks_(std::move(toks)), diags_(diags) {}
@@ -528,6 +611,7 @@ public:
         while (!atEnd()) {
             std::size_t before = i_;
             if (isKw("namespace")) parseNamespace(tu);
+            else if (isKw("template")) parseTemplate();
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
@@ -541,6 +625,8 @@ public:
             if (stop_) break;
             if (i_ == before) advance();
         }
+        flushExtras(tu);
+        processInstances(tu);
         flushExtras(tu);
         return tu;
     }
@@ -607,6 +693,7 @@ private:
             isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
             isKwTok(t, "typedef"))
             return true;
+        if (t.kind == Tok::Ident && ctmpl_.count(t.text)) return true;
         if (t.kind != Tok::Ident || findTypedef(t.text) == nullptr) return false;
         if (!implicitTags_.count(t.text)) return true;
         // A struct tag used as a plain type name (C++). Where C would see a variable of the same
@@ -777,6 +864,8 @@ private:
             t->unsign = uns;
             return t;
         }
+        if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && !findTypedef(cur().text))
+            return instantiateClass(cur().text);
         if (!atEnd() && cur().kind == Tok::Ident) {
             const Type* td = findTypedef(cur().text);
             if (td) {
@@ -1334,12 +1423,22 @@ private:
             }
             if (tag.find("::") == std::string::npos) tag = qualify(tag);
         }
+        std::string tplShort;
+        if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
+            tplShort = instOverrideName_;
+            tag = instOverrideTag_;
+            instOverrideName_.clear();
+        }
         std::string baseTag;
         if (!tag.empty() && !isUnion && isP(":")) {
             advance();
             while (isKw("public") || isKw("private") || isKw("protected") || isKw("virtual")) advance();
             std::string bn;
-            if (!atEnd() && cur().kind == Tok::Ident) {
+            if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && nextIs("<")) {
+                auto bt = instantiateClass(cur().text);
+                if (bt && !bt->tag.empty() && classOf(bt->tag)) baseTag = bt->tag;
+                else err("unknown base class");
+            } else if (!atEnd() && cur().kind == Tok::Ident) {
                 bn = cur().text;
                 advance();
                 while (eatP("::")) {
@@ -1350,7 +1449,8 @@ private:
                 }
             }
             const Type* td = findTypedef(bn);
-            if (classOf(qualify(bn))) baseTag = qualify(bn);
+            if (!baseTag.empty()) {
+            } else if (classOf(qualify(bn))) baseTag = qualify(bn);
             else if (classOf(bn)) baseTag = bn;
             else if (td && !td->tag.empty() && classOf(td->tag)) baseTag = td->tag;
             else err("unknown base class '" + bn + "'");
@@ -1384,7 +1484,7 @@ private:
         cx.dtorPos.col = at.column;
         cx.dtorPos.file = at.file;
         bool classy = !tag.empty() && !isUnion;
-        std::string shortTag = shortName(tag);
+        std::string shortTag = tplShort.empty() ? shortName(tag) : tplShort;
         bool pub = !isClass;
         if (classy) cx.cxx = true;
         if (!baseTag.empty()) {
@@ -1758,6 +1858,11 @@ private:
         decl->init = std::move(init);
         decl->function = decl->type && decl->type->kind == Type::Kind::Function;
         decl->name = qualify(decl->name);
+        if (!instFnName_.empty() && decl->function) {
+            decl->name = instFnName_;
+            instFnName_.clear();
+            return decl;
+        }
         if (decl->name.find("::") != std::string::npos && decl->type) {
             if (decl->function) decl->asmName = mangleFunc(decl->name, *decl->type);
             else decl->asmName = mangleData(decl->name);
@@ -1784,6 +1889,319 @@ private:
         }
         for (auto& d : extras_) tu.decls.push_back(std::move(d));
         extras_.clear();
+    }
+
+    // ---- template parsing ----
+    struct TParam {
+        std::string name;
+        bool isType = true;
+        bool hasDef = false;
+        std::size_t defStart = 0;
+    };
+    struct TDecl {
+        std::vector<TParam> params;
+        std::size_t start = 0;
+        std::size_t end = 0;
+    };
+    std::map<std::string, TDecl> ftmpl_;
+    std::map<std::string, TDecl> ctmpl_;
+    std::vector<InstReq> work_;
+    std::set<std::string> instDone_;
+    std::string instOverrideName_;
+    std::string instOverrideTag_;
+    std::string instFnName_;
+    bool halfGt_ = false;
+
+    std::size_t skipDecl(std::size_t from) const {
+        std::size_t k = from;
+        int paren = 0;
+        while (k < toks_.size() && toks_[k].kind != Tok::End) {
+            const Token& t = toks_[k];
+            if (isP(t, "(")) ++paren;
+            else if (isP(t, ")")) --paren;
+            else if (isP(t, "{") && paren == 0) {
+                int depth = 0;
+                while (k < toks_.size() && toks_[k].kind != Tok::End) {
+                    if (isP(toks_[k], "{")) ++depth;
+                    else if (isP(toks_[k], "}") && --depth == 0) break;
+                    ++k;
+                }
+                ++k;
+                if (k < toks_.size() && isP(toks_[k], ";")) ++k;
+                return k;
+            } else if (isP(t, ";") && paren == 0) {
+                return k + 1;
+            }
+            ++k;
+        }
+        return k;
+    }
+
+    bool isAngleClose() const { return halfGt_ || isP(">") || isP(">>"); }
+    void closeAngle() {
+        if (halfGt_) {
+            halfGt_ = false;
+            advance();
+            return;
+        }
+        if (isP(">")) advance();
+        else if (isP(">>")) halfGt_ = true;
+        else err("expected '>'");
+    }
+
+    std::int64_t constOf(const Expr& e) {
+        if (e.kind == Expr::Kind::Int || e.kind == Expr::Kind::Char) return static_cast<std::int64_t>(e.ival);
+        if (e.kind == Expr::Kind::Unary && e.text == "-" && !e.kids.empty() && e.kids[0])
+            return -constOf(*e.kids[0]);
+        err("template argument is not a constant");
+        return 0;
+    }
+
+    TArg parseOneArg(const TParam& tp) {
+        TArg a;
+        if (tp.isType) {
+            auto b = parseBase();
+            while (eatP("*")) {
+                auto ptr = ty(Type::Kind::Pointer);
+                ptr->inner = std::move(b);
+                b = std::move(ptr);
+            }
+            a.type = std::move(b);
+        } else {
+            auto e = parseAdd();
+            a.isValue = true;
+            a.value = constOf(*e);
+        }
+        return a;
+    }
+
+    // At '<': read the template arguments up to the closing '>', then fill in defaults.
+    void parseTemplateArgs(const TDecl& td, std::vector<TArg>& out) {
+        advance();
+        std::size_t idx = 0;
+        while (!atEnd() && !isAngleClose()) {
+            if (idx >= td.params.size()) {
+                err("too many template arguments");
+                break;
+            }
+            out.push_back(parseOneArg(td.params[idx]));
+            ++idx;
+            if (!eatP(",")) break;
+        }
+        closeAngle();
+        for (; idx < td.params.size(); ++idx) {
+            if (!td.params[idx].hasDef) {
+                err("too few template arguments");
+                break;
+            }
+            std::size_t saved = i_;
+            i_ = td.params[idx].defStart;
+            out.push_back(parseOneArg(td.params[idx]));
+            i_ = saved;
+        }
+    }
+
+    struct EnumSave {
+        std::string name;
+        bool had = false;
+        std::int64_t old = 0;
+    };
+    std::vector<EnumSave> bindParams(const TDecl& td, const std::vector<TArg>& args) {
+        std::vector<EnumSave> saved;
+        tscopes_.emplace_back();
+        for (std::size_t i = 0; i < td.params.size() && i < args.size(); ++i) {
+            const TParam& tp = td.params[i];
+            if (tp.isType && args[i].type) {
+                tscopes_.back()[tp.name] = cloneType(*args[i].type);
+            } else if (!tp.isType) {
+                EnumSave es;
+                es.name = tp.name;
+                auto it = enums_.find(tp.name);
+                if (it != enums_.end()) {
+                    es.had = true;
+                    es.old = it->second;
+                }
+                saved.push_back(es);
+                enums_[tp.name] = args[i].value;
+            }
+        }
+        return saved;
+    }
+    void unbindParams(const std::vector<EnumSave>& saved) {
+        for (const EnumSave& es : saved) {
+            if (es.had) enums_[es.name] = es.old;
+            else enums_.erase(es.name);
+        }
+        if (!tscopes_.empty()) tscopes_.pop_back();
+    }
+
+    void parseTemplate() {
+        advance();
+        if (!eatP("<")) {
+            err("expected '<' after 'template'");
+            syncSemi();
+            return;
+        }
+        TDecl td;
+        while (!atEnd() && !isP(">")) {
+            TParam tp;
+            if (isKw("typename") || isKw("class")) {
+                tp.isType = true;
+                advance();
+            } else {
+                tp.isType = false;
+                while (!atEnd() && cur().kind != Tok::Ident && !isP(",") && !isP(">")) advance();
+            }
+            if (!atEnd() && cur().kind == Tok::Ident) {
+                tp.name = cur().text;
+                advance();
+            } else {
+                err("expected a template parameter name");
+                break;
+            }
+            if (eatP("=")) {
+                tp.hasDef = true;
+                tp.defStart = i_;
+                int depth = 0;
+                while (!atEnd()) {
+                    if (isP("<")) ++depth;
+                    else if (isP(">")) {
+                        if (depth == 0) break;
+                        --depth;
+                    } else if (isP(",") && depth == 0) break;
+                    advance();
+                }
+            }
+            td.params.push_back(tp);
+            if (!eatP(",")) break;
+        }
+        expectP(">", ">");
+        td.start = i_;
+        td.end = skipDecl(i_);
+        if (isKw("class") || isKw("struct")) {
+            if (i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) ctmpl_[toks_[i_ + 1].text] = td;
+            else err("expected a class template name");
+            i_ = td.end;
+            return;
+        }
+        std::string name;
+        int paren = 0;
+        for (std::size_t k = td.start; k < td.end; ++k) {
+            if (isP(toks_[k], "(")) {
+                if (paren == 0 && k > td.start && toks_[k - 1].kind == Tok::Ident) {
+                    name = toks_[k - 1].text;
+                    break;
+                }
+                ++paren;
+            }
+        }
+        if (name.empty()) {
+            err("expected a function template");
+            i_ = td.end;
+            return;
+        }
+        // The prototype, with each type parameter standing for itself, is what deduction matches.
+        TemplateSig sig;
+        std::vector<EnumSave> saved;
+        tscopes_.emplace_back();
+        for (const TParam& tp : td.params) {
+            sig.names.push_back(tp.name);
+            sig.isType.push_back(tp.isType);
+            if (tp.isType) {
+                auto ph = ty(Type::Kind::Struct);
+                ph->tag = "\x02" + tp.name;
+                tscopes_.back()[tp.name] = std::move(ph);
+            } else {
+                EnumSave es;
+                es.name = tp.name;
+                auto it = enums_.find(tp.name);
+                if (it != enums_.end()) {
+                    es.had = true;
+                    es.old = it->second;
+                }
+                saved.push_back(es);
+                enums_[tp.name] = 0;
+            }
+        }
+        i_ = td.start;
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        sig.fn = apply(std::move(base), d.mods);
+        for (const EnumSave& es : saved) {
+            if (es.had) enums_[es.name] = es.old;
+            else enums_.erase(es.name);
+        }
+        tscopes_.pop_back();
+        i_ = td.end;
+        funcTemplateSigs()[name] = std::move(sig);
+        ftmpl_[name] = td;
+    }
+
+    std::unique_ptr<Type> instantiateClass(const std::string& name) {
+        TDecl td = ctmpl_[name];
+        advance();
+        std::vector<TArg> args;
+        if (isP("<")) parseTemplateArgs(td, args);
+        else err("a class template needs its arguments in '<' '>'");
+        std::string tag = name + "<";
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (i) tag += ",";
+            tag += argMangle(args[i]);
+        }
+        tag += ">";
+        if (!structs_.count(tag) && args.size() == td.params.size()) {
+            std::size_t saved = i_;
+            auto savedPre = std::move(preStmts_);
+            preStmts_.clear();
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            auto es = bindParams(td, args);
+            instOverrideName_ = name;
+            instOverrideTag_ = tag;
+            i_ = td.start;
+            parseBase();
+            instOverrideName_.clear();
+            unbindParams(es);
+            i_ = saved;
+            preStmts_ = std::move(savedPre);
+            halfGt_ = savedHalf;
+        }
+        auto it = structs_.find(tag);
+        if (it == structs_.end() || !it->second) return ty(Type::Kind::Int);
+        return cloneType(*it->second);
+    }
+
+    void replayFunction(Tu& tu, const InstReq& r) {
+        auto it = ftmpl_.find(r.tmpl);
+        if (it == ftmpl_.end()) {
+            err("unknown function template '" + r.tmpl + "'");
+            return;
+        }
+        TDecl td = it->second;
+        std::size_t saved = i_;
+        auto es = bindParams(td, r.args);
+        instFnName_ = r.name;
+        i_ = td.start;
+        parseExternal(tu);
+        instFnName_.clear();
+        unbindParams(es);
+        i_ = saved;
+    }
+
+    void processInstances(Tu& tu) {
+        for (const InstReq& r : instRequests()) {
+            InstReq c;
+            c.tmpl = r.tmpl;
+            c.args = cloneArgs(r.args);
+            c.name = r.name;
+            work_.push_back(std::move(c));
+        }
+        while (!work_.empty() && !stop_) {
+            InstReq r = std::move(work_.back());
+            work_.pop_back();
+            if (!instDone_.insert(r.name).second) continue;
+            replayFunction(tu, r);
+        }
     }
 
     // extern "C" declaration  /  extern "C" { declarations }  (ISO C++ [dcl.link]). C linkage means
@@ -1828,6 +2246,7 @@ private:
         while (!atEnd() && !isP("}")) {
             std::size_t before = i_;
             if (isKw("namespace")) parseNamespace(tu);
+            else if (isKw("template")) parseTemplate();
             else if (parseLinkage(tu)) {
             } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
@@ -1849,7 +2268,10 @@ private:
         if (!eatP(":")) return;
         while (!atEnd() && !isP("{") && !isP(";")) {
             MemInit mi;
-            if (cur().kind == Tok::Ident) {
+            if (cur().kind == Tok::Ident && ctmpl_.count(cur().text) && nextIs("<")) {
+                auto bt = instantiateClass(cur().text);
+                mi.name = bt ? bt->tag : "";
+            } else if (cur().kind == Tok::Ident) {
                 mi.name = cur().text;
                 advance();
                 while (eatP("::")) {
@@ -2749,6 +3171,27 @@ private:
             advance();
             return e;
         }
+        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text)) {
+            std::string name = cur().text;
+            Token at = cur();
+            TDecl td = ftmpl_[name];
+            advance();
+            auto e = ex(Expr::Kind::Name, at);
+            if (isP("<")) {
+                std::vector<TArg> args;
+                parseTemplateArgs(td, args);
+                const TemplateSig& sig = funcTemplateSigs()[name];
+                InstReq r;
+                r.tmpl = name;
+                r.name = instFuncName(name, sig, args);
+                r.args = cloneArgs(args);
+                e->text = r.name;
+                work_.push_back(std::move(r));
+            } else {
+                e->text = "\x01" "tmpl:" + name;
+            }
+            return e;
+        }
         if (cur().kind == Tok::Ident) {
             auto it = enums_.find(cur().text);
             if (it != enums_.end() && !nextIs("::")) {
@@ -3210,7 +3653,7 @@ private:
                 }
                 r.type = cloneType(*inner.type->inner);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
             ET inner = decay(checkExpr(*e.kids[0]));
@@ -3298,7 +3741,7 @@ private:
             }
             r.type = cloneType(*ptr->type->inner);
             r.lvalue = true;
-            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
             return r;
         }
         case Expr::Kind::Member: {
@@ -3323,7 +3766,7 @@ private:
                 if (f.name != fname || !f.type) continue;
                 r.type = cloneType(*f.type);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
             err(e.line, e.col, "struct has no field '" + fname + "'");
@@ -3529,11 +3972,86 @@ private:
         return cast2;
     }
 
+    // Match a prototype type (with "\x02T" placeholders) against an argument type and bind T.
+    bool deduceType(const Type& pat, const Type& arg, const TemplateSig& sig,
+                    std::vector<std::unique_ptr<Type>>& bound) {
+        if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
+            for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                if (sig.names[i] != pat.tag.substr(1)) continue;
+                std::unique_ptr<Type> a = cloneType(arg);
+                if (a->kind == Type::Kind::Array && a->inner) a = ptrTo(std::move(a->inner));
+                if (!bound[i]) {
+                    bound[i] = std::move(a);
+                    return true;
+                }
+                return sameType(*bound[i], *a);
+            }
+            return true;
+        }
+        if (pat.kind == Type::Kind::Pointer && pat.inner) {
+            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
+                return deduceType(*pat.inner, *arg.inner, sig, bound);
+            return true;
+        }
+        if (pat.kind == Type::Kind::Reference && pat.inner) return deduceType(*pat.inner, arg, sig, bound);
+        if (pat.kind == Type::Kind::Array && pat.inner) {
+            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
+                return deduceType(*pat.inner, *arg.inner, sig, bound);
+            return true;
+        }
+        return true;
+    }
+
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
         Expr& c0 = *e.kids[0];
         static const std::string kCtor = "\x01" "ctor:";
-        if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kCtor.size(), kCtor) == 0) {
+        static const std::string kTmpl = "\x01" "tmpl:";
+        if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kTmpl.size(), kTmpl) == 0) {
+            std::string name = c0.text.substr(kTmpl.size());
+            auto sit = funcTemplateSigs().find(name);
+            if (sit == funcTemplateSigs().end() || !sit->second.fn) {
+                err(e.line, e.col, "unknown function template '" + name + "'");
+                return bad(e.line, e.col);
+            }
+            const TemplateSig& sig = sit->second;
+            if (sig.fn->params.size() != e.kids.size() - 1) {
+                err(e.line, e.col, "wrong number of arguments");
+                return bad(e.line, e.col);
+            }
+            std::vector<std::unique_ptr<Type>> bound(sig.names.size());
+            for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
+                ET a = checkExpr(*e.kids[i + 1]);
+                if (a.bad || !a.type) return bad(e.line, e.col);
+                if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *a.type, sig, bound)) {
+                    err(e.line, e.col, "conflicting types for a template argument");
+                    return bad(e.line, e.col);
+                }
+            }
+            std::vector<TArg> args;
+            for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                if (!bound[i]) {
+                    err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
+                    return bad(e.line, e.col);
+                }
+                TArg a;
+                a.type = std::move(bound[i]);
+                args.push_back(std::move(a));
+            }
+            std::string inst = instFuncName(name, sig, args);
+            bool known = false;
+            for (const InstReq& r : instRequests())
+                if (r.name == inst) known = true;
+            if (!known) {
+                InstReq r;
+                r.tmpl = name;
+                r.name = inst;
+                r.args = std::move(args);
+                instRequests().push_back(std::move(r));
+                instDirty() = true;
+            }
+            c0.text = inst;
+        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kCtor.size(), kCtor) == 0) {
             std::string tag = c0.text.substr(kCtor.size());
             auto it = canonStructs().find(tag);
             std::vector<const Param*> cands;
@@ -5341,6 +5859,20 @@ private:
         }
     }
 
+    // Store a struct value into memory. 'rhs' is the address of the source object, or for a call
+    // the returned value (one register, a register pair, or the address of the hidden result).
+    void storeAggregate(Operand dst, int sz, const Val& rhs, bool fromCall) {
+        if (rhs.pair) {
+            storeBits(dst, rhs.op, 8);
+            storeBits(addAddr(dst, 8), rhs.hi, sz - 8);
+        } else if (sz > 8) {
+            copyMem(dst, rhs.op, sz);
+        } else {
+            Operand bits = fromCall ? rhs.op : loadBits(rhs.op, sz);
+            storeBits(dst, bits, sz);
+        }
+    }
+
     Val lowerAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) {
             err(e.line, e.col, "not lowered");
@@ -5379,6 +5911,15 @@ private:
         if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind == Expr::Kind::Call) {
             Sym* s = find(lhs.text);
             if (s && s->agg) return storeCall(*s, *e.kids[1]);
+        }
+        if (lhs.kind != Expr::Kind::Name && lhs.checked && lhs.checked->kind == Type::Kind::Struct &&
+            e.kids[1]->kind != Expr::Kind::Call) {
+            // struct = struct through a pointer, a field or an index: copy the bytes.
+            Addr src = lowerAddr(*e.kids[1]);
+            Addr dst = lowerAddr(lhs);
+            if (!src.ok || !dst.ok) return {};
+            copyMem(dst.op, src.op, sizeOf(lhs.checked.get()));
+            return Val{dst.op, 0, 0};
         }
         Val rhs = lowerExpr(*e.kids[1]);
         if (lhs.kind == Expr::Kind::Name) {
@@ -5448,6 +5989,10 @@ private:
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
+        if (lhs.checked && lhs.checked->kind == Type::Kind::Struct) {
+            storeAggregate(a.op, sizeOf(lhs.checked.get()), rhs, e.kids[1]->kind == Expr::Kind::Call);
+            return rhs;
+        }
         if (a.bitWidth > 0) {
             unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
             unsigned fieldMask = mask << a.bitOff;
@@ -5897,6 +6442,15 @@ private:
                         storeBits(addAddr(Operand::vreg(addr), fields[i].offset), v.op, w);
                     }
                 }
+            } else if (d.init && d.type->kind == Type::Kind::Struct) {
+                // A struct initialized from another struct or from a call: copy the bytes.
+                Sym* me = find(d.name);
+                if (d.init->kind == Expr::Kind::Call && me) {
+                    storeCall(*me, *d.init);
+                } else {
+                    Addr src = lowerAddr(*d.init);
+                    if (src.ok) copyMem(Operand::vreg(addr), src.op, bytes);
+                }
             }
             return;
         }
@@ -6239,6 +6793,29 @@ private:
 
 void typecheckTu(Tu& tu, Diagnostics& diags);
 
+// Parse and check. A function template called without explicit arguments is only known after the
+// checker has deduced them, so the file is parsed again with the new instance requests until none
+// are new (at most eight rounds).
+Tu frontEnd(const std::vector<Token>& toks, Diagnostics& diags) {
+    instRequests().clear();
+    Tu result;
+    for (int round = 0; round < 8; ++round) {
+        Diagnostics local;
+        instDirty() = false;
+        Parser parser(toks, local);
+        Tu tu = parser.parseTu();
+        if (local.ok()) typecheckTu(tu, local);
+        if (instDirty() && round < 7) continue;
+        for (const Diag& d : local.items()) {
+            if (d.warning) diags.warning(d.file, d.line, d.column, d.message);
+            else diags.error(d.file, d.line, d.column, d.message);
+        }
+        result = std::move(tu);
+        break;
+    }
+    return result;
+}
+
 Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName,
                      const std::vector<std::string>& includes) {
     MemoryFiles files;
@@ -6263,10 +6840,7 @@ Module lowerProgram(const std::string& source, Diagnostics& diags, const std::st
     end.line = line;
     end.column = col;
     toks.push_back(std::move(end));
-    Parser parser(std::move(toks), diags);
-    Tu tu = parser.parseTu();
-    if (!diags.ok()) return {};
-    typecheckTu(tu, diags);
+    Tu tu = frontEnd(toks, diags);
     if (!diags.ok()) return {};
     Lowerer lowerer(diags);
     return lowerer.run(tu);
@@ -6338,10 +6912,8 @@ void checkSource(const std::string& source, Diagnostics& diags, const std::strin
     end.line = line;
     end.column = col;
     toks.push_back(std::move(end));
-    Parser parser(std::move(toks), diags);
-    Tu tu = parser.parseTu();
-    if (!diags.ok()) return;
-    typecheckTu(tu, diags);
+    Tu tu = frontEnd(toks, diags);
+    (void)tu;
 }
 
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file,

@@ -144,7 +144,7 @@ int printf(char *fmt, ...) {
                     char buf[32];
                     int len;
                     int k;
-                    unsigned u;
+                    unsigned long u;
                     int neg;
                     int base;
                     char *digits;
@@ -158,14 +158,14 @@ int printf(char *fmt, ...) {
                         else v = va_arg(ap, int);
                         if (v < 0) {
                             neg = 1;
-                            u = (unsigned)0 - (unsigned)v;
+                            u = (unsigned long)0 - (unsigned long)v;
                         } else {
-                            u = (unsigned)v;
+                            u = (unsigned long)v;
                         }
                     } else if (islong) {
-                        u = (unsigned)va_arg(ap, long);
+                        u = (unsigned long)va_arg(ap, long);
                     } else {
-                        u = va_arg(ap, unsigned);
+                        u = (unsigned long)va_arg(ap, unsigned);
                     }
                     len = 0;
                     if (u == 0) {
@@ -173,9 +173,9 @@ int printf(char *fmt, ...) {
                         len = 1;
                     }
                     while (u != 0) {
-                        buf[len] = digits[u % (unsigned)base];
+                        buf[len] = digits[u % (unsigned long)base];
                         len = len + 1;
-                        u = u / (unsigned)base;
+                        u = u / (unsigned long)base;
                     }
                     if (neg) {
                         n = n + p_char('-');

@@ -286,6 +286,32 @@ int main() {
     }
     {
         const char* src =
+            "template <typename T> T twice(T a) { return a + a; }\n"
+            "template <typename T, int N> struct Box {\n"
+            "  T v;\n"
+            "  Box(T x) : v(x) {}\n"
+            "  T get() { return v + N; }\n"
+            "};\n"
+            "int main() {\n"
+            "  Box<int, 3> b(4);\n"
+            "  Box<long, 5> c(1);\n"
+            "  return twice(b.get()) + twice<int>(1) + (int)c.get();\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        // Itanium names: Box<int, 3> is 3BoxIiLi3EE, a function template instance is _Z5twiceIiEi.
+        bool names = as.find("_ZN3BoxIiLi3EE3getEv") != std::string::npos &&
+                     as.find("_ZN3BoxIlLi5EEC1El") != std::string::npos &&
+                     as.find("_Z5twiceIiEi") != std::string::npos;
+        if (got != 22 || !names) {
+            std::fprintf(stderr, "FAIL templates exit %d names %d\n%s\n", got, names ? 1 : 0, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
             "int main() {\n"
             "  bool b;\n"
             "  int *p;\n"

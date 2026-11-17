@@ -140,6 +140,7 @@ std::set<std::string> undefined_externals(const std::vector<ObjectFile>& objects
     for (const std::string& name : pending) {
         if (defined.find(name) == defined.end()) need.insert(name);
     }
+    if (!options.entry.empty() && defined.find(options.entry) == defined.end()) need.insert(options.entry);
     return need;
 }
 

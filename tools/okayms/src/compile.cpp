@@ -489,6 +489,35 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
+        if (c == '\'') {
+            ++i;
+            if (i >= text.size()) {
+                *error = "unterminated character";
+                return {};
+            }
+            unsigned char value = 0;
+            if (text[i] == '\\' && i + 1 < text.size()) {
+                ++i;
+                if (text[i] == 'n') value = '\n';
+                else if (text[i] == 't') value = '\t';
+                else if (text[i] == 'r') value = '\r';
+                else if (text[i] == '0') value = 0;
+                else value = static_cast<unsigned char>(text[i]);
+                ++i;
+            } else {
+                value = static_cast<unsigned char>(text[i]);
+                ++i;
+            }
+            if (i >= text.size() || text[i] != '\'') {
+                *error = "unterminated character";
+                return {};
+            }
+            ++i;
+            tok.kind = TNumber;
+            tok.number = value;
+            tokens.push_back(tok);
+            continue;
+        }
         if (c == '"') {
             std::string value;
             ++i;
@@ -1757,6 +1786,12 @@ bool Gen::gen_expr(const Node& node) {
             return true;
         }
         if (Global* global = find_global(node.text)) {
+            if (global->type.is_array()) {
+                if (!gen_addr(node)) return false;
+                last_type = element_type(global->type);
+                last_type.pointers += 1;
+                return true;
+            }
             const int size = size_of(global->type);
             const bool uns = global->type.is_unsigned;
             if (global->type.pointer() || size >= 8) {

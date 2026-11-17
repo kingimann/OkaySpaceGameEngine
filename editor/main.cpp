@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
@@ -49093,7 +49094,15 @@ static void DrawActionPrompt(EditorState& ed) {
     for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
     ImGui::Spacing();
     if (ImGui::Button("Save", ImVec2(120, 0))) {
-        if (SaveProject(ed, true)) RunPendingAction(ed);
+        // While playing, Stop first so the edit-time scene is what gets saved (issue #888, finding 85).
+        const auto act = static_cast<okay::editor::PendingAction>(g_pendingAction);
+        const bool ran = okay::editor::RunSaveBefore(act, ed.isPlaying(),
+            [&ed] { StopPlayNow(ed); },
+            [&ed] { return SaveProject(ed, true); },
+            [&ed] { RunPendingAction(ed); });
+        // Done, or already stopped (a failed save shows its own popup): nothing left to ask. Otherwise a failed
+        // save keeps the prompt, as before, so it can be tried again.
+        if (ran || (act == okay::editor::PendingAction::Stop && !ed.isPlaying())) { g_pendingAction = 0; g_pendingPath.clear(); }
         ImGui::CloseCurrentPopup();
     }
     ImGui::SetItemDefaultFocus();

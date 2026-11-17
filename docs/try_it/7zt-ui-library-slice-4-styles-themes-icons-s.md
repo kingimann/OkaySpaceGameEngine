@@ -1,6 +1,6 @@
 ---
 id: 7zt
-row: | 7zt | UI library slice 4: styles, themes, icons, ready-made screens, the UI Gallery and the cleaned-up GameObject > UI menu | GameObject > UI (eight groups) and GameObject > UI > Browse All UI...; File > Examples > UI library > ui_library_4 and ui_starter_pack | New in this change; headless tests, pictures and a syntax check of the editor code only, real window and editor menus unverified |
+row: | 7zt | UI library slice 4: styles, themes, icons, ready-made screens, the UI Gallery and the cleaned-up GameObject > UI menu | GameObject > UI (eight groups) and GameObject > UI > Browse All UI...; File > Open Scene: examples\\ui_library\\ui_library_4.okayscene and ui_starter_pack.okayscene | New in this change; headless tests, pictures and a syntax check of the editor code only, real window and editor menus unverified |
 ---
 ## 7zt. UI library slice 4: styles, themes, icons, screens and the UI Gallery
 
@@ -27,9 +27,9 @@ in [ui_catalogue.md](ui_catalogue.md); the design is in [ui_library.md](ui_libra
    (try the Size and Density boxes: XS to XL, compact to spacious). **Randomise selected** gives it a random style.
 5. Choose **Icons**, type `sword`. Click an icon: a large preview with a Tint colour and a Size slider. Select an Image or a Button in the
    Hierarchy and click **Use on selected Image / Button**. The icon shows crisp at any size.
-6. **File > Examples > UI library > ui_library_4**, press **Play**. Click a theme on the left (Neon, Retro Pixel, Candy, Paper...): the whole
+6. **File > Open Scene...**, choose `<install folder>\examples\ui_library\ui_library_4.okayscene`, press **Play**. Click a theme on the left (Neon, Retro Pixel, Candy, Paper...): the whole
    page restyles, including the twelve style buttons in the middle (each stays in its own style, in the new colours). Close and reopen
-   Play: the theme you picked is remembered. **File > Examples > UI library > ui_starter_pack** is the Starter Pack as a ready scene.
+   Play: the theme you picked is remembered. `examples\ui_library\ui_starter_pack.okayscene` is the Starter Pack as a ready scene.
 7. In a script, `ui_set_theme("Cyber Pink")` switches the theme, `ui_set_style("Play", "Neon Pill")` styles one widget, and
    `ui_theme_sound("click")` reads the sound name of the theme. A widget whose **UI Style Variant** has a **Theme Name** keeps that theme.
 

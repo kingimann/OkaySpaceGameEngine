@@ -2615,6 +2615,7 @@ private:
         bool zext = false;
         bool func = false;
         bool ref = false;
+        bool boolean = false;
         int fpw = 0;
         std::string gname;
         int width = 8;
@@ -2642,6 +2643,7 @@ private:
     int tmpN_ = 0;
     int strN_ = 0;
     int retWidth_ = 8;
+    bool retBool_ = false;
     bool retFp_ = false;
     int vaSave_ = -1;
     bool retUns_ = false;
@@ -2843,6 +2845,7 @@ private:
         s.inner = innerOf(t);
         s.objSize = sizeOf(t);
         s.zext = t->unsign || t->kind == Type::Kind::Bool;
+        s.boolean = t->kind == Type::Kind::Bool;
         s.fpw = fpWidthOf(t);
         if (t->kind == Type::Kind::Reference && t->inner) {
             describe(s, t->inner.get());
@@ -2939,6 +2942,28 @@ private:
         in.label2 = f;
         emit(in);
     }
+    Operand asBool(Operand src, int fpw = 0) {
+        if (fpw) {
+            std::uint64_t mask = fpw <= 4 ? 0x7fffffffull : 0x7fffffffffffffffll;
+            if (src.kind == Operand::Kind::Imm) {
+                std::uint64_t bits = static_cast<std::uint64_t>(src.imm) & mask;
+                return Operand::number(bits != 0 ? 1 : 0);
+            }
+            int mag = fresh();
+            Inst in;
+            in.op = Inst::Op::And;
+            in.dst = mag;
+            in.a = src;
+            in.b = Operand::number(static_cast<std::int64_t>(mask));
+            emit(in);
+            src = Operand::vreg(mag);
+        }
+        if (src.kind == Operand::Kind::Imm) return Operand::number(src.imm != 0 ? 1 : 0);
+        int dst = fresh();
+        emitBin(Inst::Op::Cne, dst, src, Operand::number(0));
+        return Operand::vreg(dst);
+    }
+
     void emitBin(Inst::Op op, int dst, Operand a, Operand b, bool uns = false) {
         Inst in;
         in.op = op;
@@ -3129,7 +3154,9 @@ private:
             g.reloc = addString(d.init->text);
         } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
             g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
-            putInt(g.bytes, static_cast<std::int64_t>(d.init->ival), g.size);
+            std::int64_t n = static_cast<std::int64_t>(d.init->ival);
+            if (d.type->kind == Type::Kind::Bool) n = n != 0;
+            putInt(g.bytes, n, g.size);
         } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "-" && !d.init->kids.empty() &&
                    d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Int) {
             g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
@@ -3518,6 +3545,7 @@ private:
             if (e.kids.empty() || !e.kids[0]) return {};
             Val v = lowerExpr(*e.kids[0]);
             if (!e.ty) return v;
+            if (e.ty->kind == Type::Kind::Bool) return Val{asBool(v.op, v.fpw), 0, 0};
             if (e.ty->kind == Type::Kind::Pointer) {
                 v.step = valueStep(e.ty.get());
                 v.inner = innerOf(e.ty.get());
@@ -3958,6 +3986,7 @@ private:
     }
 
     void storeNamed(Sym& s, Operand val) {
+        if (s.boolean) val = asBool(val);
         if (s.ref) {
             storeBits(Operand::vreg(s.reg), val, s.width > 0 ? s.width : 8);
             return;
@@ -4022,6 +4051,7 @@ private:
                 err(e.line, e.col, "not lowered: " + lhs.text);
                 return {};
             }
+            if (s->boolean) rhs.op = asBool(rhs.op, rhs.fpw);
             if (s->fpw) {
                 if (rhs.fpw != s->fpw) rhs = cvtFp(rhs, rhs.fpw, s->fpw);
                 if (s->global) {
@@ -4105,6 +4135,7 @@ private:
             storeBits(a.op, Operand::vreg(merged), a.width > 0 ? a.width : 4);
             return Val{Operand::vreg(val), 0, 0};
         }
+        if (lhs.checked && lhs.checked->kind == Type::Kind::Bool) rhs.op = asBool(rhs.op, rhs.fpw);
         if (lhs.checked && isFp(*lhs.checked)) {
             int w = fpWidthOf(lhs.checked.get());
             if (rhs.fpw != w) rhs = cvtFp(rhs, rhs.fpw, w);
@@ -4280,7 +4311,8 @@ private:
                 bool decay = t && (t->kind == Type::Kind::Array || t->kind == Type::Kind::Function);
                 int w = !t || decay ? 8 : sizeOf(t);
                 bool uns = t && !decay && t->unsign;
-                Operand val = (w > 0 && w < 8) ? narrow(v.op, w, uns) : v.op;
+                Operand val = declared && declared->kind == Type::Kind::Bool ? asBool(v.op, v.fpw)
+                              : (w > 0 && w < 8) ? narrow(v.op, w, uns) : v.op;
                 if (reg >= 6) stack.push_back(val);
                 else {
                     regs.push_back(val);
@@ -4418,6 +4450,7 @@ private:
             }
             if (s.expr) {
                 Val v = lowerExpr(*s.expr);
+                if (retBool_) v.op = asBool(v.op, v.fpw);
                 if (retFp_ && v.fpw != retWidth_) v = cvtFp(v, v.fpw, retWidth_);
                 in.a = v.op;
                 in.extra = retWidth_;
@@ -4480,7 +4513,9 @@ private:
             g.size = sz;
             g.bytes.assign(static_cast<std::size_t>(sz), 0);
             if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
-                putAt(g.bytes, 0, static_cast<std::int64_t>(d.init->ival), sz > 8 ? 8 : sz);
+                std::int64_t n = static_cast<std::int64_t>(d.init->ival);
+                if (d.type->kind == Type::Kind::Bool) n = n != 0;
+                putAt(g.bytes, 0, n, sz > 8 ? 8 : sz);
             }
             mod_.globals.push_back(std::move(g));
             Sym s;
@@ -4547,7 +4582,7 @@ private:
                 if (v.fpw != s.fpw) v = cvtFp(v, v.fpw, s.fpw);
                 emitMov(slot, v.op, 8);
             } else {
-                Operand val = narrow(v.op, s.width, s.zext);
+                Operand val = s.boolean ? asBool(v.op, v.fpw) : narrow(v.op, s.width, s.zext);
                 if (s.mem) storeMem(slot, val, s.width);
                 else emitMov(slot, val, s.width, s.zext);
             }
@@ -4714,14 +4749,16 @@ private:
         retWidth_ = 8;
         retFp_ = false;
         retUns_ = false;
+        retBool_ = false;
         retStruct_ = false;
         hiddenReg_ = -1;
         if (d.body) scanStmt(*d.body);
         if (d.type && d.type->inner) {
             const Type* r = d.type->inner.get();
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
-                r->kind == Type::Kind::Long)
+                r->kind == Type::Kind::Long || r->kind == Type::Kind::Bool)
                 retWidth_ = sizeOf(r);
+            if (r->kind == Type::Kind::Bool) retBool_ = true;
             if (r->kind == Type::Kind::Float || r->kind == Type::Kind::Double) {
                 retFp_ = true;
                 retWidth_ = sizeOf(r);
@@ -4846,6 +4883,10 @@ private:
                 } else {
                     s.reg = plan.regAt;
                     if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
+                }
+                if (s.boolean && s.reg >= 0) {
+                    Operand n = asBool(Operand::vreg(s.reg));
+                    emitMov(s.reg, n, 1, true);
                 }
                 if (!p.name.empty()) scopes_.back()[p.name] = s;
             }

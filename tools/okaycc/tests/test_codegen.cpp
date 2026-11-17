@@ -249,6 +249,39 @@ int main() {
     }
     {
         const char* src =
+            "bool id(bool x) { return x; }\n"
+            "int main() {\n"
+            "  bool a;\n"
+            "  bool b;\n"
+            "  bool c;\n"
+            "  bool d;\n"
+            "  int n;\n"
+            "  int *p;\n"
+            "  a = 2;\n"
+            "  b = 0;\n"
+            "  c = (bool)5;\n"
+            "  d = id(7);\n"
+            "  n = 3;\n"
+            "  p = 0;\n"
+            "  if (a != 1) return 1;\n"
+            "  if (b != 0) return 2;\n"
+            "  if (c != 1) return 3;\n"
+            "  if (d != 1) return 4;\n"
+            "  if ((bool)p != 0) return 5;\n"
+            "  p = &n;\n"
+            "  if ((bool)p != 1) return 6;\n"
+            "  return 0;\n"
+            "}\n";
+        int got = runExit(src, nullptr);
+        if (got != 0) {
+            std::fprintf(stderr, "FAIL bool norm exit %d\n", got);
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
             "char *malloc(int n);\n"
             "void free(char *p);\n"
             "int main() {\n"

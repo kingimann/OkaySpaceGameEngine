@@ -6,9 +6,43 @@ row: | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=oka
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
-the screens that have an OkayUI port change; everything else stays Dear ImGui. The About popup shows `ui=okayui` when it
-took effect. Whether the Windows release contains OkayUI is unverified: if not, the line stays `ui=imgui`. Nothing was
-run in a real window.
+the screens that have an OkayUI port change; everything else stays Dear ImGui. In the launcher: What's New, Tips, Downloads,
+Achievements and the Notifications panel (the bell). In the editor: Console, Crash Log, Audio Mixer, Problems, Stats, History,
+Tags and Layers, Physics, Profiler, Import settings, Post-processing, and the Player and Rendering settings.
+The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
+the line stays `ui=imgui`.
+
+To see the three newest launcher screens with sample data, in a Command Prompt:
+
+```
+set OKAY_UI_BACKEND=okayui
+set OKAY_UI_DEMO_USER=demo
+OkaySpace.exe
+```
+
+- **Downloads** (sidebar): four sample downloads (completed, downloading, queued, failed). Expect bordered rows with a yellow
+  progress bar, the status in colour, and Open folder, Install to Community, Cancel or Remove; Remove takes a finished row away.
+- **Achievements** (sidebar): eight sample achievements with medals. Click "This month", type in the search, change the sort,
+  right-click a tile for Add to showcase, Remove from showcase or Copy id.
+- **Notifications** (the bell at the bottom of the sidebar): a sample feed. Click the chips, hover a row for its dismiss button,
+  click a row to open its page.
+
+Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui versions: the two should look the same
+(same positions, sizes, icons and tooltip place; only edge shading and single text pixels differ). The Dear ImGui Downloads rows
+now show their buttons in full (they used to be cut off at the bottom). Clicking a chip or button right after moving onto it
+works on the first click. Add `set OKAY_UI_TIMING=1` to see, after
+300 frames on one of these screens, a toast (and a stdout line) with the median CPU time per frame of that screen on the backend
+that drew it, and how many triangle indices each backend drew. Run in a real window only on Linux under Xvfb so far; not run
+on Windows.
+
+What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.7), same steps as above:
+- **Smooth edges**: the medals, the level ring, the round dots, the chips and the rounded rows have soft one-pixel edges,
+  as on the Dear ImGui pages (before, they were stair-stepped).
+- **Achievements**: the search field brightens a little under the mouse and while typing. Open the sort list ("Newest first"):
+  it is a rounded box right under the combo with the current choice highlighted, as the Dear ImGui one. Right-click a tile:
+  the menu is a rounded box with a hairline edge; the entry under the mouse is highlighted.
+- **Speed**: with `set OKAY_UI_TIMING=1`, compare the "build + render" figure of each screen with and without
+  `set OKAY_UI_BACKEND=okayui`: OkayUI's should be lower (on Linux it was 12% to 18% lower).
 
 To turn it on for the editor: open the Command Prompt in the folder with `Tools\OkayEngine.exe`, type `set OKAY_DEV=1`, then
 `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. To compare, start it again with `set OKAY_UI_BACKEND=imgui`.

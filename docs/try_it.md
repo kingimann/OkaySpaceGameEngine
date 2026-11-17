@@ -91,13 +91,17 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 12b | Our own code editor in the Script Editor (off by default) | `OKAY_CODE_EDITOR=own`, then open any script | New; tested headless only, never run in a real window or on Windows (see 12b) |
+| 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 18 | Own font rasteriser in the editor and launcher (off by default) | `OKAY_OWN_FONT_RASTER=1` | Tested headless on Linux; never run in a real window or on Windows |
 | 11b | Launcher drawn by our own renderer (off by default) | `OKAY_LAUNCHER_RENDERER=own`, then `OkaySpace.exe` (section "Launcher: drawing with our own renderer") | Footer says "own renderer"; the chat opens in its own window and the OkayUI preview works with it too; Linux/Xvfb only, unverified on Windows |
 | 11c | Launcher with no SDL at all (off by default) | `OKAY_LAUNCHER_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `OkaySpace.exe` (section "Launcher with no SDL at all") | Log says `launcher: no SDL`; voice calls and voice notes use our own audio (waveOut / waveIn); Linux/Xvfb only, unverified on Windows |
 | 11d | Editor input and 3D-view OpenGL through our own code (off by default) | `OKAY_EDITOR_PLATFORM=own` (optionally also `OKAY_PLATFORM_BACKEND=own`), then `Tools\OkayEngine.exe` (section "Editor: input and the 3D views' OpenGL through our own code") | Console's first lines say `editor: platform own (...)`; the editor works as usual except that panels cannot be dragged out into their own windows; untested in a real editor run and on Windows |
 | 11e | Editor drawn by our own renderer (off by default) | `OKAY_EDITOR_PLATFORM=own` and `OKAY_EDITOR_RENDERER=own`, then `Tools\OkayEngine.exe` (section "Editor: drawing with our own renderer") | Console's first lines say `editor: renderer own (opengl painter ...)`; no multi-window panels; **untested in a real editor run and on Windows** |
 | 11f | Editor with no SDL at all (off by default) | `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe` (section "Editor with no SDL at all") | Log and Console say `editor: no SDL ...`; drag a file onto the window to import it; Linux/Xvfb only (the whole editor, with an SDL trap), **unverified on Windows** |
-| 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
-| 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 11g | Player with no SDL, game resolutions on our own code | `Tools\OkaySpacePlayer.exe` (section "Player with no SDL") | Run on Linux under Xvfb only; Windows unverified |
+| 11h | Launcher background work on our own threads | `OkaySpace.exe` (section "Launcher: threads on our own code") | Tested on Linux only |
+| 11i | Launcher window calls through our platform layer; voice clips on our own WAV decoder | `OkaySpace.exe`, chat voice messages | Tested on Linux only |
 
 ---
 
@@ -1736,6 +1740,31 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
 
+### 18. Own font rasteriser in the editor and launcher
+
+* **What it is.** The editor's and launcher's text is drawn by Dear ImGui, whose letters come from a rasteriser built
+  into Dear ImGui (third-party code). With this switch every letter comes from OkaySpace's own TrueType rasteriser
+  instead. The layout does not change: the same sizes, line heights and letter widths. Details and measurements:
+  `docs/own_font_raster.md`.
+* **Steps.**
+  1. Open a Command Prompt in the folder with `OkaySpace.exe`. Type `set OKAY_OWN_FONT_RASTER=1` and press Enter.
+  2. Start `OkaySpace.exe` from that same window. The launcher looks the same; the letters should be **slightly
+     sharper** (Dear ImGui's rasteriser oversamples and blurs edges a little; ours draws each letter exactly at its
+     size on whole pixels). Accented letters (é, ç, ß) and the chat's `code` font should look normal.
+  3. Start the editor (`Tools\OkayEngine.exe`) from the same window, or from the launcher. Open **Console**: the first
+     lines should include `Fonts: OKAY_OWN_FONT_RASTER=1, the editor's text is drawn by OkaySpace's own TrueType
+     rasteriser`. Open the Script Editor: the code font (JetBrains Mono) should line up in columns as before.
+  4. Close both, start them again from a new window without the variable: the old rasteriser is back.
+* **What you should not see.** Text moved up or down by a pixel, letters cut off, boxes instead of letters, or wider
+  or narrower text. Any of those is a bug: please tell us which text and at what Windows scaling.
+* **Not in this switch.** Kerning (letter pairs like "AV" or "To" moving closer) is applied in the game's UI text and
+  in OkayUI, not in the editor's and launcher's Dear ImGui text, whose layout has no kerning step.
+* **Verified here (Linux, headless):** `test_font_raster_compare` draws the same strings at 12 to 48 px with both
+  rasterisers through Dear ImGui's real atlas: equal widths and line metrics, ours 0.2 to 0.5 levels (of 255) from
+  exact coverage on average, Dear ImGui's 2.7 to 5.8; the whole UI font atlas bakes in about 0.9 times the time with a
+  quarter of the memory. **Unverified:** everything on Windows and in a real window (the editor and launcher were only
+  compiled for a syntax check).
+
 ## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
 
 The Sandbox got slow from the first click on because the player and the editor ran a hidden software render of the whole scene, with shadows, every
@@ -1755,108 +1784,25 @@ frame once the digger's dust particle object existed. It now runs only while dus
    sharper shadows (and the old cost) back.
 Tests: `ctest -R "voxel_overlay_depth"`; numbers: `bench_voxel_frame`.
 
-## Checks run for this page
+## WAV decoder speed and memory (developer bench, not part of the Windows release)
 
-Run on Linux, on the branch `claude/try-it`:
+Compares our own WAV decoder (`okay::wav`) with `SDL_LoadWAV` on the same files: time and peak memory of the decode alone
+and of the launcher's whole voice-clip load to the format it plays. It is a program in the test build, not something in
+`OkaySpace.exe`, so it cannot be tried from the release. Linux (or any build with tests on and SDL2 found; the memory
+columns need glibc, elsewhere they print `-`):
 
-* `tests/test_project_create.cpp`, built on its own with g++ (it needs only the shared header), run from the source
-  tree so the launcher and editor title cross-check really ran: **282 checks, 0 failures** (the same test on main:
-  278). The test now expects 22 templates and that the editor's list equals the shared list, which includes
-  "Vehicle (get in and drive)".
-* `python3 scripts/gen_feature_map.py` then `--check`: up to date.
-* The `examples` copy block of `scripts/build-windows-dist.sh`, run alone: 12 folders, 42 files, about 0.5 MB (472 KB on disk), no
-  `.py`, `.cpp` or `__pycache__`. `bash -n` on the whole script.
-* `okay::wav::DecodeWav` on `mulaw_tone.wav` and `Mesh::LoadOBJ` on the three OBJ samples, as described above.
+1. Build it: `cmake -B build -DOKAY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release`, then `ninja -C build bench_wav_decoder`.
+2. Run it: `build/tests/bench_wav_decoder` (about 30 seconds). With no argument it reads the repository's WAV files and
+   writes a generated set of 13 files (about 260 MB, 16-bit stereo from 1 s to 10 min, 8/24/32-bit, float32/64, A-law,
+   mu-law, MS and IMA ADPCM, a 6-channel extensible file) to `<temp>/okay_wav_bench` the first time; `--gen DIR` puts
+   them elsewhere. Or give it your own `.wav` files or folders.
+3. You should see a table, one row per file: milliseconds and peak MiB for our decoder and SDL, and the ratio (below 1
+   means ours is faster or smaller), first for the decode alone ("raw"), then for the load to the playback format
+   ("final"). Expect every "final" ratio below 1, and SDL to print `fail` on the float64 file (it does not read it).
+4. `--digest` prints a hash of our output per file; run it before and after a change to the decoder: the lines must
+   match.
 
-**Not run:** `test_templates`, `vehicle_seat` and the other engine tests (the engine build was stopped; no engine
-code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
-and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
-Anything on Windows. The NSIS installer and the zip.
-
-## Five starter templates removed from New Project
-
-Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer offered when you create a project. Projects and scenes
-already made from them still open and play, and the scene builders stay in the engine (still tested).
-
-1. Windows launcher: open the **Templates** page (or **Create**, then the New Project wizard). The list now has 17 templates:
-   Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are gone; Main Menu, Platformer, First Person and the rest are still there.
-2. Pick Main Menu (or any other) and create a project: the editor opens with the starter scene.
-3. In the editor, **File > New Project** shows the same list.
-4. Test: `ctest -R templates_work` checks the launcher list, the editor table and the builders agree.
-
-## How the packaging was checked (and what was not)
-
-* `scripts/build-windows-dist.sh` now copies the `examples\` folders listed in `EXAMPLE_DIRS` (and `grid.png` for the OBJ
-  samples) into `build-win-dist/examples/`. The zip step in `release.yml` and `scripts/release-local.sh` run
-  `cp -r build-win-dist/*`, and the installer script `scripts/okayspace-installer.nsi` installs `build-win-dist/*`
-  recursively (`File /r`), so both pick the folder up with no further change. The uninstaller now removes `examples\`.
-* Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
-  the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
-* `release.yml` was not changed and no workflow was run.
-
-## Launcher: threads on our own code (branch `claude2/launcher-own-threads`, not merged or released yet)
-
-What changed: the launcher's background work (news, downloads, the update check, chat, voice, the Git buttons, every
-"working..." job) used SDL's threads, locks and counters. It now uses our own (`launcher/LauncherThreads.hpp` over
-`engine/src/Core/CoreThreads.hpp`). Nothing should look different. This is a check that it still behaves the same.
-
-1. Start `OkaySpace.exe`. The start-up update check runs and the launcher opens. Expect the same as before (no hang on
-   "Checking for updates").
-2. **Home / What's New**: the news and link previews load. **Account**: sign in; your avatar loads.
-3. **Versions**: install an editor version. The progress bar moves; **Cancel** stops it; installing again finishes.
-4. Click the version number at the bottom of the left bar (tooltip "Check for updates"). The Software Update window
-   answers ("up to date" or offers the update) and the launcher does not freeze.
-5. **Create** page: right-click a project that is a Git folder and pick **Git: Pull**, or use **Commit & Push**, or
-   **Clone** a repository. A message says it worked or failed, as before.
-6. Chat: send a message and an image; start a voice call and the mic test; hang up.
-7. Quit the launcher while a download runs. It closes within a few seconds and does not crash.
-
-If any step hangs or crashes where the last release did not, that is this change: report the step.
-
-**Status.** Tested on Linux only: `test_core_threads` (mutex under contention, recursive lock, a woken waiter, exact atomic
-adds, join, detach, names; also clean under ThreadSanitizer), the launcher built natively, and `launcher/main.cpp` passed a
-MinGW (Windows) syntax check. Not run on Windows: the steps above are unverified until you run them.
-
-## Launcher: window calls through our platform layer, voice clips on our own decoder as an option (branch `claude2/launcher-own-wav-window`, not merged or released yet)
-
-What changed (SDL removal, stage A):
-
-* **Voice messages.** By default the launcher still reads a voice message's WAV file with SDL (`SDL_LoadWAV`), as
-  before. To try our own WAV decoder instead (`launcher/VoiceClipLoad.hpp` over `okay::wav`), start the launcher from a
-  Command Prompt after `set OKAY_OWN_WAV=1` (`set OKAY_OWN_WAV=0`, or no variable, is SDL). Playback itself is unchanged
-  either way.
-* **Window calls.** Showing, raising, restoring, the minimised / hidden / focused checks, size, position, window id and
-  minimum size of the launcher window and the separate chat window now go through `okay::platform` (a
-  `WrapSdl2Window` view over the same SDL window). The window is still made by SDL, so nothing should look different.
-
-Steps:
-
-1. Start `OkaySpace.exe`. The splash shows, then the launcher. Try to make the window smaller than about 720 x 480: it
-   stops there, as before.
-2. Sign in. Open a chat, record a voice message (hold the mic button), send it. Press play on it: you hear it, the
-   waveform bars show its loudness (not even bars), the time counts, and **1.5x / 2x** speed it up without a higher
-   voice. Play a voice message someone else sent, too.
-2a. Our own decoder: close the launcher, open a Command Prompt in its folder, run `set OKAY_OWN_WAV=1` and then
-   `OkaySpace.exe`. Play the same voice messages: they should sound and look exactly the same as in step 2.
-3. Set chat to open in its own window (chat settings), open it. It cannot be made smaller than about 520 x 380. Close
-   and reopen the launcher: the chat window comes back where you left it.
-4. Minimise the launcher with the chat window open: the chat window keeps working. Restore the launcher from the
-   taskbar.
-5. In a game, press **Shift+Tab** (Invite friends): the launcher comes to the front, restored if it was minimised.
-6. With the launcher minimised or in the background, let an update hint or an incoming call arrive: the taskbar
-   button flashes.
-7. Close the launcher and start it again: it opens at the size you left it.
-
-If a voice message does not play or plays as noise with `OKAY_OWN_WAV=1` only, that is our decoder; if a window step
-behaves differently from the last release, that is the window change: report the step.
-
-**Status.** Tested on Linux only: `test_launcher_wav_window` (every WAV in the repository and five made-up ones read by
-SDL and by our reader give the same format and length; the launcher picks SDL by default and with `OKAY_OWN_WAV=0`
-and ours with `OKAY_OWN_WAV=1`, and the SDL path gives exactly what the launcher played before and byte-for-byte the same samples, except 8-bit and 24-bit files,
-which are within 2 steps of 32,768 because the old launcher code truncated where ours rounds; every truncation of a file fails or reads less; the
-window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
-dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
-syntax check. Not run on Windows: the steps above are unverified until you run them.
+The measured table is in [own_wav_decoder.md](own_wav_decoder.md), "Speed and memory against SDL".
 
 ## Launcher: drawing with our own renderer as an option (branch `claude2/sdl-launcher-painter`, not merged or released yet)
 
@@ -2073,22 +2019,105 @@ modes were tested under Xvfb with modes the test adds (`platform_display_modes_o
 build of the editor, launcher and player with no SDL at all exists (`-DOKAY_WITH_SDL=OFF`, built and run on Linux) but it is a
 developer build, never a release, so there is nothing to try in the Windows release for it.
 
-## WAV decoder speed and memory (developer bench, not part of the Windows release)
+## Launcher: threads on our own code (branch `claude2/launcher-own-threads`, not merged or released yet)
 
-Compares our own WAV decoder (`okay::wav`) with `SDL_LoadWAV` on the same files: time and peak memory of the decode alone
-and of the launcher's whole voice-clip load to the format it plays. It is a program in the test build, not something in
-`OkaySpace.exe`, so it cannot be tried from the release. Linux (or any build with tests on and SDL2 found; the memory
-columns need glibc, elsewhere they print `-`):
+What changed: the launcher's background work (news, downloads, the update check, chat, voice, the Git buttons, every
+"working..." job) used SDL's threads, locks and counters. It now uses our own (`launcher/LauncherThreads.hpp` over
+`engine/src/Core/CoreThreads.hpp`). Nothing should look different. This is a check that it still behaves the same.
 
-1. Build it: `cmake -B build -DOKAY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release`, then `ninja -C build bench_wav_decoder`.
-2. Run it: `build/tests/bench_wav_decoder` (about 30 seconds). With no argument it reads the repository's WAV files and
-   writes a generated set of 13 files (about 260 MB, 16-bit stereo from 1 s to 10 min, 8/24/32-bit, float32/64, A-law,
-   mu-law, MS and IMA ADPCM, a 6-channel extensible file) to `<temp>/okay_wav_bench` the first time; `--gen DIR` puts
-   them elsewhere. Or give it your own `.wav` files or folders.
-3. You should see a table, one row per file: milliseconds and peak MiB for our decoder and SDL, and the ratio (below 1
-   means ours is faster or smaller), first for the decode alone ("raw"), then for the load to the playback format
-   ("final"). Expect every "final" ratio below 1, and SDL to print `fail` on the float64 file (it does not read it).
-4. `--digest` prints a hash of our output per file; run it before and after a change to the decoder: the lines must
-   match.
+1. Start `OkaySpace.exe`. The start-up update check runs and the launcher opens. Expect the same as before (no hang on
+   "Checking for updates").
+2. **Home / What's New**: the news and link previews load. **Account**: sign in; your avatar loads.
+3. **Versions**: install an editor version. The progress bar moves; **Cancel** stops it; installing again finishes.
+4. Click the version number at the bottom of the left bar (tooltip "Check for updates"). The Software Update window
+   answers ("up to date" or offers the update) and the launcher does not freeze.
+5. **Create** page: right-click a project that is a Git folder and pick **Git: Pull**, or use **Commit & Push**, or
+   **Clone** a repository. A message says it worked or failed, as before.
+6. Chat: send a message and an image; start a voice call and the mic test; hang up.
+7. Quit the launcher while a download runs. It closes within a few seconds and does not crash.
 
-The measured table is in [own_wav_decoder.md](own_wav_decoder.md), "Speed and memory against SDL".
+If any step hangs or crashes where the last release did not, that is this change: report the step.
+
+**Status.** Tested on Linux only: `test_core_threads` (mutex under contention, recursive lock, a woken waiter, exact atomic
+adds, join, detach, names; also clean under ThreadSanitizer), the launcher built natively, and `launcher/main.cpp` passed a
+MinGW (Windows) syntax check. Not run on Windows: the steps above are unverified until you run them.
+
+## Launcher: window calls through our platform layer, voice clips on our own decoder as an option (branch `claude2/launcher-own-wav-window`, not merged or released yet)
+
+What changed (SDL removal, stage A):
+
+* **Voice messages.** By default the launcher still reads a voice message's WAV file with SDL (`SDL_LoadWAV`), as
+  before. To try our own WAV decoder instead (`launcher/VoiceClipLoad.hpp` over `okay::wav`), start the launcher from a
+  Command Prompt after `set OKAY_OWN_WAV=1` (`set OKAY_OWN_WAV=0`, or no variable, is SDL). Playback itself is unchanged
+  either way.
+* **Window calls.** Showing, raising, restoring, the minimised / hidden / focused checks, size, position, window id and
+  minimum size of the launcher window and the separate chat window now go through `okay::platform` (a
+  `WrapSdl2Window` view over the same SDL window). The window is still made by SDL, so nothing should look different.
+
+Steps:
+
+1. Start `OkaySpace.exe`. The splash shows, then the launcher. Try to make the window smaller than about 720 x 480: it
+   stops there, as before.
+2. Sign in. Open a chat, record a voice message (hold the mic button), send it. Press play on it: you hear it, the
+   waveform bars show its loudness (not even bars), the time counts, and **1.5x / 2x** speed it up without a higher
+   voice. Play a voice message someone else sent, too.
+2a. Our own decoder: close the launcher, open a Command Prompt in its folder, run `set OKAY_OWN_WAV=1` and then
+   `OkaySpace.exe`. Play the same voice messages: they should sound and look exactly the same as in step 2.
+3. Set chat to open in its own window (chat settings), open it. It cannot be made smaller than about 520 x 380. Close
+   and reopen the launcher: the chat window comes back where you left it.
+4. Minimise the launcher with the chat window open: the chat window keeps working. Restore the launcher from the
+   taskbar.
+5. In a game, press **Shift+Tab** (Invite friends): the launcher comes to the front, restored if it was minimised.
+6. With the launcher minimised or in the background, let an update hint or an incoming call arrive: the taskbar
+   button flashes.
+7. Close the launcher and start it again: it opens at the size you left it.
+
+If a voice message does not play or plays as noise with `OKAY_OWN_WAV=1` only, that is our decoder; if a window step
+behaves differently from the last release, that is the window change: report the step.
+
+**Status.** Tested on Linux only: `test_launcher_wav_window` (every WAV in the repository and five made-up ones read by
+SDL and by our reader give the same format and length; the launcher picks SDL by default and with `OKAY_OWN_WAV=0`
+and ours with `OKAY_OWN_WAV=1`, and the SDL path gives exactly what the launcher played before and byte-for-byte the same samples, except 8-bit and 24-bit files,
+which are within 2 steps of 32,768 because the old launcher code truncated where ours rounds; every truncation of a file fails or reads less; the
+window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
+dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
+syntax check. Not run on Windows: the steps above are unverified until you run them.
+
+## Checks run for this page
+
+Run on Linux, on the branch `claude/try-it`:
+
+* `tests/test_project_create.cpp`, built on its own with g++ (it needs only the shared header), run from the source
+  tree so the launcher and editor title cross-check really ran: **282 checks, 0 failures** (the same test on main:
+  278). The test now expects 22 templates and that the editor's list equals the shared list, which includes
+  "Vehicle (get in and drive)".
+* `python3 scripts/gen_feature_map.py` then `--check`: up to date.
+* The `examples` copy block of `scripts/build-windows-dist.sh`, run alone: 12 folders, 42 files, about 0.5 MB (472 KB on disk), no
+  `.py`, `.cpp` or `__pycache__`. `bash -n` on the whole script.
+* `okay::wav::DecodeWav` on `mulaw_tone.wav` and `Mesh::LoadOBJ` on the three OBJ samples, as described above.
+
+**Not run:** `test_templates`, `vehicle_seat` and the other engine tests (the engine build was stopped; no engine
+code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
+and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
+Anything on Windows. The NSIS installer and the zip.
+
+## Five starter templates removed from New Project
+
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer offered when you create a project. Projects and scenes
+already made from them still open and play, and the scene builders stay in the engine (still tested).
+
+1. Windows launcher: open the **Templates** page (or **Create**, then the New Project wizard). The list now has 17 templates:
+   Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are gone; Main Menu, Platformer, First Person and the rest are still there.
+2. Pick Main Menu (or any other) and create a project: the editor opens with the starter scene.
+3. In the editor, **File > New Project** shows the same list.
+4. Test: `ctest -R templates_work` checks the launcher list, the editor table and the builders agree.
+
+## How the packaging was checked (and what was not)
+
+* `scripts/build-windows-dist.sh` now copies the `examples\` folders listed in `EXAMPLE_DIRS` (and `grid.png` for the OBJ
+  samples) into `build-win-dist/examples/`. The zip step in `release.yml` and `scripts/release-local.sh` run
+  `cp -r build-win-dist/*`, and the installer script `scripts/okayspace-installer.nsi` installs `build-win-dist/*`
+  recursively (`File /r`), so both pick the folder up with no further change. The uninstaller now removes `examples\`.
+* Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
+  the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
+* `release.yml` was not changed and no workflow was run.

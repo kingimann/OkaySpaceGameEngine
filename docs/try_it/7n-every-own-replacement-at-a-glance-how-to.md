@@ -22,11 +22,11 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
-| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| WAV (the default now) | nothing (`OKAY_OWN_WAV=0` = old, this release only) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav`; streamed: `examples\own_wav\stream_test.okayscene` with `alaw_tone.wav` | you hear it: own = a clean 440 Hz tone, old = buzzy; Console line `audio: WAV files load with our own reader ...` | no startup word |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
 | Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
 | OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
-| CodeEdit (script editor) | `OKAY_UI_BACKEND=okayui` and `OKAY_DEV=1` | any script | none | never run in a real window |
+| CodeEdit (script editor) | `OKAY_CODE_EDITOR=own` (or the OkayUI backend) | any script | `okay_log.txt`: `Script editor code widget: own (...)` | never run in a real window |
 | okay::crypto | none, on purpose | none | the line says `crypto=libsodium` | nothing to try |
 
 The gaps (no sample for 32 of the 35 reader switches, no way to tell that the 16 newest readers or WAV are on, no run-time switch for STL

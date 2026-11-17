@@ -57,6 +57,8 @@ int main() {
     bad("ptr sub assign", "int main(){int *p; int *q; p = p - q; return 0;}\n", "cannot assign");
     ok("struct", "struct P { int x; int y; }; int main(){struct P p; struct P *q; p.x = 1; q = &p; return q->y;}\n");
     ok("sizeof", "struct P { int x; }; int main(){int a[4]; struct P p; char *s; return sizeof(int)+sizeof(a)+sizeof(p)+sizeof(*s)+sizeof(\"hi\");}\n");
+    ok("typedef", "typedef int I; typedef unsigned int U; int main(){I x; U u; x = 1; u = x; return sizeof(x+x);}\n");
+    ok("cast", "int main(){int x; char *p; unsigned char c; x = 1; c = (unsigned char)x; p = (char *)&x; return *p;}\n");
     bad("no field", "struct P { int x; }; int main(){struct P p; return p.z;}\n", "no field");
     bad("dot int", "int main(){int x; return x.y;}\n", "not a struct");
 

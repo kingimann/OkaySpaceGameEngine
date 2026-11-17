@@ -53,10 +53,23 @@ void store(std::string& s, const char* reg, int dst) {
     s += "\n";
 }
 
-void sext(std::string& s, int width) {
+void sext(std::string& s, int width, bool uns) {
+    if (width != 1 && width != 2 && width != 4) return;
+    if (uns && width == 4) {
+        s += "  movl %eax, %eax\n";
+        return;
+    }
+    if (uns && width == 2) {
+        s += "  movzwq %ax, %rax\n";
+        return;
+    }
+    if (uns && width == 1) {
+        s += "  movzbq %al, %rax\n";
+        return;
+    }
     if (width == 4) s += "  movslq %eax, %rax\n";
     else if (width == 2) s += "  movswq %ax, %rax\n";
-    else if (width == 1) s += "  movsbq %al, %rax\n";
+    else s += "  movsbq %al, %rax\n";
 }
 
 const char* loadOp(int width) {
@@ -64,6 +77,32 @@ const char* loadOp(int width) {
     if (width == 2) return "movswq";
     if (width == 4) return "movslq";
     return "movq";
+}
+
+void memLoad(std::string& s, int width, bool uns, const std::string& addr) {
+    if (uns && width == 4) {
+        s += "  movl ";
+        s += addr;
+        s += ", %eax\n";
+        return;
+    }
+    if (uns && width == 1) {
+        s += "  movzbq ";
+        s += addr;
+        s += ", %rax\n";
+        return;
+    }
+    if (uns && width == 2) {
+        s += "  movzwq ";
+        s += addr;
+        s += ", %rax\n";
+        return;
+    }
+    s += "  ";
+    s += loadOp(width);
+    s += " ";
+    s += addr;
+    s += ", %rax\n";
 }
 
 const char* storeOp(int width) {
@@ -87,7 +126,18 @@ const char* storeRegC(int width) {
     return "%rcx";
 }
 
-const char* setcc(Inst::Op op) {
+const char* setcc(Inst::Op op, bool uns) {
+    if (uns) {
+        switch (op) {
+        case Inst::Op::Clt: return "setb";
+        case Inst::Op::Cle: return "setbe";
+        case Inst::Op::Cgt: return "seta";
+        case Inst::Op::Cge: return "setae";
+        case Inst::Op::Ceq: return "sete";
+        case Inst::Op::Cne: return "setne";
+        default: return "sete";
+        }
+    }
     switch (op) {
     case Inst::Op::Ceq: return "sete";
     case Inst::Op::Cne: return "setne";
@@ -119,7 +169,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
     switch (in.op) {
     case Inst::Op::Mov:
         load(s, in.a, "%rax");
-        sext(s, in.extra);
+        sext(s, in.extra, in.uns);
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Add:
@@ -182,7 +232,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         load(s, in.a, "%rax");
         load(s, in.b, "%rcx");
         s += "  cmpq %rcx, %rax\n  ";
-        s += setcc(in.op);
+        s += setcc(in.op, in.uns);
         s += " %al\n  movzbq %al, %rax\n";
         store(s, "%rax", in.dst);
         break;
@@ -228,7 +278,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
     case Inst::Op::Ret:
         if (in.a.kind != Operand::Kind::None) {
             load(s, in.a, "%rax");
-            sext(s, in.extra);
+            sext(s, in.extra, in.uns);
         }
         s += "  jmp ";
         s += f.name;
@@ -267,9 +317,7 @@ void emitMem(std::string& s, const Inst& in, int localOff) {
         break;
     case Inst::Op::Load:
         load(s, in.a, "%rax");
-        s += "  ";
-        s += loadOp(in.extra);
-        s += " (%rax), %rax\n";
+        memLoad(s, in.extra, in.uns, "(%rax)");
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Store:
@@ -282,11 +330,7 @@ void emitMem(std::string& s, const Inst& in, int localOff) {
         s += ", (%rax)\n";
         break;
     case Inst::Op::GLoad:
-        s += "  ";
-        s += loadOp(in.extra);
-        s += " ";
-        s += in.func;
-        s += "(%rip), %rax\n";
+        memLoad(s, in.extra, in.uns, in.func + "(%rip)");
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::GStore:

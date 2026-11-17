@@ -39,7 +39,8 @@ struct Inst {
         Local, Lea, LeaSym, Load, Store, GLoad, GStore
     } op = Op::Mov;
     int dst = -1;
-    int extra = 8;  // byte width for load/store
+    int extra = 8;  // byte width for a load, store, or narrowing move
+    bool uns = false;  // zero-extend, or unsigned compare
     Operand a;
     Operand b;
     std::string label;

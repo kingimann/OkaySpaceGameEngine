@@ -38,10 +38,13 @@ struct Expr {
     } kind = Kind::Int;
     std::string text;
     std::uint64_t ival = 0;
+    bool litUnsigned = false;
+    int litRank = 0;
     int line = 1;
     int col = 1;
     std::vector<std::unique_ptr<Expr>> kids;
     std::unique_ptr<Type> ty;
+    std::unique_ptr<Type> checked;
     Expr();
     ~Expr();
 };
@@ -49,6 +52,7 @@ struct Expr {
 struct Type {
     enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct } kind = Kind::Int;
     std::string tag;
+    bool unsign = false;
     std::unique_ptr<Type> inner;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
@@ -110,11 +114,14 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
     n->kind = e.kind;
     n->text = e.text;
     n->ival = e.ival;
+    n->litUnsigned = e.litUnsigned;
+    n->litRank = e.litRank;
     n->line = e.line;
     n->col = e.col;
     for (const auto& k : e.kids)
         if (k) n->kids.push_back(cloneExpr(*k));
     if (e.ty) n->ty = cloneType(*e.ty);
+    if (e.checked) n->checked = cloneType(*e.checked);
     return n;
 }
 
@@ -122,6 +129,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     auto n = std::make_unique<Type>();
     n->kind = t.kind;
     n->tag = t.tag;
+    n->unsign = t.unsign;
     n->unsized = t.unsized;
     if (t.inner) n->inner = cloneType(*t.inner);
     if (t.bound) n->bound = cloneExpr(*t.bound);
@@ -374,6 +382,7 @@ public:
 
     Tu parseTu() {
         Tu tu;
+        if (tscopes_.empty()) tscopes_.emplace_back();
         while (!atEnd()) {
             if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
@@ -396,6 +405,23 @@ private:
     std::size_t i_ = 0;
     bool reported_ = false;
     std::map<std::string, std::unique_ptr<Type>> structs_;
+    std::vector<std::map<std::string, std::unique_ptr<Type>>> tscopes_;
+
+    const Type* findTypedef(const std::string& name) const {
+        for (int i = static_cast<int>(tscopes_.size()) - 1; i >= 0; --i) {
+            auto it = tscopes_[static_cast<std::size_t>(i)].find(name);
+            if (it != tscopes_[static_cast<std::size_t>(i)].end()) return it->second.get();
+        }
+        return nullptr;
+    }
+    void addTypedef(const std::string& name, std::unique_ptr<Type> type) {
+        if (name.empty()) {
+            err("typedef needs a name");
+            return;
+        }
+        if (tscopes_.empty()) tscopes_.emplace_back();
+        tscopes_.back()[name] = std::move(type);
+    }
 
     const Token& cur() const { return toks_[i_]; }
     bool atEnd() const { return i_ >= toks_.size() || toks_[i_].kind == Tok::End; }
@@ -417,8 +443,11 @@ private:
     }
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
-        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
-               isKwTok(t, "long") || isKwTok(t, "struct");
+        if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
+            isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
+            isKwTok(t, "typedef"))
+            return true;
+        return t.kind == Tok::Ident && findTypedef(t.text) != nullptr;
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
@@ -463,6 +492,8 @@ private:
     std::unique_ptr<Expr> leafInt(const Token& t) {
         auto e = ex(Expr::Kind::Int, t);
         e->ival = t.uval;
+        e->litUnsigned = t.isUnsigned;
+        e->litRank = t.longRank;
         return e;
     }
     std::unique_ptr<Expr> zeroAt() {
@@ -484,8 +515,18 @@ private:
         bool sawInt = false;
         bool sawChar = false;
         bool sawVoid = false;
+        bool uns = false;
         bool any = false;
         while (!atEnd()) {
+            if (eatKw("unsigned")) {
+                uns = true;
+                any = true;
+                continue;
+            }
+            if (eatKw("signed")) {
+                any = true;
+                continue;
+            }
             if (eatKw("long")) {
                 ++longs;
                 any = true;
@@ -514,13 +555,25 @@ private:
             break;
         }
         if (any) {
-            if (sawVoid && !longs && !shorts && !sawInt && !sawChar) return ty(Type::Kind::Void);
-            if (sawChar && !longs && !shorts && !sawInt && !sawVoid) return ty(Type::Kind::Char);
-            if (shorts && !longs && !sawChar && !sawVoid) return ty(Type::Kind::Short);
-            if (longs && !shorts && !sawChar && !sawVoid) return ty(Type::Kind::Long);
-            if (sawInt && !longs && !shorts && !sawChar && !sawVoid) return ty(Type::Kind::Int);
-            err("unsupported type");
-            return ty(Type::Kind::Int);
+            std::unique_ptr<Type> t;
+            if (sawVoid && !longs && !shorts && !sawInt && !sawChar && !uns) t = ty(Type::Kind::Void);
+            else if (sawChar && !longs && !shorts && !sawInt && !sawVoid) t = ty(Type::Kind::Char);
+            else if (shorts && !longs && !sawChar && !sawVoid) t = ty(Type::Kind::Short);
+            else if (longs && !shorts && !sawChar && !sawVoid) t = ty(Type::Kind::Long);
+            else if ((sawInt || uns) && !longs && !shorts && !sawChar && !sawVoid) t = ty(Type::Kind::Int);
+            if (!t) {
+                err("unsupported type");
+                return ty(Type::Kind::Int);
+            }
+            t->unsign = uns;
+            return t;
+        }
+        if (!atEnd() && cur().kind == Tok::Ident) {
+            const Type* td = findTypedef(cur().text);
+            if (td) {
+                advance();
+                return cloneType(*td);
+            }
         }
         if (!atEnd() && cur().kind == Tok::Keyword) {
             err("'" + cur().text + "' is not in this subset");
@@ -704,6 +757,7 @@ private:
     }
 
     void parseExternal(Tu& tu) {
+        bool td = eatKw("typedef");
         auto base = parseBase();
         if (base && base->kind == Type::Kind::Struct && isP(";")) {
             advance();
@@ -713,9 +767,13 @@ private:
             err("expected a declarator");
             return;
         }
+        auto keep = [&](Parsed& d, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
+            if (td) addTypedef(d.name, std::move(type));
+            else tu.decls.push_back(makeDecl(d, std::move(type), std::move(init)));
+        };
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
-        if (type && type->kind == Type::Kind::Function && isP("{")) {
+        if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
             auto decl = makeDecl(d, std::move(type), nullptr);
             decl->body = parseCompound();
             tu.decls.push_back(std::move(decl));
@@ -723,13 +781,13 @@ private:
         }
         std::unique_ptr<Expr> init;
         if (eatP("=")) init = parseInitializer();
-        tu.decls.push_back(makeDecl(d, std::move(type), std::move(init)));
+        keep(d, std::move(type), std::move(init));
         while (eatP(",")) {
             Parsed d2 = parseDeclarator(true);
             auto t2 = apply(cloneType(*base), d2.mods);
             std::unique_ptr<Expr> init2;
             if (eatP("=")) init2 = parseInitializer();
-            tu.decls.push_back(makeDecl(d2, std::move(t2), std::move(init2)));
+            keep(d2, std::move(t2), std::move(init2));
         }
         expectP(";", ";");
     }
@@ -744,6 +802,7 @@ private:
     }
 
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
+        bool td = eatKw("typedef");
         auto base = parseBase();
         if (base && base->kind == Type::Kind::Struct && isP(";")) {
             advance();
@@ -758,13 +817,15 @@ private:
         }
         std::unique_ptr<Expr> init;
         if (eatP("=")) init = parseInitializer();
-        out.push_back(declStmt(makeDecl(d, std::move(type), std::move(init))));
+        if (td) addTypedef(d.name, std::move(type));
+        else out.push_back(declStmt(makeDecl(d, std::move(type), std::move(init))));
         while (eatP(",")) {
             Parsed d2 = parseDeclarator(true);
             auto t2 = apply(cloneType(*base), d2.mods);
             std::unique_ptr<Expr> init2;
             if (eatP("=")) init2 = parseInitializer();
-            out.push_back(declStmt(makeDecl(d2, std::move(t2), std::move(init2))));
+            if (td) addTypedef(d2.name, std::move(t2));
+            else out.push_back(declStmt(makeDecl(d2, std::move(t2), std::move(init2))));
         }
         expectP(";", ";");
         (void)forInit;
@@ -790,6 +851,7 @@ private:
     std::unique_ptr<Stmt> parseCompound() {
         auto saved = cur();
         expectP("{", "{");
+        tscopes_.emplace_back();
         auto s = std::make_unique<Stmt>();
         s->kind = Stmt::Kind::Block;
         s->line = saved.line;
@@ -807,6 +869,7 @@ private:
             s->stmts.push_back(parseStmt());
         }
         expectP("}", "}");
+        if (!tscopes_.empty()) tscopes_.pop_back();
         return s;
     }
 
@@ -1181,7 +1244,7 @@ bool isVoidPtr(const Type& t) {
     return isPtr(t) && t.inner && t.inner->kind == Type::Kind::Void;
 }
 bool sameType(const Type& a, const Type& b) {
-    if (a.kind != b.kind) return false;
+    if (a.kind != b.kind || a.unsign != b.unsign) return false;
     if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
@@ -1347,7 +1410,7 @@ private:
         }
     }
 
-    ET checkExpr(Expr& e) {
+    ET checkExprBody(Expr& e) {
         ET r;
         r.line = e.line;
         r.col = e.col;
@@ -1356,7 +1419,11 @@ private:
         };
         switch (e.kind) {
         case Expr::Kind::Int:
-            r.type = prim(Type::Kind::Int);
+            if (e.litRank > 0) r.type = prim(Type::Kind::Long);
+            else if (!e.litUnsigned && e.ival > 0x7fffffffull) r.type = prim(Type::Kind::Long);
+            else r.type = prim(Type::Kind::Int);
+            if (e.litUnsigned || (e.litRank == 0 && e.ival > 0xffffffffull)) r.type->unsign = true;
+            if (e.litUnsigned && e.ival > 0xffffffffull) r.type->kind = Type::Kind::Long;
             r.nullc = e.ival == 0;
             return r;
         case Expr::Kind::Char:
@@ -1366,7 +1433,10 @@ private:
         case Expr::Kind::String: {
             r.type = prim(Type::Kind::Array);
             r.type->inner = prim(Type::Kind::Char);
-            r.type->unsized = true;
+            auto bound = std::make_unique<Expr>();
+            bound->kind = Expr::Kind::Int;
+            bound->ival = static_cast<std::uint64_t>(e.text.size()) + 1;
+            r.type->bound = std::move(bound);
             r.lvalue = true;
             return r;
         }
@@ -1550,6 +1620,12 @@ private:
             return bad(e.line, e.col);
         }
         return bad(e.line, e.col);
+    }
+
+    ET checkExpr(Expr& e) {
+        ET r = checkExprBody(e);
+        if (r.type) e.checked = cloneType(*r.type);
+        return r;
     }
 
     ET checkBin(Expr& e) {
@@ -1791,6 +1867,7 @@ private:
         bool array = false;
         bool agg = false;
         bool mem = false;
+        bool zext = false;
         std::string gname;
         int width = 8;
         int step = 0;
@@ -1814,6 +1891,7 @@ private:
     int tmpN_ = 0;
     int strN_ = 0;
     int retWidth_ = 8;
+    bool retUns_ = false;
     std::set<std::string> addr_;
     std::vector<std::map<std::string, Sym>> scopes_;
     std::map<std::string, Sym> globals_;
@@ -1928,6 +2006,8 @@ private:
         s.step = valueStep(t);
         s.inner = innerOf(t);
         s.objSize = sizeOf(t);
+        s.zext = t->unsign;
+        if (t->kind == Type::Kind::Array && t->inner) s.zext = t->inner->unsign;
         if (t->kind == Type::Kind::Struct) {
             s.agg = true;
             s.fields = layoutOf(t);
@@ -1946,18 +2026,20 @@ private:
         return nullptr;
     }
 
-    void emitMov(int dst, Operand src, int width = 8) {
+    void emitMov(int dst, Operand src, int width = 8, bool uns = false) {
         Inst in;
         in.op = Inst::Op::Mov;
         in.dst = dst;
         in.a = src;
         in.extra = width <= 0 ? 8 : width;
+        in.uns = uns;
         emit(in);
     }
-    Operand narrow(Operand src, int width) {
-        if (width >= 8 || width <= 0) return src;
+    Operand narrow(Operand src, int width, bool uns = false) {
+        if ((width >= 8 || width <= 0) && !uns) return src;
+        if (width >= 8) return src;
         int t = fresh();
-        emitMov(t, src, width);
+        emitMov(t, src, width, uns);
         return Operand::vreg(t);
     }
     void storeMem(int slot, Operand val, int width) {
@@ -1974,7 +2056,7 @@ private:
         st.extra = width;
         emit(st);
     }
-    Val loadMem(int slot, int width) {
+    Val loadMem(int slot, int width, bool uns) {
         int addr = fresh();
         Inst lea;
         lea.op = Inst::Op::Lea;
@@ -1987,6 +2069,7 @@ private:
         ld.dst = dst;
         ld.a = Operand::vreg(addr);
         ld.extra = width;
+        ld.uns = uns;
         emit(ld);
         return Val{Operand::vreg(dst), 0, 0};
     }
@@ -2004,12 +2087,13 @@ private:
         in.label2 = f;
         emit(in);
     }
-    void emitBin(Inst::Op op, int dst, Operand a, Operand b) {
+    void emitBin(Inst::Op op, int dst, Operand a, Operand b, bool uns = false) {
         Inst in;
         in.op = op;
         in.dst = dst;
         in.a = a;
         in.b = b;
+        in.uns = uns;
         emit(in);
     }
     int asReg(Operand o) {
@@ -2134,7 +2218,7 @@ private:
             err(line, col, "not lowered: " + name);
             return {};
         }
-        if (s->mem) return loadMem(s->reg, s->width);
+        if (s->mem) return loadMem(s->reg, s->width, s->zext);
         if (s->array || s->agg) {
             if (s->global) {
                 int dst = fresh();
@@ -2164,6 +2248,7 @@ private:
             in.dst = dst;
             in.func = s->gname;
             in.extra = s->width;
+            in.uns = s->zext;
             emit(in);
             Val v;
             v.op = Operand::vreg(dst);
@@ -2308,13 +2393,14 @@ private:
         return a;
     }
 
-    Val loadAddr(Addr a, int inner) {
+    Val loadAddr(Addr a, int inner, bool uns = false) {
         int dst = fresh();
         Inst in;
         in.op = Inst::Op::Load;
         in.dst = dst;
         in.a = a.op;
         in.extra = a.width;
+        in.uns = uns;
         emit(in);
         return Val{Operand::vreg(dst), inner, 0};
     }
@@ -2354,9 +2440,22 @@ private:
         }
         case Expr::Kind::Name:
             return readName(e.text, e.line, e.col);
-        case Expr::Kind::Cast:
+        case Expr::Kind::Cast: {
             if (e.kids.empty() || !e.kids[0]) return {};
-            return lowerExpr(*e.kids[0]);
+            Val v = lowerExpr(*e.kids[0]);
+            if (!e.ty) return v;
+            if (e.ty->kind == Type::Kind::Pointer) {
+                v.step = valueStep(e.ty.get());
+                v.inner = innerOf(e.ty.get());
+                v.fields.clear();
+                if (e.ty->inner && e.ty->inner->kind == Type::Kind::Struct) v.fields = layoutOf(e.ty->inner.get());
+                return v;
+            }
+            if (e.ty->kind == Type::Kind::Array) return v;
+            int w = sizeOf(e.ty.get());
+            if (w >= 8 && !e.ty->unsign) return v;
+            return Val{narrow(v.op, w, e.ty->unsign), 0, 0};
+        }
         case Expr::Kind::Comma: {
             Val last{};
             for (auto& k : e.kids)
@@ -2395,7 +2494,7 @@ private:
             if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
                 if (Sym* s = find(e.kids[0]->text)) inner = s->inner;
             }
-            return loadAddr(a, inner);
+            return loadAddr(a, inner, e.checked && e.checked->unsign);
         }
         case Expr::Kind::Member: {
             Addr a = lowerAddr(e);
@@ -2406,7 +2505,7 @@ private:
                 v.fields = a.fields;
                 return v;
             }
-            Val v = loadAddr(a, a.inner);
+            Val v = loadAddr(a, a.inner, e.checked && e.checked->unsign);
             v.step = a.step;
             v.inner = a.inner;
             v.fields = a.fields;
@@ -2476,6 +2575,7 @@ private:
 
     int sizeofOf(Expr& e) {
         if (e.ty) return sizeOf(e.ty.get());
+        if (!e.kids.empty() && e.kids[0] && e.kids[0]->checked) return sizeOf(e.kids[0]->checked.get());
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "sizeof this expression is not allowed");
             return 8;
@@ -2537,7 +2637,7 @@ private:
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
             a.ok = true;
-            return loadAddr(a, p.inner);
+            return loadAddr(a, p.inner, e.checked && e.checked->unsign);
         }
         if (e.text == "+") return lowerExpr(*e.kids[0]);
         Val a = lowerExpr(*e.kids[0]);
@@ -2584,22 +2684,22 @@ private:
         }
         Operand one = Operand::number(e.text == "--" ? -1 : 1);
         if (s->mem) {
-            Val cur = loadMem(s->reg, s->width);
+            Val cur = loadMem(s->reg, s->width, s->zext);
             int dst = fresh();
             emitBin(Inst::Op::Add, dst, cur.op, one);
-            Operand nxt = narrow(Operand::vreg(dst), s->width);
+            Operand nxt = narrow(Operand::vreg(dst), s->width, s->zext);
             storeMem(s->reg, nxt, s->width);
             return pre ? Val{nxt, 0, 0} : cur;
         }
         if (pre) {
             emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
-            if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width);
+            if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width, s->zext);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         int old = fresh();
         emitMov(old, Operand::vreg(s->reg));
         emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
-        if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width);
+        if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width, s->zext);
         return Val{Operand::vreg(old), s->step, s->inner};
     }
 
@@ -2630,8 +2730,23 @@ private:
             emitBin(Inst::Op::Div, q, Operand::vreg(diff), Operand::number(a.step));
             return Val{Operand::vreg(q), 0, 0};
         }
+        bool uns = false;
+        if (e.text == "<" || e.text == ">" || e.text == "<=" || e.text == ">=") {
+            const Type* ta = e.kids[0]->checked.get();
+            const Type* tb = e.kids[1]->checked.get();
+            auto isLong = [](const Type* t) { return t && t->kind == Type::Kind::Long; };
+            bool aUns = ta && ta->unsign;
+            bool bUns = tb && tb->unsign;
+            if ((isLong(ta) && aUns) || (isLong(tb) && bUns)) uns = true;
+            else if ((isLong(ta) && !aUns && bUns) || (isLong(tb) && !bUns && aUns)) uns = false;
+            else if (aUns || bUns) {
+                uns = true;
+                a.op = narrow(a.op, 4, true);
+                b.op = narrow(b.op, 4, true);
+            }
+        }
         int dst = fresh();
-        emitBin(binOp(e.text), dst, a.op, b.op);
+        emitBin(binOp(e.text), dst, a.op, b.op, uns);
         return Val{Operand::vreg(dst), 0, 0};
     }
 
@@ -2653,7 +2768,7 @@ private:
                 return {};
             }
             if (s->global || s->mem) {
-                Operand val = narrow(rhs.op, s->width);
+                Operand val = narrow(rhs.op, s->width, s->zext);
                 if (s->global) {
                     Inst in;
                     in.op = Inst::Op::GStore;
@@ -2666,12 +2781,13 @@ private:
                 }
                 return Val{val, 0, 0};
             }
-            emitMov(s->reg, rhs.op, s->width);
+            emitMov(s->reg, rhs.op, s->width, s->zext);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
-        Operand val = narrow(rhs.op, a.width);
+        bool destUns = lhs.checked && lhs.checked->unsign;
+        Operand val = narrow(rhs.op, a.width, destUns);
         Inst in;
         in.op = Inst::Op::Store;
         in.a = a.op;
@@ -2735,6 +2851,7 @@ private:
             if (s.expr) {
                 in.a = lowerExpr(*s.expr).op;
                 in.extra = retWidth_;
+                in.uns = retUns_;
             }
             emit(in);
             break;
@@ -2787,9 +2904,9 @@ private:
         if (!d.name.empty() && addr_.count(d.name)) s.mem = true;
         if (!d.name.empty()) scopes_.back()[d.name] = s;
         if (d.init) {
-            Operand val = narrow(lowerExpr(*d.init).op, s.width);
+            Operand val = narrow(lowerExpr(*d.init).op, s.width, s.zext);
             if (s.mem) storeMem(slot, val, s.width);
-            else emitMov(slot, val, s.width);
+            else emitMov(slot, val, s.width, s.zext);
         }
     }
 
@@ -2891,12 +3008,14 @@ private:
         loops_.clear();
         addr_.clear();
         retWidth_ = 8;
+        retUns_ = false;
         if (d.body) scanStmt(*d.body);
         if (d.type && d.type->inner) {
             const Type* r = d.type->inner.get();
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
                 r->kind == Type::Kind::Long)
                 retWidth_ = sizeOf(r);
+            retUns_ = r->unsign;
         }
         if (d.type) {
             for (const Param& p : d.type->params) {
@@ -2921,6 +3040,8 @@ private:
         mod_.funcs.push_back(std::move(fn_));
     }
 };
+
+void typecheckTu(Tu& tu, Diagnostics& diags);
 
 Module lowerProgram(const std::string& source, Diagnostics& diags) {
     MemoryFiles files;
@@ -2947,6 +3068,8 @@ Module lowerProgram(const std::string& source, Diagnostics& diags) {
     toks.push_back(std::move(end));
     Parser parser(std::move(toks), diags);
     Tu tu = parser.parseTu();
+    if (!diags.ok()) return {};
+    typecheckTu(tu, diags);
     if (!diags.ok()) return {};
     Lowerer lowerer(diags);
     return lowerer.run(tu);

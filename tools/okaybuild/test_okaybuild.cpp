@@ -140,6 +140,28 @@ static void testRawActions() {
     o = sh("x.o --dry-run"); check(ran(o) == 0, "selecting one output works", o);
 }
 
+// Bug: the manifest reader cut every line at the first '#', so a command that prints a
+// preprocessor line, and a quoted path that contains '#', were both truncated.
+static void testHashInCommandAndPath() {
+    printf("test: '#' inside a command and inside a quoted path is kept\n");
+    fresh("hashc");
+    write("a#b.cpp", "int main(){return 0;}\n");
+    write("build.okay",
+          "action\n"
+          "  cmd = sh -c \"printf '#define V 3\\n' > gen.h\"\n"
+          "  output = gen.h\n"
+          "end\n"
+          "target app exe\n"
+          "  sources = \"a#b.cpp\"\n"
+          "  include = .\n"
+          "end\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0, "build with hash in cmd and path", o);
+    string h; { std::ifstream f(gRoot / "gen.h"); h.assign(std::istreambuf_iterator<char>(f), {}); }
+    check(h.find("#define V 3") != string::npos, "command kept the hash character", h + o);
+    check(fs::exists(gRoot / "build/app"), "quoted source path with a hash compiled");
+}
+
 static void testImportGenerated() {
     printf("test: importer keeps order-only edges for generated files (real CMake+Ninja configure of a tiny project)\n");
     if (system("cmake --version >/dev/null 2>&1 && ninja --version >/dev/null 2>&1") != 0) { printf("  skipped (no cmake/ninja)\n"); return; }
@@ -165,6 +187,6 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
-    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testImportGenerated();
+    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

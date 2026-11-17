@@ -56,6 +56,23 @@ static vector<string> tokens(const string& line) {
 }
 static string qtok(const string& s) { return s.find_first_of(" \t") == string::npos && !s.empty() ? s : "\"" + s + "\""; }
 
+// '#' starts a comment only outside quotes. A cmd line is kept whole, because the command text
+// itself may contain '#' (a preprocessor line, a quoted path). A trailing comment on a cmd line
+// is therefore part of the command.
+static bool isCmdLine(const string& line) {
+    size_t i = 0; while (i < line.size() && isspace((unsigned char)line[i])) ++i;
+    if (line.compare(i, 3, "cmd") != 0) return false;
+    size_t j = i + 3; return j >= line.size() || isspace((unsigned char)line[j]) || line[j] == '=';
+}
+static string stripComment(const string& line) {
+    bool inq = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == '"') inq = !inq;
+        else if (line[i] == '#' && !inq) return line.substr(0, i);
+    }
+    return line;
+}
+
 static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
@@ -64,7 +81,7 @@ static Manifest parseManifest(const string& file) {
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     while (std::getline(in, line)) {
         ++ln;
-        auto h = line.find('#'); if (h != string::npos) line.resize(h);
+        if (!isCmdLine(line)) line = stripComment(line);
         auto t = tokens(line); if (t.empty()) continue;
         if (mode == ACTION && t[0] == "cmd") { // raw rest of line, kept exactly
             auto p = line.find('='); if (p == string::npos) throw err("expected: cmd = command");
@@ -511,16 +528,20 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
             cv.wait(lk, [&] { return !ready.empty() || running == 0; });
             if (ready.empty() || failed) { if (running == 0) { cv.notify_all(); return; } if (failed) { cv.wait(lk, [&] { return running == 0; }); return; } continue; }
             int id = ready.back(); ready.pop_back(); ++running; const Action& a = g.acts[id]; lk.unlock();
-            string why; long long t0 = nowNs(); bool d = dirty(a, why); gNsDirty += nowNs() - t0;
+            string why; bool d = false; bool ok = true; string out;
+            try {
+            long long t0 = nowNs(); d = dirty(a, why); gNsDirty += nowNs() - t0;
             if (!d && o.dry) for (int dep : a.deps) if (wouldRun[dep]) { d = true; why = "input " + g.acts[dep].output + " would be rebuilt"; }
-            bool ok = true; string out;
             if (d) {
                 { std::lock_guard<std::mutex> pl(mu); ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
                   if (o.explain) { printf("        because: %s\n", why.c_str()); }
                   if (o.verbose || o.dry) { printf("        %s\n", joined(a.argv).c_str()); }
                   fflush(stdout); }
                 if (!o.dry) {
-                    if (!a.output.empty()) fs::create_directories(fs::path(a.output).parent_path());
+                    if (!a.output.empty()) { // "file" in the current directory has an empty parent; creating that throws
+                        fs::path parent = fs::path(a.output).parent_path();
+                        if (!parent.empty()) fs::create_directories(parent);
+                    }
                     if (a.kind == "AR") fs::remove(a.output);
                     vector<string> argv = a.argv;
                     if (a.rspHead > 0 && joined(a.argv).size() > a.rspThreshold) { // long line: put the arguments in a response file
@@ -537,9 +558,12 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                         for (auto& p : ins) { FileSig h; if (!hashFile(p, h)) { ok = false; out += "okay-build: cannot hash input " + p + "\n"; break; } r.inputs.push_back({p, h}); }
                         if (ok) { std::lock_guard<std::mutex> sl(gStateMu); gState[a.output] = r; }
                         gNsPost += nowNs() - ts;
-                    } else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+                    } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
                 } else wouldRun[id] = 1;
             } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
+            } catch (const std::exception& e) {
+                ok = false; out += string("okay-build: ") + e.what() + "\n";
+            }
             lk.lock(); --running; ++finished;
             if (!ok) { if (!failed) firstErr = out; failed = true; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
             else if (!failed) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);

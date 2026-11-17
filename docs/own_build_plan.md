@@ -19,6 +19,11 @@ No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
   (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
 - Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic), no pools,
   no restat, no generator steps, no `-k`; structured targets use -MMD (system headers not tracked), imported ones keep CMake's -MD.
+- Bug fixed (2026-11-17): a `#` used to end the line even inside quotes and inside `cmd`, so `sources = "a#b.cpp"` and
+  `cmd = printf '#define V 3'` were cut in half. Comments are now stripped only outside quotes, and a `cmd` line is kept whole.
+  The same test aborted the process: an output in the current directory has an empty parent path, and
+  `create_directories` on that path throws out of the worker thread (`std::terminate`). Empty parents are skipped, and a
+  worker exception fails that step instead of killing the process.
 
 ## What Ninja/Make do that okay-build does not yet
 Pools (limit link jobs), `restat` for generators, generator rules (custom commands with declared outputs), `-k` keep going,

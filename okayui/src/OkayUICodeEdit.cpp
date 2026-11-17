@@ -1071,6 +1071,7 @@ void CodeEdit::handleKeys(bool& changed) {
     const bool ctrl = io.keyCtrl, shift = io.keyShift;
     bool any = false;
     const unsigned v0 = version_;
+    if (in.selectAll && !comp_.active) { SelectAll(); any = true; }   // before the text: Ctrl+A and the text typed after it in one frame replace the old text
     if (in.commit && in.commit[0]) {   // what the input method finished: inserted like typed text, over the selection
         std::string t = sanitize(in.commit);
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
@@ -1086,7 +1087,6 @@ void CodeEdit::handleKeys(bool& changed) {
         if (version_ != v0) changed = true;
         return;
     }
-    if (in.selectAll) { SelectAll(); any = true; }
     if (in.copy) { Copy(); any = true; }
     if (in.cut) { Cut(); any = true; }
     if (in.paste) { Paste(); any = true; }

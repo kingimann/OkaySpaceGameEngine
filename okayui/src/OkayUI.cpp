@@ -1658,6 +1658,10 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             for (int i = 0; i < n; ++i) buf[ts->caret + i] = p[i];
             len += n; ts->caret += n; ts->anchor = ts->caret; changed = true;
         };
+        // Ctrl+A first: the host gathers one frame's keys without their order, and a select-all typed just before text (Ctrl+A, then
+        // "2.5" from a fast typist or xdotool) must select the old text for the new text to replace. Applied after the text, it selected
+        // the "2" just typed, and the ".5" of the next frame replaced it: 0.5 instead of 2.5.
+        if (g_in.selectAll && !composing) { ts->anchor = 0; ts->caret = len; }
         if (g_in.commit && g_in.commit[0] && !readOnly) {   // what the input method finished: typed text, replacing a selection
             for (const char* p = g_in.commit; *p;) {
                 const int n = printableUtf8Len(p);
@@ -1709,7 +1713,6 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         if (g_in.right && !composing) move(nextChar(buf, len, ts->caret), selHi());
         if (g_in.home && !composing)  { ts->caret = 0;   if (!g_in.shift) ts->anchor = 0; }
         if (g_in.end && !composing)   { ts->caret = len; if (!g_in.shift) ts->anchor = len; }
-        if (g_in.selectAll && !composing) { ts->anchor = 0; ts->caret = len; }
         if (g_in.enter && !composing) enter = true;
         if (g_in.escape && !composing) { if (g_focus == id) { g_lostFocusId = id; g_lostFocusEdited = (g_editedId == id); } g_focus = 0; focused = false; }
     }

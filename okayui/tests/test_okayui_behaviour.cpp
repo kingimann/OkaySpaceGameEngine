@@ -176,6 +176,12 @@ void InputTextTests() {
     r.sim.Type("Q"); r.Frame(); CHECK(!std::strcmp(text, "abQ"));
     // select all, then Backspace
     r.Tap(Key_SelectAll); r.Tap(Key_Backspace); CHECK(text[0] == '\0');
+    // Ctrl+A and the digits typed right after it in one frame (xdotool, a fast typist): the digits replace the old text. Select-all
+    // applied after the text selected the "2" just typed, and the next frame's ".5" replaced it (0.5 instead of 2.5).
+    r.sim.Type("1.000"); r.Frame(); CHECK(!std::strcmp(text, "1.000"));
+    r.sim.Press(Key_SelectAll); r.sim.Type("2"); r.Frame(); CHECK(!std::strcmp(text, "2"));
+    r.sim.Type(".5"); r.Frame(); CHECK(!std::strcmp(text, "2.5"));
+    r.Tap(Key_SelectAll); r.Tap(Key_Backspace); CHECK(text[0] == '\0');
     // control characters and invalid UTF-8 are dropped; a real multi-byte character is kept and removed whole
     r.sim.Type(std::string("a\tb\n\x7f") + "\xFF" + "\xC3\xA9" + "z"); r.Frame();
     CHECK(!std::strcmp(text, "ab\xC3\xA9z"));

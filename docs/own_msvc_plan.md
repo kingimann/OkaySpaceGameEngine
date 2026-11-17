@@ -49,6 +49,8 @@ COFF names, written from the public decoration rules: `?f@C@@` access letter, `E
 
 A virtual call through a pointer, a reference, or `*p` loads the table pointer from the object, indexes it by slot and calls through that. A call on a named object is a direct call, as in C++. The table pointer is stored where a local object is declared.
 
+The `/O2` inliner skips member functions (their body names `this->field`); `/O1` and `/O2` are tested on a virtual-call program.
+
 Not done: constructors and destructors, so there is no member initializer list and no `new`; a global or array of an object with virtual functions (it needs a constructor that runs at startup); more than one base; a virtual function added in a class whose base has none; virtual bases; overloads that differ only in parameter types (overloads are told apart by parameter count); parameter-name back references in decorated names (MSVC writes `1` for a repeated type; we write it again); access checks (the access letter is only used in the name); a virtual call whose object expression has a side effect (it is refused with an error); the struct-return slot comes before `this` in the call, MSVC puts `this` first; templates; exceptions.
 
 Written from: ISO/IEC 14882 (class, member function, virtual function, override rules), the public MSVC name decoration description, the x64 calling convention (this in rcx), PE Format (ADDR64).

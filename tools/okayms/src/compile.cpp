@@ -4873,6 +4873,7 @@ void inline_node(Node* node, const std::vector<FuncDecl>& funcs) {
         for (const FuncDecl& item : funcs)
             if (item.name == node->text && item.defined) fn = &item;
         const bool simple = fn != nullptr && !fn->vararg && !fn->sret &&
+                            (fn->param_names.empty() || fn->param_names[0] != "this") &&
                             static_cast<int>(node->kids.size()) == fn->nparams &&
                             static_cast<int>(fn->locals.size()) == fn->nparams;
         bool args_ok = simple;
@@ -4960,6 +4961,8 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
     for (const FuncDecl& item : funcs)
         if (item.name == call->text && item.defined) fn = &item;
     if (fn == nullptr || fn->vararg || fn->sret || static_cast<int>(call->kids.size()) != fn->nparams) return false;
+    // Member functions are not inlined: their body names this->field.
+    if (!fn->param_names.empty() && fn->param_names[0] == "this") return false;
     if (!no_loop(fn->body) || contains_call(fn->body)) return false;
     std::map<std::string, std::string> ren;
     Node block;

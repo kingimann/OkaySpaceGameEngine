@@ -195,9 +195,44 @@ static void test_virtual(Tally& tally) {
     }
 }
 
+// /O1 and /O2 must give the same answer for the same programs.
+static void test_optimized(Tally& tally) {
+    std::printf("test_optimized\n");
+    for (int level = 1; level <= 2; ++level) {
+        okayms::CompileInput in;
+        in.optimize = true;
+        in.opt_level = level;
+        in.source =
+            "class A { public: int v; virtual int f() { return v; } int g() { return v + 1; } };\n"
+            "class B : public A { public: int f() { return v * 2; } };\n"
+            "int entry(void) {\n"
+            "  B b;\n"
+            "  b.v = 5;\n"
+            "  A *p = &b;\n"
+            "  return p->f() + b.g();\n"
+            "}\n";
+        const auto compiled = okayms::compile_c(in);
+        CHECK(tally, compiled.ok());
+        if (!compiled.ok()) {
+            std::fprintf(stderr, "  %s\n", compiled.error.c_str());
+            continue;
+        }
+        const auto linked = okayms::link_executable({compiled.value.object}, {});
+        CHECK(tally, linked.ok());
+        if (!linked.ok()) continue;
+        run_shell("mkdir -p /tmp/okayms-class");
+        const std::string exe = "/tmp/okayms-class/opt" + std::to_string(level) + ".exe";
+        CHECK(tally, write_bytes(exe, linked.value));
+        const int code = wine_exit(exe);
+        CHECK(tally, code == 16);
+        if (code != 16) std::fprintf(stderr, "  /O%d exit %d, wanted 16\n", level, code);
+    }
+}
+
 int main() {
     Tally tally;
     test_methods(tally);
     test_virtual(tally);
-    return tally.finish(2);
+    test_optimized(tally);
+    return tally.finish(3);
 }

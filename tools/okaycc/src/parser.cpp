@@ -606,6 +606,13 @@ private:
         }
         auto t = ty(Type::Kind::Struct);
         t->tag = tag;
+        bool completing = false;
+        if (!tag.empty() && !structs_.count(tag)) {
+            auto inc = ty(Type::Kind::Struct);
+            inc->tag = tag;
+            structs_[tag] = std::move(inc);
+            completing = true;
+        }
         while (!atEnd() && !isP("}")) {
             if (!isTypeKw(cur())) {
                 err("expected a field");
@@ -621,7 +628,9 @@ private:
         }
         expectP("}", "}");
         if (!tag.empty()) {
-            if (structs_.count(tag)) {
+            auto it = structs_.find(tag);
+            bool already = it != structs_.end() && it->second && !it->second->params.empty() && !completing;
+            if (already) {
                 diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column, "redefined struct '" + tag + "'");
             } else {
                 structs_[tag] = cloneType(*t);
@@ -1351,9 +1360,12 @@ private:
             if (e.type->kind == Type::Kind::Function) {
                 e.lvalue = false;
                 e.mod = false;
-            } else if (e.type->kind == Type::Kind::Array || e.type->kind == Type::Kind::Struct) {
+            } else if (e.type->kind == Type::Kind::Array) {
                 e.lvalue = true;
                 e.mod = false;
+            } else if (e.type->kind == Type::Kind::Struct) {
+                e.lvalue = true;
+                e.mod = true;
             } else {
                 e.lvalue = true;
                 e.mod = true;
@@ -1383,6 +1395,8 @@ private:
     bool canAssign(const Type& dst, const ET& src) {
         if (src.bad || !src.type) return true;
         if (isIntish(dst) && isIntish(*src.type)) return true;
+        if (dst.kind == Type::Kind::Struct && src.type->kind == Type::Kind::Struct && sameType(dst, *src.type))
+            return true;
         if (isPtr(dst) && src.nullc) return true;
         if (isPtr(dst) && isPtr(*src.type)) {
             if (isVoidPtr(dst) || isVoidPtr(*src.type)) return true;
@@ -1842,6 +1856,7 @@ private:
         int step = 0;
         int inner = 0;
         bool agg = false;
+        std::string tag;
         std::vector<FieldOff> fields;
     };
     struct Val {
@@ -1892,6 +1907,7 @@ private:
     int strN_ = 0;
     int retWidth_ = 8;
     bool retUns_ = false;
+    bool retStruct_ = false;
     std::set<std::string> addr_;
     std::vector<std::map<std::string, Sym>> scopes_;
     std::map<std::string, Sym> globals_;
@@ -1986,13 +2002,31 @@ private:
             bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
                            p.type->inner->kind == Type::Kind::Struct;
             f.agg = nested;
-            if (nested) f.fields = layoutOf(p.type.get());
-            else if (pstruct && (p.type->inner->tag.empty() || p.type->inner->tag != t->tag))
-                f.fields = layoutOf(p.type->inner.get());
+            if (nested) {
+                f.fields = layoutOf(p.type.get());
+                f.tag = p.type->tag;
+            } else if (pstruct) {
+                f.tag = p.type->inner->tag;
+                if (p.type->inner->tag.empty() || p.type->inner->tag != t->tag)
+                    f.fields = layoutOf(p.type->inner.get());
+            }
             out.push_back(std::move(f));
             off += f.width;
         }
+        if (!t->tag.empty()) structLayouts()[t->tag] = out;
         return out;
+    }
+
+    static std::map<std::string, std::vector<FieldOff>>& structLayouts() {
+        static std::map<std::string, std::vector<FieldOff>> layouts;
+        return layouts;
+    }
+
+    static std::vector<FieldOff> fieldsFor(const FieldOff& f) {
+        if (!f.fields.empty() || f.tag.empty()) return f.fields;
+        auto it = structLayouts().find(f.tag);
+        if (it == structLayouts().end()) return f.fields;
+        return it->second;
     }
 
     static void describe(Sym& s, const Type* t) {
@@ -2385,7 +2419,7 @@ private:
             a.step = field->step;
             a.inner = field->inner;
             a.agg = field->agg;
-            a.fields = field->fields;
+            a.fields = fieldsFor(*field);
             a.ok = true;
             return a;
         }
@@ -2403,6 +2437,31 @@ private:
         in.uns = uns;
         emit(in);
         return Val{Operand::vreg(dst), inner, 0};
+    }
+    static int bitWidth(int sz) {
+        if (sz >= 8) return 8;
+        if (sz >= 4) return 4;
+        if (sz >= 2) return 2;
+        return 1;
+    }
+    Operand loadBits(Operand addr, int sz) {
+        int dst = fresh();
+        Inst ld;
+        ld.op = Inst::Op::Load;
+        ld.dst = dst;
+        ld.a = addr;
+        ld.extra = bitWidth(sz);
+        ld.uns = true;
+        emit(ld);
+        return Operand::vreg(dst);
+    }
+    void storeBits(Operand addr, Operand bits, int sz) {
+        Inst st;
+        st.op = Inst::Op::Store;
+        st.a = addr;
+        st.b = bits;
+        st.extra = bitWidth(sz);
+        emit(st);
     }
 
     Val lowerLogic(Expr& e, bool isAnd) {
@@ -2490,6 +2549,14 @@ private:
         case Expr::Kind::Index: {
             Addr a = lowerAddr(e);
             if (!a.ok) return {};
+            if (e.checked && (e.checked->kind == Type::Kind::Array || e.checked->kind == Type::Kind::Struct)) {
+                Val v;
+                v.op = a.op;
+                v.step = valueStep(e.checked.get());
+                v.inner = innerOf(e.checked.get());
+                if (e.checked->kind == Type::Kind::Struct) v.fields = layoutOf(e.checked.get());
+                return v;
+            }
             int inner = 0;
             if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
                 if (Sym* s = find(e.kids[0]->text)) inner = s->inner;
@@ -2763,9 +2830,31 @@ private:
                 err(e.line, e.col, "not lowered: " + lhs.text);
                 return {};
             }
-            if (s->array || s->agg) {
+            if (s->array) {
                 err(e.line, e.col, "not lowered");
                 return {};
+            }
+            if (s->agg) {
+                int sz = s->objSize > 0 ? s->objSize : s->width;
+                if (sz > 8) {
+                    err(e.line, e.col, "struct bigger than 8 bytes is not lowered");
+                    return {};
+                }
+                Operand bits = rhs.op;
+                if (!e.kids[1] || e.kids[1]->kind != Expr::Kind::Call)
+                    bits = loadBits(rhs.op, sz);
+                Operand addr = Operand::vreg(s->reg);
+                if (s->global) {
+                    int dst = fresh();
+                    Inst lea;
+                    lea.op = Inst::Op::LeaSym;
+                    lea.dst = dst;
+                    lea.func = s->gname;
+                    emit(lea);
+                    addr = Operand::vreg(dst);
+                }
+                storeBits(addr, bits, sz);
+                return rhs;
             }
             if (s->global || s->mem) {
                 Operand val = narrow(rhs.op, s->width, s->zext);
@@ -2820,8 +2909,17 @@ private:
             return {};
         }
         std::vector<Operand> args;
-        for (std::size_t i = 1; i < e.kids.size(); ++i)
-            if (e.kids[i]) args.push_back(lowerExpr(*e.kids[i]).op);
+        for (std::size_t i = 1; i < e.kids.size(); ++i) {
+            if (!e.kids[i]) continue;
+            Val v = lowerExpr(*e.kids[i]);
+            if (e.kids[i]->checked && e.kids[i]->checked->kind == Type::Kind::Struct) {
+                int sz = sizeOf(e.kids[i]->checked.get());
+                if (sz > 8) err(e.line, e.col, "struct argument bigger than 8 bytes is not lowered");
+                else args.push_back(loadBits(v.op, sz));
+            } else {
+                args.push_back(v.op);
+            }
+        }
         int dst = fresh();
         Inst in;
         in.op = Inst::Op::Call;
@@ -2848,10 +2946,22 @@ private:
         case Stmt::Kind::Return: {
             Inst in;
             in.op = Inst::Op::Ret;
+            if (s.expr && retStruct_ && s.expr->kind == Expr::Kind::Name) {
+                if (Sym* sy = find(s.expr->text)) {
+                    if (sy->agg) {
+                        Val addr = readName(s.expr->text, s.line, s.col);
+                        in.a = loadBits(addr.op, retWidth_);
+                        in.extra = bitWidth(retWidth_);
+                        in.uns = true;
+                        emit(in);
+                        break;
+                    }
+                }
+            }
             if (s.expr) {
                 in.a = lowerExpr(*s.expr).op;
                 in.extra = retWidth_;
-                in.uns = retUns_;
+                in.uns = retUns_ || retStruct_;
             }
             emit(in);
             break;
@@ -3009,28 +3119,59 @@ private:
         addr_.clear();
         retWidth_ = 8;
         retUns_ = false;
+        retStruct_ = false;
         if (d.body) scanStmt(*d.body);
         if (d.type && d.type->inner) {
             const Type* r = d.type->inner.get();
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
                 r->kind == Type::Kind::Long)
                 retWidth_ = sizeOf(r);
+            if (r->kind == Type::Kind::Struct) {
+                retStruct_ = true;
+                retWidth_ = sizeOf(r);
+            }
             retUns_ = r->unsign;
         }
+        startBlock("entry");
+        std::vector<int> structBits;
+        std::vector<int> structSize;
         if (d.type) {
             for (const Param& p : d.type->params) {
                 Sym s;
                 s.reg = nextReg_++;
                 if (p.type) {
-                    if (p.type->kind == Type::Kind::Struct)
-                        err(d.line, d.col, "struct parameter is not lowered");
                     describe(s, p.type.get());
-                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
+                    if (p.type->kind == Type::Kind::Struct) {
+                        int sz = sizeOf(p.type.get());
+                        if (sz > 8) err(d.line, d.col, "struct parameter bigger than 8 bytes is not lowered");
+                        structBits.push_back(s.reg);
+                        structSize.push_back(sz);
+                        s.agg = true;
+                    } else if (!p.name.empty() && addr_.count(p.name)) {
+                        s.mem = true;
+                    }
                 }
                 if (!p.name.empty()) scopes_.back()[p.name] = s;
             }
         }
-        startBlock("entry");
+        {
+            int n = 0;
+            if (d.type) {
+                for (const Param& p : d.type->params) {
+                    if (!p.type || p.type->kind != Type::Kind::Struct || p.name.empty()) continue;
+                    int addr = fresh();
+                    Inst loc;
+                    loc.op = Inst::Op::Local;
+                    loc.dst = addr;
+                    int sz = structSize[static_cast<std::size_t>(n)];
+                    loc.a = Operand::number(sz < 1 ? 1 : sz);
+                    emit(loc);
+                    storeBits(Operand::vreg(addr), Operand::vreg(structBits[static_cast<std::size_t>(n)]), sz);
+                    if (Sym* sy = find(p.name)) sy->reg = addr;
+                    ++n;
+                }
+            }
+        }
         if (d.body && d.body->kind == Stmt::Kind::Block) {
             for (auto& st : d.body->stmts)
                 if (st) lowerStmt(*st);

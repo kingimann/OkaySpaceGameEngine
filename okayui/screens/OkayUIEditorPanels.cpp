@@ -1250,7 +1250,9 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
         // ---- the scene strip: its name (and the unsaved marker), the object count at the right
         UI::Dummy(0.0f, 0.0f);
         {
-            const std::string title = HierSceneTitle(m.sceneName, m.dirty);
+            char cntFit[24]; std::snprintf(cntFit, sizeof cntFit, "%d", m.objectCount);
+            const float room = w - 32.0f - UI::CalcTextWidth(cntFit) - (m.sceneDiag > 0 ? 40.0f : 16.0f);
+            const std::string title = HierSceneTitleFit(m.sceneName, m.dirty, room, [](const std::string& t) { return UI::CalcTextWidth(t.c_str()); });
             UI::TextUnformatted(title.c_str());
             const UI::Rect tr = UI::GetItemRect();
             OkPen pen{UI::GetWindowDrawList()};

@@ -5759,10 +5759,25 @@ static float g_tabIconPx = 0.0f;     // icon size on panel tabs (from the font, 
 static float TabIconPx()    { return g_tabIconPx > 0.0f ? g_tabIconPx : std::round(12.0f * g_uiScale); }
 static float TabIconInset() { return std::round(7.0f * g_uiScale); }
 static float TabPadX()      { return TabIconInset() + TabIconPx() + std::round(6.0f * g_uiScale); }
+// A compact (icon-only) tab, used when a group's tabs do not fit at full width (ApplyCompactTabs): exactly the padding on both
+// sides, so ImGui has no room left for any letter of the name (no "Consol..." or "Problen"); the icon is drawn in the middle.
+static float CompactTabW()  { return 2.0f * TabPadX(); }
 struct TabPaddingScope {
-    float saved;
-    TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x) { ImGui::GetStyle().FramePadding.x = TabPadX(); }
-    ~TabPaddingScope() { ImGui::GetStyle().FramePadding.x = saved; }
+    float saved, savedMinBase, savedCloseMin;
+    // While dock tab bars are laid out and drawn: the tab padding (room for the icon), a minimum width that lets a compact tab be
+    // that small (every other dock tab asks for at least the style's TabMinWidthBase itself, ApplyCompactTabs), and no close
+    // button on a compact tab (it would cover the icon; the panel still closes from its tab menu or with the middle button).
+    TabPaddingScope() : saved(ImGui::GetStyle().FramePadding.x), savedMinBase(ImGui::GetStyle().TabMinWidthBase),
+                        savedCloseMin(ImGui::GetStyle().TabCloseButtonMinWidthUnselected) {
+        ImGuiStyle& st = ImGui::GetStyle();
+        st.FramePadding.x = TabPadX();
+        st.TabMinWidthBase = std::min(savedMinBase, CompactTabW());
+        st.TabCloseButtonMinWidthUnselected = std::max(savedCloseMin, CompactTabW() + 1.0f);
+    }
+    ~TabPaddingScope() {
+        ImGuiStyle& st = ImGui::GetStyle();
+        st.FramePadding.x = saved; st.TabMinWidthBase = savedMinBase; st.TabCloseButtonMinWidthUnselected = savedCloseMin;
+    }
     TabPaddingScope(const TabPaddingScope&) = delete;
     TabPaddingScope& operator=(const TabPaddingScope&) = delete;
 };
@@ -6195,8 +6210,51 @@ static void DrawPanelTabMenu() {
     ImGui::EndPopup();
 }
 
+// Compact tabs: when a group's tabs do not fit at their full width, the widest tabs other than the selected one show only their
+// icon (okay::edtabs::CompactTabs), so no name is cut short; the name is in the tab's tooltip and in the overflow list. Applied
+// after the frame's docking pass, through each tab's RequestedWidth, which ImGui's next layout of the tab bar uses (the dock
+// code never sets it itself; its TabItemEx clears it, so it is set again every frame). Every dock tab gets one: the compact
+// width, or its full width but at least the style's TabMinWidthBase (TabPaddingScope lowers the style's minimum so a compact
+// tab can be narrower).
+static ImGuiStorage g_compactTabNodes;   // dock node id -> 1 while some of its tabs are compact
+static void ApplyCompactTabs() {
+    ImGuiContext& g = *GImGui;
+    const float compactW = CompactTabW(), minBase = g.Style.TabMinWidthBase;
+    const float spacing = g.Style.ItemInnerSpacing.x;
+    const float listBtn = std::round(ImGui::GetFrameHeight() * 0.95f) + spacing + 2.0f;   // DrawTabOverflow's button and gap, + rounding
+    for (int i = 0; i < g.DockContext.Nodes.Data.Size; ++i) {
+        ImGuiDockNode* node = (ImGuiDockNode*)g.DockContext.Nodes.Data[i].val_p;
+        if (!node || !node->IsLeafNode() || !node->TabBar) continue;
+        ImGuiTabBar* tb = node->TabBar;
+        std::vector<ImGuiTabItem*> tabs;
+        std::vector<float> full;
+        int sel = -1;
+        for (ImGuiTabItem& t : tb->Tabs) {
+            if (t.Flags & ImGuiTabItemFlags_Button) continue;
+            if (t.ID == tb->SelectedTabId) sel = (int)tabs.size();
+            tabs.push_back(&t);
+            full.push_back(std::max(t.ContentWidth, minBase));   // this frame's TabItemEx measured the whole name
+        }
+        bool visible = node->IsVisible && node->HostWindow && !node->IsHiddenTabBar() && !node->IsNoTabBar() &&
+                       node->LastFrameActive == g.FrameCount && tb->CurrFrameVisible == g.FrameCount;
+        std::vector<bool> compact(tabs.size(), false);
+        if (visible) {
+            // The bar's whole width: ImGui took the scroll arrows off it when it scrolled (TabBarScrollingButtons).
+            float bar = tb->BarRect.GetWidth();
+            if (tb->ScrollButtonEnabled) bar += (g.FontSize - 2.0f) * 2.0f + 1.0f;
+            compact = okay::edtabs::CompactTabs(full, sel, spacing, bar, listBtn, compactW);
+        }
+        bool any = false;
+        for (std::size_t k = 0; k < tabs.size(); ++k) {
+            tabs[k]->RequestedWidth = compact[k] ? compactW : full[k];
+            any = any || compact[k];
+        }
+        g_compactTabNodes.SetInt(node->ID, any ? 1 : 0);
+    }
+}
+
 // Panel icons on docked tabs: drawn over each tab, in the room TabPaddingScope
-// leaves before the name. The active tab's icon takes the accent colour.
+// leaves before the name (in the middle of a compact tab). The active tab's icon takes the accent colour.
 static void DrawPanelTabIcons() {
     ImGuiContext& g = *GImGui;
     g_tabIconPx = std::round(ImGui::GetFontSize() * 0.80f);   // used by next frame's layout
@@ -6209,7 +6267,8 @@ static void DrawPanelTabIcons() {
         if (!node || !w->DockIsActive || !node->IsVisible || !node->TabBar || !node->HostWindow) continue;
         if (node->IsHiddenTabBar() || node->IsNoTabBar() || !(w->Active || w->WasActive)) continue;
         ImRect r = w->DC.DockTabItemRect;
-        if (r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
+        const bool compactTab = r.GetWidth() <= CompactTabW() + 0.5f && g_compactTabNodes.GetInt(node->ID, 0) != 0;
+        if (!compactTab && r.GetWidth() < ic + inset * 2.0f + 8.0f) continue;   // squeezed: the name needs the room
         ImRect clip = r;
         clip.ClipWith(node->TabBar->BarRect);
         if (clip.GetWidth() <= 0.0f) continue;   // scrolled out of view
@@ -6220,7 +6279,8 @@ static void DrawPanelTabIcons() {
         ImDrawList* dl = node->HostWindow->DrawList;
         HostFgChannel fg(dl);
         dl->PushClipRect(clip.Min, clip.Max, false);
-        DrawPanelIcon(dl, ImVec2(std::floor(r.Min.x + inset + ic * 0.5f) + 0.5f, std::floor((r.Min.y + r.Max.y) * 0.5f + 1.0f) + 0.5f),
+        const float icx = compactTab ? (r.Min.x + r.Max.x) * 0.5f : r.Min.x + inset + ic * 0.5f;
+        DrawPanelIcon(dl, ImVec2(std::floor(icx) + 0.5f, std::floor((r.Min.y + r.Max.y) * 0.5f + 1.0f) + 0.5f),
                       ic, d ? d->icon : PI_Generic, sel ? (focused ? accent : normal) : dim);
         dl->PopClipRect();
     }
@@ -6246,7 +6306,11 @@ static void DrawTabOverflow() {
         const bool was = s_shown.GetInt(node->ID, 0) != 0;
         const float btn = was ? btnW + g.Style.ItemInnerSpacing.x : 0.0f;
         const float barW = node->Size.x - 2.0f * TabPadX() - 2.0f * node->HostWindow->WindowBorderSize;
-        const bool show = okay::edtabs::TabsOverflow(tb->WidthAllTabsIdeal - btn, barW, tabs, was);
+        // Shown exactly while ApplyCompactTabs made some of the group's tabs icon-only (their names are in the list): the two
+        // decisions use the same widths, so the button never squeezes tabs that fit without it. Groups ApplyCompactTabs did not
+        // see this frame keep the old test.
+        const int compactState = g_compactTabNodes.GetInt(node->ID, -1);
+        const bool show = compactState >= 0 ? compactState == 1 : okay::edtabs::TabsOverflow(tb->WidthAllTabsIdeal - btn, barW, tabs, was);
         s_shown.SetInt(node->ID, show ? 1 : 0);
         if (!show || !ImGui::DockNodeBeginAmendTabBar(node)) continue;
         {
@@ -6460,6 +6524,7 @@ static void DrawPanelSwitcher() {
 // Everything the tab system does after the panels have been drawn this frame.
 static void DrawPanelTabsExtras() {
     UpdateSideTabs();
+    ApplyCompactTabs();
     DrawPanelTabIcons();
     DrawTabOverflow();
     DrawPanelTabMenu();
@@ -16622,7 +16687,8 @@ void DrawScriptEditor(EditorState& ed) {
         // widget's breakpoint markers (repurposed).
         {
             ScriptEditorWidget::ErrorMarkers em;
-            for (const auto& w : s_warns) if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg;
+            for (const auto& w : s_warns)
+                if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg + (w.fix.empty() ? "" : "   (Alt+Enter to fix)");
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
             te.SetUserTypes(s_userTypes);
@@ -17169,20 +17235,9 @@ void DrawScriptEditor(EditorState& ed) {
                     }
                 }
             }
-            // Inline diagnostics: the line's first problem, dimmed after the code.
-            {
-                std::set<int> inlined;
-                auto inlineMsg = [&](int probLine, const std::string& message, ImU32 col, bool fixable) {
-                    if (probLine <= 0 || probLine > lines) return;
-                    if (!inlined.insert(probLine).second) return;
-                    std::string txt = "  <  " + (message.size() > 90 ? message.substr(0, 87) + "..." : message);
-                    if (fixable) txt += "   (Alt+Enter to fix)";
-                    float x = te.TextStartX() + (te.LineLength(probLine - 1) + 2) * te.CharWidth();
-                    fdl->AddText(ImVec2(x, corg.y + (probLine - 1) * rowH), col, txt.c_str());
-                };
-                for (const auto& d : s_diags) inlineMsg(d.line, d.message, IM_COL32(240, 110, 110, 165), false);
-                for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 150), !w.fix.empty());
-            }
+            // Inline diagnostics: the code widget itself writes each marked line's message after the code (both the ImGui editor
+            // and ours, from the error markers above, the quick-fix hint included). This overlay used to write it a second time,
+            // a few pixels off, so on the ImGui editor the two copies overlapped.
             // Squiggle under the token the diagnostic names, when it has a column.
             {
                 const char* src = buf.data();
@@ -21072,7 +21127,11 @@ void DrawHierarchy(EditorState& ed) {
         ImGui::Spacing();
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", (int)ed.scene().Objects().size());
         std::string sname = ed.scene().Name().empty() ? std::string("Untitled") : ed.scene().Name();
-        ImGui::TextUnformatted((sname + (ed.dirty ? "  ·  unsaved" : "")).c_str());
+        {   // the whole "name  ·  unsaved" when it fits beside the count, else "name *" (a narrow Hierarchy cut it under the count)
+            const std::string full = sname + (ed.dirty ? "  ·  unsaved" : "");
+            const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(cnt).x - 40.0f;
+            ImGui::TextUnformatted((ed.dirty && ImGui::CalcTextSize(full.c_str()).x > room ? sname + " *" : full).c_str());
+        }
         {
             const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             DrawSceneDiagMarker(mn, ImVec2(mx.x + 16.0f, mx.y));
@@ -27366,6 +27425,9 @@ static bool SameLineOrWrap(float nextW) {
 }
 static float ButtonW(const char* label) {
     return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+static float CheckboxW(const char* label) {   // the box (a frame high), the inner gap, the label
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label, nullptr, true).x;
 }
 
 // One header bar per component: fold arrow, enable box and a type
@@ -48511,16 +48573,19 @@ void DrawGameView(EditorState& ed) {
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mobile emulator: play the game on a phone or tablet screen\n(real resolution, rounded corners, notch, safe area). The mouse acts as your finger.");
-    ImGui::SameLine();
+    // The toolbar is one row while the panel is wide enough and flows onto more rows when it is not (SameLineOrWrap), so nothing
+    // is cut off at the panel's right edge (a docked Game tab at 1280x800 is about 590 px wide).
     int curW = 0, curH = 0;
     if (const MobileDevice* dev = ActiveDevice()) {
         (void)dev;
+        SameLineOrWrap(ButtonW(g_gameDeviceLandscape ? "Landscape" : "Portrait"));
         if (ImGui::Button(g_gameDeviceLandscape ? "Landscape" : "Portrait")) { g_gameDeviceLandscape = !g_gameDeviceLandscape; SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate the device");
-        ImGui::SameLine();
+        SameLineOrWrap(CheckboxW("Safe area"));
         if (ImGui::Checkbox("Safe area", &g_gameSafeArea)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tint the areas the notch / camera and the home indicator cover:\nkeep buttons and text out of them.");
     } else {
+    SameLineOrWrap(200.0f + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Resolution").x);
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("Resolution", kGameResPresets[s_aspect].name)) {
         for (int i = 0; i < kGameResCount; ++i) {
@@ -48543,27 +48608,28 @@ void DrawGameView(EditorState& ed) {
     }   // no device
     if (ActiveDevice()) { float da; CurrentGameRes(da, curW, curH); }
     const bool  kFixedRes  = (curW > 0 && curH > 0);
-    ImGui::SameLine();
     {
         // Drawn status dot: green while the game runs, gray in edit mode.
-        ImVec2 dp = ImGui::GetCursorScreenPos();
         float dr = ImGui::GetFontSize() * 0.26f;
+        SameLineOrWrap(dr * 2.0f + 5.0f + ImGui::CalcTextSize(ed.isPlaying() ? "live" : "press Play to run").x);
+        ImGui::AlignTextToFramePadding();   // the text sits on the row's frames (also at the start of a wrapped row)
+        ImVec2 dp = ImGui::GetCursorScreenPos();
         ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(130, 134, 142, 255);
-        ImGui::GetWindowDrawList()->AddCircleFilled(
-            ImVec2(dp.x + dr, dp.y + ImGui::GetTextLineHeight() * 0.55f), dr, dc);
+        ImGui::GetWindowDrawList()->AddCircleFilled(   // centred on the text line
+            ImVec2(dp.x + dr, dp.y + ImGui::GetStyle().FramePadding.y + ImGui::GetTextLineHeight() * 0.5f), dr, dc);
         ImGui::Dummy(ImVec2(dr * 2.0f + 5.0f, 0));
         ImGui::SameLine(0, 0);
         if (ed.isPlaying()) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.52f, 1), "live");
         else                ImGui::TextDisabled("press Play to run");
     }
     // FPS testing: grab the mouse so look controls work in the Game tab.
-    ImGui::SameLine();
+    SameLineOrWrap(CheckboxW("Capture mouse"));
     if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {
         if (g_gameMouseCapture) g_gameCursorReleased = false;   // grab it now (if playing)
         else if (ed.isPlaying() && Cursor::IsLocked()) g_gameCursorReleased = true;   // let go now
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nEsc shows the cursor again; click the Game view to give it back.\nGames that lock the cursor (FPS/TPS controllers) grab it automatically.");
-    ImGui::SameLine();
+    SameLineOrWrap(CheckboxW("Stats") + 2.0f + ImGui::GetFrameHeight());   // the box and its options arrow stay together
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame rate and frame times (average, 1% low, hitches), the time scale, what paused the game,\nobject + triangle counts and, optionally, the timers: overlaid on the view.\nThe arrow picks what to show.");
     ImGui::SameLine(0, 2);
@@ -48578,11 +48644,11 @@ void DrawGameView(EditorState& ed) {
         if (changed) { g_gameStatsOverlay = true; SaveSettings(); }   // ticking a part means you want to see it
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
+    SameLineOrWrap(CheckboxW("Physics"));
     if (ImGui::Checkbox("Physics", &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Physics debug view: colliders (green), triggers (blue), contact points\nand normals (red), and rays cast from scripts, in the Scene and Game views.\nMore options in View > Scene Overlays > Physics Debug.");
     if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked() || Cursor::IsConfined())) {
-        ImGui::SameLine();
+        SameLineOrWrap(ImGui::CalcTextSize(g_gameCursorReleased ? "(click the view to capture)" : "(Esc to release)").x);
         if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
         else ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)");
     }

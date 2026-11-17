@@ -6,6 +6,7 @@
 #include "OkayUIScreens.hpp"
 #include "ConsoleScriptLink.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 using namespace okayuitest;
@@ -229,7 +230,8 @@ int main() {
                 model.SetClock([] { return 3723.0; });   // 01:02:03
             }
             ~CRig() { UI::UseLauncherLook(false); }
-            void Frame() { sim.Frame([&] { res = S::DrawConsole(model, st, host.h, 16, 12, 900 - 32, 520 - 24); }); }
+            float w = 900 - 32;   // the panel's width (a narrow docked Console wraps its toggle rows)
+            void Frame() { sim.Frame([&] { res = S::DrawConsole(model, st, host.h, 16, 12, w, 520 - 24); }); }
             void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
             void Click(const UI::Rect& r) { sim.Move(CenterX(r), CenterY(r)); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
             void Fill() {
@@ -245,6 +247,25 @@ int main() {
             CHECK(c.res.clearButton.w > 0 && c.res.searchField.w > 0 && c.res.categoryCombo.w > 0 && c.res.copyAllButton.w > 0 && c.res.saveButton.w > 0);
             CHECK(c.res.firstRow.w > 0 && c.res.logArea.w > 0);
             CHECK(c.res.detailsCopyButton.w == 0);                    // "Select a log entry to see details."
+        }
+        {   // a narrow panel (the editor's bottom dock at 1280x800 is about 560 wide): the toggle and button rows flow onto more lines
+            // instead of cutting "Auto-scroll" off at the edge, and every control stays inside the panel and clickable
+            for (float w : {868.0f, 560.0f, 420.0f, 300.0f}) {
+                CRig c; c.w = w; c.Fill(); c.Frames(3);
+                const float right = 16.0f + w;
+                const UI::Rect rs[] = {c.res.warnToggle, c.res.errorToggle, c.res.collapseToggle, c.res.autoScrollToggle,
+                                       c.res.clearOnPlayToggle, c.res.pauseOnErrorToggle, c.res.copyAllButton, c.res.saveButton};
+                for (const UI::Rect& r : rs) CHECK(r.w > 0 && r.x + r.w <= right + 0.5f);
+                if (w < 600.0f) CHECK(c.res.autoScrollToggle.y > c.res.warnToggle.y);   // wrapped onto a second row
+                else CHECK(c.res.autoScrollToggle.y == c.res.warnToggle.y);            // wide: one row, as before
+                std::printf("  console %.0f wide: toggles at y %.0f / %.0f, save at %.0f,%.0f (%.0f wide)\n", w, c.res.warnToggle.y,
+                            c.res.autoScrollToggle.y, c.res.saveButton.x, c.res.saveButton.y, c.res.saveButton.w);
+                if (w == 560.0f) CHECK(c.res.saveButton.y == c.res.autoScrollToggle.y);   // two rows of toggles and buttons, as wide ones had
+                c.Click(c.res.autoScrollToggle); c.Frames(1);
+                CHECK(!c.st.autoScroll);
+                c.Click(c.res.saveButton);
+                CHECK(c.host.saved.size() == 1);                                          // the short "Save log" saves too
+            }
         }
         {   // selecting a row shows its details and Copy sends the message; right-click offers the copy menu
             CRig c; c.Fill(); c.Frames(3);

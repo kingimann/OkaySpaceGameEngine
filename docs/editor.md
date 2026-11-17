@@ -620,9 +620,12 @@ unchanged.
 - **Right-click a panel's tab** for **Add Tab** (open any panel as a new tab in
   that spot, or move one that's open elsewhere), **Close Tab**, **Close Other
   Tabs**, **Float (undock)**, **Show Group as Side Tabs** and the **Layout** menu.
-- **Tab overflow**: when a group's tabs don't fit at full width, a small list
-  button appears at the end of its tab strip. It opens a searchable list of that
-  group's tabs and every other open panel; type to filter, Enter picks the first.
+- **Tab overflow**: when a group's tabs don't fit at full width, the widest tabs
+  other than the selected one show only their panel icon (hover one for its name),
+  so no tab name is ever cut short, and a small list button appears at the end of
+  its tab strip. It opens a searchable list of that group's tabs and every other
+  open panel; type to filter, Enter picks the first. (`okay::edtabs::CompactTabs`,
+  tested in `editor_tabs`.)
 - **Ctrl+Tab** switches panels like an IDE: a list of the open panels (most
   recently used first) shows while Ctrl is held; tap Tab to move down it (Shift+Tab
   or the arrow keys go back), let go of Ctrl to switch, Esc cancels. One quick

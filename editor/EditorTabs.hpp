@@ -230,4 +230,32 @@ inline bool TabsOverflow(float idealWidth, float barWidth, int tabCount, bool sh
     return shownLastFrame ? idealWidth > barWidth - slack : idealWidth > barWidth;
 }
 
+// Compact tabs: when a tab bar's tabs at their full width do not fit, some tabs show only their panel icon (the name is in the
+// tab's tooltip and in the overflow list) so that no tab name is cut short ("Consol...", "Problen"). The selected tab always keeps
+// its name; the widest other tabs go to icons first, until the rest fit next to the overflow list button. Returns, per tab,
+// whether it is compact; all false when everything fits at full width. `fullWidths` are the tabs' full widths, `spacing` the gap
+// between two tabs, `barWidth` the whole bar, `listButton` the overflow button's width plus its gap (only taken off when tabs are
+// compacted: the button is shown then), `compactWidth` an icon-only tab's width.
+inline std::vector<bool> CompactTabs(const std::vector<float>& fullWidths, int selected, float spacing, float barWidth,
+                                     float listButton, float compactWidth) {
+    const int n = (int)fullWidths.size();
+    std::vector<bool> compact((std::size_t)n, false);
+    if (n < 2 || barWidth <= 0.0f) return compact;
+    float total = spacing * (float)(n - 1);
+    for (float w : fullWidths) total += w;
+    if (total <= barWidth) return compact;
+    const float budget = barWidth - listButton;
+    std::vector<int> order;
+    for (int i = 0; i < n; ++i) if (i != selected) order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return fullWidths[(std::size_t)a] > fullWidths[(std::size_t)b]; });
+    for (int i : order) {
+        if (total <= budget) break;
+        const float w = fullWidths[(std::size_t)i];
+        if (w <= compactWidth) continue;   // already as small as an icon
+        compact[(std::size_t)i] = true;
+        total -= w - compactWidth;
+    }
+    return compact;
+}
+
 }  // namespace okay::edtabs

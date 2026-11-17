@@ -8,6 +8,7 @@
 #include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
 #include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/crash_reports.md)
 
+#include <cfloat>
 #include <cstdlib>
 #include <ctime>
 #include <set>
@@ -235,9 +236,12 @@ void DrawConsole() {
                        cst.ItemSpacing.x * 0.5f * 2.0f;
         float moreW = ImGui::GetFrameHeight();
         const float collapseW = ImGui::CalcTextSize("Collapse").x + cst.FramePadding.x * 2.0f;
-        SearchField("##cfilter", filter, sizeof(filter), "Search log",
-                    -(pillsW + collapseW + moreW + catW + cst.ItemSpacing.x * 4.0f));
-        ImGui::SameLine();
+        // A narrow Console (the bottom group at 1280x800) keeps the search field readable and puts the category, the pills,
+        // Collapse and the options button on a second row, instead of squeezing the field and cutting the last button off.
+        const float rowRest = pillsW + collapseW + moreW + catW + cst.ItemSpacing.x * 4.0f;
+        const bool twoRows = ImGui::GetContentRegionAvail().x - rowRest < ImGui::GetFontSize() * 10.0f;
+        SearchField("##cfilter", filter, sizeof(filter), "Search log", twoRows ? -FLT_MIN : -rowRest);
+        if (!twoRows) ImGui::SameLine();
         ImGui::SetNextItemWidth(catW);
         if (ImGui::BeginCombo("##ccat", cats[catSel].c_str())) {
             for (int i = 0; i < (int)cats.size(); ++i) {

@@ -96,6 +96,13 @@ int main() {
         CHECK(P::HierTail(3, true) == "  (3)" && P::HierTail(0, false) == "  (off)" && P::HierTail(2, false) == "  (2)  (off)" && P::HierTail(0, true).empty());
         CHECK(P::HierHeaderLabel("", "Level") == "Level (main)" && P::HierHeaderLabel("", "") == "Main Scene" && P::HierHeaderLabel("Extra.okayscene", "Level") == "Extra.okayscene");
         CHECK(P::HierSceneTitle("", false) == "Untitled" && P::HierSceneTitle("Village", true) == "Village  \xC2\xB7  unsaved");
+        {   // a narrow strip: "name *" instead of a cut "Village  ·  uns" (8 px a byte here)
+            auto w8 = [](const std::string& t) { return 8.0f * (float)t.size(); };
+            CHECK(P::HierSceneTitleFit("Village", true, 400.0f, w8) == "Village  \xC2\xB7  unsaved");
+            CHECK(P::HierSceneTitleFit("Village", true, 100.0f, w8) == "Village *");
+            CHECK(P::HierSceneTitleFit("Village", false, 10.0f, w8) == "Village");
+            CHECK(P::HierSceneTitleFit("", true, 10.0f, w8) == "Untitled *");
+        }
         CHECK(P::HierSearchFooter(0, "rock") == "No objects match 'rock'." && P::HierSearchFooter(12, "rock") == "12 match(es)");
         CHECK(P::HierDropZone(0.1f) == P::HierDropBefore && P::HierDropZone(0.5f) == P::HierDropInside && P::HierDropZone(0.9f) == P::HierDropAfter);
         CHECK(P::HierDropZone(0.30f) == P::HierDropInside && P::HierDropZone(0.70f) == P::HierDropInside);

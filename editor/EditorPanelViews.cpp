@@ -743,7 +743,8 @@ HierarchyIntent DrawHierarchyBodyImGui(const HierarchyModel& m, HierarchyState& 
     {
         ImGui::Spacing();
         char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", m.objectCount);
-        const std::string title = HierSceneTitle(m.sceneName, m.dirty);
+        const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(cnt).x - (m.sceneDiag > 0 ? 40.0f : 16.0f);
+        const std::string title = HierSceneTitleFit(m.sceneName, m.dirty, room, [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; });
         ImGui::TextUnformatted(title.c_str());
         if (m.sceneDiag > 0) {
             const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();

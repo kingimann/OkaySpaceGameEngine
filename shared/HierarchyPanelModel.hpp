@@ -186,6 +186,14 @@ inline std::string HierHeaderLabel(const std::string& section, const std::string
 inline std::string HierSceneTitle(const std::string& name, bool dirty) {
     return (name.empty() ? std::string("Untitled") : name) + (dirty ? "  \xC2\xB7  unsaved" : "");
 }
+/// The same title for a strip `room` pixels wide (`width` measures a string): the whole title when it fits, else the name with
+/// " *" for the unsaved marker, so a narrow Hierarchy never shows "Village  ·  uns" under the object count.
+template <class Measure>
+inline std::string HierSceneTitleFit(const std::string& name, bool dirty, float room, Measure width) {
+    std::string full = HierSceneTitle(name, dirty);
+    if (!dirty || width(full) <= room) return full;
+    return (name.empty() ? std::string("Untitled") : name) + " *";
+}
 
 /// The line under the search results.
 inline std::string HierSearchFooter(int hits, const char* filter) {

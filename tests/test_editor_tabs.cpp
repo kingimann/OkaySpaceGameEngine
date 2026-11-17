@@ -127,5 +127,32 @@ int main() {
         CHECK(!TabsOverflow(100, 0, 3, false));
     }
 
+    {   // Compact tabs: the default layout's bottom group at 1280x800 (Console selected, Project, Script Editor, Problems in about
+        // 560 px): the widest other tabs become icons until the rest fit beside the list button; the selected tab keeps its name.
+        const std::vector<float> full = {120, 127, 150, 132};   // Console, Project, Script Editor, Problems
+        const float sp = 4, btn = 32, icon = 48;
+        std::vector<bool> c = CompactTabs(full, 0, sp, 1000, btn, icon);
+        CHECK(c == std::vector<bool>({false, false, false, false}));          // wide: all names
+        c = CompactTabs(full, 0, sp, 541, btn, icon);
+        CHECK(c == std::vector<bool>({false, false, false, false}));          // exactly fits (529 + 12 spacing)
+        c = CompactTabs(full, 0, sp, 540, btn, icon);
+        CHECK(c == std::vector<bool>({false, false, true, false}));           // Script Editor (widest) first
+        c = CompactTabs(full, 0, sp, 420, btn, icon);
+        CHECK(c == std::vector<bool>({false, false, true, true}));            // then Problems
+        c = CompactTabs(full, 2, sp, 420, btn, icon);
+        CHECK(!c[2] && c[3] && c[1]);                                         // Script Editor selected: it keeps its name
+        c = CompactTabs(full, 0, sp, 200, btn, icon);
+        CHECK(!c[0] && c[1] && c[2] && c[3]);                                 // very narrow: every other tab is an icon
+        // the result fits whenever it can: sum of widths after compacting <= bar - button
+        for (float bar = 250; bar <= 560; bar += 7) {
+            c = CompactTabs(full, 1, sp, bar, btn, icon);
+            float t = sp * 3;
+            bool any = false;
+            for (std::size_t i = 0; i < full.size(); ++i) { t += c[i] ? icon : full[i]; any = any || c[i]; }
+            CHECK(t <= (any ? bar - btn : bar) || (c[0] && c[2] && c[3]));
+        }
+        CHECK(CompactTabs({100}, 0, sp, 50, btn, icon) == std::vector<bool>({false}));   // one tab: nothing to do
+    }
+
     TEST_MAIN_RESULT();
 }

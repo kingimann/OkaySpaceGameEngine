@@ -147,6 +147,16 @@ int LevelIndex(okay::Log::Level l) {
     return 0;
 }
 
+// A row of toggles and buttons flows onto the next line when the panel is too narrow for it, instead of cutting the last one off
+// at the panel's edge ("Auto-scro"). `right` is the row's right edge (screen pixels); the widths are what Checkbox and Button
+// take (the box is at most a frame high, then an 8 px gap and the label; a button is its label plus 24).
+float ToggleW(const char* label) { return UI::GetFrameHeight() + 8.0f + UI::CalcTextSize(label).x; }
+float ButtonW(const char* label) { return UI::CalcTextSize(label).x + 24.0f; }
+void SameLineOrWrap(float nextW, float right) {
+    UI::SameLine();
+    if (UI::GetCursorScreenPos().x + nextW > right + 0.5f) UI::NewLine();
+}
+
 std::string RowText(const okay::ConsoleRow& row) {
     const okay::ConsoleEntry& e = row.entry;
     std::string s = ConsoleClockText(row.repeat > 1 ? row.lastTimeSec : e.timeSec) + "  ";
@@ -204,41 +214,52 @@ ConsoleResult DrawConsole(okay::ConsoleModel& model, ConsoleViewState& st, const
         res.categoryCombo = UI::GetItemRect();
 
         // ---- row 2: what to show (with counts) ----
+        const float rowRight = UI::GetCursorScreenPos().x + UI::GetContentRegionAvail().x;
         char b[48];
         std::snprintf(b, sizeof(b), "Messages %zu", counts.info + counts.trace);
         UI::Checkbox(b, &st.showInfo);
-        UI::SameLine();
+        const float firstToggleY = UI::GetItemRect().y;
         std::snprintf(b, sizeof(b), "Warnings %zu", counts.warning);
+        SameLineOrWrap(ToggleW(b), rowRight);
         UI::Checkbox(b, &st.showWarn);
         res.warnToggle = UI::GetItemRect();
-        UI::SameLine();
         std::snprintf(b, sizeof(b), "Errors %zu", counts.error);
+        SameLineOrWrap(ToggleW(b), rowRight);
         UI::Checkbox(b, &st.showError);
         res.errorToggle = UI::GetItemRect();
-        UI::SameLine();
+        SameLineOrWrap(ToggleW("Collapse duplicates"), rowRight);
         UI::Checkbox("Collapse duplicates", &st.collapse);
         res.collapseToggle = UI::GetItemRect();
-        UI::SameLine();
+        SameLineOrWrap(ToggleW("Auto-scroll"), rowRight);
         UI::Checkbox("Auto-scroll", &st.autoScroll);
         res.autoScrollToggle = UI::GetItemRect();
-        // ---- row 3: host options and the two actions ----
-        bool any = false;
-        if (host.clearOnPlay) { UI::Checkbox("Clear on Play", host.clearOnPlay); res.clearOnPlayToggle = UI::GetItemRect(); any = true; }
+        // ---- row 3: host options and the two actions. When the toggles already took two rows (a narrow panel), they flow on
+        // after "Auto-scroll" instead of starting a third row, so the Console is no taller than before. ----
+        const bool toggleRowWrapped = res.autoScrollToggle.y > firstToggleY + 0.5f;
+        if (host.clearOnPlay) {
+            if (toggleRowWrapped) SameLineOrWrap(ToggleW("Clear on Play"), rowRight);
+            UI::Checkbox("Clear on Play", host.clearOnPlay);
+            res.clearOnPlayToggle = UI::GetItemRect();
+        }
         if (host.pauseOnError) {
-            if (any) UI::SameLine();
+            if (host.clearOnPlay || toggleRowWrapped) SameLineOrWrap(ToggleW("Pause on error"), rowRight);
             UI::Checkbox("Pause on error", host.pauseOnError);
             res.pauseOnErrorToggle = UI::GetItemRect();
-            any = true;
         }
-        if (any) UI::SameLine();
+        if (host.clearOnPlay || host.pauseOnError || toggleRowWrapped) SameLineOrWrap(ButtonW("Copy all"), rowRight);
         UI::BeginDisabled(!host.copyText);
         if (UI::Button("Copy all") && host.copyText) host.copyText(model.CopyAll());
         res.copyAllButton = UI::GetItemRect();
         UI::EndDisabled();
+        // "Save log" where the whole name would not fit on the line (the tooltip names the file)
         UI::SameLine();
+        const bool fullSave = UI::GetCursorScreenPos().x + ButtonW("Save to console_log.txt") <= rowRight + 0.5f;
+        const char* saveLabel = fullSave ? "Save to console_log.txt" : "Save log##save";
+        if (UI::GetCursorScreenPos().x + ButtonW(fullSave ? saveLabel : "Save log") > rowRight + 0.5f) UI::NewLine();
         UI::BeginDisabled(!host.saveLog);
-        if (UI::Button("Save to console_log.txt") && host.saveLog) host.saveLog(model.CopyAll(false));
+        if (UI::Button(saveLabel) && host.saveLog) host.saveLog(model.CopyAll(false));
         res.saveButton = UI::GetItemRect();
+        if (!fullSave && UI::IsItemHovered()) UI::SetTooltip("Save the log to console_log.txt");
         UI::EndDisabled();
         UI::Separator();
 

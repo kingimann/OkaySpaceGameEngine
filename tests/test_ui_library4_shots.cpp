@@ -76,7 +76,7 @@ void Sample(Scene& s, const std::string& theme) {
     GameObject* c = Panel(s, canvas, "Card", UIAnchor::StretchFull, {6, 6}, {6, 6}, slate::Panel(), 12.0f, true);
     Text(s, c, "T", theme, UIAnchor::TopLeft, {12, 8}, {296, 26}, 18.0f, slate::Text(), 0, true);
     Button(s, c, "B1", "Play", UIAnchor::TopLeft, {12, 44}, {92, 34});
-    Button(s, c, "B2", "Options", UIAnchor::TopLeft, {112, 44}, {92, 34}, ButtonKind::Secondary);
+    Button(s, c, "B2", "More", UIAnchor::TopLeft, {112, 44}, {92, 34}, ButtonKind::Secondary);
     Button(s, c, "B3", "Quit", UIAnchor::TopLeft, {212, 44}, {92, 34}, ButtonKind::Danger);
     GameObject* sl = Child(s, c, "S"); auto* slc = sl->AddComponent<UISlider>(); slc->anchor = UIAnchor::TopLeft; slc->position = {12, 100}; slc->size = {200, 10}; slc->value = 0.6f;
     GameObject* pb = Child(s, c, "P"); auto* pbc = pb->AddComponent<UIProgressBar>(); pbc->anchor = UIAnchor::TopLeft; pbc->position = {12, 130}; pbc->size = {200, 12}; pbc->value = 0.7f;

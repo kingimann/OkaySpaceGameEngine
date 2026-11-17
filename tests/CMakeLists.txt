@@ -27,6 +27,9 @@ if(OKAY_PYTHON)
     if(OKAY_GIT)
         add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
     endif()
+    # scripts/lint_test_registration.py: its own rules, then the real tests/CMakeLists.txt (no test registered twice unmarked, no shared /tmp literal).
+    add_test(NAME lint_test_registration_self COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/lint_test_registration.py --self-test)
+    add_test(NAME lint_test_registration COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/lint_test_registration.py)
 endif()
 
 add_executable(test_serialize test_serialize.cpp)
@@ -2276,6 +2279,7 @@ add_test(NAME guided_quality COMMAND test_guided_quality)
 add_executable(test_guided_animation test_guided_animation.cpp)
 target_link_libraries(test_guided_animation PRIVATE okay::engine)
 add_test(NAME guided_animation COMMAND test_guided_animation)
+# okay-lint: same-command-twice guided_roundtrip: it only uses std::filesystem::temp_directory_path(), and every test has its own TMPDIR
 add_test(NAME guided_roundtrip COMMAND test_guided_quality)
 add_executable(test_guided_characters test_guided_characters.cpp)
 target_link_libraries(test_guided_characters PRIVATE okay::engine)

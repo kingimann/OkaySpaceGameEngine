@@ -2511,6 +2511,11 @@ void DrawCross(const UI::Rect& b) {
     dl.AddLine(UI::Vec2{cx - r, cy + r}, UI::Vec2{cx + r, cy - r}, col, 1.5f);
 }
 
+// Wrapped text ends at the region's right edge, as Dear ImGui's PushTextWrapPos(0) ends it at the window's content edge: the body's window
+// reaches past the region by kMarkBleed (for the prefab bars), so wrapping at the window's edge ran 6 pixels wider than Dear ImGui and a
+// line broke later (seen in the real editor: the walk-speed hint took two lines where Dear ImGui took three).
+void WrapAtRegion(float right) { UI::PushTextWrapPos(std::max(1.0f, right - UI::GetCursorScreenPos().x)); }
+
 // The editor's SectionHeader inside an open list (the UI Button's Function list: "Native (gameplay)", "Script"): Spacing, the accent
 // tick, the heading face, a rule across the list.
 void PopupHeading(const char* text) {
@@ -2806,7 +2811,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     break;
                 }
                 if (!r.wrap && std::strchr(r.Text(), '\n')) { LinesText(r.Text(), UI::GetColorU32(UI::Col_TextDisabled)); break; }
-                if (r.wrap) UI::PushTextWrapPos(0.0f);
+                if (r.wrap) WrapAtRegion(regionX + w);
                 UI::TextDisabled(r.Text());
                 if (r.wrap) UI::PopTextWrapPos();
                 break;
@@ -2823,11 +2828,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     LinesText(r.Text(), (r.kind == InspRowColorText || r.color) ? (r.color | 0xff000000u) : UI::GetColorU32(UI::Col_Text));
                     break;
                 }
-                if (r.wrap) UI::PushTextWrapPos(0.0f);
+                if (r.wrap) WrapAtRegion(regionX + w);
                 if (r.kind == InspRowColorText || r.color) {
                     const std::uint32_t c = r.color;
                     UI::TextColored((unsigned char)(c & 0xff), (unsigned char)((c >> 8) & 0xff), (unsigned char)((c >> 16) & 0xff), r.Text());
-                } else if (r.wrap) UI::TextWrapped(r.Text());
+                } else if (r.wrap) UI::Text(r.Text());
                 else UI::Text(r.Text());
                 if (r.wrap) UI::PopTextWrapPos();
                 break;

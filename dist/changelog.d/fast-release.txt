@@ -1,0 +1,6 @@
+section: Behind the scenes
+roadmap: One-click release path: the next version number, the release notes and the safety checks are worked out by the release workflow itself (no version-bump PR)
+---
+- Releases can now be published faster and more often: the release notes
+  come from one small file per change, so they no longer clash between
+  changes.

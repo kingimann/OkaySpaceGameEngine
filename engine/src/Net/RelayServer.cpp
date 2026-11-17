@@ -41,6 +41,7 @@ void RelayServer::Stop() {
     m_perAddress.clear();
     m_sessionsPerAddress.clear();
     m_helloRate.clear();
+    m_addressFlow.clear();
 }
 
 RelayServer::Peer* RelayServer::FindBySlot(std::uint32_t slot) {
@@ -130,8 +131,15 @@ bool RelayServer::HelloAllowed(std::uint32_t address) {
     auto it = m_helloRate.find(address);
     if (it == m_helloRate.end()) {
         if (m_helloRate.size() >= kMaxHelloTrackers) {
-            PruneHelloRate();
-            if (m_helloRate.size() >= kMaxHelloTrackers) { ++m_droppedHellos; return false; }
+            // Full: a flood of forged sources can fill the table, so it is pruned (at most a few times a second, not once
+            // per hello: that would make the flood a CPU attack) and, while it stays full, the addresses it has no room
+            // for share one global allowance instead of all being refused.
+            if (m_now >= m_helloFullPruneAt) { PruneHelloRate(); m_helloFullPruneAt = m_now + 0.25; }
+            if (m_helloRate.size() >= kMaxHelloTrackers) {
+                if (SpendFlow(m_untrackedHellos, kUntrackedHellosPerSecond, 1)) return true;
+                ++m_droppedHellos;
+                return false;
+            }
         }
         it = m_helloRate.emplace(address, HelloBucket{2.0f * kHellosPerSecond, m_now}).first;
     }
@@ -143,11 +151,29 @@ bool RelayServer::HelloAllowed(std::uint32_t address) {
     return true;
 }
 
-// Forget addresses whose bucket has filled up again (they're back to the burst).
+// Forget addresses whose bucket has filled up again: they are back to the burst, so forgetting loses nothing.
 void RelayServer::PruneHelloRate() {
-    const double full = 2.0;   // seconds for an empty bucket to refill
-    for (auto it = m_helloRate.begin(); it != m_helloRate.end(); )
-        it = m_now - it->second.refilled >= full ? m_helloRate.erase(it) : std::next(it);
+    for (auto it = m_helloRate.begin(); it != m_helloRate.end(); ) {
+        const float full = it->second.tokens + static_cast<float>(m_now - it->second.refilled) * kHellosPerSecond;
+        it = full >= 2.0f * kHellosPerSecond ? m_helloRate.erase(it) : std::next(it);
+    }
+}
+
+// Spend `len` bytes from a token bucket that refills at `bytesPerSecond` with a burst of two seconds' worth.
+bool RelayServer::SpendFlow(FlowBucket& b, float bytesPerSecond, std::size_t len) {
+    b.tokens = std::fmin(2.0f * bytesPerSecond, b.tokens + static_cast<float>(m_now - b.refilled) * bytesPerSecond);
+    b.refilled = m_now;
+    if (b.tokens < static_cast<float>(len)) return false;
+    b.tokens -= static_cast<float>(len);
+    return true;
+}
+
+// What one IP address forwards in total, across all its peers (loopback is exempt, like the hello rate).
+bool RelayServer::WithinAddress(std::uint32_t address, std::size_t len) {
+    if ((address >> 24) == 127) return true;
+    auto it = m_addressFlow.find(address);
+    if (it == m_addressFlow.end()) it = m_addressFlow.emplace(address, FlowBucket{2.0f * kAddressBytesPerSecond, m_now}).first;
+    return SpendFlow(it->second, kAddressBytesPerSecond, len);
 }
 
 // A random, unused, non-zero slot: a peer can't guess another session's slots.
@@ -180,7 +206,7 @@ RelayServer::PeerMap::iterator RelayServer::RemovePeer(PeerMap::iterator it) {
     const std::uint32_t slot = it->second.slot;
     m_slotEp.erase(slot);
     auto pa = m_perAddress.find(it->first.address);
-    if (pa != m_perAddress.end() && --pa->second == 0) m_perAddress.erase(pa);
+    if (pa != m_perAddress.end() && --pa->second == 0) { m_perAddress.erase(pa); m_addressFlow.erase(it->first.address); }
     auto s = m_sessions.find(it->second.code);
     if (s != m_sessions.end()) {
         if (s->second.hostSlot == slot) {
@@ -330,7 +356,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             moved.version = version;
             moved.nonce = nonce;
             auto opa = m_perAddress.find(old->first.address);
-            if (opa != m_perAddress.end() && --opa->second == 0) m_perAddress.erase(opa);
+            if (opa != m_perAddress.end() && --opa->second == 0) { m_perAddress.erase(opa); m_addressFlow.erase(old->first.address); }
             m_peers.erase(old);
             m_perAddress[from.address]++;
             if (s.opener == slotEp->second.address && from.address != s.opener) {
@@ -379,7 +405,9 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.inRefilled = m_now;
     m_slotEp[peer.slot] = from;
     if (sit == m_sessions.end()) {
-        m_sessions[code].opener = from.address;
+        Session& fresh = m_sessions[code];
+        fresh.opener = from.address;
+        fresh.flow = FlowBucket{2.0f * kSessionBytesPerSecond, m_now};
         m_sessionsPerAddress[from.address]++;
     }
     Session& s = m_sessions[code];
@@ -430,7 +458,8 @@ void RelayServer::HandleData(const Endpoint& from, const std::uint8_t* data, std
     const std::uint32_t hostSlot = session != m_sessions.end() ? session->second.hostSlot : 0;
     if (dest == m_peers.end() || dest->second.code != sender->second.code || hostSlot == 0 ||
         (sender->second.slot == hostSlot) == (destSlot == hostSlot)) { ++m_droppedRoute; return; }
-    if (!WithinRate(sender->second, len) || !WithinInbound(dest->second, len)) { ++m_droppedRate; return; }
+    if (!WithinRate(sender->second, len) || !WithinInbound(dest->second, len) || !WithinAddress(from.address, len) ||
+        !SpendFlow(session->second.flow, kSessionBytesPerSecond, len)) { ++m_droppedRate; return; }
     // Rewrite the slot field from dest to the *sender's* slot, then forward
     // the untouched payload.
     const std::size_t payloadOff = 1 + 4;          // tag + destSlot

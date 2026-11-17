@@ -1908,9 +1908,14 @@ struct Mesh {
 
     /// Translate so the bounding-box center sits at the origin — fixes imported
     /// OBJs modeled off to one side so they rotate/scale about their middle.
+    /// Like every other edit, a change marks the mesh custom (clears `name`) so the
+    /// moved geometry is what a scene saves, not a primitive rebuilt from its name.
     void RecenterToOrigin() {
+        if (vertices.empty()) return;
         Vec3 c = Center();
+        if (!std::isfinite(c.x + c.y + c.z) || (c.x == 0.0f && c.y == 0.0f && c.z == 0.0f)) return;
         for (Vec3& v : vertices) v -= c;
+        name = "";
     }
 
     /// Move the pivot to the base: centered in X/Z with the lowest point at
@@ -1919,18 +1924,23 @@ struct Mesh {
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c{(lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f};
+        if (!std::isfinite(c.x + c.y + c.z) || (c.x == 0.0f && c.y == 0.0f && c.z == 0.0f)) return;
         for (Vec3& v : vertices) v -= c;
+        name = "";   // saved as real geometry (a primitive's name would rebuild the old pivot on load)
     }
 
     /// Uniformly scale (about the origin) so the largest bounding-box dimension
     /// equals `maxExtent` — normalize wildly-sized imported models to a usable
     /// scale. No-op on a flat/empty mesh.
     void ScaleToFit(float maxExtent = 1.0f) {
+        if (!std::isfinite(maxExtent) || vertices.empty()) return;   // a typed NaN/inf would turn every vertex into NaN
         Vec3 s = Size();
         float biggest = std::fmax(s.x, std::fmax(s.y, s.z));
-        if (biggest <= 1e-6f) return;
+        if (!(biggest > 1e-6f) || !std::isfinite(biggest)) return;
         float k = maxExtent / biggest;
+        if (!std::isfinite(k) || k == 1.0f) return;
         for (Vec3& v : vertices) v = v * k;
+        name = "";   // saved as real geometry (a primitive's name would rebuild the old size on load)
     }
 
     /// Normalize an imported mesh's size in place. Exporters disagree on units —
@@ -1981,6 +1991,11 @@ struct Mesh {
         std::vector<Vec3> pos, nrm; std::vector<Vec2> uv;
         struct Corner { int p, t, n; };                        // 0-based pos / uv / normal (-1 = none)
         std::vector<std::vector<Corner>> faces;
+        std::vector<Color> vcol;                               // per `v` colour (the `v x y z r g b` extension)
+        bool anyVCol = false;
+        std::vector<std::string> mtlNames;                     // materials named by `usemtl`, in first-use order
+        std::vector<int> faceMtl;                              // per face: index into mtlNames (-1 = none)
+        int curMtl = -1;
         std::string mtllib;
         bool badIndex = false;                                 // a face index no vertex can satisfy
         const char* p = data.c_str();
@@ -1997,6 +2012,22 @@ struct Mesh {
             if (p < end) {
                 if (p[0] == 'v' && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
                     p += 2; Vec3 v; v.x = readF(p); v.y = readF(p); v.z = readF(p); pos.push_back(v);
+                    // What follows the position: nothing, a weight (`v x y z w`), or a colour (`v x y z r g b`, 0..1).
+                    float extra[4]; int nExtra = 0;
+                    for (; nExtra < 4; ++nExtra) {
+                        while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
+                        if (p >= end || *p == '\n' || *p == '#') break;
+                        char* q = nullptr; extra[nExtra] = std::strtof(p, &q);
+                        if (q == p) break;
+                        p = q;
+                    }
+                    Color vc{1, 1, 1, 1};
+                    if (nExtra >= 3) {
+                        if (std::isfinite(extra[0] + extra[1] + extra[2])) { vc.r = extra[0]; vc.g = extra[1]; vc.b = extra[2]; }
+                        anyVCol = true;
+                    }
+                    if (anyVCol && vcol.size() + 1 < pos.size()) vcol.resize(pos.size() - 1, Color{1, 1, 1, 1});
+                    if (anyVCol) vcol.push_back(vc);
                 } else if (p[0] == 'v' && p + 2 < end && p[1] == 't' && (p[2] == ' ' || p[2] == '\t')) {
                     p += 3; Vec2 t; t.x = readF(p); t.y = readF(p); uv.push_back(t);
                 } else if (p[0] == 'v' && p + 2 < end && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
@@ -2024,7 +2055,17 @@ struct Mesh {
                         if (vi < 1 || vi > INT_MAX || ti < 0 || ti > INT_MAX || ni < 0 || ni > INT_MAX) badIndex = true;
                         face.push_back({(int)vi - 1, (int)ti - 1, (int)ni - 1});
                     }
-                    if (face.size() >= 3) faces.push_back(std::move(face));
+                    if (face.size() >= 3) { faces.push_back(std::move(face)); faceMtl.push_back(curMtl); }
+                } else if (end - p >= 7 && std::strncmp(p, "usemtl", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
+                    p += 7;
+                    while (p < end && (*p == ' ' || *p == '\t')) ++p;
+                    const char* s0 = p;
+                    while (p < end && *p != '\n' && *p != '\r') ++p;
+                    std::string nm(s0, p);
+                    while (!nm.empty() && (nm.back() == ' ' || nm.back() == '\t')) nm.pop_back();
+                    curMtl = -1;
+                    for (int k = 0; k < (int)mtlNames.size() && curMtl < 0; ++k) if (mtlNames[k] == nm) curMtl = k;
+                    if (curMtl < 0) { curMtl = (int)mtlNames.size(); mtlNames.push_back(nm); }
                 } else if (end - p >= 7 && std::strncmp(p, "mtllib", 6) == 0 &&
                            (p[6] == ' ' || p[6] == '\t')) {
                     p += 7;
@@ -2043,11 +2084,18 @@ struct Mesh {
             for (const Corner& c : fc)
                 if (c.p < 0 || c.p >= (int)pos.size()) badIndex = true;
         if (badIndex) { if (ok) *ok = false; return Mesh{}; }
-        auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
+        if (anyVCol) vcol.resize(pos.size(), Color{1, 1, 1, 1});
+        // Every triangle remembers its face, so polygons (quads, n-gons) and materials carry over.
+        std::vector<int> triFace;
+        int curFace = 0;
+        auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); triFace.push_back(curFace); };
         if (uv.empty() && nrm.empty()) {               // simplest case: 1:1 with v lines
             m.vertices = pos;
-            for (auto& fc : faces)
+            if (anyVCol) m.vertexColors = vcol;
+            for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+                curFace = (int)fi; auto& fc = faces[fi];
                 for (std::size_t i = 2; i < fc.size(); ++i) tri(fc[0].p, fc[i - 1].p, fc[i].p);
+            }
         } else {                                       // de-index per (pos,uv,normal) so attributes map right
             const bool haveUV = !uv.empty(), haveN = !nrm.empty();
             // Hash map keyed on the packed corner: the ordered std::map<tuple> this
@@ -2069,17 +2117,52 @@ struct Mesh {
                 m.vertices.push_back((c.p >= 0 && c.p < (int)pos.size()) ? pos[c.p] : Vec3{0, 0, 0});
                 if (haveUV) m.uvs.push_back((c.t >= 0 && c.t < (int)uv.size()) ? uv[c.t] : Vec2{0, 0});
                 if (haveN)  m.normals.push_back((c.n >= 0 && c.n < (int)nrm.size()) ? nrm[c.n] : Vec3{0, 1, 0});
+                if (anyVCol) m.vertexColors.push_back(vcol[c.p]);
                 remap[key] = ni; return ni;
             };
             std::vector<int> idx;
-            for (auto& fc : faces) {
+            for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+                curFace = (int)fi; auto& fc = faces[fi];
                 idx.clear(); for (auto& c : fc) idx.push_back(corner(c));
                 for (std::size_t i = 2; i < idx.size(); ++i) tri(idx[0], idx[i - 1], idx[i]);
             }
         }
+        // Polygons: kept (as polygon ids) when the file has any face with more than three corners.
+        bool anyPoly = false;
+        for (const auto& fc : faces) if (fc.size() > 3) { anyPoly = true; break; }
+        if (anyPoly) m.polyFace = triFace;
         NormalizeImportScale(m);   // cm/mm exports (Meshy AI etc.) land at a usable size
         // The .mtl is held to the same place as textures: the model's folder or an allowed root (TexturePath.hpp).
         const std::string mtlPath = mtllib.empty() ? std::string() : ResolveModelTexturePath(mtllib, dir);
+        // Material colours: each `usemtl` material's diffuse colour (Kd, and d for opacity) becomes the face colour of
+        // its faces. A material with a diffuse texture (map_Kd) stays white, so the texture is not tinted, and a file
+        // whose faces name no coloured material gets no face colours at all (as before).
+        if (!mtlPath.empty() && !mtlNames.empty()) {
+            std::map<std::string, Color> kd; std::set<std::string> textured;
+            std::ifstream mf(mtlPath); std::string ml, cur;
+            while (mf && std::getline(mf, ml)) {
+                std::istringstream ms(ml); std::string mt; ms >> mt;
+                if (mt == "newmtl") { std::getline(ms, cur); std::size_t a = cur.find_first_not_of(" \t"); cur = a == std::string::npos ? std::string() : cur.substr(a);
+                                      while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t' || cur.back() == '\r')) cur.pop_back(); }
+                else if (mt == "Kd" && !cur.empty()) { Color c = kd.count(cur) ? kd[cur] : Color{1, 1, 1, 1}; float r, g, b;
+                                      if (ms >> r >> g >> b && std::isfinite(r + g + b)) { c.r = r; c.g = g; c.b = b; kd[cur] = c; } }
+                else if (mt == "d" && !cur.empty()) { float d; if (ms >> d && std::isfinite(d)) { Color c = kd.count(cur) ? kd[cur] : Color{1, 1, 1, 1}; c.a = std::clamp(d, 0.0f, 1.0f); kd[cur] = c; } }
+                else if (mt == "map_Kd" && !cur.empty()) textured.insert(cur);
+            }
+            std::vector<Color> faceCol(faces.size(), Color{1, 1, 1, 1});
+            bool any = false;
+            for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+                const int k = fi < faceMtl.size() ? faceMtl[fi] : -1;
+                if (k < 0) continue;
+                auto it = kd.find(mtlNames[k]);
+                if (it == kd.end() || textured.count(mtlNames[k])) continue;
+                faceCol[fi] = it->second; any = true;
+            }
+            if (any) {
+                m.triColors.clear();
+                for (int f : triFace) m.triColors.push_back(faceCol[(std::size_t)f]);
+            }
+        }
         if (outTexture && !mtlPath.empty()) {                   // read .mtl for map_Kd
             std::ifstream mf(mtlPath); std::string ml;
             while (mf && std::getline(mf, ml)) {
@@ -2102,24 +2185,158 @@ struct Mesh {
         return m;
     }
 
-    /// Write this mesh to a Wavefront .OBJ. Returns false on I/O error.
+    /// Write this mesh to a Wavefront .OBJ (and, when it has face or slot colours, a .mtl next to it with the same
+    /// stem). Written from the OBJ/MTL format description; LoadOBJ reads everything back:
+    ///  - `v x y z` with 9 significant digits (a float survives the round trip), plus `r g b` (0..1) when the mesh has
+    ///    vertex colours (the common vertex-colour extension);
+    ///  - `vt` per vertex, or per triangle corner when the mesh keeps corner UVs (edit mode);
+    ///  - `vn` and `s 1` for smooth shading, `s off` for flat;
+    ///  - polygons (quads, n-gons) as one `f` line each when `polyFace` groups triangles into a simple outline;
+    ///  - face colours as one material per distinct colour (`usemtl`, with `Kd` and `d` in the .mtl).
+    /// Returns false on an I/O error.
     bool SaveOBJ(const std::string& path) const {
         std::ofstream f(path);
         if (!f) return false;
+        char buf[128];
+        auto num = [&](float x) { std::snprintf(buf, sizeof buf, "%.9g", (double)(std::isfinite(x) ? x : 0.0f)); return std::string(buf); };
+        const int nTri = TriangleCount();
+        // Face colour per triangle: the face colours, else the slot colours.
+        std::vector<Color> faceCol;
+        if (HasFaceColors()) faceCol = triColors;
+        else if (HasSlots() && !slotColors.empty()) {
+            faceCol.resize((std::size_t)nTri, Color{1, 1, 1, 1});
+            for (int t = 0; t < nTri; ++t)
+                if (triSlot[t] >= 0 && triSlot[t] < (int)slotColors.size()) faceCol[t] = slotColors[triSlot[t]];
+        }
+        std::vector<int> matOf((std::size_t)nTri, -1);
+        std::vector<Color> mats;
+        for (int t = 0; t < (int)faceCol.size(); ++t) {
+            const Color& c = faceCol[t];
+            int m = -1;
+            for (int k = 0; k < (int)mats.size() && m < 0; ++k)
+                if (mats[k].r == c.r && mats[k].g == c.g && mats[k].b == c.b && mats[k].a == c.a) m = k;
+            if (m < 0) { m = (int)mats.size(); mats.push_back(c); }
+            matOf[t] = m;
+        }
+        std::string mtlName;
+        if (!mats.empty()) {
+            std::string mtlPath = path;
+            const std::size_t slash = mtlPath.find_last_of("/\\"), dot = mtlPath.find_last_of('.');
+            if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) mtlPath.erase(dot);
+            mtlPath += ".mtl";
+            mtlName = slash == std::string::npos ? mtlPath : mtlPath.substr(mtlPath.find_last_of("/\\") + 1);
+            std::ofstream mf(mtlPath);
+            if (!mf) return false;
+            mf << "# OkaySpace materials (one per face colour)\n";
+            for (int k = 0; k < (int)mats.size(); ++k) {
+                mf << "newmtl color" << k << "\n";
+                mf << "Kd " << num(mats[k].r) << " " << num(mats[k].g) << " " << num(mats[k].b) << "\n";
+                if (mats[k].a < 1.0f) mf << "d " << num(mats[k].a) << "\n";
+            }
+            if (!mf) return false;
+        }
         f << "# OkaySpace mesh\n";
-        for (const Vec3& v : vertices) f << "v " << v.x << " " << v.y << " " << v.z << "\n";
-        const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
-        if (hadUV)
-            for (const Vec2& t : uvs) f << "vt " << t.x << " " << t.y << "\n";
-        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
-            int a = triangles[i] + 1, b = triangles[i + 1] + 1, c = triangles[i + 2] + 1;
-            if (hadUV)   // per-vertex UVs share the position index
-                f << "f " << a << "/" << a << " " << b << "/" << b << " " << c << "/" << c << "\n";
-            else
-                f << "f " << a << " " << b << " " << c << "\n";
+        if (!mtlName.empty()) f << "mtllib " << mtlName << "\n";
+        const bool vc = HasVertexColors();
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const Vec3& v = vertices[i];
+            f << "v " << num(v.x) << " " << num(v.y) << " " << num(v.z);
+            if (vc) f << " " << num(vertexColors[i].r) << " " << num(vertexColors[i].g) << " " << num(vertexColors[i].b);
+            f << "\n";
+        }
+        const bool cornerUV = HasCornerUVs();
+        const bool vertUV = !cornerUV && HasUVs();
+        if (cornerUV) for (const Vec2& t : cornerUVs) f << "vt " << num(t.x) << " " << num(t.y) << "\n";
+        if (vertUV)   for (const Vec2& t : uvs) f << "vt " << num(t.x) << " " << num(t.y) << "\n";
+        const bool vn = HasNormals();
+        if (vn) for (const Vec3& n : normals) f << "vn " << num(n.x) << " " << num(n.y) << " " << num(n.z) << "\n";
+        f << (vn ? "s 1\n" : "s off\n");
+        // A corner: vertex v, reached through triangle corner c (for corner UVs).
+        auto corner = [&](int v, int c) {
+            std::string out = std::to_string(v + 1);
+            if (cornerUV || vertUV || vn) {
+                out += "/";
+                if (cornerUV) out += std::to_string(c + 1);
+                else if (vertUV) out += std::to_string(v + 1);
+                if (vn) out += "/" + std::to_string(v + 1);
+            }
+            return out;
+        };
+        // Faces in order: a polygon is written once, where its first triangle is.
+        const bool polys = (int)polyFace.size() == nTri && nTri > 0;
+        std::map<int, std::vector<int>> trisOfPoly;
+        if (polys) for (int t = 0; t < nTri; ++t) trisOfPoly[polyFace[t]].push_back(t);
+        std::vector<char> done((std::size_t)nTri, 0);
+        int curMat = -2;
+        auto useMat = [&](int t) {
+            const int m = matOf.empty() ? -1 : matOf[t];
+            if (m != curMat && m >= 0) f << "usemtl color" << m << "\n";
+            curMat = m;
+        };
+        for (int t = 0; t < nTri; ++t) {
+            if (done[t]) continue;
+            std::vector<std::pair<int, int>> loop;                      // (vertex, triangle corner) around the polygon
+            if (polys) {
+                const std::vector<int>& group = trisOfPoly[polyFace[t]];
+                if (group.size() > 1 && PolygonOutline(group, matOf, loop)) {
+                    for (int g : group) done[g] = 1;
+                    useMat(t);
+                    f << "f";
+                    for (const auto& vc2 : loop) f << " " << corner(vc2.first, vc2.second);
+                    f << "\n";
+                    continue;
+                }
+            }
+            done[t] = 1;
+            useMat(t);
+            f << "f";
+            for (int k = 0; k < 3; ++k) f << " " << corner(triangles[t * 3 + k], t * 3 + k);
+            f << "\n";
         }
         return static_cast<bool>(f);
     }
+
+private:
+    /// The outline of a polygon made of triangles `group`: the edges no other triangle of the group runs the other
+    /// way, chained into one loop. False (write the triangles instead) when the triangles differ in material or
+    /// corner UV at a shared vertex, or the outline is not one simple loop through every corner vertex.
+    bool PolygonOutline(const std::vector<int>& group, const std::vector<int>& matOf,
+                        std::vector<std::pair<int, int>>& loop) const {
+        const bool cuv = HasCornerUVs();
+        std::map<int, int> cornerOf;                                     // vertex -> a triangle corner that uses it
+        std::map<std::pair<int, int>, int> edges;                        // directed edge -> uses
+        for (int t : group) {
+            if (!matOf.empty() && matOf[t] != matOf[group[0]]) return false;
+            for (int k = 0; k < 3; ++k) {
+                const int v = triangles[t * 3 + k];
+                auto it = cornerOf.find(v);
+                if (it == cornerOf.end()) cornerOf[v] = t * 3 + k;
+                else if (cuv && !(cornerUVs[it->second].x == cornerUVs[t * 3 + k].x && cornerUVs[it->second].y == cornerUVs[t * 3 + k].y)) return false;
+                ++edges[{v, triangles[t * 3 + (k + 1) % 3]}];
+            }
+        }
+        std::map<int, int> next;
+        for (const auto& e : edges) {
+            if (e.second != 1) return false;
+            if (edges.count({e.first.second, e.first.first})) continue;   // inside the polygon
+            if (next.count(e.first.first)) return false;                   // two ways out: not a simple loop
+            next[e.first.first] = e.first.second;
+        }
+        if (next.size() < 3 || next.size() != cornerOf.size()) return false;
+        const int start = triangles[group[0] * 3];
+        if (!next.count(start)) return false;
+        int v = start;
+        do {
+            loop.push_back({v, cornerOf[v]});
+            auto it = next.find(v);
+            if (it == next.end() || loop.size() > next.size()) { loop.clear(); return false; }
+            v = it->second;
+        } while (v != start);
+        if (loop.size() != next.size()) { loop.clear(); return false; }
+        return true;
+    }
+
+public:
 
     // ---- UV projection (quick unwraps for texturing edited meshes) -----------
     // All of these fill the per-vertex `uvs` array and mark the mesh custom
@@ -2133,7 +2350,7 @@ struct Mesh {
     /// UVs follow the engine's convention: v = 0 is the top of the image, and a
     /// face reads the right way round seen from outside (from + along the axis).
     void ProjectUVPlanar(int axis, float tile = 1.0f) {
-        if (vertices.empty() || axis < 0 || axis > 2) return;
+        if (vertices.empty() || axis < 0 || axis > 2 || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
@@ -2152,7 +2369,7 @@ struct Mesh {
     /// normal axis, turned so the texture reads the right way round from
     /// outside on all six sides. The go-to for buildings and hand-edited geometry.
     void ProjectUVBox(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
@@ -2183,7 +2400,7 @@ struct Mesh {
     /// to top. For columns, cans, tree trunks, lathe/screw results. Faces that
     /// straddle the wrap-around keep their corners on one side (no smeared band).
     void ProjectUVCylinder(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         float h = (hi.y - lo.y) > 1e-6f ? (hi.y - lo.y) : 1.0f;
@@ -2201,7 +2418,7 @@ struct Mesh {
 
     /// Spherical projection from the bounds centre — planets, rocks, heads.
     void ProjectUVSphere(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         const float kPi = 3.14159265358979323846f;
@@ -2448,6 +2665,17 @@ public:
     }
     Mesh Mirrored(int axis = 0, bool weld = true) const { Mesh m = *this; m.Mirror(axis, weld); return m; }
 
+    /// Symmetrize: keep the positive half across the `axis` plane through the pivot (0=X 1=Y 2=Z), then mirror it
+    /// over the other side and weld the seam, so the mesh is exactly symmetric. The one implementation behind the
+    /// Modeling window's Symmetrize buttons (Mirror X/Y/Z, by contrast, adds a mirrored copy of the whole mesh).
+    void Symmetrize(int axis) {
+        if (axis < 0 || axis > 2 || vertices.empty()) return;
+        const Vec3 n{axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f};
+        Bisect({0, 0, 0}, n, false, true);   // keep + half, seam open
+        Mirror(axis);                        // reflect + weld the seam
+        name = "";
+    }
+
     /// Push every vertex toward a sphere centred on the mesh, by `amount` in [0,1]
     /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
     /// soften a blocky shape. The sphere radius is the average vertex distance.
@@ -2574,9 +2802,57 @@ public:
             for (int id : src.polyFace) polyFace.push_back(id + hi);
         } else polyFace.clear();
         if (src.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), inner.cornerUVs.begin(), inner.cornerUVs.end()); else cornerUVs.clear();
+        AddSolidifyRim(src, base);
+        // A negative thickness puts the new shell outside: turn every face round so the solid still faces outward.
+        if (thickness < 0.0f) FlipWinding();
         normals.clear();
         name = "";
     }
+
+private:
+    /// Solidify's rim: close the gap between a surface and its offset copy (vertex i <-> i + base) with a wall of
+    /// quads along every open border, so a sheet becomes a closed slab. An edge is open when no other triangle uses it
+    /// in the opposite direction; vertices are matched by position so a UV seam (two vertices at one point) is not a
+    /// border. The wall keeps the border face's colour and slot, and is wound to face away from the sheet.
+    void AddSolidifyRim(const Mesh& src, int base) {
+        const int nTri = src.TriangleCount();
+        if (nTri <= 0) return;
+        std::map<std::tuple<float, float, float>, int> idOf;            // one id per distinct position
+        std::vector<int> canon(src.vertices.size());
+        for (std::size_t i = 0; i < src.vertices.size(); ++i) {
+            const Vec3& v = src.vertices[i];
+            canon[i] = idOf.emplace(std::make_tuple(v.x, v.y, v.z), (int)idOf.size()).first->second;
+        }
+        std::map<std::pair<int, int>, int> directed;                   // (from, to) position ids -> uses
+        for (int t = 0; t < nTri; ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = src.triangles[t * 3 + k], b = src.triangles[t * 3 + (k + 1) % 3];
+                if (a < 0 || b < 0 || a >= (int)canon.size() || b >= (int)canon.size()) continue;
+                ++directed[{canon[a], canon[b]}];
+            }
+        const bool fc = HasFaceColors(), sl = HasSlots(), cuv = HasCornerUVs();
+        const bool pf = !polyFace.empty() && polyFace.size() * 3 == triangles.size();
+        int nextPoly = 0; if (pf) for (int id : polyFace) nextPoly = std::max(nextPoly, id + 1);
+        for (int t = 0; t < nTri; ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = src.triangles[t * 3 + k], b = src.triangles[t * 3 + (k + 1) % 3];
+                if (a < 0 || b < 0 || a >= (int)canon.size() || b >= (int)canon.size() || canon[a] == canon[b]) continue;
+                if (directed.count({canon[b], canon[a]}) || directed[{canon[a], canon[b]}] != 1) continue;   // shared (or non-manifold) edge
+                // The face runs a -> b, so its neighbour across a border would run b -> a: the wall does too, then
+                // drops to the copy (a' = a + base, b' = b + base).
+                triangles.insert(triangles.end(), {b, a, a + base});
+                triangles.insert(triangles.end(), {b, a + base, b + base});
+                if (fc) { triColors.push_back(triColors[t]); triColors.push_back(triColors[t]); }
+                if (sl) { triSlot.push_back(triSlot[t]); triSlot.push_back(triSlot[t]); }
+                if (pf) { polyFace.push_back(nextPoly); polyFace.push_back(nextPoly); ++nextPoly; }
+                if (cuv) {
+                    const Vec2 ua = cornerUVs[t * 3 + k], ub = cornerUVs[t * 3 + (k + 1) % 3];
+                    cornerUVs.insert(cornerUVs.end(), {ub, ua, ua, ub, ua, ub});
+                }
+            }
+    }
+
+public:
 
     /// Extrude a 2D outline (XY, convex, counter-clockwise) into a 3D prism of
     /// the given depth along Z — custom signs, logos, blocky props. Builds a
@@ -2764,6 +3040,7 @@ public:
     /// Push every vertex onto a sphere of the given radius about the origin —
     /// pair with Subdivide() to turn a cube/icosphere into a smooth ball.
     void ProjectToSphere(float radius = 0.5f) {
+        if (!std::isfinite(radius)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         for (Vec3& v : vertices) {
             float m = v.Magnitude();
             if (m > 1e-6f) v = v * (radius / m);
@@ -2997,7 +3274,7 @@ public:
     /// Shrink/Fatten (Alt+S): inflate or carve a selected patch without dragging
     /// an axis. Uses smooth per-vertex normals so the offset follows curvature.
     void ShrinkFattenVertices(const std::vector<int>& verts, float dist) {
-        if (verts.empty() || std::fabs(dist) < 1e-8f || vertices.empty()) return;
+        if (verts.empty() || !std::isfinite(dist) || std::fabs(dist) < 1e-8f || vertices.empty()) return;
         std::vector<Vec3> n = Normals();
         for (int v : verts)
             if (v >= 0 && v < (int)vertices.size()) vertices[v] += n[v] * dist;
@@ -3010,7 +3287,7 @@ public:
     /// To Sphere (Shift+Alt+S). The sphere radius is the selection's mean distance
     /// from its centre, so the patch rounds without ballooning.
     void SphereizeVertices(const std::vector<int>& verts, float amount) {
-        if (verts.empty() || amount <= 0.0f || vertices.empty()) return;
+        if (verts.empty() || !(amount > 0.0f) || vertices.empty()) return;   // (NaN fails the test)
         float t = amount > 1.0f ? 1.0f : amount;
         Vec3 c{0, 0, 0}; int n = 0;
         for (int v : verts) if (v >= 0 && v < (int)vertices.size()) { c += vertices[v]; ++n; }
@@ -3461,7 +3738,8 @@ public:
     /// centre, sharpening creases). SMOOTH/FLATTEN read a snapshot so the
     /// relaxation doesn't feed back within one call.
     void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode) {
-        if (radius <= 1e-6f || vertices.empty()) return;
+        if (!(radius > 1e-6f) || vertices.empty()) return;
+        if (!std::isfinite(radius + strength + center.x + center.y + center.z + dir.x + dir.y + dir.z)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         std::vector<Vec3> vn;
         if (mode == 1 || mode == 3) vn = Normals();    // vertex normals for INFLATE/FLATTEN
         std::vector<Vec3> snapshot = vertices;         // SMOOTH reads positions pre-edit
@@ -3795,7 +4073,7 @@ public:
     /// `dist` — positive inflates, negative deflates. Normals are oriented outward
     /// (away from the mesh centre) so it inflates regardless of triangle winding.
     void ShrinkFatten(float dist) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(dist)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         ComputeSmoothNormals();
         Vec3 ctr{0, 0, 0};
         for (const Vec3& v : vertices) ctr += v;
@@ -3814,7 +4092,7 @@ public:
     /// section (`thickness` across), turning the mesh into its wire lattice — handy
     /// for cages, scaffolds, and stylised low-poly props.
     void Wireframe(float thickness) {
-        if (triangles.empty() || thickness <= 1e-6f) return;
+        if (triangles.empty() || !(thickness > 1e-6f) || !std::isfinite(thickness)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         Mesh w = *this; w.WeldVertices();
         std::set<std::pair<int, int>> edges;
         for (std::size_t t = 0; t + 2 < w.triangles.size(); t += 3) {
@@ -3856,7 +4134,7 @@ public:
     /// `axis`: 0=X,1=Y,2=Z) toward `radius`, by `amount` (0 = none, 1 = full). Rounds
     /// a boxy shape into a barrel/tube. Cast-to-sphere already exists as Spherify().
     void CastToCylinder(float radius, int axis = 1, float amount = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(radius) || !std::isfinite(amount)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         for (Vec3& v : vertices) {
             float a, b;
             if (axis == 0)      { a = v.y; b = v.z; }
@@ -4527,11 +4805,11 @@ public:
         RefreshNormals();
     }
 
-    /// Loop Cut: insert `count` evenly-spaced edge loops across the mesh
-    /// perpendicular to `axis` (0=X 1=Y 2=Z) — Blender's Ctrl+R. Robust on any
-    /// topology (it slices, not quad-walks): great for adding editable divisions
-    /// to a wall/box/extruded shape. Welds the new cut vertices into clean loops.
-    void LoopCut(int axis, int count) {
+    /// Slice: cut the whole mesh with `count` evenly spaced planes across `axis`
+    /// (0=X 1=Y 2=Z) and weld the cut vertices into rings — adds editable divisions
+    /// to a wall/box/extruded shape on any topology. (This was called "Loop Cut";
+    /// the real edge-ring Loop Cut is modeling::LoopCut, Ctrl+R in Edit Mesh.)
+    void SliceAxis(int axis, int count) {
         if (axis < 0 || axis > 2 || count < 1 || vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis];
@@ -4617,7 +4895,7 @@ public:
     /// Displace vertices by a deterministic random offset up to `amount` — quick
     /// organic roughness (rocks, rubble, hand-made look). Empty `verts` = whole mesh.
     void JitterVertices(const std::vector<int>& verts, float amount, int seed = 0) {
-        if (amount == 0.0f || vertices.empty()) return;
+        if (amount == 0.0f || !std::isfinite(amount) || vertices.empty()) return;   // a typed NaN or infinite value would turn every vertex into NaN
         auto h = [&](int i, int c) {
             unsigned x = ((unsigned)i * 73856093u) ^ ((unsigned)c * 19349663u) ^ ((unsigned)seed * 83492791u);
             x = (x ^ (x >> 13)) * 1274126177u;
@@ -4639,7 +4917,7 @@ public:
     /// `along` (about the centre) — slanted walls, italic text blocks, leaning towers.
     void Shear(int axis, int along, float amount) {
         if (axis < 0 || axis > 2 || along < 0 || along > 2 || axis == along
-            || amount == 0.0f || vertices.empty()) return;
+            || amount == 0.0f || !std::isfinite(amount) || vertices.empty()) return;   // a typed NaN or infinite value would turn every vertex into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         float c = ((&lo.x)[along] + (&hi.x)[along]) * 0.5f;
         for (Vec3& v : vertices)

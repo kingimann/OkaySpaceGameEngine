@@ -67,6 +67,7 @@ The feature map currently has **125** rows that are Partial or Planned.
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
+| Fast release (one workflow dispatch, no bump PR: `.github/workflows/fast-release.yml`, `scripts/fast_release.py`, `dist/changelog.d/`, branch `claude/fast-release-1`) | Built, off by default, never run on GitHub | Needs the owner to set the repository variable `FAST_RELEASE_ENABLED=1` after a successful `dry_run=true` run. Unverified on Actions: calling `release.yml` as a reusable workflow with `secrets: inherit`, `body_path` with `generate_release_notes`, the `gh api --paginate` job list, GitHub's asset `digest` field. Checked offline: version choice, the CI-gate parsing, entry assembly, stamp, sync and the after-check with fake data (ctest `fast_release_lint`). Not done: a repository bot commit that keeps `CMakeLists.txt`/`ROADMAP.md`/`dist/CHANGELOG.txt` current (a docs-only catch-up PR with `sync-docs` does it by hand, on purpose), an LTS path, hiding a release automatically when the after-check fails, a PR-time check that a PR added an entry. Edits to `release.yml` can conflict with PR #953 and the release-parallel branch. `docs/fast_release.md`, `docs/try_it.md` fast1 |
 
 ## Own cryptography: no hired review, libsodium stays
 
@@ -138,7 +139,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Humanoid animation quality, procedural object holding, 2.5D controller improvements, backpedal and strafe animations, character joint hinges and detail (animation team)
 - Splitting the largest files: launcher `main.cpp`, the OkayScript VM, component serializer registry, editor `main.cpp` into panel files
 - ~~Remove the hard-coded Supabase URL and key from CMake; stop committing dist binaries~~ DONE on `claude/hygiene-1`: address and publishable key now live only in `config/public-account.json` (no longer in CMake or the page); dist binaries removed from git, lint added. Optional owner step: rotate the old key in Supabase and edit that file (`docs/accounts.md`)
-- Security plan SEC1: relay isolation, script file-path safety, updater signing, reactions privacy SQL; anti-cheat hardening
+- Security plan SEC1 (built, see `docs/security.md`; owner steps left: create the update signing key and add the GitHub secret and variable, run `docs/sql/reactions_privacy.sql`; still open: a signed timestamp against update "freezes", per-packet authentication on relay data frames, moving the app to `reaction_counts`); anti-cheat hardening
 - README matching reality and a component audit document
 
 ## From the feature map (Partial and Planned)
@@ -199,7 +200,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | sign the launcher, editor and player downloads (ed25519 as the anti-cheat manifest does) and verify before swapping; the SEC1... |
+| [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | owner steps (update signing key, two GitHub entries, run reactions_privacy.sql); a signed timestamp against update freezes; per-packet authentication on relay data frames; move the app to reaction_counts and then limit the raw reactions SELECT |
 
 ### 18. Build, export & release
 

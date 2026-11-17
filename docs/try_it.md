@@ -87,7 +87,9 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
+| security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -96,6 +98,7 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
 
@@ -1391,6 +1394,39 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## fast1. Fast release: one dispatch, no version-bump PR
+
+**What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
+refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
+The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
+then "Release Windows build") still works. Everything: `docs/fast_release.md`.
+
+**Steps (the dry run, safe: builds and publishes nothing).**
+1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.
+   Or in a terminal: `gh workflow run fast-release.yml --ref main -f dry_run=true`.
+2. Open the run and read its summary page.
+
+**What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
+("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
+new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
+(missing, still running, red). That is the safety check working, not a failure of the tool.
+
+**Steps (the first real release through it).**
+1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
+2. Actions > Fast release > Run workflow, branch `main`, dry_run off.
+3. Wait for the three jobs: Plan, Build and publish (release.yml), Check the release. The last one prints a table; every row must say "ok".
+
+**What you should see.** A new GitHub release `v<version>` that is "latest", the launcher offering that version, and in the run summary the
+check table (release published, tag on the tested commit, three programs with a SHA-256 in versions.json that equals the one on GitHub).
+
+**To add a changelog entry (every PR).** Copy `dist/changelog.d/fast-release.txt`, change the text, run
+`python3 scripts/fast_release.py check-entries`.
+
+**Status.** Tested offline only: `python3 tests/scripts/test_fast_release.py` (ctest `fast_release_lint`) with fake GitHub data and a
+throw-away git repo; the workflows parse as YAML and every shell block passes `bash -n`. Not run on GitHub Actions. Unverified there:
+calling `release.yml` as a reusable workflow with `secrets: inherit`, `body_path` together with `generate_release_notes`, and GitHub's
+asset `digest` field. The first dry run and the first real release are the proof.
+
 ## File > Examples opens the examples (fix)
 
 1. Open the editor from the Windows release (also when it was started from a project folder).
@@ -1410,6 +1446,34 @@ What changes for you:
 
 **Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
 
+## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
+
+Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+
+**Script file paths (try it in the editor).**
+
+1. Open the editor from the Windows release, **File > Open...**, open `examples\security_paths\script_paths.okayscene` (in the `examples`
+   folder next to the program) and press Play.
+2. Open the Console. You should see seven lines: the first six file names (`NUL`, `con.txt`, `C:/x`, `slot.okaysave:hidden`,
+   `../escape.okaysave`, `/etc/evil.okaysave`) end with `false`, and `slot_ok.okaysave` ends with `true`. Above them the Console
+   shows `[script] save file: refusing file 'NUL': a reserved device name (CON, NUL, COM1 ...)` and one like it per refused name.
+
+**Update signature status (visible now, OFF until you add a key).**
+
+1. Open the launcher, **Settings > About**: under the version you should see `update signature check: OFF (no key configured)` in amber.
+   In the editor, **Help > About** shows the same line. (Start the launcher from a terminal, or open `okay_update.log` beside
+   `OkaySpace.exe`, to see it printed at start-up too.)
+2. To turn it ON: add the GitHub secret `OKAY_UPDATE_SIGNING_SEED` and the variable `OKAY_UPDATE_TRUSTED_KEYS` (steps in security.md section 3),
+   release, install that release: the line turns green and says `ON (1 key built in)`.
+
+**Relay caps and reactions SQL (owner steps, nothing to click in the Windows release).** The relay is a Linux server program; its new
+caps are checked by `ctest -R relay_security`. The reactions fix is `docs/sql/reactions_privacy.sql`: Supabase dashboard > SQL Editor >
+paste it > Run. Check it with `select * from public.reaction_counts('dm', array[1]);` (no user column in the answer).
+
+**Unverified.** Checked on Linux only: the tests `path_safety`, `script_paths`, `update_security`, `update_signature`, `relay_security`,
+`sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
+in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
@@ -1421,6 +1485,35 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+
+All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+
+1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
+   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
+   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
+2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
+   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
+   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
+3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
+   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
+   UV **tile** field.
+4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
+   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
+5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
+   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
+   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
+   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
+   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
+   the same reader but was not tried by hand.)
+6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
+   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
+   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+
+What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
+`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
+Mesh (it creates a second object).
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 
@@ -1644,6 +1737,40 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## ci1. CI and release speed-up: how to tell it worked
+
+**This change has nothing to click in the editor, launcher or player.** It only changes how GitHub builds and tests
+(`.github/workflows/ci.yml`, `.github/workflows/release.yml`, the end of `tests/CMakeLists.txt`). The way to "try" it is
+to read the Actions page. **The speed-up is UNVERIFIED until a real CI run has happened.** The first run after this
+merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR run restores whatever `main` last saved.
+
+**Steps.**
+1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
+   about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
+2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
+   means the build was cold.
+4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
+   90 percent; the first run after a change is expected to be lower.
+5. Open "Test". The `ctest` line must show `-j4 --timeout 300` and the summary must say 100 percent passed, with the
+   same count (about 805 tests) as before. No test is skipped or loosened.
+6. After the merge, open the push-to-main run. Every job that builds C++ now has a last step "Save compiler cache (main
+   only)"; it runs only there. On a PR run that step shows as skipped.
+7. Repository Settings > Actions > Caches: the `ccache-*` entries should be one recent entry per job, not a long list of
+   old sha keys. Total under 10 GB.
+8. Release (`release.yml`): the first step of the "Cross-compile Windows exes" job is "Refuse a version that is already
+   released". On a version that already has a GitHub release it must fail in seconds with "already released". Two
+   release runs started together must queue (the second shows "Waiting"), not run at the same time. The "Make the release
+   visible (latest)" job runs only if the Linux server job succeeded.
+
+**What you should see.** A faster "Build & test (Ubuntu)" (target: well under an hour; the real number is unknown until
+measured) and the same tests passing. All other jobs still run on every PR and on main, with the same names.
+
+**Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
+CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
+passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+out.
 
 ## Five starter templates removed from New Project
 

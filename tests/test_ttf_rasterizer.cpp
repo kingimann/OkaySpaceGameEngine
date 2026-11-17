@@ -9,8 +9,12 @@
 #include "okay/Graphics/TtfFont.hpp"
 #endif
 #include "test_framework.hpp"
+#include "OkfDecode.hpp"            // the embedded fonts (header-only decoder, shared/)
+#include "RobotoFontOwn.h"
+#include "JetBrainsMonoFontOwn.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -404,6 +408,85 @@ Bytes ReadFile(const std::string& path) {
     return Bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
+// ---- Kerning tables, written from the OpenType spec ----------------------------------------
+// Glyphs 1..4 are A, V, T, o. GPOS: a 'kern' feature with lookup 0 (pair adjustment format 1:
+// A+V -80, T+o -120) and lookup 1 (an extension lookup holding format 2: class V then class A
+// gives XPlacement 7 (ignored), XAdvance -50, and the second glyph's XPlacement +5), plus a
+// 'liga' feature whose pair lookup 2 (A+V -999) must NOT count.
+Bytes PairPos1(const std::vector<int>& cover, const std::vector<std::vector<std::pair<int, int>>>& sets) {
+    Bytes b;
+    const std::size_t head = 10 + cover.size() * 2;
+    std::vector<Bytes> ps;
+    for (const auto& set : sets) { Bytes p; P16(p, (unsigned)set.size()); for (auto& r : set) { P16(p, (unsigned)r.first); P16(p, (unsigned)(r.second & 0xFFFF)); } ps.push_back(p); }
+    std::size_t at = head; std::vector<std::size_t> offs;
+    for (auto& p : ps) { offs.push_back(at); at += p.size(); }
+    P16(b, 1); P16(b, (unsigned)at); P16(b, 0x0004); P16(b, 0); P16(b, (unsigned)ps.size());
+    for (auto o : offs) P16(b, (unsigned)o);
+    for (auto& p : ps) b.insert(b.end(), p.begin(), p.end());
+    P16(b, 1); P16(b, (unsigned)cover.size()); for (int g : cover) P16(b, (unsigned)g);   // coverage format 1
+    return b;
+}
+Bytes PairPos2() {
+    Bytes b;
+    P16(b, 2); P16(b, 0); P16(b, 0x0005); P16(b, 0x0001);   // coverage offset patched below
+    P16(b, 0); P16(b, 0); P16(b, 2); P16(b, 2);              // classDef offsets patched below
+    const int vals[2][2][3] = {{{0, 0, 0}, {0, 0, 0}}, {{0, 0, 0}, {7, -50, 5}}};
+    for (auto& c1 : vals) for (auto& c2 : c1) for (int v : c2) P16(b, (unsigned)(v & 0xFFFF));
+    Put16At(b, 2, (unsigned)b.size()); P16(b, 2); P16(b, 1); P16(b, 1); P16(b, 4); P16(b, 0);   // coverage format 2: 1..4
+    Put16At(b, 8, (unsigned)b.size()); P16(b, 2); P16(b, 1); P16(b, 2); P16(b, 2); P16(b, 1);   // class 1 = V (format 2)
+    Put16At(b, 10, (unsigned)b.size()); P16(b, 1); P16(b, 1); P16(b, 4); P16(b, 1); P16(b, 0); P16(b, 0); P16(b, 0);   // A = class 1 (format 1)
+    return b;
+}
+Bytes Lookup(unsigned type, const Bytes& sub) { Bytes b; P16(b, type); P16(b, 0); P16(b, 1); P16(b, 8); b.insert(b.end(), sub.begin(), sub.end()); return b; }
+Bytes MakeGpos() {
+    Bytes ext; P16(ext, 1); P16(ext, 2); P32(ext, 8);
+    const Bytes pp2 = PairPos2(); ext.insert(ext.end(), pp2.begin(), pp2.end());
+    std::vector<Bytes> lookups = {Lookup(2, PairPos1({1, 3}, {{{2, -80}}, {{4, -120}}})), Lookup(9, ext),
+                                  Lookup(2, PairPos1({1}, {{{2, -999}}}))};
+    Bytes scripts; P16(scripts, 0);
+    Bytes feats; P16(feats, 2);
+    P32(feats, 0x6B65726E); P16(feats, 14); P32(feats, 0x6C696761); P16(feats, 22);   // 'kern', 'liga'
+    P16(feats, 0); P16(feats, 2); P16(feats, 0); P16(feats, 1);   // kern: lookups 0, 1
+    P16(feats, 0); P16(feats, 1); P16(feats, 2);                  // liga: lookup 2
+    Bytes list; P16(list, 3);
+    std::size_t at = 2 + 3 * 2;
+    for (auto& l : lookups) { P16(list, (unsigned)at); at += l.size(); }
+    for (auto& l : lookups) list.insert(list.end(), l.begin(), l.end());
+    Bytes g; P16(g, 1); P16(g, 0);
+    P16(g, 10); P16(g, (unsigned)(10 + scripts.size())); P16(g, (unsigned)(10 + scripts.size() + feats.size()));
+    g.insert(g.end(), scripts.begin(), scripts.end()); g.insert(g.end(), feats.begin(), feats.end());
+    g.insert(g.end(), list.begin(), list.end());
+    return g;
+}
+// The legacy table: two horizontal format 0 subtables that add up, and a cross-stream one to skip.
+Bytes MakeKern() {
+    auto sub = [](unsigned coverage, const std::vector<std::array<int, 3>>& pairs) {
+        Bytes b; P16(b, 0); P16(b, (unsigned)(14 + pairs.size() * 6)); P16(b, coverage);
+        P16(b, (unsigned)pairs.size()); P16(b, 0); P16(b, 0); P16(b, 0);
+        for (auto& p : pairs) { P16(b, (unsigned)p[0]); P16(b, (unsigned)p[1]); P16(b, (unsigned)(p[2] & 0xFFFF)); }
+        return b;
+    };
+    Bytes k; P16(k, 0); P16(k, 3);
+    for (const Bytes& b : {sub(0x0001, {{1, 2, -70}, {3, 4, -100}}), sub(0x0001, {{1, 2, -10}}), sub(0x0005, {{1, 2, -500}})})
+        k.insert(k.end(), b.begin(), b.end());
+    return k;
+}
+Spec KernSpec() {
+    Spec s;
+    s.glyphs.push_back(Notdef());
+    for (int i = 0; i < 4; ++i) { Glyph g; g.data = SimpleGlyph({Rect(50, 0, 550, 700)}); s.glyphs.push_back(g); }
+    s.map = {{'A', 1}, {'V', 2}, {'T', 3}, {'o', 4}};
+    return s;
+}
+
+// The embedded fonts, decoded from their OKF1 text (no engine needed).
+Bytes EmbeddedFont(bool mono) {
+    Bytes out;
+    if (mono) okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, out);
+    else okf::DecodeLines(okf_data::kRobotoMediumOkf, okf_data::kRobotoMediumOkfLines, out);
+    return out;
+}
+
 // ---- DejaVu Sans reference glyphs (FreeType, unhinted, 16x box-filtered) ---------------------
 struct Ref { unsigned cp; float px; int x0, y0, w, h; const char* hex; };
 const Ref kRefs[] = {
@@ -431,6 +514,11 @@ void Exercise(const Bytes& data, int glyphs) {
     }
     for (std::uint32_t c = 0; c < 0x300; c += 7) f.FindGlyph(c);
     f.FindGlyph(0x1F600); f.FindGlyph(0xFFFF); f.FindGlyph(0xFFFFFFFFu);
+    // Kerning reads GPOS / kern: every pair of a few glyphs, and out-of-range ones.
+    const int kn = std::min(f.GlyphCount(), 48);
+    for (int a = 0; a < kn; a += 3)
+        for (int b = 0; b < kn; b += 2) f.Kerning(a, b);
+    f.Kerning(-1, 5); f.Kerning(5, 1 << 20); f.Kerning(0xFFFF, 0xFFFF);
 }
 
 } // namespace
@@ -853,6 +941,88 @@ int main() {
         // A composite (e-acute) is a base letter plus an accent: taller than the plain e.
         Bmp e = Draw(f, f.FindGlyph('e'), 32.0f), ea = Draw(f, f.FindGlyph(0xE9), 32.0f);
         CHECK(e.ok && ea.ok && ea.h > e.h && ea.w == e.w);
+    }
+
+    // ---- Kerning: GPOS pair adjustment (formats 1 and 2, extension lookups) and the kern table ----------------
+    {
+        Spec s = KernSpec();
+        std::vector<Table> t = GlyfTables(s);
+        t.push_back({"GPOS", MakeGpos()});
+        Bytes font; AppendSfnt(font, t, 0x00010000);
+        ttf::Face f;
+        CHECK(f.Load(font.data(), font.size()));
+        CHECK(f.KerningSource() == 2);
+        const int A = f.FindGlyph('A'), V = f.FindGlyph('V'), T = f.FindGlyph('T'), o = f.FindGlyph('o');
+        CHECK(f.Kerning(A, V) == -80);    // format 1 (the 'liga' lookup's -999 is not counted)
+        CHECK(f.Kerning(T, o) == -120);   // format 1, second pair set
+        CHECK(f.Kerning(V, A) == -45);    // format 2 behind an extension lookup: -50 + the second glyph's +5
+        CHECK(f.Kerning(A, A) == 0 && f.Kerning(o, T) == 0 && f.Kerning(V, V) == 0);
+        CHECK(f.Kerning(0, A) == 0 && f.Kerning(A, 99) == 0);
+        // The legacy table alone: horizontal format 0 subtables add up, cross-stream ones are skipped.
+        std::vector<Table> t2 = GlyfTables(s);
+        t2.push_back({"kern", MakeKern()});
+        Bytes font2; AppendSfnt(font2, t2, 0x00010000);
+        ttf::Face k;
+        CHECK(k.Load(font2.data(), font2.size()));
+        CHECK(k.KerningSource() == 1);
+        CHECK(k.Kerning(A, V) == -80 && k.Kerning(T, o) == -100 && k.Kerning(V, A) == 0);
+        // Both: GPOS wins (fonts carry the old table only for old software).
+        std::vector<Table> t3 = GlyfTables(s);
+        t3.push_back({"GPOS", MakeGpos()}); t3.push_back({"kern", MakeKern()});
+        Bytes font3; AppendSfnt(font3, t3, 0x00010000);
+        ttf::Face both;
+        CHECK(both.Load(font3.data(), font3.size()) && both.KerningSource() == 2 && both.Kerning(T, o) == -120);
+        // Every truncation of the GPOS font still loads or fails cleanly.
+        for (std::size_t n = font.size() - 400; n < font.size(); ++n) { Bytes cut(font.begin(), font.begin() + (std::ptrdiff_t)n); Exercise(cut, 5); }
+
+        // Roboto (the UI font): pairs checked against fontTools 4.68.0 reading the same bytes (an independent
+        // reader; its values are in docs/own_font_raster.md). JetBrains Mono is monospaced and has no kerning.
+        const Bytes roboto = EmbeddedFont(false), mono = EmbeddedFont(true);
+        ttf::Face r, m;
+        CHECK(r.Load(roboto.data(), roboto.size()) && r.KerningSource() == 2);
+        CHECK(m.Load(mono.data(), mono.size()) && m.KerningSource() == 0);
+        struct KP { const char* pair; int value; };
+        const KP kRoboto[] = {{"AV", -77}, {"VA", -75}, {"To", -208}, {"Ta", -168}, {"Te", -89}, {"Yo", -65}, {"AT", -120},
+                              {"LT", -205}, {"AW", -39}, {"Wa", -33}, {"P,", -404}, {"F.", -274}, {"Av", -50}, {"rn", 0},
+                              {"ff", 0}, {"AA", 0}, {"oT", 0}, {"LV", -206}, {"Ty", -82}, {"AY", -150}};
+        for (const KP& p : kRoboto) {
+            const int got = r.Kerning(r.FindGlyph((unsigned char)p.pair[0]), r.FindGlyph((unsigned char)p.pair[1]));
+            if (got != p.value) std::fprintf(stderr, "  Roboto kerning %s: %d, expected %d\n", p.pair, got, p.value);
+            CHECK(got == p.value);
+        }
+        CHECK(r.Kerning(r.FindGlyph(0xC0), r.FindGlyph('V')) == -77);   // A-grave kerns like A
+        CHECK(m.Kerning(m.FindGlyph('A'), m.FindGlyph('V')) == 0);
+    }
+
+    // ---- The embedded fonts under attack: truncations and mutations (run under ASan / UBSan too) ----------------
+    {
+        int loaded = 0;
+        for (int which = 0; which < 2; ++which) {
+            const Bytes base = EmbeddedFont(which == 1);
+            CHECK(base.size() > 100000);
+            if (base.empty()) continue;
+            for (std::size_t n = 0; n <= base.size(); n += (n < 2048 ? 7 : 4093)) {   // dense at the head, sparse after
+                Bytes cut(base.begin(), base.begin() + (std::ptrdiff_t)n);
+                Exercise(cut, 24);
+            }
+            for (int it = 0; it < 220; ++it) {
+                Bytes mu = base;
+                const int hits = 1 + (int)(Rnd() % 6);
+                for (int k = 0; k < hits; ++k) {
+                    const std::size_t pos = (Rnd() % 2 == 0) ? Rnd() % std::min<std::size_t>(mu.size(), 600) : Rnd() % mu.size();
+                    switch (Rnd() % 5) {
+                    case 0: mu[pos] = (std::uint8_t)Rnd(); break;
+                    case 1: mu[pos] = 0xFF; break;
+                    case 2: mu[pos] = 0; break;
+                    case 3: mu[pos] ^= (std::uint8_t)(1u << (Rnd() % 8)); break;
+                    default: if (pos + 1 < mu.size()) { mu[pos] = 0x7F; mu[pos + 1] = 0xFF; } break;
+                    }
+                }
+                ttf::Face f; if (f.Load(mu.data(), mu.size())) ++loaded;
+                Exercise(mu, 24);
+            }
+        }
+        CHECK(loaded > 100);
     }
 
 #ifndef OKAY_TTF_STANDALONE

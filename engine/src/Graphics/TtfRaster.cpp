@@ -57,16 +57,46 @@ constexpr int kMaxSubrDepth = 10;
 constexpr int kMaxCsSteps = 400000;
 
 bool Finite(float v) { return v > -1e7f && v < 1e7f; }   // false for NaN too
+// Floor and ceiling to int for the small, finite bitmap coordinates the rasterizer works in
+// (without a library call on CPUs where the compiler has no rounding instruction).
+inline int IFloor(float v) { const int i = (int)v; return i - (v < (float)i ? 1 : 0); }
+inline int ICeil(float v) { const int i = (int)v; return i + (v > (float)i ? 1 : 0); }
 
 // ---- Exact-area coverage accumulation ---------------------------------------------
 // Each line segment adds, to the cells it crosses, the signed area it sweeps to the
 // right of itself; a running sum along the row then gives each pixel's covered
-// fraction (|sum|, clamped to 1: non-zero winding for same-direction overlaps).
+// fraction (|sum|, clamped to 1).
+//
+// That sum is exact while contours do not overlap. Where two contours of the same
+// direction overlap (a composite's accent touching its letter, a font drawn with
+// overlapping strokes), a pixel the edges of both cross gets the SUM of the two areas
+// instead of the area of their union, so the edge of the overlap comes out too dark.
+// So rows are checked for winding 2 (4 sample lines per row; one
+// contour can cross itself too, as JetBrains Mono's sharp s does), and a row where the
+// running sum goes past 1 or a sample line meets winding 2 is drawn again, with its neighbours, by a non-zero
+// winding scanline: 16 sample lines per pixel row, each with exact horizontal coverage
+// from the sorted edge crossings (the general non-zero scanline method). Every other row
+// keeps the exact area.
+struct Edge { float x0, y0, y1, dxdy, dir; };   // a line in bitmap space, y0 < y1
+// Buffers one thread's rasterizer reuses from glyph to glyph (no allocation per glyph).
+struct RasterScratch {
+    std::vector<float> acc;
+    std::vector<Edge> edges;
+    std::vector<std::uint8_t> overlap;
+    std::vector<int> at, fill;
+    std::vector<std::pair<float, float>> cx;
+};
+RasterScratch& Scratch() { static thread_local RasterScratch s; return s; }
+void ReplayInto(const detail::Recorder& path, PathSink& sink);   // (below, after Recorder)
+
 class Raster : public PathSink {
 public:
     Raster(int w, int h, float scale, int ox, int oy)
         : m_w(w), m_h(h), m_stride(w + 2), m_scale(scale), m_ox((float)ox), m_oy((float)oy),
-          m_acc((std::size_t)(w + 2) * (std::size_t)h, 0.0f) {}
+          m_s(Scratch()), m_acc(m_s.acc), m_edges(m_s.edges) {
+        m_acc.assign((std::size_t)(w + 2) * (std::size_t)h, 0.0f);
+        m_edges.clear();
+    }
 
     void Move(float x, float y) override {
         CloseSub();
@@ -78,20 +108,24 @@ public:
         float px, py; Map(x, y, px, py);
         if (!m_open) { m_sx = m_cx = px; m_sy = m_cy = py; m_open = true; return; }
         Seg(m_cx, m_cy, px, py);
+        PushEdge(m_cx, m_cy, px, py);
         m_cx = px; m_cy = py;
     }
     void Quad(float cx, float cy, float x, float y) override {
         float qx, qy, px, py; Map(cx, cy, qx, qy); Map(x, y, px, py);
         if (!m_open) { m_sx = m_cx = px; m_sy = m_cy = py; m_open = true; return; }
         const float dd = std::fabs(m_cx - 2 * qx + px) + std::fabs(m_cy - 2 * qy + py);
-        const int n = Steps(dd * 0.25f / kTol);
-        float ax = m_cx, ay = m_cy;
-        for (int i = 1; i <= n; ++i) {
-            const float t = (float)i / (float)n, u = 1 - t;
-            const float bx = u * u * m_cx + 2 * u * t * qx + t * t * px;
-            const float by = u * u * m_cy + 2 * u * t * qy + t * t * py;
-            Seg(ax, ay, bx, by);
-            ax = bx; ay = by;
+        // Twice: finely for the coverage, coarsely (or finely, when collecting) for the edge list.
+        for (int pass = m_accumulate ? 0 : 1; pass < 2; ++pass) {
+            const int n = Steps(dd * 0.25f / (pass == 0 ? kTol : m_edgeTol));
+            float ax = m_cx, ay = m_cy;
+            for (int i = 1; i <= n; ++i) {
+                const float t = (float)i / (float)n, u = 1 - t;
+                const float bx = u * u * m_cx + 2 * u * t * qx + t * t * px;
+                const float by = u * u * m_cy + 2 * u * t * qy + t * t * py;
+                if (pass == 0) Seg(ax, ay, bx, by); else PushEdge(ax, ay, bx, by);
+                ax = bx; ay = by;
+            }
         }
         m_cx = px; m_cy = py;
     }
@@ -101,23 +135,29 @@ public:
         if (!m_open) { m_sx = m_cx = px; m_sy = m_cy = py; m_open = true; return; }
         const float d1 = std::fabs(m_cx - 2 * ax + bx) + std::fabs(m_cy - 2 * ay + by);
         const float d2 = std::fabs(ax - 2 * bx + px) + std::fabs(ay - 2 * by + py);
-        const int n = Steps(0.75f * std::max(d1, d2) / kTol);
-        float lx = m_cx, ly = m_cy;
-        for (int i = 1; i <= n; ++i) {
-            const float t = (float)i / (float)n, u = 1 - t;
-            const float k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
-            const float qx = k0 * m_cx + k1 * ax + k2 * bx + k3 * px;
-            const float qy = k0 * m_cy + k1 * ay + k2 * by + k3 * py;
-            Seg(lx, ly, qx, qy);
-            lx = qx; ly = qy;
+        for (int pass = m_accumulate ? 0 : 1; pass < 2; ++pass) {   // coverage, then the edge list
+            const int n = Steps(0.75f * std::max(d1, d2) / (pass == 0 ? kTol : m_edgeTol));
+            float lx = m_cx, ly = m_cy;
+            for (int i = 1; i <= n; ++i) {
+                const float t = (float)i / (float)n, u = 1 - t;
+                const float k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+                const float qx = k0 * m_cx + k1 * ax + k2 * bx + k3 * px;
+                const float qy = k0 * m_cy + k1 * ay + k2 * by + k3 * py;
+                if (pass == 0) Seg(lx, ly, qx, qy); else PushEdge(lx, ly, qx, qy);
+                lx = qx; ly = qy;
+            }
         }
         m_cx = px; m_cy = py;
     }
     void Close() override { CloseSub(); }
 
-    // Write coverage 0..255 for the w x h area.
-    void Finish(std::uint8_t* out, int stride) {
+    // Write coverage 0..255 for the w x h area. `path` (the same outline again) gives the
+    // scanline pass finely flattened edges; without it the coarse list is used.
+    void Finish(std::uint8_t* out, int stride, const detail::Recorder* path = nullptr) {
         CloseSub();
+        std::vector<std::uint8_t>& overlap = m_s.overlap;
+        overlap.assign((std::size_t)m_h, 0);
+        bool any = false;
         for (int y = 0; y < m_h; ++y) {
             const float* row = &m_acc[(std::size_t)y * m_stride];
             std::uint8_t* o = out + (std::size_t)y * stride;
@@ -125,14 +165,118 @@ public:
             for (int x = 0; x < m_w; ++x) {
                 sum += row[x];
                 float v = std::fabs(sum);
+                if (v > 1.0f + kOverlap) { overlap[(std::size_t)y] = 1; any = true; }
                 if (v > 1.0f) v = 1.0f;
                 o[x] = (std::uint8_t)(v * 255.0f + 0.5f);
             }
+        }
+        if (m_edges.empty()) return;
+        // Winding on 4 sample lines per row: the crossings of each line, sorted by x, summed
+        // left to right (a winding-2 span between two sample lines can be missed; it is
+        // under a quarter pixel tall and barely shows).
+        {
+            const int lines = m_h * kCheckLines;
+            auto lineRange = [&](const Edge& e, int& l0, int& l1) {
+                l0 = std::max(ICeil(e.y0 * kCheckLines - 0.5f), 0);
+                l1 = std::min(ICeil(e.y1 * kCheckLines - 0.5f), lines);
+            };
+            std::vector<int>& at = m_s.at;
+            at.assign((std::size_t)lines + 1, 0);
+            for (const Edge& e : m_edges) { int l0, l1; lineRange(e, l0, l1); for (int l = l0; l < l1; ++l) ++at[(std::size_t)l + 1]; }
+            for (int l = 0; l < lines; ++l) at[(std::size_t)l + 1] += at[(std::size_t)l];
+            std::vector<std::pair<float, float>>& cx = m_s.cx;
+            cx.resize((std::size_t)at[(std::size_t)lines]);
+            {
+                std::vector<int>& fill = m_s.fill;
+                fill.assign(at.begin(), at.end() - 1);
+                for (const Edge& e : m_edges) {
+                    int l0, l1; lineRange(e, l0, l1);
+                    for (int l = l0; l < l1; ++l)
+                        cx[(std::size_t)fill[(std::size_t)l]++] = {e.x0 + (((float)l + 0.5f) / (float)kCheckLines - e.y0) * e.dxdy, e.dir};
+                }
+            }
+            for (int l = 0; l < lines; ++l) {
+                const int y = l / kCheckLines;
+                const int a = at[(std::size_t)l], b = at[(std::size_t)l + 1];
+                if (overlap[(std::size_t)y] || b - a < 4) continue;   // winding 2 needs at least 4 crossings
+                if (b - a == 4) {   // the common case (a letter with a counter): a 5-swap network
+                    auto* c = &cx[(std::size_t)a];
+                    auto sw = [](std::pair<float, float>& p, std::pair<float, float>& q) { if (q.first < p.first) std::swap(p, q); };
+                    sw(c[0], c[1]); sw(c[2], c[3]); sw(c[0], c[2]); sw(c[1], c[3]); sw(c[1], c[2]);
+                } else {
+                    std::sort(cx.begin() + a, cx.begin() + b);
+                }
+                float w = 0;
+                for (int k = a; k < b; ++k)
+                    if (std::fabs(w += cx[(std::size_t)k].second) > 1.5f) { overlap[(std::size_t)y] = 1; any = true; break; }
+            }
+        }
+        if (!any) return;
+        if (path) {   // the outline again, flattened finely, edges only
+            m_edges.clear();
+            m_accumulate = false; m_edgeTol = kTol;
+            ReplayInto(*path, *this);
+            CloseSub();
+        }
+        // The edges each row touches (index lists, one pass to count, one to fill).
+        std::vector<int> start((std::size_t)m_h + 1, 0), idx;
+        for (const Edge& e : m_edges)
+            for (int r = std::max(0, (int)e.y0); r < std::min(m_h, ICeil(e.y1)); ++r) ++start[(std::size_t)r + 1];
+        for (int r = 0; r < m_h; ++r) start[(std::size_t)r + 1] += start[(std::size_t)r];
+        idx.resize((std::size_t)start[(std::size_t)m_h]);
+        {
+            std::vector<int> fill(start.begin(), start.end() - 1);
+            for (std::size_t i = 0; i < m_edges.size(); ++i) {
+                const Edge& e = m_edges[i];
+                for (int r = std::max(0, (int)e.y0); r < std::min(m_h, ICeil(e.y1)); ++r)
+                    idx[(std::size_t)fill[(std::size_t)r]++] = (int)i;
+            }
+        }
+        std::vector<std::pair<float, float>> xs;   // crossing x, winding step
+        auto crossings = [&](int row, float sy) {
+            xs.clear();
+            for (int j = start[(std::size_t)row]; j < start[(std::size_t)row + 1]; ++j) {
+                const Edge& e = m_edges[(std::size_t)idx[(std::size_t)j]];
+                if (sy >= e.y0 && sy < e.y1) xs.push_back({e.x0 + (sy - e.y0) * e.dxdy, e.dir});
+            }
+            std::sort(xs.begin(), xs.end());
+        };
+        std::vector<float> cov((std::size_t)m_w + 1);
+        for (int y = 0; y < m_h; ++y) {
+            const bool near = overlap[(std::size_t)y] || (y > 0 && overlap[(std::size_t)y - 1]) ||
+                              (y + 1 < m_h && overlap[(std::size_t)y + 1]);
+            if (!near) continue;
+            std::fill(cov.begin(), cov.end(), 0.0f);
+            for (int k = 0; k < kSamples; ++k) {
+                crossings(y, (float)y + ((float)k + 0.5f) / (float)kSamples);
+                float wind = 0;
+                for (std::size_t i = 0; i + 1 < xs.size(); ++i) {
+                    wind += xs[i].second;
+                    if (std::fabs(wind) < 0.5f) continue;   // outside: winding 0
+                    AddSpan(cov, xs[i].first, xs[i + 1].first, 1.0f / (float)kSamples);
+                }
+            }
+            std::uint8_t* o = out + (std::size_t)y * stride;
+            for (int x = 0; x < m_w; ++x) o[x] = (std::uint8_t)(std::min(cov[(std::size_t)x], 1.0f) * 255.0f + 0.5f);
         }
     }
 
 private:
     static constexpr float kTol = 0.01f;   // flattening tolerance, pixels
+    static constexpr float kOverlap = 0.02f;   // running sum this far past 1: winding 2 somewhere
+    static constexpr int kSamples = 16;        // sample lines per pixel row in overlapping rows
+    static constexpr int kCheckLines = 4;      // lines per row that look for winding 2
+    static constexpr float kEdgeTol = 0.2f;    // the edge list for those checks may be coarse
+    // Coverage of [a, b) on one sample line, `weight` per whole pixel.
+    void AddSpan(std::vector<float>& cov, float a, float b, float weight) const {
+        a = std::max(a, 0.0f); b = std::min(b, (float)m_w);
+        if (!(b > a)) return;
+        const int ia = (int)a, ib = (int)b;
+        if (ia == ib) { cov[(std::size_t)ia] += (b - a) * weight; return; }
+        cov[(std::size_t)ia] += ((float)(ia + 1) - a) * weight;
+        for (int x = ia + 1; x < ib; ++x) cov[(std::size_t)x] += weight;
+        if (ib < m_w) cov[(std::size_t)ib] += (b - (float)ib) * weight;
+    }
     static int Steps(float v) {
         if (!(v > 1.0f)) return 1;
         const float n = std::ceil(std::sqrt(v));
@@ -145,13 +289,28 @@ private:
     void CloseSub() {
         if (m_open) {
             Seg(m_cx, m_cy, m_sx, m_sy);
+            PushEdge(m_cx, m_cy, m_sx, m_sy);
             m_cx = m_sx; m_cy = m_sy;
         }
         m_open = false;
     }
 
-    // A line in bitmap space. Clip to the rows, then to the columns.
+    // A line for the winding checks and the scanline pass, clipped to the rows.
+    void PushEdge(float x0, float y0, float x1, float y1) {
+        if (!Finite(x0) || !Finite(y0) || !Finite(x1) || !Finite(y1) || y0 == y1) return;
+        float dir = 1.0f;
+        if (y0 > y1) { std::swap(x0, x1); std::swap(y0, y1); dir = -1.0f; }
+        const float H = (float)m_h;
+        if (y1 <= 0.0f || y0 >= H) return;
+        const float dxdy = (x1 - x0) / (y1 - y0);
+        if (y0 < 0.0f) { x0 += -y0 * dxdy; y0 = 0.0f; }
+        if (y1 > H) y1 = H;
+        m_edges.push_back({x0, y0, y1, dxdy, dir});
+    }
+
+    // A line in bitmap space, into the coverage. Clip to the rows, then to the columns.
     void Seg(float x0, float y0, float x1, float y1) {
+        if (!m_accumulate) return;
         if (!Finite(x0) || !Finite(y0) || !Finite(x1) || !Finite(y1)) return;
         if (y0 == y1) return;
         float dir = 1.0f;
@@ -161,8 +320,10 @@ private:
         const float dxdy = (x1 - x0) / (y1 - y0);
         if (y0 < 0.0f) { x0 += -y0 * dxdy; y0 = 0.0f; }
         if (y1 > H) { x1 = x0 + (H - y0) * dxdy; y1 = H; }
-        // Columns: split where the segment crosses x = 0 and x = w.
+        // Columns: split where the segment crosses x = 0 and x = w (the box holds the outline,
+        // so nearly every segment is inside and goes straight in).
         const float W = (float)m_w;
+        if (x0 >= 0.0f && x1 >= 0.0f && x0 <= W && x1 <= W) { Accum(x0, y0, x1, y1, dir); return; }
         float ts[4]; int nt = 0;
         ts[nt++] = 0.0f;
         const float dx = x1 - x0;
@@ -189,7 +350,7 @@ private:
         const float dxdy = (x1 - x0) / (y1 - y0);
         float x = x0;
         const int rowFirst = (int)y0;
-        int rowLast = (int)std::ceil(y1);
+        int rowLast = ICeil(y1);
         if (rowLast > m_h) rowLast = m_h;
         for (int row = rowFirst; row < rowLast; ++row) {
             float* a = &m_acc[(std::size_t)row * m_stride];
@@ -201,9 +362,9 @@ private:
             xn = std::min(std::max(xn, 0.0f), (float)m_w);
             const float d = dy * dir;
             const float xa = std::min(x, xn), xb = std::max(x, xn);
-            const float fl = std::floor(xa);
+            const float fl = (float)IFloor(xa);
             const int i0 = (int)fl;
-            const int i1 = (int)std::ceil(xb);
+            const int i1 = ICeil(xb);
             if (i1 <= i0 + 1) {
                 // Within one pixel column: the part of the row to the right of the
                 // segment's mean x is covered.
@@ -235,11 +396,18 @@ private:
 
     int m_w, m_h, m_stride;
     float m_scale, m_ox, m_oy;
-    std::vector<float> m_acc;
+    bool m_accumulate = true;        // false: only collect edges (the scanline pass's fine list)
+    float m_edgeTol = kEdgeTol;      // flattening tolerance of the edge list
+    RasterScratch& m_s;
+    std::vector<float>& m_acc;
+    std::vector<Edge>& m_edges;
     float m_cx = 0, m_cy = 0, m_sx = 0, m_sy = 0;
     bool m_open = false;
 };
 
+} // namespace
+
+namespace detail {
 // Collects the extent of every point (control points included).
 class Bounds : public PathSink {
 public:
@@ -258,6 +426,39 @@ private:
         ymin = std::min(ymin, y); ymax = std::max(ymax, y);
     }
 };
+
+// A path kept to be drawn later (and its point box): the outline is parsed once per glyph.
+class Recorder : public PathSink {
+public:
+    struct Cmd { std::uint8_t op; float v[6]; };
+    Recorder() : cmds(Buffer()) { cmds.clear(); }
+    Recorder(const Recorder&) = delete;
+    Recorder& operator=(const Recorder&) = delete;
+    std::vector<Cmd>& cmds;   // one per thread, reused (a Recorder is never nested)
+    Bounds box;
+    void Move(float x, float y) override { cmds.push_back({0, {x, y, 0, 0, 0, 0}}); box.Move(x, y); }
+    void Line(float x, float y) override { cmds.push_back({1, {x, y, 0, 0, 0, 0}}); box.Line(x, y); }
+    void Quad(float cx, float cy, float x, float y) override { cmds.push_back({2, {cx, cy, x, y, 0, 0}}); box.Quad(cx, cy, x, y); }
+    void Cubic(float a, float b, float c, float d, float x, float y) override { cmds.push_back({3, {a, b, c, d, x, y}}); box.Cubic(a, b, c, d, x, y); }
+    void Close() override { cmds.push_back({4, {0, 0, 0, 0, 0, 0}}); }
+    static std::vector<Cmd>& Buffer() { static thread_local std::vector<Cmd> b; return b; }
+    void Replay(PathSink& s) const {
+        for (const Cmd& c : cmds) {
+            switch (c.op) {
+            case 0: s.Move(c.v[0], c.v[1]); break;
+            case 1: s.Line(c.v[0], c.v[1]); break;
+            case 2: s.Quad(c.v[0], c.v[1], c.v[2], c.v[3]); break;
+            case 3: s.Cubic(c.v[0], c.v[1], c.v[2], c.v[3], c.v[4], c.v[5]); break;
+            default: s.Close(); break;
+            }
+        }
+    }
+};
+} // namespace detail
+
+namespace {
+using detail::Bounds;
+void ReplayInto(const detail::Recorder& path, PathSink& sink) { path.Replay(sink); }
 
 // TrueType contours (on/off-curve points, implied on-curve midpoints) -> path.
 void EmitContours(const PointList& pl, PathSink& sink) {
@@ -375,6 +576,7 @@ bool Face::Load(const std::uint8_t* data, std::size_t size, int index) {
 
     PickCmap();   // a font without a usable cmap still loads: every character is "missing"
     if (m_cff && !LoadCff()) return fail();
+    LoadKerning(dir);   // a damaged GPOS / kern table only loses kerning
     m_valid = true;
     return true;
 }
@@ -489,6 +691,208 @@ bool Face::HMetrics(int glyph, int& advance, int& lsb) const {
     return true;
 }
 
+// ---- Kerning (OpenType spec: GPOS lookup type 2 and the 'kern' table) -----------------
+namespace {
+constexpr int kMaxPairSubtables = 1024;   // more than any real font; caps the work per pair
+// Bytes of a ValueRecord with this ValueFormat: two per bit of the low byte.
+int ValueSize(std::uint32_t fmt) {
+    int n = 0;
+    for (int b = 0; b < 8; ++b) n += (fmt >> b) & 1u;
+    return n * 2;
+}
+// Byte offset of a field (bit `bit` of the ValueFormat) inside a ValueRecord.
+int ValueField(std::uint32_t fmt, int bit) {
+    int n = 0;
+    for (int b = 0; b < bit; ++b) n += (fmt >> b) & 1u;
+    return n * 2;
+}
+} // namespace
+
+void Face::LoadKerning(std::uint32_t dir) {
+    m_pairSubs.clear(); m_kernSubs.clear(); m_kernSource = 0;
+    Table gpos;
+    if (FindTable(dir, "GPOS", gpos) && gpos.len >= 10 && U16(gpos.off) == 1) {
+        const std::size_t g = gpos.off;
+        const std::uint32_t flOff = U16(g + 6), llOff = U16(g + 8);
+        if (flOff && llOff) {
+            const std::size_t fl = g + flOff, ll = g + llOff;
+            // Lookups the 'kern' feature uses (in every script), in lookup-list order.
+            std::vector<int> lookups;
+            const std::uint32_t nf = U16(fl);
+            for (std::uint32_t i = 0; i < nf && Has(fl + 2 + (std::size_t)i * 6, 6); ++i) {
+                const std::size_t rec = fl + 2 + (std::size_t)i * 6;
+                if (U32(rec) != Tag("kern")) continue;
+                const std::size_t ft = fl + U16(rec + 4);
+                const std::uint32_t n = U16(ft + 2);
+                for (std::uint32_t j = 0; j < n && Has(ft + 4 + (std::size_t)j * 2, 2); ++j)
+                    lookups.push_back((int)U16(ft + 4 + (std::size_t)j * 2));
+            }
+            std::sort(lookups.begin(), lookups.end());
+            lookups.erase(std::unique(lookups.begin(), lookups.end()), lookups.end());
+            const std::uint32_t nl = U16(ll);
+            for (int li : lookups) {
+                if ((std::uint32_t)li >= nl) continue;
+                const std::size_t lo = ll + U16(ll + 2 + (std::size_t)li * 2);
+                const std::uint32_t type = U16(lo), nsub = U16(lo + 4);
+                if (type != 2 && type != 9) continue;
+                for (std::uint32_t k = 0; k < nsub && Has(lo + 6 + (std::size_t)k * 2, 2); ++k) {
+                    std::size_t st = lo + U16(lo + 6 + (std::size_t)k * 2);
+                    std::uint32_t t = type;
+                    if (t == 9) {   // extension: format 1, the real type, a 32-bit offset
+                        if (U16(st) != 1) continue;
+                        t = U16(st + 2);
+                        st += U32(st + 4);
+                    }
+                    if (t != 2 || !Has(st, 10)) continue;
+                    const std::uint32_t fmt = U16(st);
+                    if (fmt != 1 && fmt != 2) continue;
+                    if ((int)m_pairSubs.size() >= kMaxPairSubtables) break;
+                    m_pairSubs.push_back({st, li});
+                }
+            }
+        }
+    }
+    if (!m_pairSubs.empty()) { m_kernSource = 2; return; }
+
+    Table kern;
+    if (!FindTable(dir, "kern", kern) || kern.len < 4 || U16(kern.off) != 0) return;   // (Apple's version 1 is not read)
+    const std::uint32_t n = U16(kern.off + 2);
+    std::size_t off = kern.off + 4;
+    const std::size_t end = (std::size_t)kern.off + kern.len;
+    for (std::uint32_t i = 0; i < n && off + 14 <= end; ++i) {
+        const std::uint32_t len = U16(off + 2), cov = U16(off + 4);
+        const std::uint32_t fmt = cov >> 8;
+        std::size_t next = off + len;
+        if (fmt == 0) {
+            // Large tables overflow the 16-bit length: trust the pair count instead.
+            next = off + 14 + (std::size_t)U16(off + 6) * 6;
+            const bool horizontal = (cov & 1u) != 0, cross = (cov & 4u) != 0, minimum = (cov & 2u) != 0;
+            if (horizontal && !cross && !minimum && (int)m_kernSubs.size() < kMaxPairSubtables)
+                m_kernSubs.push_back({off, (cov & 8u) != 0});
+        }
+        if (len < 6 && fmt != 0) break;
+        if (next <= off) break;
+        off = next;
+    }
+    if (!m_kernSubs.empty()) m_kernSource = 1;
+}
+
+int Face::CoverageIndex(std::size_t cov, int glyph) const {
+    const std::uint32_t fmt = U16(cov);
+    const std::uint32_t g = (std::uint32_t)glyph;
+    if (fmt == 1) {
+        std::uint32_t lo = 0, hi = U16(cov + 2);
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            const std::uint32_t v = U16(cov + 4 + (std::size_t)mid * 2);
+            if (v == g) return (int)mid;
+            if (v < g) lo = mid + 1; else hi = mid;
+        }
+        return -1;
+    }
+    if (fmt == 2) {
+        std::uint32_t lo = 0, hi = U16(cov + 2);
+        while (lo < hi) {   // first range whose end >= g
+            const std::uint32_t mid = (lo + hi) / 2;
+            if (U16(cov + 4 + (std::size_t)mid * 6 + 2) < g) lo = mid + 1; else hi = mid;
+        }
+        if (lo >= U16(cov + 2)) return -1;
+        const std::size_t r = cov + 4 + (std::size_t)lo * 6;
+        const std::uint32_t start = U16(r);
+        if (start > g) return -1;
+        return (int)(U16(r + 4) + (g - start));
+    }
+    return -1;
+}
+
+int Face::ClassOf(std::size_t cd, int glyph) const {
+    const std::uint32_t fmt = U16(cd);
+    const std::uint32_t g = (std::uint32_t)glyph;
+    if (fmt == 1) {
+        const std::uint32_t start = U16(cd + 2), count = U16(cd + 4);
+        return (g >= start && g - start < count) ? (int)U16(cd + 6 + (std::size_t)(g - start) * 2) : 0;
+    }
+    if (fmt == 2) {
+        const std::uint32_t n = U16(cd + 2);
+        std::uint32_t lo = 0, hi = n;
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            if (U16(cd + 4 + (std::size_t)mid * 6 + 2) < g) lo = mid + 1; else hi = mid;
+        }
+        if (lo >= n) return 0;
+        const std::size_t r = cd + 4 + (std::size_t)lo * 6;
+        return U16(r) <= g ? (int)U16(r + 4) : 0;
+    }
+    return 0;   // glyphs no class lists are class 0
+}
+
+// The x adjustment one pair-adjustment subtable gives (the first glyph's XAdvance plus
+// the second glyph's XPlacement); `applied` says whether the subtable covers the pair.
+int Face::PairPosValue(std::size_t st, int left, int right, bool& applied) const {
+    applied = false;
+    const int ci = CoverageIndex(st + U16(st + 2), left);
+    if (ci < 0) return 0;
+    const std::uint32_t vf1 = U16(st + 4), vf2 = U16(st + 6);
+    const int s1 = ValueSize(vf1), s2 = ValueSize(vf2);
+    auto value = [&](std::size_t rec) {
+        int v = 0;
+        if (vf1 & 4u) v += I16(rec + (std::size_t)ValueField(vf1, 2));
+        if (vf2 & 1u) v += I16(rec + (std::size_t)s1);
+        return v;
+    };
+    if (U16(st) == 1) {
+        if ((std::uint32_t)ci >= U16(st + 8)) return 0;
+        const std::size_t ps = st + U16(st + 10 + (std::size_t)ci * 2);
+        const std::size_t recSize = 2 + (std::size_t)s1 + (std::size_t)s2;
+        std::uint32_t lo = 0, hi = U16(ps);
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            const std::size_t rec = ps + 2 + (std::size_t)mid * recSize;
+            const std::uint32_t second = U16(rec);
+            if (second == (std::uint32_t)right) { applied = true; return value(rec + 2); }
+            if (second < (std::uint32_t)right) lo = mid + 1; else hi = mid;
+        }
+        return 0;
+    }
+    // Format 2: class pairs.
+    const std::uint32_t c1n = U16(st + 12), c2n = U16(st + 14);
+    const int c1 = ClassOf(st + U16(st + 8), left), c2 = ClassOf(st + U16(st + 10), right);
+    if ((std::uint32_t)c1 >= c1n || (std::uint32_t)c2 >= c2n) return 0;
+    applied = true;   // a covered first glyph: this subtable decides, even when its value is 0
+    const std::size_t rec = st + 16 + ((std::size_t)c1 * c2n + (std::size_t)c2) * (std::size_t)(s1 + s2);
+    return value(rec);
+}
+
+int Face::Kerning(int left, int right) const {
+    if (!m_valid || left <= 0 || right <= 0 || left >= m_numGlyphs || right >= m_numGlyphs) return 0;
+    if (m_kernSource == 2) {
+        int total = 0, doneLookup = -1;
+        for (const PairSub& p : m_pairSubs) {
+            if (p.lookup == doneLookup) continue;   // the first subtable that applies ends a lookup
+            bool applied = false;
+            const int v = PairPosValue(p.off, left, right, applied);
+            if (applied) { total += v; doneLookup = p.lookup; }
+        }
+        return total;
+    }
+    if (m_kernSource == 1) {
+        const std::uint32_t key = ((std::uint32_t)left << 16) | (std::uint32_t)right;
+        int total = 0;
+        for (const KernSub& k : m_kernSubs) {
+            std::uint32_t lo = 0, hi = U16(k.off + 6);
+            while (lo < hi) {
+                const std::uint32_t mid = (lo + hi) / 2;
+                const std::size_t rec = k.off + 14 + (std::size_t)mid * 6;
+                const std::uint32_t v = U32(rec);
+                if (v == key) { total = k.replace ? I16(rec + 4) : total + I16(rec + 4); break; }
+                if (v < key) lo = mid + 1; else hi = mid;
+            }
+        }
+        return total;
+    }
+    return 0;
+}
+
 // ---- glyf ----------------------------------------------------------------------------
 bool Face::GlyphData(int glyph, std::size_t& off, std::size_t& len) const {
     off = len = 0;
@@ -520,7 +924,8 @@ bool Face::GlyfPoints(int glyph, int depth, PointList& out, int& budget) const {
         if (nc == 0) return true;
         std::size_t p = off + 10;
         if (p + (std::size_t)nc * 2 + 2 > end) return false;
-        std::vector<int> ends((std::size_t)nc);
+        static thread_local std::vector<int> ends;   // (no recursion below: reused, not reallocated)
+        ends.resize((std::size_t)nc);
         for (int i = 0; i < nc; ++i) {
             ends[(std::size_t)i] = (int)U16(p + (std::size_t)i * 2);
             if (i > 0 && ends[(std::size_t)i] <= ends[(std::size_t)i - 1]) return false;
@@ -531,7 +936,8 @@ bool Face::GlyfPoints(int glyph, int depth, PointList& out, int& budget) const {
         p += (std::size_t)nc * 2;
         const std::size_t ins = U16(p);
         std::size_t q = p + 2 + ins;
-        std::vector<std::uint8_t> flags((std::size_t)np);
+        static thread_local std::vector<std::uint8_t> flags;
+        flags.resize((std::size_t)np);
         for (int i = 0; i < np;) {
             if (q >= end) return false;
             const std::uint8_t f = (std::uint8_t)U8(q++);
@@ -543,7 +949,8 @@ bool Face::GlyfPoints(int glyph, int depth, PointList& out, int& budget) const {
                 while (r-- > 0) flags[(std::size_t)i++] = f;
             }
         }
-        std::vector<float> xs((std::size_t)np), ys((std::size_t)np);
+        static thread_local std::vector<float> xs, ys;
+        xs.resize((std::size_t)np); ys.resize((std::size_t)np);
         int v = 0;
         for (int i = 0; i < np; ++i) {
             const std::uint8_t f = flags[(std::size_t)i];
@@ -559,6 +966,7 @@ bool Face::GlyfPoints(int glyph, int depth, PointList& out, int& budget) const {
             ys[(std::size_t)i] = (float)v;
         }
         const int base = (int)out.pts.size();
+        out.pts.reserve(out.pts.size() + (std::size_t)np);
         for (int i = 0; i < np; ++i) out.pts.push_back({xs[(std::size_t)i], ys[(std::size_t)i], (flags[(std::size_t)i] & 1) != 0});
         for (int e : ends) out.ends.push_back(base + e);
         return true;
@@ -652,10 +1060,39 @@ bool Face::GlyphBounds(int glyph, float& xmin, float& ymin, float& xmax, float& 
     return xmax > xmin && ymax > ymin;
 }
 
+// The outline read once: the path in font units, replayed into the rasterizer, and the
+// box of its points (for glyf, every point, as GlyphBounds; for CFF, the path's points).
+bool Face::Capture(int glyph, detail::Recorder& rec, float& xmin, float& ymin, float& xmax, float& ymax) const {
+    xmin = ymin = xmax = ymax = 0;
+    if (!m_valid || glyph < 0 || glyph >= m_numGlyphs) return false;
+    if (!m_cff) {
+        static thread_local PointList pl;   // reused: Capture is never nested
+        pl.pts.clear(); pl.ends.clear();
+        int budget = kPointBudget;
+        if (!GlyfPoints(glyph, 0, pl, budget) || pl.pts.empty()) return false;
+        xmin = xmax = pl.pts[0].x; ymin = ymax = pl.pts[0].y;
+        for (const auto& p : pl.pts) {
+            xmin = std::min(xmin, p.x); xmax = std::max(xmax, p.x);
+            ymin = std::min(ymin, p.y); ymax = std::max(ymax, p.y);
+        }
+        EmitContours(pl, rec);
+        return xmax > xmin && ymax > ymin;
+    }
+    if (!CffOutline(glyph, rec) || !rec.box.any) return false;
+    xmin = rec.box.xmin; ymin = rec.box.ymin; xmax = rec.box.xmax; ymax = rec.box.ymax;
+    return xmax > xmin && ymax > ymin;
+}
+
 bool Face::GlyphBox(int glyph, float scale, int& x0, int& y0, int& x1, int& y1) const {
     x0 = y0 = x1 = y1 = 0;
     float xmin, ymin, xmax, ymax;
     if (!(scale > 0.0f) || !Finite(scale) || !GlyphBounds(glyph, xmin, ymin, xmax, ymax)) return false;
+    return BoxAt(xmin, ymin, xmax, ymax, scale, x0, y0, x1, y1);
+}
+
+bool Face::BoxAt(float xmin, float ymin, float xmax, float ymax, float scale, int& x0, int& y0, int& x1, int& y1) {
+    x0 = y0 = x1 = y1 = 0;
+    if (!(scale > 0.0f) || !Finite(scale)) return false;
     const float fx0 = std::floor(xmin * scale), fy0 = std::floor(-ymax * scale);
     const float fx1 = std::ceil(xmax * scale), fy1 = std::ceil(-ymin * scale);
     if (!(fx1 - fx0 > 0.0f) || !(fy1 - fy0 > 0.0f)) return false;
@@ -668,11 +1105,31 @@ bool Face::GlyphBox(int glyph, float scale, int& x0, int& y0, int& x1, int& y1) 
 bool Face::Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride) const {
     if (!out || w <= 0 || h <= 0 || stride < w) return false;
     for (int y = 0; y < h; ++y) std::memset(out + (std::size_t)y * stride, 0, (std::size_t)w);
+    detail::Recorder rec;
+    float xmin, ymin, xmax, ymax;
     int x0, y0, x1, y1;
-    if (!GlyphBox(glyph, scale, x0, y0, x1, y1)) return false;
+    if (!Capture(glyph, rec, xmin, ymin, xmax, ymax) || !BoxAt(xmin, ymin, xmax, ymax, scale, x0, y0, x1, y1)) return false;
     Raster r(w, h, scale, x0, y0);
-    if (!Outline(glyph, r)) return false;
-    r.Finish(out, stride);
+    rec.Replay(r);
+    r.Finish(out, stride, &rec);
+    return true;
+}
+
+bool Face::RenderGlyph(int glyph, float scale, std::vector<std::uint8_t>& bitmap, int& x0, int& y0, int& w, int& h) const {
+    x0 = y0 = w = h = 0;
+    bitmap.clear();
+    detail::Recorder rec;
+    float xmin, ymin, xmax, ymax;
+    int x1, y1;
+    if (!Capture(glyph, rec, xmin, ymin, xmax, ymax) || !BoxAt(xmin, ymin, xmax, ymax, scale, x0, y0, x1, y1)) {
+        x0 = y0 = 0;
+        return false;
+    }
+    w = x1 - x0; h = y1 - y0;
+    bitmap.assign((std::size_t)w * (std::size_t)h, 0);
+    Raster r(w, h, scale, x0, y0);
+    rec.Replay(r);
+    r.Finish(bitmap.data(), w, &rec);
     return true;
 }
 
@@ -1021,12 +1478,13 @@ bool BakeGlyph(const Face& face, int glyph, float scale, ShelfPacker& packer, st
     int adv = 0, lsb = 0;
     face.HMetrics(glyph, adv, lsb);
     out.xadvance = (float)adv * scale;
-    int bx0, by0, bx1, by1;
-    if (!face.GlyphBox(glyph, scale, bx0, by0, bx1, by1)) return true;   // nothing to draw
-    const int gw = bx1 - bx0, gh = by1 - by0;
+    static thread_local std::vector<std::uint8_t> bmp;
+    int bx0, by0, gw, gh;
+    if (!face.RenderGlyph(glyph, scale, bmp, bx0, by0, gw, gh)) return true;   // nothing to draw
     int px, py;
     if (!packer.Place(gw, gh, px, py)) return false;
-    face.Render(glyph, scale, atlas + (std::size_t)py * packer.w + px, gw, gh, packer.w);
+    for (int y = 0; y < gh; ++y)
+        std::memcpy(atlas + (std::size_t)(py + y) * packer.w + px, bmp.data() + (std::size_t)y * gw, (std::size_t)gw);
     out.x0 = px; out.y0 = py; out.x1 = px + gw; out.y1 = py + gh;
     out.xoff = (float)bx0; out.yoff = (float)by0;
     return true;

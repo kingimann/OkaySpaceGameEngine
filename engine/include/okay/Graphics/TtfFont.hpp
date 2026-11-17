@@ -77,8 +77,16 @@ public:
     float ScaleFor(float pixelHeight) const {
         return (m_bakeHeight > 0.0f) ? (pixelHeight / m_bakeHeight) : 1.0f;
     }
-    /// Width of the longest line of UTF-8 `text` at the given pixel height.
+    /// Width of the longest line of UTF-8 `text` at the given pixel height (pair
+    /// kerning included, see Kerning).
     float Measure(const char* text, float pixelHeight) const;
+    /// Pair kerning between two characters drawn side by side, in bake-height pixels
+    /// (multiply by ScaleFor(px)); negative pulls the right one closer. From the font's
+    /// GPOS 'kern' feature or its 'kern' table; 0 when the font has none for the pair.
+    /// Hosts that draw text add it to the pen before the second character.
+    float Kerning(std::uint32_t left, std::uint32_t right) const;
+    /// True when the font has any kerning data.
+    bool HasKerning() const;
     /// Distance between successive baselines at the given pixel height.
     float LineHeight(float pixelHeight) const { return m_lineHeight * ScaleFor(pixelHeight); }
     /// Distance from the pen line (glyph top) down to the baseline at this height.
@@ -111,6 +119,31 @@ private:
     mutable std::unordered_map<int, std::unique_ptr<TtfFont>> m_sized;  // bake height -> face
 };
 
+/// An ordered list of fonts where a character the first font lacks is taken from
+/// the next font that has it (for example JetBrains Mono, then Roboto). Unlike
+/// FontForText, which picks one font for a whole string, this falls back per character.
+class FontChain {
+public:
+    FontChain() = default;
+    explicit FontChain(std::vector<TtfFont*> fonts);
+    void Add(TtfFont* f);
+    const std::vector<TtfFont*>& Fonts() const { return m_fonts; }
+    /// The first font with a glyph for `cp`; nullptr when none has it. Space and
+    /// control characters count as present in the first font.
+    TtfFont* FontFor(std::uint32_t cp) const;
+    /// Width of the longest line of UTF-8 `text`: each character in the font FontFor
+    /// picks, every font scaled to the same pixel height, kerning only between two
+    /// neighbours from the same font. A character no font has leaves half a pixel
+    /// height of gap (like TtfFont::Measure).
+    float Measure(const char* text, float pixelHeight) const;
+    /// `text` cut into runs that each draw with one font (nullptr for characters no font
+    /// has); newlines stay inside runs.
+    struct Run { TtfFont* font; std::string text; };
+    std::vector<Run> Split(const std::string& text) const;
+private:
+    std::vector<TtfFont*> m_fonts;
+};
+
 /// Process-wide font cache: returns a loaded font for `path` (baked once and reused),
 /// or nullptr if it can't be loaded. Empty path returns nullptr. Failures are cached
 /// so a missing/bad file isn't retried every frame.
@@ -120,6 +153,10 @@ TtfFont* GetFont(const std::string& path);
 TtfFont* BuiltinUIFont();
 /// The raw bytes of that font (decompressed once). False if unavailable.
 bool EmbeddedUIFontData(std::vector<unsigned char>& out);
+/// The code font (JetBrains Mono Regular, built into the engine) as TrueType bytes.
+bool EmbeddedCodeFontData(std::vector<unsigned char>& out);
+/// The code font baked once (nullptr if the embedded data were damaged).
+TtfFont* BuiltinCodeFont();
 /// A scene's default UI font (Scene::uiFont): "" = the built-in launcher font,
 /// "pixel" = the classic 8x8 bitmap font (nullptr), else a .ttf/.otf path.
 TtfFont* SceneUIFont(const std::string& uiFont);

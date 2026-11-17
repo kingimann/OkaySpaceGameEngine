@@ -12,8 +12,13 @@
 // work are capped, and a corrupt font or glyph yields "no font" / an empty glyph,
 // never a crash. The Face does not copy the bytes: they must outlive it.
 //
+// Pair kerning comes from the GPOS 'kern' feature (pair adjustment, lookup type 2,
+// formats 1 and 2, also behind extension lookups) or, when a font has no GPOS kerning,
+// from the legacy 'kern' table (format 0 subtables). Written from the OpenType spec
+// (GPOS and kern chapters).
+//
 // Not supported (a font using them still loads; the feature is skipped): hinting
-// instructions, kerning / GPOS / GSUB, variable fonts (gvar / CFF2), bitmap and
+// instructions, GSUB and the other GPOS lookups, variable fonts (gvar / CFF2), bitmap and
 // colour glyph tables (CBDT, sbix, COLR), cmap format 2, the deprecated seac form
 // of CFF `endchar`.
 #include <cstddef>
@@ -23,7 +28,7 @@
 namespace okay {
 namespace ttf {
 
-namespace detail { class PathSink; struct PointList; struct CsState; }
+namespace detail { class PathSink; struct PointList; struct CsState; class Recorder; }
 
 class Face {
 public:
@@ -54,6 +59,12 @@ public:
     /// Advance and left side bearing of a glyph, in font units.
     bool HMetrics(int glyph, int& advance, int& leftBearing) const;
 
+    /// Horizontal kerning between two glyphs drawn side by side, in font units
+    /// (negative: move the right glyph closer). 0 when the font has no data for the pair.
+    int Kerning(int left, int right) const;
+    /// Where kerning comes from: 0 nowhere, 1 the 'kern' table, 2 GPOS.
+    int KerningSource() const { return m_kernSource; }
+
     /// Pixel box of the glyph at `scale` with the pen at the origin: x grows right,
     /// y grows DOWN from the baseline ([x0,x1) x [y0,y1), so y0 is negative above
     /// the baseline). False when the glyph has no outline (space), is out of range,
@@ -64,6 +75,11 @@ public:
     /// its GlyphBox. Every pixel of the w x h area is written (0..255 coverage).
     /// False (the area is zeroed) when the glyph cannot be drawn.
     bool Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride) const;
+
+    /// GlyphBox and Render in one step (the outline is read once): `bitmap` gets the
+    /// w x h coverage, (x0, y0) its offset from the pen as in GlyphBox. False, with an
+    /// empty bitmap and w = h = 0, when the glyph has nothing to draw.
+    bool RenderGlyph(int glyph, float scale, std::vector<std::uint8_t>& bitmap, int& x0, int& y0, int& w, int& h) const;
 
 private:
     struct Table { std::uint32_t off = 0, len = 0; };
@@ -92,6 +108,12 @@ private:
     bool CffOutline(int glyph, detail::PathSink& sink) const;
     bool CffRun(const CffIndex& local, std::size_t start, std::size_t len, detail::CsState& s, int depth) const;
     bool GlyphBounds(int glyph, float& xmin, float& ymin, float& xmax, float& ymax) const;
+    bool Capture(int glyph, detail::Recorder& rec, float& xmin, float& ymin, float& xmax, float& ymax) const;
+    static bool BoxAt(float xmin, float ymin, float xmax, float ymax, float scale, int& x0, int& y0, int& x1, int& y1);
+    void LoadKerning(std::uint32_t dir);
+    int CoverageIndex(std::size_t cov, int glyph) const;
+    int ClassOf(std::size_t classDef, int glyph) const;
+    int PairPosValue(std::size_t sub, int left, int right, bool& applied) const;
 
     const std::uint8_t* m_d = nullptr;
     std::size_t m_n = 0;
@@ -102,6 +124,13 @@ private:
     std::size_t m_cmapSub = 0;   // absolute offset of the chosen cmap subtable
     int m_cmapFmt = -1;   // -1: no usable cmap subtable
     bool m_cmapSymbol = false;
+    // Kerning: GPOS pair-adjustment subtables (absolute offsets, in lookup order, with
+    // the lookup each belongs to), or 'kern' format 0 subtables (offset, override flag).
+    struct PairSub { std::size_t off; int lookup; };
+    std::vector<PairSub> m_pairSubs;
+    struct KernSub { std::size_t off; bool replace; };
+    std::vector<KernSub> m_kernSubs;
+    int m_kernSource = 0;
     // CFF
     CffIndex m_charStrings, m_gsubrs;
     std::vector<CffFd> m_fds;

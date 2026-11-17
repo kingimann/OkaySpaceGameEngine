@@ -515,11 +515,15 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     const float kSlant = 0.22f;                       // how far the top of a glyph leans, per unit of height
     const int taps = boldOffset > 0.0f ? 3 : 1;
     float penX = ox, penY = oy;
+    const bool kern = sized->HasKerning();
+    std::uint32_t prev = 0;
     for (std::size_t i = 0; i < text.size();) {
         const std::uint32_t ch = okay::utf8::Next(text, i);
-        if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; continue; }
+        if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; prev = 0; continue; }
         const okay::TtfFont::Glyph* g = sized->GlyphFor(ch);
-        if (!g) { if (ch >= ' ') penX += px * 4.0f; continue; }
+        if (!g) { if (ch >= ' ') penX += px * 4.0f; prev = 0; continue; }
+        if (kern && prev) penX += sized->Kerning(prev, ch) * s;   // pair kerning (TtfFont::Measure adds the same)
+        prev = ch;
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};

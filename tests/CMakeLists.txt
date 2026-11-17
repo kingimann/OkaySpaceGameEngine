@@ -328,6 +328,7 @@ add_test(NAME ui_font_policy COMMAND test_ui_font_policy)
 add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
 target_link_libraries(test_ttf_rasterizer PRIVATE okay::engine)
 target_compile_definitions(test_ttf_rasterizer PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_include_directories(test_ttf_rasterizer PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME ttf_rasterizer COMMAND test_ttf_rasterizer)
 set_tests_properties(ttf_rasterizer PROPERTIES TIMEOUT 120)
 
@@ -1522,6 +1523,28 @@ else()
     FetchContent_MakeAvailable(imgui)
     set(OKAY_VS_IMGUI_INCLUDE ${imgui_SOURCE_DIR})
 endif()
+# Our own TrueType rasteriser inside Dear ImGui's font atlas (shared/OwnImGuiFontLoader.hpp,
+# OKAY_OWN_FONT_RASTER=1) against Dear ImGui's built-in rasteriser: metrics, pixels against
+# exact coverage, merged-font fallback (docs/own_font_raster.md). Needs Dear ImGui's core
+# (no backend): the editor's library when it is in the build, else the four core files.
+if(TARGET okay_imgui)
+    set(OKAY_FONTCMP_IMGUI okay_imgui)
+else()
+    if(NOT TARGET okay_test_imgui_core)
+        add_library(okay_test_imgui_core STATIC
+            ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(okay_test_imgui_core SYSTEM PUBLIC ${imgui_SOURCE_DIR})
+        target_compile_options(okay_test_imgui_core PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
+    endif()
+    set(OKAY_FONTCMP_IMGUI okay_test_imgui_core)
+endif()
+add_executable(test_font_raster_compare test_font_raster_compare.cpp)
+target_include_directories(test_font_raster_compare PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_font_raster_compare PRIVATE okay::engine ${OKAY_FONTCMP_IMGUI})
+add_test(NAME font_raster_compare COMMAND test_font_raster_compare)
+set_tests_properties(font_raster_compare PROPERTIES TIMEOUT 600)
+
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
@@ -4065,3 +4088,10 @@ add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINA
 add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# Text with our own TrueType code: kerning in TtfFont::Measure, the FontChain fallback
+# (JetBrains Mono, then Roboto) and golden images per UI size (tests/golden/ttf/).
+add_executable(test_ttf_text test_ttf_text.cpp)
+target_link_libraries(test_ttf_text PRIVATE okay::engine)
+target_compile_definitions(test_ttf_text PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ttf_text COMMAND test_ttf_text)

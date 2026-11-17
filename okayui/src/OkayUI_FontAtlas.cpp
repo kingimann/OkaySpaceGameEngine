@@ -27,12 +27,13 @@ int BuildCodepoints(int* out) {
 
 Atlas g_atlas;
 bool  g_built = false;
+okay::ttf::Face g_face;   // kept for kerning; reads `bytes` below in place
 
 void Build() {
     g_built = true;
     static std::vector<unsigned char> bytes;   // the Face reads the font in place: keep it alive
     if (!okay::EmbeddedUIFontData(bytes)) return;
-    okay::ttf::Face face;
+    okay::ttf::Face& face = g_face;
     if (!face.Load(bytes.data(), bytes.size(), 0)) return;
 
     int all[256]; const int nall = BuildCodepoints(all);
@@ -79,6 +80,7 @@ void Build() {
             Size& sz = a.sizes[s];
             sz.px = sizes[s];
             sz.ascent = asc * scales[s];
+            sz.scale = scales[s];
             sz.count = n;
             for (int k = 0; k < n; ++k) {
                 const okay::ttf::BakedGlyph& b = baked[(std::size_t)s * n + k];
@@ -119,6 +121,11 @@ const Size& Atlas::Pick(float pixelHeight) const {
 const Atlas& Get() {
     if (!g_built) Build();
     return g_atlas;
+}
+
+int KerningUnits(unsigned left, unsigned right) {
+    if (!g_atlas.ok || g_face.KerningSource() == 0) return 0;
+    return g_face.Kerning(g_face.FindGlyph(left), g_face.FindGlyph(right));
 }
 
 okay::TtfFont* FallbackFont(const char* s) {

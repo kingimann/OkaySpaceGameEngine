@@ -18,6 +18,9 @@ public:
     static ActionSet* Set(int player = 0);
     /// Next phase event of this frame for `player` ("Jump:performed"), false when none are left.
     static bool PopEvent(int player, std::string& out);
+    /// A new play session in a project: forget the players, then use <projectDir>/Assets/input.okayinput when it exists (the default asset
+    /// otherwise). A Player Input component with its own asset path still replaces it. True when the project's file was loaded.
+    static bool UseProjectAsset(const std::string& projectDir);
     static void Update(float dt);
     static void Reset();                              ///< forget players and asset (tests)
     /// Join from a word: "keyboard", "pad0".."pad3", "any". Returns the player index or -1.

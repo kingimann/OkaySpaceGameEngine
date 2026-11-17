@@ -24,6 +24,7 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Input/InputAsset.hpp"
+#include <algorithm>
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -188,27 +189,26 @@ inline GameObject* AddControlsScreen(Scene& scene, const ActionSet* asset = null
         }
     }
     // Rows that share an action share a line for the controller field.
-    GameObject* root = Panel(scene, canvas, "Controls", UIAnchor::Center, {0, 0}, {620, 130.0f + 34.0f * (float)rows.size()}, slate::Panel(), 14.0f, true);
+    GameObject* root = Panel(scene, canvas, "Controls", UIAnchor::Center, {0, 0}, {620, 130.0f + 34.0f * (float)std::count_if(rows.begin(), rows.end(), [](const Row& r) { return !r.pad; })}, slate::Panel(), 14.0f, true);
     root->GetComponent<UIPanel>()->blocksPointer = true;
     Caption(scene, root, "Caption", "SETTINGS", UIAnchor::TopLeft, {28, 22}, 300, slate::Accent());
     Text(scene, root, "Title", "Controls", UIAnchor::TopLeft, {28, 42}, {300, 34}, 26.0f, slate::Text(), 0, true);
-    Text(scene, root, "KeyboardHeader", "Keyboard / mouse", UIAnchor::TopLeft, {210, 74}, {180, 20}, 13.0f, slate::Dim());
-    Text(scene, root, "ControllerHeader", "Controller", UIAnchor::TopLeft, {420, 74}, {180, 20}, 13.0f, slate::Dim());
+    Text(scene, root, "KeyboardHeader", "Keyboard / mouse", UIAnchor::TopLeft, {28, 74}, {180, 20}, 13.0f, slate::Dim());
+    Text(scene, root, "ControllerHeader", "Controller", UIAnchor::TopLeft, {330, 74}, {180, 20}, 13.0f, slate::Dim());
     float y = 96.0f;
     std::string lastAction;
     for (const Row& r : rows) {
         if (!r.pad) {
-            Text(scene, root, ("Label " + r.label).c_str(), r.label, UIAnchor::TopLeft, {28, y + 4}, {170, 22}, 15.0f, slate::Text());
             GameObject* k = Child(scene, root, ("Key " + r.label).c_str());
             auto* kb = k->AddComponent<UIKeybindField>();
-            kb->anchor = UIAnchor::TopLeft; kb->position = {210, y}; kb->size = {190, 28}; kb->textSize = 1.5f;
+            kb->anchor = UIAnchor::TopLeft; kb->position = {28, y}; kb->size = {280, 28}; kb->textSize = 1.5f;
             kb->action = r.label; kb->inputAction = "ia:" + r.action + "@" + std::to_string(player); kb->part = r.part; kb->gamepad = false;
             lastAction = r.action;
             // the controller field sits on the first row of its action
             for (const Row& p : rows) if (p.pad && p.action == r.action && lastAction != "") {
                 GameObject* g = Child(scene, root, ("Pad " + r.label).c_str());
                 auto* pb = g->AddComponent<UIKeybindField>();
-                pb->anchor = UIAnchor::TopLeft; pb->position = {420, y}; pb->size = {180, 28}; pb->textSize = 1.5f;
+                pb->anchor = UIAnchor::TopLeft; pb->position = {330, y}; pb->size = {260, 28}; pb->textSize = 1.5f;
                 pb->action = r.label; pb->inputAction = "ia:" + r.action + "@" + std::to_string(player); pb->part = 0; pb->gamepad = true;
                 break;
             }

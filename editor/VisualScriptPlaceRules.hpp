@@ -981,7 +981,7 @@ inline const VsRule kApiRules[] = {
     {"Input.Rumble", "Gamepad & Controls", "Named Actions"},
     {"Input.RebindAction", "Gamepad & Controls", "Named Actions"},
     {"Input.PlayerAction*", "Gamepad & Controls", "Local Players"}, {"Input.PlayerRebind", "Gamepad & Controls", "Local Players"},
-    {"Input.PlayerScheme", "Gamepad & Controls", "Local Players"}, {"Input.SetActionMapEnabled", "Gamepad & Controls", "Local Players"},
+    {"Input.PlayerScheme", "Gamepad & Controls", "Local Players"}, {"Input.MyPlayer", "Gamepad & Controls", "Local Players"}, {"Input.SetActionMapEnabled", "Gamepad & Controls", "Local Players"},
     {"Input.DefineAction", "Gamepad & Controls", "Named Actions"},
     {"Input.DefineDirection", "Gamepad & Controls", "Named Actions"}, {"Input.GetKey*", "Keyboard", ""},
     {"Input.mousePosition", "Mouse & Touch", ""}, {"Input.GetMouse*", "Mouse & Touch", ""},

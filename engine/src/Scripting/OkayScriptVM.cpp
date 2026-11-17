@@ -126,6 +126,7 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/PadProfiles.hpp"
 #include "okay/Input/InputRuntime.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Input/InputAsset.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/GameSaves.hpp"
@@ -4002,6 +4003,12 @@ struct OkayScriptVM::Impl {
         b["ia_join"] = [](std::vector<Value>& a) { return Value{(float)InputRuntime::JoinNamed(a.empty() ? std::string("any") : a[0].AsString())}; };
         b["ia_poll_join"] = [](std::vector<Value>&) { InputRuntime::Set(); return Value{(float)InputRuntime::Players().PollJoin()}; };
         b["ia_leave"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Players().Leave(iaPlayer(a, 0)); return Value{}; };
+        auto iaGo = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
+        b["ia_my_player"] = [iaGo](std::vector<Value>&) {   // the player index of a Player Input component on this object, -1 when there is none
+            GameObject* g = iaGo();
+            auto* lp = g ? g->GetComponent<LocalPlayerInput>() : nullptr;
+            return Value{(float)(lp ? lp->GetPlayerIndex() : -1)};
+        };
         b["ia_players"] = [](std::vector<Value>&) { int n = 0; for (int i = 0; i < InputRuntime::Players().Count(); ++i) n += InputRuntime::Players().Active(i); return Value{(float)n}; };
         auto iaVal = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return s ? s->Value(iaName(a)) : InputValue{}; };
         b["ia_value"] = [iaVal](std::vector<Value>& a) { return Value{iaVal(a).x}; };

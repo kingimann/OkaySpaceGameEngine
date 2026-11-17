@@ -4,6 +4,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Input/InputRuntime.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 
 using namespace okay;
 
@@ -59,6 +60,25 @@ function update(dt) {
         CHECK(Has(Text(scene, "T2"), "move 0.0 nav 1.0"));
     Step(scene, {'r'}); Step(scene, {'j'});
         CHECK(Has(Text(scene, "T2"), "jump true J"));
+    // ia_my_player() / Input.MyPlayer(): the index of the Player Input on this object
+    {
+        InputRuntime::Reset();
+        Scene s3("me"); s3.physicsEnabled = false;
+        GameObject* a = s3.CreateGameObject("T");
+        a->AddComponent<TextRenderer>();
+        a->AddComponent<LocalPlayerInput>()->device = LocalPlayerInput::Device::Keyboard;
+        auto* sa = a->AddComponent<ScriptComponent>();
+        std::string e2;
+        CHECK(sa->LoadSource(R"(function update(dt) { set_text("me " + ia_my_player() + " x " + to_fixed(ia_x("Move", ia_my_player()), 1)); })", &e2));
+        GameObject* b2 = s3.CreateGameObject("U");
+        b2->AddComponent<TextRenderer>();
+        auto* sb = b2->AddComponent<ScriptComponent>();
+        CHECK(sb->LoadSource(R"(function update(dt) { set_text("none " + ia_my_player() + ""); })", &e2));
+        s3.Start();
+        Step(s3, {'d'});
+        CHECK(Has(Text(s3, "T"), "me 0 x 1.0"));
+        CHECK(Has(Text(s3, "U"), "none -1"));
+    }
     InputRuntime::Reset();
     Prefs::Clear();
     TEST_MAIN_RESULT();

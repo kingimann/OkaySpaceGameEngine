@@ -1,4 +1,5 @@
 #include "okay/Net/Matchmaker.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
@@ -1123,6 +1124,7 @@ void EditorState::Play() {
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
     m_dirtyAtPlay = dirty;
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
+    InputRuntime::UseProjectAsset(m_projectDir);   // a fresh set of local players on the project's input asset (or the default)
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
     for (const auto& up : m_scene.Objects())
@@ -1186,6 +1188,7 @@ void EditorState::Stop() {
     dirty = m_dirtyAtPlay;   // edits made to the running game are thrown away, so they leave no mark
     if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
+    InputRuntime::Reset();   // the local players belonged to the session that ended
 }
 
 void EditorState::Tick(float dt) {

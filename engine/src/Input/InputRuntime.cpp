@@ -1,5 +1,6 @@
 #include "okay/Input/InputRuntime.hpp"
 #include "okay/Input/InputAsset.hpp"
+#include <fstream>
 
 namespace okay {
 namespace {
@@ -56,6 +57,13 @@ void InputRuntime::Update(float dt) {
     if (s.players.Count() == 0) return;
     s.players.Update(dt);
     for (std::size_t& c : s.cursor) c = 0;
+}
+bool InputRuntime::UseProjectAsset(const std::string& projectDir) {
+    Reset();
+    if (projectDir.empty()) return false;
+    const std::string path = projectDir + "/Assets/input.okayinput";
+    std::ifstream f(path);
+    return f.good() && LoadAsset(path);
 }
 void InputRuntime::Reset() { S() = State{}; }
 int InputRuntime::JoinNamed(const std::string& d) {

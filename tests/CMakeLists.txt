@@ -2369,6 +2369,11 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
+    # Picture tool for the typed-input Controls screen (no add_test: it writes nothing without an output folder).
+    add_executable(shot_controls_screen shot_controls_screen.cpp)
+    target_link_libraries(shot_controls_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(shot_controls_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_renderer_golden PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -3980,3 +3985,9 @@ add_test(NAME controls_screen COMMAND test_controls_screen)
 add_executable(test_local_player_input test_local_player_input.cpp)
 target_link_libraries(test_local_player_input PRIVATE okay::engine)
 add_test(NAME local_player_input COMMAND test_local_player_input)
+
+# Editor Play uses the project's Assets/input.okayinput (or the default asset) with no setup.
+add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_input_autoload PRIVATE okay::engine)
+add_test(NAME input_autoload COMMAND test_input_autoload)

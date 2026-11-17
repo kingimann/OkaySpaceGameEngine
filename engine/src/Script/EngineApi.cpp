@@ -9,6 +9,7 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/Gestures.hpp"
 #include "okay/Input/InputRuntime.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -1162,6 +1163,11 @@ EngineApi Build() {
         in.staticMethods.push_back(method("PlayerRebind", {tString, tInt, tInt, tString, tInt}, {"action", "binding", "part", "input", "player"}, tBool,
             [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 4); return Value{s && s->Rebind(S(a[0]), I(a[1]), I(a[2]), S(a[3]))}; },
             "Change one input of a local player's action (binding and part count from 0), e.g. (\"Jump\", 0, 0, \"key:j\", 0). False if it is not understood."));
+        in.staticMethods.push_back(method("MyPlayer", {}, {}, tInt,
+            [](const Value&, std::vector<Value>&, CallContext& c) {
+                auto* lp = c.self ? c.self->GetComponent<LocalPlayerInput>() : nullptr;
+                return Value{(std::int32_t)(lp ? lp->GetPlayerIndex() : -1)};
+            }, "The local player index of the Player Input component on this object (use it as the player of the Player calls), or -1 when there is none or the game is not playing."));
         in.staticMethods.push_back(method("PlayerScheme", {tInt}, {"player"}, tString,
             [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 0); return Value{s ? s->Scheme() : std::string()}; },
             "The control scheme a local player is in now (Keyboard+Mouse, Gamepad ...); it follows the device used last when the player uses any device."));

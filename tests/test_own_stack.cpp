@@ -148,7 +148,11 @@ static void TestBuildDefaults() {
 #else               // a default build: exactly the old stack, nothing of ours switched on
     CHECK(i.ownReaders.empty());
     CHECK(i.ufbx);
+#  if defined(OKAY_PLATFORM_HAVE_SDL2)
     CHECK(i.platform == "sdl2");
+#  else
+    CHECK(i.platform == "own");   // -DOKAY_WITH_SDL=OFF: there is no sdl2 backend, our own is the default
+#  endif
     CHECK(i.http == "curl" || i.http == "winhttp");
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
     CHECK(Has(line, "readers=ufbx"));

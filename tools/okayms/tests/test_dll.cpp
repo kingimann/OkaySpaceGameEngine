@@ -89,7 +89,7 @@ void test_export_bytes(Tally& tally) {
         return;
     }
     const std::vector<uint8_t>& image = linked.value;
-    CHECK(tally, u16at(image, 0x56) == 0x2023);
+    CHECK(tally, u16at(image, 0x56) == 0x2022);
     CHECK(tally, u32at(image, 0xC8) == 0x2000);
     CHECK(tally, u32at(image, 0xCC) == 40);
     CHECK(tally, std::memcmp(image.data() + 0x170, ".edata", 6) == 0);

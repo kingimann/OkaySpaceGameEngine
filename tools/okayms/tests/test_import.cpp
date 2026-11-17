@@ -62,10 +62,10 @@ void test_import_bytes(Tally& tally) {
         return;
     }
     const std::vector<uint8_t>& image = linked.value;
-    CHECK(tally, image.size() == 0x600);
+    CHECK(tally, image.size() == 0x800);
     CHECK(tally, u32at(image, 0x68) == 0x1000);
-    CHECK(tally, u32at(image, 0x90) == 0x3000);
-    CHECK(tally, u16at_sections(image) == 2);
+    CHECK(tally, u32at(image, 0x90) == 0x4000);
+    CHECK(tally, u16at_sections(image) == 3);
     const uint8_t code[] = {
         0x48, 0x83, 0xEC, 0x28, 0xB9, 0x2A, 0x00, 0x00, 0x00,
         0xFF, 0x15, 0x49, 0x10, 0x00, 0x00,

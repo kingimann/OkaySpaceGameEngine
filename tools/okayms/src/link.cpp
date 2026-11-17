@@ -2,6 +2,7 @@
 
 #include "okayms/archive.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <set>
@@ -9,7 +10,6 @@
 namespace okayms {
 namespace {
 
-constexpr uint16_t kFileRelocsStripped = 0x0001;
 constexpr uint16_t kFileExecutable = 0x0002;
 constexpr uint16_t kFileLargeAddress = 0x0020;
 constexpr uint16_t kRelAbsolute = 0;
@@ -404,6 +404,31 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     }
     if (outs.empty()) return Result<std::vector<uint8_t>>::fail("image has no sections");
 
+    // Reserve the base-relocation section before addresses are assigned so
+    // the header size includes it. The bytes are replaced once every
+    // absolute address is known. IMAGE_REL_BASED_DIR64 is type 10.
+    int reloc_section = -1;
+    uint32_t addr64_count = 0;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        for (size_t si = 0; si < objects[oi].sections.size(); ++si) {
+            if (!contribs[oi][si].present) continue;
+            for (const Relocation& reloc : objects[oi].sections[si].relocations) {
+                if (reloc.type == kRelAmd64Addr64) ++addr64_count;
+            }
+        }
+    }
+    {
+        const uint32_t reserve = addr64_count == 0 ? 12u : addr64_count * 12u;
+        OutSection rel;
+        rel.name = ".reloc";
+        rel.bytes.assign(reserve, 0);
+        rel.virtual_size = reserve;
+        rel.any_data = true;
+        rel.characteristics = kScnCntInitData | kScnMemRead | 0x02000000u;
+        outs.push_back(std::move(rel));
+        reloc_section = static_cast<int>(outs.size()) - 1;
+    }
+
     const uint32_t header_bytes = 64u + 4u + 20u + 240u + 40u * static_cast<uint32_t>(outs.size());
     uint32_t size_of_headers = 0;
     if (!align_up(header_bytes, options.file_alignment, &size_of_headers, &error)) {
@@ -449,7 +474,8 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             size_of_init += out.raw_size;
         }
     }
-    const uint32_t size_of_image = rva;
+    uint32_t size_of_image = rva;
+    std::vector<uint32_t> fixup_rvas;
 
     if (idata_section >= 0) {
         OutSection& idata = outs[static_cast<size_t>(idata_section)];
@@ -649,6 +675,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 uint8_t* slot = out.bytes.data() + location;
                 if (reloc.type == kRelAmd64Addr64) {
                     write_u64(slot, read_u64(slot) + target_va);
+                    if (!target.absolute) fixup_rvas.push_back(out.rva + location);
                 } else if (reloc.type == kRelAmd64Addr32) {
                     const uint64_t sum = static_cast<uint64_t>(read_u32(slot)) + target_va;
                     if (sum > 0xFFFFFFFFu) {
@@ -699,6 +726,59 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             }
         }
     }
+    if (reloc_section >= 0) {
+        std::sort(fixup_rvas.begin(), fixup_rvas.end());
+        fixup_rvas.erase(std::unique(fixup_rvas.begin(), fixup_rvas.end()), fixup_rvas.end());
+        std::vector<uint8_t> built;
+        auto append32 = [&](uint32_t value) {
+            for (int i = 0; i < 4; ++i) built.push_back(static_cast<uint8_t>(value >> (8 * i)));
+        };
+        auto append_block = [&](uint32_t page, const std::vector<uint16_t>& entries) {
+            append32(page);
+            append32(8u + static_cast<uint32_t>(entries.size()) * 2u);
+            for (uint16_t entry : entries) {
+                built.push_back(static_cast<uint8_t>(entry));
+                built.push_back(static_cast<uint8_t>(entry >> 8));
+            }
+        };
+        if (fixup_rvas.empty()) {
+            append_block(0, {0, 0});
+        } else {
+            size_t i = 0;
+            while (i < fixup_rvas.size()) {
+                const uint32_t page = fixup_rvas[i] & ~0xFFFu;
+                std::vector<uint16_t> entries;
+                while (i < fixup_rvas.size() && (fixup_rvas[i] & ~0xFFFu) == page) {
+                    entries.push_back(static_cast<uint16_t>((10u << 12) | (fixup_rvas[i] & 0xFFFu)));
+                    ++i;
+                }
+                if ((entries.size() & 1u) != 0) entries.push_back(0);
+                append_block(page, entries);
+            }
+        }
+        OutSection& rel = outs[static_cast<size_t>(reloc_section)];
+        if (built.size() > rel.bytes.size()) {
+            return Result<std::vector<uint8_t>>::fail("base relocation table is larger than reserved");
+        }
+        const uint32_t old_raw = rel.raw_size;
+        rel.bytes = std::move(built);
+        rel.virtual_size = static_cast<uint32_t>(rel.bytes.size());
+        uint32_t new_raw = 0;
+        if (!align_up(rel.virtual_size, options.file_alignment, &new_raw, &error)) {
+            return Result<std::vector<uint8_t>>::fail(error);
+        }
+        size_of_init = size_of_init - old_raw + new_raw;
+        rel.raw_size = new_raw;
+        size_of_image = 0;
+        for (const OutSection& out : outs) {
+            const uint32_t span = out.virtual_size == 0 ? options.section_alignment : out.virtual_size;
+            uint32_t end = 0;
+            if (!align_up(out.rva + span, options.section_alignment, &end, &error)) {
+                return Result<std::vector<uint8_t>>::fail(error);
+            }
+            if (end > size_of_image) size_of_image = end;
+        }
+    }
 
     std::vector<uint8_t> image(size_of_headers, 0);
     image[0] = 'M';
@@ -719,8 +799,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     put16(0x44, kMachineAmd64);
     put16(0x46, static_cast<uint16_t>(outs.size()));
     put32(0x54, 240);
-    put16(0x56, static_cast<uint16_t>(kFileRelocsStripped | kFileExecutable | kFileLargeAddress |
-                                      (options.dll ? 0x2000 : 0)));
+    put16(0x56, static_cast<uint16_t>(kFileExecutable | kFileLargeAddress | (options.dll ? 0x2000 : 0)));
     put16(0x58, 0x20B);
     image[0x5B] = 1;
     put32(0x5C, size_of_code);
@@ -738,7 +817,7 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     put32(0x90, size_of_image);
     put32(0x94, size_of_headers);
     put16(0x9C, options.subsystem);
-    put16(0x9E, options.dll_characteristics);
+    put16(0x9E, static_cast<uint16_t>(options.dll_characteristics | 0x0040));
     put64(0xA0, options.stack_reserve);
     put64(0xA8, options.stack_commit);
     put64(0xB0, options.heap_reserve);
@@ -759,6 +838,10 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     if (edata_section >= 0) {
         put32(0xC8, outs[static_cast<size_t>(edata_section)].rva);
         put32(0xC8 + 4, 40);
+    }
+    if (reloc_section >= 0) {
+        put32(0xC8 + 40, outs[static_cast<size_t>(reloc_section)].rva);
+        put32(0xC8 + 44, outs[static_cast<size_t>(reloc_section)].virtual_size);
     }
 
     size_t section_at = 0x148;

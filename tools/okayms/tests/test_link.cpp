@@ -69,21 +69,21 @@ void test_static_image(Tally& tally) {
         return;
     }
     const std::vector<uint8_t>& image = linked.value;
-    CHECK(tally, image.size() == 0x400);
+    CHECK(tally, image.size() == 0x600);
     CHECK(tally, image[0] == 'M' && image[1] == 'Z');
     CHECK(tally, u32at(image, 0x3C) == 64);
     CHECK(tally, image[0x40] == 'P' && image[0x41] == 'E' && image[0x42] == 0 && image[0x43] == 0);
     CHECK(tally, u16at(image, 0x44) == 0x8664);
-    CHECK(tally, u16at(image, 0x46) == 1);
+    CHECK(tally, u16at(image, 0x46) == 2);
     CHECK(tally, u32at(image, 0x48) == 0);
     CHECK(tally, u32at(image, 0x4C) == 0);
     CHECK(tally, u32at(image, 0x50) == 0);
     CHECK(tally, u16at(image, 0x54) == 240);
-    CHECK(tally, u16at(image, 0x56) == 0x0023);
+    CHECK(tally, u16at(image, 0x56) == 0x0022);
     CHECK(tally, u16at(image, 0x58) == 0x20B);
     CHECK(tally, image[0x5A] == 0 && image[0x5B] == 1);
     CHECK(tally, u32at(image, 0x5C) == 0x200);
-    CHECK(tally, u32at(image, 0x60) == 0);
+    CHECK(tally, u32at(image, 0x60) == 0x200);
     CHECK(tally, u32at(image, 0x64) == 0);
     CHECK(tally, u32at(image, 0x68) == 0x1006);
     CHECK(tally, u32at(image, 0x6C) == 0x1000);
@@ -92,20 +92,25 @@ void test_static_image(Tally& tally) {
     CHECK(tally, u32at(image, 0x7C) == 0x200);
     CHECK(tally, u16at(image, 0x80) == 6 && u16at(image, 0x82) == 0);
     CHECK(tally, u16at(image, 0x88) == 6 && u16at(image, 0x8A) == 0);
-    CHECK(tally, u32at(image, 0x90) == 0x2000);
+    CHECK(tally, u32at(image, 0x90) == 0x3000);
     CHECK(tally, u32at(image, 0x94) == 0x200);
     CHECK(tally, u32at(image, 0x98) == 0);
     CHECK(tally, u16at(image, 0x9C) == 3);
-    CHECK(tally, u16at(image, 0x9E) == 0x0100);
+    CHECK(tally, u16at(image, 0x9E) == 0x0140);
     CHECK(tally, u64at(image, 0xA0) == 0x100000);
     CHECK(tally, u64at(image, 0xA8) == 0x1000);
     CHECK(tally, u64at(image, 0xB0) == 0x100000);
     CHECK(tally, u64at(image, 0xB8) == 0x1000);
     CHECK(tally, u32at(image, 0xC0) == 0);
     CHECK(tally, u32at(image, 0xC4) == 16);
-    bool directories_clear = true;
-    for (size_t i = 0xC8; i < 0x148; ++i) if (image[i] != 0) directories_clear = false;
-    CHECK(tally, directories_clear);
+    CHECK(tally, u32at(image, 0xC8 + 40) == 0x2000);
+    CHECK(tally, u32at(image, 0xC8 + 44) == 12);
+    bool other_directories_clear = true;
+    for (size_t i = 0xC8; i < 0x148; ++i) {
+        if (i >= 0xC8 + 40 && i < 0xC8 + 48) continue;
+        if (image[i] != 0) other_directories_clear = false;
+    }
+    CHECK(tally, other_directories_clear);
     CHECK(tally, std::memcmp(image.data() + 0x148, ".text", 5) == 0);
     CHECK(tally, image[0x148 + 5] == 0);
     CHECK(tally, u32at(image, 0x148 + 8) == 12);
@@ -114,8 +119,9 @@ void test_static_image(Tally& tally) {
     CHECK(tally, u32at(image, 0x148 + 20) == 0x200);
     CHECK(tally, u32at(image, 0x148 + 36) == 0x60000020u);
     // Header padding up to file alignment is zero.
+    CHECK(tally, std::memcmp(image.data() + 0x170, ".reloc", 6) == 0);
     bool header_pad = true;
-    for (size_t i = 0x170; i < 0x200; ++i) if (image[i] != 0) header_pad = false;
+    for (size_t i = 0x198; i < 0x200; ++i) if (image[i] != 0) header_pad = false;
     CHECK(tally, header_pad);
     const uint8_t code[] = {0xE8, 0x01, 0x00, 0x00, 0x00, 0xC3, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3};
     CHECK(tally, std::memcmp(image.data() + 0x200, code, sizeof code) == 0);
@@ -197,9 +203,9 @@ void test_two_sections(Tally& tally) {
     CHECK(tally, linked.ok());
     if (!linked.ok()) return;
     const std::vector<uint8_t>& image = linked.value;
-    CHECK(tally, u16at(image, 0x46) == 2);
+    CHECK(tally, u16at(image, 0x46) == 3);
     CHECK(tally, u32at(image, 0x94) == 0x200);
-    CHECK(tally, image[0x198] == 0 && image[0x1FF] == 0);
+    CHECK(tally, image[0x1C0] == 0 && image[0x1FF] == 0);
     CHECK(tally, std::memcmp(image.data() + 0x148, ".text", 5) == 0);
     CHECK(tally, u32at(image, 0x148 + 12) == 0x1000);
     CHECK(tally, u32at(image, 0x148 + 20) == 0x200);
@@ -211,10 +217,10 @@ void test_two_sections(Tally& tally) {
     CHECK(tally, u32at(image, 0x170 + 36) == 0xC0000040u);
     CHECK(tally, image[0x200] == 0xC3);
     CHECK(tally, image[0x400] == 0x2A);
-    CHECK(tally, u32at(image, 0x90) == 0x3000);
+    CHECK(tally, u32at(image, 0x90) == 0x4000);
     CHECK(tally, u32at(image, 0x5C) == 0x200);
-    CHECK(tally, u32at(image, 0x60) == 0x200);
-    CHECK(tally, image.size() == 0x600);
+    CHECK(tally, u32at(image, 0x60) == 0x400);
+    CHECK(tally, image.size() == 0x800);
 }
 
 bool error_has(const okayms::Result<std::vector<uint8_t>>& result, const char* needle) {

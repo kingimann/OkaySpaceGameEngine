@@ -49385,7 +49385,7 @@ static bool PollHandoff(bool& raiseWindow) {
 // are skipped in secondary windows — dock those panels back into the main
 // window to see their content; text/vector panels (Hierarchy, Inspector,
 // Console, Script Editor, Flow Graph, ...) work fully on any monitor.
-// Toggled by g_multiWindow (View ▸ Multi-Window Panels, persisted, declared
+// On when g_multiWindow is set and both backends can do it (ViewportsSupported; g_multiWindow is declared
 // with the other editor settings).
 
 struct OkayVpData {
@@ -49519,6 +49519,14 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     SDL_RenderClear(d->ren);
     OkayRenderDrawData(vp->DrawData, d->ren, d);
     SDL_RenderPresent(d->ren);
+}
+
+// True when both halves of multi-window panels are there: the platform backend can create OS windows (the
+// SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
+// X11; not Wayland or the headless offscreen driver) and the renderer side (OkayVpInstall) is installed.
+static bool ViewportsSupported() {
+    const ImGuiBackendFlags f = ImGui::GetIO().BackendFlags;
+    return (f & ImGuiBackendFlags_PlatformHasViewports) && (f & ImGuiBackendFlags_RendererHasViewports);
 }
 
 // Install the renderer-side viewport handlers (the SDL2 platform backend
@@ -49879,10 +49887,8 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // Multi-window panels: drag a tab outside the editor and it becomes its own
-    // OS window — put the Inspector or Console on a second monitor (View menu
-    // toggle; needs our SDL_Renderer viewport layer installed below).
-    if (g_multiWindow) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // Multi-window panels (ImGuiConfigFlags_ViewportsEnable) are turned on below, once the platform and renderer
+    // backends are installed and have said whether they can open extra OS windows.
     io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
     // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
@@ -50056,6 +50062,19 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
+    // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
+    // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
+    // ImGui turns the flag off in its first frame otherwise (and asserts if it is turned back on in the second).
+    if (g_multiWindow) {
+        if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+        else {
+            const char* drv = SDL_GetCurrentVideoDriver();
+            const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
+                                    "' cannot open extra windows here, so panels stay inside the editor window.";
+            std::printf("[okay] %s\n", msg.c_str());
+            ConsoleLog(msg, 1);
+        }
+    }
 
 #ifdef OKAY_HAVE_OKAYUI
     // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
@@ -51778,15 +51797,17 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
-        // dragged out of the editor). Also applies a runtime toggle from the
-        // View menu — flipping the flag between frames is supported by ImGui.
+        // dragged out of the editor).
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
+        // g_multiWindow changed while running (nothing changes it today): flipping the flag between frames is
+        // supported by Dear ImGui, except turning it on for the second frame, and turning it on is only worth it
+        // when both backends can open windows (otherwise Dear ImGui turns it off again in the next NewFrame()).
         if (g_multiWindow != ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0)) {
-            if (g_multiWindow) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-            else               io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+            if (!g_multiWindow) io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+            else if (ViewportsSupported() && ImGui::GetFrameCount() > 1) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         }
 
         {   // Close out the profiler frame (total wall time incl. present).

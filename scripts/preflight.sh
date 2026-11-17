@@ -31,6 +31,10 @@ step() { # step "<title>" cmd args...
 if [ "$FETCH" = 1 ] && [ "$BASE" = origin/main ]; then git fetch --quiet origin main 2>/dev/null || echo "(could not fetch origin/main, using what is here)"; fi
 git rev-parse --verify --quiet "$BASE" >/dev/null || { echo "no $BASE here: run 'git fetch origin main' first" >&2; exit 2; }
 
+# .gitattributes marks the generated docs merge=regen. The driver is `true` (keep this branch's copy, then regenerate); git only
+# runs it when it is configured, so set it here. Harmless when already set.
+[ -n "$(git config --get merge.regen.driver)" ] || git config merge.regen.driver true
+
 conflicts() {
     # git merge-tree --write-tree (git 2.38+) does a real merge in memory and touches nothing.
     local out rc

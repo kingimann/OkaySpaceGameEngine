@@ -34285,6 +34285,25 @@ static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*
     return true;
 }
 
+static bool DrawWorldSpaceUIWithOkayUI(EditorState& ed, WorldSpaceUI* w3, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(8);
+    L.Drag("Pixels / Unit##w3", &w3->pixelsPerUnit, 1, 1.0f, 1.0f, 4000.0f, "%.0f"); L.Tip("Design pixels per world unit (smaller = bigger in-world).");
+    L.Check("Billboard (face camera)##w3", &w3->billboard); L.TipLookup();
+    L.Check("Constant size (don't resize with distance)##w3", &w3->constantSize);
+    L.Tip("Keep a fixed on-screen size no matter how near/far the camera is.\nThe widget still moves in 3D, it just never shrinks or grows.");
+    if (w3->constantSize) {
+        L.Drag("Size Scale##w3", &w3->constantScale, 1, 0.01f, 0.05f, 20.0f, "%.2f"); L.Tip("Multiplier on the fixed size (1.0 = authored design pixels).");
+    }
+    L.Note("This UI widget renders in the 3D world at this object's position. Move it with the transform gizmo.", false, true);
+    const int kRemove = L.SmallButton("Remove##w3");
+    if (!DrawRowsOkayUI(w3, "##okayui_worldspaceui", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = w3;
+    return true;
+}
+
 // What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
 static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIBackend() && DrawRowsOkayUI(comp, id, L); }
 static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
@@ -43399,7 +43418,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* w3 = dynamic_cast<WorldSpaceUI*>(curComp)) {
-        if (CompHeader("World Space UI (3D)", w3, &toRemove)) {
+        if (CompHeader("World Space UI (3D)", w3, &toRemove) && !(UseOkayUIBackend() && DrawWorldSpaceUIWithOkayUI(ed, w3, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ImGui::DragFloat("Pixels / Unit##w3", &w3->pixelsPerUnit, 1.0f, 1.0f, 4000.0f, "%.0f"))
                 ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Design pixels per world unit (smaller = bigger in-world).");
@@ -43412,8 +43431,7 @@ void DrawInspector(EditorState& ed) {
                     ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplier on the fixed size (1.0 = authored design pixels).");
             }
-            ImGui::TextDisabled("This UI widget renders in the 3D world at this object's");
-            ImGui::TextDisabled("position. Move it with the transform gizmo.");
+            WrappedNote("%s", "This UI widget renders in the 3D world at this object's position. Move it with the transform gizmo.");
             if (ImGui::SmallButton("Remove##w3")) toRemove = w3;
         }
     }

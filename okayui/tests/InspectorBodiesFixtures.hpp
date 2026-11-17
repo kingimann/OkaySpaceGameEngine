@@ -32,7 +32,7 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   BodyItemPickup, BodyHoldPrompt, BodyWater, BodyFlashlight, BodyPauseMenu, BodyFpHand, BodyVoxelDigger, BodyVoxelTerrain,
                   // stage 7 (section 20): Stats, Inventory (two slots, a weight limit), Camera Follow, World UI, Vehicle Seat, Vehicle
                   // Controller (Car), Joint 3D (a hinge with motor and limits)
-                  BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyCount };
+                  BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyWorldSpaceUI, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
@@ -40,7 +40,7 @@ inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody"
                                                   "objholding", "holdable", "character", "firstperson", "playerview", "animsm",
                                                   "itempickup", "holdprompt", "water", "flashlight", "pausemenu", "fphand", "voxeldigger",
                                                   "voxelterrain", "stats", "inventory", "camerafollow", "worldui", "vehicleseat", "vehicle",
-                                                  "joint3d"};
+                                                  "joint3d", "worldspaceui"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -192,6 +192,7 @@ struct Values {
     float vcF[20] = {30, 8, 12, 25, 0.5f, 120, 6, 1, 0.6f, 8, 3, 4, 0.5f, 60, 6, 0.3f, 2.6f, 1.6f, 1, 8}; float vcTilt = 6; bool vcFollow = true, vcSusp = true;
     int jtMode = 3; std::string jtBody; float jtAnchor[3] = {0, 2, 0}, jtAxis[3] = {0, 1, 0}, jtSpeed = 90, jtTorque = 50, jtMin = -45, jtMax = 45, jtBreak = 10;
     bool jtMotor = true, jtLimits = true, jtBreakable = false;
+    float w3Ppu = 200.0f, w3Scale = 1.0f; bool w3Bill = true, w3Const = true;
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -1325,6 +1326,12 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.SmallButton("Remove##jt");
         break;
     }
+    case BodyWorldSpaceUI:
+        L.Drag("Pixels / Unit##w3", &v.w3Ppu, 1, 1.0f, 1.0f, 4000.0f, "%.0f"); L.Check("Billboard (face camera)##w3", &v.w3Bill);
+        L.Check("Constant size (don't resize with distance)##w3", &v.w3Const); L.Drag("Size Scale##w3", &v.w3Scale, 1, 0.01f, 0.05f, 20.0f, "%.2f");
+        L.Note("This UI widget renders in the 3D world at this object's position. Move it with the transform gizmo.", false, true);
+        L.SmallButton("Remove##w3");
+        break;
     default: break;
     }
     return L;

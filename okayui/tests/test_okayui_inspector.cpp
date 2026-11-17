@@ -1143,7 +1143,7 @@ int main() {
     // ================= stage 7 (section 20): Stats, Inventory, Camera Follow, World UI, Vehicle Seat, Vehicle, Joint 3D =================
     {   // every body is drawn and no row runs past the region
         for (inspbody::Body b : {inspbody::BodyStats, inspbody::BodyInventory, inspbody::BodyCameraFollow, inspbody::BodyWorldUI,
-                                 inspbody::BodyVehicleSeat, inspbody::BodyVehicle, inspbody::BodyJoint3D}) {
+                                 inspbody::BodyVehicleSeat, inspbody::BodyVehicle, inspbody::BodyJoint3D, inspbody::BodyWorldSpaceUI}) {
             BRig r(b, 460.0f, 1600.0f);
             r.Frames(3);
             CHECK(r.res.contentHeight > 80.0f);

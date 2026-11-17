@@ -2716,6 +2716,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         res.listRows[(std::size_t)q] = UI::GetItemRect();
                         UI::PopID();
                     }
+                    UI::Dummy(0.0f, 0.0f);   // the last row inside the list (see the search list above)
                     const UI::Vec2 le = UI::GetCursorScreenPos();
                     setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, le.y - lp.y + 16.0f});
                     UI::EndCombo();
@@ -2728,6 +2729,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         res.listRows[(std::size_t)q] = UI::GetItemRect();
                         UI::PopID();
                     });
+                    UI::Dummy(0.0f, 0.0f);   // the last row inside the list: it was cut by the list's edge ("Slider (prismatic)", stage 7)
                     setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, (fs + g_metrics.itemSpacing.y) * (float)std::min(r.count, kListRows) + 16.0f});
                     UI::EndCombo();
                 }

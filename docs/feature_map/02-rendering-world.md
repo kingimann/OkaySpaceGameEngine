@@ -115,7 +115,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.1 Heightmap terrain - `Components/Terrain` - square height grid, brushes (raise, smooth, flatten, noise, erode), generators, hydraulic and thermal erosion, terrace, heightmap PNG import and export; builds the sibling MeshRenderer's mesh
   - 2.6.2 Terrain digging - `Components/TerrainDigger` - hold the mouse in Play to dig, raise, smooth or flatten under the crosshair; no caves or overhangs
   - 2.6.3 Voxel terrain - `Components/VoxelTerrain` - 3D density field meshed with marching cubes: caves, tunnels, overhangs; Dig, Add, Smooth, DigBox, RemoveFloaters
-  - 2.6.4 Voxel digging - `Components/VoxelDigger` - left mouse digs, right adds, aim marker; skips rebuilds when nothing changed
+  - 2.6.4 Voxel digging - `Components/VoxelDigger`, `Components/VoxelAim` - left mouse / RT digs, right mouse / LT adds, aim through the crosshair in first and third person (reach from the character, no digging inside the body or through a wall), marker with dig progress, rebindable Dig / Place / PickBlock / Hotbar actions, number-key and wheel hotbar; skips rebuilds when nothing changed
   - 2.6.5 Water - `Components/Water` - animated wave mesh, reflective semi-transparent material that follows the wind, buoyancy (`fluidDensity`, `linearDrag`) for rigidbodies
   - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row

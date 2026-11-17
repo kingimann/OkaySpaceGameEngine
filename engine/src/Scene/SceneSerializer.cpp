@@ -1503,7 +1503,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
             << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
-            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells
+            << " " << vd->reach << " " << ((vd->playerAim ? 1 : 0) | (vd->useActions ? 2 : 0) | (vd->hotbarKeys ? 4 : 0) | (vd->showProgress ? 8 : 0)) << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7693,7 +7694,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             in >> std::ws;
                             if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
                                 in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
-                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells));
+                                        in >> std::ws; if (std::isdigit(in.peek())) { int fl = 0; in >> vd->reach >> fl; vd->reach = std::max(0.5f, std::min(1000.0f, vd->reach));
+                                            vd->playerAim = (fl & 1) != 0; vd->useActions = (fl & 2) != 0; vd->hotbarKeys = (fl & 4) != 0; vd->showProgress = (fl & 8) != 0; } } } }
                         }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;

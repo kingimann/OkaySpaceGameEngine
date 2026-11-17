@@ -77,6 +77,8 @@ release job or the installer build for this change.
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
+| 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
+| 7zsd | Sandbox digging works in first and third person; crosshair, dig feedback, rebindable dig/place/pick actions, hotbar | New Project > Sandbox, or File > Examples > voxel > `voxel_sandbox` (also `voxel_big_world`); press V to switch view | New in this change; tested headless on Linux, not run in a window or on Windows |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
@@ -1190,6 +1192,55 @@ once when you let go (one undo step), and a time line under the Undo buttons tel
 
 **Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
 a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
+
+## 7zq. Modeling: curves, bevel weights, remesh, undo and attribute fixes
+
+**What it is.** More of the modeler (same Modeling window as 7zh): Bezier curves to meshes, edge bevel weights, Quad Remesh, saved reference images, and fixes so edits keep material slots, UVs, vertex colours and seams.
+
+**Steps.** Open the Modeling window and follow these.
+
+More new steps (same branch):
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
+- **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
+- **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
+- **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+- **Mirror and Undo fixes** (Edit Mesh): add a Mirror modifier to a half model that has UVs or material slots; the mirrored half now keeps its picture and colours. In Edit Mesh, add a modifier from the Inspector, change the mesh, then press Ctrl+Z: the modifier list goes back together with the mesh (Ctrl+Y brings both back). Edge snapping ignores the hidden diagonal inside a quad.
+- **Faces keep their look through edits**: in Edit Mesh on a mesh with two material slots (Material slots page) and UVs, select a face and Extrude, Inset, Subdivide, Poke or Duplicate it, or delete a face; the new faces keep the slot colour of the face they came from and the picture does not jump. The same holds for the Array, Solidify, Subdivision, Decimate and Displace modifiers (add one in the Inspector > Modifiers).
+- **Slots: remove and reorder; UVs survive edits** (Edit Mesh > Material slots page): with two or more slots, pick one and press `- Slot` (its faces fall back to slot 0, later slots move down) or `Up` / `Down` (faces keep their colour, the slot just changes place). Ctrl+Z undoes each. UVs: unwrap a mesh (UV page > Smart Unwrap), then Subdivide or Poke a few faces: the new faces keep the UV layout (no jump or stretch in the UV view) and marked seams stay seams, including through the Array and Subdivision modifiers.
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+
+## 7zsd. Sandbox digging: first and third person
+
+**What it is.** The Sandbox's digger now aims the same way in both views. The aim line always goes through the
+crosshair (the centre of the screen). In third person it starts where that line passes the character (not at the lens
+behind you), the reach is measured from the character, and it will not dig inside your own body, with your head in the
+ground, or the ground behind a wall you are looking over. The same Player Controller View setting (First Person,
+Third Person, Both) is used; the Sandbox template now uses Both and starts in first person.
+
+**Steps.**
+1. Open the editor, choose New Project > Sandbox (or File > Examples > voxel > `voxel_sandbox`), press Play.
+2. Look at the ground. A hollow orange marker shows where you will dig. Hold left mouse (or RT on a pad): the ground
+   goes, the marker shrinks and turns white as the ground under it is taken away. Right mouse (or LT) builds.
+3. Press V (or Back on a pad) to switch to third person. Dig again: the marker is still under the crosshair, and
+   ground more than 14 m from the character is out of reach (the marker disappears).
+4. Stand with a wall of ground between you and a spot you look at over your shoulder: it will not dig that spot.
+5. Press 1 to 9 to pick the material to build with, or use the mouse wheel or the bumpers (LB / RB) to step through
+   them. With a terrain that has no materials, the wheel changes the brush size instead. T (or a click on the right
+   stick) picks the material under the crosshair.
+6. Rebind: the actions are named Dig, Place, PickBlock, HotbarNext and HotbarPrev (the Input settings / remap
+   screen list them; until you rebind Dig and Place they follow Fire and Aim, i.e. left and right mouse, RT and LT). Once an action is rebound its old default button stops working.
+
+**What you should see.** The same dig in both views, a crosshair dot in the middle of the screen, the help line at
+the top listing the controls. A material the tool is too weak for (Realistic preset, hardness above the tool
+power) shows a red marker.
+
+**Status.** Verified here: the `voxel_aim` test (ray start, reach, wall, body, both views with a real Player
+Controller, actions, hotbar, progress, scene save) on Linux. Unverified: nothing was run in a window, on Windows
+or with a real pad or touch screen.
 
 ## 16. Main menu bar (cleaned up)
 

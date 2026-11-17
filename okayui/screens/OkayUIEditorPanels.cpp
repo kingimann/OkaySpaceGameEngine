@@ -2655,7 +2655,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 // Modifiers' "Subdivision Surface" ran under the bar of a 160-wide list, stage 8)
                 float listW = frameW;
                 if (r.items && r.count <= 256)
-                    for (int q = 0; q < r.count; ++q) listW = std::max(listW, UI::CalcTextWidth(r.items[q]) + 16.0f + (r.count > kListRows ? 12.0f : 0.0f));
+                    for (int q = 0; q < r.count; ++q) listW = std::max(listW, UI::CalcTextWidth(r.items[q]) + 20.0f + (r.count > kListRows ? 16.0f : 0.0f));   // the list's padding, its bar
                 UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
                 UI::SetNextItemWidth(WithLabel(frameW, r.label));
                 int* cur = r.I();

@@ -2541,3 +2541,86 @@ lists still open left of their box under Xvfb.
 
 Windows; other UI scales; World UI (3D label) in the real editor (no example scene has one; compared headless); Play mode for all eight;
 an Inventory with a weight limit in the real editor (compared headless).
+
+## 21. The Inspector, stage 8: Modifiers, Behavior Tree Runner, First Person Hands; wrapped text breaks where Dear ImGui's does
+
+Behind the same developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`); Dear ImGui stays the default and the fallback. Written from
+the editor's own Dear ImGui bodies (`editor/main.cpp` Modifiers, `editor/BehaviorTreeWindow.cpp` DrawBehaviorTreeInspector,
+`editor/FpHandsWindow.cpp` DrawFpHandsBody and its helpers) and measurements of both pictures; no code from any other project.
+
+### 21.1 Why the Vehicle's note broke a word apart, and the fix
+
+Measured in the comparison test (`OKAYUI_GLYPHS=1 tests/test_okayui_inspector_imgui` prints every printable character's width in both):
+**Dear ImGui's glyph advances are whole pixels**, and each of the 95 is exactly OkayUI's advance rounded to the nearest pixel (a space
+4.00 against 3.83, "=" 9.00 against 8.60). Over a line the roundings do not cancel: the drive note up to "Space =" is 384 pixels in Dear
+ImGui and 386.09 in OkayUI, so in a docked Inspector "=" fitted in Dear ImGui and went to the next line in OkayUI. It is a rounding
+difference, not the space's width alone. OkayUI's wrapping now measures each word with the advances rounded to whole pixels
+(`fMeasureWhole`), so it breaks where Dear ImGui does; the drawn text is unchanged. In the real editor both now break after "Space ="
+(`side-50-car-top.png`). The same fix moved three other notes to Dear ImGui's breaks (goldens `inspector_animsm`, `_joint3d`,
+`_joint3d_modes`, looked at); no other picture changed by more than 0.01 in average difference.
+
+### 21.2 What is ported
+
+| Component | Builder | Notes |
+|---|---|---|
+| Modifiers | `DrawModifiersWithOkayUI` (`editor/main.cpp`) | the summary, + Add Modifier (its list fits its widest item), Apply All, each modifier's on box, its fold-out with the "..." at the right edge (Move Up, Move Down, Apply, Copy, Remove; still there when the fold-out is closed), its cost or error and every field of every type; the Boolean's cutter is a search list of the scene's objects. The fold-out's right-click menu is not a row (the "..." opens the same menu); a closed fold-out hides its cost line (Dear ImGui shows it); Array Along Curve shows up to 64 points |
+| Behavior Tree Runner | `DrawBehaviorTreeRunnerRows` (`editor/BehaviorTreeWindow.cpp`) | every row and the Play-mode lines; the blackboard key is a list of the tree's keys when it has some |
+| First Person Hands | `DrawFpHandsBodyOkayUI` (`editor/FpHandsWindow.cpp`) | every row: presets, the buttons, Player View, both hands, Others View, both arms, the held item's grips; the preset list has no per-preset tooltip (the help line under it says the same) |
+
+New rows: a collapsing header (`Header` / `HeaderEnd`: Dear ImGui's CollapsingHeader, its bar reaching 8 pixels into the window's padding
+as Dear ImGui's does, measured), the First Person Hands window's small section heading (`SmallSection`), a menu button (`MenuButton`),
+and a small button put at the region's right edge (`alignRight`). Bodies in other files reach the row drawer through
+`oked::InspectorRowsOkayUI` (`editor/NavigationWindow.hpp`).
+
+**Counts.** Ported to field rows: **60** (57 after stage 7, and these 3). Generic card: 8. Still Dear ImGui: **about 163**. Not reached
+this stage: the simple field lists (Sequence Player, NPC Controller, Dialogue Runner, Quest Log, the debris emitter and the rest).
+
+### 21.3 Found and fixed
+
+- **Both toolkits:** the Behavior Tree Runner's Tree field (-60) and override values (-30) left too little room for their label and buttons:
+  "..." and "x" ran past the panel's edge in Dear ImGui too. Now -84 and -36. Its navigation note did not wrap in Dear ImGui; it does.
+- **OkayUI:** a fold-out on a check box's line sat at the line's top (Dear ImGui centres it on the box); a combo's list was the box's width
+  even when an item was wider ("Subdivision Surface" ran under the list's bar); the comparison canvas for First Person Hands is taller (Dear
+  ImGui's scroll bar narrowed its column).
+
+### 21.4 Tests
+
+- `okayui_inspector` (688 checks; 4 new golden images `inspector_modifiers`, `_modifiers_menu`, `_fphands`, `_btrunner`; 3 updated by
+  21.1): the "..." at the right edge on its fold-out's line, its menu and a pick, the "..." of a closed fold-out; the header across the
+  region with its rows not indented, and folding it; no row runs past the region by a pixel or more (a header reaches into the padding).
+- `okayui_inspector_imgui` (79 checks): the three bodies in both toolkits.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector|prefab"`: 46 of 47 pass; `prefab_variants` fails its long temp-path check (PR #995
+  fixes it). The eight changed editor files pass the syntax-only check without `OKAY_HAVE_OKAYUI`; the editor builds with it.
+
+### 21.5 Speed and pixels
+
+Instructions per frame (callgrind, 200 frames): Modifiers 224,800 against 163,265 (27% fewer), Behavior Tree Runner 168,387 against
+124,242 (26%), First Person Hands 454,207 against 378,122 (17%).
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Modifiers | 113.7 us | 42.3 us | 47.0 ms | 4.9 ms | 1.07% |
+| Behavior Tree Runner | 105.8 us | 45.2 us | 49.0 ms | 6.5 ms | 1.14% |
+| First Person Hands | 165.6 us | 117.7 us | 102.7 ms | 23.2 ms | 2.36% |
+
+### 21.6 In the real editor
+
+Under Xvfb at 1920 x 1200, both toolkits side by side, each side-by-side scroll-matched by `oi4-logs/drive/pair8.py` (the OkayUI side
+shifted to line up with Dear ImGui's rows; the shift is printed: 0 or 1 pixel, except the Behavior Tree pictures, where OkayUI's wrapped
+note made its body one line taller and the shift is 18 or 19). Pictures in `<scratchpad>/shots/oi8/`. Looked at:
+
+- `examples/modeling_tools/vertex_paint_creases.okayscene`, Creased Cube's Modifiers (`side-10-mods.png`); + Add Modifier > Mirror in both
+  (`side-12-added.png`); the new Mirror's "..." menu (`menu-open.png`), Move Up and Ctrl+Z (`steps-moveup.png`); the add list
+  (`add-open-v2.png`).
+- `examples/behavior_trees/breakpoint_demo.okayscene`, Marker's Behavior Tree Runner (`side-20-bt.png`), + Override and Ctrl+Z
+  (`steps-override.png`).
+- `examples/fp_hand/fp_hand_test.okayscene`, Player's First Person Hands (`side-31-up.png`, `fph-overview.png`); the header bars measured
+  edge to edge: 8 to 407 in both (`side-40-hands.png`); Left hand opened (`side-41-lh-open.png`), a Uniform scale drag and Ctrl+Z
+  (`steps-handscale.png`).
+- `examples/vehicle/vehicle_test.okayscene`: the drive note breaks after "Space =" in both (`side-50-car-top.png`).
+
+### 21.7 Not verified
+
+Windows; other UI scales; the Modifiers' Boolean cutter list and Array Along Curve in the real editor (headless only); the held item's
+grip rows (shown only with the preview open or an item held); Play mode for all three; the add list after the last width change (headless
+only).

@@ -1015,3 +1015,119 @@ launcher's line icons (stroked paths) and the faux-bold titles. The speed fixes 
 from a table, an inline `floor` in the text path, re-wrapping a notification only when it changes, cheaper row outlines) won
 back part of it. The owner's rule needs "faster": Achievements is; Downloads and Notifications are now level, not faster.
 Headless (`okayui_launcher_pages`) figures are printed by the test and vary too much on this machine to quote.
+
+### 8.8 Three more launcher pages: Friends, Community, Versions
+
+Same pattern as section 8: each page is a plain function in `okayui/screens/OkayUILauncherMorePages.*` (no SDL, no Dear ImGui)
+that takes the data and a rectangle and returns what the person did; `launcher/main.cpp` runs the same actions as the Dear
+ImGui page. The Dear ImGui pages stay the default; the OkayUI ones are used only with `OKAY_UI_BACKEND=okayui` (or Settings >
+Appearance > UI backend with `OKAY_DEV=1`), and fall back to Dear ImGui for any frame a Dear ImGui popup covers them. Written
+from the launcher's own Dear ImGui pages (their sizes, colours and rules) and from screenshots of what Dear ImGui draws; no code
+from any other project.
+
+**Why these three.** Of the launcher pages not yet ported (Play, Create, Multiplayer, Account, Settings, Market, Servers,
+Forums, Admin), Friends is the most used social page and has demo data; Community is the library people open every day
+(local only, no network); Versions is how people keep and install editor versions, and its rules already live in their own
+module (`launcher/VersionsUI.cpp`), so the data can be shared cleanly. Market was left out on purpose: its Dear ImGui page has
+its own layout faults to fix first (cut-off buttons, a scrollbar inside every listing) and four modal popups. Servers and
+Forums are about twice the size of these. `origin/claude/own-ui-3` ported no launcher page (it ported the editor's Stats window).
+
+**Same data and actions.**
+
+- **Friends** (`okayuiscreens::DrawFriends`). The chips (Online, All, Pending with its red count, Following, Followers, Add
+  friend), the presence picker and its menu (Online, Away, Invisible), the search, the sections (FAVORITES, ONLINE, OFFLINE,
+  INCOMING, SENT) sorted as the Dear ImGui page sorts them, each row (avatar disc and initial, presence dot, favourite star, name,
+  @username, status line in its colour, round Message / Join / More / Accept / Decline / Cancel buttons with tooltips), the
+  right-click and More menu (Message, Join their game, Invite to the game, party, Favorite, Set nickname..., Clear nickname, Copy
+  username, View profile, Remove friend / Decline / Cancel request), the "N friend requests waiting" link, the Add friend card
+  (username or code, Enter or Send request, the error or success line), Following and Followers (follow by username, Unfollow,
+  Remove, Follow back, "you follow each other"), the friend-code card and the activity card, the empty states, and the narrow
+  layout (the side cards under the list). One function, `FriendsPageDataRefresh`, now reads the lists, feed, code and follows
+  for both pages, and both share the view, search, typed names and the Set nickname dialog (a Dear ImGui modal on both).
+- **Community** (`okayuiscreens::DrawCommunity`). The hero card (its tile art, the three buttons that wrap on a narrow page),
+  the dashed drop zone, the library header and search (Ctrl+F puts the keyboard in it), the item cards (initial tile, title,
+  kind and size, file and age, Play, show in folder, More), double-click to play, the item menu (Play, Show in Explorer, Copy
+  Path, Remove from library...), the empty states, the share steps, the starter templates and their search. The size cache
+  (`CommunityItemMeta`) and the "Remove from library?" dialog are shared by both pages.
+- **Versions** (`okayuiscreens::DrawVersions`). The request banner, This version (pills, Check again, Open install folder, the
+  list's state), the update channel and what the long-term-support line asks for, the default-editor combo, the installed rows
+  (Make default, Remove), keep previous versions and Remove them now, the available rows (Install, the download bar and Cancel,
+  a failed install's note), Show older versions. `okayversionsui::BuildOkayUIModel` works all of it out by the same rules as the
+  Dear ImGui page and `ApplyOkayUIResult` runs the same actions; the "Remove this version?" dialog stays Dear ImGui on both. The
+  page is laid out whole and only the visible band is drawn, so the launcher's own page scrolls it as before (the wheel stays
+  with Dear ImGui).
+
+**What was added to OkayUI** (tested in `okayui_launcher_more_pages`):
+
+- A popup is as wide as its widest sized item (before: always 160 px, so a 230 px row spilled out) and stays inside the display
+  when `Input::displayW` / `displayH` are set; the launcher now sets them. (The presence menu opened half off the window.)
+- A `Selectable` labelled `"##id"` shows no text (before it drew `##id`).
+- A child with the Dear ImGui-style padding (`StyleVar_ChildPadding`) scrolls five text lines per wheel notch, at most two
+  thirds of its height, as Dear ImGui's lists do (before: one row, a third as far).
+- The launcher look (internal `okayui/screens/OkayUILauncherLook.hpp`): the helpers are shared by both page files; the line
+  icons gain play, grid, bag and download; `OutlineRect` strokes an outline where the launcher's outlines sit; `FlatButton`
+  places its label on whole pixels (Dear ImGui truncates; the `downloads_empty` golden moved one pixel) and, on a padded button
+  shorter than its text and padding, at the top padding as Dear ImGui does.
+- Our own text wrapping for the pages (`WrapLines`, greedy at spaces, long words cut), cached per text and width.
+
+**Tests.** `okayui_launcher_more_pages` (headless, 157 checks): wrapping; Friends sections and status lines, every chip,
+button, menu entry and the presence menu, a row click that is not also a button, Pending, Add friend (button and Enter),
+follows (and a busy follow job), empty states, the narrow layout, 80 friends scrolled, hostile text; Community filters, every
+button, both menus, double click, search, Ctrl+F, templates, no player or editor, narrow and empty, 63 cards scrolled, hostile
+text; Versions every button, the keep combo, the download bar and Cancel, disabled states, the visible band, the other list
+states, junk values; the popup width and display clamp; the hidden Selectable label. Ten golden images:
+`friends_online`, `friends_add`, `friends_followers`, `friends_narrow`, `community_top`, `community_bottom`,
+`community_narrow_empty`, `versions_full`, `versions_downloading`, `versions_empty`. All 34 OkayUI suites, `ui_backend` and the
+launcher suites (`launcher_join`, `launcher_versions`, `self_update`, `update_signature`, `dev_channel`) pass under ctest.
+
+**Pixel difference** (real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, `OKAY_UI_DEMO_USER=demo` with
+`OKAY_UI_DEMO_TAB`; the page area x 374 to 1290, y 76 to 785, Versions to 825; mean absolute difference per channel 0 to 255,
+and the share of pixels where some channel differs by more than 32; Community used three sample games in the build's
+`community` folder):
+
+| Page (view) | Mean | Clearly different |
+|---|---:|---:|
+| Friends, Online | 0.18 | 0.12% |
+| Friends, Pending | 0.14 | 0.07% |
+| Friends, Followers | 0.38 | 0.34% |
+| Friends, Add friend | 0.11 | 0.03% |
+| Community, top | 0.39 | 0.35% |
+| Community, scrolled 8 notches | 0.17 | 0.03% |
+| Versions, top | 0.24 | 0.08% |
+| Versions, scrolled 12 notches | 0.18 | 0.03% |
+
+Screenshots: `scratchpad/shots/ol3/final-<page>-{imgui,okayui}.png` and `final-diff-<page>.png` (red: clearly different) in
+the session that made this step (not committed).
+
+What still differs: the edge shading of circles, rounded corners and the dashed outline (OkayUI draws no anti-aliased fringe;
+another branch adds it), single glyph pixels, and OkayUI's own popups (the presence menu, the item menus, the combo lists).
+
+**Checked in the real launcher with `xdotool`** (OkayUI backend): Friends: the All chip, the right-click menu, Favorite (the
+friend moved to the top with a star), the presence menu (now inside the window) and Away, Follow back (Following 3 to 4),
+typing "pri" in the search, Add friend with Enter (the error line shows); Community: typing "neon" in the search, Ctrl+F then
+typing (on both backends), the item menu and Remove from library... (the Dear ImGui dialog opens), Refresh; Versions: the
+channel combo to Long-term support (the LTS text and note show), Check again (shows Checking...).
+
+**Speed** (`OKAY_UI_TIMING=1`, same machine and method as 8.6: each page run alternately on each backend, each figure the median
+of the medians of 300 frames; a shared and busy machine, about 10 to 20% run-to-run spread):
+
+| Page | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |
+|---|---:|---:|---:|---:|---|
+| Friends | 77 us | 80 us | 213 us | 210 us | a tie (build 4% slower, build + render 1% less) |
+| Community | 392 us | 153 us | 614 us | 458 us | met (25% less; see below why) |
+| Versions | 64 us | 60 us | 171 us | 191 us | not yet (build 6% less, build + render 12% more) |
+
+(19 or 20 medians for Friends and Versions per backend, 8 and 14 for Community, whose frames were slower.)
+
+Community is much faster on OkayUI, but mostly because its host reads the file ages and sizes once a second while the Dear
+ImGui page reads every file's time every frame; that could be fixed in the Dear ImGui page too. Friends is level. Versions
+builds faster but costs more in total: OkayUI's own render step (uploading its vertices) takes about 54 us for this page
+where Dear ImGui's share of its render is about 35 us. Speed fixes in this step: the Friends model is rebuilt only when its data
+changes, its sections sorted only when the view or search changes; the Versions model is rebuilt ten times a second, and cards
+outside the visible band are laid out but not drawn. Headless (the test's `[speed]` lines, OkayUI only, the page function
+alone): Friends about 15 us, Community about 48 us, Versions about 15 us per frame. Callgrind was run on the headless Friends
+page (strokes of the line icons and text are most of it); there is no headless Dear ImGui version of these pages to compare.
+
+**Not done or unverified:** Windows was not built or run; real profile pictures and game covers (`SDL_Texture`) are not drawn
+by the OkayUI pages yet (the initial disc or tile shows instead); the Market, Servers, Forums, Settings and the other pages stay
+Dear ImGui; owner rule "faster and up to par": Community and Friends meet or tie it, Versions does not yet in build + render.

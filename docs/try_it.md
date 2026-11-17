@@ -1237,7 +1237,8 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
 the screens that have an OkayUI port change; everything else stays Dear ImGui. In the launcher: What's New, Tips, Downloads,
-Achievements and the Notifications panel (the bell). In the editor: Console, Crash Log and Audio Mixer.
+Achievements, Friends, Community, Versions and the Notifications panel (the bell). In the editor: Console, Crash Log and Audio
+Mixer.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`.
 
@@ -1255,6 +1256,14 @@ OkaySpace.exe
   right-click a tile for Add to showcase, Remove from showcase or Copy id.
 - **Notifications** (the bell at the bottom of the sidebar): a sample feed. Click the chips, hover a row for its dismiss button,
   click a row to open its page.
+- **Friends** (sidebar): sample friends, requests, follows and activity. Click the chips (All, Pending, Following, Followers,
+  Add friend), right-click a friend or press its "..." for the menu (Favorite moves them to the top with a star), click your
+  status at the top right and pick Away, type in the search, press Follow back on a follower.
+- **Community** (sidebar): the library shows the games in the `community` folder next to `OkaySpace.exe` (put a game folder
+  there, or drop one onto the window, then Refresh). Type in the library search or press Ctrl+F, right-click a card for its
+  menu (Remove from library... asks first), scroll down to the share steps and the starter templates.
+- **Versions** (sidebar): This version, the update channel (switch it to Long-term support and back), the installed versions
+  and the versions you can install. Scroll with the wheel as usual.
 
 Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui versions: the two should look the same
 (same positions, sizes, icons and tooltip place; only edge shading and single text pixels differ). The Dear ImGui Downloads rows

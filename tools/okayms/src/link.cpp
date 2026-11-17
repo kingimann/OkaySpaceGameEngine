@@ -217,7 +217,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         for (size_t si = 0; si < object.sections.size(); ++si) {
             const Section& section = object.sections[si];
             if ((section.characteristics & kScnLnkRemove) != 0) continue;
-            if (section.name.empty() || section.name.size() > 8) {
+            // A '$' in a COFF section name groups contributions. The image
+            // section keeps only the part before the '$'.
+            std::string base_name = section.name;
+            const size_t dollar = base_name.find('$');
+            if (dollar != std::string::npos) base_name = base_name.substr(0, dollar);
+            if (base_name.empty() || base_name.size() > 8) {
                 return Result<std::vector<uint8_t>>::fail("section name is too long for an image");
             }
             uint32_t align = 0;
@@ -226,12 +231,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 return Result<std::vector<uint8_t>>::fail(error);
             }
             uint32_t index = 0;
-            const auto found = section_index.find(section.name);
+            const auto found = section_index.find(base_name);
             if (found == section_index.end()) {
                 index = static_cast<uint32_t>(outs.size());
-                section_index[section.name] = index;
+                section_index[base_name] = index;
                 OutSection created;
-                created.name = section.name;
+                created.name = base_name;
                 outs.push_back(std::move(created));
             } else {
                 index = found->second;

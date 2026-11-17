@@ -49,6 +49,27 @@ public:
     static bool FindPathForAgent(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
                                  std::vector<NavMeshLink*>& legLinks, std::uint32_t areaMask,
                                  float agentRadius = 0.4f, GameObject* self = nullptr);
+    // ---- Spreading replans over frames (Finding 107) ----
+    /// Agents replan on a timer (NavMeshAgent every 0.5 s, NPCController 0.6 s, ClickToMoveController
+    /// 0.5 s). A timer replan first asks for a slot here: at most ReplanBudget() timer replans run per
+    /// scene per frame, the rest wait for a later frame (their old path stays in use meanwhile). Plans an
+    /// agent cannot move without (no path yet, a new or moved goal, stuck, a carved hole changed) never
+    /// ask. Without this, every agent given a destination on the same frame replanned on the same frame,
+    /// and 50 agents with no baked NavMesh froze the game for seconds every half second.
+    static bool TakeReplanSlot(Scene& scene);
+    /// Timer replans allowed per scene per frame (default 4). 0 or less = no limit (the old behaviour).
+    /// The environment variable OKAY_NAV_REPLAN_BUDGET sets the starting value.
+    static int ReplanBudget();
+    static void SetReplanBudget(int perFrame);
+    /// A fixed value in [0, 1) for an object (from its instance id), used to give agents that got a
+    /// destination together different replan timer phases (1 when the stagger is off).
+    static float StaggerPhase(const GameObject* go);
+    /// Turn the stagger off (StaggerPhase then gives 1: every agent waits the full interval, the old
+    /// timing). On by default; OKAY_NAV_REPLAN_STAGGER=0 turns it off. For comparisons and tests.
+    static void SetStaggerEnabled(bool on);
+    static bool StaggerEnabled();
+    /// Path searches run so far by FindPath / FindPathForAgent (all scenes): for tests and profiling.
+    static std::uint64_t SearchCount();
     /// Every NavMeshLink in the scene (cached with the agents).
     static const std::vector<NavMeshLink*>& Links(Scene& scene);
     /// The closest walkable point within `maxDistance` (mesh only; false without one).

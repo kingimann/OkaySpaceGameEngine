@@ -203,6 +203,7 @@ add_library(okay_engine
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp
+    src/AI/NavProbeIndex.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
     src/AI/Perception.cpp

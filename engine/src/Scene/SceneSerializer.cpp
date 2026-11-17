@@ -63,6 +63,8 @@
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Volume.hpp"
 #include "okay/Components/Consumables.hpp"
+#include "okay/Scene/RecordIO.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -225,6 +227,7 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+const std::string& rec::LoadingSceneDir() { return g_loadingSceneDir; }
 // The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
 static thread_local std::string g_lastSceneDir;
 
@@ -238,6 +241,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear, GameObj
                       std::vector<std::string>* warnings);
 
 namespace {
+
+using rec::Quote; using rec::ReadQuoted; using rec::ReadRecordLine; using rec::KvOut; using rec::KvIn;
 
 // Floats in scene text are written with the fewest digits that read back as the
 // same value (the default stream precision keeps 6, so 12345.678 came back as
@@ -330,33 +335,6 @@ inline bool LooksNumeric(std::istream& in) {
     if (c == std::char_traits<char>::eof()) return false;
     return c == '-' || c == '+' || c == '.' || std::isdigit(c) != 0;
 }
-// Quote a string for the line-based format (escapes quotes/backslashes).
-std::string Quote(const std::string& s) {
-    std::string out = "\"";
-    for (char c : s) {
-        if (c == '"' || c == '\\') out += '\\';
-        out += c;
-    }
-    out += '"';
-    return out;
-}
-
-// Read a quoted token from a stream (assumes leading quote already trimmed by >>).
-std::string ReadQuoted(std::istream& in) {
-    std::string tok;
-    in >> std::ws;
-    if (in.peek() != '"') { in >> tok; return tok; }
-    in.get(); // opening quote
-    std::string out;
-    char c;
-    while (in.get(c)) {
-        if (c == '\\') { if (in.get(c)) out += c; }
-        else if (c == '"') break;
-        else out += c;
-    }
-    return out;
-}
-
 // A key code in the records that name a key as one token (charctrl2d, tdctrl, tdctrl2d, tpsctrl, ctmctrl). Older
 // builds wrote the raw character, so a space, a tab or Enter split the record and shifted every later field, and
 // '-' (which stood for "no key") read back as no key. Now a printable character other than '-' is still written
@@ -455,76 +433,6 @@ void ReadRecipeExtras(std::istream& in, std::vector<Recipe>& rs) {
     }
 }
 
-// key=value component lines (used by newer components): order-free, and keys a
-// build doesn't know are skipped, so fields can be added without breaking saves.
-struct KvOut {
-    std::ostream& o;
-    template <class T> KvOut& operator()(const char* k, const T& v) { o << ' ' << k << '=' << v; return *this; }
-    KvOut& b(const char* k, bool v) { o << ' ' << k << '=' << (v ? 1 : 0); return *this; }
-    KvOut& key(const char* k, char v) { o << ' ' << k << '=' << (int)(unsigned char)v; return *this; }
-    KvOut& str(const char* k, const std::string& v) { o << ' ' << k << '=' << Quote(v); return *this; }
-    KvOut& col(const char* k, const Color& c) {
-        o << ' ' << k << "R=" << c.r << ' ' << k << "G=" << c.g << ' ' << k << "B=" << c.b << ' ' << k << "A=" << c.a;
-        return *this;
-    }
-};
-// Read the rest of a record's line. A quoted value may itself contain line breaks (a quest description typed
-// into a multi-line box is written as it is, Quote escapes only the quote and the backslash), so a line that ends
-// inside a quote goes on to the next one until the quote closes. When it never closes (a hand-edited or damaged
-// file) the stream is put back and only the first line is taken, as before.
-std::string ReadRecordLine(std::istream& in) {
-    std::string line;
-    // Ask the buffer, not tellg(): tellg() fails once the stream has hit the end.
-    const std::streamoff start = in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
-    std::getline(in, line);
-    auto endsInQuote = [](const std::string& l) {
-        bool open = false;
-        for (std::size_t i = 0; i < l.size(); ++i) {
-            if (open && l[i] == '\\') ++i;   // an escaped character
-            else if (l[i] == '"') open = !open;
-        }
-        return open;
-    };
-    if (!endsInQuote(line) || start < 0) return line;
-    std::string joined = line;
-    std::string next;
-    while (std::getline(in, next)) {
-        joined += '\n';
-        joined += next;
-        if (!endsInQuote(joined)) return joined;
-    }
-    in.clear();
-    in.rdbuf()->pubseekpos(start, std::ios::in);   // the quote never closed: only this line belongs to the record
-    std::getline(in, line);
-    return line;
-}
-struct KvIn {
-    std::unordered_map<std::string, std::string> m;
-    explicit KvIn(std::istream& in) {
-        const std::string line = ReadRecordLine(in);
-        std::istringstream ls(line);
-        while (true) {
-            ls >> std::ws;
-            if (!ls || ls.peek() == EOF) break;
-            std::string k; char c;
-            while (ls.get(c) && c != '=' && !std::isspace((unsigned char)c)) k += c;
-            if (c != '=') continue;
-            if (ls.peek() == '"') m[k] = ReadQuoted(ls);
-            else { std::string v; ls >> v; m[k] = v; }
-        }
-    }
-    const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
-    void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
-    void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
-    void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
-    void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
-    void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
-    void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
-    void col(const char* k, Color& c) const {
-        std::string b = k;
-        f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
-    }
-};
 // A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
 void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
     if (!l.Active()) return;
@@ -2493,14 +2401,6 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.item) << " " << Quote(r.action) << " " << r.amount;
         out << "\n";
     }
-    for (auto* c : go->GetComponents<DayNightCycle>()) {
-        auto col = [&](const Color& k) { out << " " << k.r << " " << k.g << " " << k.b; };
-        out << "  daynight " << c->dayLengthSeconds << " " << c->time << " " << (c->paused ? 1 : 0)
-            << " " << (c->controlSun ? 1 : 0) << " " << (c->rotateSun ? 1 : 0) << " " << (c->controlSky ? 1 : 0)
-            << " " << c->dayIntensity << " " << c->nightIntensity << " " << c->dayAmbient << " " << c->nightAmbient;
-        col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
-        out << "\n";
-    }
     for (auto* c : go->GetComponents<NPCController>()) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
@@ -2760,15 +2660,6 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
         if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
-        out << "\n";
-    }
-    for (auto* rd : go->GetComponents<Ragdoll>()) {
-        out << "  ragdoll";
-        KvOut k{out};
-        k("grav", rd->gravity)("damp", rd->damping)("fric", rd->friction)("radius", rd->radius)
-         ("iters", rd->iterations)("maxSpeed", rd->maxSpeed).b("onDeath", rd->ragdollOnDeath)
-         ("deathPush", rd->deathImpulse).b("hits", rd->hitReactions)("hitPush", rd->hitImpulse)
-         ("recover", rd->hitRecover);
         out << "\n";
     }
     for (auto* pc : go->GetComponents<Platformer25DController>()) {
@@ -3760,53 +3651,6 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Navigation: key=value records of their own, so older scenes load unchanged.
     // The baked mesh stays in the .okaynav file the surface points at.
-    for (auto* ns : go->GetComponents<NavMeshSurface>()) {
-        out << "  navsurface";
-        KvOut k{out};
-        k("radius", ns->settings.agentRadius)("height", ns->settings.agentHeight)("slope", ns->settings.maxSlope)
-         ("step", ns->settings.maxStep)("cell", ns->settings.cellSize)("cellh", ns->settings.cellHeight)
-         .str("path", ns->navPath).b("autob", ns->autoBounds)
-         ("bcx", ns->boundsCenter.x)("bcy", ns->boundsCenter.y)("bcz", ns->boundsCenter.z)
-         ("bsx", ns->boundsSize.x)("bsy", ns->boundsSize.y)("bsz", ns->boundsSize.z)
-         .b("dyn", ns->includeDynamic)("layers", ns->layerMask).b("bakeplay", ns->bakeBeforePlay);
-        for (int a = 0; a < kNavAreaCount; ++a) {   // only what differs from the defaults
-            if (ns->areaCost[a] != NavAreaDefaultCost(a)) k(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
-            if (!ns->areaName[a].empty()) k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
-        }
-        out << "\n";
-    }
-    for (auto* na : go->GetComponents<NavMeshAgent>()) {
-        out << "  navagent";
-        KvOut k{out};
-        k("radius", na->radius)("height", na->height)("speed", na->speed)("accel", na->acceleration)
-         ("angular", na->angularSpeed)("stop", na->stoppingDistance).b("repath", na->autoRepath)
-         ("repathT", na->repathInterval)("prio", na->avoidancePriority)("avoid", na->avoidanceRange)
-         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset)
-         ("mask", na->areaMask);
-        out << "\n";
-    }
-    for (auto* nm : go->GetComponents<NavMeshModifier>()) {
-        out << "  navmod";
-        KvOut k{out};
-        k("area", nm->area).b("kids", nm->applyToChildren);
-        out << "\n";
-    }
-    for (auto* nl : go->GetComponents<NavMeshLink>()) {
-        out << "  navlink";
-        KvOut k{out};
-        k("type", (int)nl->type)("sx", nl->startPoint.x)("sy", nl->startPoint.y)("sz", nl->startPoint.z)
-         ("ex", nl->endPoint.x)("ey", nl->endPoint.y)("ez", nl->endPoint.z).b("both", nl->bidirectional)
-         ("cost", nl->cost)("area", nl->area)("speed", nl->speed)("arc", nl->arcHeight);
-        out << "\n";
-    }
-    for (auto* no : go->GetComponents<NavMeshObstacle>()) {
-        out << "  navobstacle";
-        KvOut k{out};
-        k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z)
-         ("shape", (int)no->shape)("cr", no->capsuleRadius)("ch", no->capsuleHeight).b("carve", no->carve)
-         .b("still", no->carveOnlyWhenStationary)("tts", no->timeToStationary)("move", no->moveThreshold);
-        out << "\n";
-    }
     // ---- Dialogue and quests: own key=value records, so older scenes skip nothing
     // they don't have and newer keys are ignored by older builds. ----
     for (auto* st : go->GetComponents<StoryState>()) {
@@ -6540,14 +6384,6 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         r.item = ItemId(ReadQuoted(in)); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
                     }
-                } else if (field == "daynight") {
-                    auto* c = go->AddComponent<DayNightCycle>();
-                    int ps = 0, cs = 1, rs = 1, ck = 1;
-                    in >> c->dayLengthSeconds >> c->time >> ps >> cs >> rs >> ck
-                       >> c->dayIntensity >> c->nightIntensity >> c->dayAmbient >> c->nightAmbient;
-                    c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
-                    auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
-                    col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
                 } else if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;
@@ -6966,13 +6802,6 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
-                } else if (field == "ragdoll") {
-                    auto* rd = go->AddComponent<Ragdoll>();
-                    KvIn k(in);
-                    k.f("grav", rd->gravity); k.f("damp", rd->damping); k.f("fric", rd->friction);
-                    k.f("radius", rd->radius); k.i("iters", rd->iterations); k.f("maxSpeed", rd->maxSpeed);
-                    k.b("onDeath", rd->ragdollOnDeath); k.f("deathPush", rd->deathImpulse);
-                    k.b("hits", rd->hitReactions); k.f("hitPush", rd->hitImpulse); k.f("recover", rd->hitRecover);
                 } else if (field == "fpstance" || field == "pcfirststance" || field == "tpstance" || field == "pcthirdstance") {
                     // Stance options for the controller declared just above (crouch/prone body).
                     KvIn k(in);
@@ -8962,52 +8791,6 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (auto* hp = AtComp(go->GetComponents<HoldPrompt>(), idx)) k.b("hold", hp->localized);
                     if (auto* pm = AtComp(go->GetComponents<PauseMenu>(), idx)) k.b("pause", pm->localized);
                     if (auto* lsc = AtComp(go->GetComponents<LoadingScreen>(), idx)) k.b("loading", lsc->localized);
-                } else if (field == "navsurface") {
-                    auto* ns = go->AddComponent<NavMeshSurface>();
-                    KvIn k(in);
-                    k.f("radius", ns->settings.agentRadius); k.f("height", ns->settings.agentHeight);
-                    k.f("slope", ns->settings.maxSlope); k.f("step", ns->settings.maxStep);
-                    k.f("cell", ns->settings.cellSize); k.f("cellh", ns->settings.cellHeight);
-                    k.str("path", ns->navPath); k.b("autob", ns->autoBounds);
-                    k.f("bcx", ns->boundsCenter.x); k.f("bcy", ns->boundsCenter.y); k.f("bcz", ns->boundsCenter.z);
-                    k.f("bsx", ns->boundsSize.x); k.f("bsy", ns->boundsSize.y); k.f("bsz", ns->boundsSize.z);
-                    k.b("dyn", ns->includeDynamic); k.u("layers", ns->layerMask); k.b("bakeplay", ns->bakeBeforePlay);
-                    for (int a = 0; a < kNavAreaCount; ++a) {
-                        k.f(("ac" + std::to_string(a)).c_str(), ns->areaCost[a]);
-                        k.str(("an" + std::to_string(a)).c_str(), ns->areaName[a]);
-                    }
-                    ns->sceneDir = g_loadingSceneDir;   // the .okaynav is looked for next to the scene too
-                } else if (field == "navagent") {
-                    auto* na = go->AddComponent<NavMeshAgent>();
-                    KvIn k(in);
-                    k.f("radius", na->radius); k.f("height", na->height); k.f("speed", na->speed);
-                    k.f("accel", na->acceleration); k.f("angular", na->angularSpeed); k.f("stop", na->stoppingDistance);
-                    k.b("repath", na->autoRepath); k.f("repathT", na->repathInterval); k.i("prio", na->avoidancePriority);
-                    k.f("avoid", na->avoidanceRange); k.b("brake", na->autoBraking); k.b("face", na->faceMovement);
-                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset); k.u("mask", na->areaMask);
-                } else if (field == "navmod") {
-                    auto* nm = go->AddComponent<NavMeshModifier>();
-                    KvIn k(in);
-                    k.i("area", nm->area); k.b("kids", nm->applyToChildren);
-                    nm->area = std::clamp(nm->area, 0, kNavAreaCount - 1);
-                } else if (field == "navlink") {
-                    auto* nl = go->AddComponent<NavMeshLink>();
-                    KvIn k(in);
-                    int ty = 0; k.i("type", ty); nl->type = (NavMeshLink::Type)std::clamp(ty, 0, 2);
-                    k.f("sx", nl->startPoint.x); k.f("sy", nl->startPoint.y); k.f("sz", nl->startPoint.z);
-                    k.f("ex", nl->endPoint.x); k.f("ey", nl->endPoint.y); k.f("ez", nl->endPoint.z);
-                    k.b("both", nl->bidirectional); k.f("cost", nl->cost); k.i("area", nl->area);
-                    k.f("speed", nl->speed); k.f("arc", nl->arcHeight);
-                    nl->area = std::clamp(nl->area, 0, kNavAreaCount - 1);
-                } else if (field == "navobstacle") {
-                    auto* no = go->AddComponent<NavMeshObstacle>();
-                    KvIn k(in);
-                    k.f("sx", no->size.x); k.f("sy", no->size.y); k.f("sz", no->size.z);
-                    k.f("cx", no->center.x); k.f("cy", no->center.y); k.f("cz", no->center.z);
-                    int sh = 0; k.i("shape", sh); no->shape = (NavMeshObstacle::Shape)std::clamp(sh, 0, 1);
-                    k.f("cr", no->capsuleRadius); k.f("ch", no->capsuleHeight);
-                    k.b("carve", no->carve); k.b("still", no->carveOnlyWhenStationary);
-                    k.f("tts", no->timeToStationary); k.f("move", no->moveThreshold);
                 } else if (field == "storystate") {
                     // Dialogue + quests: the story's global variables and flags.
                     auto* st = go->AddComponent<StoryState>();
@@ -9211,7 +8994,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else {
                     // A newer build's field: one record per line, so step over it. Its text is kept on the object and
                     // written back by the next save, so an older build does not drop what a newer one stored.
-                    warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
+                    if (const auto* off = ModuleRegistry::Get().ModuleOfRecord(field))
+                        warn("kept the '" + field + "' record on object " + std::to_string(idx) + " without loading it: the module \"" +
+                             off->manifest.title + "\" is off in this build");
+                    else
+                        warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
                     const std::string rest = ReadRecordLine(in);
                     if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
                         go->unknownRecords.push_back(field + rest);

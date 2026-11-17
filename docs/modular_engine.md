@@ -18,6 +18,12 @@ Design and decisions: `design/modular_gameplay_contracts.md` (section 11).
 ## Stripping proof (2026-11-17, Linux, -O0 with debug info, same build tree)
 `libokay_engine.a`: 471,149,566 bytes with every module, 425,180,764 with `-DOKAY_MODULES=core` (-46 MB, -9.8%): the 35 model reader files, `Interactable.cpp` and the register.cpp of 8 modules are not in the library. `ReadColladaFile` is absent from the core library (nm). `test_modules` (112 checks) and `test_obj_import` pass in the core build; tests that call a stripped reader do not link there.
 
+## Step: scene records through the registry (2026-11-17)
+sky_weather (`daynight`), ragdoll (`ragdoll`) and ai_navigation (`navsurface`, `navagent`, `navmod`, `navlink`, `navobstacle`) write and read their records from their `register.cpp` (code moved unchanged; helpers Quote, KvOut, KvIn are now `okay/Scene/RecordIO.hpp`). A record of a module that is off is kept on the object and written back, with the warning "kept the 'x' record ... module is off in this build". Registered records are written after the built-in ones, so the line order of an object that has both can differ from before; the text loads the same and writing it again is stable (`test_module_records`).
+Sizes (`libokay_engine.a`, -O0 with debug info): all modules 472,029,618; `OKAY_MODULES=core` 424,718,384 (-47.3 MB, -10.0%). Compared with the previous step the core build shrank only 0.46 MB: the component classes are header-only and still used by the validator, asset walker, property tables and editor, so most of the code stays. Bigger wins need those registries cut first.
+Build Game now refuses (not only warns) a scene that uses a module that is off, unless "Build anyway" is ticked (editor code compiles; not run).
+Still open from the owner's list: VM bindings and visual-script nodes per module (vs_nodes), property tables per module, renderer contributions, GameObject menu and templates filtering.
+
 ## Measured sizes (stage 0)
 
 From `python3 scripts/module_sizes.py <build folder>` on 2026-11-17: source lines and the code+data bytes of each

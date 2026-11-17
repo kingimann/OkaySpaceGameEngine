@@ -3945,3 +3945,9 @@ add_executable(test_weapon_contract test_weapon_contract.cpp)
 target_link_libraries(test_weapon_contract PRIVATE okay::engine)
 add_test(NAME weapon_contract COMMAND test_weapon_contract)
 set_tests_properties(weapon_contract PROPERTIES LABELS "module:weapons")
+
+# Scene records that modules register themselves (sky_weather, ragdoll, ai_navigation) and a scene loaded without those modules
+add_executable(test_module_records test_module_records.cpp)
+target_link_libraries(test_module_records PRIVATE okay::engine)
+add_test(NAME module_records COMMAND test_module_records)
+set_tests_properties(module_records PROPERTIES LABELS "module:core")

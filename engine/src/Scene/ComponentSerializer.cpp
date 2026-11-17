@@ -1,5 +1,6 @@
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/Component.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include <atomic>
 #include <cctype>
 #include <mutex>
@@ -25,7 +26,10 @@ void AddEntry(Table& t, ComponentSerializerRegistry::Entry e) {
     t.entries.push_back(sp);
 }
 void EnsureBuiltins(Table& t) {
-    std::call_once(t.builtinsOnce, [] { detail::RegisterBuiltinComponentSerializers(); });
+    std::call_once(t.builtinsOnce, [] {
+        detail::RegisterBuiltinComponentSerializers();
+        (void)ModuleRegistry::Get();   // the modules register their own records (a scene must load them without anything else touching the registry first)
+    });
 }
 } // namespace
 

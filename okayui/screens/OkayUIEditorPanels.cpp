@@ -2373,6 +2373,9 @@ std::string Visible(const char* label) { return std::string(label ? label : "", 
 
 // A body's window reaches this far past its region on both sides: the prefab bar of a changed field sits 5 pixels left of the region.
 constexpr float kMarkBleed = 9.0f;   // 6 was enough for the prefab bars; a collapsing header reaches 8 (stage 8)
+// On the right the window reaches further, for a line that does not wrap and runs into the Inspector's padding (the host offers up to 2
+// pixels short of the padding's end, 14 at the editor's 16; stage 9: the last "." of "Methods: ... SetGodMode." was cut at 9).
+constexpr float kRightBleed = 14.0f;
 
 // n drag cells sharing the value column (Dear ImGui's DragFloat2..4 and the editor's DragVec3Axis): each cell a whole number of pixels,
 // the last taking the rest; with axisBars the axis colour down each cell's left edge and fewer decimals in a narrow cell; a part that
@@ -2542,8 +2545,9 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
     FieldListResult res;
     res.rows.assign(list.rows.size(), UI::Rect{});
     UI::BareNextWindow();
-    // the window reaches kMarkBleed past the region on both sides, where a field's prefab bar is drawn; the content starts that far in
-    if (UI::Begin(id, x - kMarkBleed, y, w + 2.0f * kMarkBleed, h)) {
+    // the window reaches kMarkBleed past the region on the left, where a field's prefab bar is drawn (the content starts that far in), and
+    // kRightBleed on the right
+    if (UI::Begin(id, x - kMarkBleed, y, w + kMarkBleed + kRightBleed, h)) {
         EditorRows rows_;
         FieldColors fields_;
         UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);

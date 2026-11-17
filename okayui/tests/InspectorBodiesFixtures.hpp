@@ -35,7 +35,11 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyWorldSpaceUI,
                   // stage 8 (section 21): Modifiers (a Mirror and an Array Along Curve), Behavior Tree Runner (two overrides), First Person
                   // Hands (the left hand open)
-                  BodyModifiers, BodyBtRunner, BodyFpHands, BodyCount };
+                  BodyModifiers, BodyBtRunner, BodyFpHands,
+                  // stage 9 (section 22): Stat: Health (the bar, three fold-outs, the respawn rows), Collectible (a narrow drag on the check
+                  // box's line, the collider warning), Day / Night Cycle (a formatted label, colours), Top Down Shooter Controller (sections,
+                  // key lists, a slot, a swatch-only colour)
+                  BodyHealthStat, BodyCollectible, BodyDayNight, BodyShooter, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
@@ -43,7 +47,8 @@ inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody"
                                                   "objholding", "holdable", "character", "firstperson", "playerview", "animsm",
                                                   "itempickup", "holdprompt", "water", "flashlight", "pausemenu", "fphand", "voxeldigger",
                                                   "voxelterrain", "stats", "inventory", "camerafollow", "worldui", "vehicleseat", "vehicle",
-                                                  "joint3d", "worldspaceui", "modifiers", "btrunner", "fphands"};
+                                                  "joint3d", "worldspaceui", "modifiers", "btrunner", "fphands",
+                                                  "healthstat", "collectible", "daynight", "shooter"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -206,6 +211,17 @@ struct Values {
     float fsBob = 1, fsSway = 1, fsPunch = 1, fsFov = 0, fsItemOff[3] = {0.2f, -0.2f, 0.4f}, fsItemRot[3] = {0, 0, 0}, fsScale = 1;
     float fsPos[3] = {-0.2f, -0.25f, 0.35f}, fsRot[3] = {0, 10, 0}, fsUni = 1, fsSc[3] = {1, 1, 1}, fsSize[3] = {1, 1, 1}, fsWo[3] = {0, 0, 0}, fsWr[3] = {0, 0, 0};
     float fsElbow = 20, fsReach = 0, fsFl = 0.3f, fsFt = 0.06f, fsFc[3] = {0.8f, 0.6f, 0.5f}, fsSl = 0.2f, fsSc2[3] = {0.2f, 0.3f, 0.6f};
+
+    // stage 9
+    float hsHealth = 72.0f, hsMax = 100.0f, hsArmor = 0, hsRegen = 1, hsDelay = 3, hsLow = 25, hsRes = 0.1f, hsMin = 0, hsIFrames = 0.25f, hsRespDelay = 3;
+    bool hsGod = false, hsDeathAnim = true, hsHitAnim = false, hsDestroy = false, hsRespawn = true, hsPrefs = false, hsBar = true, hsMsg = true;
+    int hsLives = 3;
+    std::string coVar = "score", coTag; float coPoints = 1, coHeal = 0, coDelay = 5; bool coRespawn = true;
+    float dnTime = 14.5f, dnLen = 600, dnDayI = 1.2f, dnNightI = 0.1f, dnDayA = 0.35f, dnNightA = 0.05f;
+    float dnSky[3] = {0.45f, 0.65f, 0.95f}, dnHor[3] = {0.95f, 0.7f, 0.5f}, dnNight[3] = {0.03f, 0.04f, 0.1f}; bool dnPaused = false, dnSun = true, dnRotate = true, dnSkyOn = true;
+    float shWalk = 5, shRun = 8, shAcc = 40, shDec = 50, shBack = 0.7f, shTurn = 0, shRate = 8, shDmg = 10, shSpread = 3, shSpeed = 40, shLife = 2, shSize = 0.1f;
+    float shColor[4] = {1.0f, 0.85f, 0.3f, 1.0f}; int shAim = 0, shMode = 0, shFire = 0, shPellets = 1, shSprint = 1, shFireKey = 0; bool shRel = true, shAnim = true, shHold = true;
+    std::string shProj;
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -1428,6 +1444,73 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.SmallButton("Reset##player"); L.SameLine(); L.Note("Player view");
         L.SmallSection("Others View");
         L.Note("Where the held item sits on the full body, and where each hand grips it. The arms follow the item.", false, true);
+        break;
+    }
+    case BodyHealthStat: {
+        L.Progress("72.0 / 100", v.hsHealth / v.hsMax);
+        L.Drag("Current##cursth", &v.hsHealth, 1, 0.5f, 0.0f, 1e9f, "%.1f");
+        L.Drag("Max Health##sth", &v.hsMax, 1, 1.0f, 1.0f, 100000.0f); L.Drag("Armor##sth", &v.hsArmor, 1, 0.1f, 0.0f, 1000.0f);
+        L.Drag("Regen / s##sth", &v.hsRegen, 1, 0.1f, 0.0f, 100.0f); L.Drag("Regen Delay##sth", &v.hsDelay, 1, 0.1f, 0.0f, 60.0f, "%.1f s");
+        L.Drag("Low Threshold##sth", &v.hsLow, 1, 1.0f, 0.0f, 100000.0f);
+        L.Tree("Mitigation##sth"); L.Slider("Resistance##sth", &v.hsRes, 0.0f, 1.0f); L.Drag("Min Damage##sth", &v.hsMin, 1, 0.1f, 0.0f, 1000.0f);
+        L.Drag("I-Frames##sth", &v.hsIFrames, 1, 0.05f, 0.0f, 10.0f, "%.2f s"); L.Check("God Mode##sth", &v.hsGod); L.TreeEnd();
+        L.Tree("Overheal##sth"); L.TreeEnd();
+        L.Tree("Death / Respawn##sth"); L.Check("Play Death Anim##sth", &v.hsDeathAnim); L.Check("Play Hit Anim##sth", &v.hsHitAnim);
+        L.Check("Destroy on Death##sth", &v.hsDestroy); L.Check("Respawn##sth", &v.hsRespawn);
+        if (v.hsRespawn) { L.Drag("Respawn Delay##sth", &v.hsRespDelay, 1, 0.1f, 0.0f, 60.0f, "%.1f s"); L.DragInt("Lives (0=inf)##sth", &v.hsLives, 0.1f, 0, 999); }
+        L.TreeEnd();
+        L.Tree("Output##sth"); L.Check("Saved value##sth", &v.hsPrefs); L.Check("Fill *Bar##sth", &v.hsBar); L.Check("Broadcast msg##sth", &v.hsMsg); L.TreeEnd();
+        L.Note("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.", false, true);
+        L.SmallButton("Remove##sth");
+        break;
+    }
+    case BodyCollectible:
+        L.Text("Score Var##co", &v.coVar); L.Drag("Points##co", &v.coPoints, 1, 0.1f, -100000.0f, 100000.0f);
+        L.Drag("Heal##co", &v.coHeal, 1, 0.5f, 0.0f, 100000.0f); L.Check("Respawn##co", &v.coRespawn);
+        if (v.coRespawn) { L.SameLine(); L.Drag("Delay##cord", &v.coDelay, 1, 0.05f, 0.0f, 10000.0f); L.Last().width = 90.0f; }
+        L.Text("Collector Tag##co", &v.coTag);
+        L.ColorText(P::HierCol(255, 179, 77), "Add a Collider (trigger) so this can react to touch.");
+        L.SmallButton("Remove##co");
+        break;
+    case BodyDayNight:
+        L.Label("Time: 14:30 (day)");
+        L.Slider("Time of Day##dnc", &v.dnTime, 0.0f, 24.0f, "%.2f h"); L.Drag("Day Length##dnc", &v.dnLen, 1, 1.0f, 1.0f, 100000.0f, "%.0f s");
+        L.Check("Paused##dnc", &v.dnPaused); L.Check("Drive Sun Light##dnc", &v.dnSun);
+        if (v.dnSun) {
+            L.Check("Rotate Sun##dnc", &v.dnRotate); L.Drag("Day Intensity##dnc", &v.dnDayI, 1, 0.05f, 0.0f, 10.0f);
+            L.Drag("Night Intensity##dnc", &v.dnNightI, 1, 0.05f, 0.0f, 10.0f); L.Drag("Day Ambient##dnc", &v.dnDayA, 1, 0.01f, 0.0f, 1.0f);
+            L.Drag("Night Ambient##dnc", &v.dnNightA, 1, 0.01f, 0.0f, 1.0f);
+        }
+        L.Check("Drive Sky Color##dnc", &v.dnSkyOn);
+        if (v.dnSkyOn) { L.Color("Day Sky##dnc", v.dnSky, 3); L.Color("Horizon##dnc", v.dnHor, 3); L.Color("Night Sky##dnc", v.dnNight, 3); }
+        L.Note("Drives the Sun light + main camera sky. Bind UI text with {hour}.", false, true);
+        L.SmallButton("Remove##dnc");
+        break;
+    case BodyShooter: {
+        static const char* const kKeys[] = {"(none)", "Shift", "Ctrl", "C", "Z", "X", "V", "F", "B"};
+        static const char* const kAims[] = {"Mouse cursor", "Move direction", "Auto (mouse or gamepad)"};
+        static const char* const kModes[] = {"Bullets (built in)", "Projectile prefab", "Hitscan (instant ray)"};
+        static const char* const kBtns[] = {"Left mouse", "Right mouse", "Middle mouse", "None"};
+        L.Note("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.", false, true);
+        L.Section("Movement");
+        L.Drag("Walk Speed##tds", &v.shWalk, 1, 0.1f, 0.0f, 50.0f);
+        L.Combo("Sprint Key##tds", &v.shSprint, kKeys, 9); L.Last().width = 96.0f;
+        L.Drag("Run Speed##tds", &v.shRun, 1, 0.1f, 0.0f, 50.0f); L.Drag("Acceleration##tds", &v.shAcc, 1, 1.0f, 1.0f, 300.0f);
+        L.Drag("Deceleration##tds", &v.shDec, 1, 1.0f, 1.0f, 300.0f); L.Slider("Backpedal Speed##tds", &v.shBack, 0.2f, 1.0f, "x%.2f");
+        L.Check("Camera-Relative Move##tds", &v.shRel); L.Check("Drive Animation##tds", &v.shAnim);
+        L.Section("Aim");
+        L.Combo("Aim With##tds", &v.shAim, kAims, 3); L.Drag("Turn Speed##tds", &v.shTurn, 1, 0.2f, 0.0f, 80.0f);
+        L.Section("Weapon");
+        L.Combo("Shoots##tds", &v.shMode, kModes, 3);
+        L.Combo("Fire Button##tds", &v.shFire, kBtns, 4);
+        L.Combo("Fire Key##tds", &v.shFireKey, kKeys, 9); L.Last().width = 96.0f;
+        L.Check("Hold To Fire##tds", &v.shHold); L.Drag("Fire Rate##tds", &v.shRate, 1, 0.1f, 0.1f, 60.0f, "%.1f / s");
+        L.Drag("Damage##tds", &v.shDmg, 1, 0.5f, 0.0f, 1000.0f); L.DragInt("Pellets##tds", &v.shPellets, 0.1f, 1, 24);
+        L.Drag("Spread##tds", &v.shSpread, 1, 0.2f, 0.0f, 90.0f, "%.1f deg");
+        L.Drag("Bullet Speed##tds", &v.shSpeed, 1, 0.5f, 1.0f, 300.0f); L.Drag("Bullet Lifetime##tds", &v.shLife, 1, 0.05f, 0.05f, 20.0f, "%.2fs");
+        L.Drag("Bullet Size##tds", &v.shSize, 1, 0.01f, 0.02f, 2.0f);
+        L.Color("Bullet Colour##tds", v.shColor, 4); L.Last().noInputs = true;
+        L.SmallButton("Remove##tds");
         break;
     }
     default: break;

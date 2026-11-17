@@ -17843,7 +17843,10 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.isPlaying()) RequestStop(ed);
         else RequestPlay(ed);
     }
-    if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
+    // A hosted OkayUI field being typed in has the keyboard too (the host asks Dear ImGui to capture the keyboard, which does not set
+    // WantTextInput): typing "S Health" into the OkayUI Hierarchy's search hid the selected object on the "h" (the H shortcut), found
+    // in stage 9 under Xvfb at about 15 frames a second.
+    if (io.WantTextInput || OkayUIHasKeyboard() || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     // The Project panel owns Delete, Ctrl+C/X/V/D and its own Ctrl+Z while it has focus: they act on files, never on the scene's selected object.
     const bool projectKeys = GImGui->NavWindow && GImGui->NavWindow->RootWindow && std::strcmp(GImGui->NavWindow->RootWindow->Name, "Project") == 0;
@@ -34491,7 +34494,7 @@ static bool DrawNetworkSyncWithOkayUI(EditorState& ed, NetworkSync* ns, okay::Co
     L.rows.reserve(12);
     int ai = (int)ns->authority;
     int k1 = -1;
-    L.Note("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.", false, false);
+    L.Note("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.", false, true);
     L.Text("Net Id##ns", &ns->netId);
     L.Tip("Must match the same object on every peer (blank = use the object's name).");
     static const char* const auth[] = {"Host (server drives it)", "Mine (this peer drives it)", "Manual (use Owned)"};
@@ -34506,7 +34509,7 @@ static bool DrawNetworkSyncWithOkayUI(EditorState& ed, NetworkSync* ns, okay::Co
     L.Check("Players can claim it##ns", &ns->clientClaimable);
     L.Tip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
     if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable) {
-        L.Note("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.", false, false);
+        L.Note("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.", false, true);
     }
     const int kRemove = L.SmallButton("Remove##ns");
     if (!DrawRowsOkayUI(ns, "##okayui_networksync", L)) return false;
@@ -34521,7 +34524,7 @@ static bool DrawNetworkPlayerSpawnerWithOkayUI(EditorState& ed, NetworkPlayerSpa
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(11);
-    L.Note("Spawns a player copy for you (driveable) and for each peer\n" "(stripped to a moving/animating avatar). Needs a Network Manager.", false, false);
+    L.Note("Spawns a player copy for you (driveable) and for each peer\n" "(stripped to a moving/animating avatar). Needs a Network Manager.", false, true);
     L.Text("Template object##nps", &ps->playerTemplate);
     L.Tip("Name of an INACTIVE object in the scene to clone for each player.");
     L.Text("Prefab file##nps", &ps->prefabFile);
@@ -34571,7 +34574,7 @@ static bool DrawSaveConfigWithOkayUI(EditorState& ed, SaveConfig* ss, okay::Comp
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(9);
-    L.Note("When this scene saves by itself. One per scene.", false, false);
+    L.Note("When this scene saves by itself. One per scene.", false, true);
     L.Drag("Autosave every (s)##ss", &ss->autosaveInterval, 1, 1.0f, 0.0f, 7200.0f, "%.0f");
     L.Tip("Seconds of play between autosaves (0 = off).");
     L.Check("Autosave when the scene starts##ss", &ss->autosaveOnSceneStart);
@@ -34590,7 +34593,7 @@ static bool DrawWorldStreamerWithOkayUI(EditorState& ed, WorldStreamer* ws, okay
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(16);
-    L.Note("Streams cell prefabs in/out around the target (World Partition).", false, false);
+    L.Note("Streams cell prefabs in/out around the target (World Partition).", false, true);
     L.Drag("Cell Size##ws", &ws->cellSize, 1, 1.0f, 1.0f, 5000.0f);
     L.Tip("World units per chunk edge (XZ).");
     L.DragInt("Load Radius##ws", &ws->loadRadius, 0.1f, 0, 32);
@@ -34610,7 +34613,7 @@ static bool DrawWorldStreamerWithOkayUI(EditorState& ed, WorldStreamer* ws, okay
     L.Tip("Name of the object to follow. Blank = the main camera.");
     L.Check("Only re-check on cell change##ws", &ws->onlyOnCellChange);
     { char t_[256]; std::snprintf(t_, sizeof t_, "Cells: %s%s_<x>_<z>%s  |  resident: %d", ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
-      L.Note(t_, true, false); }
+      L.Note(t_, true, true); }
     const int kRemove = L.SmallButton("Remove##ws");
     if (!DrawRowsOkayUI(ws, "##okayui_worldstreamer", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -34625,7 +34628,7 @@ static bool DrawDestructibleWithOkayUI(EditorState& ed, Destructible* de, okay::
     L.rows.reserve(23);
     int bi = (de->breakButton < 0 || de->breakButton > 2) ? 0 : de->breakButton + 1;
     int k1 = -1;
-    L.Note("Voxel blocks shatter into physics debris; unsupported blocks collapse.", false, false);
+    L.Note("Voxel blocks shatter into physics debris; unsupported blocks collapse.", false, true);
     L.Text("Block Tag##de", &de->blockTag);
     L.Tip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
     L.Drag("Voxel Size##de", &de->voxelSize, 1, 0.05f, 0.1f, 50.0f);
@@ -34675,7 +34678,7 @@ static bool DrawOccluderWithOkayUI(EditorState& ed, Occluder* occ, okay::Compone
     L.rows.reserve(7);
     L.Check("Use mesh", &occ->useMesh);
     L.Tip("On: the real triangles hide what's behind them.\n" "Off: the bounding box does (only for a solid wall).");
-    L.Note("Objects behind this one can be skipped when Occlusion is on (Stats).", false, false);
+    L.Note("Objects behind this one can be skipped when Occlusion is on (Stats).", false, true);
     const int kRemove = L.SmallButton("Remove##occ");
     if (!DrawRowsOkayUI(occ, "##okayui_occluder", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -34688,7 +34691,7 @@ static bool DrawJoint2DWithOkayUI(EditorState& ed, Joint2D* jt, okay::Component*
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(22);
-    L.Note("Constrains this 2D body to an anchor or another body.", false, false);
+    L.Note("Constrains this 2D body to an anchor or another body.", false, true);
     static const char* const modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
     L.Combo("Mode##jt2", &jt->mode, modes, 4);
     L.Text("Connected Body##jt2", &jt->connectedBody);
@@ -34708,7 +34711,7 @@ static bool DrawJoint2DWithOkayUI(EditorState& ed, Joint2D* jt, okay::Component*
         L.Drag("Damper##jt2", &jt->damper, 1, 0.1f, 0.0f, 500.0f);
     }
     if (jt->mode == (int)Joint2D::Mode::Hinge) {
-        L.Note("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.", false, false);
+        L.Note("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.", false, true);
         L.Check("Use Motor##jt2", &jt->useMotor);
         L.TipLookup();
         if (jt->useMotor) {
@@ -34741,7 +34744,7 @@ static bool DrawIKTargetWithOkayUI(EditorState& ed, IKTarget* ikt, okay::Compone
     int k1 = -1;
     int limb = ikt->limb;
     int k2 = -1;
-    L.Note("This object is where a hand, foot, or the head reaches.", false, false);
+    L.Note("This object is where a hand, foot, or the head reaches.", false, true);
     k1 = L.Text("Character##ikt", &ikt->characterName);
     L.TipLookup();
     static const char* const limbs[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot", "Head"};
@@ -34769,7 +34772,7 @@ static bool DrawAimOffsetWithOkayUI(EditorState& ed, AimOffset* ao, okay::Compon
     L.rows.reserve(18);
     int k1 = -1;
     int k2 = -1;
-    L.Note("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.", false, false);
+    L.Note("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.", false, true);
     L.Check("Aim with the camera##ao", &ao->useCamera);
     k1 = L.Text("Target object##ao", &ao->targetName);
     L.Tip("When set, the body aims at this object instead of the camera.");
@@ -34821,7 +34824,7 @@ static bool DrawVehicleController2DWithOkayUI(EditorState& ed, VehicleController
         L.Drag("Handbrake Grip##veh2", &v2->handbrakeGrip, 1, 0.05f, 0.0f, 30.0f);
         L.TipLookup();
     }
-    L.Note(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider." : "W/S gas, A/D steer, Space handbrake (drift).", false, false);
+    L.Note(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider." : "W/S gas, A/D steer, Space handbrake (drift).", false, true);
     const int kRemove = L.SmallButton("Remove##veh2");
     if (!DrawRowsOkayUI(v2, "##okayui_vehiclecontroller2d", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -34834,8 +34837,8 @@ static bool DrawBlockBuilderWithOkayUI(EditorState& ed, BlockBuilder* bb, okay::
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(18);
-    L.Note("Look + click to place a cube on a grid; right-click removes it.", false, false);
-    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, false);
+    L.Note("Look + click to place a cube on a grid; right-click removes it.", false, true);
+    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, true);
     L.Drag("Block Size##bb", &bb->blockSize, 1, 0.05f, 0.05f, 50.0f);
     L.TipLookup();
     L.Drag("Reach##bb", &bb->reach, 1, 0.25f, 0.5f, 200.0f);
@@ -34875,9 +34878,9 @@ static bool DrawBuilderModeWithOkayUI(EditorState& ed, BuilderMode* bm, okay::Co
     int k1 = -1;
     float sr[2] = {bm->minScale, bm->maxScale};
     int k2 = -1;
-    L.Note("Walk + aim: click places the brush, right-click removes it.", false, false);
-    L.Note("R rotate, +/- scale, G grab a piece, P save the model as a prefab.", false, false);
-    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, false);
+    L.Note("Walk + aim: click places the brush, right-click removes it.", false, true);
+    L.Note("R rotate, +/- scale, G grab a piece, P save the model as a prefab.", false, true);
+    L.Note("Attach to the Player (or its camera) — it ignores your own body.", false, true);
     static const char* const brushes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Wedge", "Pyramid", "Plane", "Capsule", "Torus", "Prefab"};
     k1 = L.Combo("Brush##bm", &br, brushes, BuilderMode::kBrushCount);
     L.TipLookup();
@@ -34914,7 +34917,7 @@ static bool DrawBuilderModeWithOkayUI(EditorState& ed, BuilderMode* bm, okay::Co
     L.Text("Map file##bm", &bm->mapPath, "built_map.okayscene");
     L.Tip("Save Map (O key, also in Play) writes the WHOLE scene here so a map you build in-game persists.");
     L.TreeEnd();
-    L.Note("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map", false, false);
+    L.Note("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map", false, true);
     L.Check("Brush hotkeys (1-9)##bm", &bm->brushHotkeys);
     L.TipLookup();
     L.Check("Placement preview##bm", &bm->showPreview);
@@ -34965,8 +34968,8 @@ static bool DrawBuildableWithOkayUI(EditorState& ed, Buildable* bl, okay::Compon
     InspFieldList L;
     L.rows.reserve(11);
     int k1 = -1;
-    L.Note("Players may edit this in build mode. Put one on every palette prefab", false, false);
-    L.Note("and on level props players are allowed to rearrange.", false, false);
+    L.Note("Players may edit this in build mode. Put one on every palette prefab", false, true);
+    L.Note("and on level props players are allowed to rearrange.", false, true);
     L.Check("Players can edit##bl", &bl->editable);
     L.TipLookup();
     { char t_[256]; std::snprintf(t_, sizeof t_, "Build id: %d", bl->buildId);
@@ -34975,7 +34978,7 @@ static bool DrawBuildableWithOkayUI(EditorState& ed, Buildable* bl, okay::Compon
     k1 = L.SmallButton("New id##bl");
     L.Tip("Logic links and saved creations find objects by this id.");
     if (bl->placed) {
-        L.Note("Placed by a player (saved with creations)", false, false);
+        L.Note("Placed by a player (saved with creations)", false, true);
     }
     const int kRemove = L.SmallButton("Remove##bl");
     if (!DrawRowsOkayUI(bl, "##okayui_buildable", L)) return false;
@@ -34990,7 +34993,7 @@ static bool DrawNetInventoryWithOkayUI(EditorState& ed, NetInventory* ni, okay::
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(12);
-    L.Note("Host owns this bag or chest. Clients send requests; they don't write the contents.", false, false);
+    L.Note("Host owns this bag or chest. Clients send requests; they don't write the contents.", false, true);
     L.Drag("Range##ni", &ni->range, 1, 0.1f, 0.0f, 100.0f);
     L.Tip("How close someone must be to take from a chest (0 = any distance).");
     L.DragInt("Requests / sec##ni", &ni->maxPerSecond, 0.2f, 0, 200);
@@ -35065,7 +35068,7 @@ static bool DrawHealthStatWithOkayUI(EditorState& ed, HealthStat* c, okay::Compo
     L.Check("Fill *Bar##sth", &c->publishBar);
     L.Check("Broadcast msg##sth", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.", false, false);
+    L.Note("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.", false, true);
     const int kRemove = L.SmallButton("Remove##sth");
     if (!DrawRowsOkayUI(c, "##okayui_healthstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35099,7 +35102,7 @@ static bool DrawSeatWithOkayUI(EditorState& ed, Seat* c, okay::Component*& toRem
     L.Text("Prompt##seat", &c->prompt);
     L.TipLookup();
     if (c->occupied) {
-        L.Note("Occupied", false, false);
+        L.Note("Occupied", false, true);
     }
     const int kRemove = L.SmallButton("Remove##seat");
     if (!DrawRowsOkayUI(c, "##okayui_seat", L)) return false;
@@ -35139,7 +35142,7 @@ static bool DrawHungerStatWithOkayUI(EditorState& ed, HungerStat* c, okay::Compo
     L.Check("Fill *Bar##sthu", &c->publishBar);
     L.Check("Broadcast msg##sthu", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().", false, false);
+    L.Note("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().", false, true);
     const int kRemove = L.SmallButton("Remove##sthu");
     if (!DrawRowsOkayUI(c, "##okayui_hungerstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35176,7 +35179,7 @@ static bool DrawThirstStatWithOkayUI(EditorState& ed, ThirstStat* c, okay::Compo
     L.Check("Fill *Bar##stt", &c->publishBar);
     L.Check("Broadcast msg##stt", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().", false, false);
+    L.Note("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().", false, true);
     const int kRemove = L.SmallButton("Remove##stt");
     if (!DrawRowsOkayUI(c, "##okayui_thirststat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35217,7 +35220,7 @@ static bool DrawStaminaStatWithOkayUI(EditorState& ed, StaminaStat* c, okay::Com
     L.Check("Fill *Bar##sts", &c->publishBar);
     L.Check("Broadcast msg##sts", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().", false, false);
+    L.Note("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().", false, true);
     const int kRemove = L.SmallButton("Remove##sts");
     if (!DrawRowsOkayUI(c, "##okayui_staminastat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35247,7 +35250,7 @@ static bool DrawOxygenStatWithOkayUI(EditorState& ed, OxygenStat* c, okay::Compo
     L.Check("Fill *Bar##sto", &c->publishBar);
     L.Check("Broadcast msg##sto", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.", false, false);
+    L.Note("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.", false, true);
     const int kRemove = L.SmallButton("Remove##sto");
     if (!DrawRowsOkayUI(c, "##okayui_oxygenstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35277,7 +35280,7 @@ static bool DrawTemperatureStatWithOkayUI(EditorState& ed, TemperatureStat* c, o
     L.Check("Fill *Bar##stmp", &c->publishBar);
     L.Check("Broadcast msg##stmp", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.", false, false);
+    L.Note("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.", false, true);
     const int kRemove = L.SmallButton("Remove##stmp");
     if (!DrawRowsOkayUI(c, "##okayui_temperaturestat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35312,7 +35315,7 @@ static bool DrawSleepStatWithOkayUI(EditorState& ed, SleepStat* c, okay::Compone
     L.Check("Fill *Bar##stsl", &c->publishBar);
     L.Check("Broadcast msg##stsl", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().", false, false);
+    L.Note("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().", false, true);
     const int kRemove = L.SmallButton("Remove##stsl");
     if (!DrawRowsOkayUI(c, "##okayui_sleepstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35342,7 +35345,7 @@ static bool DrawSanityStatWithOkayUI(EditorState& ed, SanityStat* c, okay::Compo
     L.Check("Fill *Bar##stsn", &c->publishBar);
     L.Check("Broadcast msg##stsn", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.", false, false);
+    L.Note("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.", false, true);
     const int kRemove = L.SmallButton("Remove##stsn");
     if (!DrawRowsOkayUI(c, "##okayui_sanitystat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35355,7 +35358,7 @@ static bool DrawRadiationStatWithOkayUI(EditorState& ed, RadiationStat* c, okay:
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(18);
-    L.Note("Builds in zones; past threshold it poisons Health.", false, false);
+    L.Note("Builds in zones; past threshold it poisons Health.", false, true);
     { const float fr_ = c->maxRadiation > 0.0f ? Mathf::Clamp01(c->radiation / c->maxRadiation) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->radiation, c->maxRadiation); L.Progress(ov_, fr_, true); }
     L.Drag("Current##curstrd", &c->radiation, 1, 0.5f, 0.0f, 1e9f, "%.1f");
     L.Drag("Max##strd", &c->maxRadiation, 1, 1.0f, 1.0f, 100000.0f);
@@ -35373,7 +35376,7 @@ static bool DrawRadiationStatWithOkayUI(EditorState& ed, RadiationStat* c, okay:
     L.Check("Fill *Bar##strd", &c->publishBar);
     L.Check("Broadcast msg##strd", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: AddRadiation, TakeAntiRad, SetInRadiation.", false, false);
+    L.Note("Methods: AddRadiation, TakeAntiRad, SetInRadiation.", false, true);
     const int kRemove = L.SmallButton("Remove##strd");
     if (!DrawRowsOkayUI(c, "##okayui_radiationstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35386,7 +35389,7 @@ static bool DrawBleedingStatWithOkayUI(EditorState& ed, BleedingStat* c, okay::C
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(16);
-    L.Note("Wounds drain Health until bandaged.", false, false);
+    L.Note("Wounds drain Health until bandaged.", false, true);
     { const float fr_ = c->maxBleed > 0.0f ? Mathf::Clamp01(c->bleed / c->maxBleed) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->bleed, c->maxBleed); L.Progress(ov_, fr_, true); }
     L.Drag("Current##curstbl", &c->bleed, 1, 0.5f, 0.0f, 1e9f, "%.1f");
     L.Drag("Max Bleed##stbl", &c->maxBleed, 1, 1.0f, 1.0f, 100000.0f);
@@ -35400,7 +35403,7 @@ static bool DrawBleedingStatWithOkayUI(EditorState& ed, BleedingStat* c, okay::C
     L.Check("Fill *Bar##stbl", &c->publishBar);
     L.Check("Broadcast msg##stbl", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Wound, Bandage, Heal.", false, false);
+    L.Note("Methods: Wound, Bandage, Heal.", false, true);
     const int kRemove = L.SmallButton("Remove##stbl");
     if (!DrawRowsOkayUI(c, "##okayui_bleedingstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35413,7 +35416,7 @@ static bool DrawPoisonStatWithOkayUI(EditorState& ed, PoisonStat* c, okay::Compo
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(16);
-    L.Note("Toxin damages Health, then fades; antidote clears.", false, false);
+    L.Note("Toxin damages Health, then fades; antidote clears.", false, true);
     { const float fr_ = c->maxPoison > 0.0f ? Mathf::Clamp01(c->poison / c->maxPoison) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->poison, c->maxPoison); L.Progress(ov_, fr_, true); }
     L.Drag("Current##curstpo", &c->poison, 1, 0.5f, 0.0f, 1e9f, "%.1f");
     L.Drag("Max Poison##stpo", &c->maxPoison, 1, 1.0f, 1.0f, 100000.0f);
@@ -35427,7 +35430,7 @@ static bool DrawPoisonStatWithOkayUI(EditorState& ed, PoisonStat* c, okay::Compo
     L.Check("Fill *Bar##stpo", &c->publishBar);
     L.Check("Broadcast msg##stpo", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: Poison, Cure, CureAll.", false, false);
+    L.Note("Methods: Poison, Cure, CureAll.", false, true);
     const int kRemove = L.SmallButton("Remove##stpo");
     if (!DrawRowsOkayUI(c, "##okayui_poisonstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35440,7 +35443,7 @@ static bool DrawWetnessStatWithOkayUI(EditorState& ed, WetnessStat* c, okay::Com
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(18);
-    L.Note("Soaks in water/rain; chills warmth while wet.", false, false);
+    L.Note("Soaks in water/rain; chills warmth while wet.", false, true);
     { const float fr_ = c->maxWetness > 0.0f ? Mathf::Clamp01(c->wetness / c->maxWetness) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->wetness, c->maxWetness); L.Progress(ov_, fr_, true); }
     L.Drag("Current##curstwe", &c->wetness, 1, 0.5f, 0.0f, 1e9f, "%.1f");
     L.Drag("Max Wetness##stwe", &c->maxWetness, 1, 1.0f, 1.0f, 100000.0f);
@@ -35458,7 +35461,7 @@ static bool DrawWetnessStatWithOkayUI(EditorState& ed, WetnessStat* c, okay::Com
     L.Check("Fill *Bar##stwe", &c->publishBar);
     L.Check("Broadcast msg##stwe", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: AddWetness, DryOff, SetInWater.", false, false);
+    L.Note("Methods: AddWetness, DryOff, SetInWater.", false, true);
     const int kRemove = L.SmallButton("Remove##stwe");
     if (!DrawRowsOkayUI(c, "##okayui_wetnessstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35471,7 +35474,7 @@ static bool DrawCarryWeightStatWithOkayUI(EditorState& ed, CarryWeightStat* c, o
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(16);
-    L.Note("Over the limit: drains stamina, slows movement.", false, false);
+    L.Note("Over the limit: drains stamina, slows movement.", false, true);
     { const float fr_ = c->maxLoad > 0.0f ? Mathf::Clamp01(c->load / c->maxLoad) : 0.0f; char ov_[48]; std::snprintf(ov_, sizeof ov_, "%.1f / %.0f", c->load, c->maxLoad); L.Progress(ov_, fr_, true); }
     L.Drag("Current##curstcw", &c->load, 1, 0.5f, 0.0f, 1e9f, "%.1f");
     L.Drag("Max Load##stcw", &c->maxLoad, 1, 1.0f, 0.0f, 1000000.0f);
@@ -35485,7 +35488,7 @@ static bool DrawCarryWeightStatWithOkayUI(EditorState& ed, CarryWeightStat* c, o
     L.Check("Fill *Bar##stcw", &c->publishBar);
     L.Check("Broadcast msg##stcw", &c->sendMessages);
     L.TreeEnd();
-    L.Note("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.", false, false);
+    L.Note("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.", false, true);
     const int kRemove = L.SmallButton("Remove##stcw");
     if (!DrawRowsOkayUI(c, "##okayui_carryweightstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35498,13 +35501,13 @@ static bool DrawStatusEffectStatWithOkayUI(EditorState& ed, StatusEffectStat* c,
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(10);
-    L.Note("Timed buffs/debuffs (code/trigger-driven).", false, false);
-    L.Note("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.", false, false);
+    L.Note("Timed buffs/debuffs (code/trigger-driven).", false, true);
+    L.Note("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.", false, true);
     L.Check("Broadcast messages##stse", &c->sendMessages);
     L.Tip("<name> on apply, <name>_expired on end -> ActionList OnMessage.");
     { char t_[256]; std::snprintf(t_, sizeof t_, "Active now: %d", c->ActiveCount());
       L.Label(t_, 0, false, true); }
-    L.Note("Methods: Apply, Remove, Clear, Has, Remaining.", false, false);
+    L.Note("Methods: Apply, Remove, Clear, Has, Remaining.", false, true);
     const int kRemove = L.SmallButton("Remove##stse");
     if (!DrawRowsOkayUI(c, "##okayui_statuseffectstat", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35519,7 +35522,7 @@ static bool DrawSurvivalSaveWithOkayUI(EditorState& ed, SurvivalSave* c, okay::C
     L.rows.reserve(12);
     int k1 = -1;
     int k2 = -1;
-    L.Note("Persists current stat values across sessions.", false, false);
+    L.Note("Persists current stat values across sessions.", false, true);
     L.Text("Save Key##svsv", &c->saveKey);
     L.Tip("Writes <key>.okayprefs beside the game.");
     L.Check("Load on Start##svsv", &c->loadOnStart);
@@ -35531,7 +35534,7 @@ static bool DrawSurvivalSaveWithOkayUI(EditorState& ed, SurvivalSave* c, okay::C
         L.SameLine();
         k2 = L.SmallButton("Load Now##svsv");
     }
-    L.Note("Methods: Save, Load (On Click-callable).", false, false);
+    L.Note("Methods: Save, Load (On Click-callable).", false, true);
     const int kRemove = L.SmallButton("Remove##svsv");
     if (!DrawRowsOkayUI(c, "##okayui_survivalsave", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35580,7 +35583,7 @@ static bool DrawDayNightCycleWithOkayUI(EditorState& ed, DayNightCycle* c, okay:
         L.Color("Night Sky##dnc", &c->skyNight.r, 3);
         L.TipLookup();
     }
-    L.Note("Drives the Sun light + main camera sky. Bind UI text with {hour}.", false, false);
+    L.Note("Drives the Sun light + main camera sky. Bind UI text with {hour}.", false, true);
     const int kRemove = L.SmallButton("Remove##dnc");
     if (!DrawRowsOkayUI(c, "##okayui_daynightcycle", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35627,7 +35630,7 @@ static bool DrawTopDownControllerWithOkayUI(EditorState& ed, TopDownController* 
     L.TipLookup();
     L.Drag("Damping##td", &td->cameraDamping, 1, 0.1f, 0.0f, 30.0f);
     L.TipLookup();
-    L.Note("Twin-stick / ARPG: WASD + a fixed high follow camera.", false, false);
+    L.Note("Twin-stick / ARPG: WASD + a fixed high follow camera.", false, true);
     const int kRemove = L.SmallButton("Remove##td");
     if (!DrawRowsOkayUI(td, "##okayui_topdowncontroller", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35641,7 +35644,7 @@ static bool DrawRagdollWithOkayUI(EditorState& ed, Ragdoll* rd, okay::Component*
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(19);
-    L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, false);
+    L.Note("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).", false, true);
     L.Section("Triggers");
     L.Check("Ragdoll On Death##rd", &rd->ragdollOnDeath);
     L.TipLookup();
@@ -35683,7 +35686,7 @@ static bool DrawTopDownShooterControllerWithOkayUI(EditorState& ed, TopDownShoot
     int k1 = -1;
     int pb = sh->dashGamepadButton < 0 || sh->dashGamepadButton > 3 ? 4 : sh->dashGamepadButton;
     int k2 = -1;
-    L.Note("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.", false, false);
+    L.Note("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.", false, true);
     L.Section("Movement");
     L.Drag("Walk Speed##tds", &sh->walkSpeed, 1, 0.1f, 0.0f, 50.0f);
     L.TipLookup();
@@ -35801,7 +35804,7 @@ static bool DrawTopDownShooterControllerWithOkayUI(EditorState& ed, TopDownShoot
     }
     L.Drag("Fire Shake##tds", &sh->fireShake, 1, 0.005f, 0.0f, 0.5f, "%.3f");
     L.TipLookup();
-    L.Note("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.", false, false);
+    L.Note("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.", false, true);
     const int kRemove = L.SmallButton("Remove##tds");
     if (!DrawRowsOkayUI(sh, "##okayui_topdownshootercontroller", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35834,7 +35837,7 @@ static bool DrawProjectile3DWithOkayUI(EditorState& ed, Projectile3D* pj, okay::
     if (pj->bounce) {
         L.DragInt("Bounces##pj", &pj->maxBounces, 0.05f, 1, 20);
     }
-    L.Note("Damages the Health it hits; calls on_hit on its script.", false, false);
+    L.Note("Damages the Health it hits; calls on_hit on its script.", false, true);
     const int kRemove = L.SmallButton("Remove##pj");
     if (!DrawRowsOkayUI(pj, "##okayui_projectile3d", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35872,7 +35875,7 @@ static bool DrawFreeRoamControllerWithOkayUI(EditorState& ed, FreeRoamController
     L.TipLookup();
     L.Drag("Max Pitch##fr", &fr->maxPitch, 1, 0.5f, 0.0f, 89.0f);
     L.TipLookup();
-    L.Note("Put on a Camera. WASD fly, Space/C up/down, Shift boost.", false, false);
+    L.Note("Put on a Camera. WASD fly, Space/C up/down, Shift boost.", false, true);
     const int kRemove = L.SmallButton("Remove##fr");
     if (!DrawRowsOkayUI(fr, "##okayui_freeroamcontroller", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35892,7 +35895,7 @@ static bool DrawFollowTarget2DWithOkayUI(EditorState& ed, FollowTarget2D* ft, ok
     L.TipLookup();
     L.Drag("Stop Distance##ft", &ft->stopDistance, 1, 0.05f, 0.0f, 1000.0f);
     L.TipLookup();
-    L.Note("Chases the named object (enemy AI / homing).", false, false);
+    L.Note("Chases the named object (enemy AI / homing).", false, true);
     const int kRemove = L.SmallButton("Remove##ft");
     if (!DrawRowsOkayUI(ft, "##okayui_followtarget2d", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35919,7 +35922,7 @@ static bool DrawGridPathAgent2DWithOkayUI(EditorState& ed, GridPathAgent2D* gp, 
     L.Tip("Use the Grid Movement Costs on the tilemap. Off: only empty tiles are open, and every step costs the same.");
     L.Drag("Plan again every (seconds)##gp", &gp->repathInterval, 1, 0.05f, 0.0f, 60.0f);
     L.Tip("How often to plan again. A new obstacle on the route plans again at once.");
-    L.Note("Walks empty tiles. Walls are any other tile until costs are on.", false, false);
+    L.Note("Walks empty tiles. Walls are any other tile until costs are on.", false, true);
     const int kRemove = L.SmallButton("Remove##gp");
     if (!DrawRowsOkayUI(gp, "##okayui_gridpathagent2d", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35940,7 +35943,7 @@ static bool DrawGridCostLayerWithOkayUI(EditorState& ed, GridCostLayer* gc, okay
     L.Tip("Which tile number is mud.");
     L.Drag("Mud cost (higher is slower)##gc", &gc->mudCost, 1, 0.05f, 0.0f, 1000.0f);
     L.Tip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
-    L.Note("The agent pays these only when Pay for mud and roads is on.", false, false);
+    L.Note("The agent pays these only when Pay for mud and roads is on.", false, true);
     const int kRemove = L.SmallButton("Remove##gc");
     if (!DrawRowsOkayUI(gc, "##okayui_gridcostlayer", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35961,7 +35964,7 @@ static bool DrawGridObstacle2DWithOkayUI(EditorState& ed, GridObstacle2D* go2, o
     L.Tip("Height of the blocked rectangle, in cells.");
     L.Check("Block the path##gob", &go2->blocks);
     L.Tip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
-    L.Note("Move this object to slide the blocked cells.", false, false);
+    L.Note("Move this object to slide the blocked cells.", false, true);
     const int kRemove = L.SmallButton("Remove##gob");
     if (!DrawRowsOkayUI(go2, "##okayui_gridobstacle2d", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35976,7 +35979,7 @@ static bool DrawMoverWithOkayUI(EditorState& ed, Mover* mv, okay::Component*& to
     L.rows.reserve(7);
     L.Drag("Velocity##mv", &mv->velocity.x, 3, 0.05f);
     L.TipLookup();
-    L.Note("units / second", false, false);
+    L.Note("units / second", false, true);
     const int kRemove = L.SmallButton("Remove##mv");
     if (!DrawRowsOkayUI(mv, "##okayui_mover", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -35991,7 +35994,7 @@ static bool DrawSpinnerWithOkayUI(EditorState& ed, Spinner* sp, okay::Component*
     L.rows.reserve(7);
     L.Drag("Angular Vel##sp", &sp->angularVelocity.x, 3, 0.5f);
     L.TipLookup();
-    L.Note("degrees / second (X, Y, Z)", false, false);
+    L.Note("degrees / second (X, Y, Z)", false, true);
     const int kRemove = L.SmallButton("Remove##sp");
     if (!DrawRowsOkayUI(sp, "##okayui_spinner", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36006,7 +36009,7 @@ static bool DrawLifetimeWithOkayUI(EditorState& ed, Lifetime* lt, okay::Componen
     L.rows.reserve(7);
     L.Drag("Seconds##lt", &lt->seconds, 1, 0.05f, 0.0f, 10000.0f);
     L.TipLookup();
-    L.Note("destroys this object after N seconds of play", false, false);
+    L.Note("destroys this object after N seconds of play", false, true);
     const int kRemove = L.SmallButton("Remove##lt");
     if (!DrawRowsOkayUI(lt, "##okayui_lifetime", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36074,7 +36077,7 @@ static bool DrawJumpPadWithOkayUI(EditorState& ed, JumpPad* jp, okay::Component*
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(11);
-    L.Note("Launches bodies that touch it (needs a collider on this object).", false, false);
+    L.Note("Launches bodies that touch it (needs a collider on this object).", false, true);
     L.Drag("Force##jp", &jp->force, 1, 0.2f, 0.0f, 100.0f);
     L.TipLookup();
     L.Check("Launch Along Object Up##jp", &jp->useObjectUp);
@@ -36125,9 +36128,9 @@ static bool DrawCinemachineBrainWithOkayUI(EditorState& ed, CinemachineBrain* cb
     L.Tip("Smooth the blend curve instead of a linear ramp.");
     if (VirtualCamera* live = cb->LiveCamera()) {
         { char t_[256]; std::snprintf(t_, sizeof t_, "Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
-          L.Note(t_, true, false); }
+          L.Note(t_, true, true); }
     } else {
-        L.Note("Drives this Camera from virtual cameras.", false, false);
+        L.Note("Drives this Camera from virtual cameras.", false, true);
     }
     const int kRemove = L.SmallButton("Remove##cb");
     if (!DrawRowsOkayUI(cb, "##okayui_cinemachinebrain", L)) return false;
@@ -36180,8 +36183,8 @@ static bool DrawUIDraggableWithOkayUI(EditorState& ed, UIDraggable* dg, okay::Co
     L.TipLookup();
     L.Check("Keep on screen##udg", &dg->keepOnScreen);
     L.TipLookup();
-    L.Note("Drop onto a UI Drop Target fires on_drop() here +", false, false);
-    L.Note("on_receive() on the target.", false, false);
+    L.Note("Drop onto a UI Drop Target fires on_drop() here +", false, true);
+    L.Note("on_receive() on the target.", false, true);
     const int kRemove = L.SmallButton("Remove##udg");
     if (!DrawRowsOkayUI(dg, "##okayui_uidraggable", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36224,11 +36227,11 @@ static bool DrawUIDropTargetWithOkayUI(EditorState& ed, UIDropTarget* dt, okay::
     L.Section("Drop");
     L.Check("Snap dropped item to center##udt", &dt->snapToCenter);
     L.TipLookup();
-    L.Note("Script events (on a ScriptComponent here):", false, false);
+    L.Note("Script events (on a ScriptComponent here):", false, true);
     L.Bullet("on_receive  — an item is dropped on this slot");
     L.Bullet("on_remove   — an item is dragged out of this slot");
     L.Bullet("on_drag_enter / on_drag_exit — item hovers/leaves");
-    L.Note("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.", false, false);
+    L.Note("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.", false, true);
     const int kRemove = L.SmallButton("Remove##udt");
     if (!DrawRowsOkayUI(dt, "##okayui_uidroptarget", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36262,9 +36265,9 @@ static bool DrawDraggableWithOkayUI(EditorState& ed, Draggable* dg, okay::Compon
     L.Tip("Snap drag to a world grid (0 = off) — board/tile games");
     L.Drag("Drag Scale##dg", &dg->dragScale, 1, 0.01f, 0.1f, 4.0f);
     L.Tip("Scale the item while dragging for a lifted look (1 = off)");
-    L.Note("Drag the sprite at runtime; dropping on a Drop Zone", false, false);
-    L.Note("fires on_drop() here + on_receive() on the zone.", false, false);
-    L.Note("Zones also get on_hover_enter/exit() during a drag.", false, false);
+    L.Note("Drag the sprite at runtime; dropping on a Drop Zone", false, true);
+    L.Note("fires on_drop() here + on_receive() on the zone.", false, true);
+    L.Note("Zones also get on_hover_enter/exit() during a drag.", false, true);
     const int kRemove = L.SmallButton("Remove##dg");
     if (!DrawRowsOkayUI(dg, "##okayui_draggable", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36281,7 +36284,7 @@ static bool DrawDropZoneWithOkayUI(EditorState& ed, DropZone* dz, okay::Componen
     L.rows.reserve(7);
     L.Text("Accept Tag##dz", &dz->acceptTag);
     L.Tip("Only accept draggables whose object Tag matches (empty = any)");
-    L.Note("Sprites dropped here call this object's on_receive().", false, false);
+    L.Note("Sprites dropped here call this object's on_receive().", false, true);
     const int kRemove = L.SmallButton("Remove##dz");
     if (!DrawRowsOkayUI(dz, "##okayui_dropzone", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36310,7 +36313,7 @@ static bool DrawUIProgressBarWithOkayUI(EditorState& ed, UIProgressBar* pb, okay
     L.TipLookup();
     L.Color("Background##upb", &pb->background.r, 4);
     L.TipLookup();
-    L.Note("script: set_progress(0..1)", false, false);
+    L.Note("script: set_progress(0..1)", false, true);
     AddAnchorRow(L, "Anchor##upb", pb->anchor, ar);
     AddShapeRow(L, "Shape##upb", pb->shape, sr1);
     if (UIShapeUsesRadius(pb->shape)) {
@@ -36398,7 +36401,7 @@ static bool DrawUIRadialProgressWithOkayUI(EditorState& ed, UIRadialProgress* rp
     AddAnchorRow(L, "Anchor##urp", rp->anchor, ar);
     L.Check("Show Percent##urp", &rp->showPercent);
     L.TipLookup();
-    L.Note("script: set_radial(\"name\", 0..1), thickness / spin / start", false, false);
+    L.Note("script: set_radial(\"name\", 0..1), thickness / spin / start", false, true);
     const int kRemove = L.SmallButton("Remove##urp");
     if (!DrawRowsOkayUI(rp, "##okayui_uiradialprogress", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36416,15 +36419,15 @@ static bool DrawUITextBindWithOkayUI(EditorState& ed, UITextBind* tb, okay::Comp
     L.Text("Format##utbind", &tb->format);
     L.TipLookup();
     L.Tip("The text shown, filled in every frame. {name} is a visual-script variable or a saved value;\n" "{name|default} shows the default when it is empty; {{ and }} are literal braces.\n" "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n" "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n" "Controller or Character). A nameplate on a character shows that character.");
-    L.Note("Shows live values each frame on the sibling Text/Button.", false, false);
-    L.Note("Use {name} for a visual-script variable or a saved value,", false, false);
-    L.Note("e.g.  Health: {hp}   or   Score: {score}", false, false);
-    L.Note("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}", false, false);
+    L.Note("Shows live values each frame on the sibling Text/Button.", false, true);
+    L.Note("Use {name} for a visual-script variable or a saved value,", false, true);
+    L.Note("e.g.  Health: {hp}   or   Score: {score}", false, true);
+    L.Note("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}", false, true);
     if (const GameObject* ow = uiowner::Find(tb->gameObject)) {
         { char t_[256]; std::snprintf(t_, sizeof t_, "Owner: %s", ow->name.c_str());
-          L.Note(t_, true, false); }
+          L.Note(t_, true, true); }
     } else {
-        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, false);
+        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, true);
     }
     const int kRemove = L.SmallButton("Remove##utbind");
     if (!DrawRowsOkayUI(tb, "##okayui_uitextbind", L)) return false;
@@ -36445,14 +36448,14 @@ static bool DrawUIBarBindWithOkayUI(EditorState& ed, UIBarBind* bb, okay::Compon
     L.TipLookup();
     L.Drag("Max (full)##ubbind", &bb->max, 1, 0.5f);
     L.TipLookup();
-    L.Note("Fills the sibling Progress Bar / Radial from the named", false, false);
-    L.Note("visual-script variable (or saved value) each frame.", false, false);
-    L.Note("Under a character: owner.healthFrac is that character's health (0 to 1).", false, false);
+    L.Note("Fills the sibling Progress Bar / Radial from the named", false, true);
+    L.Note("visual-script variable (or saved value) each frame.", false, true);
+    L.Note("Under a character: owner.healthFrac is that character's health (0 to 1).", false, true);
     if (const GameObject* ow = uiowner::Find(bb->gameObject)) {
         { char t_[256]; std::snprintf(t_, sizeof t_, "Owner: %s", ow->name.c_str());
-          L.Note(t_, true, false); }
+          L.Note(t_, true, true); }
     } else {
-        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, false);
+        L.Note("Owner: none (an owner key then reads the variable of the same name, the player's)", false, true);
     }
     const int kRemove = L.SmallButton("Remove##ubbind");
     if (!DrawRowsOkayUI(bb, "##okayui_uibarbind", L)) return false;
@@ -36571,7 +36574,7 @@ static bool DrawUIStepperWithOkayUI(EditorState& ed, UIStepper* st, okay::Compon
     }
     L.Check("Interactable##ust", &st->interactable);
     L.TipLookup();
-    L.Note("[-] value [+] ; calls script on_change()", false, false);
+    L.Note("[-] value [+] ; calls script on_change()", false, true);
     const int kRemove = L.SmallButton("Remove##ust");
     if (!DrawRowsOkayUI(st, "##okayui_uistepper", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -36605,7 +36608,7 @@ static bool DrawUIRatingWithOkayUI(EditorState& ed, UIRating* rt, okay::Componen
     L.Color("Empty##urt", &rt->off.r, 4);
     L.TipLookup();
     AddAnchorRow(L, "Anchor##urt", rt->anchor, ar);
-    L.Note("click a star to rate; calls script on_change()", false, false);
+    L.Note("click a star to rate; calls script on_change()", false, true);
     const int kRemove = L.SmallButton("Remove##urt");
     if (!DrawRowsOkayUI(rt, "##okayui_uirating", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -38829,7 +38832,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
         if (CompHeader("Network Sync", ns, &toRemove) && !(UseOkayUIBackend() && DrawNetworkSyncWithOkayUI(ed, ns, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.");
+            WrappedNote("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.");
             char nid[64]; std::snprintf(nid, sizeof(nid), "%s", ns->netId.c_str());
             if (ImGui::InputText("Net Id##ns", nid, sizeof(nid))) { ns->netId = nid; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Must match the same object on every peer (blank = use the object's name).");
@@ -38846,13 +38849,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable)
-                ImGui::TextDisabled("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
+                WrappedNote("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
     if (auto* ps = dynamic_cast<NetworkPlayerSpawner*>(curComp)) {
         if (CompHeader("Network Player Spawner", ps, &toRemove) && !(UseOkayUIBackend() && DrawNetworkPlayerSpawnerWithOkayUI(ed, ps, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Spawns a player copy for you (driveable) and for each peer\n"
+            WrappedNote("Spawns a player copy for you (driveable) and for each peer\n"
                                 "(stripped to a moving/animating avatar). Needs a Network Manager.");
             char tn[64]; std::snprintf(tn, sizeof(tn), "%s", ps->playerTemplate.c_str());
             if (ImGui::InputText("Template object##nps", tn, sizeof(tn))) { ps->playerTemplate = tn; ed.dirty = true; }
@@ -39015,7 +39018,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* nv = dynamic_cast<NetValidator*>(curComp)) {
         if (CompHeader("Net Validator", nv, &toRemove) && !(UseOkayUIBackend() && DrawNetValidatorWithOkayUI(ed, nv, toRemove))) {   // OkayUI's with the preview switch (section 22)
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("A rule a client's RPC must pass on the server (needs an Anti-Cheat Config).");
+            WrappedNote("A rule a client's RPC must pass on the server (needs an Anti-Cheat Config).");
             ImGui::PopTextWrapPos();
             char rn[64]; std::snprintf(rn, sizeof(rn), "%s", nv->rpc.c_str());
             if (ImGui::InputText("RPC name##nv", rn, sizeof(rn))) { nv->rpc = rn; ed.dirty = true; }
@@ -39092,7 +39095,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ss = dynamic_cast<SaveConfig*>(curComp)) {
         if (CompHeader("Save Settings", ss, &toRemove) && !(UseOkayUIBackend() && DrawSaveConfigWithOkayUI(ed, ss, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("When this scene saves by itself. One per scene.");
+            WrappedNote("When this scene saves by itself. One per scene.");
             if (ImGui::DragFloat("Autosave every (s)##ss", &ss->autosaveInterval, 1.0f, 0.0f, 7200.0f, "%.0f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between autosaves (0 = off).");
             if (ImGui::Checkbox("Autosave when the scene starts##ss", &ss->autosaveOnSceneStart)) ed.dirty = true;
@@ -39156,7 +39159,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ws = dynamic_cast<WorldStreamer*>(curComp)) {
         if (CompHeader("World Streamer", ws, &toRemove) && !(UseOkayUIBackend() && DrawWorldStreamerWithOkayUI(ed, ws, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Streams cell prefabs in/out around the target (World Partition).");
+            WrappedNote("Streams cell prefabs in/out around the target (World Partition).");
             if (ImGui::DragFloat("Cell Size##ws", &ws->cellSize, 1.0f, 1.0f, 5000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("World units per chunk edge (XZ).");
             if (ImGui::DragInt("Load Radius##ws", &ws->loadRadius, 0.1f, 0, 32)) ed.dirty = true;
@@ -39178,14 +39181,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Follow Object##ws", tbuf, sizeof(tbuf))) { ws->target = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object to follow. Blank = the main camera.");
             ImGui::Checkbox("Only re-check on cell change##ws", &ws->onlyOnCellChange);
-            ImGui::TextDisabled("Cells: %s%s_<x>_<z>%s  |  resident: %d",
+            WrappedNote("Cells: %s%s_<x>_<z>%s  |  resident: %d",
                                 ws->folder.c_str(), ws->prefix.c_str(), ws->ext.c_str(), (int)ws->LoadedCount());
             if (ImGui::SmallButton("Remove##ws")) toRemove = ws;
         }
     }
     if (auto* de = dynamic_cast<Destructible*>(curComp)) {
         if (CompHeader("Destructible (Chaos)", de, &toRemove) && !(UseOkayUIBackend() && DrawDestructibleWithOkayUI(ed, de, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Voxel blocks shatter into physics debris; unsupported blocks collapse.");
+            WrappedNote("Voxel blocks shatter into physics debris; unsupported blocks collapse.");
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", de->blockTag.c_str());
             if (ImGui::InputText("Block Tag##de", tbuf, sizeof(tbuf))) { de->blockTag = tbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only objects with this tag fracture (matches BlockBuilder's Block Tag).");
@@ -39955,7 +39958,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("On: the real triangles hide what's behind them.\n"
                                   "Off: the bounding box does (only for a solid wall).");
-            ImGui::TextDisabled("Objects behind this one can be skipped when Occlusion is on (Stats).");
+            WrappedNote("Objects behind this one can be skipped when Occlusion is on (Stats).");
             if (ImGui::SmallButton("Remove##occ")) toRemove = occ;
         }
     }
@@ -40220,7 +40223,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* jt = dynamic_cast<Joint2D*>(curComp)) {
         if (CompHeader("Joint 2D", jt, &toRemove) && !(UseOkayUIBackend() && DrawJoint2DWithOkayUI(ed, jt, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Constrains this 2D body to an anchor or another body.");
+            WrappedNote("Constrains this 2D body to an anchor or another body.");
             const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
             ImGui::Combo("Mode##jt2", &jt->mode, modes, 4);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
@@ -40240,7 +40243,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Damper##jt2", &jt->damper, 0.1f, 0.0f, 500.0f);
             }
             if (jt->mode == (int)Joint2D::Mode::Hinge) {
-                ImGui::TextDisabled("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.");
+                WrappedNote("Pins a point, free to spin. Needs Freeze Rotation OFF on the body.");
                 if (ImGui::Checkbox("Use Motor##jt2", &jt->useMotor)) ed.dirty = true;
                 oked::FieldTip("Use Motor##jt2");
                 if (jt->useMotor) {
@@ -40304,7 +40307,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ikt = dynamic_cast<IKTarget*>(curComp)) {
         if (CompHeader("IK Target", ikt, &toRemove) && !(UseOkayUIBackend() && DrawIKTargetWithOkayUI(ed, ikt, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("This object is where a hand, foot, or the head reaches.");
+            WrappedNote("This object is where a hand, foot, or the head reaches.");
             char cn[64]; std::strncpy(cn, ikt->characterName.c_str(), sizeof(cn) - 1); cn[sizeof(cn) - 1] = '\0';
             if (ImGui::InputText("Character##ikt", cn, sizeof(cn))) { ikt->characterName = cn; ikt->character = nullptr; ed.dirty = true; }
             oked::FieldTip("Character##ikt");
@@ -40321,7 +40324,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ao = dynamic_cast<AimOffset*>(curComp)) {
         if (CompHeader("Aim Offset", ao, &toRemove) && !(UseOkayUIBackend() && DrawAimOffsetWithOkayUI(ed, ao, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.");
+            WrappedNote("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.");
             ImGui::Checkbox("Aim with the camera##ao", &ao->useCamera);
             char tn[64]; std::strncpy(tn, ao->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##ao", tn, sizeof(tn))) { ao->targetName = tn; ao->target = nullptr; ed.dirty = true; }
@@ -41425,15 +41428,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Handbrake Grip##veh2", &v2->handbrakeGrip, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
                 oked::FieldTip("Handbrake Grip##veh2");
             }
-            ImGui::TextDisabled(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
+            WrappedNote(v2->sideView ? "A/D drive, Space brake. Needs Rigidbody2D + collider."
                                              : "W/S gas, A/D steer, Space handbrake (drift).");
             if (ImGui::SmallButton("Remove##veh2")) toRemove = v2;
         }
     }
     if (auto* bb = dynamic_cast<BlockBuilder*>(curComp)) {
         if (CompHeader("Block Builder (voxel)", bb, &toRemove) && !(UseOkayUIBackend() && DrawBlockBuilderWithOkayUI(ed, bb, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Look + click to place a cube on a grid; right-click removes it.");
-            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            WrappedNote("Look + click to place a cube on a grid; right-click removes it.");
+            WrappedNote("Attach to the Player (or its camera) — it ignores your own body.");
             if (ImGui::DragFloat("Block Size##bb", &bb->blockSize, 0.05f, 0.05f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Block Size##bb");
             if (ImGui::DragFloat("Reach##bb", &bb->reach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
@@ -41517,9 +41520,9 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* bm = dynamic_cast<BuilderMode*>(curComp)) {
         if (CompHeader("Builder Mode (in-game)", bm, &toRemove) && !(UseOkayUIBackend() && DrawBuilderModeWithOkayUI(ed, bm, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Walk + aim: click places the brush, right-click removes it.");
-            ImGui::TextDisabled("R rotate, +/- scale, G grab a piece, P save the model as a prefab.");
-            ImGui::TextDisabled("Attach to the Player (or its camera) — it ignores your own body.");
+            WrappedNote("Walk + aim: click places the brush, right-click removes it.");
+            WrappedNote("R rotate, +/- scale, G grab a piece, P save the model as a prefab.");
+            WrappedNote("Attach to the Player (or its camera) — it ignores your own body.");
             const char* brushes[] = {"Cube", "Sphere", "Cylinder", "Cone", "Wedge",
                                      "Pyramid", "Plane", "Capsule", "Torus", "Prefab"};
             int br = (int)bm->brush;
@@ -41561,7 +41564,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Map (O key, also in Play) writes the WHOLE scene here so a map you build in-game persists.");
                 ImGui::TreePop();
             }
-            ImGui::TextDisabled("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map");
+            WrappedNote("Play controls: click place / right-click remove / R rotate / +- scale / G grab / P save model / O save map");
             if (ImGui::Checkbox("Brush hotkeys (1-9)##bm", &bm->brushHotkeys)) ed.dirty = true;
             oked::FieldTip("Brush hotkeys (1-9)##bm");
             if (ImGui::Checkbox("Placement preview##bm", &bm->showPreview)) ed.dirty = true;
@@ -41705,15 +41708,15 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* bl = dynamic_cast<Buildable*>(curComp)) {
         if (CompHeader("Buildable", bl, &toRemove) && !(UseOkayUIBackend() && DrawBuildableWithOkayUI(ed, bl, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Players may edit this in build mode. Put one on every palette prefab");
-            ImGui::TextDisabled("and on level props players are allowed to rearrange.");
+            WrappedNote("Players may edit this in build mode. Put one on every palette prefab");
+            WrappedNote("and on level props players are allowed to rearrange.");
             if (ImGui::Checkbox("Players can edit##bl", &bl->editable)) ed.dirty = true;
             oked::FieldTip("Players can edit##bl");
             ImGui::Text("Build id: %d", bl->buildId);
             ImGui::SameLine();
             if (ImGui::SmallButton("New id##bl")) { bl->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Logic links and saved creations find objects by this id.");
-            if (bl->placed) ImGui::TextDisabled("Placed by a player (saved with creations)");
+            if (bl->placed) WrappedNote("Placed by a player (saved with creations)");
             if (ImGui::SmallButton("Remove##bl")) toRemove = bl;
         }
     }
@@ -42593,7 +42596,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ni = dynamic_cast<NetInventory*>(curComp)) {
         if (CompHeader("Net Inventory", ni, &toRemove) && !(UseOkayUIBackend() && DrawNetInventoryWithOkayUI(ed, ni, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Host owns this bag or chest. Clients send requests; they don't write the contents.");
+            WrappedNote("Host owns this bag or chest. Clients send requests; they don't write the contents.");
             if (ImGui::DragFloat("Range##ni", &ni->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close someone must be to take from a chest (0 = any distance).");
             if (ImGui::DragInt("Requests / sec##ni", &ni->maxPerSecond, 0.2f, 0, 200)) ed.dirty = true;
@@ -42781,7 +42784,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             statOutputs(c, "sth");
-            ImGui::TextDisabled("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.");
+            WrappedNote("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.");
             if (ImGui::SmallButton("Remove##sth")) toRemove = c;
         }
     }
@@ -42806,7 +42809,7 @@ void DrawInspector(EditorState& ed) {
             std::snprintf(pbuf, sizeof(pbuf), "%s", c->prompt.c_str());
             if (ImGui::InputText("Prompt##seat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
             oked::FieldTip("Prompt##seat");
-            if (c->occupied) ImGui::TextDisabled("Occupied");
+            if (c->occupied) WrappedNote("Occupied");
             if (ImGui::SmallButton("Remove##seat")) toRemove = c;
         }
     }
@@ -42853,7 +42856,7 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Min Speed##sthu");
             }
             statOutputs(c, "sthu");
-            ImGui::TextDisabled("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().");
+            WrappedNote("Methods: Eat, SetSprinting, SetDrainScale, SpeedFactor().");
             if (ImGui::SmallButton("Remove##sthu")) toRemove = c;
         }
     }
@@ -42876,7 +42879,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Slow When Dehydrated##stt");
             if (c->slowWhenDehydrated) if (ImGui::SliderFloat("Min Speed##stt", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stt");
-            ImGui::TextDisabled("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().");
+            WrappedNote("Methods: Drink, SetSprinting, SetDrainScale, SpeedFactor().");
             if (ImGui::SmallButton("Remove##stt")) toRemove = c;
         }
     }
@@ -42903,7 +42906,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Slow When Exhausted##sts");
             if (c->slowWhenExhausted) if (ImGui::SliderFloat("Min Speed##sts", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "sts");
-            ImGui::TextDisabled("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().");
+            WrappedNote("Methods: TryJump, SetSprinting, CanSprint, SetDrainScale, SpeedFactor().");
             if (ImGui::SmallButton("Remove##sts")) toRemove = c;
         }
     }
@@ -42921,7 +42924,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Drown Dmg / s##sto", &c->drownDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while out of air (0 = off).");
             statOutputs(c, "sto");
-            ImGui::TextDisabled("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.");
+            WrappedNote("Methods: Breathe, SetSubmerged, SetDrainScale. Empty -> 'drowning'.");
             if (ImGui::SmallButton("Remove##sto")) toRemove = c;
         }
     }
@@ -42939,7 +42942,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Freeze Dmg / s##stmp", &c->freezeDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while frozen (0 = off).");
             statOutputs(c, "stmp");
-            ImGui::TextDisabled("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.");
+            WrappedNote("Methods: Warm, SetCold, SetNearFire, SetDrainScale. Empty -> 'freezing'.");
             if (ImGui::SmallButton("Remove##stmp")) toRemove = c;
         }
     }
@@ -42960,7 +42963,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Slow When Tired##stsl");
             if (c->slowWhenTired) if (ImGui::SliderFloat("Min Speed##stsl", &c->minSpeedFactor, 0.0f, 1.0f)) ed.dirty = true;
             statOutputs(c, "stsl");
-            ImGui::TextDisabled("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().");
+            WrappedNote("Methods: Rest, SetResting, SetDrainScale, SpeedFactor().");
             if (ImGui::SmallButton("Remove##stsl")) toRemove = c;
         }
     }
@@ -42978,13 +42981,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Insane Dmg / s##stsn", &c->insaneDamage, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HP/s to a sibling Stat: Health while insane (0 = off).");
             statOutputs(c, "stsn");
-            ImGui::TextDisabled("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.");
+            WrappedNote("Methods: Restore, SetInDanger, SetDrainScale. Empty -> 'insane'.");
             if (ImGui::SmallButton("Remove##stsn")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<RadiationStat*>(curComp)) {
         if (CompHeader("Stat: Radiation", c, &toRemove) && !(UseOkayUIBackend() && DrawRadiationStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Builds in zones; past threshold it poisons Health.");
+            WrappedNote("Builds in zones; past threshold it poisons Health.");
             statValue(&c->radiation, c->maxRadiation, "strd");
             if (ImGui::DragFloat("Max##strd", &c->maxRadiation, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##strd");
@@ -42997,13 +43000,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Damage / s##strd", &c->damagePerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             oked::FieldTip("Damage / s##strd");
             statOutputs(c, "strd");
-            ImGui::TextDisabled("Methods: AddRadiation, TakeAntiRad, SetInRadiation.");
+            WrappedNote("Methods: AddRadiation, TakeAntiRad, SetInRadiation.");
             if (ImGui::SmallButton("Remove##strd")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<BleedingStat*>(curComp)) {
         if (CompHeader("Stat: Bleeding", c, &toRemove) && !(UseOkayUIBackend() && DrawBleedingStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Wounds drain Health until bandaged.");
+            WrappedNote("Wounds drain Health until bandaged.");
             statValue(&c->bleed, c->maxBleed, "stbl");
             if (ImGui::DragFloat("Max Bleed##stbl", &c->maxBleed, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Bleed##stbl");
@@ -43012,13 +43015,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Clot / s##stbl", &c->clotPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             oked::FieldTip("Clot / s##stbl");
             statOutputs(c, "stbl");
-            ImGui::TextDisabled("Methods: Wound, Bandage, Heal.");
+            WrappedNote("Methods: Wound, Bandage, Heal.");
             if (ImGui::SmallButton("Remove##stbl")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<PoisonStat*>(curComp)) {
         if (CompHeader("Stat: Poison", c, &toRemove) && !(UseOkayUIBackend() && DrawPoisonStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Toxin damages Health, then fades; antidote clears.");
+            WrappedNote("Toxin damages Health, then fades; antidote clears.");
             statValue(&c->poison, c->maxPoison, "stpo");
             if (ImGui::DragFloat("Max Poison##stpo", &c->maxPoison, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Poison##stpo");
@@ -43027,13 +43030,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Decay / s##stpo", &c->decayPerSecond, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             oked::FieldTip("Decay / s##stpo");
             statOutputs(c, "stpo");
-            ImGui::TextDisabled("Methods: Poison, Cure, CureAll.");
+            WrappedNote("Methods: Poison, Cure, CureAll.");
             if (ImGui::SmallButton("Remove##stpo")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<WetnessStat*>(curComp)) {
         if (CompHeader("Stat: Wetness", c, &toRemove) && !(UseOkayUIBackend() && DrawWetnessStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Soaks in water/rain; chills warmth while wet.");
+            WrappedNote("Soaks in water/rain; chills warmth while wet.");
             statValue(&c->wetness, c->maxWetness, "stwe");
             if (ImGui::DragFloat("Max Wetness##stwe", &c->maxWetness, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max Wetness##stwe");
@@ -43046,13 +43049,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Soaked Threshold##stwe", &c->soakedThreshold, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Soaked Threshold##stwe");
             statOutputs(c, "stwe");
-            ImGui::TextDisabled("Methods: AddWetness, DryOff, SetInWater.");
+            WrappedNote("Methods: AddWetness, DryOff, SetInWater.");
             if (ImGui::SmallButton("Remove##stwe")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<CarryWeightStat*>(curComp)) {
         if (CompHeader("Stat: Carry Weight", c, &toRemove) && !(UseOkayUIBackend() && DrawCarryWeightStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Over the limit: drains stamina, slows movement.");
+            WrappedNote("Over the limit: drains stamina, slows movement.");
             statValue(&c->load, c->maxLoad, "stcw");
             if (ImGui::DragFloat("Max Load##stcw", &c->maxLoad, 1.0f, 0.0f, 1000000.0f)) ed.dirty = true;
             oked::FieldTip("Max Load##stcw");
@@ -43061,24 +43064,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Min Speed Factor##stcw", &c->minSpeedFactor, 0.05f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Movement multiplier when heavily overloaded. Read SpeedFactor() from a controller.");
             statOutputs(c, "stcw");
-            ImGui::TextDisabled("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.");
+            WrappedNote("Methods: AddLoad, RemoveLoad, SetLoad. Over -> 'encumbered'.");
             if (ImGui::SmallButton("Remove##stcw")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<StatusEffectStat*>(curComp)) {
         if (CompHeader("Status Effects", c, &toRemove) && !(UseOkayUIBackend() && DrawStatusEffectStatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Timed buffs/debuffs (code/trigger-driven).");
-            ImGui::TextDisabled("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.");
+            WrappedNote("Timed buffs/debuffs (code/trigger-driven).");
+            WrappedNote("Apply(name, duration, hpPerSecond): -hp = damage, +hp = heal.");
             if (ImGui::Checkbox("Broadcast messages##stse", &c->sendMessages)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("<name> on apply, <name>_expired on end -> ActionList OnMessage.");
             ImGui::Text("Active now: %d", c->ActiveCount());
-            ImGui::TextDisabled("Methods: Apply, Remove, Clear, Has, Remaining.");
+            WrappedNote("Methods: Apply, Remove, Clear, Has, Remaining.");
             if (ImGui::SmallButton("Remove##stse")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<SurvivalSave*>(curComp)) {
         if (CompHeader("Survival Save / Load", c, &toRemove) && !(UseOkayUIBackend() && DrawSurvivalSaveWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Persists current stat values across sessions.");
+            WrappedNote("Persists current stat values across sessions.");
             char key[64]; std::strncpy(key, c->saveKey.c_str(), sizeof(key) - 1); key[sizeof(key) - 1] = '\0';
             if (ImGui::InputText("Save Key##svsv", key, sizeof(key))) { c->saveKey = key; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Writes <key>.okayprefs beside the game.");
@@ -43091,7 +43094,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Load Now##svsv")) c->Load();
             }
-            ImGui::TextDisabled("Methods: Save, Load (On Click-callable).");
+            WrappedNote("Methods: Save, Load (On Click-callable).");
             if (ImGui::SmallButton("Remove##svsv")) toRemove = c;
         }
     }
@@ -43195,7 +43198,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit3("Night Sky##dnc", n)) { c->skyNight = {n[0], n[1], n[2], 1}; ed.dirty = true; }
                 oked::FieldTip("Night Sky##dnc");
             }
-            ImGui::TextDisabled("Drives the Sun light + main camera sky. Bind UI text with {hour}.");
+            WrappedNote("Drives the Sun light + main camera sky. Bind UI text with {hour}.");
             if (ImGui::SmallButton("Remove##dnc")) toRemove = c;
         }
     }
@@ -44317,13 +44320,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Look Height##td");
             if (ImGui::DragFloat("Damping##td", &td->cameraDamping, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
             oked::FieldTip("Damping##td");
-            ImGui::TextDisabled("Twin-stick / ARPG: WASD + a fixed high follow camera.");
+            WrappedNote("Twin-stick / ARPG: WASD + a fixed high follow camera.");
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
     if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
         if (CompHeader("Ragdoll", rd, &toRemove) && !(UseOkayUIBackend() && DrawRagdollWithOkayUI(ed, rd, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
+            WrappedNote("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
             SectionHeader("Triggers");
             if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
             oked::FieldTip("Ragdoll On Death##rd");
@@ -44353,7 +44356,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
         if (CompHeader("Top Down Shooter Controller", sh, &toRemove) && !(UseOkayUIBackend() && DrawTopDownShooterControllerWithOkayUI(ed, sh, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
+            WrappedNote("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tds", &sh->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Walk Speed##tds");
@@ -44474,7 +44477,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Fire Shake##tds", &sh->fireShake, 0.005f, 0.0f, 0.5f, "%.3f")) ed.dirty = true;
             oked::FieldTip("Fire Shake##tds");
-            ImGui::TextDisabled("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.");
+            WrappedNote("Script events: on_fire, on_reload, on_reloaded, on_empty, on_dash.");
             if (ImGui::SmallButton("Remove##tds")) toRemove = sh;
         }
     }
@@ -44654,7 +44657,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Bounce Off Walls##pj", &pj->bounce)) ed.dirty = true;
             oked::FieldTip("Bounce Off Walls##pj");
             if (pj->bounce) if (ImGui::DragInt("Bounces##pj", &pj->maxBounces, 0.05f, 1, 20)) ed.dirty = true;
-            ImGui::TextDisabled("Damages the Health it hits; calls on_hit on its script.");
+            WrappedNote("Damages the Health it hits; calls on_hit on its script.");
             if (ImGui::SmallButton("Remove##pj")) toRemove = pj;
         }
     }
@@ -44761,7 +44764,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Min Pitch##fr");
             if (ImGui::DragFloat("Max Pitch##fr", &fr->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
             oked::FieldTip("Max Pitch##fr");
-            ImGui::TextDisabled("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
+            WrappedNote("Put on a Camera. WASD fly, Space/C up/down, Shift boost.");
             if (ImGui::SmallButton("Remove##fr")) toRemove = fr;
         }
     }
@@ -44926,7 +44929,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Speed##ft");
             if (ImGui::DragFloat("Stop Distance##ft", &ft->stopDistance, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
             oked::FieldTip("Stop Distance##ft");
-            ImGui::TextDisabled("Chases the named object (enemy AI / homing).");
+            WrappedNote("Chases the named object (enemy AI / homing).");
             if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
         }
     }
@@ -44948,7 +44951,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Grid Movement Costs on the tilemap. Off: only empty tiles are open, and every step costs the same.");
             if (ImGui::DragFloat("Plan again every (seconds)##gp", &gp->repathInterval, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How often to plan again. A new obstacle on the route plans again at once.");
-            ImGui::TextDisabled("Walks empty tiles. Walls are any other tile until costs are on.");
+            WrappedNote("Walks empty tiles. Walls are any other tile until costs are on.");
             if (ImGui::SmallButton("Remove##gp")) toRemove = gp;
         }
     }
@@ -44962,7 +44965,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is mud.");
             if (ImGui::DragFloat("Mud cost (higher is slower)##gc", &gc->mudCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
-            ImGui::TextDisabled("The agent pays these only when Pay for mud and roads is on.");
+            WrappedNote("The agent pays these only when Pay for mud and roads is on.");
             if (ImGui::SmallButton("Remove##gc")) toRemove = gc;
         }
     }
@@ -44978,7 +44981,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Height of the blocked rectangle, in cells.");
             if (ImGui::Checkbox("Block the path##gob", &go2->blocks)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
-            ImGui::TextDisabled("Move this object to slide the blocked cells.");
+            WrappedNote("Move this object to slide the blocked cells.");
             if (ImGui::SmallButton("Remove##gob")) toRemove = go2;
         }
     }
@@ -45179,7 +45182,7 @@ void DrawInspector(EditorState& ed) {
             float v[3] = {mv->velocity.x, mv->velocity.y, mv->velocity.z};
             if (ImGui::DragFloat3("Velocity##mv", v, 0.05f)) { mv->velocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Velocity##mv");
-            ImGui::TextDisabled("units / second");
+            WrappedNote("units / second");
             if (ImGui::SmallButton("Remove##mv")) toRemove = mv;
         }
     }
@@ -45188,7 +45191,7 @@ void DrawInspector(EditorState& ed) {
             float v[3] = {sp->angularVelocity.x, sp->angularVelocity.y, sp->angularVelocity.z};
             if (ImGui::DragFloat3("Angular Vel##sp", v, 0.5f)) { sp->angularVelocity = {v[0], v[1], v[2]}; ed.dirty = true; }
             oked::FieldTip("Angular Vel##sp");
-            ImGui::TextDisabled("degrees / second (X, Y, Z)");
+            WrappedNote("degrees / second (X, Y, Z)");
             if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
         }
     }
@@ -45196,7 +45199,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Lifetime", lt, &toRemove) && !(UseOkayUIBackend() && DrawLifetimeWithOkayUI(ed, lt, toRemove))) {   // OkayUI's with the preview switch (section 22)
             if (ImGui::DragFloat("Seconds##lt", &lt->seconds, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
             oked::FieldTip("Seconds##lt");
-            ImGui::TextDisabled("destroys this object after N seconds of play");
+            WrappedNote("destroys this object after N seconds of play");
             if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
         }
     }
@@ -45251,7 +45254,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* jp = dynamic_cast<JumpPad*>(curComp)) {
         if (CompHeader("Jump Pad", jp, &toRemove) && !(UseOkayUIBackend() && DrawJumpPadWithOkayUI(ed, jp, toRemove))) {   // OkayUI's with the preview switch (section 22)
-            ImGui::TextDisabled("Launches bodies that touch it (needs a collider on this object).");
+            WrappedNote("Launches bodies that touch it (needs a collider on this object).");
             if (ImGui::DragFloat("Force##jp", &jp->force, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
             oked::FieldTip("Force##jp");
             if (ImGui::Checkbox("Launch Along Object Up##jp", &jp->useObjectUp)) ed.dirty = true;
@@ -45558,9 +45561,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Ease In/Out##cb", &cb->easeInOut)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth the blend curve instead of a linear ramp.");
             if (VirtualCamera* live = cb->LiveCamera())
-                ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
+                WrappedNote("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
             else
-                ImGui::TextDisabled("Drives this Camera from virtual cameras.");
+                WrappedNote("Drives this Camera from virtual cameras.");
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
         }
     }
@@ -46674,8 +46677,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Drag the parent (window title bar)##udg");
             if (ImGui::Checkbox("Keep on screen##udg", &dg->keepOnScreen)) ed.dirty = true;
             oked::FieldTip("Keep on screen##udg");
-            ImGui::TextDisabled("Drop onto a UI Drop Target fires on_drop() here +");
-            ImGui::TextDisabled("on_receive() on the target.");
+            WrappedNote("Drop onto a UI Drop Target fires on_drop() here +");
+            WrappedNote("on_receive() on the target.");
             if (ImGui::SmallButton("Remove##udg")) toRemove = dg;
         }
     }
@@ -46718,11 +46721,11 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Drop");
             if (ImGui::Checkbox("Snap dropped item to center##udt", &dt->snapToCenter)) ed.dirty = true;
             oked::FieldTip("Snap dropped item to center##udt");
-            ImGui::TextDisabled("Script events (on a ScriptComponent here):");
+            WrappedNote("Script events (on a ScriptComponent here):");
             ImGui::BulletText("on_receive  — an item is dropped on this slot");
             ImGui::BulletText("on_remove   — an item is dragged out of this slot");
             ImGui::BulletText("on_drag_enter / on_drag_exit — item hovers/leaves");
-            ImGui::TextDisabled("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.");
+            WrappedNote("Items expose prefs: ui_drop_source, ui_drag_item, ui_remove_item.");
             if (ImGui::SmallButton("Remove##udt")) toRemove = dt;
         }
     }
@@ -46747,9 +46750,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap drag to a world grid (0 = off) — board/tile games");
             if (ImGui::DragFloat("Drag Scale##dg", &dg->dragScale, 0.01f, 0.1f, 4.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the item while dragging for a lifted look (1 = off)");
-            ImGui::TextDisabled("Drag the sprite at runtime; dropping on a Drop Zone");
-            ImGui::TextDisabled("fires on_drop() here + on_receive() on the zone.");
-            ImGui::TextDisabled("Zones also get on_hover_enter/exit() during a drag.");
+            WrappedNote("Drag the sprite at runtime; dropping on a Drop Zone");
+            WrappedNote("fires on_drop() here + on_receive() on the zone.");
+            WrappedNote("Zones also get on_hover_enter/exit() during a drag.");
             if (ImGui::SmallButton("Remove##dg")) toRemove = dg;
         }
     }
@@ -46758,7 +46761,7 @@ void DrawInspector(EditorState& ed) {
             char tb[64]; std::strncpy(tb, dz->acceptTag.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Accept Tag##dz", tb, sizeof(tb))) { dz->acceptTag = tb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only accept draggables whose object Tag matches (empty = any)");
-            ImGui::TextDisabled("Sprites dropped here call this object's on_receive().");
+            WrappedNote("Sprites dropped here call this object's on_receive().");
             if (ImGui::SmallButton("Remove##dz")) toRemove = dz;
         }
     }
@@ -46843,7 +46846,7 @@ void DrawInspector(EditorState& ed) {
             float bc[4] = {pb->background.r, pb->background.g, pb->background.b, pb->background.a};
             if (ImGui::ColorEdit4("Background##upb", bc)) { pb->background = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             oked::FieldTip("Background##upb");
-            ImGui::TextDisabled("script: set_progress(0..1)");
+            WrappedNote("script: set_progress(0..1)");
             AnchorCombo("Anchor##upb", pb->anchor, ed);
             ShapeCombo("Shape##upb", pb->shape, ed);
             if (UIShapeUsesRadius(pb->shape)) {
@@ -46932,7 +46935,7 @@ void DrawInspector(EditorState& ed) {
             AnchorCombo("Anchor##urp", rp->anchor, ed);
             if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
             oked::FieldTip("Show Percent##urp");
-            ImGui::TextDisabled("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
+            WrappedNote("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
             if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
@@ -46947,12 +46950,12 @@ void DrawInspector(EditorState& ed) {
                                   "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n"
                                   "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n"
                                   "Controller or Character). A nameplate on a character shows that character.");
-            ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
-            ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
-            ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
-            ImGui::TextDisabled("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
-            if (const GameObject* ow = uiowner::Find(tb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
-            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
+            WrappedNote("Shows live values each frame on the sibling Text/Button.");
+            WrappedNote("Use {name} for a visual-script variable or a saved value,");
+            WrappedNote("e.g.  Health: {hp}   or   Score: {score}");
+            WrappedNote("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
+            if (const GameObject* ow = uiowner::Find(tb->gameObject)) WrappedNote("Owner: %s", ow->name.c_str());
+            else WrappedNote("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
         }
     }
@@ -46971,11 +46974,11 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Min (empty)##ubbind");
             if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
             oked::FieldTip("Max (full)##ubbind");
-            ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
-            ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
-            ImGui::TextDisabled("Under a character: owner.healthFrac is that character's health (0 to 1).");
-            if (const GameObject* ow = uiowner::Find(bb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
-            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
+            WrappedNote("Fills the sibling Progress Bar / Radial from the named");
+            WrappedNote("visual-script variable (or saved value) each frame.");
+            WrappedNote("Under a character: owner.healthFrac is that character's health (0 to 1).");
+            if (const GameObject* ow = uiowner::Find(bb->gameObject)) WrappedNote("Owner: %s", ow->name.c_str());
+            else WrappedNote("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
         }
     }
@@ -47653,7 +47656,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::Checkbox("Interactable##ust", &st->interactable)) ed.dirty = true;
             oked::FieldTip("Interactable##ust");
-            ImGui::TextDisabled("[-] value [+] ; calls script on_change()");
+            WrappedNote("[-] value [+] ; calls script on_change()");
             if (ImGui::SmallButton("Remove##ust")) toRemove = st;
         }
     }
@@ -47681,7 +47684,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Empty##urt", off)) { rt->off = {off[0], off[1], off[2], off[3]}; ed.dirty = true; }
             oked::FieldTip("Empty##urt");
             AnchorCombo("Anchor##urt", rt->anchor, ed);
-            ImGui::TextDisabled("click a star to rate; calls script on_change()");
+            WrappedNote("click a star to rate; calls script on_change()");
             if (ImGui::SmallButton("Remove##urt")) toRemove = rt;
         }
     }
@@ -56726,6 +56729,17 @@ int main(int argc, char** argv) {
                 if (e.type == SDL_MOUSEBUTTONDOWN) { ox = e.button.x; oy = e.button.y; } else SDL_GetMouseState(&ox, &oy);
                 const Uint32 wid = e.type == SDL_MOUSEBUTTONDOWN ? e.button.windowID : e.wheel.windowID;
                 okayOverlay = wid == SDL_GetWindowID(window) && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
+            }
+            // A key typed into a hosted OkayUI field is the field's: Dear ImGui does not queue it too. Dear ImGui hands queued keys out
+            // over the next frames, so at a low frame rate a letter typed into the OkayUI Hierarchy's search reached the editor's
+            // shortcuts after a click had moved the keyboard away ("S Health" typed, the row clicked: the "h" hid the object; stage 9).
+            // Modifier keys still go (Ctrl, Shift and Alt stay right in Dear ImGui), and Ctrl+P, which plays from any field.
+            if (UseOkayUIBackend() && OkayUI::WantsTextInput() && (e.type == SDL_TEXTINPUT || e.type == SDL_KEYDOWN)) {
+                const SDL_Keycode k = e.type == SDL_KEYDOWN ? e.key.keysym.sym : 0;
+                const bool modifier = k == SDLK_LCTRL || k == SDLK_RCTRL || k == SDLK_LSHIFT || k == SDLK_RSHIFT || k == SDLK_LALT ||
+                                      k == SDLK_RALT || k == SDLK_LGUI || k == SDLK_RGUI;
+                const bool playKey = k == SDLK_p && (e.key.keysym.mod & KMOD_CTRL);
+                if (!modifier && !playKey) okayOverlay = true;   // (the same "not Dear ImGui's" switch as a press over an OkayUI list)
             }
 #endif
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay)

@@ -87,8 +87,10 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, co
 struct SectionDrawn { float height = 0.0f; OkayUI::Rect popup; };
 // `bleed`: the body may draw that many pixels past the placeholder on the left and the right (Dear ImGui's framed headers reach half the
 // window padding out); that strip is offered and clipped with it, within what the window shows.
+// `bleedRight` (< 0: `bleed`): on the right instead (the field rows, stage 9).
 template <class Draw>
-bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f) {
+bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f, float bleedRight = -1.0f) {
+    if (bleedRight < 0.0f) bleedRight = bleed;
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (!win || okayuihost::OutsideMainWindow(win)) return false;
     float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
@@ -123,7 +125,7 @@ bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f) {
     const ImVec2 c0 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Min), c1 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Max);
     const ImRect clip(c0, c1);
     const float x0 = std::max(p.x - bleed, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
-    const float x1 = std::min(p.x + w + bleed, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
+    const float x1 = std::min(p.x + w + bleedRight, clip.Max.x + bleedRight - bleed), y1 = std::min(p.y + h, clip.Max.y);
     if (x1 <= x0 || y1 <= y0) return true;            // scrolled out of view: the space stays, nothing is drawn
     OkayUIRegion().Offer(x0, y0, x1 - x0, y1 - y0, hovered);
     OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
@@ -373,7 +375,9 @@ bool DrawFieldListOkayUI(const char* id, okaypanels::InspFieldList& list) {
         okayuiscreens::FieldListResult r = okayuiscreens::DrawFieldList(list, win, x, y, w, h);
         rows = std::move(r.rows);
         return SectionDrawn{r.contentHeight, r.popup};
-    }, HeaderBleed());
+    // on the right up to 2 pixels short of the window padding's end: a line that does not wrap may run into the padding, as in Dear ImGui,
+    // and OkayUI's text is a pixel or two longer than Dear ImGui's whole-pixel advances (the last "." of the Stat: Health note was cut)
+    }, HeaderBleed(), std::max(HeaderBleed(), ImGui::GetStyle().WindowPadding.x - 2.0f));
     if (!drawn || (!dragged && !draggedObject)) return drawn;
     // a drop: a Dear ImGui drop target over each row that takes one (the rows are OkayUI's, the drag is Dear ImGui's)
     const ImVec2 o = ImGui::GetMainViewport()->Pos;

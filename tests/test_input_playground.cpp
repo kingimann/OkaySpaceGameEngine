@@ -21,14 +21,16 @@ namespace {
 // A controller with raw inputs for the Controller station.
 struct StationPad final : platform::Gamepad {
     std::int16_t ax[6] = {}; std::uint8_t hat = 0;
-    int InstanceId() const override { return 77; }
-    const char* Name() const override { return "DualSense Wireless Controller"; }
+    int id = 77; std::string name = "DualSense Wireless Controller"; std::uint16_t vid = 0x054C, pid = 0x0CE6; int type = 7; bool mapped = true;
+    int InstanceId() const override { return id; }
+    const char* Name() const override { return name.c_str(); }
+    bool HasBuiltinMapping() const override { return mapped; }
     std::int16_t Axis(platform::GamepadAxis) const override { return 0; }
     bool Button(platform::GamepadButton) const override { return false; }
     bool Rumble(std::uint16_t, std::uint16_t, std::uint32_t) override { return true; }
-    std::uint16_t VendorId() const override { return 0x054C; }
-    std::uint16_t ProductId() const override { return 0x0CE6; }
-    int ControllerType() const override { return 7; }
+    std::uint16_t VendorId() const override { return vid; }
+    std::uint16_t ProductId() const override { return pid; }
+    int ControllerType() const override { return type; }
     int RawAxisCount() const override { return 6; }
     int RawButtonCount() const override { return 13; }
     int RawHatCount() const override { return 1; }
@@ -103,6 +105,28 @@ private:
     ui2d::Rect m_clip{};
     float m_sx = 1, m_sy = 1;
 };
+
+// Software render of a scene's screen-space text (NOT a real window) to `<OKAY_SHOT_DIR>/<file>` when that variable is set.
+bool ShotTo(Scene& scene, const std::string& file) {
+    const char* dir = std::getenv("OKAY_SHOT_DIR");
+    if (!dir) return true;
+    UICanvas::Set(1280, 720);
+    scene.uiFont = "pixel";
+    scene.Update(1.0f / 60.0f);
+    Image image(1280, 720);
+    image.Fill(Color{0.07f, 0.08f, 0.12f, 1.0f});
+    MemoryPainter painter(image);
+    ui2d::UIRenderOptions opt;
+    opt.interactive = false;
+    ui2d::RenderSceneUI(scene, painter, 1280, 720, opt);
+    return image.SavePNG(std::string(dir) + "/" + file);
+}
+void AddText(Scene& s, const char* name, float x, float y, const std::string& text, float px = 1.5f, Color c = Color{0.85f, 0.9f, 1.0f, 1.0f}) {
+    GameObject* g = s.CreateGameObject(name);
+    auto* t = g->AddComponent<TextRenderer>();
+    t->screenSpace = true; t->screenPos = {x, y}; t->size = {1200, 400}; t->vcenter = false; t->pixelSize = px; t->color = c; t->text = text;
+}
+std::string Pad(std::string s, size_t n) { if (s.size() < n) s.append(n - s.size(), ' '); return s; }
 
 std::string Read(const std::string& p) { std::ifstream f(p, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); return ss.str(); }
 std::string TextOf(Scene& s, const char* name) {
@@ -257,6 +281,68 @@ int main() {
         CHECK(Has(TextOf(scene, "H Controller"), "Controller 1: DualSense"));
         pads.CloseAll();
         PadProfiles::Reset();
+    }
+
+    // Pictures for the controller work: software renders (no window, no real controller).
+    {
+        using F = ControllerFamily;
+        const F fams[] = {F::DualSense, F::DualShock4, F::XboxSeries, F::Xbox360, F::SwitchPro, F::SteamDeck, F::Unknown};
+        {   // glyph sheet: every button as each family names it
+            Scene sheet("glyphs"); sheet.physicsEnabled = false;
+            std::string t = "CONTROLLER BUTTON NAMES BY FAMILY (text names; no artwork)\n\n" + Pad("button", 12);
+            for (F f : fams) t += Pad(FamilyName(f), 15);
+            t += "\n";
+            for (int b = 0; b < Input::PadButtonCount; ++b) {
+                t += Pad(Input::GamepadButtonName(b), 12);
+                for (F f : fams) t += Pad(PadButtonName(b, f), 15);
+                t += "\n";
+            }
+            t += "\n" + Pad("PS / Home", 12);
+            for (F f : fams) t += Pad(PadExtraName(PadExtra::Guide, f), 15);
+            t += "\n" + Pad("Touchpad", 12);
+            for (F f : fams) t += Pad(PadExtraName(PadExtra::Touchpad, f), 15);
+            t += "\n" + Pad("Mute", 12);
+            for (F f : fams) t += Pad(PadExtraName(PadExtra::Mute, f), 15);
+            AddText(sheet, "Sheet", 8, 8, t, 1.2f);
+            CHECK(ShotTo(sheet, "glyph-sheet.png"));
+        }
+        struct Dev { const char* file; const char* name; std::uint16_t v, p; int type; bool mapped; };
+        const Dev devs[] = {
+            {"DualSense", "DualSense Wireless Controller", 0x054C, 0x0CE6, 7, true},
+            {"XboxSeries", "Xbox Wireless Controller", 0x045E, 0x0B13, 2, true},
+            {"SwitchPro", "Nintendo Switch Pro Controller", 0x057E, 0x2009, 5, true},
+            {"Generic", "USB Gamepad (unknown maker)", 0x1234, 0x5678, -1, false}};
+        for (const Dev& d : devs) {
+            PadProfiles::Reset();
+            PadSet set;
+            auto pad = std::make_unique<StationPad>();
+            pad->name = d.name; pad->vid = d.v; pad->pid = d.p; pad->type = d.type; pad->mapped = d.mapped; pad->id = 90;
+            pad->ax[0] = 12000; pad->hat = 1;
+            CHECK(set.Attach(std::move(pad)) == 0);
+            std::vector<char> pk; set.Feed(pk);
+            Input::FeedGamepadRaw(0, {}, {}, 0, 0, 1u << Input::PadA, true); InputActions::Tick(1.0f / 60.0f); scene.Update(1.0f / 60.0f);
+            if (!d.mapped) { PadProfiles::BeginSetup(0); }
+            set.Feed(pk);
+            Input::FeedGamepadRaw(0, {}, {}, 0, 0, 1u << Input::PadA, true); InputActions::Tick(1.0f / 60.0f); scene.Update(1.0f / 60.0f);
+            CHECK(ShotTo(scene, std::string("controller-station-") + d.file + ".png"));
+            // The Controls screen with this controller's names in the gamepad column.
+            Scene ctl("controls"); ctl.physicsEnabled = false;
+            std::string t = std::string("CONTROLS   controller: ") + d.name + "\n\n" + Pad("action", 14) + Pad("keyboard / mouse", 22) + "gamepad\n";
+            RemapOptions ro; ro.hidden = {"look", "inventory", "pause", "reload", "aim", "interact", "sprint", "crouch"};
+            const std::vector<RemapRow> rows = RemapRows(ro);
+            for (const RemapRow& r : rows) t += Pad(r.action, 14) + Pad(r.keyboard.bound ? r.keyboard.label : "-", 22) + (r.gamepad.bound ? r.gamepad.label : "-") + "\n";
+            t += "\nPress a button on the controller to rebind; names follow the controller in use.";
+            AddText(ctl, "Controls", 24, 24, t);
+            CHECK(ShotTo(ctl, std::string("rebinding-") + d.file + ".png"));
+            if (d.type == 7) {   // the rebinding column really changed with the family
+                bool seen = false;
+                for (const RemapRow& r : rows) if (r.gamepad.bound && r.gamepad.label == "Cross") seen = true;
+                CHECK(seen);
+            }
+            set.CloseAll();
+        }
+        PadProfiles::Reset();
+        Input::SetGamepadFamily(0, Input::PadFamily::Xbox);
     }
 
     // A picture (software painter; not a real window)

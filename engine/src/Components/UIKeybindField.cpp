@@ -1,3 +1,4 @@
+#include "okay/Input/PadProfiles.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIModal.hpp"
@@ -20,7 +21,7 @@ std::string UIKeybindField::KeyLabel() const {
     const InputBinding* b = InputActions::Current(inputAction, gamepad);
     if (!b) return "None";
     if (part >= 0 && part < 4 && b->kind == InputBinding::Kind::Keys4) return Input::KeyName(b->keys[part]);
-    return b->Label();
+    return b->kind == InputBinding::Kind::PadButton ? PadProfiles::BindingLabel(*b) : b->Label();
 }
 
 void UIKeybindField::BindAction(const std::string& binding) {

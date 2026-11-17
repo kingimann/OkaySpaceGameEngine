@@ -7,6 +7,7 @@
 // Pure logic and static state: no SDL, no device.
 #include "okay/Input/ControllerMapping.hpp"
 #include "okay/Input/GamepadInfo.hpp"
+#include "okay/Input/InputActions.hpp"
 #include <functional>
 #include <string>
 
@@ -58,6 +59,10 @@ public:
     static const ControllerMapping* Mapping(int slot);
     /// "Cross" / "A" ...: a pad button as THIS controller names it (the slot's family; a Generic one when empty).
     static std::string ButtonName(int slot, int padButton);
+    /// An action's binding as the connected controller names it ("Cross" for a PlayStation pad, "A" for an Xbox pad).
+    /// Keyboard / mouse bindings, and every binding while no controller is plugged in, read as InputBinding::Label().
+    /// Used by the Controls screen model and the keybind field, so rebinding shows the right names.
+    static std::string BindingLabel(const InputBinding& b);
     /// Several lines for the Controller station / a bug report: name, ids, family, how it was recognised, mapping source, extras.
     static std::string Describe(int slot);
     /// One line: the raw axes, buttons and hats, for example "axes 0.00 0.50 ...; buttons 0,3; hat up".

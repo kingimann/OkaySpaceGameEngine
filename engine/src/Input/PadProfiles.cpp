@@ -97,17 +97,26 @@ std::string PadProfiles::ButtonName(int slot, int b) {
     }
 }
 
+std::string PadProfiles::BindingLabel(const InputBinding& b) {
+    if (b.kind != InputBinding::Kind::PadButton) return b.Label(Input::GamepadFamily(Input::LastGamepad()));
+    int slot = -1;
+    if (b.player > 0 && Ok(b.player) && S().pads[b.player].present) slot = b.player;
+    else if (Ok(Input::LastGamepad()) && S().pads[Input::LastGamepad()].present) slot = Input::LastGamepad();
+    else for (int i = 0; i < Input::kMaxGamepads && slot < 0; ++i) if (S().pads[i].present) slot = i;
+    if (slot < 0) return b.Label();
+    return PadButtonName(b.code, S().pads[slot].info.family) + (b.player > 0 ? " (Pad " + std::to_string(b.player + 1) + ")" : std::string());
+}
+
 std::string PadProfiles::BatteryText(int slot) { return Ok(slot) ? PowerName(S().pads[slot].power) : "unknown"; }
 
 std::string PadProfiles::Describe(int slot) {
     if (!Ok(slot) || !S().pads[slot].present) return "Controller " + std::to_string(slot + 1) + ": none connected";
     const PadProfile& p = S().pads[slot];
     std::string s = "Controller " + std::to_string(slot + 1) + ": " + (p.id.name.empty() ? "(no name)" : p.id.name) + "\n";
-    s += "ids " + FormatUsbId(p.id.vendor, p.id.product) + "   sdl type " + std::to_string(p.id.sdlType) + "\n";
-    s += "family " + p.info.familyName + (p.info.recognised ? "" : " (not recognised: generic)") + "   found by " + p.info.matchedBy + "\n";
-    s += std::string("mapping ") + MapSourceName(p.mapSource) + "   key " + p.deviceKey + "\n";
-    s += "raw: " + std::to_string(p.raw.axes.size()) + " axes, " + std::to_string(p.raw.buttons.size()) + " buttons, " + std::to_string(p.raw.hats.size()) + " hats\n";
-    s += "battery " + BatteryText(slot);
+    s += "ids " + FormatUsbId(p.id.vendor, p.id.product) + "  sdl type " + std::to_string(p.id.sdlType) + "  family " + p.info.familyName +
+         (p.info.recognised ? "" : " (not recognised: generic)") + "  found by " + p.info.matchedBy + "\n";
+    s += std::string("mapping ") + MapSourceName(p.mapSource) + "  key " + p.deviceKey + "  raw " + std::to_string(p.raw.axes.size()) + " axes " +
+         std::to_string(p.raw.buttons.size()) + " buttons " + std::to_string(p.raw.hats.size()) + " hats  battery " + BatteryText(slot);
     std::string ex;
     auto add = [&](bool on, const char* n) { if (on) ex += std::string(ex.empty() ? "" : ", ") + n; };
     add(p.info.touchpad, "touchpad"); add(p.info.gyro, "gyro"); add(p.info.lightbar, "lightbar"); add(p.info.playerLeds, "player LEDs");

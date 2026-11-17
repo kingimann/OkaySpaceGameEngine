@@ -373,7 +373,7 @@ artwork from another project was used; the tables are in `engine/src/Input/Gamep
   Square / Triangle, Create (DualSense) / Share (DualShock 4), Options, L1 / R1 / L2 / R2, L3 / R3 on PlayStation pads;
   A B X Y, View / Menu (One, Series), Back / Start (360), LB / RB / LT / RT on Xbox pads; B A Y X, - / +, L / R, ZL / ZR on Nintendo
   pads (the right button is A). `PadExtraName` gives PS / Home / Guide, Share / Capture, Touchpad, Mute. The old
-  `InputBinding::Label(family)` is unchanged; the richer names are what `input_button_name("jump")` prints. No glyph artwork is
+  `InputBinding::Label(family)` is unchanged; the richer names are what `input_button_name("jump")` prints, and `PadProfiles::BindingLabel(binding)` is what the Controls screen model (`RemapRows`, gamepad column) and the UI keybind field now use, so rebinding shows Cross on a DualSense and A on an Xbox pad (no controller plugged in: the old Xbox-style names). No glyph artwork is
   drawn yet: only text names (so nothing needs a licence).
 - **Slots on hot-plug** (`PadSet`, `PadSlotAllocator`): a pad takes its old slot back when that is free, else the first free one;
   a pad that did not fit is tried again when a slot frees; plain joysticks are opened after real gamepads so they never take
@@ -390,7 +390,7 @@ artwork from another project was used; the tables are in `engine/src/Input/Gamep
 - **OkayScript:** `pad_name`, `pad_family`, `pad_ids`, `pad_mapping` ("built-in", "generic", "user"), `pad_info`, `pad_raw`,
   `pad_battery`, `pad_button_name("a", slot)`, `input_button_name("jump")`, `pad_event()`, `pad_setup_start / active / prompt /
   skip / back / cancel / save / clear`, `pad_lightbar`, `pad_trigger_rumble`, `pad_swap`, `pad_touch`, `pad_gyro`.
-- **Try it:** the **Controller** station (H) of the input playground; steps in `docs/try_it.md`.
+- **Pictures** (software renders, not a real window or pad): `docs/images/input/` (button-name sheet, Controller station and Controls screen for DualSense, Xbox Series, Switch Pro and an unknown generic pad). The **Controller** station (H) is in the input playground.
 - **Checked with fake devices only:** `tests/test_controller_mapping.cpp` (classifier table, generic layout, trigger range, dead
   zone, Setup, saved round trip, names, slots, toasts) and the station in `tests/test_input_playground.cpp`. No real PS5, Xbox or
   other pad, and nothing on Windows, has been run.

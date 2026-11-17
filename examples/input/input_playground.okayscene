@@ -199,7 +199,7 @@ function update(dt) {
   if (key_down(\"l\")) { pad_setup_clear(slot); }
   if (key_down(\"y\")) { pad_lightbar(slot, 255, 0, 80); }
   if (key_down(\"t\")) { pad_trigger_rumble(slot, 1, 1, 0.4); }
-  var s = \"H. CONTROLLER   P next pad   U Controller Setup   I skip   O back   M cancel   N save   L clear   Y light   T trigger buzz\\n\";
+  var s = \"H. CONTROLLER   P next pad  U Controller Setup (I skip, O back, M cancel, N save, L clear)  Y light  T trigger buzz\\n\";
   s = s + pad_info(slot) + \"\\n\";
   s = s + pad_raw(slot) + \"\\n\";
   s = s + \"stick \" + to_fixed(gamepad_x(), 2) + \",\" + to_fixed(gamepad_y(), 2) + \"   controllers \" + gamepad_count() + \"\\n\";
@@ -214,6 +214,6 @@ function update(dt) {
   if (get(\"hevt\") != \"\") { s = s + \"last event: \" + get(\"hevt\"); }
   set_text(s);
 }" "" 0
-  text "" 1 1 1 1 1.5 1 700 66.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  text "" 1 1 1 1 0.8 1 24 623 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
   comporder "TextRenderer" "ScriptComponent"
 end

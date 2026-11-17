@@ -8,6 +8,7 @@
 #include "CodeEditorChoice.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 
 using namespace scripteditor;
@@ -220,13 +221,20 @@ int main() {
         CHECK(Parse("own") == Choice::Own && Parse("OWN") == Choice::Own && Parse("okayui") == Choice::Own && Parse("1") == Choice::Own);
         CHECK(Parse("imgui") == Choice::ImGui && Parse("ImGui") == Choice::ImGui && Parse("0") == Choice::ImGui);
         CHECK(Parse("banana") == Choice::FollowUiBackend && Parse("ownownownownownownown") == Choice::FollowUiBackend);
-        CHECK(!UseOwn(Parse(nullptr), false));                  // the default: the ImGui editor
-        CHECK(UseOwn(Parse(nullptr), true));                    // the developer-only OkayUI backend: our own, as before
+        // the default (owner's decision 2026-11-17): our own editor; OKAY_THIRD_PARTY=1 goes back unless the OkayUI backend is on
+        unsetenv("OKAY_THIRD_PARTY");
+        CHECK(UseOwn(Parse(nullptr), false) && UseOwn(Parse(nullptr), true));
+        setenv("OKAY_THIRD_PARTY", "1", 1);
+        CHECK(!UseOwn(Parse(nullptr), false));
+        CHECK(UseOwn(Parse(nullptr), true));
+        CHECK(std::string(Describe(Parse(nullptr), false)) == "imgui (OKAY_THIRD_PARTY=1)");
+        CHECK(UseOwn(Parse("own"), false) && !UseOwn(Parse("imgui"), true));   // the editor's own variable wins
+        unsetenv("OKAY_THIRD_PARTY");
         CHECK(UseOwn(Parse("own"), false) && UseOwn(Parse("own"), true));
         CHECK(!UseOwn(Parse("imgui"), true) && !UseOwn(Parse("imgui"), false));
         CHECK(!UseOwn(Parse("own"), true, false));              // no OkayUI in this build
         CHECK(std::string(Describe(Parse("own"), false)).find("own") == 0);
-        CHECK(std::string(Describe(Parse(nullptr), false)) == "imgui (default)");
+        CHECK(std::string(Describe(Parse(nullptr), false)).find("own (default") == 0);
     }
     {   // the script editor's palette (TextEditor::PaletteIndex order) reaches our editor's colours
         ScriptEditorCodeEdit s;

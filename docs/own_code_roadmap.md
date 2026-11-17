@@ -6,6 +6,28 @@ The stages between "it exists" and "the library is deleted" (off, dogfood, opt-i
 
 Our replacements stay **off by default** until the owner declares them ready and bug free. "Ready" is the list of criteria below, all of which must hold; there is no partial credit and no date.
 
+## Owner approval of 2026-11-17: our own replacements are the default
+
+The owner wrote in chat on **2026-11-17**: "start switching them so i can test them out". That is the owner approval of step 4 (CLAUDE.md
+rule 17) for the items below, given so the owner can test them in the Windows release; it is recorded here per item. The criteria of
+step 3 are **not** all met (none of these has run on real Windows), and the approval does not unlock step 5: the third-party code
+stays compiled in and selectable, and no library is deleted until the owner says it worked. Every item has its own way back and
+`OKAY_THIRD_PARTY=1` (`engine/include/okay/Core/ThirdPartySwitch.hpp`) sends all of them back at once; if our own window, GL context
+or renderer cannot start, the program starts on SDL by itself. Each program writes one line saying what is ours
+(`own: ...; third party: libsodium ...`). Steps: `docs/try_it.md` section 0b. Branch: `claude2/own-switch-on`.
+
+| Item | Default now | Way back | Approved |
+|---|---|---|---|
+| `okay::platform` own backend instead of SDL2 (launcher, editor, player; set at their start by `okay::ownstack::ApplyOwnDefaults`) | own | `OKAY_PLATFORM_BACKEND=sdl2` | 2026-11-17 |
+| Launcher renderer (our GL painter and ImGui renderer instead of SDL_Renderer) | own | `OKAY_LAUNCHER_RENDERER=sdl` | 2026-11-17 |
+| Editor platform side and renderer | own | `OKAY_EDITOR_PLATFORM=sdl`, `OKAY_EDITOR_RENDERER=sdl` | 2026-11-17 |
+| WAV reader (`okay::wav`) | own (since 2026-11-16) | `OKAY_OWN_WAV=0` | 2026-11-16, kept |
+| Font rasteriser inside Dear ImGui's atlas (`shared/OwnImGuiFontLoader.hpp`) | own | `OKAY_OWN_FONT_RASTER=0` | 2026-11-17 |
+| Script code editor (`OkayUI::CodeEdit` instead of ImGuiColorTextEdit) | own | `OKAY_CODE_EDITOR=imgui` | 2026-11-17 |
+| Ported launcher pages and editor panels on OkayUI instead of Dear ImGui (CMake `OKAY_UI_DEFAULT_BACKEND=okayui`) | OkayUI | `OKAY_UI_BACKEND=imgui` | 2026-11-17 |
+| libsodium / `okay::crypto` | **libsodium** (unchanged, rule 18) | none | not approved, on purpose |
+| Model readers (ufbx, Assimp) | unchanged here; handled by `claude2/own-readers-integration` | `OKAY_OWN_<FMT>` | not part of this change |
+
 ## How a library is removed
 
 1. **Seam.** A thin interface of our own between the engine and the library, so no other code calls the library directly.

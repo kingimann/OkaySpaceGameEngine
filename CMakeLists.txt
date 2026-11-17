@@ -45,7 +45,7 @@ option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; dow
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
 # The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
 # OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
-set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
+set(OKAY_UI_DEFAULT_BACKEND "okayui" CACHE STRING "Which UI toolkit the ported launcher and editor screens start with: okayui (the default since the owner's decision of 2026-11-17) or imgui; OKAY_UI_BACKEND=imgui or OKAY_THIRD_PARTY=1 at run time go back")
 set_property(CACHE OKAY_UI_DEFAULT_BACKEND PROPERTY STRINGS imgui okayui)
 if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
     message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")

@@ -18,6 +18,7 @@
 #include "EditorPlatform.hpp"
 
 #include "ImGuiOwnPlatform.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +32,10 @@ PlatformKind ParsePlatform(const char* value) {
     (void)value;
     return PlatformKind::Own;   // -DOKAY_WITH_SDL=OFF: our own platform side is the only one
 #endif
-    return value && std::strcmp(value, "own") == 0 ? PlatformKind::Own : PlatformKind::Sdl;
+    // Our own platform side is the default (owner's decision, 2026-11-17). "sdl" (or any other word) is SDL; unset follows
+    // OKAY_THIRD_PARTY=1 back to SDL.
+    if (!value || !*value) return okay::ThirdPartyForced() ? PlatformKind::Sdl : PlatformKind::Own;
+    return std::strcmp(value, "own") == 0 ? PlatformKind::Own : PlatformKind::Sdl;
 }
 
 const char* PlatformName(PlatformKind k) { return k == PlatformKind::Own ? "own" : "sdl"; }
@@ -196,6 +200,7 @@ private:
 } // namespace
 
 std::unique_ptr<EditorPlatform> CreateOwnEditorPlatform(std::string* err) {
+    if (okay::OwnStartForcedToFail("platform")) { if (err) *err = "OKAY_TEST_OWN_FAIL=platform (a test asked our platform side to fail)"; return nullptr; }
     plat::Backend* sdl = plat::Get(plat::BackendKind::Sdl2);
     if (!sdl && !plat::Default()) {
         if (err) *err = "okay::platform has no backend in this build";
@@ -217,7 +222,7 @@ std::unique_ptr<EditorPlatform> CreateEditorPlatformFromEnv(std::string* note) {
     }
     if (note) {
         *note = "editor: platform " + p->Describe();
-        if (want == PlatformKind::Own && p->Kind() != PlatformKind::Own) *note += " (OKAY_EDITOR_PLATFORM=own could not start: " + why + ")";
+        if (want == PlatformKind::Own && p->Kind() != PlatformKind::Own) *note += " (our own platform side could not start: " + why + ")";
     }
     if (const char* l = std::getenv("OKAY_EDITOR_INPUT_LOG"); l && std::strcmp(l, "1") == 0) p->SetInputLog(true);
     return p;

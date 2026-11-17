@@ -1139,7 +1139,7 @@ endif()
 
 # The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
 add_executable(test_ui_backend test_ui_backend.cpp)
-target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME ui_backend COMMAND test_ui_backend)
 
 # The own-stack dogfood switch (OKAY_OWN_STACK build option, OKAY_OWN_STACK=1 at run time) and the one-line startup stack report.
@@ -1149,6 +1149,13 @@ target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
+# OKAY_THIRD_PARTY=1, the own defaults the programs apply at start-up, their start-up line and the fallback test hook
+# (engine/include/okay/Core/ThirdPartySwitch.hpp, shared/OwnStack.hpp; owner decision 2026-11-17).
+add_executable(test_third_party_switch test_third_party_switch.cpp)
+target_include_directories(test_third_party_switch PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_third_party_switch PRIVATE okay::engine)
+add_test(NAME third_party_switch COMMAND test_third_party_switch)
+add_test(NAME third_party_switch_forced COMMAND test_third_party_switch forced)
 add_test(NAME release_refuses_own_crypto COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/check_release_own_stack.sh --self-test)
 add_test(NAME fetch_tarball_pin COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/test_fetch_tarball.sh)   # SHA-256 pinning of downloads (offline)
 

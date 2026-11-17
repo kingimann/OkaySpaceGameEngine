@@ -4,6 +4,7 @@
 // backends are our own (shared/ImGuiOwnRenderer.cpp, shared/ImGuiOwnPlatform.cpp).
 #include "LauncherGfx.hpp"
 #include "ImGuiOwnBackend.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
 
 #include "imgui.h"
 
@@ -26,7 +27,10 @@ RendererKind ParseRenderer(const char* v) {
     (void)v;
     return RendererKind::Own;   // -DOKAY_WITH_SDL=OFF: our own renderer is the only one
 #else
-    return v && std::strcmp(v, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
+    // Our own renderer is the default (owner's decision, 2026-11-17). "sdl" (or any other word) is SDL_Renderer; unset follows
+    // OKAY_THIRD_PARTY=1 back to SDL.
+    if (!v || !*v) return okay::ThirdPartyForced() ? RendererKind::Sdl : RendererKind::Own;
+    return std::strcmp(v, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
 #endif
 }
 
@@ -104,6 +108,10 @@ private:
 } // namespace
 
 std::unique_ptr<Gfx> CreateOwnGfx(const WindowSpec& spec, std::string* err) {
+    if (okay::OwnStartForcedToFail("window") || okay::OwnStartForcedToFail("renderer")) {
+        if (err) *err = "OKAY_TEST_OWN_FAIL (a test asked our window and renderer to fail)";
+        return nullptr;
+    }
     plat::Backend* b = plat::Default();
     if (!b) { if (err) *err = "okay::platform has no backend in this build"; return nullptr; }
     plat::InitFlags f;

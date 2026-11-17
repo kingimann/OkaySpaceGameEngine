@@ -1,17 +1,19 @@
 #pragma once
-// Which UI toolkit draws the launcher's and the editor's ported screens: Dear ImGui (the default) or OkayUI (preview).
+// Which UI toolkit draws the launcher's and the editor's ported screens: OkayUI (the launcher's and editor's build default since the
+// owner's decision of 2026-11-17, "start switching them so i can test them out") or Dear ImGui (the way back).
 // Pure logic, std only, so the choice can be parsed, saved and tested without a window (tests/test_ui_backend.cpp).
 //
-// This is a DEVELOPER switch, not a user feature: nothing is offered to users until the owner declares the OkayUI ports ready.
-// In a normal run (no OKAY_DEV) the answer is the build default, Dear ImGui, whatever a saved settings file says, and the
-// settings rows that change it are not shown. With the developer flag OKAY_DEV (the switch the editor already has) on:
+// In a normal run (no OKAY_DEV) the answer is the environment variable OKAY_UI_BACKEND when set ("okayui" or "imgui"), else the
+// build default; a saved settings file is ignored and the settings rows that change it are not shown. OKAY_THIRD_PARTY=1 makes the
+// build default Dear ImGui. With the developer flag OKAY_DEV (the switch the editor already has) on:
 //   1. the environment variable OKAY_UI_BACKEND ("okayui" or "imgui"; anything else is ignored),
 //   2. the saved setting (the row in Settings > Appearance in the launcher, View > Rendering & Performance in the editor),
-//   3. the build's default: Dear ImGui, unless the build was configured with -DOKAY_UI_DEFAULT_BACKEND=okayui.
-// OKAY_UI_BACKEND alone (without OKAY_DEV) is honoured too: setting it is itself a deliberate developer act, and the tests use it.
+//   3. the build's default (CMake OKAY_UI_DEFAULT_BACKEND: okayui for the launcher and editor; the header alone says Dear ImGui).
 // A build without OkayUI compiled in (no SDL2, or the web player) always answers Dear ImGui.
 #include <cctype>
 #include <string>
+
+#include "okay/Core/ThirdPartySwitch.hpp"   // OKAY_THIRD_PARTY=1: back to Dear ImGui
 
 #ifndef OKAY_UI_DEFAULT_BACKEND_OKAYUI
 #define OKAY_UI_DEFAULT_BACKEND_OKAYUI 0
@@ -30,8 +32,12 @@ inline bool CompiledIn() {
 #endif
 }
 
-/// The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND).
-inline Backend BuildDefault() { return OKAY_UI_DEFAULT_BACKEND_OKAYUI ? Backend::OkayUI : Backend::ImGui; }
+/// The build's default (the CMake option OKAY_UI_DEFAULT_BACKEND; "okayui" since the owner's decision of 2026-11-17 for the
+/// launcher and the editor). OKAY_THIRD_PARTY=1 makes it Dear ImGui for this run (okay/Core/ThirdPartySwitch.hpp).
+inline Backend BuildDefault() {
+    if (okay::ThirdPartyForced()) return Backend::ImGui;
+    return OKAY_UI_DEFAULT_BACKEND_OKAYUI ? Backend::OkayUI : Backend::ImGui;
+}
 
 /// The short name stored in settings files and read from the environment: "imgui" or "okayui".
 inline const char* Name(Backend b) { return b == Backend::OkayUI ? "okayui" : "imgui"; }

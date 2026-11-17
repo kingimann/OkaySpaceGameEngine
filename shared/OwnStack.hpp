@@ -23,6 +23,7 @@
 
 #include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
 #include "OkayUIBackend.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -77,6 +78,15 @@ inline bool SetIfUnset(const char* name, const char* value) {
     return _putenv_s(name, value) == 0;
 #else
     return setenv(name, value, 0) == 0;
+#endif
+}
+
+/// Set (or replace) an environment variable for this process and the programs it starts.
+inline bool SetEnv(const char* name, const char* value) {
+#if defined(_WIN32)
+    return _putenv_s(name, value) == 0;
+#else
+    return setenv(name, value, 1) == 0;
 #endif
 }
 
@@ -177,10 +187,45 @@ inline Info Gather(const char* ui = nullptr) {
 
 inline std::string Describe(const char* ui = nullptr) { return FormatLine(Gather(ui)); }
 
-/// The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1, then log the line to stderr.
+/// Our own replacements are the default (owner decision, 2026-11-17, "start switching them so i can test them out"). The switches
+/// that live in the engine library and are read from the environment get their "own" value here, at the top of the launcher's,
+/// the editor's and the player's main(), only when they are not set already and OKAY_THIRD_PARTY=1 is not set: today that is
+/// OKAY_PLATFORM_BACKEND (okay::platform's own backend, when it is compiled in). The other switches (renderers, the editors'
+/// platform side, WAV, fonts, the code editor, the OkayUI screens) default to our own code where they are read. Tests and tools
+/// that do not call this keep the library's build default.
+inline int ApplyOwnDefaults() {
+    if (okay::ThirdPartyForced()) return 0;
+    int n = 0;
+    if (okay::platform::IsCompiledIn(okay::platform::BackendKind::Own) && SetIfUnset("OKAY_PLATFORM_BACKEND", "own")) ++n;
+    return n;
+}
+
+/// One part of a program and whether our own code or the third-party code runs it now.
+struct Part { const char* name; bool own; };
+
+/// The plain start-up line each program writes once its parts are chosen (the launcher to okay_launcher.log, the editor to its
+/// Console, all three to stderr), for example:
+///   own: platform, renderer, wav, fonts, code editor, okayui screens; third party: libsodium (set OKAY_THIRD_PARTY=1 for all old paths)
+/// Cryptography is always third party (libsodium; CLAUDE.md rule 18), so it is always listed there.
+inline std::string SummaryLine(const std::vector<Part>& parts) {
+    std::string own, third;
+    for (const Part& p : parts) {
+        std::string& to = p.own ? own : third;
+        if (!to.empty()) to += ", ";
+        to += p.name;
+    }
+    if (!third.empty()) third += ", ";
+    third += "libsodium";
+    std::string line = "own: " + (own.empty() ? std::string("nothing") : own) + "; third party: " + third;
+    line += okay::ThirdPartyForced() ? " (OKAY_THIRD_PARTY=1 is set: old paths)" : " (set OKAY_THIRD_PARTY=1 for all old paths)";
+    return line;
+}
+
+/// The one call each program makes at the top of main(): apply OKAY_OWN_STACK=1 and the own defaults, then log the line to stderr.
 /// `ui` as for Gather(); the player has no UI toolkit and passes "none".
 inline void Startup(const char* ui = nullptr) {
     ApplyEnvironment();
+    ApplyOwnDefaults();
     if (PrintAndExitRequested()) {   // the release guard's question: print and stop, touching nothing else
         std::printf("%s\n", Describe(ui).c_str());
         std::fflush(stdout);

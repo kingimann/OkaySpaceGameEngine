@@ -6,6 +6,8 @@
 // "Build Game" writes that file and copies this player beside it, so a shipped
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
+#include "okay/Audio/WavDecoder.hpp"   // okay::wav::OwnWavEnabled (the start-up line)
+#include "okay/Core/ThirdPartySwitch.hpp"
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
@@ -1282,12 +1284,25 @@ int main(int argc, char** argv) {
         } else if (direct) { cl.game = "game"; launchJoin = cl.Format(); }
         else launchJoin.clear();
     }
+    std::string ownFallbackNote;   // set when our own platform backend could not start and SDL took over
     if (dedicatedServer) {
         okay::platform::InitFlags none; none.video = none.audio = none.gamepad = false;   // headless: timers only
         if (!pb->Init(none)) { std::fprintf(stderr, "SDL_Init failed: %s\n", pb->LastError().c_str()); return 1; }
-    } else if (!pb->Init(okay::platform::InitFlags())) {   // video + audio + game controllers
-        pb->Log("SDL_Init failed: " + pb->LastError());
-        return 1;
+    } else {
+        const bool forced = pb->Kind() == okay::platform::BackendKind::Own && okay::OwnStartForcedToFail("platform");
+        if (forced || !pb->Init(okay::platform::InitFlags())) {   // video + audio + game controllers
+            const std::string why = forced ? std::string("OKAY_TEST_OWN_FAIL=platform") : pb->LastError();
+            // The automatic fallback (owner decision 2026-11-17): our own backend could not start, so start on SDL.
+            if (pb->Kind() == okay::platform::BackendKind::Own && okay::platform::FallBackTo(okay::platform::BackendKind::Sdl2)) {
+                ownFallbackNote = "player: our own platform backend could not start (" + why + "); starting on SDL instead (the old path)";
+                std::fprintf(stderr, "%s\n", ownFallbackNote.c_str());
+                pb = okay::platform::Default();
+            }
+            if (!ownFallbackNote.empty() ? !pb->Init(okay::platform::InitFlags()) : true) {
+                pb->Log("SDL_Init failed: " + pb->LastError());
+                return 1;
+            }
+        }
     }
     // Games copy and paste through the OS clipboard of the backend (SDL_GetClipboardText / SDL_SetClipboardText on sdl2,
     // as before; our X11 / Win32 code on own). The memory clipboard stays the default everywhere else (tests, a headless run).
@@ -1612,7 +1627,23 @@ int main(int argc, char** argv) {
     cfg.width  = okay::platform::ValidWindowExtent(cfg.width, 960);
     cfg.height = okay::platform::ValidWindowExtent(cfg.height, 600);
     wd.width = cfg.width; wd.height = cfg.height;
-    std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
+    std::unique_ptr<okay::platform::Window> windowOwner;
+    if (!(pb->Kind() == okay::platform::BackendKind::Own && okay::OwnStartForcedToFail("window"))) windowOwner = pb->MakeWindow(wd);
+    if (!windowOwner && pb->Kind() == okay::platform::BackendKind::Own && okay::platform::Get(okay::platform::BackendKind::Sdl2)) {
+        // The automatic fallback (owner decision 2026-11-17): our own backend could not make the window, so make it with SDL.
+        ownFallbackNote = "player: our own platform backend could not make the game window (" +
+                          (okay::OwnStartForcedToFail("window") ? std::string("OKAY_TEST_OWN_FAIL=window") : pb->LastError()) +
+                          "); starting on SDL instead (the old path)";
+        std::fprintf(stderr, "%s\n", ownFallbackNote.c_str());
+        pb->Shutdown();
+        okay::platform::FallBackTo(okay::platform::BackendKind::Sdl2);
+        pb = okay::platform::Default();
+        if (pb->Init(okay::platform::InitFlags())) {
+            s_osClipboard.SetBackend(pb);
+            if (!cfg.showCursor) pb->ShowCursor(false);
+            windowOwner = pb->MakeWindow(wd);
+        }
+    }
     okay::platform::Window* window = windowOwner.get();
     if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
         pb->Log(std::string("could not create the game window: ") + pb->LastError());
@@ -1674,6 +1705,15 @@ int main(int argc, char** argv) {
         pb->Log(std::string("2D painter: ") + painterOwner->Name());
     }
     okay::platform::Painter* renderer = painterOwner.get();
+    {   // The start-up line: what runs on our own code and what is third party (owner decision 2026-11-17).
+        const std::string line = "player: " + okay::ownstack::SummaryLine({
+            {"platform", pb->Kind() == okay::platform::BackendKind::Own},
+            {"wav", okay::wav::OwnWavEnabled()},
+        });
+        if (!ownFallbackNote.empty()) pb->Log(ownFallbackNote);
+        pb->Log(line);
+        std::fprintf(stderr, "%s\n", line.c_str());
+    }
 
     // ---- Boot splash: the project's branded loading frame, shown immediately so
     // the game doesn't flash a black window while the renderer / GPU / scene set

@@ -1,5 +1,6 @@
 #include "okay/Audio/WavDecoder.hpp"
 #include "okay/Audio/WavPlayback.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -93,6 +94,7 @@ bool OwnWavEnabled() {
 #else
         true;
 #endif
+    if (okay::ThirdPartyForced()) v = false;   // OKAY_THIRD_PARTY=1: every old path (OKAY_OWN_WAV still wins when set)
     if (const char* e = std::getenv("OKAY_OWN_WAV")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
@@ -764,7 +766,7 @@ std::uint64_t FindDataStart(const unsigned char* p, std::size_t n, std::uint64_t
 
 const char* ReaderLogLine(bool own) {
     return own ? "audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)"
-               : "audio: WAV files load with the OLD reader (OKAY_OWN_WAV=0 or a -DOKAY_OWN_WAV=OFF build)";
+               : "audio: WAV files load with the OLD reader (OKAY_OWN_WAV=0, OKAY_THIRD_PARTY=1 or a -DOKAY_OWN_WAV=OFF build)";
 }
 
 Limits StreamLimits() {

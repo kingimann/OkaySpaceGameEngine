@@ -12,6 +12,7 @@
 #include "EditorGfx.hpp"
 
 #include "ImGuiOwnRenderer.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -25,7 +26,10 @@ RendererKind ParseRenderer(const char* value) {
     (void)value;
     return RendererKind::Own;   // -DOKAY_WITH_SDL=OFF: our own renderer is the only one
 #else
-    return value && std::strcmp(value, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
+    // Our own renderer is the default (owner's decision, 2026-11-17). "sdl" (or any other word) is SDL_Renderer; unset follows
+    // OKAY_THIRD_PARTY=1 back to SDL.
+    if (!value || !*value) return okay::ThirdPartyForced() ? RendererKind::Sdl : RendererKind::Own;
+    return std::strcmp(value, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
 #endif
 }
 
@@ -67,6 +71,7 @@ private:
 } // namespace
 
 std::unique_ptr<EditorGfx> CreateOwnEditorGfx(plat::Window& w, plat::Backend& b, bool vsync, std::string* err) {
+    if (okay::OwnStartForcedToFail("renderer")) { if (err) *err = "OKAY_TEST_OWN_FAIL=renderer (a test asked our renderer to fail)"; return nullptr; }
     plat::PainterDesc pd;
     pd.vsync = vsync;
     std::string why;
@@ -81,7 +86,7 @@ std::unique_ptr<EditorGfx> CreateEditorGfxFromEnv(void* sdlWindow, plat::Window*
     std::unique_ptr<EditorGfx> g;
     std::string why;
     if (want == RendererKind::Own) {
-        if (!OwnRendererAllowed(want, ownPlatform)) why = "it needs OKAY_EDITOR_PLATFORM=own as well";
+        if (!OwnRendererAllowed(want, ownPlatform)) why = "it needs the own platform side (OKAY_EDITOR_PLATFORM) as well";
         else if (!glWindow || !b) why = "no OpenGL main window";
         else g = CreateOwnEditorGfx(*glWindow, *b, vsync, &why);
     }
@@ -89,7 +94,7 @@ std::unique_ptr<EditorGfx> CreateEditorGfxFromEnv(void* sdlWindow, plat::Window*
     if (note) {
         *note = g ? "editor: renderer " + g->Describe() : std::string("editor: renderer: none");
         if (want == RendererKind::Own && (!g || g->Kind() != RendererKind::Own))
-            *note += " (OKAY_EDITOR_RENDERER=own could not start: " + why + ")";
+            *note += " (our own renderer could not start: " + why + ")";
     }
     return g;
 }

@@ -1,6 +1,8 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
 #include "Internal.hpp"
+#include "okay/Core/ThirdPartySwitch.hpp"
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -38,16 +40,31 @@ bool IsCompiledIn(BackendKind k) {
     return false;
 }
 
+namespace {
+std::atomic<int> g_fallbackKind{-1};   // FallBackTo: the backend a failed own start fell back to (-1: none)
+}
+
+bool FallBackTo(BackendKind k) {
+    if (!IsCompiledIn(k)) return false;
+    g_fallbackKind.store((int)k);
+    return true;
+}
+
 BackendKind DefaultKind() {
+    if (const int fb = g_fallbackKind.load(); fb >= 0) return (BackendKind)fb;
     // The build picks the default (OKAY_PLATFORM_BACKEND at configure time). The same
     // variable at run time overrides it for this process, so one binary can be tried
-    // on either backend; a value that is not "sdl2" or "own" is ignored.
+    // on either backend; a value that is not "sdl2" or "own" is ignored. OKAY_THIRD_PARTY=1
+    // (okay/Core/ThirdPartySwitch.hpp) makes the default SDL2 when the variable is not set.
+    // The launcher, the editor and the player make our own backend their default at start-up
+    // (okay::ownstack::ApplyOwnDefaults, owner decision 2026-11-17).
     static const BackendKind kind = [] {
 #if defined(OKAY_PLATFORM_DEFAULT_OWN)
         BackendKind k = BackendKind::Own;
 #else
         BackendKind k = BackendKind::Sdl2;
 #endif
+        if (okay::ThirdPartyForced() && IsCompiledIn(BackendKind::Sdl2)) k = BackendKind::Sdl2;
         BackendKind fromEnv;
         if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
         return k;

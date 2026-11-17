@@ -18331,6 +18331,8 @@ static const okayversionsui::Host& VersionsHost() {
 // all come from okay::platform's own backend. Every other combination starts SDL video here, as the launcher always did
 // (the sdl renderer needs it; with the own renderer on the sdl2 platform backend, that backend starts SDL itself).
 static bool g_sdlVideo = false;   // this file called SDL_Init(SDL_INIT_VIDEO)
+static bool g_ownFontRaster = false;   // our own TrueType rasteriser fills ImGui's font atlas (the start-up line reports it)
+static std::string g_ownFallbackNote;  // set when our own window and renderer could not start and SDL took over
 static bool StartSdlVideo() {
     if (g_sdlVideo) return true;
 #ifndef OKAY_PLATFORM_HAVE_SDL2
@@ -18435,7 +18437,11 @@ int main(int argc, char** argv) {
         std::string err;
         if (wantOwnRenderer) {
             g_gfx = lg::CreateOwnGfx(spec, &err);
-            if (!g_gfx) std::fprintf(stderr, "launcher: the own renderer could not start (%s); using sdl\n", err.c_str());
+            if (!g_gfx) {   // the automatic fallback (owner decision 2026-11-17): say why, then start on SDL
+                g_ownFallbackNote = "launcher: our own window and renderer could not start (" + err + "); starting on SDL instead (the old path)";
+                std::fprintf(stderr, "%s\n", g_ownFallbackNote.c_str());
+                okay::platform::FallBackTo(okay::platform::BackendKind::Sdl2);   // every other okay::platform call goes to SDL too
+            }
         }
         if (!g_gfx) {
             if (!StartSdlVideo()) { std::fprintf(stderr, "launcher: SDL video could not start either\n"); return 1; }   // (only reached by a failed own start)
@@ -18497,9 +18503,8 @@ int main(int argc, char** argv) {
     // Same embedded Roboto Medium font as the editor, so the launcher and editor
     // read as one product (crisp, modern text instead of the tiny bitmap default).
     {
-        // OKAY_OWN_FONT_RASTER=1: every glyph of this atlas comes from our own rasteriser (off by default).
-        if (okay::imguifont::InstallIfRequested(ImGui::GetIO().Fonts))
-            std::fprintf(stderr, "[launcher] OKAY_OWN_FONT_RASTER=1: text is drawn by OkaySpace's own TrueType rasteriser\n");
+        // Every glyph of this atlas comes from our own rasteriser (the default; OKAY_OWN_FONT_RASTER=0 or OKAY_THIRD_PARTY=1 go back).
+        g_ownFontRaster = okay::imguifont::InstallIfRequested(ImGui::GetIO().Fonts);
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
@@ -18512,6 +18517,22 @@ int main(int argc, char** argv) {
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     if (!g_gfx->InitImGui()) { std::fprintf(stderr, "launcher: the ImGui backends did not start\n"); return 1; }
+    {   // The start-up line: what runs on our own code and what is third party (owner decision 2026-11-17), on stderr and in
+        // okay_launcher.log next to the launcher (the Windows launcher has no console).
+        const bool ownR = g_gfx->Kind() == okay::launchergfx::RendererKind::Own;
+        okay::platform::Backend* pb = okay::platform::Default();
+        const std::string line = "launcher: " + okay::ownstack::SummaryLine({
+            {"platform", ownR && pb && pb->Kind() == okay::platform::BackendKind::Own},
+            {"renderer", ownR},
+            {"wav", okay::wav::OwnWavEnabled()},
+            {"fonts", g_ownFontRaster},
+            {"okayui screens", g_uiBackend == okayuibackend::Backend::OkayUI},
+        });
+        std::fprintf(stderr, "%s\n", line.c_str());
+        const fs::path logPath = fs::path(g_exeDir) / "okay_launcher.log";
+        if (!g_ownFallbackNote.empty()) okay::restart::AppendLog(logPath, g_ownFallbackNote);
+        okay::restart::AppendLog(logPath, line);
+    }
 
     std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});

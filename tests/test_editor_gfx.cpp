@@ -188,8 +188,14 @@ bool ColourAt(const Shot& s, int x, int y, int r, int g, int b, int tol = 1) {
 // ---- 1. the switch ----
 void TestSwitch() {
     RUN_SUITE("OKAY_EDITOR_RENDERER: the switch");
+    // Our own renderer is the default (owner's decision 2026-11-17); OKAY_THIRD_PARTY=1 goes back to SDL when unset.
+    unsetenv("OKAY_THIRD_PARTY");
+    CHECK(eg::ParseRenderer(nullptr) == eg::RendererKind::Own);
+    CHECK(eg::ParseRenderer("") == eg::RendererKind::Own);
+    setenv("OKAY_THIRD_PARTY", "1", 1);
     CHECK(eg::ParseRenderer(nullptr) == eg::RendererKind::Sdl);
-    CHECK(eg::ParseRenderer("") == eg::RendererKind::Sdl);
+    CHECK(eg::ParseRenderer("own") == eg::RendererKind::Own);   // the editor's own variable still wins
+    unsetenv("OKAY_THIRD_PARTY");
     CHECK(eg::ParseRenderer("sdl") == eg::RendererKind::Sdl);
     CHECK(eg::ParseRenderer("OWN") == eg::RendererKind::Sdl);
     CHECK(eg::ParseRenderer("opengl") == eg::RendererKind::Sdl);

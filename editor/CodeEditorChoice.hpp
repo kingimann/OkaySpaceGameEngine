@@ -1,13 +1,15 @@
 #pragma once
-// Which code widget the script editor uses: the vendored ImGuiColorTextEdit (the default) or our own OkayUI::CodeEdit.
+// Which code widget the script editor uses: our own OkayUI::CodeEdit (the default since the owner's decision of 2026-11-17) or
+// the vendored ImGuiColorTextEdit (the way back).
 //
-//   OKAY_CODE_EDITOR=own     our own editor (OkayUI::CodeEdit through editor/ScriptEditorCodeEdit.hpp), even when the rest of
-//                            the editor is Dear ImGui
-//   OKAY_CODE_EDITOR=imgui   the ImGui editor, even with the developer-only OkayUI backend on
-//   unset (or anything else) follow the UI backend: the ImGui editor unless the developer-only OkayUI backend is on
+//   OKAY_CODE_EDITOR=own     our own editor (OkayUI::CodeEdit through editor/ScriptEditorCodeEdit.hpp)
+//   OKAY_CODE_EDITOR=imgui   the ImGui editor
+//   unset (or anything else) our own editor; with OKAY_THIRD_PARTY=1 the ImGui editor unless the OkayUI backend is on
 //
 // Pure: no ImGui, no SDL, no OkayUI, so it is tested headless (okayui/tests/test_okayui_script_adapter.cpp).
 #include <cstring>
+
+#include "okay/Core/ThirdPartySwitch.hpp"
 
 namespace codeeditorchoice {
 
@@ -32,7 +34,7 @@ inline bool UseOwn(Choice c, bool okayUiBackendOn, bool okayUiBuilt = true) {
     if (!okayUiBuilt) return false;
     if (c == Choice::Own) return true;
     if (c == Choice::ImGui) return false;
-    return okayUiBackendOn;
+    return okay::ThirdPartyForced() ? okayUiBackendOn : true;
 }
 
 /// For the log line at start-up.
@@ -40,7 +42,8 @@ inline const char* Describe(Choice c, bool okayUiBackendOn, bool okayUiBuilt = t
     if (!okayUiBuilt) return c == Choice::Own ? "imgui (OKAY_CODE_EDITOR=own asked, but this build has no OkayUI)" : "imgui";
     if (c == Choice::Own) return "own (OkayUI::CodeEdit, OKAY_CODE_EDITOR=own)";
     if (c == Choice::ImGui) return "imgui (OKAY_CODE_EDITOR=imgui)";
-    return okayUiBackendOn ? "own (follows the OkayUI backend)" : "imgui (default)";
+    if (!okay::ThirdPartyForced()) return "own (default; OKAY_CODE_EDITOR=imgui for the old one)";
+    return okayUiBackendOn ? "own (OKAY_THIRD_PARTY=1, but the OkayUI backend is on)" : "imgui (OKAY_THIRD_PARTY=1)";
 }
 
 } // namespace codeeditorchoice

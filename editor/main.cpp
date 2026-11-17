@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
+#include "okay/Audio/WavDecoder.hpp"   // okay::wav::OwnWavEnabled (the start-up line)
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
@@ -1047,6 +1048,35 @@ static void* EditorGLProc(const char* name) { return g_edPlat ? g_edPlat->GLProc
 // OKAY_PLATFORM_BACKEND=own as well the editor makes no SDL call at all (g_noSdl: no SDL_Init / SDL_Quit either;
 // scripts/editor_no_sdl_check.sh proves it). Anything else is the old path.
 bool g_noSdl = false;
+bool g_ownFontRaster = false;   // our own TrueType rasteriser fills ImGui's font atlas (the start-up line reports it)
+std::string g_ownFallbackNote;  // set when our own platform side, window or renderer could not start and SDL took over
+// The automatic fallback (owner decision 2026-11-17): our own platform backend, platform side, window or renderer could not start,
+// so start on SDL instead: say why, point every switch at SDL for the rest of this run, and start SDL when the no-SDL path had
+// not. `windowStage`: called while making the window (SDL video is started here if it was not). False when this build has no
+// SDL (nothing to fall back on) or SDL itself cannot start.
+static bool EditorFallBackToSdl(const std::string& why, bool windowStage) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    g_ownFallbackNote = "editor: our own " + why + " could not start; starting on SDL instead (the old path)";
+    std::cerr << g_ownFallbackNote << "\n";
+    okay::ownstack::SetEnv("OKAY_EDITOR_PLATFORM", "sdl");
+    okay::ownstack::SetEnv("OKAY_EDITOR_RENDERER", "sdl");
+    okay::platform::FallBackTo(okay::platform::BackendKind::Sdl2);
+    if (g_noSdl) {
+        g_noSdl = false;
+        if (!windowStage) return true;   // before SDL was due to start: main() starts it on the ordinary path just after
+        SDL_SetMainReady();
+        SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+            std::cerr << "editor: SDL could not start either: " << SDL_GetError() << "\n";
+            return false;
+        }
+    }
+    return true;
+#else
+    (void)why; (void)windowStage;
+    return false;
+#endif
+}
 // The backend that made the main window: the keyboard, mouse, cursor, text input and focus calls below go to it. On the default
 // (sdl) path that is okay::platform's sdl2 backend, whose calls are the very SDL calls main.cpp made itself.
 static okay::platform::Backend* EdInput() { return g_edPlat ? g_edPlat->MainWindowBackend() : nullptr; }
@@ -49541,15 +49571,19 @@ int main(int argc, char** argv) {
 
     if (g_noSdl) {
         // The same start through our own backend: per-monitor DPI awareness before the first window (Windows), then video, audio
-        // and controllers. No fallback to SDL here: a failed start says why and stops (unset the switches to use SDL).
+        // and controllers. When it cannot start, the editor says why and starts on SDL instead (the automatic fallback).
         okay::platform::Backend* pb = okay::platform::Default();
         if (pb) pb->SetPerMonitorDpiAware();
-        if (!pb || !pb->Init(okay::platform::InitFlags())) {
-            std::cerr << "editor: the own platform backend could not start (" << (pb ? pb->LastError() : std::string("none"))
-                      << "); unset OKAY_PLATFORM_BACKEND to use SDL\n";
-            return 1;
+        if (!pb || okay::OwnStartForcedToFail("platform") || !pb->Init(okay::platform::InitFlags())) {
+            const std::string why = "platform backend (" + (okay::OwnStartForcedToFail("platform") ? std::string("OKAY_TEST_OWN_FAIL=platform")
+                                                            : pb ? pb->LastError() : std::string("none")) + ")";
+            if (!EditorFallBackToSdl(why, false)) {
+                std::cerr << "editor: the own platform backend could not start and this build has no SDL to fall back on\n";
+                return 1;
+            }
         }
-    } else {
+    }
+    if (!g_noSdl) {
 #ifndef OKAY_PLATFORM_HAVE_SDL2
     std::cerr << "editor: this build has no SDL; it runs only on our own platform code\n";
     return 1;
@@ -49590,22 +49624,52 @@ int main(int argc, char** argv) {
     if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
 
     // The platform seam: OKAY_EDITOR_PLATFORM=own (our ImGui glue, the views' GL through okay::platform) or sdl (the default).
-    std::string platNote;
-    g_edPlat = okay::editorplat::CreateEditorPlatformFromEnv(&platNote);
+    // The platform seam and the drawing seam, with the automatic fallback (owner decision 2026-11-17): our own platform side,
+    // window and renderer are the default; when one of them cannot start, the editor says why (stderr and the Console) and makes
+    // everything again on SDL, once.
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
     // frame while hidden and then reveal the window already showing the splash.
     // The drawing seam: OKAY_EDITOR_RENDERER=own (our GL painter on the main window, our ImGui renderer; only together with
-    // OKAY_EDITOR_PLATFORM=own) or sdl (SDL_Renderer, the default). The own renderer needs a main window with OpenGL.
-    const bool wantOwnRenderer = okay::editorgfx::OwnRendererAllowed(
-        okay::editorgfx::ParseRenderer(std::getenv("OKAY_EDITOR_RENDERER")),
-        g_edPlat->Kind() == okay::editorplat::PlatformKind::Own);
-    SDL_Window* window = static_cast<SDL_Window*>(g_edPlat->CreateMainWindow("OkayEngine", 1280, 800, wantOwnRenderer));
-    if (!window) { std::cerr << "CreateWindow failed: " << g_edPlat->LastError() << "\n"; return 1; }
+    // OKAY_EDITOR_PLATFORM=own) or sdl (SDL_Renderer). The own renderer needs a main window with OpenGL.
+    // What draws the window: SDL's 2D renderer (Direct3D 11 on Windows so the 3D renderer can share its device and draw the
+    // viewports straight into the textures the UI shows; OKAY_RENDER_DRIVER overrides; VSync off by default = uncapped FPS,
+    // toggled in View > VSync), or our own GL painter (EditorGfx.hpp). Every texture below is one of its painter's.
+    std::string platNote, gfxNote, gfxErr;
+    SDL_Window* window = nullptr;
+    bool platEvents = false;
+    for (int attempt = 0;; ++attempt) {
+        g_edPlat = okay::editorplat::CreateEditorPlatformFromEnv(&platNote);
+        if (!g_edPlat) { std::cerr << platNote << "\n"; return 1; }
+        const bool ownSide = g_edPlat->Kind() == okay::editorplat::PlatformKind::Own;
+        const bool wantOwnRenderer = okay::editorgfx::OwnRendererAllowed(
+            okay::editorgfx::ParseRenderer(std::getenv("OKAY_EDITOR_RENDERER")), ownSide);
+        std::string failWhy;
+        if (ownSide && okay::OwnStartForcedToFail("window")) failWhy = "main window (OKAY_TEST_OWN_FAIL=window)";
+        else window = static_cast<SDL_Window*>(g_edPlat->CreateMainWindow("OkayEngine", 1280, 800, wantOwnRenderer));
+        if (failWhy.empty() && !window) failWhy = "main window (" + g_edPlat->LastError() + ")";
+        if (failWhy.empty()) {
+            // Stage E3: the main window and its events are okay::platform's (own platform + own renderer). `window` is then not an
+            // SDL_Window: nothing below hands it to SDL on this path.
+            platEvents = g_edPlat->EventsFromPlatform();
+            g_gfx = okay::editorgfx::CreateEditorGfxFromEnv(window, g_edPlat->MainWindow(), g_edPlat->MainWindowBackend(),
+                                                            ownSide, g_vsync, &gfxNote, &gfxErr);
+            if (!g_gfx) failWhy = "renderer (" + gfxErr + ")";
+            else if (platEvents && g_gfx->Kind() != okay::editorgfx::RendererKind::Own)   // the SDL_Renderer fallback cannot draw it
+                failWhy = "renderer on the okay::platform main window (" + gfxNote + ")";
+            else if (wantOwnRenderer && g_gfx->Kind() != okay::editorgfx::RendererKind::Own)
+                g_ownFallbackNote = "editor: our own renderer could not start; the editor draws with SDL instead (" + gfxNote + ")";
+        }
+        if (failWhy.empty()) break;
+        const bool triedOwn = ownSide || wantOwnRenderer || okay::platform::DefaultKind() == okay::platform::BackendKind::Own;
+        g_gfx.reset();
+        g_edPlat.reset();
+        window = nullptr;
+        if (attempt == 0 && triedOwn && EditorFallBackToSdl(failWhy, true)) continue;
+        std::cerr << "editor: could not start: " << failWhy << "\n";
+        return 1;
+    }
     okay::platform::Window& mainWin = *g_edPlat->MainWindow();   // okay::platform's view of it (id, focus, show / raise)
-    // Stage E3: the main window and its events are okay::platform's (own platform + own renderer). `window` is then not an
-    // SDL_Window: nothing below hands it to SDL on this path.
-    const bool platEvents = g_edPlat->EventsFromPlatform();
     if (platEvents) {
         platNote = "editor: platform " + g_edPlat->Describe();   // now says which backend made the window
         okay::SetAppIconOn(mainWin);   // placeholder OkaySpace logo (Window::SetIcon)
@@ -49614,21 +49678,7 @@ int main(int argc, char** argv) {
     else okay::SetAppIcon(window);   // placeholder OkaySpace logo
 #endif
     std::cerr << platNote << "\n";
-
-    // What draws the window: SDL's 2D renderer (Direct3D 11 on Windows so the 3D renderer can share its device and draw the
-    // viewports straight into the textures the UI shows; OKAY_RENDER_DRIVER overrides; VSync off by default = uncapped FPS,
-    // toggled in View > VSync), or our own GL painter (EditorGfx.hpp). Every texture below is one of its painter's.
-    std::string gfxNote, gfxErr;
-    g_gfx = okay::editorgfx::CreateEditorGfxFromEnv(window, g_edPlat->MainWindow(), g_edPlat->MainWindowBackend(),
-                                                    g_edPlat->Kind() == okay::editorplat::PlatformKind::Own, g_vsync,
-                                                    &gfxNote, &gfxErr);
-    if (!g_gfx) { std::cerr << "CreateRenderer failed: " << gfxErr << "\n"; return 1; }
     std::cerr << gfxNote << "\n";
-    if (platEvents && g_gfx->Kind() != okay::editorgfx::RendererKind::Own) {
-        // (only when our renderer failed on a window that is not SDL's: the SDL_Renderer fallback cannot draw it)
-        std::cerr << "editor: our own renderer could not start on the okay::platform main window; unset OKAY_EDITOR_RENDERER\n";
-        return 1;
-    }
     SDL_Renderer* renderer = static_cast<SDL_Renderer*>(g_gfx->SdlRenderer());   // null on own
     g_sdlRenderer = renderer;
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
@@ -49705,9 +49755,9 @@ int main(int argc, char** argv) {
     // Crisper at any zoom and far more legible across the whole editor. Falls back
     // to the default font if the atlas build ever fails.
     {
-        // OKAY_OWN_FONT_RASTER=1: every glyph of this atlas comes from our own rasteriser (off by default).
-        if (okay::imguifont::InstallIfRequested(io.Fonts))
-            ConsoleLog("Fonts: OKAY_OWN_FONT_RASTER=1, the editor's text is drawn by OkaySpace's own TrueType rasteriser");
+        // Every glyph of this atlas comes from our own rasteriser (the default; OKAY_OWN_FONT_RASTER=0 or OKAY_THIRD_PARTY=1 go back).
+        g_ownFontRaster = okay::imguifont::InstallIfRequested(io.Fonts);
+        if (g_ownFontRaster) ConsoleLog("Fonts: the editor's text is drawn by OkaySpace's own TrueType rasteriser (OKAY_OWN_FONT_RASTER=0 for Dear ImGui's)");
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         // (Dear ImGui 1.92 loads glyphs on demand from the TTF, so punctuation like
@@ -49869,6 +49919,7 @@ int main(int argc, char** argv) {
     ConsoleLog(platNote);
     g_gfx->InitImGui();              // ImGui's renderer side: ImGui's SDL_Renderer backend (sdl) or our renderer (own)
     ConsoleLog(gfxNote);
+    if (!g_ownFallbackNote.empty()) ConsoleLog(g_ownFallbackNote, 1);   // our own start failed and SDL took over: a warning
 #ifdef OKAY_PLATFORM_HAVE_SDL2
     if (renderer) OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels; SDL_Renderer only)
 #endif
@@ -49995,6 +50046,18 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    {   // The start-up line: what runs on our own code and what is third party (owner decision 2026-11-17), in the Console and on stderr.
+        const std::string line = "editor: " + okay::ownstack::SummaryLine({
+            {"platform", g_edPlat && g_edPlat->Kind() == okay::editorplat::PlatformKind::Own},
+            {"renderer", g_gfx && g_gfx->Kind() == okay::editorgfx::RendererKind::Own},
+            {"wav", okay::wav::OwnWavEnabled()},
+            {"fonts", g_ownFontRaster},
+            {"code editor", UseOwnCodeEditor()},
+            {"okayui screens", UseOkayUIBackend()},
+        });
+        std::cerr << line << "\n";
+        ConsoleLog(line);
+    }
     LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
     // Brand-new install on a high-DPI display (common on Windows 11 laptops at
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —

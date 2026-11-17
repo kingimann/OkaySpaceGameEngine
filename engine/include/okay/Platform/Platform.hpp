@@ -39,6 +39,10 @@ Backend* Default();
 /// the whole process. Creating it does not touch the OS; call Backend::Init.
 Backend* Get(BackendKind k);
 BackendKind DefaultKind();
+/// The automatic fallback (owner decision 2026-11-17: our own backend is the default, SDL the way back): a program whose own
+/// backend could not start calls this with BackendKind::Sdl2, and from then on Default() / DefaultKind() answer that backend.
+/// False (and nothing changes) when `k` is not compiled in.
+bool FallBackTo(BackendKind k);
 
 // ---- Keys ------------------------------------------------------------------
 // Physical keys, numbered with the USB HID usage ids (the same numbers as SDL

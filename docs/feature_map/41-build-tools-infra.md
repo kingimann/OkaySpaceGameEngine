@@ -211,15 +211,18 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.11.4 Release guard - `scripts/check_release_own_stack.sh` - fails a release build when own crypto or the own-stack switch is on, or when libsodium is not really in the build (cache `OKAY_SODIUM_IN_BUILD`, compiler flags, `--binary` startup line `crypto=libsodium`); `-DOKAY_REQUIRE_SODIUM=ON` makes CMake fail too; the libsodium download is SHA-256 pinned (`scripts/fetch-tarball.sh --sha256`, `scripts/libsodium-mingw.pin`); called by `scripts/build-windows-dist.sh`, `release-local.sh` and `release.yml`
   - 41.11.5 CI job - `.github/workflows/ci.yml` - `own-stack` (not required): builds with the switch on and no libsodium and runs the own pieces' tests; green on main
   - 41.11.6 Flip proposal - `docs/own_flip_proposal.md` - which own replacement could become the default, in what order (one group per release), the readiness rating of each, the prep work (Step 0), a checklist for every flip an agent can run, what blocks deleting each third-party library and how to try each replacement; no default is flipped by it
+  - 41.11.7 Own code on by default and the way back - `engine/include/okay/Core/ThirdPartySwitch.hpp` - owner decision 2026-11-17: the launcher, editor and player start on our own platform backend, renderers, WAV reader, font rasteriser, code editor and OkayUI screens; `OKAY_THIRD_PARTY=1` sends every one back to the third-party code (each feature's own variable still wins); `okay::ownstack::ApplyOwnDefaults` sets `OKAY_PLATFORM_BACKEND=own` at their start
+  - 41.11.8 Automatic fallback - `editor/main.cpp`, `launcher/main.cpp`, `player/main.cpp`, `okay::platform::FallBackTo` - when our own platform backend, window, GL context or renderer cannot start, the program logs why and starts on SDL; `OKAY_TEST_OWN_FAIL=window|renderer|platform|1` forces it (tests only)
+  - 41.11.9 What-is-ours line - `shared/OwnStack.hpp` `SummaryLine` - `own: platform, renderer, wav, fonts, code editor, okayui screens; third party: libsodium (set OKAY_THIRD_PARTY=1 for all old paths)` in the launcher's `okay_launcher.log`, the editor's Console and the player's log
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `shared/OwnStack.hpp`, `scripts/check_release_own_stack.sh`, `scripts/fetch-tarball.sh`, `scripts/fetch-libsodium-mingw.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
-- **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `OKAY_REQUIRE_SODIUM`, `OKAY_PRINT_STACK_AND_EXIT`, `okay::ownstack::Startup`, `okay::ownstack::Describe`
+- **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `OKAY_REQUIRE_SODIUM`, `OKAY_PRINT_STACK_AND_EXIT`, `OKAY_THIRD_PARTY`, `OKAY_TEST_OWN_FAIL`, `okay::ownstack::Startup`, `okay::ownstack::Describe`, `okay::ownstack::SummaryLine`, `okay::ThirdPartyForced`, `okay::platform::FallBackTo`
 - **Editor:** Help > About OkaySpace (the stack line)
 - **Docs:** `docs/own_stack_rollout.md`, `docs/own_code_roadmap.md`, `docs/own_flip_proposal.md`, `docs/try_it.md`
-- **Tests:** `own_stack`, `own_stack_env`, `release_refuses_own_crypto`
+- **Tests:** `own_stack`, `own_stack_env`, `release_refuses_own_crypto`, `third_party_switch`, `third_party_switch_forced`
 - **Status:** Works - tested on Linux; the CI job `own-stack` is green on main (it prints the stack line and runs 131 tests); nothing of it has run on real Windows
 - **Open:** the switch and the line cover only 20 readers (FBX and 19 formats), not the 16 newest readers or WAV; the line cannot know a UI backend saved in a developer build's settings at the top of `main()`; the job builds without Assimp and no test covers the readers' automatic fallback to the old reader
 - **Related:** 41.1, 41.8, 41.10
-- **Words:** own stack, dogfood, OKAY_OWN_STACK, startup line, stack line, own backends, third-party, own crypto test
+- **Words:** own stack, dogfood, OKAY_OWN_STACK, startup line, stack line, own backends, third-party, own crypto test, OKAY_THIRD_PARTY, way back, fallback, own by default
 - **Seen as:** a line starting `[okay] stack:` in the log; the About popup lists the stack
 - **Ask me like:** "how do I run everything on our own code?"
 

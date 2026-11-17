@@ -86,6 +86,9 @@ if [ -n "${STEAMWORKS_SDK_PATH:-}" ]; then
     EXTRA+=("-DOKAY_WITH_STEAM=ON" "-DSTEAMWORKS_SDK_PATH=$STEAMWORKS_SDK_PATH")
 fi
 
+# Our own code is the default (owner decision 2026-11-17): OkayUI for the ported screens (named here so a cached build tree from an
+# older release cannot keep "imgui"); the other own defaults are decided in the programs. SDL stays linked and SDL2.dll ships, because
+# it is the automatic fallback and what OKAY_THIRD_PARTY=1 goes back to.
 # A release never carries our own unreviewed crypto or the own-stack dogfood switch (CLAUDE.md rule 18, docs/own_stack_rollout.md).
 scripts/check_release_own_stack.sh -- "${EXTRA[@]}"
 
@@ -95,6 +98,7 @@ cmake -S . -B "$BUILD_DIR" \
       -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
       -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON \
       -DOKAY_USE_ASSIMP=ON \
+      -DOKAY_WITH_SDL=ON -DOKAY_UI_DEFAULT_BACKEND=okayui \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"

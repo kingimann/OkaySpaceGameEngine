@@ -1,7 +1,8 @@
 #pragma once
-// OKAY_OWN_FONT_RASTER=1: Dear ImGui's font atlas takes its glyph bitmaps from our own
+// Our own font rasteriser for Dear ImGui (the default since 2026-11-17; OKAY_OWN_FONT_RASTER=0 or OKAY_THIRD_PARTY=1 go back):
+// Dear ImGui's font atlas takes its glyph bitmaps from our own
 // TrueType reader and rasteriser (okay::ttf::Face, engine/src/Graphics/TtfRaster.cpp)
-// instead of the rasteriser built into Dear ImGui. Off by default.
+// instead of the rasteriser built into Dear ImGui.
 //
 // How: Dear ImGui 1.92 loads glyphs through a font-loader interface (ImFontLoader,
 // declared in imgui_internal.h; its own header says "prefer using a custom ImFontLoader"
@@ -30,15 +31,21 @@
 #include <cstdlib>
 #include <vector>
 
+#include "okay/Core/ThirdPartySwitch.hpp"
+
 namespace okay {
 namespace imguifont {
 
-/// True when OKAY_OWN_FONT_RASTER=1 (or "on" / "true") is set.
+/// True when our rasteriser should fill the atlas: the default since the owner's decision of 2026-11-17. OKAY_OWN_FONT_RASTER=0
+/// (or "off" / "false" / "no") turns it off; with the variable unset, OKAY_THIRD_PARTY=1 turns it off too (Dear ImGui's own
+/// rasteriser, the old path). "1" / "on" / "true" / "yes" turns it on whatever OKAY_THIRD_PARTY says.
 inline bool OwnFontRasterRequested() {
     const char* e = std::getenv("OKAY_OWN_FONT_RASTER");
-    if (!e) return false;
+    if (!e || !*e) return !okay::ThirdPartyForced();
     const char c = e[0];
-    return c == '1' || c == 'o' || c == 'O' || c == 't' || c == 'T' || c == 'y' || c == 'Y';
+    if (c == '0' || c == 'f' || c == 'F' || c == 'n' || c == 'N') return false;
+    if (c == 'o' || c == 'O') return !(e[1] == 'f' || e[1] == 'F');   // "on" / "off"
+    return c == '1' || c == 't' || c == 'T' || c == 'y' || c == 'Y';
 }
 
 namespace detail {
@@ -181,7 +188,7 @@ inline const ImFontLoader* Loader() {
     return &loader;
 }
 
-/// Switch `atlas` to our rasteriser when OKAY_OWN_FONT_RASTER=1. Returns true when it did.
+/// Switch `atlas` to our rasteriser (the default; see OwnFontRasterRequested). Returns true when it did.
 inline bool InstallIfRequested(ImFontAtlas* atlas) {
     if (!atlas || !OwnFontRasterRequested()) return false;
     atlas->SetFontLoader(Loader());

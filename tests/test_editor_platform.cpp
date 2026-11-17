@@ -163,8 +163,14 @@ void Frame(SDL_Renderer* r) {
 // ---- 1. the switch ----
 void TestSwitch() {
     RUN_SUITE("OKAY_EDITOR_PLATFORM");
+    // Our own platform side is the default (owner's decision 2026-11-17); OKAY_THIRD_PARTY=1 goes back to SDL when unset.
+    unsetenv("OKAY_THIRD_PARTY");
+    CHECK(ep::ParsePlatform(nullptr) == ep::PlatformKind::Own);
+    CHECK(ep::ParsePlatform("") == ep::PlatformKind::Own);
+    setenv("OKAY_THIRD_PARTY", "1", 1);
     CHECK(ep::ParsePlatform(nullptr) == ep::PlatformKind::Sdl);
-    CHECK(ep::ParsePlatform("") == ep::PlatformKind::Sdl);
+    CHECK(ep::ParsePlatform("own") == ep::PlatformKind::Own);   // the editor's own variable still wins
+    unsetenv("OKAY_THIRD_PARTY");
     CHECK(ep::ParsePlatform("sdl") == ep::PlatformKind::Sdl);
     CHECK(ep::ParsePlatform("OWN") == ep::PlatformKind::Sdl);   // exact spelling only
     CHECK(ep::ParsePlatform("own") == ep::PlatformKind::Own);

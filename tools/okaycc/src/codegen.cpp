@@ -201,14 +201,17 @@ const char* setcc(Inst::Op op, bool uns) {
 void emitInst(std::string& s, const Function& f, const Inst& in) {
     if (in.fp && in.op == Inst::Op::Cvt) {
         int src = in.extra;
-        int dstW = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        int code = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        int dstW = code < 0 ? -code : code;
         if (src == 0) {
             load(s, in.a, "%rax");
-            s += dstW <= 4 ? "  cvtsi2ss %rax, %xmm0\n" : "  cvtsi2sd %rax, %xmm0\n";
+            s += code <= 4 ? "  cvtsi2ss %rax, %xmm0\n" : "  cvtsi2sd %rax, %xmm0\n";
             storeXmm(s, 0, in.dst, dstW);
-        } else if (dstW == 0) {
+        } else if (code <= 0) {
             loadXmm(s, in.a, 0, src);
-            s += src <= 4 ? "  cvttss2si %xmm0, %rax\n" : "  cvttsd2si %xmm0, %rax\n";
+            if (dstW <= 4) s += src <= 4 ? "  cvttss2si %xmm0, %eax\n  movslq %eax, %rax\n"
+                                         : "  cvttsd2si %xmm0, %eax\n  movslq %eax, %rax\n";
+            else s += src <= 4 ? "  cvttss2si %xmm0, %rax\n" : "  cvttsd2si %xmm0, %rax\n";
             store(s, "%rax", in.dst);
         } else {
             loadXmm(s, in.a, 0, src);

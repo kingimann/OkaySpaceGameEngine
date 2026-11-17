@@ -426,22 +426,28 @@ void fpBin(Image& im, int width, int opcode) {
 void emitInst(Image& im, const Function& f, const Inst& in) {
     if (in.fp && in.op == Inst::Op::Cvt) {
         int src = in.extra;
-        int dstW = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        int code = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        int dstW = code < 0 ? -code : code;
         if (src == 0) {
             loadRax(im, in.a);
-            u8(im, dstW <= 4 ? 0xF3 : 0xF2);
+            u8(im, code <= 4 ? 0xF3 : 0xF2);
             u8(im, 0x48);
             u8(im, 0x0F);
             u8(im, 0x2A);
             u8(im, modrm(3, 0, Rax));
             storeXmm(im, 0, in.dst, dstW);
-        } else if (dstW == 0) {
+        } else if (code <= 0) {
             loadXmm(im, in.a, 0, src);
             u8(im, src <= 4 ? 0xF3 : 0xF2);
-            u8(im, 0x48);
+            if (dstW > 4) u8(im, 0x48);
             u8(im, 0x0F);
             u8(im, 0x2C);
             u8(im, modrm(3, Rax, 0));
+            if (dstW <= 4) {
+                u8(im, 0x48);
+                u8(im, 0x63);
+                u8(im, modrm(3, Rax, Rax));
+            }
             movSlotRax(im, in.dst);
         } else {
             loadXmm(im, in.a, 0, src);

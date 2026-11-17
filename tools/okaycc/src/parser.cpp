@@ -2953,6 +2953,18 @@ private:
                 return v;
             }
             if (e.ty->kind == Type::Kind::Array) return v;
+            int srcW = v.fpw ? v.fpw : fpWidthOf(e.kids[0]->checked.get());
+            int dstFp = fpWidthOf(e.ty.get());
+            if (srcW || dstFp) {
+                if (dstFp) return cvtFp(v, srcW, dstFp);
+                int iw = sizeOf(e.ty.get());
+                if (iw < 4) {
+                    Val n = cvtFp(v, srcW, -4);
+                    return Val{narrow(n.op, iw, e.ty->unsign), 0, 0};
+                }
+                if (iw > 8) iw = 8;
+                return cvtFp(v, srcW, -iw);
+            }
             int w = sizeOf(e.ty.get());
             if (w >= 8 && !e.ty->unsign) return v;
             return Val{narrow(v.op, w, e.ty->unsign), 0, 0};
@@ -3214,13 +3226,13 @@ private:
         return Val{Operand::vreg(old), s->step, s->inner};
     }
 
-    Val cvtFp(Val v, int src, int dstW) {
-        if (src == dstW && src != 0) return v;
-        if (src == 0 && v.op.kind == Operand::Kind::Imm && dstW != 0) {
+    Val cvtFp(Val v, int src, int dstCode) {
+        if (dstCode > 0 && src == dstCode) return v;
+        if (src == 0 && v.op.kind == Operand::Kind::Imm && dstCode > 0) {
             double d = static_cast<double>(v.op.imm);
             Val o;
-            o.fpw = dstW;
-            if (dstW == 4) {
+            o.fpw = dstCode;
+            if (dstCode == 4) {
                 float f = static_cast<float>(d);
                 std::uint32_t bits = 0;
                 std::memcpy(&bits, &f, 4);
@@ -3239,11 +3251,11 @@ private:
         in.dst = t;
         in.a = v.op;
         in.extra = src;
-        in.b = Operand::number(dstW);
+        in.b = Operand::number(dstCode);
         emit(in);
         Val o;
         o.op = Operand::vreg(t);
-        o.fpw = dstW == 4 || dstW == 8 ? dstW : 0;
+        o.fpw = dstCode > 0 ? dstCode : 0;
         return o;
     }
 

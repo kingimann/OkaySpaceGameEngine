@@ -18,7 +18,9 @@ struct CompileInput {
     std::vector<std::string> include_paths;
     // Each entry is "NAME" or "NAME=value". NAME alone means 1.
     std::vector<std::string> defines;
-    // /O1. Drops an if whose condition is a constant. /O2 does not set this.
+    // 1 is /O1 (constant ifs and register allocation). 2 is /O2, which also
+    // propagates constants and removes dead stores.
+    int opt_level = 0;
     bool optimize = false;
 };
 

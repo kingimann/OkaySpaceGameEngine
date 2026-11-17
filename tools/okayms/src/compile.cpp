@@ -94,6 +94,7 @@ struct Local {
     bool is_static = false;
     bool is_const = false;
     std::string symbol;
+    int reg = 0;
 };
 
 struct FuncDecl {
@@ -2037,6 +2038,7 @@ struct Gen {
     int sret_dest_off = 0;
     bool save_nv = false;
     bool optimize = false;
+    std::vector<uint8_t> extra_pops;
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
     std::vector<std::vector<size_t>> break_stack;
@@ -2122,11 +2124,7 @@ struct Gen {
         b(0x89);
         b(0xEC);
         b(0x5D);
-        if (save_nv) {
-            b(0x5F);
-            b(0x5E);
-            b(0x5B);
-        }
+        for (uint8_t op : extra_pops) b(op);
         b(0xC3);
     }
     size_t emit_jcc(uint8_t cc) {
@@ -2417,6 +2415,21 @@ bool Gen::gen_expr(const Node& node) {
     }
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
+            if (local->reg != 0) {
+                if (local->reg == 3) {
+                    b(0x89);
+                    b(0xD8);
+                } else if (local->reg == 6) {
+                    b(0x89);
+                    b(0xF0);
+                } else {
+                    b(0x89);
+                    b(0xF8);
+                }
+                last_type = local->type;
+                promote(&last_type);
+                return true;
+            }
             if (local->is_static) {
                 const int size = size_of(local->type);
                 const bool uns = local->type.is_unsigned;
@@ -2663,6 +2676,24 @@ bool Gen::gen_expr(const Node& node) {
         return false;
     }
     if (node.kind == Node::Assign) {
+        if (node.kids[0].kind == Node::Name && (node.op == TAssign || node.op == TEnd)) {
+            if (Local* local = find_local(node.kids[0].text)) {
+                if (local->reg != 0) {
+                    if (!gen_expr(node.kids[1])) return false;
+                    if (local->reg == 3) {
+                        b(0x89);
+                        b(0xC3);
+                    } else if (local->reg == 6) {
+                        b(0x89);
+                        b(0xC6);
+                    } else {
+                        b(0x89);
+                        b(0xC7);
+                    }
+                    return true;
+                }
+            }
+        }
         if (node.number != 1 && node.kids[0].kind == Node::Name) {
             if (Local* local = find_local(node.kids[0].text)) {
                 if (local->is_const) {
@@ -3453,9 +3484,83 @@ struct Sym {
     uint8_t storage = kClassExternal;
 };
 
+bool address_taken(const Node& node, const std::string& name) {
+    if (node.kind == Node::Unary && node.op == TAmp && !node.kids.empty() && node.kids[0].kind == Node::Name &&
+        node.kids[0].text == name)
+        return true;
+    for (const Node& kid : node.kids)
+        if (address_taken(kid, name)) return true;
+    return false;
+}
+
+bool expr_uses(const Node& node, const std::string& name) {
+    if (node.kind == Node::Name && node.text == name) return true;
+    for (const Node& kid : node.kids)
+        if (expr_uses(kid, name)) return true;
+    return false;
+}
+
+Node* statement_value(Node* node) {
+    if (node->kind == Node::ExprStmt && node->kids.size() == 1) return &node->kids[0];
+    return node;
+}
+
+void prop_node(Node* node, std::map<std::string, uint64_t>* known) {
+    if (node->kind == Node::Block || node->kind == Node::If || node->kind == Node::While || node->kind == Node::For ||
+        node->kind == Node::Do || node->kind == Node::Label) {
+        if (node->kind == Node::Block) {
+            for (size_t i = 0; i + 1 < node->kids.size(); ++i) {
+                Node* cur = statement_value(&node->kids[i]);
+                Node* nxt = statement_value(&node->kids[i + 1]);
+                if (cur->kind == Node::Assign && nxt->kind == Node::Assign && cur->kids.size() == 2 && nxt->kids.size() == 2 &&
+                    cur->kids[0].kind == Node::Name && nxt->kids[0].kind == Node::Name && cur->kids[0].text == nxt->kids[0].text &&
+                    !expr_uses(nxt->kids[1], cur->kids[0].text)) {
+                    node->kids[i].kind = Node::Block;
+                    node->kids[i].kids.clear();
+                }
+            }
+        }
+        for (Node& kid : node->kids) prop_node(&kid, known);
+        return;
+    }
+    if (node->kind == Node::Assign && !node->kids.empty() && node->kids[0].kind == Node::Name &&
+        (node->op == TAssign || node->op == TEnd)) {
+        prop_node(&node->kids[1], known);
+        if (node->kids[1].kind == Node::IntLit && node->kids[1].type.base < 5) (*known)[node->kids[0].text] = node->kids[1].number;
+        else known->erase(node->kids[0].text);
+        return;
+    }
+    if (node->kind == Node::Name && known->count(node->text) != 0) {
+        const uint64_t value = (*known)[node->text];
+        *node = Node{};
+        node->kind = Node::IntLit;
+        node->number = value;
+        node->type.base = 1;
+        return;
+    }
+    for (Node& kid : node->kids) prop_node(&kid, known);
+    if (node->kind == Node::Binary && node->kids.size() == 2 && node->kids[0].kind == Node::IntLit &&
+        node->kids[1].kind == Node::IntLit && node->kids[0].type.base < 5 && node->kids[1].type.base < 5) {
+        const uint64_t left = node->kids[0].number;
+        const uint64_t right = node->kids[1].number;
+        uint64_t value = 0;
+        bool folded = true;
+        if (node->op == TPlus) value = left + right;
+        else if (node->op == TMinus) value = left - right;
+        else if (node->op == TStar) value = left * right;
+        else folded = false;
+        if (folded) {
+            *node = Node{};
+            node->kind = Node::IntLit;
+            node->number = value;
+            node->type.base = 1;
+        }
+    }
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
-                    std::string* error, CompileOutput* out) {
+                    int opt_level, std::string* error, CompileOutput* out) {
     Gen gen(funcs);
     gen.structs = &structs;
     gen.globals = &globals;
@@ -3472,6 +3577,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     std::vector<uint32_t> unwind_offs;
     for (FuncDecl& fn : funcs) {
         if (!fn.defined) continue;
+        if (opt_level >= 2) {
+            std::map<std::string, uint64_t> known;
+            prop_node(&fn.body, &known);
+        }
         int max_args = count_args(fn.body);
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
@@ -3482,8 +3591,25 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         for (const Local& local : fn.locals) {
             if (local.type.base == 3 && local.type.pointers == 0 && !gen.fits_register(local.type)) needs_nv = true;
         }
-        if (needs_nv) frame += 8;
-        gen.save_nv = needs_nv;
+        std::vector<int> extra_regs;
+        if ((optimize || opt_level >= 1) && !needs_nv) {
+            const int pool[] = {3, 6, 7};
+            int used = 0;
+            for (Local& local : fn.locals) {
+                if (used >= 3) break;
+                if (local.is_static || local.name.empty() || local.name[0] == '_') continue;
+                if (local.type.is_array() || local.type.pointers != 0 || local.type.base == 3 || local.type.base == 5 ||
+                    local.type.base == 6)
+                    continue;
+                if (address_taken(fn.body, local.name)) continue;
+                local.reg = pool[used++];
+                extra_regs.push_back(local.reg);
+            }
+        }
+        if (needs_nv) extra_regs = {3, 6, 7};
+        if (((static_cast<int>(extra_regs.size()) + 1) % 2) == 0) frame += 8;
+        gen.save_nv = !extra_regs.empty();
+        gen.extra_pops.clear();
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
         gen.frame = frame;
@@ -3491,13 +3617,12 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         uint8_t cursor = 0;
         auto mark = [&](uint8_t bytes) { cursor = static_cast<uint8_t>(cursor + bytes); return cursor; };
         std::vector<UnwindPush> pushes;
-        if (needs_nv) {
-            gen.b(0x53);
-            pushes.push_back({3, mark(1)});
-            gen.b(0x56);
-            pushes.push_back({6, mark(1)});
-            gen.b(0x57);
-            pushes.push_back({7, mark(1)});
+        for (int reg : extra_regs) {
+            const uint8_t push_op = reg == 3 ? 0x53 : reg == 6 ? 0x56 : 0x57;
+            const uint8_t pop_op = reg == 3 ? 0x5B : reg == 6 ? 0x5E : 0x5F;
+            gen.b(push_op);
+            pushes.push_back({static_cast<uint8_t>(reg), mark(1)});
+            gen.extra_pops.insert(gen.extra_pops.begin(), pop_op);
         }
         gen.b(0x55);
         pushes.push_back({5, mark(1)});
@@ -3592,6 +3717,18 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 gen.b(modrm);
                 gen.disp(local.offset);
             }
+        }
+        for (int p = 0; p < fn.nparams; ++p) {
+            const Local& local = fn.locals[static_cast<size_t>(fn.param_base + p)];
+            if (local.reg == 0) continue;
+            const int src = p + (fn.sret ? 1 : 0);
+            if (src >= 4) continue;
+            const uint8_t modrm = local.reg == 3 ? (src == 0 ? 0xCB : src == 1 ? 0xD3 : src == 2 ? 0xC3 : 0xCB)
+                                                 : local.reg == 6 ? (src == 0 ? 0xCE : src == 1 ? 0xD6 : 0xC6)
+                                                                  : (src == 0 ? 0xCF : src == 1 ? 0xD7 : 0xC7);
+            if (src >= 2) gen.b(0x44);
+            gen.b(0x89);
+            gen.b(modrm);
         }
         if (!gen.gen_stmt(fn.body)) {
             *error = gen.error.empty() ? "codegen failed" : gen.error;
@@ -3793,8 +3930,8 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     CompileOutput output;
     std::string error;
-    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, &error,
-                        &output))
+    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, input.opt_level,
+                        &error, &output))
         return Result<CompileOutput>::fail(error);
     return Result<CompileOutput>::success(std::move(output));
 }

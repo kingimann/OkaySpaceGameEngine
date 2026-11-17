@@ -137,9 +137,14 @@ int main(int argc, char** argv) {
             }
             if (low == "o1") {
                 common.optimize = true;
+                common.opt_level = 1;
                 continue;
             }
-            if (low == "o2") continue;
+            if (low == "o2") {
+                common.optimize = true;
+                common.opt_level = 2;
+                continue;
+            }
             if (low == "ld") {
                 make_dll = true;
                 link.dll = true;

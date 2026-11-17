@@ -45,6 +45,23 @@ Typed options are one line, the same shape in the manifest and in `config.okay`:
 
 `okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
 
+## Benchmarks on the 339-step test_math tree (2026-11-17, this machine)
+Fresh shallow clone of `grok/okaybuild-1`, Ninja Debug `-O0 -g0`, tests on, player/editor/launcher/sandbox/assimp off, sodium on. `ninja` reported `[339/339]`. Import: 335 compiles, 3 archives, 1 link. `-j2`. Not Windows.
+
+The first okay-build had no state, so it recompiled all 339 steps (cache cold, and each compile also preprocesses for the cache). Wall clock 392.6 s. Profile: dirty-check 4 ms, run command 778266 ms summed across the two workers, depfile+hash 1463 ms, wall 392608 ms. That 1.5 s is the cost of hashing inputs while the state file is written. The state file ended at 11 MB and 105,599 lines.
+
+A later pass with `--no-stat` (mtime shortcut off, so every input is read) hashed 1983 files, trusted 0, dirty-check 1300 ms, plan+state load 43 ms, wall 1344 ms, and ran 0 steps.
+
+No-op, median of 20, process start included, stat shortcut on:
+- okay-build, cache warm: 63.5 ms (runs from 58.1 to 84.3)
+- okay-build, cache directory deleted: 61.4 ms (59.0 to 90.9)
+- Ninja `test_math`: 25.6 ms (23.0 to 55.9)
+
+A no-op does not compile, so a cold cache and a warm cache take the same time. The gap versus Ninja is the state file, same finding as the earlier median-of-5 (66 ms vs 24–28 ms).
+
+## Asset pipeline (design only, not built)
+A pipeline would be a rule in the manifest: a source suffix, a tool, an output suffix, and a folder to scan. okay-build would turn each match into an action edge. The engine's importers are inside the engine and the editor, not a program this tool can run. Until there is a command-line importer, assets stay as hand-written `action` blocks. No engine file was changed. The question for the owner is in the round report: is a small importer program allowed, or do assets stay as actions?
+
 ## MSVC flag spelling
 The `msvc` toolchain preset drives `cl.exe`, `link.exe` and `lib.exe` (object `.obj`, library `.lib`, program `.exe`). Configs, defines and includes are spelled for that driver: `/Od` `/O1` `/O2` `/Ox`, `/Zi`, `/D`, `/I`, `/Fo` on a compile, `/OUT:` on `link.exe` and `lib.exe`, `/Fe` when the linker itself is `cl.exe`, `/LIBPATH:` and `name.lib` for libraries. A compile passes `/showIncludes`. Lines that say `including file:` are written into the same depfile the gcc path already reads, so a named header is a real dependency. Long commands use the existing response-file path (`tool @file`, one argument per line). This was checked with a fake `cl.exe` that records its arguments. It was not run against a real Microsoft compiler.
 

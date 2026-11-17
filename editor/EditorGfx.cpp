@@ -90,7 +90,10 @@ std::unique_ptr<EditorGfx> CreateEditorGfxFromEnv(void* sdlWindow, plat::Window*
         else if (!glWindow || !b) why = "no OpenGL main window";
         else g = CreateOwnEditorGfx(*glWindow, *b, vsync, &why);
     }
-    if (!g) g = CreateSdlEditorGfx(sdlWindow, vsync, err);
+    // SDL_Renderer only on an SDL window: with the main window made by okay::platform (sdlWindow null) there is nothing SDL can
+    // draw on, and the caller starts again on SDL (the editor's automatic fallback).
+    if (!g && sdlWindow) g = CreateSdlEditorGfx(sdlWindow, vsync, err);
+    else if (!g && err) *err = why;
     if (note) {
         *note = g ? "editor: renderer " + g->Describe() : std::string("editor: renderer: none");
         if (want == RendererKind::Own && (!g || g->Kind() != RendererKind::Own))

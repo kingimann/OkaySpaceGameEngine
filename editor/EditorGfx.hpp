@@ -129,7 +129,8 @@ std::unique_ptr<EditorGfx> CreateOwnEditorGfx(okay::platform::Window& w, okay::p
 
 /// OKAY_EDITOR_RENDERER picks. `own` is used only when `ownPlatform` (OKAY_EDITOR_PLATFORM=own started) and `glWindow` / `b`
 /// are given; otherwise, or when it cannot start, `sdl` on `sdlWindow` (and `note` says why). `note` gets one line for the log,
-/// e.g. "editor: renderer own (opengl painter on a sdl2 window, own ImGui renderer)". Null only when `sdl` fails too (`err`).
+/// e.g. "editor: renderer own (opengl painter on a sdl2 window, own ImGui renderer)". Null when `sdl` fails too (`err`), or when
+/// our renderer failed and `sdlWindow` is null (a main window made by okay::platform: the caller falls back to SDL as a whole).
 std::unique_ptr<EditorGfx> CreateEditorGfxFromEnv(void* sdlWindow, okay::platform::Window* glWindow, okay::platform::Backend* b,
                                                   bool ownPlatform, bool vsync, std::string* note, std::string* err);
 

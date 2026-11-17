@@ -49652,7 +49652,7 @@ int main(int argc, char** argv) {
             // Stage E3: the main window and its events are okay::platform's (own platform + own renderer). `window` is then not an
             // SDL_Window: nothing below hands it to SDL on this path.
             platEvents = g_edPlat->EventsFromPlatform();
-            g_gfx = okay::editorgfx::CreateEditorGfxFromEnv(window, g_edPlat->MainWindow(), g_edPlat->MainWindowBackend(),
+            g_gfx = okay::editorgfx::CreateEditorGfxFromEnv(platEvents ? nullptr : window, g_edPlat->MainWindow(), g_edPlat->MainWindowBackend(),
                                                             ownSide, g_vsync, &gfxNote, &gfxErr);
             if (!g_gfx) failWhy = "renderer (" + gfxErr + ")";
             else if (platEvents && g_gfx->Kind() != okay::editorgfx::RendererKind::Own)   // the SDL_Renderer fallback cannot draw it

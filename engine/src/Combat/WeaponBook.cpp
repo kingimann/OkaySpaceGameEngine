@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -112,10 +113,7 @@ bool WeaponBook::Load(const std::string& path, std::string* err) {
 }
 
 bool WeaponBook::Save(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << Serialize();
-    if (!f) return false;
+    if (!savefmt::AtomicWrite(path, Serialize())) return false;   // all or nothing
     Cache()[path] = *this;
     return true;
 }

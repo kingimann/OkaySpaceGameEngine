@@ -98,6 +98,9 @@ public:
     void SetEnabled(bool on) { m_enabled = on; }
     bool Enabled() const { return m_enabled; }
     void SetInterval(float seconds) { m_cfg.intervalSeconds = seconds; }
+    /// How many rotating copies this session keeps (>= 1). Takes effect with the next write.
+    void SetSlots(int slots) { m_cfg.slots = slots < 1 ? 1 : slots; }
+    int Slots() const { return m_cfg.slots; }
     float Interval() const { return m_cfg.intervalSeconds; }
     /// Advance the timer; autosaves (via the provider) when the interval has
     /// elapsed. Returns true if a file was written.

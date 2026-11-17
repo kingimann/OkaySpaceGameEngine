@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
 
 #include <algorithm>
@@ -658,10 +659,8 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
 }
 
 bool PolyMesh::Save(const std::string& path, std::string* error) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) { if (error) *error = "can't write " + path; return false; }
-    f << Serialize();
-    if (!f.good()) { if (error) *error = "writing " + path + " failed"; return false; }
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, Serialize(), &why)) { if (error) *error = why; return false; }   // all or nothing
     return true;
 }
 

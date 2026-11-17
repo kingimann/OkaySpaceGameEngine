@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "StoryKv.hpp"
 #include "okay/Components/Character.hpp"          // AssetBaseDir
@@ -193,10 +194,7 @@ bool QuestFile::Load(const std::string& path, std::vector<QuestDef>& out, std::s
 }
 
 bool QuestFile::Save(const std::string& path, const std::vector<QuestDef>& quests) {
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return false;
-    f << Write(quests);
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Write(quests));   // all or nothing
 }
 
 std::vector<QuestFile::Issue> QuestFile::Validate(const std::vector<QuestDef>& quests, const std::vector<std::string>* knownItems) {

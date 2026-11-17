@@ -1,6 +1,7 @@
 #include "okay/Net/Matchmaker.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
+#include <ctime>
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
@@ -232,13 +233,8 @@ private:
             std::error_code ec;
             const bool keep = undoing ? e.hadBefore : e.hasAfter;
             if (!keep) { fs::remove(e.path, ec); continue; }
-            const std::string tmp = e.path + ".tmp";
-            {
-                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-                f << (undoing ? e.before : e.after);
-            }
-            fs::rename(tmp, e.path, ec);
-            if (ec) { fs::remove(e.path, ec); ec.clear(); fs::rename(tmp, e.path, ec); }
+            // All or nothing: an undo that dies half way must not leave a half-written file.
+            okay::editor::savesafe::WriteUserFile(e.path, undoing ? e.before : e.after, nullptr, false);
         }
         if (!m_edits.empty()) SceneSerializer::ClearPrefabCache();   // instantiating a prefab must read the restored file
     }
@@ -998,6 +994,31 @@ bool EditorState::Save(const std::string& path, std::string* error) {
     if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
     m_path = path;
     MarkClean();
+    m_watch.Remember(path);   // what is on disk now is the editor's own write
+    m_savedAtUnix = (std::int64_t)std::time(nullptr);
+    return true;
+}
+
+okay::editor::savesafe::DiskChange EditorState::SceneDiskChange() {
+    if (m_playing || !m_levels.empty() || m_path.empty() || m_watch.Path() != m_path) return okay::editor::savesafe::DiskChange::None;
+    return m_watch.Check();
+}
+
+bool EditorState::RevertToSaved(std::string* error) {
+    if (m_playing) { if (error) *error = "Stop Play first."; return false; }
+    if (!m_levels.empty()) { if (error) *error = "A prefab is open. Leave prefab mode (Back) first."; return false; }
+    if (m_path.empty()) { if (error) *error = "This scene has not been saved yet, so there is nothing to go back to."; return false; }
+    Scene probe;   // read into a spare scene first: a damaged file leaves the open scene alone
+    if (!SceneSerializer::LoadFromFile(probe, m_path, error)) return false;
+    const std::string text = SceneSerializer::Serialize(probe);
+    PushUndo("Revert to Saved");
+    RestoreKeepingSelection(text);
+    SyncHistory();
+    m_known = SceneSerializer::Serialize(m_scene);
+    m_savedPrint = Fingerprint(m_known);
+    m_stack->MarkSaved();
+    dirty = false;
+    m_watch.Remember(m_path);
     return true;
 }
 
@@ -1010,6 +1031,7 @@ bool EditorState::LoadRecoveredText(const std::string& text, const std::string& 
     }
     if (!Load(tmp, error)) return false;
     m_path = keepPath;
+    if (keepPath.empty()) m_watch.Forget(); else m_watch.Remember(keepPath);   // the real file, not the recovery temp
     dirty = true;
     std::error_code ec;
     std::filesystem::remove(tmp, ec);
@@ -1031,6 +1053,8 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
+    m_watch.Remember(path);   // the file as it is now; a later change on disk is an outside change
+    m_savedAtUnix = 0;
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
     // Re-home the project to the scene's own project folder (the parent of its
@@ -1094,6 +1118,7 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
         m_scene.SetName(prevName);
         Select(nullptr);
         m_path = prevPath;
+        if (prevPath.empty()) m_watch.Forget(); else m_watch.Remember(prevPath);
         setProjectDir(prevDir);
         m_stack = std::move(prevStack);
         m_known = prevKnown;

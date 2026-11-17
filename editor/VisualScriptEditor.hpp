@@ -6,6 +6,7 @@
 // the same text format the engine parses (node/pos/exec/data/entry lines).
 #include "imgui.h"
 #include "EditorState.hpp"
+#include "SaveSafety.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
@@ -1265,9 +1266,8 @@ public:
         return o.str();
     }
     bool save(const std::string& p) {
-        std::ofstream f(p, std::ios::binary);
-        if (!f) return false;
-        f << toText();
+        // All or nothing: temp file, flush, swap. A crash or a full disk leaves the old graph whole.
+        if (!okay::editor::savesafe::WriteUserFile(p, toText())) return false;
         path = p; dirty = false; return true;
     }
     void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
@@ -5434,8 +5434,8 @@ inline void Draw(EditorState& ed, bool* open) {
             if (!p.empty()) { auto d = p.rfind(".okayvs"); if (d != std::string::npos) p = p.substr(0, d); }
             else { std::string dir = ed.projectDir(); p = (dir.empty() ? std::string("Script") : dir + "/Assets/Script"); }
             p += ".okay";
-            std::ofstream f(p, std::ios::binary);
-            if (f) { f << code; Log("Wrote " + p); } else Log("Save failed: " + p, 2);
+            std::string why;
+            if (okay::editor::savesafe::WriteUserFile(p, code, &why)) Log("Wrote " + p); else Log("Save failed: " + p + ": " + why, 2);
         }
         ImGui::Separator();
         // Read-only multiline view (a copy buffer; edits don't flow back).

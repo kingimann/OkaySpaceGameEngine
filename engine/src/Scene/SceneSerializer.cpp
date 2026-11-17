@@ -1,6 +1,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
+#include "okay/Core/SaveData.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -4178,7 +4179,7 @@ void SceneSerializer::ClearPrefabCache() {
 bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, std::string* error) {
     ClearPrefabCacheOnExit clearPrefabCache;   // whatever happens below, the next read sees the new file
     namespace fs = std::filesystem;
-    // Atomic save: the new text goes to "<path>.savetmp" first and is checked, then renamed over the
+    // Atomic save: the new text goes to "<path>.tmp" first and is flushed, then renamed over the
     // target, so a crash or a full disk mid-write can never leave a truncated scene. The target is
     // never moved or removed before the new file is complete: one rolling "<path>.bak" keeps the
     // previous good copy (a copy, so a failed rename leaves the scene exactly where it was).
@@ -4194,40 +4195,17 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path, st
     if (target.has_parent_path() && !fs::is_directory(target.parent_path(), ec))
         return fail("The folder \"" + target.parent_path().string() + "\" doesn't exist.");
     const std::string text = Serialize(scene);
-    const std::string tmp = path + ".savetmp";
-    {
-        errno = 0;
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return fail("Couldn't write \"" + tmp + "\": " + (errno ? std::error_code(errno, std::generic_category()).message() : std::string("no permission")));
-        f.write(text.data(), (std::streamsize)text.size());
-        f.flush();
-        if (!f) {
-            const int e = errno;
-            f.close();
-            fs::remove(tmp, ec);
-            return fail("Couldn't write \"" + path + "\": " + (e ? std::error_code(e, std::generic_category()).message() : std::string("the disk may be full")));
-        }
-    }
-    const std::uintmax_t written = fs::file_size(tmp, ec);
-    if (ec || written != text.size()) {
-        fs::remove(tmp, ec);
-        return fail("Couldn't write \"" + path + "\": the file came out the wrong size (is the disk full?).");
-    }
+    // The previous good copy first (a copy, so nothing is moved before the new file is complete). The write
+    // itself is savefmt::AtomicWriteChecked: a temp file beside the target, flushed to disk, then swapped in.
+    // A failed write (disk full, locked, killed half way) leaves the target exactly as it was.
     if (fs::exists(target, ec)) {   // best-effort previous-version backup; the target itself stays put
         std::error_code be;
         fs::copy_file(target, path + ".bak", fs::copy_options::overwrite_existing, be);
     }
-    ec.clear();
-    fs::rename(tmp, target, ec);      // atomic replace on the same filesystem
-    if (ec) {
-        // Locked or a platform that won't rename over an existing file: overwrite by copy. The old file is
-        // still in place until this succeeds, and the backup above holds its content if it half-fails.
-        std::error_code ce;
-        fs::copy_file(tmp, target, fs::copy_options::overwrite_existing, ce);
-        std::error_code rc;
-        fs::remove(tmp, rc);
-        if (ce) return fail("Couldn't replace \"" + path + "\": " + ce.message());
-    }
+    std::string why;
+    savefmt::WriteOptions opt;
+    opt.sync = true;
+    if (!savefmt::AtomicWriteChecked(path, text, &why, opt)) return fail("Couldn't save the scene (" + why + "). The file on disk was not changed.");
     return true;
 }
 
@@ -4316,6 +4294,7 @@ struct ParseSession {
     std::vector<std::string> warnings;            // unknown records skipped so far
     std::unordered_map<int, int> siblingHints;    // child index -> saved position among its siblings
     std::unordered_set<std::string> seenGuids;
+    std::string lastObject;                       // name of the last gameobject record read (for error messages)
 };
 
 // Parse (a slice of) a document into `scene`, which the caller has already
@@ -4371,8 +4350,20 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
     auto countOk = [&](long long n, unsigned long long minChars) {
         return n >= 0 && (unsigned long long)n <= remaining() / minChars;   // divide: n * minChars can wrap
     };
+    // A failure says where it was found: the line the parser had reached and the last object it read, so the
+    // editor can tell the user what to look at ("... (line 412, in or after the object "Door")").
     auto bad = [&](const std::string& what) {
-        if (error) *error = what;
+        if (error) {
+            const std::streamoff at = in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
+            std::string where;
+            if (at >= 0 && (std::size_t)at <= text.size()) {
+                const long line = 1 + (long)std::count(text.begin(), text.begin() + (std::ptrdiff_t)at, '\n');
+                where = " (line " + std::to_string(line);
+                if (!S.lastObject.empty()) where += ", in or after the object \"" + S.lastObject + "\"";
+                where += ")";
+            }
+            *error = what + where;
+        }
         return false;
     };
 
@@ -4504,6 +4495,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string name = ReadQuoted(in);
             if (!in) return bad("truncated gameobject header");
             if (byIndex.count(idx)) return bad("duplicate gameobject index " + std::to_string(idx));
+            S.lastObject = name;
             GameObject* go = scene.CreateGameObject(name);
             if (!S.first) S.first = go;
             if (firstNew && !*firstNew) *firstNew = go;
@@ -9562,10 +9554,7 @@ GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab)
 
 bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string& path) {
     ClearPrefabCacheOnExit clearPrefabCache;
-    std::ofstream f(path);
-    if (!f) return false;
-    f << SerializeObject(root);
-    return static_cast<bool>(f);
+    return savefmt::AtomicWrite(path, SerializeObject(root));   // all or nothing: the prefab file is whole or untouched
 }
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,

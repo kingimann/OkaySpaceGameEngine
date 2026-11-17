@@ -116,6 +116,7 @@ struct State {
     int  recentCount = 0;           // scenes in Open Recent
     bool assimp = false;            // Import Model reads more formats (tooltip only)
     bool isolating = false;         // Isolate mode is on
+    bool sceneUnsaved = false;      // the open scene has changes that are not saved
 };
 
 // ---- GameObject > Create: the categories every "create an object" menu shares ----
@@ -159,8 +160,21 @@ inline std::vector<Entry> FileMenu(const State& s) {
                                               : "Save this scene: " + s.scenePath);
         m.push_back(OnlyIf(save, !s.playing, kStopPlayFirst));
         m.push_back(OnlyIf(Item("file.saveas", "Save Scene As...", key::SaveAs), !s.playing, kStopPlayFirst));
-        m.push_back(Item("file.saveproject", "Save Project", key::SaveProject,
-                         "Save everything: the scene, every edited script, the open visual\nscript, project and build settings, and editor preferences."));
+        m.push_back(Item("file.saveproject", "Save All", key::SaveProject,
+                         "Save everything: the scene, every edited script, the open visual\nscript, project and build settings, and editor preferences.\nThe Console lists what was saved."));
+        // The rest of the scene-file commands: copies, going back, finding the file, templates (docs/editor_saving.md).
+        std::vector<Entry> file;
+        file.push_back(OnlyIf(Item("file.saveacopy", "Save a Copy...", "", "Write the scene to a new file and keep working in this one."), !s.playing, kStopPlayFirst));
+        file.push_back(OnlyIf(Item("file.duplicate", "Duplicate Scene", "", "Make \"<name> copy\" next to this scene and open it. This scene stays as it is."), !s.playing && !s.scenePath.empty(),
+                              s.playing ? kStopPlayFirst : "Save the scene once first: a copy needs a file to copy."));
+        file.push_back(OnlyIf(Item("file.revert", "Revert to Saved", "", "Throw away the changes since the last save and read the file again. Undo brings them back."),
+                              !s.playing && !s.scenePath.empty() && s.sceneUnsaved,
+                              s.playing ? kStopPlayFirst : s.scenePath.empty() ? "Nothing to go back to: this scene has no file yet." : "There are no unsaved changes."));
+        file.push_back(OnlyIf(Item("file.showfolder", "Show in Folder", "", "Open the folder that holds this scene's file."), !s.scenePath.empty(), "This scene has no file yet."));
+        file.push_back(Sep());
+        file.push_back(OnlyIf(Item("file.astemplate", "Save Scene as Template...", "", "Keep this scene as a starting point. It then appears under Scene Templates."), !s.playing, kStopPlayFirst));
+        file.push_back(SlotMenu("file.templates", "New from Template", "Start a new scene from one of your templates."));
+        m.push_back(Sub("file.scenefile", "Scene File", std::move(file), "Save a copy, duplicate, revert, find the file, scene templates."));
     }
     m.push_back(Sep());
     m.push_back(Item("file.newproject", "New Project...", "", "Make a new project folder from a template and open it.\n(The launcher's Create page makes the same thing.)"));

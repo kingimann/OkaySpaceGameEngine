@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Modeling/Guided.hpp"
 #include <chrono>
 #include "okay/Modeling/PolyOps.hpp"
@@ -1109,10 +1110,8 @@ std::string SidecarPath(const std::string& meshPath) {
 }
 
 static bool WriteText(const std::string& path, const std::string& text, std::string* error) {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) { if (error) *error = "can't write " + path; return false; }
-    f << text;
-    if (!f.good()) { if (error) *error = "writing " + path + " failed"; return false; }
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, text, &why)) { if (error) *error = why; return false; }   // all or nothing
     return true;
 }
 static bool ReadText(const std::string& path, std::string& out, std::string* error) {

@@ -112,7 +112,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ### 1.5 Scene serializer
 - **What:** Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps.
 - **Parts:**
-  - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
+  - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile` (written through `savefmt::AtomicWriteChecked`: temp file, flush, swap; one `.bak` of the previous save), `Deserialize`, `LoadFromFile` (a failed parse says the line and the last object read); `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
   - 1.5.2 Safe loading - `Scene/SceneSerializer` - all-or-nothing: a bad or cut-short file leaves the live scene untouched; counts are bounded; records from a newer build are skipped with warnings
   - 1.5.3 Merge and chunks - `Scene/SceneSerializer` - `MergeFromText/File` adds a scene next to the host, roots offset, objects tagged with `sourceScene`
   - 1.5.4 Stable ids and flags - `Scene/SceneSerializer` - `guid`, `sibling` order, `active`, per-component `compoff` records (see docs/scene_serializer.md)
@@ -128,7 +128,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/scene_serializer.md`, `docs/prefabs.md`, `docs/scene_diff_merge.md`
 - **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
 - **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the long `SceneSerializer.cpp` still carries most components in one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names). Every component instance on an object is saved and loaded, in stored order (two colliders, two lights, two sprites, and the rest); a file with one of each is unchanged, and an older file still loads
-- **Open:** file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
+- **Open:** `SceneSerializer::Deserialize` and `SceneLoadJob` parse a whole-scene load twice by design (a check pass in a throwaway scene, then the live one; it is what keeps the load all-or-nothing); removing it needs a build-into-a-spare-scene-and-swap (`docs/editor_saving.md`); file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
 - **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
 - **Seen as:** a scene file will not open or opens half-empty; a component's settings are lost after save and load; two scenes will not merge cleanly

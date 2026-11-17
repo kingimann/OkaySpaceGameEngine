@@ -1,6 +1,7 @@
 // Theme assets: a UI theme saved to its own small text file (.okaytheme) and loaded back, so one look
 // can be shared between scenes and projects. The file is `okaytheme 1` and then one `name=value` line
 // per property, in the property registry's exact text form, so every field a theme has is kept.
+#include "okay/Core/SaveData.hpp"
 #include "okay/Components/UITheme.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <fstream>
@@ -52,11 +53,8 @@ bool UIThemeFromText(UITheme& theme, const std::string& text, std::string* error
 
 bool SaveUIThemeAsset(const UITheme& theme, const std::string& path, std::string* error) {
     const std::string text = UIThemeToText(theme);
-    std::ofstream f(path, std::ios::binary);
-    if (!f) { if (error) *error = "could not write " + path; return false; }
-    f << text;
-    f.flush();
-    if (!f) { if (error) *error = "could not write " + path; return false; }
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, text, &why)) { if (error) *error = why; return false; }   // all or nothing
     return true;
 }
 

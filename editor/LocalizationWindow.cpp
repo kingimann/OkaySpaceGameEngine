@@ -8,6 +8,7 @@
 // Also the toolbar's preview-language menu and the Inspector's Localized options.
 #include "LocalizationWindow.hpp"
 #include "LocalizationTools.hpp"
+#include "SaveSafety.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol, SearchField
 #include "okay/Components/DialogueRunner.hpp"
@@ -696,10 +697,11 @@ void ExportCsv(const EditorState& ed) {
 }
 
 void ExportCsvTo(const std::string& p) {
-    std::ofstream f(fs::u8path(p), std::ios::binary | std::ios::trunc);
-    f << Localization::Table().ExportCsv();
-    if (f) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
-    else ConsoleLog("Localization: couldn't write " + p, 2);
+    savefmt::WriteOptions wo;
+    wo.utf8Path = true;
+    std::string why;
+    if (savefmt::AtomicWriteChecked(p, Localization::Table().ExportCsv(), &why, wo)) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
+    else ConsoleLog("Localization: couldn't write " + p + ": " + why, 2);
 }
 
 std::string FilterLabel() {

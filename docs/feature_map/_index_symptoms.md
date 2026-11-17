@@ -228,6 +228,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a run is cancelled by a newer push | [18.3](18-build-export-release.md#183-ci-jobs) CI jobs |
 | a save file edit is not kept | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
 | a save from a newer version is rejected | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
+| a save half-written a file | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | a save in the external IDE does not reload | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | a scene file will not open or opens half-empty | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a scene file with a stray NaN would not open | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
@@ -236,6 +237,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a scene of thousands of identical props is slow | [27.3](20-35-planned.md#273-batching) Batching |
 | a scene opens with missing textures and no warning | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
 | a scene shows pink or empty after I moved a file | [20.2](20-35-planned.md#202-dependencies-and-references) Dependencies and references |
+| a scene will not open and the message is unclear | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | a score label stays at its first value | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a script cannot find a widget by name | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a script clip is overwritten by locomotion | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
@@ -990,6 +992,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor exe is huge | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
+| the editor overwrote a file changed outside it | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
 | the editor stutters on a big scene | [38.2](38-render-backends.md#382-opengl-backend) OpenGL backend |
 | the editor view freezes while the GPU recovers | [38.10](38-render-backends.md#3810-frame-and-present-path) Frame and present path |

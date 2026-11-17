@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/AI/BehaviorTree.hpp"
 
 #include "okay/Scene/GameObject.hpp"
@@ -945,10 +946,8 @@ bool BehaviorTree::Deserialize(const std::string& text, std::string* error) {
 }
 
 bool BehaviorTree::SaveToFile(const std::string& path, std::string* error) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) { if (error) *error = "cannot write " + path; return false; }
-    f << Serialize();
-    if (!f) { if (error) *error = "write failed: " + path; return false; }
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, Serialize(), &why)) { if (error) *error = why; return false; }   // all or nothing
     return true;
 }
 bool BehaviorTree::LoadFromFile(const std::string& path, std::string* error) {

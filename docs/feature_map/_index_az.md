@@ -3974,6 +3974,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Saves and prefs (1.7, 13.7.4)
 - SaveSystem (35.3)
 - SaveVariant (21.3)
+- Saving and loading the user's work (15.9.9)
 - Saving nested structures (#578) (21.2.3)
 - Scalar helpers (36.3.1)
 - Scalars, interpolation and easing (36.3)

@@ -64,6 +64,7 @@ The feature map currently has **125** rows that are Partial or Planned.
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
+| Editor saving and loading (`docs/editor_saving.md`, branch `claude/editor-saves-1`, try it: `docs/try_it.md` saves1) | Built and unit-tested on Linux; the screens are compiled but never run in a real editor window or on Windows | Whole-or-nothing saves with failure-injection tests, outside-change warning, recovery box with Open Both, unsaved list and Save All report, Scene File menu, safe-mode open. Not done: a progress bar with Cancel for very large scene loads (the load is one blocking step and parses twice by design), a Problems entry for missing asset and script references on load, atomic writes for the pose-clip library, OBJ export and import side files, an unsaved mark on every window tab |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
 
 ## Own cryptography: no hired review, libsodium stays

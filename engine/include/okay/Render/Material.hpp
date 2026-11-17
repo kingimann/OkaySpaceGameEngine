@@ -2,6 +2,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Core/SaveData.hpp"
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -100,10 +101,7 @@ struct Material {
     }
 
     bool SaveToFile(const std::string& path) const {
-        std::ofstream f(path);
-        if (!f) return false;
-        f << ToText();
-        return true;
+        return savefmt::AtomicWrite(path, ToText());   // all or nothing: a failed write leaves the old material whole
     }
     static bool LoadFromFile(const std::string& path, Material& out) {
         std::ifstream f(path);

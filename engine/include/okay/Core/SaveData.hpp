@@ -129,6 +129,28 @@ struct WriteOptions {
     bool utf8Path = false;    ///< `path` is UTF-8 text (std::filesystem::u8path): non-ASCII names work on Windows
 };
 
+/// Test hook: make AtomicWriteChecked fail at a chosen step, as a full disk, a locked file or a
+/// killed editor would. Nothing is armed by default, and the check costs one relaxed atomic read.
+/// The tests use it to show that a write that dies half way leaves the old file whole.
+enum class WriteFaultStep {
+    None,
+    Open,     ///< the temp file can't be created
+    Write,    ///< the write stops after `afterBytes` bytes (disk full)
+    Flush,    ///< everything was written but the flush to disk fails
+    Rename,   ///< the swap over the real file fails
+};
+struct WriteFault {
+    WriteFaultStep step = WriteFaultStep::None;
+    std::size_t afterBytes = 0;     ///< Write: how much of the temp file is written first
+    bool leaveTemp = false;         ///< true = the process "died": the half-written temp file stays behind
+    int count = 1;                  ///< how many writes this fault hits before it disarms itself
+    std::string pathContains;       ///< only writes whose path contains this text (empty = any)
+};
+void SetWriteFault(const WriteFault& fault);
+void ClearWriteFault();
+/// How many times an armed fault has fired since it was set.
+int WriteFaultHits();
+
 /// Write `content` to `path` by writing `path.tmp` and renaming it over `path`, so a
 /// crash or a full disk never leaves a half-written file where a good one was. On failure
 /// the old file is untouched, no temp file is left, and `error` (when given) says why

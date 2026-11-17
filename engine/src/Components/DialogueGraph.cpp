@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Components/DialogueGraph.hpp"
 #include "StoryKv.hpp"
 #include "okay/Core/Localization.hpp"
@@ -397,10 +398,7 @@ bool DialogueGraph::Load(const std::string& path, std::string* err) {
 }
 
 bool DialogueGraph::Save(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return false;
-    f << Write();
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Write());   // all or nothing
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -102,6 +103,26 @@ void UnlockFacade() {
     FacadeMutex().Unlock();
 }
 
+namespace {
+// The test hook (SaveData.hpp). Set only by tests, while no write is running.
+std::atomic<int> g_faultArmed{0};
+WriteFault g_fault;
+int g_faultHits = 0;
+// True when the armed fault is for this step and this path; counts the hit and disarms after `count` hits.
+bool FaultHits(WriteFaultStep step, const std::string& path) {
+    if (g_faultArmed.load(std::memory_order_relaxed) == 0) return false;
+    if (g_fault.step != step) return false;
+    if (!g_fault.pathContains.empty() && path.find(g_fault.pathContains) == std::string::npos) return false;
+    ++g_faultHits;
+    if (--g_fault.count <= 0) g_faultArmed.store(0, std::memory_order_relaxed);
+    return true;
+}
+} // namespace
+
+void SetWriteFault(const WriteFault& fault) { g_fault = fault; g_faultHits = 0; g_faultArmed.store(fault.step == WriteFaultStep::None ? 0 : 1); }
+void ClearWriteFault() { g_faultArmed.store(0); g_fault = WriteFault{}; }
+int WriteFaultHits() { return g_faultHits; }
+
 bool AtomicWriteChecked(const std::string& path, const std::string& content, std::string* error, const WriteOptions& opt) {
     auto fail = [&](const std::string& msg) { if (error) *error = msg; return false; };
     if (error) error->clear();
@@ -116,17 +137,32 @@ bool AtomicWriteChecked(const std::string& path, const std::string& content, std
         fs::create_directories(parent, ec);
         if (ec && !fs::is_directory(parent, ec)) return fail("can't create the folder " + parent.string() + ": " + Reason(ec.value()));
     }
+    if (FaultHits(WriteFaultStep::Open, path)) return fail("can't create " + tmp.string() + ": " + Reason(EACCES));
     std::FILE* f = OpenForWrite(tmp);
     if (!f) return fail("can't create " + tmp.string() + ": " + Reason(errno));
     errno = 0;
-    bool ok = content.empty() || std::fwrite(content.data(), 1, content.size(), f) == content.size();
-    int err = errno;
+    bool ok = true;
+    int err = 0;
+    bool leaveTemp = false;
+    if (FaultHits(WriteFaultStep::Write, path)) {   // injected: only the first bytes get written
+        const std::size_t part = std::min(g_fault.afterBytes, content.size());
+        if (part) std::fwrite(content.data(), 1, part, f);
+        ok = false; err = ENOSPC; leaveTemp = g_fault.leaveTemp;
+    } else {
+        ok = content.empty() || std::fwrite(content.data(), 1, content.size(), f) == content.size();
+        err = errno;
+    }
     if (ok && std::fflush(f) != 0) { ok = false; err = errno; }
+    if (ok && FaultHits(WriteFaultStep::Flush, path)) { ok = false; err = EIO; leaveTemp = g_fault.leaveTemp; }
     if (ok && opt.sync && !SyncFile(f)) { ok = false; err = errno; }
     if (std::fclose(f) != 0 && ok) { ok = false; err = errno; }
     if (!ok) {
-        fs::remove(tmp, ec);
+        if (!leaveTemp) fs::remove(tmp, ec);   // (an injected kill leaves it, as a real one would)
         return fail("can't write " + target.string() + ": " + Reason(err));
+    }
+    if (FaultHits(WriteFaultStep::Rename, path)) {
+        if (!g_fault.leaveTemp) fs::remove(tmp, ec);
+        return fail("can't replace " + target.string() + ": " + Reason(EACCES));
     }
     fs::rename(tmp, target, ec);
     if (ec) {

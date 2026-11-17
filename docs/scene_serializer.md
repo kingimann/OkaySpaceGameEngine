@@ -82,7 +82,7 @@ page covers what an object round trip keeps.
   object and per scene. The warning, and `SceneSerializer::Validate`, still name them.
 - **Asset paths:** `CollectAssetPaths` lists the files of every instance of a component that can hold several (all the audio
   sources, particle systems and sequence players of an object) and the prefab of each Spawner, so Build Game copies them.
-- **Saving a file:** `SaveToFile(scene, path, &error)` writes `<path>.savetmp`, checks it, and renames it over the
+- **Saving a file:** `SaveToFile(scene, path, &error)` writes `<path>.tmp` (flushed to disk), and renames it over the
   target; the target is never moved or removed first. It keeps one rolling `<path>.bak` (a copy of the previous
   file), refuses a read-only target or a missing folder with a message, and leaves the old file untouched when
   anything fails.

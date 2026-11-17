@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <algorithm>
 #include <cctype>
@@ -80,10 +81,7 @@ bool ItemDatabase::Load(const std::string& path, std::string* err) {
 }
 
 bool ItemDatabase::Save(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << Serialize();
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Serialize());   // all or nothing
 }
 
 // Format:

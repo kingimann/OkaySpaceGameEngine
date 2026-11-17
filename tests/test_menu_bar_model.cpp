@@ -26,7 +26,7 @@ std::vector<State> States() {
     std::vector<State> v;
     State a; v.push_back(a);                                   // a fresh editor
     State b; b.selectedCount = 1; b.objectCount = 5; b.canUndo = true; b.undoName = "Move"; b.clipboardHasObject = true;
-    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; b.assimp = true; v.push_back(b);
+    b.scenePath = "Assets/Scenes/Level1.okayscene"; b.recentCount = 3; b.assimp = true; b.sceneUnsaved = true; v.push_back(b);
     State c = b; c.selectedCount = 4; c.canRedo = true; c.redoName = "Delete"; c.isolating = true; v.push_back(c);
     State d = b; d.playing = true; d.canUndo = false; v.push_back(d);
     State e = b; e.inPrefabMode = true; v.push_back(e);
@@ -151,7 +151,7 @@ int main() {
         State s; s.recentCount = 2;
         CHECK((Ids(FileMenu(s)) == std::vector<std::string>{
             "file.new2d", "file.new3d", "file.open", "file.recent", "file.examples", "---",
-            "file.save", "file.saveas", "file.saveproject", "---",
+            "file.save", "file.saveas", "file.saveproject", "file.scenefile", "---",
             "file.newproject", "file.openproject", "file.upgrade", "---",
             "file.import", "file.merge", "---", "file.autosave", "file.build", "---", "file.exit"}));
         CHECK(FindId(FileMenu(s), "file.open")->label == "Open Scene...");
@@ -288,6 +288,23 @@ int main() {
         CHECK(!SeparatorsOk({Sep(), Item("a", "A")}));
         CHECK(!SeparatorsOk({Item("a", "A"), Sep(), Sep(), Item("b", "B")}));
         CHECK(!SeparatorsOk({Item("a", "A"), Sep()}));
+    }
+
+    {   // Scene File: copies, revert, find the file, templates. Each says why it is greyed out.
+        State fresh;                                        // never saved
+        State saved; saved.scenePath = "Assets/Scenes/A.okayscene";
+        State changed = saved; changed.sceneUnsaved = true;
+        State play = changed; play.playing = true;
+        CHECK(FindId(FileMenu(fresh), "file.scenefile") != nullptr);
+        CHECK(FindId(FileMenu(fresh), "file.saveproject")->label == "Save All");
+        CHECK(FindId(FileMenu(fresh), "file.saveacopy")->enabled);                       // a never-saved scene can still be saved as a copy
+        CHECK(!FindId(FileMenu(fresh), "file.duplicate")->enabled && !FindId(FileMenu(fresh), "file.revert")->enabled && !FindId(FileMenu(fresh), "file.showfolder")->enabled);
+        CHECK(FindId(FileMenu(saved), "file.duplicate")->enabled && FindId(FileMenu(saved), "file.showfolder")->enabled);
+        CHECK(!FindId(FileMenu(saved), "file.revert")->enabled && FindId(FileMenu(saved), "file.revert")->reason.find("no unsaved changes") != std::string::npos);
+        CHECK(FindId(FileMenu(changed), "file.revert")->enabled);
+        CHECK(!FindId(FileMenu(play), "file.revert")->enabled && FindId(FileMenu(play), "file.revert")->reason == kStopPlayFirst);
+        CHECK(!FindId(FileMenu(play), "file.saveacopy")->enabled && !FindId(FileMenu(play), "file.astemplate")->enabled && !FindId(FileMenu(play), "file.duplicate")->enabled);
+        CHECK(FindId(FileMenu(saved), "file.templates") != nullptr && FindId(FileMenu(saved), "file.templates")->kind == Kind::SlotMenu);
     }
 
     {   // Nothing disappeared. Each row: the item the old menus had -> where it is now. "id" is an entry of the model; a "slot:" row

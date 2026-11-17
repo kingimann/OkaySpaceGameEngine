@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/ItemPickup.hpp"
@@ -98,10 +99,7 @@ std::string RecipeBook::Serialize() const {
 }
 
 bool RecipeBook::Save(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << Serialize();
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Serialize());   // all or nothing
 }
 
 bool RecipeBook::Load(const std::string& path, std::string* err) {

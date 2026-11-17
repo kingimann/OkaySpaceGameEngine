@@ -895,6 +895,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 }
 #include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
+#include "SceneSalvage.hpp"       // open a damaged scene in safe mode
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -2423,6 +2424,11 @@ bool g_autosave = true;          // recovery-folder autosave (File > Autosave)
 float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs, scripts, scene)
 bool   g_autosaveToFile = false;     // also overwrite the real file (off unless chosen)
 double g_autosaveStamp = 0.0;    // time of the last successful autosave (for UI)
+okay::editor::savesafe::AutosaveCost g_asCost;   // what the recovery copies cost (File > Autosave shows it)
+bool   g_autosaveUrgent = false;     // the window lost focus: write a recovery copy soon (still rate limited)
+bool   g_anyUnsaved = true;          // cached "something is unsaved" (refreshed every 20th frame)
+int    g_docAutosaveKeep = 3;        // recovery copies kept per session (File > Autosave > Keep)
+std::vector<std::string> g_recentPins;   // Open Recent entries pinned to the top (right-click a recent scene)
 std::string g_recoverPath;       // a newer ".autosave" found on load (recovery prompt)
 Uint64 g_lastSavedAt = 0;        // okay::platform::TicksMs() of the last successful scene save (0 = none this session)
 bool g_quitRequested = false;    // quit pending (may prompt to save first)
@@ -2432,21 +2438,35 @@ std::string g_clipboard;         // serialized GameObject for copy/paste
 // Recently-used scenes, persisted to a small file beside the working dir.
 void LoadRecent() {
     g_recent.clear();
-    std::ifstream f("okay_recent.txt");
-    std::string line;
-    while (std::getline(f, line) && g_recent.size() < 10)
-        if (!line.empty()) g_recent.push_back(line);
+    g_recentPins.clear();
+    {
+        std::ifstream f("okay_recent.txt");
+        std::string line;
+        while (std::getline(f, line) && g_recent.size() < 40)
+            if (!line.empty()) g_recent.push_back(line);
+    }
+    {
+        std::ifstream f("okay_recent_pins.txt");
+        std::string line;
+        while (std::getline(f, line)) if (!line.empty()) g_recentPins.push_back(line);
+    }
+    // Start-up cleanup: scenes that no longer exist are dropped (a pinned one stays in the pin file, so it
+    // comes back with its drive), pinned scenes go first, and the list is cut to ten.
+    const auto exists = [](const std::string& p) { std::error_code ec; return std::filesystem::exists(p, ec); };
+    g_recent = okay::editor::savesafe::CleanRecent(g_recent, g_recentPins, exists, 10).list;
 }
 void SaveRecent() {
-    std::string text;
+    std::string text, pins;
     for (const auto& p : g_recent) text += p + "\n";
+    for (const auto& p : g_recentPins) pins += p + "\n";
     okayproj::WriteTextAtomic("okay_recent.txt", text);
+    okayproj::WriteTextAtomic("okay_recent_pins.txt", pins);
 }
 void AddRecent(const std::string& path) {
     if (path.empty()) return;
     g_recent.erase(std::remove(g_recent.begin(), g_recent.end(), path), g_recent.end());
     g_recent.insert(g_recent.begin(), path);
-    if (g_recent.size() > 10) g_recent.resize(10);
+    g_recent = okay::editor::savesafe::CleanRecent(g_recent, g_recentPins, nullptr, 10).list;   // pinned stay on top; ten in all
     SaveRecent();
 }
 
@@ -2509,6 +2529,8 @@ void LoadSettings() {
         else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
         else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
         else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
+        else if (k == "autosaveon") g_autosave = (v != 0);
+        else if (k == "docautosavekeep") g_docAutosaveKeep = okay::editor::savesafe::AutosaveSettings::ClampKeep(v);
         else if (k == "consolecollapse") g_consoleCollapse = (v != 0);
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
@@ -2570,6 +2592,8 @@ void SaveSettings() {
       << "sidetabs " << g_sideTabs << "\n"
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
       << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n"
+      << "autosaveon " << (g_autosave ? 1 : 0) << "\n"
+      << "docautosavekeep " << g_docAutosaveKeep << "\n"
       << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n";
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
@@ -2860,13 +2884,25 @@ static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
 static bool AnyUnsavedWork(EditorState& ed);     // scene, scripts or open graphs
+static std::vector<okay::editor::savesafe::UnsavedItem> CollectUnsavedItems(EditorState& ed);   // the same, by name, for the prompts
 static bool SaveEditorDocument(const std::string& path, const std::string& content);  // backup, then atomic write
 static void RequestPlay(EditorState& ed);
 static void RequestStop(EditorState& ed);
 static void RequestLoad(EditorState& ed, const std::string& path);
 static void DrawActionPrompt(EditorState& ed);
 static std::string DefaultScenePath(EditorState& ed);                 // where a never-saved scene goes
-static bool SaveSceneTo(EditorState& ed, std::string p);              // save under a path (reports why when it can't)
+static bool SaveSceneTo(EditorState& ed, std::string p, bool askUser = true, bool force = false);   // save under a path (reports why when it can't); a changed-outside file is asked about unless `force`
+static bool g_saveHeld = false;                                       // the last SaveSceneTo was stopped to ask about an outside change (not a failure)
+static okay::RecoveryManager& DocRecovery();
+static std::vector<okay::RecoveryManager::Candidate> g_docRecover;   // recovery copies of the last (killed) session, waiting for an answer
+static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
+static bool FileExistsAt(const std::string& q) { std::error_code e; return std::filesystem::exists(q, e); }
+static void SaveCopyCmd(EditorState& ed);                             // File > Scene File > Save a Copy
+static void DuplicateSceneCmd(EditorState& ed);
+static void RevertSceneCmd(EditorState& ed);
+static void ShowSceneInFolder(EditorState& ed);
+static void SaveAsTemplateCmd(EditorState& ed);
+static void DrawTemplateMenuItems(EditorState& ed);
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
 // Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
@@ -4145,9 +4181,8 @@ static bool ConvertActionsToGraph(okay::editor::EditorState& ed, okay::ActionLis
     fsn::path p = dir / (stem + "Graph.okayvs");
     for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (stem + "Graph" + std::to_string(k) + ".okayvs");
     {
-        std::ofstream f(p, std::ios::binary);
-        if (!f) { ConsoleLog("Couldn't write " + p.string(), 2); return false; }
-        f << okay::vs::ActionListToGraph(*al);
+        std::string why;
+        if (!okay::editor::savesafe::WriteUserFile(p.string(), okay::vs::ActionListToGraph(*al), &why)) { ConsoleLog("Couldn't write " + p.string() + ": " + why, 2); return false; }
     }
     if (!AttachScriptAsset(ed, go, p.string())) return false;
     okay::editor::vsed::OpenFile(p.string());
@@ -4160,10 +4195,15 @@ static bool ConvertActionsToGraph(okay::editor::EditorState& ed, okay::ActionLis
 namespace extide {
 namespace fs = std::filesystem;
 bool WriteFile(const std::string& path, const std::string& text) {
-    std::ofstream f(path);
-    if (!f) return false;
-    f << text;
-    return static_cast<bool>(f);
+    // All or nothing (temp file, flush, swap): a crash or a full disk never leaves a half-written script.
+    // The file keeps the line endings the platform's text mode used to give it (CRLF on Windows).
+#if defined(_WIN32)
+    std::string t; t.reserve(text.size() + text.size() / 32);
+    for (char c : text) { if (c == '\n') t += '\r'; t += c; }
+    return okay::editor::savesafe::WriteUserFile(path, t);
+#else
+    return okay::editor::savesafe::WriteUserFile(path, text);
+#endif
 }
 std::string ReadFile(const std::string& path) {
     std::ifstream f(path);
@@ -6824,6 +6864,7 @@ static oked::menubar::State MenuBarState(EditorState& ed) {
     s.playing = ed.isPlaying();
     s.inPrefabMode = ed.InPrefabMode();
     s.scenePath = ed.path();
+    s.sceneUnsaved = ed.dirty && !ed.isPlaying();
     s.selectedCount = (int)ed.MultiSelection().size();
     if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
     s.objectCount = (int)ed.scene().Objects().size();
@@ -6849,13 +6890,33 @@ static void DrawRecentMenuItems(EditorState& ed) {
         }
         std::error_code fec;
         bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
-        if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
+        const bool pinned = std::find(g_recentPins.begin(), g_recentPins.end(), p) != g_recentPins.end();
+        if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), pinned ? "pinned" : nullptr, false, exists)) {
             RequestLoad(ed, p);
         }
         if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("File not found (moved or deleted)");
+            ImGui::SetTooltip("File not found (moved or deleted). Right-click to remove it from the list.");
+        if (ImGui::BeginPopupContextItem(("##recentctx" + p).c_str())) {   // right-click: pin it to the top, or take it off the list
+            if (ImGui::MenuItem(pinned ? "Unpin" : "Pin to top")) {
+                okay::editor::savesafe::TogglePin(g_recentPins, p);
+                g_recent = okay::editor::savesafe::CleanRecent(g_recent, g_recentPins, nullptr, 10).list;
+                SaveRecent();
+            }
+            if (ImGui::MenuItem("Remove from list")) {
+                g_recent.erase(std::remove(g_recent.begin(), g_recent.end(), p), g_recent.end());
+                g_recentPins.erase(std::remove(g_recentPins.begin(), g_recentPins.end(), p), g_recentPins.end());
+                SaveRecent();
+            }
+            ImGui::EndPopup();
+            break;   // the list changed under the loop
+        }
     }
     ImGui::Separator();
+    if (ImGui::MenuItem("Remove missing files")) {
+        const auto gone = [](const std::string& q) { std::error_code e; return std::filesystem::exists(q, e); };
+        g_recent = okay::editor::savesafe::CleanRecent(g_recent, g_recentPins, gone, 10).list;
+        SaveRecent();
+    }
     if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
 }
 
@@ -6926,16 +6987,26 @@ static void DrawExampleMenuItems(EditorState& ed) {
 }
 
 static void DrawAutosaveMenuItems() {
-    ImGui::MenuItem("Enabled", nullptr, &g_autosave);
+    if (ImGui::MenuItem("Enabled", nullptr, &g_autosave)) SaveSettings();
     ImGui::SetNextItemWidth(150);
     if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::SliderInt("Keep copies", &g_docAutosaveKeep, 1, 20)) {
+        g_docAutosaveKeep = okay::editor::savesafe::AutosaveSettings::ClampKeep(g_docAutosaveKeep);
+        DocRecovery().SetSlots(g_docAutosaveKeep);
+        SaveSettings();
+    }
     if (g_autosaveStamp > 0.0)
-        ImGui::TextDisabled("Last autosave: %.0fs ago",
-                            okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
+        ImGui::TextDisabled("Last recovery copy: %.0fs ago", okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
+    else
+        ImGui::TextDisabled("No recovery copy written yet this session.");
+    if (g_asCost.Count() > 0)
+        ImGui::TextDisabled("Cost: %.1f ms last, %.1f ms worst (%d copies)", g_asCost.LastMs(), g_asCost.WorstMs(), g_asCost.Count());
     ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
-    ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
-    ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
-    ImGui::TextDisabled("when it is newer than the scene. New ones are not written.");
+    ImGui::TextDisabled("okay_recovery folder, never over your own files.");
+    ImGui::TextDisabled("Nothing is written while the game plays, and a copy");
+    ImGui::TextDisabled("waits for a quiet moment (not while you drag or type).");
+    ImGui::TextDisabled("After the editor is killed, the next start offers them.");
     if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
 }
@@ -7468,6 +7539,7 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
     else if (id == "file.examples") DrawExampleMenuItems(ed);
     else if (id == "file.upgrade") ProjectUpgradeMenuItem(ed);   // upgrade this project to the editor's version, or restore a backup
     else if (id == "file.autosave") DrawAutosaveMenuItems();
+    else if (id == "file.templates") DrawTemplateMenuItems(ed);
     else if (id == "edit.preferences") DrawPreferencesMenuItems();
     else if (id == "view.overlays") DrawSceneOverlayMenuItems(ed);
     else if (id == "view.bookmarks") DrawCameraBookmarkMenuItems(ed);
@@ -7485,6 +7557,11 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "file.save") SaveSceneCmd(ed);
     else if (id == "file.saveas") SaveSceneAsCmd(ed);
     else if (id == "file.saveproject") SaveProject(ed, true);
+    else if (id == "file.saveacopy") SaveCopyCmd(ed);
+    else if (id == "file.duplicate") DuplicateSceneCmd(ed);
+    else if (id == "file.revert") RevertSceneCmd(ed);
+    else if (id == "file.showfolder") ShowSceneInFolder(ed);
+    else if (id == "file.astemplate") SaveAsTemplateCmd(ed);
     else if (id == "file.newproject") g_openNewProjectDialog = true;
     else if (id == "file.openproject") OpenProjectFolderDialog(ed, DefaultProjectsLocation());
     else if (id == "file.import") PickAndImportModel();   // OS file explorer, then settings
@@ -7850,8 +7927,8 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::SameLine(0, 4);
         ImGui::TextColored(amber, "unsaved");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene has unsaved changes (Ctrl+S to save)");
-    } else if (!ed.isPlaying() && g_lastSaveError.empty() && g_lastSavedAt && okay::platform::TicksMs() - g_lastSavedAt < 5000) {
-        // A short confirmation after a save (it fades after five seconds; the Console keeps the record).
+    } else if (!ed.isPlaying() && g_lastSaveError.empty() && ed.savedAtUnix() > 0) {
+        // "Saved 14:03": stays until the scene changes again, so you can always see when your work last went to disk.
         ImGui::SameLine(0, 12);
         const ImVec4 ok(0.45f, 0.82f, 0.56f, 1.0f);
         float r = ImGui::GetFontSize() * 0.22f;
@@ -7860,7 +7937,8 @@ void DrawStatusBar(EditorState& ed) {
             ImVec2(dp.x + r, dp.y + ImGui::GetTextLineHeight() * 0.60f), r, ImGui::GetColorU32(ok));
         ImGui::Dummy(ImVec2(r * 2.0f + 2.0f, ImGui::GetTextLineHeight()));
         ImGui::SameLine(0, 4);
-        ImGui::TextColored(ok, "Saved");
+        ImGui::TextColored(ok, "Saved %s", okay::editor::savesafe::FormatClock(ed.savedAtUnix(), okay::editor::savesafe::LocalUtcOffsetSeconds(ed.savedAtUnix())).c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The scene was last saved at this time.");
     }
     {   // A failure belongs to the scene that was open when it happened: a different scene is a fresh start.
         static std::string s_errSeen, s_errScene;
@@ -10197,8 +10275,9 @@ static int AssetLabelOf(const std::string& proj, const std::string& full) {
 static void SetAssetLabel(const std::string& proj, const std::string& full, int idx) {
     std::string k = AssetLabelKey(proj, full);
     if (idx <= 0) g_assetLabels.erase(k); else g_assetLabels[k] = idx;
-    std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
-    for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
+    std::string labels;
+    for (const auto& kv : g_assetLabels) labels += std::to_string(kv.second) + "\t" + kv.first + "\n";
+    okay::editor::savesafe::WriteUserFile((std::filesystem::path(proj) / ".okaylabels").string(), labels, nullptr, false);
 }
 // Pictures for the Project panel come from the asset database's ThumbnailCache, through okaypb::Browser::Thumb: keyed by
 // the asset's GUID and content hash, kept on disk in <project>/.okay/thumbs, made lazily (a few milliseconds per frame,
@@ -10296,8 +10375,9 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
         }
         if (next != g_assetLabels) {
             g_assetLabels = next;
-            std::ofstream f(std::filesystem::path(proj) / ".okaylabels", std::ios::trunc);
-            for (const auto& kv : g_assetLabels) f << kv.second << "\t" << kv.first << "\n";
+            std::string labels;
+            for (const auto& kv : g_assetLabels) labels += std::to_string(kv.second) + "\t" + kv.first + "\n";
+            okay::editor::savesafe::WriteUserFile((std::filesystem::path(proj) / ".okaylabels").string(), labels, nullptr, false);
         }
     }
     g_fav.Remap(r.moved);   // stars follow
@@ -13014,19 +13094,12 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("You have unsaved changes. Save before quitting?");
-        ImGui::TextDisabled("Save keeps the scene, every edited script and every open graph.");
-        {
-            std::vector<std::string> names;
-            if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (c.unsaved) names.push_back((c.path.empty() ? "Scene: " : "Prefab: ") + (c.path.empty() ? c.label : c.path)); }
-            else if (ed.dirty) names.push_back("Scene: " + (ed.path().empty() ? ed.scene().Name() : ed.path()));
-            for (okay::ScriptComponent* t : g_scriptTabs)
-                if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
-            okay::editor::vsed::VsDirtyTitles(names);
-            for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
-        }
+        const okay::editor::savesafe::UnsavedSummary sum = okay::editor::savesafe::BuildUnsavedSummary(CollectUnsavedItems(ed));
+        ImGui::TextUnformatted(sum.names.empty() ? "You have unsaved changes. Save before quitting?" : sum.headline.c_str());
+        for (const std::string& n : sum.names) ImGui::BulletText("%s", n.c_str());
+        ImGui::TextDisabled("Save All writes each of them. Discard closes without saving: those changes are lost.");
         ImGui::Separator();
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
+        if (ImGui::Button("Save All", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
             g_quitRequested = false; open = false;
             if (ok) running = false;   // something failed: stay open so nothing is lost
@@ -13039,7 +13112,7 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        if (ImGui::Button("Discard", ImVec2(120, 0))) {
             running = false; g_quitRequested = false; open = false;
             ImGui::CloseCurrentPopup();
         }
@@ -19261,6 +19334,58 @@ static void DrawErrorPopup() {
     }
 }
 
+// ---- A scene that will not open: plain words, the line and object, and two ways forward ----
+// The loader is all-or-nothing on purpose (a half-read scene is never opened silently), so the scene you had open is
+// untouched. From here you can open what IS readable as a NEW unsaved scene ("safe mode": the damaged objects are
+// listed and left out), or the last good save (<file>.bak), also as unsaved work. The damaged file is never written to.
+static struct LoadFailure { bool open = false; std::string path, text; bool hasBak = false; } g_loadFail;
+static void ShowLoadFailure(const std::string& path, const std::string& rawError) {
+    const bool bak = FileExistsAt(path + ".bak");
+    const okay::editor::savesafe::LoadErrorText t = okay::editor::savesafe::FormatLoadError(rawError, okay::editor::savesafe::FileLeaf(path), bak);
+    g_loadFail.open = true; g_loadFail.path = path; g_loadFail.text = t.Full(); g_loadFail.hasBak = bak;
+    ConsoleLog("Couldn't open " + path + ": " + rawError, 2);
+}
+static void DrawLoadFailurePrompt(EditorState& ed) {
+    if (!g_loadFail.open) return;
+    if (g_errOpen || g_savePromptOpen || !g_docRecover.empty() || g_pendingAction) return;   // one question at a time
+    if (!ImGui::IsPopupOpen("Couldn't open the scene###loadfail")) ImGui::OpenPopup("Couldn't open the scene###loadfail");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(580, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Couldn't open the scene###loadfail", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextWrapped("%s", g_loadFail.text.c_str());
+    ImGui::Spacing();
+    bool close = false;
+    if (ImGui::Button("Open readable objects (safe mode)", ImVec2(260, 0))) {
+        std::string raw;
+        okay::editor::savesafe::ReadWholeFile(g_loadFail.path, raw);
+        const okay::editor::SalvageResult sv = okay::editor::SalvageSceneText(okay::DataPack::Unpack(raw));
+        std::string err;
+        if (!sv.usable) ShowErrorPopup("Nothing could be read", sv.headerError.empty() ? "No object in the file could be read on its own." : "The scene header itself is damaged: " + sv.headerError);
+        else if (!ed.LoadRecoveredText(sv.text, "", &err)) ShowErrorPopup("Couldn't open the readable part", err);
+        else {
+            ed.scene().SetName(okay::editor::savesafe::FileStem(g_loadFail.path) + " (safe mode)");
+            ConsoleLog("Safe mode: opened " + std::to_string(sv.kept) + " of " + std::to_string(sv.total) + " objects from " + okay::editor::savesafe::FileLeaf(g_loadFail.path) +
+                       " as a NEW unsaved scene. The file itself was not changed.", 1);
+            for (const std::string& d : sv.dropped) ConsoleLog("Left out: " + d, 1);
+        }
+        close = true;
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!g_loadFail.hasBak);
+    if (ImGui::Button("Open last good save", ImVec2(160, 0))) {
+        std::string text, err;
+        if (!okay::editor::savesafe::ReadWholeFile(g_loadFail.path + ".bak", text)) ShowErrorPopup("Couldn't read the backup", "The .bak file next to the scene can't be read.");
+        else if (!ed.LoadRecoveredText(text, g_loadFail.path, &err)) ShowErrorPopup("The backup is damaged too", err);
+        else ConsoleLog("Opened the last good save of " + okay::editor::savesafe::FileLeaf(g_loadFail.path) + " as unsaved work. Save writes it over the damaged file (which is kept as a .bak).", 1);
+        close = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;
+    if (close) { g_loadFail.open = false; ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
 // ---- Unsaved changes: Save / Don't Save / Cancel before anything replaces the open scene ----
 static std::string g_savePromptWhat, g_savePromptError;
 static std::function<void()> g_savePromptAction, g_savePromptCancel;
@@ -19314,6 +19439,7 @@ static void DrawSavePrompt(EditorState& ed) {
         if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // save the edited scene, not the running copy
         const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
         if (SaveSceneTo(ed, p)) finish(true);
+        else if (g_saveHeld) finish(false);                                             // the file changed outside the editor: that question comes first
         else g_savePromptError = g_lastSaveError;                                       // stay open: choose again
     }
     ImGui::SameLine();
@@ -19627,7 +19753,7 @@ void DrawNewProjectPopup(EditorState& ed) {
                 std::error_code ec;
                 if (!dir.empty() && fs::is_directory(dir, ec)) ed.setProjectDir(dir.string());
                 ConsoleLog("Opened " + p);
-            } else ShowErrorPopup("Couldn't open the project", "\"" + p + "\" could not be opened: " + err + "\n\nThe scene you had open is still open.");
+            } else ShowLoadFailure(p, err);
         });
         return;
     }
@@ -31619,7 +31745,7 @@ void DrawInspector(EditorState& ed) {
                                                                          : std::filesystem::path(ed.projectDir()) / "Assets";
                     std::error_code mk; std::filesystem::create_directories(dir, mk);
                     path = (dir / (go->name + "Graph.okayvs")).string();
-                    std::ofstream(path) << vsc->Source();
+                    okay::editor::savesafe::WriteUserFile(path, vsc->Source());
                     vsc->SetPath(path); ed.dirty = true;
                 }
                 okay::editor::vsed::OpenFile(path);
@@ -31662,7 +31788,7 @@ void DrawInspector(EditorState& ed) {
                         if (okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) {
                             std::string err;
                             if (vsc->LoadFromText(src, &err)) {
-                                if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+                                if (!vsc->Path().empty()) { okay::editor::savesafe::WriteUserFile(vsc->Path(), vsc->Source()); }
                                 ed.dirty = true;
                                 // Keep the open graph in step, or the next Save / Play would put the old value back.
                                 auto& eg = okay::editor::vsed::State().g;
@@ -48730,9 +48856,29 @@ static std::string DefaultScenePath(EditorState& ed) {
     const fs::path dir = ed.projectDir().empty() ? fs::path("Scenes") : fs::path(ed.projectDir()) / "Assets" / "Scenes";
     return (dir / (name + ".okayscene")).string();
 }
-static bool SaveSceneTo(EditorState& ed, std::string p) {
+// ---- The open scene's file changed outside the editor (git pull, another editor, Notepad) ----------------------------
+// Saving over it would silently throw those changes away, so Save stops and asks (DrawExternalChangePrompt). The same
+// question is asked on its own about once a second while the file is open (WatchSceneFile).
+static struct ExternalAsk {
+    bool open = false;
+    std::string path;
+    okay::editor::savesafe::DiskChange change = okay::editor::savesafe::DiskChange::None;
+    bool atSave = false;     // Save was pressed (otherwise the editor noticed by itself)
+    bool saveAll = false;    // Save All was running: run it again after the answer
+} g_ext;
+static bool SaveSceneTo(EditorState& ed, std::string p, bool askUser, bool force) {
     namespace fs = std::filesystem;
     if (fs::path(p).extension() != ".okayscene") p += ".okayscene";
+    g_saveHeld = false;
+    if (!force && !ed.isPlaying() && p == ed.path()) {
+        const okay::editor::savesafe::DiskChange ch = ed.SceneDiskChange();
+        if (ch != okay::editor::savesafe::DiskChange::None) {
+            g_saveHeld = true;                // not a failure: the scene stays as it is until you answer
+            g_lastSaveError.clear();
+            if (askUser) { g_ext.open = true; g_ext.path = p; g_ext.change = ch; g_ext.atSave = true; g_ext.saveAll = false; }
+            return false;
+        }
+    }
     std::error_code ec;
     if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
     std::string why;
@@ -48743,7 +48889,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     }
     g_lastSaveError.clear();
     g_lastSavedAt = okay::platform::TicksMs();
-    ConsoleLog("Saved scene: " + p);
+    ConsoleLog("Saved scene: " + p + " at " + okay::editor::savesafe::FormatClock(ed.savedAtUnix(), okay::editor::savesafe::LocalUtcOffsetSeconds(ed.savedAtUnix())));
     StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
     AddRecent(p); ed.Achievement("FIRST_SAVE");
     fs::remove(p + ".autosave", ec);
@@ -48757,15 +48903,112 @@ static void SaveSceneAsCmd(EditorState& ed) {
     std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);   // so the dialog opens there
     EditorState* edp = &ed;
     okay::filedialog::SaveOne("Save Scene As", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), [edp](const std::string& p) {
-        if (!SaveSceneTo(*edp, p)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+        if (!SaveSceneTo(*edp, p) && !g_saveHeld) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
     });
 }
 static void SaveSceneCmd(EditorState& ed) {
     if (ed.InPrefabMode()) { SavePrefabCmd(ed); return; }
     if (ed.isPlaying()) { ConsoleLog("Stop Play first: saving now would save the running game, not your scene.", 1); return; }
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
-    if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
+    if (!SaveSceneTo(ed, ed.path()) && !g_saveHeld) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
 }
+static std::string SceneLeaf(EditorState& ed) { return ed.path().empty() ? ed.scene().Name() : okay::editor::savesafe::FileLeaf(ed.path()); }
+static void ShowInFolder(const std::string& path) {
+    namespace fs = std::filesystem;
+#if defined(_WIN32)
+    fs::path w(path);
+    std::string native = w.make_preferred().string();
+    SysNoWindow(("explorer /select,\"" + native + "\"").c_str());   // the folder opens with the file highlighted
+#else
+    extide::RevealInFiles(fs::path(path).parent_path().string());
+#endif
+}
+static void ShowSceneInFolder(EditorState& ed) {
+    if (ed.path().empty()) { ConsoleLog("This scene has no file yet: save it first.", 1); return; }
+    ShowInFolder(ed.path());
+}
+// Save a Copy: the scene as it is now goes to a new file; this scene, its file and its unsaved mark stay as they are.
+static void SaveCopyCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { ShowErrorPopup("Go back to the scene first", "A prefab is open. Use Back in the bar above the Scene view, then try again."); return; }
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first: a copy now would be a copy of the running game, not your scene.", 1); return; }
+    const std::string def = ed.path().empty() ? DefaultScenePath(ed) : okay::editor::savesafe::CopyName(ed.path(), FileExistsAt);
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(def).parent_path(), ec);
+    EditorState* edp = &ed;
+    okay::filedialog::SaveOne("Save a Copy", def, okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), [edp](const std::string& picked) {
+        const std::string p = okay::editor::savesafe::WithExtension(picked, ".okayscene");
+        std::error_code e2;
+        if (!edp->path().empty() && std::filesystem::equivalent(p, edp->path(), e2)) {
+            ShowErrorPopup("Pick a different name", "A copy is a second file. To write \"" + okay::editor::savesafe::FileLeaf(p) + "\" itself, use Save.");
+            return;
+        }
+        std::string why;
+        if (!SceneSerializer::SaveToFile(edp->scene(), p, &why)) { ShowErrorPopup("Couldn't save the copy", why + "\n\nNothing else changed."); return; }
+        AddRecent(p);
+        ConsoleLog("Saved a copy: " + p + ". The scene you are editing is still " + SceneLeaf(*edp) + ".");
+    });
+}
+// Duplicate Scene: a copy of the scene as it looks now (unsaved edits included) is written next to it, and you switch to
+// the copy. The original file stays exactly as it was saved.
+static void DuplicateSceneCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { ShowErrorPopup("Go back to the scene first", "A prefab is open. Use Back in the bar above the Scene view, then try again."); return; }
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first.", 1); return; }
+    if (ed.path().empty()) { ShowErrorPopup("Save the scene first", "A duplicate needs a file to sit beside. Use Save Scene, then Duplicate Scene."); return; }
+    const std::string copy = okay::editor::savesafe::CopyName(ed.path(), FileExistsAt);
+    const bool hadEdits = ed.dirty;
+    std::string why;
+    if (!SceneSerializer::SaveToFile(ed.scene(), copy, &why)) { ShowErrorPopup("Couldn't duplicate the scene", why); return; }
+    const std::string original = ed.path();
+    if (!ed.Load(copy, &why)) { ShowErrorPopup("Couldn't open the copy", why); return; }
+    AddRecent(copy); AddRecent(original);
+    ConsoleLog("Duplicated " + okay::editor::savesafe::FileLeaf(original) + " as " + okay::editor::savesafe::FileLeaf(copy) + (hadEdits ? ". Your unsaved edits are in the copy; the original file is as you last saved it." : ". You are now editing the copy."));
+}
+// Revert to Saved: read the file again. It is an Undo step, so the edits can come back.
+static void RevertSceneCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { ShowErrorPopup("Go back to the scene first", "A prefab is open. Use Revert in the bar above the Scene view for the prefab, or Back to return to the scene."); return; }
+    std::string err;
+    if (!ed.RevertToSaved(&err)) { ShowErrorPopup("Couldn't revert", err + "\n\nThe scene you have open was not changed."); return; }
+    ConsoleLog("Reverted to the saved file. Edit > Undo brings your changes back.");
+}
+// Scene templates: scenes kept in okay_scene_templates/ (beside the editor's other settings files).
+static std::filesystem::path SceneTemplateDir() { return std::filesystem::path("okay_scene_templates"); }
+static void SaveAsTemplateCmd(EditorState& ed) {
+    if (ed.InPrefabMode()) { ShowErrorPopup("Go back to the scene first", "A prefab is open. Use Back in the bar above the Scene view, then try again."); return; }
+    if (ed.isPlaying()) { ConsoleLog("Stop Play first.", 1); return; }
+    std::error_code ec;
+    std::filesystem::create_directories(SceneTemplateDir(), ec);
+    std::string stem = ed.path().empty() ? ed.scene().Name() : okay::editor::savesafe::FileStem(ed.path());
+    if (stem.empty()) stem = "Template";
+    EditorState* edp = &ed;
+    okay::filedialog::SaveOne("Save Scene as Template", (SceneTemplateDir() / (stem + ".okayscene")).string(), okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}), [edp](const std::string& picked) {
+        const std::string p = okay::editor::savesafe::WithExtension(picked, ".okayscene");
+        std::string why;
+        if (!SceneSerializer::SaveToFile(edp->scene(), p, &why)) { ShowErrorPopup("Couldn't save the template", why); return; }
+        ConsoleLog("Saved a scene template: " + p + ". File > Scene File > New from Template lists it (it is looked for in the okay_scene_templates folder).");
+    });
+}
+static void DrawTemplateMenuItems(EditorState& ed) {
+    std::vector<std::string> found;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(SceneTemplateDir(), ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".okayscene") found.push_back(it->path().string());
+    std::sort(found.begin(), found.end());
+    if (found.empty()) {
+        ImGui::TextDisabled("No templates yet. Use Save Scene as Template...");
+        return;
+    }
+    for (const std::string& t : found) {
+        if (!ImGui::MenuItem(okay::editor::savesafe::FileStem(t).c_str())) continue;
+        RunAfterSavePrompt(ed, "starting a new scene from a template", [&ed, t] {
+            std::string text, err;
+            if (!okay::editor::savesafe::ReadWholeFile(t, text)) { ShowErrorPopup("Couldn't open the template", "\"" + t + "\" can't be read."); return; }
+            if (!ed.LoadRecoveredText(text, "", &err)) { ShowErrorPopup("Couldn't open the template", err); return; }
+            ed.scene().SetName(okay::editor::savesafe::FileStem(t));
+            ConsoleLog("New scene from the template " + okay::editor::savesafe::FileStem(t) + ". Save Scene picks a place for it.");
+        });
+    }
+}
+
 static okay::RecoveryManager& DocRecovery() {
     static okay::RecoveryManager* r = nullptr;
     if (!r) {
@@ -48773,13 +49016,11 @@ static okay::RecoveryManager& DocRecovery() {
         cfg.directory = "okay_recovery";
         cfg.baseName = "editor";
         cfg.intervalSeconds = 30.0f;
-        cfg.slots = 3;
+        cfg.slots = g_docAutosaveKeep;
         r = new okay::RecoveryManager(cfg);
     }
     return *r;
 }
-static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
-static int g_docCompare = -1;
 static okay::BackupManager& EditorBackups() {
     static okay::BackupManager* m = nullptr;
     if (!m) {
@@ -48798,6 +49039,22 @@ static bool AnyUnsavedWork(EditorState& ed) {
     for (okay::ScriptComponent* t : g_scriptTabs)
         if (t && ScriptTabDirty(t)) return true;
     return okay::editor::vsed::VsAnyUnsaved();
+}
+// Everything that has unsaved changes, in the words of the prompts: the scene, prefabs, scripts, visual-script graphs.
+static std::vector<okay::editor::savesafe::UnsavedItem> CollectUnsavedItems(EditorState& ed) {
+    std::vector<okay::editor::savesafe::UnsavedItem> items;
+    if (ed.InPrefabMode()) {
+        for (const auto& c : ed.PrefabCrumbs())
+            if (c.unsaved) items.push_back({c.path.empty() ? "scene" : "prefab", c.path, c.label});
+    } else if (ed.HasUnsavedChanges()) {
+        items.push_back({"scene", ed.path(), ed.scene().Name()});
+    }
+    for (okay::ScriptComponent* t : g_scriptTabs)
+        if (t && ScriptTabDirty(t)) items.push_back({"script", t->Path(), "Untitled"});
+    std::vector<std::string> graphs;
+    okay::editor::vsed::VsDirtyTitles(graphs);
+    for (const std::string& g : graphs) items.push_back({"graph", "", g.rfind("Graph: ", 0) == 0 ? g.substr(7) : g});
+    return items;
 }
 // ---- Prefab mode ---------------------------------------------------------------------------------
 // The state machine lives in EditorState (OpenPrefab / SavePrefab / ClosePrefab ...); this is the screen side:
@@ -48934,7 +49191,6 @@ static void DrawPrefabModeBar(EditorState& ed) {
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }
-static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
 static std::string g_pendingPath;
 static void StartPlayNow(EditorState& ed) {
     if (ed.InPrefabMode()) { ConsoleLog(ed.PlayBlockedReason(), 1); return; }
@@ -48960,7 +49216,7 @@ static void LoadSceneNow(EditorState& ed, const std::string& path) {
     RunAfterProjectCheck(ed, path, [&ed, path] {
         std::string err;
         if (ed.Load(path, &err)) { ConsoleLog("Opened " + path); AddRecent(path); }
-        else ShowErrorPopup("Couldn't open the scene", "\"" + path + "\": " + err + "\n\nThe scene you had open is still open.");
+        else ShowLoadFailure(path, err);
     });
 }
 static void RunPendingAction(EditorState& ed) {
@@ -48989,16 +49245,14 @@ static void DrawActionPrompt(EditorState& ed) {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Save before continuing?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const char* what = g_pendingAction == 1 ? "playing" : g_pendingAction == 2 ? "stopping" : "opening another scene";
+    const okay::editor::savesafe::UnsavedSummary sum = okay::editor::savesafe::BuildUnsavedSummary(CollectUnsavedItems(ed));
     ImGui::Text("Save your work before %s?", what);
-    std::vector<std::string> names;
-    if (ed.dirty) names.push_back("Scene");
-    for (okay::ScriptComponent* t : g_scriptTabs)
-        if (t && ScriptTabDirty(t)) names.push_back("Script: " + (t->Path().empty() ? std::string("Untitled") : t->Path()));
-    okay::editor::vsed::VsDirtyTitles(names);
-    for (const std::string& n : names) ImGui::BulletText("%s", n.c_str());
+    ImGui::TextUnformatted(sum.names.empty() ? "You have unsaved changes." : sum.headline.c_str());
+    for (const std::string& n : sum.names) ImGui::BulletText("%s", n.c_str());
     ImGui::Spacing();
-    if (ImGui::Button("Save", ImVec2(120, 0))) {
+    if (ImGui::Button("Save All", ImVec2(120, 0))) {
         if (SaveProject(ed, true)) RunPendingAction(ed);
+        else if (g_saveHeld) { g_pendingAction = 0; g_pendingPath.clear(); }   // the outside-change question comes first; ask again after it
         ImGui::CloseCurrentPopup();
     }
     ImGui::SetItemDefaultFocus();
@@ -49008,13 +49262,73 @@ static void DrawActionPrompt(EditorState& ed) {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+    if (ImGui::Button("Discard", ImVec2(120, 0))) {
         RunPendingAction(ed);
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
 }
-static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs) {
+static void DrawExternalChangePrompt(EditorState& ed) {
+    using okay::editor::savesafe::DiskChange;
+    if (!g_ext.open) return;
+    if (!g_docRecover.empty() || g_pendingAction || g_quitRequested || g_savePromptOpen) return;   // one question at a time: it waits its turn
+    const std::string leaf = okay::editor::savesafe::FileLeaf(g_ext.path.empty() ? ed.path() : g_ext.path);
+    const okay::editor::savesafe::ExternalPrompt pr = okay::editor::savesafe::BuildExternalPrompt(leaf, g_ext.change, ed.HasUnsavedChanges(), g_ext.atSave);
+    const std::string name = pr.title + "###extchange";
+    if (!ImGui::IsPopupOpen("###extchange")) ImGui::OpenPopup(name.c_str());
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal(name.c_str(), nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextWrapped("%s", pr.body.c_str());
+    ImGui::Spacing();
+    std::string chosen;
+    for (std::size_t i = 0; i < pr.buttons.size(); ++i) {
+        if (i) ImGui::SameLine();
+        if (ImGui::Button(pr.buttons[i].c_str(), ImVec2(118, 0))) chosen = pr.buttons[i];
+        if (i == 0) ImGui::SetItemDefaultFocus();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) chosen = "Cancel";
+    if (!chosen.empty()) {
+        const std::string path = g_ext.path;
+        const bool saveAll = g_ext.saveAll;
+        g_ext.open = false;
+        ImGui::CloseCurrentPopup();
+        if (chosen == "Overwrite" || chosen == "Save Here") {
+            ed.AcceptSceneDisk();   // you chose your version over what is on disk
+            if (saveAll) SaveProject(ed, true);
+            else if (!SaveSceneTo(ed, path, true, true)) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor.");
+        } else if (chosen == "Save a Copy") SaveCopyCmd(ed);
+        else if (chosen == "Save As...") SaveSceneAsCmd(ed);
+        else if (chosen == "Reload") {
+            std::string err;
+            if (!ed.RevertToSaved(&err)) ShowErrorPopup("Couldn't reload", err + "\n\nThe scene you have open was not changed.");
+            else ConsoleLog("Reloaded " + leaf + " from disk. " + std::string(pr.buttons.size() > 2 ? "Edit > Undo brings your edits back." : ""));
+        }
+        // "Keep Mine", "Cancel", "OK": nothing else. Save will ask again, so the outside change is never overwritten without a yes.
+    }
+    ImGui::EndPopup();
+}
+// About once a second: did the open scene's file change on disk? Asked once per change; a pending Save asks again.
+static void WatchSceneFile(EditorState& ed) {
+    using okay::editor::savesafe::DiskChange;
+    static Uint32 last = 0;
+    static bool asked = false;
+    static std::string askedPath;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (now - last < 1000) return;
+    last = now;
+    if (askedPath != ed.path()) { askedPath = ed.path(); asked = false; }
+    if (g_ext.open || g_savePromptOpen) return;
+    const DiskChange ch = ed.SceneDiskChange();
+    if (ch == DiskChange::None) { asked = false; return; }
+    if (asked) return;
+    asked = true;
+    if (ch == DiskChange::Modified) { g_ext.open = true; g_ext.path = ed.path(); g_ext.change = ch; g_ext.atSave = false; g_ext.saveAll = false; }
+    else if (ch == DiskChange::Deleted) ConsoleLog(okay::editor::savesafe::FileLeaf(ed.path()) + " was deleted or moved while it was open. What you have open is safe: Save writes it again.", 1);
+}
+// `both`: the recovered scene is written NEXT TO the scene's file ("<name> (recovered).okayscene") and that copy is opened,
+// so the file on disk is not touched and both versions exist (the original is in File > Open Recent).
+static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor::docrec::Buffer>& docs, bool both = false) {
     for (const auto& b : docs) {
         if (b.kind == "graph" || b.kind == "closed") okay::editor::vsed::VsRestoreBuffer(b);
         else if (b.kind == "script") {
@@ -49031,7 +49345,7 @@ static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor
                 if (g_activeScriptTab) {
                     SetCodeBuffer(g_activeScriptTab, b.text);
                     std::ifstream f(b.key, std::ios::binary);
-                    std::stringstream ss; if (f) ss << f.rdbuf();
+                    std::stringstream ss; ss << f.rdbuf();
                     g_scriptSaved[g_activeScriptTab] = ss.str();
                 }
             }
@@ -49039,7 +49353,13 @@ static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor
         } else if (b.kind == "scene") {
             const std::string keep = (b.key == "untitled-scene") ? std::string() : b.key;
             std::string err;
-            if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
+            if (both && !keep.empty() && FileExistsAt(keep)) {
+                const std::string copy = okay::editor::savesafe::RecoveredCopyPath(keep, FileExistsAt);
+                if (!okay::editor::savesafe::WriteUserFile(copy, b.text, &err)) { ConsoleLog("Couldn't write the recovered copy: " + err, 2); continue; }
+                if (!ed.Load(copy, &err)) { ConsoleLog("Couldn't open the recovered copy: " + err, 2); continue; }
+                AddRecent(keep); AddRecent(copy);
+                ConsoleLog("Recovered scene saved as " + copy + " and opened. Your own file " + keep + " was not touched (it is in File > Open Recent).");
+            } else if (!ed.LoadRecoveredText(b.text, keep, &err)) ConsoleLog("Couldn't restore the scene: " + err, 2);
         }
     }
     g_showVisualScript = true;
@@ -49047,54 +49367,44 @@ static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor
 static void DrawDocRecoveryPopup(EditorState& ed) {
     if (g_docRecover.empty()) return;
     if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
-    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(680, 0), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const auto& c = g_docRecover.front();
-    ImGui::TextWrapped("The editor closed without a clean exit. A recovery copy from that session is still here.");
-    ImGui::TextDisabled("%s", c.label.c_str());
-    ImGui::Spacing();
+    const auto c = g_docRecover.front();
     std::string payload, err;
     std::vector<okay::editor::docrec::Buffer> docs;
     const bool ok = DocRecovery().Restore(c, payload, &err) && okay::editor::docrec::DecodeBundle(payload, docs, &err);
-    if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
-    else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
-    ImGui::Spacing();
-    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
-        ApplyRecoveredBundle(ed, docs);
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
-        ImGui::CloseCurrentPopup();
+    auto removeFront = [&] { DocRecovery().Discard(c); g_docRecover.erase(g_docRecover.begin()); ImGui::CloseCurrentPopup(); };
+    bool canBoth = false;
+    if (!ok) {
+        ImGui::TextWrapped("The editor closed unexpectedly, but its recovery copy could not be read: %s", err.c_str());
+        ImGui::TextDisabled("Nothing was changed. Discard removes the damaged copy.");
+    } else {
+        std::vector<okay::editor::savesafe::RecoveredDoc> rd;
+        for (const auto& b : docs) rd.push_back({b.kind, b.key, b.text});
+        const std::int64_t now = (std::int64_t)std::time(nullptr);
+        const auto sum = okay::editor::savesafe::SummarizeRecovery(rd, c.timestamp, now, okay::editor::savesafe::LocalUtcOffsetSeconds(c.timestamp),
+            [](const std::string& path, std::string& out) { return okay::editor::savesafe::ReadWholeFile(path, out); });
+        ImGui::TextWrapped("%s", sum.headline.c_str());
+        ImGui::TextDisabled("%s", sum.when.c_str());
+        ImGui::Spacing();
+        for (const auto& l : sum.lines) ImGui::BulletText("%s: %s", l.name.c_str(), l.detail.c_str());
+        ImGui::Spacing();
+        if (!sum.worthRestoring) ImGui::TextWrapped("Everything in the copy is the same as what is saved, so there is nothing to bring back. Discard it.");
+        else ImGui::TextWrapped("Restore brings the copy back as unsaved changes: nothing is written to your files until you save.");
+        for (const auto& l : sum.lines) if (l.hasFile && !l.sameAsDisk && l.name.rfind("Scene:", 0) == 0) canBoth = true;
     }
+    ImGui::Spacing();
+    if (ImGui::Button("Restore", ImVec2(130, 0)) && ok) { ApplyRecoveredBundle(ed, docs); removeFront(); }
     ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
-    if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
+    ImGui::BeginDisabled(!canBoth);
+    if (ImGui::Button("Open Both", ImVec2(130, 0)) && ok) { ApplyRecoveredBundle(ed, docs, true); removeFront(); }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Keep your saved file as it is and open the recovered scene as a second file\n(\"<name> (recovered)\") next to it.");
     ImGui::SameLine();
-    if (ImGui::Button("Discard", ImVec2(120, 0))) {
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
-        ImGui::CloseCurrentPopup();
-    }
-    if (g_docCompare >= 0 && ok) {
-        ImGui::Separator();
-        ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
-        for (const auto& b : docs) {
-            std::string disk;
-            bool exists = false;
-            if (!b.key.empty() && b.key.rfind("untitled", 0) != 0) {
-                std::ifstream f(b.key, std::ios::binary);
-                exists = (bool)f;
-                if (f) { std::stringstream ss; ss << f.rdbuf(); disk = ss.str(); }
-            }
-            if (!okay::editor::docrec::BufferWorthRestoring(b.text, disk, exists)) continue;
-            ImGui::Text("%s  %s", b.kind.c_str(), b.key.c_str());
-            ImGui::TextDisabled("Recovered (%d characters). On disk: %s.", (int)b.text.size(), exists ? "different" : "no file yet");
-            ImGui::Spacing();
-        }
-        ImGui::EndChild();
-    }
+    if (ImGui::Button("Discard", ImVec2(130, 0))) removeFront();
     ImGui::EndPopup();
 }
 // Save everything: the scene (an unsaved one goes to Assets/Scenes), every edited
@@ -49105,19 +49415,24 @@ static void DrawDocRecoveryPopup(EditorState& ed) {
 static bool SaveProject(EditorState& ed, bool interactive) {
     bool ok = true;
     g_lastSaveError.clear();   // this save starts clean: the red "Save failed" in the status bar means THIS one failed
-    std::vector<std::string> saved;
-    bool sceneSkipped = false;
+    okay::editor::savesafe::SaveAllReport report;   // what this Save All did, by name (the Console and the status bar say it)
+    std::vector<std::string>& saved = report.saved;
+    bool sceneSkipped = false, held = false;
     if (ed.isPlaying()) {
         if (interactive) sceneSkipped = true;
         else { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // save the edited scene, not the running copy
     }
     if (!sceneSkipped && ed.InPrefabMode()) {   // the open prefab, the prefabs it was opened from, and the scene put aside
         std::string why;
-        if (ed.SaveAllPrefabLevels(&why)) saved.push_back("prefab and scene");
+        if (ed.SaveAllPrefabLevels(&why)) saved.push_back("the open prefab and its scene");
         else { ok = false; g_lastSaveError = why; ConsoleLog("Couldn't save: " + why, 2); }
     } else if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
         const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
-        if (SaveSceneTo(ed, p)) saved.push_back("scene"); else ok = false;
+        if (SaveSceneTo(ed, p, true)) saved.push_back(okay::editor::savesafe::FileStem(p));
+        else {
+            ok = false;
+            if (g_saveHeld) { held = true; g_ext.saveAll = interactive; report.skipped.push_back(okay::editor::savesafe::FileLeaf(p) + " (it changed outside the editor: answer the question first)"); }
+        }
     }
     int scripts = 0;
     for (okay::ScriptComponent* t : g_scriptTabs) {
@@ -49132,10 +49447,9 @@ static bool SaveProject(EditorState& ed, bool interactive) {
             for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okay")).string();
             t->SetPath(p);
         }
-        if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
-        else { ok = false; g_lastSaveError = "Couldn't write " + t->Path(); ConsoleLog("Couldn't save " + t->Path(), 2); }
+        if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; saved.push_back(okay::editor::savesafe::FileLeaf(t->Path())); }
+        else { ok = false; g_lastSaveError = "Couldn't write " + t->Path(); ConsoleLog("Couldn't save " + t->Path(), 2); report.failed.push_back({okay::editor::savesafe::FileLeaf(t->Path()), "the file could not be written"}); }
     }
-    if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
     const int graphs = okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
     if (graphs) saved.push_back(graphs == 1 ? "visual script" : std::to_string(graphs) + " visual scripts");
     for (const auto& tp : okay::editor::vsed::Session().tabs)
@@ -49151,13 +49465,12 @@ static bool SaveProject(EditorState& ed, bool interactive) {
     SavePluginPrefs();
     SaveSettings();
     SaveRecent();
-    saved.push_back("settings");
+    saved.push_back("project and editor settings");
     if (interactive) {
-        std::string msg = "Project saved: ";
-        for (std::size_t i = 0; i < saved.size(); ++i) msg += (i ? ", " : "") + saved[i];
-        if (sceneSkipped) msg += ". (The scene wasn't saved while playing: stop Play, then save.)";
+        std::string msg = report.Text();
+        if (sceneSkipped) msg += " (The scene wasn't saved while playing: stop Play, then save.)";
         ConsoleLog(msg, ok ? (sceneSkipped ? 1 : 0) : 2);
-        if (!ok) ShowErrorPopup("Not everything was saved", (g_lastSaveError.empty() ? std::string("The Console lists the files that could not be written.") : g_lastSaveError) +
+        if (!ok && !held) ShowErrorPopup("Not everything was saved", (g_lastSaveError.empty() ? std::string("The Console lists the files that could not be written.") : g_lastSaveError) +
                                                             "\n\nNothing was lost: your changes are still open in the editor.");
     }
     return ok;
@@ -50295,7 +50608,7 @@ int main(int argc, char** argv) {
                 g_quitRequested = true;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
-                if (g_autosave) DocRecovery().Autosave();
+                g_autosaveUrgent = true;   // the user may be leaving: a recovery copy goes out at the next quiet frame (rate limited)
             }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
@@ -50805,19 +51118,43 @@ int main(int argc, char** argv) {
 
         // Recovery copies of dirty graphs, scripts and the scene. The real files
         // are overwritten only when "Also save the real file" is on.
-        DocRecovery().SetInterval(g_docAutosaveSec);
-        DocRecovery().SetEnabled(g_autosave);
-        if (g_autosave && DocRecovery().Tick(dt)) {
-            g_autosaveStamp = okay::platform::TicksMs() / 1000.0;
-            if (g_autosaveToFile) {
-                okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
-                for (okay::ScriptComponent* t : g_scriptTabs) {
-                    if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
-                    const char* live = PeekCodeBuffer(t);
-                    if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+        {
+            // When a recovery copy may be written is okay::editor::savesafe::DecideAutosave: never during Play, never closer than
+            // 5 s to the last one, not while a button is held or a field is being typed in (up to 15 s), at once when the window
+            // loses focus. A copy that took long stretches the interval (cost stays under 1 percent of the time).
+            using namespace okay::editor::savesafe;
+            static double s_since = 1e9;
+            s_since += dt;
+            AutosaveSettings as;
+            as.enabled = g_autosave;
+            as.intervalSeconds = g_asCost.SuggestedInterval(AutosaveSettings::ClampInterval(g_docAutosaveSec));
+            as.keep = g_docAutosaveKeep;
+            AutosaveContext ctx;
+            ctx.anythingUnsaved = g_anyUnsaved;
+            ctx.playing = ed.isPlaying();
+            ctx.inPrefabMode = ed.InPrefabMode();
+            ctx.userBusy = ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1) || ImGui::IsAnyItemActive();
+            ctx.secondsSinceLast = (float)s_since;
+            ctx.secondsSinceRequested = (float)std::max(0.0, s_since - (double)as.intervalSeconds);
+            ctx.urgent = g_autosaveUrgent;
+            if (DecideAutosave(as, ctx) == AutosaveVerdict::Go) {
+                DocRecovery().SetSlots(as.keep);
+                const Uint64 t0 = okay::platform::PerfCounter();
+                const auto res = DocRecovery().Autosave();
+                g_asCost.Add(1000.0 * (double)(okay::platform::PerfCounter() - t0) / (double)okay::platform::PerfFrequency());
+                s_since = 0;
+                if (res == okay::RecoveryManager::AutosaveResult::Written) g_autosaveStamp = okay::platform::TicksMs() / 1000.0;
+                if (res == okay::RecoveryManager::AutosaveResult::Written && g_autosaveToFile) {
+                    okay::editor::vsed::VsSaveAllTabs(ed.projectDir());
+                    for (okay::ScriptComponent* t : g_scriptTabs) {
+                        if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
+                        const char* live = PeekCodeBuffer(t);
+                        if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+                    }
+                    if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode() && !ed.path().empty()) SaveSceneTo(ed, ed.path(), false);   // never asks on its own: an outside change is left for the user
                 }
-                if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }
+            g_autosaveUrgent = false;
         }
         // The unsaved-work check serializes the whole scene and hashes it whenever the dirty flag is
         // down (the normal state while playing or after a save), so paying it every frame costs real
@@ -50831,7 +51168,9 @@ int main(int argc, char** argv) {
             const bool unsaved = AnyUnsavedWork(ed);
             if (s_hadUnsaved && !unsaved) DocRecovery().OnSaved();
             s_hadUnsaved = unsaved;
+            g_anyUnsaved = unsaved;
         }
+        WatchSceneFile(ed);
         SyncProjectFiles(ed);   // project + build settings follow their edits to disk
 
         // Pump audio while playing (stereo float, queued). Top the queue up to a
@@ -50973,7 +51312,7 @@ int main(int argc, char** argv) {
         }
 
         ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
-        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
+        { OKAY_PROFILE("UI.NewProjectPopup"); DrawNewProjectPopup(ed); DrawProjectGate(ed); DrawNewProjectDialog(ed); DrawSavePrompt(ed); DrawExternalChangePrompt(ed); DrawLoadFailurePrompt(ed); DrawPrefabLeavePrompt(ed); DrawErrorPopup(); ProjectUpgradeDraw(ed); }
         {   // dev screenshot hook: OKAY_UI_FOCUS="Inspector,Project" brings those dock tabs forward
             static int s_focusFrames = 0;
             if (s_focusFrames < 90) ++s_focusFrames;

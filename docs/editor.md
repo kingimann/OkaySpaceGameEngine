@@ -469,10 +469,12 @@ project folder, and the same New Project form.
 
 ### Saving
 
-- **Save Scene** (Ctrl+S), **Save Scene As** (Ctrl+Shift+S), **Save Project** (Ctrl+Alt+S: the scene, every edited
-  script, the open visual script, project and build settings, preferences). Quitting with unsaved work, and the
-  launcher's "save and close", save everything the same way.
-- A save is whole or not at all: the new file is written beside the old one (`<name>.savetmp`), checked, and then
+- **Save Scene** (Ctrl+S), **Save Scene As** (Ctrl+Shift+S), **Save All** (Ctrl+Alt+S, was Save Project: the scene, every
+  edited script, the open visual script, project and build settings, preferences; the Console lists what it saved). Quitting with unsaved work (the box lists the
+  unsaved things by name: Save All / Discard / Cancel), and the launcher's "save and close", save everything the same way.
+  File > Scene File has Save a Copy, Duplicate Scene, Revert to Saved, Show in Folder and scene templates; the editor warns
+  before overwriting a scene file that something else changed. All of this is described in [editor_saving.md](editor_saving.md).
+- A save is whole or not at all: the new file is written beside the old one (`<name>.tmp`), flushed to disk, and then
   renamed over it. The previous good copy is kept as `<name>.okayscene.bak`. A read-only file, a missing folder or a
   full disk is refused with the reason, nothing on disk changes, and the scene stays open and unsaved (the status
   bar shows a red **Save failed**; click it for the details). The project settings, build settings, scene build list,

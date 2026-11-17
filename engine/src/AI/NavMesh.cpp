@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/AI/NavMesh.hpp"
 #include "okay/Core/SafeCast.hpp"
 
@@ -555,10 +556,7 @@ bool NavMesh::Deserialize(const std::string& text, std::string* error) {
 }
 
 bool NavMesh::SaveToFile(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return false;
-    f << Serialize();
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Serialize());   // all or nothing: a failed write leaves the old file whole
 }
 
 bool NavMesh::LoadFromFile(const std::string& path, std::string* error) {

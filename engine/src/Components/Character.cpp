@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/NetworkSync.hpp"
@@ -807,10 +808,9 @@ bool Character::SaveClipsToFile(const std::string& path, std::string* error) con
     clips.reserve(m_clips.size());
     for (const auto& kv : m_clips) clips.push_back(kv.second);
     std::string text = AnimClip::WriteAll(clips, [](int i) { return std::string(BoneToken(i)); });
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) { if (error) *error = "cannot write " + path; return false; }
-    f << text;
-    return (bool)f;
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, text, &why)) { if (error) *error = why; return false; }   // all or nothing
+    return true;
 }
 
 bool Character::PlayClip(const std::string& name) {

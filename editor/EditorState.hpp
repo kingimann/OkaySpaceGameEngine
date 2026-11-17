@@ -7,6 +7,7 @@
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Undo.hpp"
 #include "SceneUndo.hpp"
+#include "SaveSafety.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -131,8 +132,19 @@ public:
     /// and the scene is left unsaved, so the real file is not overwritten.
     bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
+    /// Has the open scene's file changed on disk since the editor last read or wrote it (a git pull, another editor,
+    /// Notepad)? Cheap (looks at size and write time); call about once a second. `Modified`, `Deleted`, `Appeared`
+    /// or `None`. Always `None` while Play runs, in prefab mode, or for a scene that has no file yet.
+    okay::editor::savesafe::DiskChange SceneDiskChange();
+    /// The user saw an outside change and chose to keep their version: stop warning until the file changes again.
+    void AcceptSceneDisk() { m_watch.AcceptDisk(); }
+    /// Unix time of the last successful Save of this scene in this session (0 = not saved yet).
+    std::int64_t savedAtUnix() const { return m_savedAtUnix; }
+    /// Throw away the changes since the last save and read the file again. This is an undoable step (Undo brings the
+    /// edits back), so reverting never loses work for good. Also the "Reload" of the outside-change question.
+    bool RevertToSaved(std::string* error = nullptr);
     /// The open scene's file was renamed or moved: keep editing it under the new path.
-    void FollowMovedFile(const std::string& newPath) { m_path = newPath; }
+    void FollowMovedFile(const std::string& newPath) { m_path = newPath; m_watch.Remember(newPath); }
     /// An asset the scene uses was renamed or moved: pass the scene's text (live scene, undo and redo history
     /// and the saved copy) through `rewrite`. A scene that had no unsaved changes still has none. Returns
     /// true when the live scene changed.
@@ -491,6 +503,8 @@ private:
     void RecordStep(const std::string& before, const std::string& after, const std::string& name,
                     const SelectionRef& selBefore, std::uint64_t key);
     void StartDocument();   // a new / opened scene: empty history, this text is the baseline and counts as saved
+    okay::editor::savesafe::DiskWatch m_watch;   // the open scene file as the editor last read or wrote it
+    std::int64_t m_savedAtUnix = 0;
     std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
     std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
     bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)

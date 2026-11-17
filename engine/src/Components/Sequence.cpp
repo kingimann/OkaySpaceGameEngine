@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Components/Sequence.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"   // AssetBaseDir: project-relative nest paths
@@ -739,9 +740,8 @@ bool Sequence::LoadFromFile(const std::string& path, Sequence& out, std::string*
 }
 
 bool Sequence::SaveToFile(const std::string& path, std::string* error) const {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) { if (error) *error = "cannot write " + path; return false; }
-    f << Write();
+    std::string why;
+    if (!savefmt::AtomicWriteChecked(path, Write(), &why)) { if (error) *error = why; return false; }   // all or nothing
     return true;
 }
 

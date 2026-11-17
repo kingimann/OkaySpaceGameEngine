@@ -8,6 +8,7 @@
 #include "ConsolePanel.hpp"
 #include "EditorWidgets.hpp"
 #include "MainShared.hpp"
+#include "SaveSafety.hpp"
 #include "imgui.h"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Inventory/LootTable.hpp"
@@ -99,10 +100,7 @@ bool WriteFile(const std::string& path, const std::string& text) {
     std::error_code ec;
     fs::path parent = fs::path(path).parent_path();
     if (!parent.empty()) fs::create_directories(parent, ec);
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << text;
-    return (bool)f;
+    return okay::editor::savesafe::WriteUserFile(path, text);   // all or nothing: the old file stays whole if this fails
 }
 std::string Canon(const std::string& path) {
     if (path.empty()) return {};

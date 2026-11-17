@@ -3872,3 +3872,11 @@ add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINA
 add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# The editor's saving and loading rules: atomic writes with simulated failures, backup rotation, recovery copies,
+# the unsaved-mark state machine, outside-change detection, the unsaved list, load-error wording, safe-mode open,
+# Open Recent cleanup, copy names (editor/SaveSafety.hpp, editor/SceneSalvage.hpp, docs/editor_saving.md).
+add_executable(test_editor_saves test_editor_saves.cpp)
+target_include_directories(test_editor_saves PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_saves PRIVATE okay::engine)
+add_test(NAME editor_saves COMMAND test_editor_saves)

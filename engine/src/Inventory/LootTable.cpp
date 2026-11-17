@@ -1,3 +1,4 @@
+#include "okay/Core/SaveData.hpp"
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
@@ -60,10 +61,7 @@ std::string LootTable::Serialize() const {
 }
 
 bool LootTable::Save(const std::string& path) const {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << Serialize();
-    return (bool)f;
+    return savefmt::AtomicWrite(path, Serialize());   // all or nothing
 }
 
 bool LootTable::Load(const std::string& path, std::string* err) {

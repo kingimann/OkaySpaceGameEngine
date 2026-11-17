@@ -118,7 +118,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 - **Multiple cursors** and **column (block) selection**.
 - **Code folding.**
 - **Word wrap.** Long lines scroll sideways.
-- **Auto-close brackets and quotes**, **auto-dedent when typing `}`**, **toggle comment (Ctrl+/)**, **move line up and down**, **duplicate line**: not in the library the script editor uses either, or done by the editor itself on top of the API (`FormatOkayScript`, comment toggle in `editor/main.cpp` work on the text through `SetSelection`, `InsertText`).
+- **Auto-close brackets and quotes**, **auto-dedent when typing `}`**, **toggle comment (Ctrl+/)**, **move line up and down**, **duplicate line** (these three are now in the widget, `ToggleLineComment`, `MoveLines`, `DuplicateLines`, keys Ctrl+/, Alt+Up / Alt+Down, Ctrl+Shift+D; `docs/own_ui_toolkit.md` section 4.39; written from the usual behaviour of code editors; moved lines do not take breakpoints with them): they were not in the library the script editor uses either, or done by the editor itself on top of the API (`FormatOkayScript`, comment toggle in `editor/main.cpp` work on the text through `SetSelection`, `InsertText`).
 - **Autocomplete popup and the hover tooltip**: the editor draws them itself (they use `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`.
 - **Drag and drop of selected text**, **drop of files onto the editor**.
 - **Show whitespace**, **minimap**, **indent guides**, **matching word highlight**.

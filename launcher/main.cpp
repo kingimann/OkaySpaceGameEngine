@@ -576,13 +576,17 @@ static void SeedDemoDownloads() {
 // g_dlMutex, and the page's requests run under it. The same mutex and thread handles as the rest of the download manager
 // (the launcher's worker threads are SDL threads: MinGW has no std::thread).
 struct DlView { int id; std::string title, dest; long long received, total; int status; };
-static std::vector<DlView> DlSnapshot() {
-    std::vector<DlView> out;
-    if (!g_dlMutex) return out;
+// A copy of the list into `out`, reusing its rows and their strings (no allocation once the list has been seen): the OkayUI
+// page calls this every frame.
+static void DlSnapshotInto(std::vector<DlView>& out) {
+    if (!g_dlMutex) { out.clear(); return; }
     okay::lt::LockMutex(g_dlMutex);
-    for (const auto& d : g_dls) out.push_back({d->id, d->title, d->dest, d->received, d->total, d->status});
+    out.resize(g_dls.size());
+    for (std::size_t i = 0; i < g_dls.size(); ++i) {
+        const DlItem& d = *g_dls[i]; DlView& v = out[i];
+        v.id = d.id; v.title = d.title; v.dest = d.dest; v.received = d.received; v.total = d.total; v.status = d.status;
+    }
     okay::lt::UnlockMutex(g_dlMutex);
-    return out;
 }
 // Cancel download `cancelId`, remove finished download `removeId`, and with `clearFinished` remove every finished one (-1: none).
 // A removed download's worker thread is joined first, as the Dear ImGui page does.
@@ -4823,7 +4827,7 @@ namespace uitiming {
 static const bool kOn = std::getenv("OKAY_UI_TIMING") != nullptr;
 static double NowUs() { return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 static std::map<std::string, double> g_frame;   // "screen|backend" -> this frame's build time
-struct Acc { std::vector<double> build, total, imguiRender, okayRender; };
+struct Acc { std::vector<double> build, total, imguiRender, okayRender, imguiIdx, okayIdx; };
 static std::map<std::string, Acc> g_acc;
 struct Scope {
     std::string key; double t0 = 0.0;
@@ -4831,19 +4835,21 @@ struct Scope {
     ~Scope() { if (kOn) g_frame[key] += NowUs() - t0; }
 };
 static double Median(std::vector<double> v) { std::sort(v.begin(), v.end()); return v.empty() ? 0.0 : v[v.size() / 2]; }
-static void FrameDone(double imguiRenderUs, double okayRenderUs) {
+// imguiIdx / okayIdx: the frame's triangle indices drawn by each backend (the renderer's work grows with them).
+static void FrameDone(double imguiRenderUs, double okayRenderUs, int imguiIdx, int okayIdx) {
     if (!kOn) return;
     for (const auto& kv : g_frame) {
         Acc& a = g_acc[kv.first];
         a.build.push_back(kv.second); a.total.push_back(kv.second + imguiRenderUs + okayRenderUs);
         a.imguiRender.push_back(imguiRenderUs); a.okayRender.push_back(okayRenderUs);
+        a.imguiIdx.push_back(imguiIdx); a.okayIdx.push_back(okayIdx);
         if (a.build.size() >= 300) {
             const std::size_t bar = kv.first.find('|');
-            char line[320];
+            char line[400];
             std::snprintf(line, sizeof(line), "okayui-timing: %s on %s: build %.0f us, build + render %.0f us (median of 300 frames; "
-                          "render: Dear ImGui %.0f us, OkayUI %.0f us)",
+                          "render: Dear ImGui %.0f us, OkayUI %.0f us; indices: Dear ImGui %.0f, OkayUI %.0f)",
                           kv.first.substr(0, bar).c_str(), kv.first.substr(bar + 1).c_str(), Median(a.build), Median(a.total),
-                          Median(a.imguiRender), Median(a.okayRender));
+                          Median(a.imguiRender), Median(a.okayRender), Median(a.imguiIdx), Median(a.okayIdx));
             std::printf("%s\n", line); std::fflush(stdout);
             Toast(line, 0);
             a = Acc();
@@ -19315,20 +19321,38 @@ int main(int argc, char** argv) {
                 ns.filter = ntFilter;
                 const std::uint32_t nowT = okay::platform::TicksMs32();
                 const long nowUnix = (long)std::time(nullptr);
-                const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
-                okayuiscreens::NotificationsModel nm;
+                // Where today and yesterday begin (local midnight), worked out once a minute instead of a calendar lookup
+                // (localtime) per row; a row is "today" from local midnight on, as DayKey would say.
+                static long dayCacheMin = -1, todayStart = 0, ydayStart = 0;
+                if (nowUnix / 60 != dayCacheMin) {
+                    dayCacheMin = nowUnix / 60;
+                    std::time_t tt = (std::time_t)nowUnix;
+                    if (const std::tm* lt = std::localtime(&tt)) {
+                        std::tm m = *lt; m.tm_hour = 0; m.tm_min = 0; m.tm_sec = 0; m.tm_isdst = -1;
+                        todayStart = (long)std::mktime(&m);
+                        m = *std::localtime(&tt); m.tm_hour = 0; m.tm_min = 0; m.tm_sec = 0; m.tm_isdst = -1; m.tm_mday -= 1;
+                        ydayStart = (long)std::mktime(&m);
+                    }
+                }
+                // The model and the index list are kept from frame to frame so their rows and strings are reused.
+                static okayuiscreens::NotificationsModel nm;
                 nm.drawFrame = false;   // this ImGui window already draws the panel's background, border and shadow
-                std::vector<int> feedIdx;   // model index -> g_notifs index
+                static std::vector<int> feedIdx;   // model index -> g_notifs index
+                feedIdx.clear();
+                std::size_t nItems = 0;
+                const bool anyHidden = !ntHidden.empty();
                 for (int i = 0; i < (int)g_notifs.size(); ++i) {
                     const Notif& n = g_notifs[(std::size_t)i];
-                    if (isHidden(n)) continue;
-                    okayuiscreens::NotifEntry e;
+                    if (anyHidden && isHidden(n)) continue;
+                    if (nItems == nm.items.size()) nm.items.emplace_back();
+                    okayuiscreens::NotifEntry& e = nm.items[nItems++];
                     e.title = n.title; e.body = n.body; e.kind = kindOf(n); e.unread = isUnread(n);
                     e.ageSeconds = (std::uint32_t)(nowT - n.time) / 1000u;
-                    const long dk = DayKey(nowUnix - (long)e.ageSeconds);
-                    e.day = dk == today ? 0 : dk == yday ? 1 : 2;
-                    nm.items.push_back(e); feedIdx.push_back(i);
+                    const long when = nowUnix - (long)e.ageSeconds;
+                    e.day = when >= todayStart ? 0 : when >= ydayStart ? 1 : 2;
+                    feedIdx.push_back(i);
                 }
+                nm.items.resize(nItems);
                 ImGui::SetCursorScreenPos(wpos);
                 ImGui::InvisibleButton("##okayui_notifs", wsz);
                 ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
@@ -27300,9 +27324,15 @@ int main(int argc, char** argv) {
             // Same list, buttons and actions as the Dear ImGui page below; differences in docs/own_ui_toolkit.md section 8.
             uitiming::Scope uiT("Downloads", "OkayUI");
             SeedDemoDownloads();
-            const fs::path ddir = fs::path(g_exeDir) / "downloads";
-            okayuiscreens::DownloadsModel dm;
-            for (const DlView& d : DlSnapshot()) dm.items.push_back({d.id, d.title, d.dest, d.received, d.total, d.status});
+            // The list and the model are kept from frame to frame so their rows and strings are reused, not allocated again.
+            static std::vector<DlView> dlv;
+            static okayuiscreens::DownloadsModel dm;
+            DlSnapshotInto(dlv);
+            dm.items.resize(dlv.size());
+            for (std::size_t i = 0; i < dlv.size(); ++i) {
+                const DlView& d = dlv[i]; okayuiscreens::DownloadEntry& e = dm.items[i];
+                e.id = d.id; e.title = d.title; e.dest = d.dest; e.received = d.received; e.total = d.total; e.status = d.status;
+            }
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's list ends; the footer stays below
@@ -27310,8 +27340,9 @@ int main(int argc, char** argv) {
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
             OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
             const okayuiscreens::DownloadsResult dr = okayuiscreens::DrawDownloads(dm, rp.x, rp.y, ra.x, ra.y);
-            if (dr.openFolder) { std::error_code ec; fs::create_directories(ddir, ec); OpenExternal(ddir.string()); }
-            if (dr.openItemFolderId >= 0) OpenExternal(ddir.string());
+            const auto ddir = [] { return fs::path(g_exeDir) / "downloads"; };   // only built when a button needs it
+            if (dr.openFolder) { std::error_code ec; fs::create_directories(ddir(), ec); OpenExternal(ddir().string()); }
+            if (dr.openItemFolderId >= 0) OpenExternal(ddir().string());
             if (dr.browseMarketplace) { tab = 7; g_lastTab = 7; SavePrefs(); }
             if (dr.installId >= 0) {
                 for (const auto& d : dm.items) if (d.id == dr.installId) {
@@ -27492,7 +27523,13 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) OkayUIFrameEnd();   // on top of everything ImGui drew, through the same renderer or painter
 #endif
-        if (uitiming::kOn) uitiming::FrameDone(uiRenderT1 - uiRenderT0, uitiming::NowUs() - uiRenderT1);
+        if (uitiming::kOn) {
+            int okayIdx = 0;
+#ifdef OKAY_HAVE_OKAYUI
+            if (okayFrame) okayIdx = OkayUI::GetDrawData().indexCount;
+#endif
+            uitiming::FrameDone(uiRenderT1 - uiRenderT0, uitiming::NowUs() - uiRenderT1, ImGui::GetDrawData() ? ImGui::GetDrawData()->TotalIdxCount : 0, okayIdx);
+        }
         g_gfx->Present();
         if (frameStats.Active()) {
             const double ms = (double)(okay::platform::PerfCounter() - workStart) * 1000.0 / (double)okay::platform::PerfFrequency();

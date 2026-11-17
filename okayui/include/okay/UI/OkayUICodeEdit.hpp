@@ -150,6 +150,15 @@ public:
     bool NewLine();
     /// Tab: indent (insert spaces to the next tab stop, or the lines of a multi-line selection); `outdent` (Shift+Tab) removes one level.
     bool Tab(bool outdent = false);
+    /// Line commands on the lines the selection touches (the caret's line when there is no selection; a selection that ends at the start of
+    /// a line does not include that line). Each is one undo step and keeps the selection on the same text.
+    /// ToggleLineComment: if every non-blank line starts (after its indent) with `prefix`, remove it (and one space after it); otherwise put
+    /// `prefix` and a space at the smallest indent among the lines (blank lines are left alone).
+    bool ToggleLineComment(const std::string& prefix = "//");
+    /// MoveLines: swap the block with the line above (`down` false) or below; false at the first or last line.
+    bool MoveLines(bool down);
+    /// DuplicateLines: copy the block under itself; the selection moves to the copy.
+    bool DuplicateLines();
     bool Cut();          // copies to the clipboard, then deletes
     bool Copy() const;   // the selection to OkayUI::SetClipboardText
     bool Paste();

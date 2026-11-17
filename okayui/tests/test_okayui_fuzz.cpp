@@ -6,6 +6,7 @@
 // rectangle or texture coordinate converted to an int) and are covered by the raw draw data scenario.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
+#include "okay/UI/OkayUIImCompat.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -119,7 +120,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(70)) {
+        switch (r.Int(74)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -237,6 +238,31 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 67: UI::BeginMenuBar(); if (UI::BeginMenu(lbl.c_str())) { UI::MenuItem(lbl.c_str(), r.Chance(30) ? nullptr : "Ctrl+X", r.Chance(50), r.Chance(50)); UI::MenuSeparator(); if (r.Chance(60) && UI::BeginMenu(r.Chance(10) ? nullptr : "sub")) { UI::MenuItem("in"); if (r.Chance(50) && UI::BeginMenu("deeper")) { UI::MenuItem("x"); if (r.Chance(30) && UI::BeginMenu("d3")) { if (r.Chance(30) && UI::BeginMenu("d4")) { if (UI::BeginMenu("d5")) UI::EndMenu(); UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenuBar(); break;
             case 68: if (r.Chance(30)) UI::OpenPopup("m"); if (UI::BeginPopupModal("m", r.Chance(50) ? &bools[0] : nullptr)) { UI::Text("modal"); UI::EndPopup(); } UI::IsPopupOpen("m"); break;
             case 69: UI::OpenPopup(lbl.c_str()); break;
+            case 70: {   // the ImGui-shaped calls (OkayUIImCompat.hpp), with hostile flags and sizes
+                if (depth < 3 && UI::BeginChild(lbl.c_str(), UI::Vec2{r.Nasty(), r.Nasty()}, r.Int(600) - 20, r.Int(100))) { RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); UI::EndChild(); }
+                UI::IsItemHovered(r.Int(2000) - 20); UI::IsWindowHovered(r.Int(2000) - 20); UI::IsWindowFocused(r.Int(20)); UI::IsAnyItemHovered();
+                UI::GetMouseDragDelta(r.Int(6) - 1, r.Nasty()); if (r.Chance(30)) UI::ResetMouseDragDelta(r.Int(6) - 1);
+                UI::IsItemEdited(); UI::IsItemDeactivatedAfterEdit(); UI::CalcItemWidth();
+                break;
+            }
+            case 71: if (UI::BeginTooltip()) { UI::Text(lbl.c_str()); if (depth < 2 && r.Chance(30)) RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); if (r.Chance(95)) UI::EndTooltip(); } UI::BeginItemTooltip(r.Int(2000)); break;   // sometimes left open: BeginFrame resets
+            case 72: if (UI::BeginPopupContextWindow(r.Chance(30) ? nullptr : lbl.c_str(), r.Int(600) - 5)) { UI::Text("ctx"); UI::EndPopup(); } UI::BeginPopupContextItem(lbl.c_str(), r.Int(8)); UI::IsPopupOpen(r.Chance(20) ? nullptr : lbl.c_str(), r.Int(600)); break;
+            case 73: {   // reorderable tab bars and hideable tables
+                if (UI::BeginTabBar(r.Chance(10) ? nullptr : "ftb", r.Int(300) - 5)) {
+                    const int nt = r.Int(6); bool openTmp = true;
+                    for (int ti = 0; ti < nt; ++ti) if (UI::BeginTabItem(r.Chance(10) ? nullptr : (ti % 3 ? "u1" : "u2"), r.Chance(30) ? &openTmp : nullptr, r.Int(128) - 4)) UI::EndTabItem();
+                    UI::EndTabBar();
+                }
+                if (UI::BeginTable(lbl.c_str(), r.Int(18) - 2, (UI::TableFlags)(r.Int(70000)))) {
+                    const int ns = r.Int(18);
+                    for (int s2 = 0; s2 < ns; ++s2) UI::TableSetupColumn(r.Chance(10) ? nullptr : "hc", r.Int(8000), r.Nasty());
+                    if (r.Chance(80)) UI::TableHeadersRow();
+                    UI::TableSetColumnEnabled(r.Int(20) - 2, r.Chance(50)); UI::TableGetHoveredColumn(); UI::TableGetColumnName(r.Int(20) - 2); UI::TableGetColumnFlags(r.Int(20) - 2);
+                    for (int row = 0; row < 3; ++row) { UI::TableNextRow(); for (int c = 0; c < 5; ++c) if (UI::TableNextColumn()) UI::Text("c"); }
+                    UI::EndTable();
+                }
+                break;
+            }
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }

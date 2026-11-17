@@ -9,127 +9,117 @@ by name: a call counts as available when OkayUI declares a function of that name
 
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
-| `ImGui::` calls | 262 | 27379 | 27058 | 98.8% |
-| ImGui types, flags, enums | 323 | 12094 | 9717 | 80.3% |
-| Draw-list methods | 26 | 2359 | 2329 | 98.7% |
+| `ImGui::` calls | 262 | 27382 | 27142 | 99.1% |
+| ImGui types, flags, enums | 323 | 12097 | 11767 | 97.3% |
+| Draw-list methods | 26 | 2359 | 2338 | 99.1% |
 
-Distinct calls available: 195 of 262.
+Distinct calls available: 210 of 262.
 
 ## Missing `ImGui::` calls, ranked by use
 
 | # | Call | Uses | Files | Where (most uses first) |
 |---:|---|---:|---:|---|
-| 1 | `GetStyle` | 87 | 15 | editor/main.cpp (42), launcher/main.cpp (17), editor/LocalizationWindow.cpp (7) |
-| 2 | `IsItemDeactivatedAfterEdit` | 23 | 6 | editor/main.cpp (6), launcher/main.cpp (6), editor/GuidedPanel.cpp (5) |
-| 3 | `CalcItemWidth` | 12 | 3 | editor/InspectorPanel.cpp (7), editor/main.cpp (4), editor/LocalizationWindow.cpp (1) |
-| 4 | `FindWindowByName` | 12 | 3 | editor/main.cpp (10), editor/ConsolePanel.cpp (1), editor/OkayPanels.cpp (1) |
-| 5 | `GetCurrentContext` | 11 | 5 | launcher/main.cpp (4), shared/FileDialogUI.cpp (4), editor/AnimatorWindow.cpp (1) |
-| 6 | `EndTooltip` | 10 | 4 | editor/VisualScriptPalette.hpp (4), editor/main.cpp (3), editor/VisualScriptEditor.hpp (2) |
-| 7 | `SetItemKeyOwner` | 8 | 4 | launcher/main.cpp (5), editor/ConsolePanel.cpp (1), editor/OkayPanels.cpp (1) |
-| 8 | `SetNextWindowDockID` | 8 | 2 | editor/main.cpp (7), editor/ContentEditors.cpp (1) |
-| 9 | `SetNextWindowFocus` | 8 | 4 | launcher/main.cpp (4), editor/main.cpp (2), editor/ContentEditors.cpp (1) |
-| 10 | `BeginPopupContextWindow` | 6 | 2 | launcher/main.cpp (4), editor/main.cpp (2) |
-| 11 | `GetCurrentWindow` | 6 | 1 | editor/main.cpp (6) |
-| 12 | `GetMouseDragDelta` | 6 | 2 | editor/main.cpp (5), editor/VisualScriptEditor.hpp (1) |
-| 13 | `SetCurrentContext` | 6 | 1 | launcher/main.cpp (6) |
-| 14 | `ClearActiveID` | 5 | 3 | editor/main.cpp (3), editor/EditorWidgets.cpp (1), editor/InspectorPanel.cpp (1) |
-| 15 | `DockBuilderGetNode` | 5 | 1 | editor/main.cpp (5) |
-| 16 | `BeginDragDropTargetCustom` | 4 | 3 | editor/main.cpp (2), editor/AnimatorWindow.cpp (1), editor/BehaviorTreeWindow.cpp (1) |
-| 17 | `CreateContext` | 4 | 3 | launcher/main.cpp (2), editor/VsGraphShot.cpp (1), editor/main.cpp (1) |
-| 18 | `DockBuilderDockWindow` | 4 | 1 | editor/main.cpp (4) |
-| 19 | `DockBuilderSetNodeSize` | 4 | 1 | editor/main.cpp (4) |
-| 20 | `FindRenderedTextEnd` | 4 | 2 | editor/main.cpp (3), editor/InspectorPanel.cpp (1) |
-| 21 | `GetDragDropPayload` | 4 | 2 | editor/InspectorPanel.cpp (3), editor/main.cpp (1) |
-| 22 | `GetMousePosOnOpeningCurrentPopup` | 4 | 3 | editor/AnimatorWindow.cpp (2), editor/BehaviorTreeWindow.cpp (1), editor/DialogueWindow.cpp (1) |
-| 23 | `GetStateStorage` | 4 | 2 | editor/main.cpp (3), launcher/main.cpp (1) |
-| 24 | `NewFrame` | 4 | 3 | launcher/main.cpp (2), editor/VsGraphShot.cpp (1), editor/main.cpp (1) |
-| 25 | `Shortcut` | 4 | 1 | editor/main.cpp (4) |
-| 26 | `BringWindowToDisplayFront` | 3 | 1 | editor/main.cpp (3) |
-| 27 | `DestroyContext` | 3 | 3 | editor/VsGraphShot.cpp (1), editor/main.cpp (1), launcher/main.cpp (1) |
-| 28 | `GetActiveID` | 3 | 2 | editor/main.cpp (2), launcher/main.cpp (1) |
-| 29 | `IsWindowDocked` | 3 | 2 | editor/main.cpp (2), editor/VisualScriptEditor.hpp (1) |
-| 30 | `SetWindowSize` | 3 | 2 | editor/main.cpp (2), editor/VisualScriptEditor.hpp (1) |
-| 31 | `StyleColorsDark` | 3 | 3 | editor/VsGraphShot.cpp (1), editor/main.cpp (1), launcher/main.cpp (1) |
-| 32 | `DockBuilderAddNode` | 2 | 1 | editor/main.cpp (2) |
-| 33 | `DockBuilderFinish` | 2 | 1 | editor/main.cpp (2) |
-| 34 | `DockBuilderRemoveNode` | 2 | 1 | editor/main.cpp (2) |
-| 35 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
-| 36 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
-| 37 | `GetPlatformIO` | 2 | 1 | editor/main.cpp (2) |
-| 38 | `IsAnyItemHovered` | 2 | 1 | launcher/main.cpp (2) |
-| 39 | `ResetMouseDragDelta` | 2 | 1 | editor/VisualScriptEditor.hpp (2) |
-| 40 | `SaveIniSettingsToMemory` | 2 | 1 | editor/main.cpp (2) |
-| 41 | `SetKeyOwner` | 2 | 1 | editor/main.cpp (2) |
-| 42 | `SetNextFrameWantCaptureKeyboard` | 2 | 2 | editor/main.cpp (1), launcher/main.cpp (1) |
-| 43 | `SetNextWindowBgAlpha` | 2 | 1 | launcher/main.cpp (2) |
-| 44 | `SetNextWindowViewport` | 2 | 1 | editor/main.cpp (2) |
-| 45 | `StyleColorsLight` | 2 | 2 | editor/main.cpp (1), launcher/main.cpp (1) |
-| 46 | `BeginPopupEx` | 1 | 1 | editor/main.cpp (1) |
-| 47 | `ClosePopupToLevel` | 1 | 1 | shared/FileDialogUI.cpp (1) |
-| 48 | `DockBuilderSplitNode` | 1 | 1 | editor/main.cpp (1) |
-| 49 | `DockContextQueueUndockWindow` | 1 | 1 | editor/main.cpp (1) |
-| 50 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 51 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 52 | `FindWindowByID` | 1 | 1 | editor/main.cpp (1) |
-| 53 | `GetCursorStartPos` | 1 | 1 | launcher/VersionsUI.cpp (1) |
-| 54 | `GetTreeNodeToLabelSpacing` | 1 | 1 | editor/main.cpp (1) |
-| 55 | `GetWindowContentRegionMin` | 1 | 1 | editor/InspectorPanel.cpp (1) |
-| 56 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
-| 57 | `IsItemEdited` | 1 | 1 | editor/main.cpp (1) |
-| 58 | `LoadIniSettingsFromMemory` | 1 | 1 | editor/main.cpp (1) |
-| 59 | `PopItemFlag` | 1 | 1 | editor/InspectorPanel.cpp (1) |
-| 60 | `PushItemFlag` | 1 | 1 | editor/InspectorPanel.cpp (1) |
+| 1 | `GetStyle` | 88 | 15 | editor/main.cpp (42), launcher/main.cpp (18), editor/LocalizationWindow.cpp (7) |
+| 2 | `FindWindowByName` | 12 | 3 | editor/main.cpp (10), editor/ConsolePanel.cpp (1), editor/OkayPanels.cpp (1) |
+| 3 | `GetCurrentContext` | 11 | 5 | launcher/main.cpp (4), shared/FileDialogUI.cpp (4), editor/AnimatorWindow.cpp (1) |
+| 4 | `SetItemKeyOwner` | 8 | 4 | launcher/main.cpp (5), editor/ConsolePanel.cpp (1), editor/OkayPanels.cpp (1) |
+| 5 | `SetNextWindowDockID` | 8 | 2 | editor/main.cpp (7), editor/ContentEditors.cpp (1) |
+| 6 | `SetNextWindowFocus` | 8 | 4 | launcher/main.cpp (4), editor/main.cpp (2), editor/ContentEditors.cpp (1) |
+| 7 | `GetCurrentWindow` | 6 | 1 | editor/main.cpp (6) |
+| 8 | `SetCurrentContext` | 6 | 1 | launcher/main.cpp (6) |
+| 9 | `ClearActiveID` | 5 | 3 | editor/main.cpp (3), editor/EditorWidgets.cpp (1), editor/InspectorPanel.cpp (1) |
+| 10 | `BeginDragDropTargetCustom` | 4 | 3 | editor/main.cpp (2), editor/AnimatorWindow.cpp (1), editor/BehaviorTreeWindow.cpp (1) |
+| 11 | `CreateContext` | 4 | 3 | launcher/main.cpp (2), editor/VsGraphShot.cpp (1), editor/main.cpp (1) |
+| 12 | `FindRenderedTextEnd` | 4 | 2 | editor/main.cpp (3), editor/InspectorPanel.cpp (1) |
+| 13 | `GetDragDropPayload` | 4 | 2 | editor/InspectorPanel.cpp (3), editor/main.cpp (1) |
+| 14 | `GetMousePosOnOpeningCurrentPopup` | 4 | 3 | editor/AnimatorWindow.cpp (2), editor/BehaviorTreeWindow.cpp (1), editor/DialogueWindow.cpp (1) |
+| 15 | `GetStateStorage` | 4 | 2 | editor/main.cpp (3), launcher/main.cpp (1) |
+| 16 | `NewFrame` | 4 | 3 | launcher/main.cpp (2), editor/VsGraphShot.cpp (1), editor/main.cpp (1) |
+| 17 | `Shortcut` | 4 | 1 | editor/main.cpp (4) |
+| 18 | `BringWindowToDisplayFront` | 3 | 1 | editor/main.cpp (3) |
+| 19 | `DestroyContext` | 3 | 3 | editor/VsGraphShot.cpp (1), editor/main.cpp (1), launcher/main.cpp (1) |
+| 20 | `GetActiveID` | 3 | 2 | editor/main.cpp (2), launcher/main.cpp (1) |
+| 21 | `IsWindowDocked` | 3 | 2 | editor/main.cpp (2), editor/VisualScriptEditor.hpp (1) |
+| 22 | `SetWindowSize` | 3 | 2 | editor/main.cpp (2), editor/VisualScriptEditor.hpp (1) |
+| 23 | `StyleColorsDark` | 3 | 3 | editor/VsGraphShot.cpp (1), editor/main.cpp (1), launcher/main.cpp (1) |
+| 24 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
+| 25 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
+| 26 | `GetPlatformIO` | 2 | 1 | editor/main.cpp (2) |
+| 27 | `SaveIniSettingsToMemory` | 2 | 1 | editor/main.cpp (2) |
+| 28 | `SetKeyOwner` | 2 | 1 | editor/main.cpp (2) |
+| 29 | `SetNextFrameWantCaptureKeyboard` | 2 | 2 | editor/main.cpp (1), launcher/main.cpp (1) |
+| 30 | `SetNextWindowBgAlpha` | 2 | 1 | launcher/main.cpp (2) |
+| 31 | `SetNextWindowViewport` | 2 | 1 | editor/main.cpp (2) |
+| 32 | `StyleColorsLight` | 2 | 2 | editor/main.cpp (1), launcher/main.cpp (1) |
+| 33 | `BeginPopupEx` | 1 | 1 | editor/main.cpp (1) |
+| 34 | `ClosePopupToLevel` | 1 | 1 | shared/FileDialogUI.cpp (1) |
+| 35 | `DockContextQueueUndockWindow` | 1 | 1 | editor/main.cpp (1) |
+| 36 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 37 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 38 | `FindWindowByID` | 1 | 1 | editor/main.cpp (1) |
+| 39 | `GetCursorStartPos` | 1 | 1 | launcher/VersionsUI.cpp (1) |
+| 40 | `GetTreeNodeToLabelSpacing` | 1 | 1 | editor/main.cpp (1) |
+| 41 | `GetWindowContentRegionMin` | 1 | 1 | editor/InspectorPanel.cpp (1) |
+| 42 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
+| 43 | `LoadIniSettingsFromMemory` | 1 | 1 | editor/main.cpp (1) |
+| 44 | `PopItemFlag` | 1 | 1 | editor/InspectorPanel.cpp (1) |
+| 45 | `PushItemFlag` | 1 | 1 | editor/InspectorPanel.cpp (1) |
+| 46 | `PushMultiItemsWidths` | 1 | 1 | editor/main.cpp (1) |
+| 47 | `RenderPlatformWindowsDefault` | 1 | 1 | editor/main.cpp (1) |
+| 48 | `SetNextWindowCollapsed` | 1 | 1 | editor/TimelineWindow.cpp (1) |
+| 49 | `SetWindowPos` | 1 | 1 | launcher/main.cpp (1) |
+| 50 | `StyleColorsClassic` | 1 | 1 | editor/main.cpp (1) |
+| 51 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
+| 52 | `UpdatePlatformWindows` | 1 | 1 | editor/main.cpp (1) |
 
-7 more missing calls with 7 uses in total: `PushMultiItemsWidths` (1), `RenderPlatformWindowsDefault` (1), `SetNextWindowCollapsed` (1), `SetWindowPos` (1), `StyleColorsClassic` (1), `TabBarFindTabByID` (1), `UpdatePlatformWindows` (1).
-
-Missing draw-list methods: `AddImageRounded` (17), `AddNgonFilled` (5), `AddImageQuad` (4), `AddNgon` (4).
+Missing draw-list methods: `AddImageRounded` (17), `AddImageQuad` (4).
 
 ## Missing types, flags and enums, ranked by use
 
 | # | Name | Uses | Files |
 |---:|---|---:|---:|
-| 1 | `ImVec4` | 1046 | 33 |
-| 2 | `ImGuiMouseButton_Left` | 192 | 15 |
-| 3 | `ImGuiHoveredFlags_AllowWhenDisabled` | 62 | 14 |
-| 4 | `ImGuiChildFlags_Borders` | 61 | 11 |
-| 5 | `ImGuiMouseButton_Right` | 60 | 8 |
-| 6 | `ImTextureID` | 59 | 8 |
-| 7 | `ImGuiID` | 57 | 6 |
-| 8 | `ImGuiChildFlags_AlwaysUseWindowPadding` | 50 | 3 |
-| 9 | `ImGuiChildFlags_AutoResizeY` | 47 | 5 |
-| 10 | `ImGuiTableColumnFlags_WidthStretch` | 46 | 7 |
-| 11 | `ImGuiWindow` | 39 | 5 |
-| 12 | `ImGuiPayload` | 36 | 8 |
-| 13 | `ImGuiFocusedFlags_RootAndChildWindows` | 34 | 11 |
-| 14 | `ImDrawFlags_Closed` | 32 | 5 |
-| 15 | `ImRect` | 29 | 5 |
-| 16 | `ImGuiTableColumnFlags_WidthFixed` | 25 | 8 |
-| 17 | `ImGuiDir_Down` | 21 | 4 |
-| 18 | `ImFont` | 19 | 6 |
-| 19 | `ImGuiHoveredFlags_AllowWhenBlockedByActiveItem` | 19 | 8 |
-| 20 | `ImGuiKey_UpArrow` | 18 | 7 |
-| 21 | `ImGuiDockNode` | 16 | 1 |
-| 22 | `ImGuiKey_DownArrow` | 16 | 6 |
-| 23 | `ImGuiMouseButton_Middle` | 16 | 6 |
-| 24 | `ImGuiChildFlags_None` | 14 | 2 |
-| 25 | `ImGuiContext` | 13 | 5 |
-| 26 | `ImGuiDir_Right` | 13 | 1 |
-| 27 | `ImGuiKey` | 11 | 3 |
-| 28 | `ImGuiKey_LeftArrow` | 11 | 5 |
-| 29 | `ImGuiKey_RightArrow` | 11 | 5 |
-| 30 | `ImGuiTabItemFlags_SetSelected` | 11 | 6 |
-| 31 | `ImDrawFlags_RoundCornersTop` | 10 | 5 |
-| 32 | `ImGuiInputTextFlags_Password` | 10 | 2 |
-| 33 | `ImGuiKey_KeypadEnter` | 9 | 4 |
-| 34 | `ImGuiKey_MouseWheelY` | 8 | 4 |
-| 35 | `ImFontConfig` | 7 | 3 |
-| 36 | `ImGuiDragDropFlags_AcceptNoDrawDefaultRect` | 7 | 2 |
-| 37 | `ImGuiPopupFlags_AnyPopupId` | 7 | 3 |
-| 38 | `ImGuiButtonFlags_MouseButtonLeft` | 6 | 2 |
-| 39 | `ImGuiButtonFlags_MouseButtonRight` | 6 | 2 |
-| 40 | `ImGuiColorEditFlags_AlphaBar` | 6 | 4 |
+| 1 | `ImGuiWindow` | 39 | 5 |
+| 2 | `ImGuiPayload` | 36 | 8 |
+| 3 | `ImRect` | 29 | 5 |
+| 4 | `ImFont` | 19 | 6 |
+| 5 | `ImGuiDockNode` | 16 | 1 |
+| 6 | `ImGuiContext` | 13 | 5 |
+| 7 | `ImGuiInputTextFlags_Password` | 10 | 2 |
+| 8 | `ImGuiKey_MouseWheelY` | 8 | 4 |
+| 9 | `ImFontConfig` | 7 | 3 |
+| 10 | `ImGuiDragDropFlags_AcceptNoDrawDefaultRect` | 7 | 2 |
+| 11 | `ImGuiColorEditFlags_AlphaBar` | 6 | 4 |
+| 12 | `ImGuiConfigFlags_ViewportsEnable` | 6 | 1 |
+| 13 | `ImGuiSliderFlags_Logarithmic` | 6 | 2 |
+| 14 | `ImGuiListClipper` | 5 | 5 |
+| 15 | `ImGuiStyleVar_WindowBorderSize` | 5 | 2 |
+| 16 | `ImGuiTreeNodeFlags_SpanAvailWidth` | 5 | 3 |
+| 17 | `ImGuiColorEditFlags_NoTooltip` | 4 | 3 |
+| 18 | `ImGuiComboFlags_HeightLarge` | 4 | 3 |
+| 19 | `ImGuiConfigFlags_NavEnableKeyboard` | 4 | 2 |
+| 20 | `ImGuiInputFlags_Repeat` | 4 | 1 |
+| 21 | `ImGuiInputTextFlags_CtrlEnterForNewLine` | 4 | 2 |
+| 22 | `ImGuiStyleVar_FrameBorderSize` | 4 | 1 |
+| 23 | `ImGuiCol_TabSelected` | 3 | 2 |
+| 24 | `ImGuiComboFlags_NoPreview` | 3 | 1 |
+| 25 | `ImGuiInputTextFlags_CharsNoBlank` | 3 | 2 |
+| 26 | `ImGuiKey_Keypad0` | 3 | 2 |
+| 27 | `ImGuiKey_KeypadSubtract` | 3 | 1 |
+| 28 | `ImGuiKey_Minus` | 3 | 1 |
+| 29 | `ImGuiSliderFlags_AlwaysClamp` | 3 | 1 |
+| 30 | `ImGuiStorage` | 3 | 1 |
+| 31 | `ImGuiTabItem` | 3 | 1 |
+| 32 | `ImColor` | 2 | 1 |
+| 33 | `ImGuiCol_TabDimmed` | 2 | 2 |
+| 34 | `ImGuiCol_TabDimmedSelected` | 2 | 2 |
+| 35 | `ImGuiCol_TabDimmedSelectedOverline` | 2 | 2 |
+| 36 | `ImGuiColorEditFlags_Float` | 2 | 1 |
+| 37 | `ImGuiDockNodeFlags_DockSpace` | 2 | 1 |
+| 38 | `ImGuiDockNodeFlags_NoTabBar` | 2 | 1 |
+| 39 | `ImGuiInputTextFlags_CallbackResize` | 2 | 1 |
+| 40 | `ImGuiInputTextFlags_CharsDecimal` | 2 | 2 |
 
-99 more with 217 uses in total.
+37 more with 44 uses in total.
 
 ## Coverage per file
 
@@ -158,25 +148,25 @@ Missing draw-list methods: `AddImageRounded` (17), `AddNgonFilled` (5), `AddImag
 | `editor/ConsolePanel.cpp` | 105 | 102 | 97.1% | SetItemKeyOwner (1), FindWindowByName (1), GetStyle (1) |
 | `editor/SceneManagerPanel.cpp` | 122 | 122 | 100.0% |  |
 | `editor/SplineTools.cpp` | 123 | 122 | 99.2% | GetFontTexUvWhitePixel (1) |
-| `editor/VsVariablePanel.hpp` | 126 | 125 | 99.2% | IsItemDeactivatedAfterEdit (1) |
+| `editor/VsVariablePanel.hpp` | 126 | 126 | 100.0% |  |
 | `editor/LevelTools.cpp` | 130 | 130 | 100.0% |  |
 | `editor/FpHandsWindow.cpp` | 148 | 148 | 100.0% |  |
 | `editor/ProjectUpgradeUI.cpp` | 164 | 160 | 97.6% | GetStyle (4) |
 | `editor/NavigationWindow.cpp` | 169 | 169 | 100.0% |  |
-| `editor/VisualScriptPalette.hpp` | 190 | 185 | 97.4% | EndTooltip (4), GetStyle (1) |
+| `editor/VisualScriptPalette.hpp` | 190 | 189 | 99.5% | GetStyle (1) |
 | `editor/ProjectPanelUI.cpp` | 197 | 197 | 100.0% |  |
 | `launcher/VersionsUI.cpp` | 208 | 207 | 99.5% | GetCursorStartPos (1) |
 | `editor/TimelineWindow.cpp` | 243 | 240 | 98.8% | GetStyle (2), SetNextWindowCollapsed (1) |
-| `editor/LocalizationWindow.cpp` | 255 | 243 | 95.3% | GetStyle (7), IsItemDeactivatedAfterEdit (4), CalcItemWidth (1) |
-| `editor/GuidedPanel.cpp` | 265 | 259 | 97.7% | IsItemDeactivatedAfterEdit (5), GetStyle (1) |
+| `editor/LocalizationWindow.cpp` | 255 | 248 | 97.3% | GetStyle (7) |
+| `editor/GuidedPanel.cpp` | 265 | 264 | 99.6% | GetStyle (1) |
 | `editor/ContentEditors.cpp` | 281 | 279 | 99.3% | SetNextWindowDockID (1), SetNextWindowFocus (1) |
-| `editor/InspectorPanel.cpp` | 336 | 316 | 94.0% | CalcItemWidth (7), GetStyle (5), GetDragDropPayload (3), FindRenderedTextEnd (1), ClearActiveID (1), PushItemFlag (1), ... |
-| `editor/BehaviorTreeWindow.cpp` | 507 | 502 | 99.0% | GetCurrentContext (1), GetMousePosOnOpeningCurrentPopup (1), BeginDragDropTargetCustom (1), IsItemDeactivatedAfterEdit (1), GetStyle (1) |
+| `editor/InspectorPanel.cpp` | 336 | 323 | 96.1% | GetStyle (5), GetDragDropPayload (3), FindRenderedTextEnd (1), ClearActiveID (1), PushItemFlag (1), PopItemFlag (1), ... |
+| `editor/BehaviorTreeWindow.cpp` | 507 | 503 | 99.2% | GetCurrentContext (1), GetMousePosOnOpeningCurrentPopup (1), BeginDragDropTargetCustom (1), GetStyle (1) |
 | `editor/DialogueWindow.cpp` | 663 | 662 | 99.8% | GetMousePosOnOpeningCurrentPopup (1) |
-| `editor/VisualScriptEditor.hpp` | 676 | 669 | 99.0% | ResetMouseDragDelta (2), EndTooltip (2), IsWindowDocked (1), SetWindowSize (1), GetMouseDragDelta (1) |
+| `editor/VisualScriptEditor.hpp` | 676 | 674 | 99.7% | IsWindowDocked (1), SetWindowSize (1) |
 | `editor/AnimatorWindow.cpp` | 739 | 734 | 99.3% | GetMousePosOnOpeningCurrentPopup (2), GetCurrentContext (1), BeginDragDropTargetCustom (1), GetStyle (1) |
-| `launcher/main.cpp` | 7234 | 7172 | 99.1% | GetStyle (17), SetCurrentContext (6), IsItemDeactivatedAfterEdit (6), SetItemKeyOwner (5), SetNextWindowFocus (4), GetCurrentContext (4), ... |
-| `editor/main.cpp` | 13717 | 13554 | 98.8% | GetStyle (42), FindWindowByName (10), SetNextWindowDockID (7), GetCurrentWindow (6), IsItemDeactivatedAfterEdit (6), DockBuilderGetNode (5), ... |
+| `launcher/main.cpp` | 7236 | 7186 | 99.3% | GetStyle (18), SetCurrentContext (6), SetItemKeyOwner (5), SetNextWindowFocus (4), GetCurrentContext (4), SetNextWindowBgAlpha (2), ... |
+| `editor/main.cpp` | 13718 | 13596 | 99.1% | GetStyle (42), FindWindowByName (10), SetNextWindowDockID (7), GetCurrentWindow (6), Shortcut (4), FindRenderedTextEnd (3), ... |
 
 ## Smallest screens by call count that are fully or almost fully coverable
 
@@ -185,16 +175,16 @@ available. Flags and types are listed too: a screen is only a quick port when th
 
 | # | Screen (function) | File:line | Calls | Coverage | Missing calls | Missing types/flags |
 |---:|---|---|---:|---:|---|---|
-| 1 | `DrawTimeline` | `editor/TimelineWindow.cpp:1465` | 30 | 93.3% | SetNextWindowCollapsed (1), GetStyle (1) | ImGuiChildFlags_Borders (3), ImGuiFocusedFlags_RootAndChildWindows (1) |
-| 2 | `ChatMsgToolbar` | `launcher/main.cpp:6736` | 30 | 100.0% | none | ImGuiHoveredFlags_ChildWindows (1), ImGuiHoveredFlags_AllowWhenBlockedByActiveItem (1), ImGuiStyleVar_ChildBorderSize (1), ImVec4 (1), ImGuiChildFlags_Borders (1) |
+| 1 | `DrawTimeline` | `editor/TimelineWindow.cpp:1465` | 30 | 93.3% | SetNextWindowCollapsed (1), GetStyle (1) | none |
+| 2 | `ChatMsgToolbar` | `launcher/main.cpp:6775` | 30 | 100.0% | none | ImGuiStyleVar_ChildBorderSize (1) |
 | 3 | `DrawPluginsMenu` | `editor/main.cpp:9880` | 31 | 100.0% | none | none |
-| 4 | `DrawUpdatePopup` | `editor/main.cpp:19965` | 31 | 100.0% | none | ImVec4 (4) |
+| 4 | `DrawUpdatePopup` | `editor/main.cpp:19987` | 31 | 100.0% | none | none |
 | 5 | `DrawAvailable` | `launcher/VersionsUI.cpp:556` | 31 | 100.0% | none | none |
-| 6 | `HandleShortcuts` | `editor/main.cpp:17952` | 32 | 100.0% | none | ImGuiKey_UpArrow (1), ImGuiKey_DownArrow (1), ImGuiPopupFlags_AnyPopupId (1), ImGuiPopupFlags_AnyPopupLevel (1), ImGuiKey (1) |
-| 7 | `ChatLayoutTokens` | `launcher/main.cpp:3026` | 32 | 100.0% | none | none |
-| 8 | `DialogueRunnerInspector` | `editor/DialogueWindow.cpp:1786` | 33 | 100.0% | none | ImVec4 (2) |
-| 9 | `StoryStateInspector` | `editor/DialogueWindow.cpp:1953` | 33 | 100.0% | none | none |
-| 10 | `DrawImportSettings` | `editor/ProjectPanelUI.cpp:492` | 33 | 100.0% | none | none |
+| 6 | `LocKeyInput` | `editor/LocalizationWindow.cpp:939` | 32 | 90.6% | GetStyle (3) | none |
+| 7 | `HandleShortcuts` | `editor/main.cpp:17974` | 32 | 100.0% | none | none |
+| 8 | `ChatLayoutTokens` | `launcher/main.cpp:3057` | 32 | 100.0% | none | none |
+| 9 | `DialogueRunnerInspector` | `editor/DialogueWindow.cpp:1786` | 33 | 100.0% | none | none |
+| 10 | `StoryStateInspector` | `editor/DialogueWindow.cpp:1953` | 33 | 100.0% | none | none |
 
 ## Screens already ported (opt-in OkayUI backend)
 
@@ -203,13 +193,14 @@ available. Flags and types are listed too: a screen is only a quick port when th
 | Console | `editor/ConsolePanel.cpp` `DrawConsole` | 97 | 97.9% |
 | Crash Log | `editor/main.cpp` `DrawCrashLog` | 40 | 100.0% |
 | Audio Mixer | `editor/main.cpp` `DrawAudioMixer` | 45 | 100.0% |
+| Stats | `editor/main.cpp` `DrawStats` | 50 | 100.0% |
 | What's New | `launcher/main.cpp` (a page inside `main`) | 60 | 100.0% |
 | Tips | `launcher/main.cpp` (a page inside `main`) | 51 | 100.0% |
-| Downloads | `launcher/main.cpp` (a page inside `main`) | 41 | 100.0% |
+| Downloads | `launcher/main.cpp` (a page inside `main`) | 43 | 97.7% |
 | Achievements | `launcher/main.cpp` (a page inside `main`) | 115 | 100.0% |
 | Notifications panel | `launcher/main.cpp` (a page inside `main`) | 119 | 98.3% |
 
-The Dear ImGui versions of the ported screens above hold 568 of the 27379 `ImGui::` call sites counted (2.1%).
+The Dear ImGui versions of the ported screens above hold 620 of the 27382 `ImGui::` call sites counted (2.3%).
 
 ## Coverage per screen (functions with 15 or more calls)
 
@@ -220,53 +211,53 @@ The Dear ImGui versions of the ported screens above hold 568 of the 27379 `ImGui
 | `ShotInspector` | `editor/TimelineWindow.cpp:1035` | 15 | 100.0% |  |
 | `TransformKeyInspector` | `editor/TimelineWindow.cpp:1082` | 15 | 100.0% |  |
 | `DrawVolumeGameObjectMenu` | `editor/VolumeTools.cpp:517` | 15 | 100.0% |  |
-| `AnimGlyphButton` | `editor/main.cpp:22624` | 15 | 100.0% |  |
-| `DrawNewProjectDialog` | `editor/main.cpp:19466` | 15 | 100.0% |  |
-| `EaseCombo` | `editor/main.cpp:27067` | 15 | 100.0% |  |
+| `AnimGlyphButton` | `editor/main.cpp:22646` | 15 | 100.0% |  |
+| `DrawNewProjectDialog` | `editor/main.cpp:19488` | 15 | 100.0% |  |
+| `EaseCombo` | `editor/main.cpp:27089` | 15 | 100.0% |  |
 | `ClipCombo` | `editor/AnimatorWindow.cpp:1191` | 16 | 100.0% |  |
 | `SearchField` | `editor/EditorWidgets.cpp:229` | 16 | 87.5% | GetStyle (1), ClearActiveID (1) |
 | `DrawLanguages` | `editor/LocalizationWindow.cpp:336` | 16 | 93.8% | GetStyle (1) |
 | `WeaponReferenceField` | `editor/WeaponEditor.cpp:98` | 16 | 100.0% |  |
-| `DrawErrorPopup` | `editor/main.cpp:19201` | 16 | 100.0% |  |
-| `FlowOpPalettePopup` | `editor/main.cpp:25771` | 16 | 100.0% |  |
+| `DrawErrorPopup` | `editor/main.cpp:19223` | 16 | 100.0% |  |
+| `FlowOpPalettePopup` | `editor/main.cpp:25793` | 16 | 100.0% |  |
 | `ItemPicker` | `editor/main.cpp:1391` | 16 | 100.0% |  |
 | `PhysicsMaterialFields` | `editor/main.cpp:2247` | 16 | 100.0% |  |
 | `DrawRequestBanner` | `launcher/VersionsUI.cpp:251` | 16 | 93.8% | GetCursorStartPos (1) |
-| `RenderChatBodyText` | `launcher/main.cpp:3369` | 16 | 100.0% |  |
-| `RenderJoinRequest` | `launcher/main.cpp:7159` | 16 | 100.0% |  |
+| `RenderChatBodyText` | `launcher/main.cpp:3400` | 16 | 100.0% |  |
+| `RenderJoinRequest` | `launcher/main.cpp:7198` | 16 | 100.0% |  |
 | `DrawTransport` | `editor/AnimatorPreview.hpp:574` | 17 | 100.0% |  |
 | `DrawTreeSlot` | `editor/BehaviorTreeWindow.cpp:1190` | 17 | 100.0% |  |
 | `ItemDropdown` | `editor/ContentEditors.cpp:381` | 17 | 100.0% |  |
 | `DrawPropertyRows` | `editor/ProjectMenuDraw.cpp:38` | 17 | 94.1% | GetStyle (1) |
 | `SaveAsCustomButton` | `editor/main.cpp:2640` | 17 | 100.0% |  |
-| `DrawAcReportPopup` | `launcher/main.cpp:14587` | 17 | 100.0% |  |
-| `DrawSocialLinksEditor` | `launcher/main.cpp:13335` | 17 | 94.1% | GetStyle (1) |
-| `DrawVoiceRecorderBar` | `launcher/main.cpp:5707` | 17 | 100.0% |  |
+| `DrawAcReportPopup` | `launcher/main.cpp:14626` | 17 | 100.0% |  |
+| `DrawSocialLinksEditor` | `launcher/main.cpp:13374` | 17 | 94.1% | GetStyle (1) |
+| `DrawVoiceRecorderBar` | `launcher/main.cpp:5746` | 17 | 100.0% |  |
 | `DrawIkCurve` | `editor/AnimatorWindow.cpp:1562` | 18 | 100.0% |  |
 | `DrawProblems` | `editor/AnimatorWindow.cpp:2439` | 18 | 100.0% |  |
 | `DrawPalette` | `editor/BehaviorTreeWindow.cpp:990` | 18 | 100.0% |  |
-| `DetailWidget` | `editor/GuidedPanel.cpp:304` | 18 | 94.4% | IsItemDeactivatedAfterEdit (1) |
+| `DetailWidget` | `editor/GuidedPanel.cpp:304` | 18 | 100.0% |  |
 | `AssetPathPicker` | `editor/InspectorPanel.cpp:244` | 18 | 94.4% | ClearActiveID (1) |
 | `VsDrawChoice` | `editor/VisualScriptEditor.hpp:3408` | 18 | 100.0% |  |
 | `DrawCustomActions` | `editor/main.cpp:2669` | 18 | 100.0% |  |
 | `DrawDataAssetEditor` | `editor/main.cpp:12121` | 18 | 100.0% |  |
-| `DrawQuitPrompt` | `editor/main.cpp:12960` | 18 | 100.0% |  |
-| `DrawScriptClosePrompt` | `editor/main.cpp:15271` | 18 | 100.0% |  |
+| `DrawQuitPrompt` | `editor/main.cpp:12982` | 18 | 100.0% |  |
+| `DrawScriptClosePrompt` | `editor/main.cpp:15293` | 18 | 100.0% |  |
 | `EmptyState` | `editor/main.cpp:2361` | 18 | 100.0% |  |
-| `ObjNamePicker` | `editor/main.cpp:26292` | 18 | 100.0% |  |
-| `SceneObjectDragChipAt` | `editor/main.cpp:43372` | 18 | 100.0% |  |
+| `ObjNamePicker` | `editor/main.cpp:26314` | 18 | 100.0% |  |
+| `SceneObjectDragChipAt` | `editor/main.cpp:43394` | 18 | 100.0% |  |
 | `TreeNote` | `editor/main.cpp:9143` | 18 | 94.4% | GetTreeNodeToLabelSpacing (1) |
-| `RenderPartyInvite` | `launcher/main.cpp:7232` | 18 | 100.0% |  |
-| `DrawActionPrompt` | `editor/main.cpp:48736` | 19 | 100.0% |  |
-| `ScriptEditorNewScriptPopup` | `editor/main.cpp:15186` | 19 | 100.0% |  |
-| `DrawChatGameBar` | `launcher/main.cpp:7186` | 19 | 100.0% |  |
+| `RenderPartyInvite` | `launcher/main.cpp:7271` | 18 | 100.0% |  |
+| `DrawActionPrompt` | `editor/main.cpp:48758` | 19 | 100.0% |  |
+| `ScriptEditorNewScriptPopup` | `editor/main.cpp:15208` | 19 | 100.0% |  |
+| `DrawChatGameBar` | `launcher/main.cpp:7225` | 19 | 100.0% |  |
 | `DrawLayerTab` | `editor/AnimatorWindow.cpp:2382` | 20 | 100.0% |  |
 | `DrawAntiCheatChecklist` | `editor/AntiCheatSetupUi.cpp:95` | 20 | 100.0% |  |
 | `HandSection` | `editor/FpHandsWindow.cpp:55` | 20 | 100.0% |  |
 | `PrefabFieldMark` | `editor/InspectorPanel.cpp:636` | 20 | 95.0% | GetWindowContentRegionMin (1) |
 | `DrawExampleMenuItems` | `editor/main.cpp:6833` | 20 | 100.0% |  |
-| `ComposerPlusButton` | `launcher/main.cpp:7103` | 20 | 100.0% |  |
-| `DrawAcBanBanner` | `launcher/main.cpp:14280` | 20 | 100.0% |  |
+| `ComposerPlusButton` | `launcher/main.cpp:7142` | 20 | 100.0% |  |
+| `DrawAcBanBanner` | `launcher/main.cpp:14319` | 20 | 100.0% |  |
 | `DrawAnyInspector` | `editor/AnimatorWindow.cpp:2032` | 21 | 100.0% |  |
 | `DrawTransitionPreview` | `editor/AnimatorWindow.cpp:1716` | 21 | 100.0% |  |
 | `AreasUI` | `editor/NavigationWindow.cpp:195` | 21 | 100.0% |  |
@@ -274,118 +265,118 @@ The Dear ImGui versions of the ported screens above hold 568 of the 27379 `ImGui
 | `DrawPreferencesMenuItems` | `editor/main.cpp:6897` | 21 | 100.0% |  |
 | `DrawSceneOverlayMenuItems` | `editor/main.cpp:6935` | 21 | 100.0% |  |
 | `DrawModals` | `launcher/VersionsUI.cpp:645` | 21 | 100.0% |  |
-| `DrawEditHistoryPopup` | `launcher/main.cpp:6307` | 21 | 100.0% |  |
-| `DrawToastOverlay` | `launcher/main.cpp:16729` | 21 | 95.2% | SetNextWindowBgAlpha (1) |
-| `RenderChatInvite` | `launcher/main.cpp:5169` | 21 | 100.0% |  |
+| `DrawEditHistoryPopup` | `launcher/main.cpp:6346` | 21 | 100.0% |  |
+| `DrawToastOverlay` | `launcher/main.cpp:16768` | 21 | 95.2% | SetNextWindowBgAlpha (1) |
+| `RenderChatInvite` | `launcher/main.cpp:5208` | 21 | 100.0% |  |
 | `DrawGraphTab` | `editor/DialogueWindow.cpp:681` | 22 | 100.0% |  |
 | `KeyPicker` | `editor/VisualScriptEditor.hpp:876` | 22 | 100.0% |  |
 | `DrawFindInFiles` | `editor/main.cpp:8222` | 22 | 100.0% |  |
 | `DrawLayoutPopups` | `editor/main.cpp:5879` | 22 | 100.0% |  |
-| `IKJointLimitUI` | `editor/main.cpp:26952` | 22 | 100.0% |  |
+| `IKJointLimitUI` | `editor/main.cpp:26974` | 22 | 100.0% |  |
 | `DrawThisVersion` | `launcher/VersionsUI.cpp:281` | 22 | 100.0% |  |
-| `ModDialog` | `launcher/main.cpp:7433` | 22 | 100.0% |  |
-| `StartupUpdateFrame` | `launcher/main.cpp:1391` | 22 | 90.9% | SetNextWindowBgAlpha (1), SetNextWindowFocus (1) |
+| `ModDialog` | `launcher/main.cpp:7472` | 22 | 100.0% |  |
+| `StartupUpdateFrame` | `launcher/main.cpp:1422` | 22 | 90.9% | SetNextWindowBgAlpha (1), SetNextWindowFocus (1) |
 | `DrawContentEditors` | `editor/ContentEditors.cpp:1100` | 23 | 91.3% | SetNextWindowDockID (1), SetNextWindowFocus (1) |
 | `DrawSelected` | `editor/LocalizationWindow.cpp:479` | 23 | 100.0% |  |
-| `DrawPrefabLeavePrompt` | `editor/main.cpp:48614` | 23 | 100.0% |  |
-| `DrawIncomingCall` | `launcher/main.cpp:8552` | 23 | 100.0% |  |
+| `DrawPrefabLeavePrompt` | `editor/main.cpp:48636` | 23 | 100.0% |  |
+| `DrawIncomingCall` | `launcher/main.cpp:8591` | 23 | 100.0% |  |
 | `DrawConflict` | `editor/GuidedPanel.cpp:364` | 24 | 100.0% |  |
 | `UIStyleBar` | `editor/main.cpp:6396` | 24 | 95.8% | GetStyle (1) |
 | `DrawKeyMap` | `editor/BehaviorTreeWindow.cpp:1232` | 25 | 100.0% |  |
 | `DrawPanelSwitcher` | `editor/main.cpp:6238` | 25 | 84.0% | FindWindowByName (1), SetNextWindowViewport (1), BringWindowToDisplayFront (1), GetCurrentWindow (1) |
-| `ParticleGradientEditor` | `editor/main.cpp:27188` | 25 | 96.0% | GetStateStorage (1) |
-| `TriggerFilterFields` | `editor/main.cpp:2276` | 25 | 80.0% | CalcItemWidth (2), GetStyle (1), PushMultiItemsWidths (1), FindRenderedTextEnd (1) |
+| `ParticleGradientEditor` | `editor/main.cpp:27210` | 25 | 96.0% | GetStateStorage (1) |
+| `TriggerFilterFields` | `editor/main.cpp:2276` | 25 | 88.0% | GetStyle (1), PushMultiItemsWidths (1), FindRenderedTextEnd (1) |
 | `FoliageInspector` | `editor/LevelTools.cpp:405` | 26 | 100.0% |  |
 | `DrawNetPanel` | `editor/NetSimPanel.cpp:9` | 26 | 100.0% |  |
-| `DrawDockSpace` | `editor/main.cpp:7896` | 26 | 69.2% | SetNextWindowViewport (1), DockBuilderGetNode (1), SaveIniSettingsToMemory (1), DockBuilderRemoveNode (1), DockBuilderAddNode (1), ... |
+| `DrawDockSpace` | `editor/main.cpp:7896` | 26 | 92.3% | SetNextWindowViewport (1), SaveIniSettingsToMemory (1) |
 | `DrawRunnerTab` | `editor/BehaviorTreeWindow.cpp:1540` | 27 | 100.0% |  |
 | `DrawPartRow` | `editor/GuidedPanel.cpp:402` | 27 | 100.0% |  |
 | `DrawTerrainLayersUI` | `editor/LevelTools.cpp:518` | 27 | 100.0% |  |
 | `DrawGrid` | `editor/TimelineWindow.cpp:822` | 27 | 100.0% |  |
-| `DrawDocRecoveryPopup` | `editor/main.cpp:48797` | 27 | 100.0% |  |
+| `DrawDocRecoveryPopup` | `editor/main.cpp:48819` | 27 | 100.0% |  |
 | `DrawRenderingMenuItems` | `editor/main.cpp:6983` | 27 | 100.0% |  |
-| `DrawSavePrompt` | `editor/main.cpp:19237` | 27 | 100.0% |  |
-| `ChatPollWidth` | `launcher/main.cpp:6969` | 27 | 100.0% |  |
-| `DrawInvitePopups` | `launcher/main.cpp:11823` | 27 | 100.0% |  |
-| `PollCreatorPopup` | `launcher/main.cpp:7062` | 27 | 100.0% |  |
+| `DrawSavePrompt` | `editor/main.cpp:19259` | 27 | 100.0% |  |
+| `ChatPollWidth` | `launcher/main.cpp:7008` | 27 | 100.0% |  |
+| `DrawInvitePopups` | `launcher/main.cpp:11862` | 27 | 100.0% |  |
+| `PollCreatorPopup` | `launcher/main.cpp:7101` | 27 | 100.0% |  |
 | `DrawClipsTab` | `editor/AnimatorWindow.cpp:2474` | 28 | 100.0% |  |
 | `DrawTransitionFields` | `editor/AnimatorWindow.cpp:1636` | 28 | 100.0% |  |
 | `DrawTransitionInspector` | `editor/AnimatorWindow.cpp:1978` | 28 | 100.0% |  |
 | `ConditionEditor` | `editor/DialogueWindow.cpp:481` | 28 | 100.0% |  |
 | `CharacterModelTools` | `editor/main.cpp:8681` | 28 | 100.0% |  |
 | `DrawBoneMap` | `editor/main.cpp:10005` | 28 | 100.0% |  |
-| `ScriptRecipePicker` | `editor/main.cpp:22319` | 28 | 96.4% | EndTooltip (1) |
-| `RenderChatVoice` | `launcher/main.cpp:5613` | 28 | 100.0% |  |
-| `DrawAnimationEditor` | `editor/main.cpp:24763` | 29 | 82.8% | DockBuilderSetNodeSize (2), FindWindowByName (1), SetNextWindowDockID (1), GetWindowDockNode (1) |
-| `DrawSideTabStrip` | `editor/main.cpp:6170` | 29 | 96.6% | DockBuilderGetNode (1) |
-| `DrawTabOverflow` | `editor/main.cpp:6069` | 29 | 86.2% | DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1), DockBuilderGetNode (1) |
-| `DrawReportPopup` | `launcher/main.cpp:14363` | 29 | 100.0% |  |
+| `ScriptRecipePicker` | `editor/main.cpp:22341` | 28 | 100.0% |  |
+| `RenderChatVoice` | `launcher/main.cpp:5652` | 28 | 100.0% |  |
+| `DrawAnimationEditor` | `editor/main.cpp:24785` | 29 | 89.7% | FindWindowByName (1), SetNextWindowDockID (1), GetWindowDockNode (1) |
+| `DrawSideTabStrip` | `editor/main.cpp:6170` | 29 | 100.0% |  |
+| `DrawTabOverflow` | `editor/main.cpp:6069` | 29 | 89.7% | DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1) |
+| `DrawReportPopup` | `launcher/main.cpp:14402` | 29 | 100.0% |  |
 | `DrawTimeline` | `editor/TimelineWindow.cpp:1465` | 30 | 93.3% | SetNextWindowCollapsed (1), GetStyle (1) |
-| `ChatMsgToolbar` | `launcher/main.cpp:6736` | 30 | 100.0% |  |
+| `ChatMsgToolbar` | `launcher/main.cpp:6775` | 30 | 100.0% |  |
 | `DrawPluginsMenu` | `editor/main.cpp:9880` | 31 | 100.0% |  |
-| `DrawUpdatePopup` | `editor/main.cpp:19965` | 31 | 100.0% |  |
+| `DrawUpdatePopup` | `editor/main.cpp:19987` | 31 | 100.0% |  |
 | `DrawAvailable` | `launcher/VersionsUI.cpp:556` | 31 | 100.0% |  |
-| `LocKeyInput` | `editor/LocalizationWindow.cpp:939` | 32 | 87.5% | GetStyle (3), CalcItemWidth (1) |
-| `HandleShortcuts` | `editor/main.cpp:17952` | 32 | 100.0% |  |
-| `ChatLayoutTokens` | `launcher/main.cpp:3026` | 32 | 100.0% |  |
+| `LocKeyInput` | `editor/LocalizationWindow.cpp:939` | 32 | 90.6% | GetStyle (3) |
+| `HandleShortcuts` | `editor/main.cpp:17974` | 32 | 100.0% |  |
+| `ChatLayoutTokens` | `launcher/main.cpp:3057` | 32 | 100.0% |  |
 | `DialogueRunnerInspector` | `editor/DialogueWindow.cpp:1786` | 33 | 100.0% |  |
 | `StoryStateInspector` | `editor/DialogueWindow.cpp:1953` | 33 | 100.0% |  |
 | `DrawImportSettings` | `editor/ProjectPanelUI.cpp:492` | 33 | 100.0% |  |
 | `DrawMaterialEditor` | `editor/main.cpp:12286` | 33 | 100.0% |  |
-| `DrawMpInfoPopup` | `launcher/main.cpp:12202` | 33 | 100.0% |  |
-| `DrawScheduledStrip` | `launcher/main.cpp:6492` | 33 | 100.0% |  |
-| `PumpScheduled` | `launcher/main.cpp:6399` | 33 | 100.0% |  |
+| `DrawMpInfoPopup` | `launcher/main.cpp:12241` | 33 | 100.0% |  |
+| `DrawScheduledStrip` | `launcher/main.cpp:6531` | 33 | 100.0% |  |
+| `PumpScheduled` | `launcher/main.cpp:6438` | 33 | 100.0% |  |
 | `DrawMachineInspector` | `editor/AnimatorWindow.cpp:2083` | 34 | 100.0% |  |
-| `AssetPickerPopup` | `editor/InspectorPanel.cpp:110` | 35 | 91.4% | GetStyle (1), CalcItemWidth (1), GetDragDropPayload (1) |
+| `AssetPickerPopup` | `editor/InspectorPanel.cpp:110` | 35 | 94.3% | GetStyle (1), GetDragDropPayload (1) |
 | `DrawTracks` | `editor/TimelineWindow.cpp:774` | 35 | 100.0% |  |
 | `DrawInstalled` | `launcher/VersionsUI.cpp:469` | 35 | 100.0% |  |
 | `DrawFpHandsPreviewWindow` | `editor/FpHandsWindow.cpp:347` | 36 | 100.0% |  |
-| `FloatRow` | `editor/InspectorPanel.cpp:284` | 36 | 77.8% | CalcItemWidth (5), GetStyle (1), PushItemFlag (1), PopItemFlag (1) |
+| `FloatRow` | `editor/InspectorPanel.cpp:284` | 36 | 91.7% | GetStyle (1), PushItemFlag (1), PopItemFlag (1) |
 | `DrawChannel` | `launcher/VersionsUI.cpp:345` | 36 | 100.0% |  |
-| `OutboxDiscard` | `launcher/main.cpp:6823` | 36 | 100.0% |  |
-| `DrawTable` | `editor/LocalizationWindow.cpp:386` | 37 | 91.9% | IsItemDeactivatedAfterEdit (2), GetStyle (1) |
+| `OutboxDiscard` | `launcher/main.cpp:6862` | 36 | 100.0% |  |
+| `DrawTable` | `editor/LocalizationWindow.cpp:386` | 37 | 97.3% | GetStyle (1) |
 | `VsDrawDocBody` | `editor/VisualScriptPalette.hpp:81` | 37 | 100.0% |  |
-| `VsNodeTooltip` | `editor/VisualScriptPalette.hpp:138` | 37 | 94.6% | EndTooltip (2) |
+| `VsNodeTooltip` | `editor/VisualScriptPalette.hpp:138` | 37 | 100.0% |  |
 | `DrawVolumeInspector` | `editor/VolumeTools.cpp:396` | 37 | 100.0% |  |
 | `DrawHistory` | `editor/main.cpp:8134` | 37 | 100.0% |  |
 | `DrawLayoutMenuItems` | `editor/main.cpp:5823` | 37 | 100.0% |  |
 | `DrawPluginManager` | `editor/main.cpp:10070` | 37 | 100.0% |  |
-| `ObjectField` | `editor/InspectorPanel.cpp:183` | 38 | 94.7% | CalcItemWidth (1), GetDragDropPayload (1) |
-| `DrawPrefabModeBar` | `editor/main.cpp:48643` | 38 | 92.1% | GetStyle (3) |
-| `DrawRecentPlayers` | `launcher/main.cpp:12359` | 38 | 100.0% |  |
+| `ObjectField` | `editor/InspectorPanel.cpp:183` | 38 | 97.4% | GetDragDropPayload (1) |
+| `DrawPrefabModeBar` | `editor/main.cpp:48665` | 38 | 92.1% | GetStyle (3) |
+| `DrawRecentPlayers` | `launcher/main.cpp:12398` | 38 | 100.0% |  |
 | `ParamField` | `editor/BehaviorTreeWindow.cpp:1028` | 39 | 100.0% |  |
 | `DrawUIThemeWindowBody` | `editor/UIRuntimeTools.cpp:161` | 39 | 97.4% | GetStyle (1) |
-| `AnchorCombo` | `editor/main.cpp:21243` | 39 | 94.9% | CalcItemWidth (1), GetStyle (1) |
+| `AnchorCombo` | `editor/main.cpp:21265` | 39 | 97.4% | GetStyle (1) |
 | `DrawBehaviorTreeInspector` | `editor/BehaviorTreeWindow.cpp:1820` | 40 | 100.0% |  |
 | `DrawToolbar` | `editor/BehaviorTreeWindow.cpp:1611` | 40 | 100.0% |  |
 | `DrawCreate` | `editor/GuidedPanel.cpp:459` | 40 | 97.5% | GetStyle (1) |
-| `DrawAboutPopup` | `editor/main.cpp:19667` | 40 | 100.0% |  |
+| `DrawAboutPopup` | `editor/main.cpp:19689` | 40 | 100.0% |  |
 | `DrawCrashLog` | `editor/main.cpp:8057` | 40 | 100.0% |  |
-| `DrawProjectGate` | `editor/main.cpp:19494` | 40 | 100.0% |  |
+| `DrawProjectGate` | `editor/main.cpp:19516` | 40 | 100.0% |  |
 | `DrawToolbar` | `editor/TimelineWindow.cpp:1362` | 41 | 97.6% | GetStyle (1) |
-| `DrawPanelTabMenu` | `editor/main.cpp:5938` | 41 | 82.9% | FindWindowByName (2), GetCurrentContext (1), FindWindowByID (1), DockBuilderDockWindow (1), DockContextQueueUndockWindow (1), ... |
-| `DrawStatusDialog` | `launcher/main.cpp:6596` | 41 | 100.0% |  |
+| `DrawPanelTabMenu` | `editor/main.cpp:5938` | 41 | 85.4% | FindWindowByName (2), GetCurrentContext (1), FindWindowByID (1), DockContextQueueUndockWindow (1), DockNodeGetRootNode (1) |
+| `DrawStatusDialog` | `launcher/main.cpp:6635` | 41 | 100.0% |  |
 | `DrawToolbar` | `editor/AnimatorWindow.cpp:2609` | 42 | 100.0% |  |
 | `DrawBehaviorTreeWindow` | `editor/BehaviorTreeWindow.cpp:1710` | 42 | 97.6% | GetStyle (1) |
 | `DrawLocalizationWindow` | `editor/LocalizationWindow.cpp:770` | 42 | 97.6% | GetStyle (1) |
 | `main` | `editor/main.cpp:694` | 43 | 74.4% | ClearActiveID (2), CreateContext (1), GetPlatformIO (1), GetActiveID (1), NewFrame (1), ... |
 | `DrawAnimatorGraph` | `editor/AnimatorWindow.cpp:2714` | 44 | 97.7% | GetStyle (1) |
-| `DrawBlackboardTab` | `editor/BehaviorTreeWindow.cpp:1409` | 44 | 97.7% | IsItemDeactivatedAfterEdit (1) |
+| `DrawBlackboardTab` | `editor/BehaviorTreeWindow.cpp:1409` | 44 | 100.0% |  |
 | `DrawPlaybackSpeedControls` | `editor/main.cpp:6673` | 44 | 100.0% |  |
 | `DrawBlend1D` | `editor/AnimatorWindow.cpp:1323` | 45 | 100.0% |  |
 | `DrawNodeInspector` | `editor/BehaviorTreeWindow.cpp:1288` | 45 | 100.0% |  |
 | `DrawAudioMixer` | `editor/main.cpp:8002` | 45 | 100.0% |  |
-| `DrawReportsAdmin` | `launcher/main.cpp:14481` | 46 | 100.0% |  |
+| `DrawReportsAdmin` | `launcher/main.cpp:14520` | 46 | 100.0% |  |
 | `DrawNavigationWindow` | `editor/NavigationWindow.cpp:338` | 47 | 100.0% |  |
 | `QuestLogInspector` | `editor/DialogueWindow.cpp:1850` | 48 | 100.0% |  |
 | `DrawPrefabChanges` | `editor/InspectorPanel.cpp:832` | 48 | 100.0% |  |
 | `DrawProblems` | `editor/ProblemsPanel.cpp:298` | 49 | 95.9% | SetNextWindowFocus (1), GetStyle (1) |
-| `DrawStats` | `editor/main.cpp:12359` | 49 | 100.0% |  |
 | `DrawDialogueTab` | `editor/DialogueWindow.cpp:1326` | 50 | 100.0% |  |
 | `DrawFpHandsBody` | `editor/FpHandsWindow.cpp:174` | 50 | 100.0% |  |
-| `DrawPopups` | `editor/LocalizationWindow.cpp:533` | 50 | 96.0% | IsItemDeactivatedAfterEdit (2) |
-| `DrawTagsAndLayersSettings` | `editor/main.cpp:19729` | 50 | 98.0% | IsItemDeactivatedAfterEdit (1) |
-| `DrawPinnedBar` | `launcher/main.cpp:6204` | 50 | 100.0% |  |
+| `DrawPopups` | `editor/LocalizationWindow.cpp:533` | 50 | 100.0% |  |
+| `DrawStats` | `editor/main.cpp:12388` | 50 | 100.0% |  |
+| `DrawTagsAndLayersSettings` | `editor/main.cpp:19751` | 50 | 100.0% |  |
+| `DrawPinnedBar` | `launcher/main.cpp:6243` | 50 | 100.0% |  |
 | `BuildUIBottomSheet` | `editor/UIInspectorWidgetsMore.cpp:81` | 51 | 100.0% |  |
 | `DrawQuestsTab` | `editor/DialogueWindow.cpp:1596` | 52 | 100.0% |  |
 | `DrawBlend2D` | `editor/AnimatorWindow.cpp:1461` | 54 | 98.1% | GetMousePosOnOpeningCurrentPopup (1) |
@@ -398,69 +389,69 @@ The Dear ImGui versions of the ported screens above hold 568 of the 27379 `ImGui
 | `DrawUIFrameConvertButtons` | `editor/UIInspectorLayout.cpp:62` | 61 | 100.0% |  |
 | `DrawStateInspector` | `editor/AnimatorWindow.cpp:1779` | 62 | 100.0% |  |
 | `DrawNodeInspector` | `editor/DialogueWindow.cpp:539` | 62 | 100.0% |  |
-| `DrawPartyCard` | `launcher/main.cpp:12077` | 62 | 100.0% |  |
+| `DrawPartyCard` | `launcher/main.cpp:12116` | 62 | 100.0% |  |
 | `QuestDefEditor` | `editor/DialogueWindow.cpp:1421` | 63 | 100.0% |  |
-| `DrawUVEditor` | `editor/main.cpp:27852` | 63 | 100.0% |  |
-| `DrawGameLeaderboards` | `launcher/main.cpp:12456` | 63 | 100.0% |  |
+| `DrawUVEditor` | `editor/main.cpp:27874` | 63 | 100.0% |  |
+| `DrawGameLeaderboards` | `launcher/main.cpp:12495` | 63 | 100.0% |  |
 | `CharacterModelPanel` | `editor/main.cpp:8795` | 64 | 100.0% |  |
 | `DrawWeaponEditor` | `editor/WeaponEditor.cpp:162` | 66 | 100.0% |  |
-| `DrawProfiler` | `editor/main.cpp:47844` | 66 | 100.0% |  |
-| `VsDrawVariableDecls` | `editor/VsVariablePanel.hpp:238` | 67 | 98.5% | IsItemDeactivatedAfterEdit (1) |
+| `DrawProfiler` | `editor/main.cpp:47866` | 66 | 100.0% |  |
+| `VsDrawVariableDecls` | `editor/VsVariablePanel.hpp:238` | 67 | 100.0% |  |
 | `DrawParameters` | `editor/AnimatorWindow.cpp:2158` | 68 | 100.0% |  |
 | `DrawSaveManager` | `editor/main.cpp:12158` | 68 | 100.0% |  |
-| `DrawLookSections` | `editor/main.cpp:12496` | 69 | 100.0% |  |
+| `DrawLookSections` | `editor/main.cpp:12518` | 69 | 100.0% |  |
 | `DrawPrefabHeader` | `editor/InspectorPanel.cpp:686` | 71 | 100.0% |  |
-| `DrawProjectSettings` | `editor/main.cpp:19833` | 71 | 95.8% | FindWindowByName (1), SetNextWindowDockID (1), SetNextWindowFocus (1) |
+| `DrawProjectSettings` | `editor/main.cpp:19855` | 71 | 95.8% | FindWindowByName (1), SetNextWindowDockID (1), SetNextWindowFocus (1) |
 | `DrawUpgradeWindow` | `editor/ProjectUpgradeUI.cpp:316` | 72 | 98.6% | GetStyle (1) |
 | `DrawRecipeTab` | `editor/ContentEditors.cpp:852` | 73 | 100.0% |  |
 | `DrawSplineInspector` | `editor/SplineTools.cpp:598` | 73 | 100.0% |  |
-| `DrawOfficialCard` | `launcher/main.cpp:17314` | 74 | 100.0% |  |
+| `DrawOfficialCard` | `launcher/main.cpp:17353` | 74 | 100.0% |  |
 | `DrawVarWatch` | `editor/main.cpp:2702` | 78 | 100.0% |  |
 | `DrawUIWidgetItems` | `editor/main.cpp:6452` | 81 | 100.0% |  |
-| `DrawNewProjectForm` | `editor/main.cpp:19362` | 83 | 100.0% |  |
-| `DrawSpriteEditor` | `editor/main.cpp:47623` | 83 | 100.0% |  |
-| `DrawScriptDocs` | `editor/main.cpp:13110` | 85 | 100.0% |  |
+| `DrawNewProjectForm` | `editor/main.cpp:19384` | 83 | 100.0% |  |
+| `DrawSpriteEditor` | `editor/main.cpp:47645` | 83 | 100.0% |  |
+| `DrawScriptDocs` | `editor/main.cpp:13132` | 85 | 100.0% |  |
 | `DrawLootTab` | `editor/ContentEditors.cpp:612` | 87 | 100.0% |  |
 | `DrawBuiltin` | `shared/FileDialogUI.cpp:25` | 90 | 94.4% | GetCurrentContext (4), ClosePopupToLevel (1) |
 | `DrawAssetManager` | `editor/main.cpp:9338` | 91 | 96.7% | FindWindowByName (1), SetNextWindowDockID (1), GetStyle (1) |
-| `DrawSimpleRules` | `editor/main.cpp:25944` | 95 | 100.0% |  |
+| `DrawSimpleRules` | `editor/main.cpp:25966` | 95 | 100.0% |  |
 | `DrawConsole` | `editor/ConsolePanel.cpp:178` | 97 | 97.9% | FindWindowByName (1), GetStyle (1) |
-| `DrawGameView` | `editor/main.cpp:48102` | 98 | 99.0% | SetNextWindowFocus (1) |
+| `DrawGameView` | `editor/main.cpp:48124` | 98 | 99.0% | SetNextWindowFocus (1) |
 | `DrawMenuAndToolbar` | `editor/main.cpp:7556` | 99 | 97.0% | GetStyle (3) |
-| `ParticleCurveEditor` | `editor/main.cpp:27271` | 100 | 98.0% | GetStateStorage (1), GetStyle (1) |
+| `ParticleCurveEditor` | `editor/main.cpp:27293` | 100 | 98.0% | GetStateStorage (1), GetStyle (1) |
 | `DrawStatusBar` | `editor/main.cpp:7741` | 104 | 99.0% | GetStyle (1) |
 | `DrawServices` | `editor/main.cpp:11917` | 108 | 100.0% |  |
-| `DrawMpDialogs` | `launcher/main.cpp:11897` | 109 | 100.0% |  |
+| `DrawMpDialogs` | `launcher/main.cpp:11936` | 109 | 100.0% |  |
 | `DrawCreateSlot` | `editor/main.cpp:7046` | 110 | 100.0% |  |
-| `VsPaletteStepIsDuplicate` | `editor/VisualScriptPalette.hpp:315` | 116 | 97.4% | EndTooltip (2), GetStyle (1) |
-| `DrawSceneSettings` | `editor/main.cpp:12643` | 121 | 98.3% | FindWindowByName (1), SetNextWindowDockID (1) |
+| `VsPaletteStepIsDuplicate` | `editor/VisualScriptPalette.hpp:315` | 116 | 99.1% | GetStyle (1) |
+| `DrawSceneSettings` | `editor/main.cpp:12665` | 121 | 98.3% | FindWindowByName (1), SetNextWindowDockID (1) |
 | `DrawSceneManager` | `editor/SceneManagerPanel.cpp:276` | 122 | 100.0% |  |
-| `DrawModelAnim` | `editor/main.cpp:24320` | 126 | 99.2% | GetStyle (1) |
+| `DrawModelAnim` | `editor/main.cpp:24342` | 126 | 99.2% | GetStyle (1) |
 | `DrawCanvas` | `editor/DialogueWindow.cpp:857` | 136 | 99.3% | GetMousePosOnOpeningCurrentPopup (1) |
-| `DrawCustomise` | `editor/GuidedPanel.cpp:550` | 138 | 98.6% | IsItemDeactivatedAfterEdit (2) |
-| `DrawAntiCheatAdmin` | `launcher/main.cpp:13825` | 142 | 100.0% |  |
+| `DrawCustomise` | `editor/GuidedPanel.cpp:550` | 138 | 100.0% |  |
+| `DrawAntiCheatAdmin` | `launcher/main.cpp:13864` | 142 | 100.0% |  |
 | `DrawCanvas` | `editor/AnimatorWindow.cpp:594` | 143 | 97.9% | GetCurrentContext (1), GetMousePosOnOpeningCurrentPopup (1), BeginDragDropTargetCustom (1) |
 | `DrawCanvas` | `editor/BehaviorTreeWindow.cpp:435` | 148 | 98.0% | GetCurrentContext (1), GetMousePosOnOpeningCurrentPopup (1), BeginDragDropTargetCustom (1) |
 | `DrawDialogs` | `editor/ProjectPanelUI.cpp:230` | 148 | 100.0% |  |
-| `ExpandCustomEmoji` | `launcher/main.cpp:4033` | 163 | 99.4% | GetStyle (1) |
-| `CameraPreviewRect` | `editor/main.cpp:43860` | 181 | 97.8% | GetMouseDragDelta (4) |
-| `DrawMultiplayerPage` | `launcher/main.cpp:12583` | 181 | 100.0% |  |
-| `VectorFields` | `editor/main.cpp:26414` | 183 | 100.0% |  |
-| `DrawHierarchy` | `editor/main.cpp:20585` | 184 | 95.7% | GetStyle (5), GetMouseDragDelta (1), GetDragDropPayload (1), BeginPopupContextWindow (1) |
-| `DrawOfficialAdmin` | `launcher/main.cpp:17793` | 207 | 100.0% |  |
-| `DrawViewport` | `editor/main.cpp:46824` | 250 | 99.6% | GetStyle (1) |
-| `DrawPublicProfilePage` | `launcher/main.cpp:15370` | 272 | 99.6% | EndTooltip (1) |
-| `DrawAdminPage` | `launcher/main.cpp:14612` | 277 | 100.0% |  |
-| `DrawObjectAnimTimeline` | `editor/main.cpp:24938` | 300 | 99.7% | GetStyle (1) |
-| `DrawProject` | `editor/main.cpp:10345` | 354 | 97.2% | GetStyle (5), IsItemDeactivatedAfterEdit (2), BeginPopupContextWindow (1), GetCurrentWindow (1), BeginDragDropTargetCustom (1) |
-| `ModDrawBanned` | `launcher/main.cpp:7467` | 366 | 99.5% | GetStyle (2) |
-| `DrawCharacterAnim` | `editor/main.cpp:22821` | 518 | 98.6% | Shortcut (4), GetStyle (1), FindRenderedTextEnd (1), SetWindowSize (1) |
-| `DrawScriptEditor` | `editor/main.cpp:15302` | 604 | 98.0% | SetNextWindowDockID (2), SetKeyOwner (2), BringWindowToDisplayFront (2), GetCurrentWindow (2), IsWindowDocked (1), ... |
-| `Draw` | `editor/VisualScriptEditor.hpp:3467` | 611 | 98.9% | ResetMouseDragDelta (2), EndTooltip (2), IsWindowDocked (1), SetWindowSize (1), GetMouseDragDelta (1) |
-| `DrawFileDialogs` | `editor/main.cpp:18091` | 642 | 99.7% | GetStyle (2) |
-| `DrawChatWindow` | `launcher/main.cpp:8686` | 715 | 99.0% | GetStyle (3), SetNextWindowFocus (2), SetWindowPos (1), IsAnyItemHovered (1) |
-| `DrawModeling` | `editor/main.cpp:28126` | 781 | 99.7% | IsWindowDocked (1), SetWindowSize (1) |
-| `main` | `launcher/main.cpp:18211` | 3586 | 99.2% | GetStyle (7), IsItemDeactivatedAfterEdit (6), SetItemKeyOwner (5), BeginPopupContextWindow (4), GetCurrentContext (1), ... |
-| `DrawInspector` | `editor/main.cpp:29804` | 5862 | 99.8% | GetStyle (6), IsItemDeactivatedAfterEdit (3), GetCurrentWindow (2), CalcItemWidth (1), BeginDragDropTargetCustom (1) |
+| `ExpandCustomEmoji` | `launcher/main.cpp:4064` | 163 | 99.4% | GetStyle (1) |
+| `CameraPreviewRect` | `editor/main.cpp:43882` | 181 | 100.0% |  |
+| `DrawMultiplayerPage` | `launcher/main.cpp:12622` | 181 | 100.0% |  |
+| `VectorFields` | `editor/main.cpp:26436` | 183 | 100.0% |  |
+| `DrawHierarchy` | `editor/main.cpp:20607` | 184 | 96.7% | GetStyle (5), GetDragDropPayload (1) |
+| `DrawOfficialAdmin` | `launcher/main.cpp:17832` | 207 | 100.0% |  |
+| `DrawViewport` | `editor/main.cpp:46846` | 250 | 99.6% | GetStyle (1) |
+| `DrawPublicProfilePage` | `launcher/main.cpp:15409` | 272 | 100.0% |  |
+| `DrawAdminPage` | `launcher/main.cpp:14651` | 277 | 100.0% |  |
+| `DrawObjectAnimTimeline` | `editor/main.cpp:24960` | 300 | 99.7% | GetStyle (1) |
+| `DrawProject` | `editor/main.cpp:10345` | 354 | 98.0% | GetStyle (5), GetCurrentWindow (1), BeginDragDropTargetCustom (1) |
+| `ModDrawBanned` | `launcher/main.cpp:7506` | 366 | 99.5% | GetStyle (2) |
+| `DrawCharacterAnim` | `editor/main.cpp:22843` | 518 | 98.6% | Shortcut (4), GetStyle (1), FindRenderedTextEnd (1), SetWindowSize (1) |
+| `DrawScriptEditor` | `editor/main.cpp:15324` | 604 | 98.3% | SetNextWindowDockID (2), SetKeyOwner (2), BringWindowToDisplayFront (2), GetCurrentWindow (2), IsWindowDocked (1), ... |
+| `Draw` | `editor/VisualScriptEditor.hpp:3467` | 611 | 99.7% | IsWindowDocked (1), SetWindowSize (1) |
+| `DrawFileDialogs` | `editor/main.cpp:18113` | 642 | 99.7% | GetStyle (2) |
+| `DrawChatWindow` | `launcher/main.cpp:8725` | 715 | 99.2% | GetStyle (3), SetNextWindowFocus (2), SetWindowPos (1) |
+| `DrawModeling` | `editor/main.cpp:28148` | 781 | 99.7% | IsWindowDocked (1), SetWindowSize (1) |
+| `main` | `launcher/main.cpp:18250` | 3588 | 99.5% | GetStyle (8), SetItemKeyOwner (5), GetCurrentContext (1), CreateContext (1), NewFrame (1), ... |
+| `DrawInspector` | `editor/main.cpp:29826` | 5862 | 99.8% | GetStyle (6), GetCurrentWindow (2), BeginDragDropTargetCustom (1) |
 
-Of 247 screens listed: 171 are fully covered by name, 237 are at least 90% covered.
+Of 247 screens listed: 182 are fully covered by name, 240 are at least 90% covered.

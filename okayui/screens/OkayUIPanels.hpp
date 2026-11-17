@@ -112,4 +112,39 @@ float MeterFill(float linear);
 
 AudioMixerResult DrawAudioMixer(AudioMixerModel& model, float x, float y, float w, float h);
 
+// ---- Stats (the editor's window of that name) -------------------------------------------------------------------------------
+
+/// What the window shows: the frame rate and its history (a ring buffer the host owns), the scene counts as name / number rows, and
+/// pointers to the host's culling and batching switches (edited in place; null ones are skipped).
+struct StatsModel {
+    float framerate = 0.0f;                          // frames per second now
+    const float* history = nullptr; int historyCount = 0; int historyOffset = 0;   // frame rates, a ring starting at historyOffset; zeros are unused slots
+    struct Row { std::string name; int value = 0; };
+    std::vector<Row> rows;                           // shown two per line (name, value, name, value)
+    bool* frustumCulling = nullptr;
+    bool* occlusionCulling = nullptr;
+    bool* staticBatching = nullptr;
+    bool* dynamicBatching = nullptr;
+    std::string skinning = "CPU";                    // "GPU" or "CPU"
+};
+
+struct StatsResult {
+    OkayUI::Rect fpsReadout, plot, frustum, occlusion, staticBatch, dynamicBatch;
+    int fpsBand = 0;                                 // 0 good (55 or more), 1 middling (30 or more), 2 poor
+    int cellsDrawn = 0;                              // name / value cells laid out in the grid
+    float plotMax = 0.0f;                            // the top of the plot's scale
+    bool changed = false;                            // a switch changed this frame
+};
+
+/// 0 for 55 fps or more, 1 for 30 or more, 2 below that (the colour of the big readout); a non-finite rate is 2.
+int FpsBand(float framerate);
+/// Smallest, largest and mean of the used (> 0 and finite) history slots; all zero when there are none.
+void HistoryStats(const float* history, int count, float* outMin, float* outMax, float* outAvg);
+/// The plot's top: 20 percent above the largest value but never below 75.
+float PlotScale(float maxValue);
+/// "999", "12.3k" from 10,000 up, "1.5M" from a million (what the grid shows).
+std::string FormatCount(int value);
+
+StatsResult DrawStats(const StatsModel& model, float x, float y, float w, float h);
+
 } // namespace okayuiscreens

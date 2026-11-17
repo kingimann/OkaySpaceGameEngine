@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -70,7 +71,7 @@ struct FaceBake {
         face.VMetrics(asc, desc, gap);
         for (int s = 0; s < nsizes; ++s) {
             Size& sz = out[s];
-            for (short& a : sz.ascii) a = -1;
+            for (short& a : sz.ascii) a = 0;
             sz.px = sizes[s];
             sz.ascent = asc * scales[s];
             sz.scale = scales[s];
@@ -82,11 +83,35 @@ struct FaceBake {
                 g.x0 = b.xoff; g.y0 = b.yoff; g.x1 = b.xoff + (float)(b.x1 - b.x0); g.y1 = b.yoff + (float)(b.y1 - b.y0);
                 g.u0 = (float)b.x0 / W; g.v0 = (float)b.y0 / H; g.u1 = (float)b.x1 / W; g.v1 = (float)b.y1 / H;
                 g.advance = b.xadvance;
-                if (cps[k] < 128) sz.ascii[cps[k]] = (short)k;
+                if (cps[k] < 128) sz.ascii[cps[k]] = (short)(k + 1);   // index + 1 (0 = not baked)
             }
         }
     }
 };
+
+// Anti-aliased discs and one-pixel rings (Theme::antiAliased) on shelves below the glyphs (so every glyph stays where it was), as
+// many radii as there is room for, discs first. Fills a.discMax / discCx / discCy and a.ringMax / ringCx / ringCy.
+void BakeDiscs(Atlas& a, unsigned char* alpha, int W, int packH, int used) {
+    a.discMax = 0; a.ringMax = 0;
+    int sx = 0, sy = used + 2, shelfH = 0;
+    for (int ring = 0; ring < 2; ++ring) {
+        for (int T = 2; T <= Atlas::kDiscMaxR; ++T) {
+            const int side = 2 * (T + Atlas::kDiscPad);
+            if (sx + side > W) { sx = 0; sy += shelfH; shelfH = 0; }
+            if (sy + side > packH) break;
+            for (int y = 0; y < side; ++y)
+                for (int x = 0; x < side; ++x) {
+                    const float dx = (float)x + 0.5f - (float)(T + Atlas::kDiscPad), dy = (float)y + 0.5f - (float)(T + Atlas::kDiscPad);
+                    const float d = std::sqrt(dx * dx + dy * dy);
+                    const float cov = std::max(0.0f, std::min(1.0f, ring ? 1.0f - std::fabs(d - ((float)T - 0.5f)) : (float)T + 0.5f - d));
+                    alpha[(std::size_t)(sy + y) * W + (std::size_t)(sx + x)] = (unsigned char)(cov * 255.0f + 0.5f);
+                }
+            const float cx = (float)(sx + T + Atlas::kDiscPad), cy = (float)(sy + T + Atlas::kDiscPad);
+            if (ring) { a.ringCx[T] = cx; a.ringCy[T] = cy; a.ringMax = T; } else { a.discCx[T] = cx; a.discCy[T] = cy; a.discMax = T; }
+            sx += side; shelfH = std::max(shelfH, side);
+        }
+    }
+}
 
 // The UI font's face and glyphs; static (a Face is large and keeps pointers into its bytes). Also read by KerningUnits.
 FaceBake g_uiBake;
@@ -139,6 +164,7 @@ void BuildAtlas(Atlas& a, int startH, int maxH, int codeSizes) {
         for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
         a.w = W; a.h = H; a.nsizes = kUiSizes;
         a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
+        BakeDiscs(a, alpha.data(), W, packH, packer.Bottom());
         ui.Fill(a.sizes, kUiPx, kUiSizes, W, H);
         a.ncode = 0;
         if (codeOk) { code.Fill(a.code, kCodePx, codeSizes, W, H); a.ncode = codeSizes; }
@@ -164,7 +190,7 @@ void Build() {
 } // namespace
 
 const Glyph* Size::Find(unsigned cp) const {   // code points are baked in ascending order
-    if (cp < 128) { const int i = ascii[cp]; return (i >= 0 && i < count) ? &glyphs[i] : nullptr; }
+    if (cp < 128) return ascii[cp] > 0 ? &glyphs[ascii[cp] - 1] : nullptr;
     int lo = 0, hi = count - 1;
     while (lo <= hi) {
         const int mid = (lo + hi) / 2;
@@ -225,9 +251,12 @@ int KerningUnits(unsigned left, unsigned right) {
 okay::TtfFont* FallbackFont(const char* s, bool code) {
     const Atlas& a = Get();
     if (!a.ok || !s) return nullptr;
+    const char* q = s;
+    while (*q && (unsigned char)*q < 0x80) ++q;   // plain ASCII: the atlas has every character
+    if (!*q) return nullptr;
     const Size& z = code ? a.PickCode(16.0f) : a.Pick(16.0f);
     bool lacks = false;
-    for (const char* p = s; *p && !lacks;) {
+    for (const char* p = q; *p && !lacks;) {
         const unsigned cp = NextCodepoint(&p);
         lacks = cp >= 0x80 && !z.Find(cp);
     }

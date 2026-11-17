@@ -65,7 +65,7 @@ public:
         UI::Theme& t = UI::Style();
         m_tipOffX = t.tooltipOffsetX; m_tipOffY = t.tooltipOffsetY; m_tipPadX = t.tooltipPadX; m_tipPadY = t.tooltipPadY;
         m_tipGap = t.tooltipLineGap; m_tipRound = t.tooltipRounding; std::memcpy(m_tipBg, t.tooltipBg, 4); m_combo = t.comboArrowBox;
-        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances;
+        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances; m_aa = t.antiAliased;
         // Its tooltips: 25 px right of and 10 px below the mouse, padded as its windows (14 x 12), lines touching, 8 px corners,
         // the popup colour; its combo: a frame-coloured box with an arrow button.
         t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f;
@@ -74,24 +74,42 @@ public:
         t.comboArrowBox = true;
         t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
         t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
+        t.antiAliased = true;      // its shapes have smooth (anti-aliased) edges, as the launcher's do
+        // Its text fields and combo boxes brighten by 5% towards white under the mouse and 9% while typing (the Slate theme's
+        // FrameBgHovered and FrameBgActive).
+        auto mix = [](float k) {   // the launcher's field colour (0.16, 0.18, 0.23) mixed towards white by k
+            const float f[3] = {0.16f, 0.18f, 0.23f};
+            int o[3]; for (int i = 0; i < 3; ++i) o[i] = (int)((f[i] + (1.0f - f[i]) * k) * 255.0f + 0.5f);
+            return Rgb(o[0], o[1], o[2]);
+        };
+        UI::PushStyleColor(UI::Col_FrameBgHovered, mix(0.05f));
+        UI::PushStyleColor(UI::Col_FrameBgActive, mix(0.09f));
+        // Its popups (the sort list, the right-click menu): Dear ImGui's padding (14 x 12), 8 px corners, a hairline edge, the
+        // Slate popup colour, rows 8 px apart, hover and current-item colours (measured from the Dear ImGui page).
+        m_pop = t.imguiPopups; t.imguiPopups = true;
+        UI::PushStyleColor(UI::Col_PopupBg, Rgb(35, 39, 48, 251));
+        UI::PushStyleColor(UI::Col_Border, Rgb(255, 255, 255, 19));
+        UI::PushStyleColor(UI::Col_Header, Rgb(53, 68, 95));
+        UI::PushStyleColor(UI::Col_HeaderHovered, Rgb(65, 70, 84));
         const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
         UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
         UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
     }
     ~LauncherLook() {
+        UI::PopStyleColor(6);
         UI::PopStyleVar(1);
         UI::PopTextScale();
         UI::Theme& t = UI::Style();
         t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
         t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
-        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap;
+        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap; t.antiAliased = m_aa; t.imguiPopups = m_pop;
     }
     LauncherLook(const LauncherLook&) = delete;
     LauncherLook& operator=(const LauncherLook&) = delete;
 private:
     float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
     unsigned char m_tipBg[4];
-    bool m_combo, m_ascent, m_snap;
+    bool m_combo, m_ascent, m_snap, m_aa, m_pop;
 };
 
 // A child region the way the launcher's children are: no padding inside, a thin 8 px (or `bar`) scrollbar that takes room only
@@ -161,23 +179,6 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
     return clicked;
 }
 
-// A 1 px rounded outline drawn cheaply (it is on every download row every frame): the four straight sides as bars and each
-// corner as three short chords of its quarter circle.
-void HairlineBox(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float r) {
-    r = std::min(r, std::min(mx.x - mn.x, mx.y - mn.y) * 0.5f);
-    dl.AddRectFilled(V(mn.x + r, mn.y), V(mx.x - r, mn.y + 1.0f), col);
-    dl.AddRectFilled(V(mn.x + r, mx.y - 1.0f), V(mx.x - r, mx.y), col);
-    dl.AddRectFilled(V(mn.x, mn.y + r), V(mn.x + 1.0f, mx.y - r), col);
-    dl.AddRectFilled(V(mx.x - 1.0f, mn.y + r), V(mx.x, mx.y - r), col);
-    const float rr = r - 0.5f;
-    static const float k[4][2] = {{1.0f, 0.0f}, {0.8660254f, 0.5f}, {0.5f, 0.8660254f}, {0.0f, 1.0f}};   // cos, sin of 0, 30, 60, 90 degrees
-    const UI::Vec2 c[4] = {V(mn.x + r, mn.y + r), V(mx.x - r, mn.y + r), V(mx.x - r, mx.y - r), V(mn.x + r, mx.y - r)};
-    const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
-    for (int q = 0; q < 4; ++q)
-        for (int i = 0; i < 3; ++i)
-            dl.AddLine(V(c[q].x + sx[q] * k[i][0] * rr, c[q].y + sy[q] * k[i][1] * rr), V(c[q].x + sx[q] * k[i + 1][0] * rr, c[q].y + sy[q] * k[i + 1][1] * rr), col, 1.0f);
-}
-
 // One line of text centred in `width` from x.
 void CenteredAt(const UI::DrawList& dl, float x, float y, float width, const char* s, UI::Color32 col) {
     dl.AddText(V(x + std::max(0.0f, (width - UI::CalcTextSize(s).x) * 0.5f), y), col, s);
@@ -206,7 +207,14 @@ void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, f
 
 // The launcher's line icons (DrawNavIcon in launcher/main.cpp): 1.6 px strokes in a 15 px box.
 enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
+void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
+// Drawn once per icon and colour and copied after that (DrawList::Cached), as the medals.
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
+    struct Args { const UI::DrawList* d; int id; UI::Vec2 c; UI::Color32 col; } a{&d, id, c, col};
+    const unsigned long long key = (0x69636f6eull << 32) ^ ((unsigned long long)(unsigned)id << 40) ^ (unsigned long long)col;
+    d.Cached(key, c, [](void* u) { const Args& m = *(const Args*)u; DrawNavIconNow(*m.d, m.id, m.c, m.col); }, &a);
+}
+void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
     const float r = 7.5f, t = 1.6f;
     switch (id) {
     case kIcoTrophy:
@@ -273,7 +281,18 @@ void DrawStar(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
 }
 // The achievement medal: a soft halo, a hexagon shaded from 62% of the id's colour at the top to 30% at the bottom with an
 // outline in the colour, a trophy on it (as the launcher's DrawAchMedal).
+void DrawMedalNow(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha);
+// The medal is the same picture wherever it is, so it is drawn once per size, colour and alpha and copied after that
+// (DrawList::Cached): about a third of the page's drawing work.
 void DrawMedal(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 c; float r; const unsigned char* rgb; float alpha; } a{&dl, c, r, rgb, alpha};
+    unsigned long long key = 1469598103934665603ull;   // the medal's look: its radius, colour and alpha
+    auto mixIn = [&](unsigned v) { key = (key ^ v) * 1099511628211ull; };
+    unsigned rb, ab; std::memcpy(&rb, &r, 4); std::memcpy(&ab, &alpha, 4);
+    mixIn(0x6d65646cu); mixIn(rb); mixIn(ab); mixIn((unsigned)rgb[0] | ((unsigned)rgb[1] << 8) | ((unsigned)rgb[2] << 16));
+    dl.Cached(key, c, [](void* u) { const Args& m = *(const Args*)u; DrawMedalNow(*m.dl, m.c, m.r, m.rgb, m.alpha); }, &a);
+}
+void DrawMedalNow(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha) {
     const float s = r / 15.0f;
     dl.AddCircleFilled(c, r + 3.0f, Rgb(rgb[0], rgb[1], rgb[2], (int)(0.14f * alpha * 255.0f)), 32);
     UI::Vec2 hex[6], rim[6];
@@ -376,7 +395,8 @@ void LauncherProgressBar(const UI::DrawList& dl, float x, float y, float w, floa
     if (overlay && *overlay) {
         const UI::Vec2 ts = UI::CalcTextSize(overlay);
         const float tx = std::max(x, std::min(x + fillW + kSpX, x + w - ts.x - kInnerX));
-        dl.AddText(V(tx, y + (h - ts.y) * 0.5f), Col(UI::Style().text), overlay);
+        // Dear ImGui's progress bar rounds this text's centred y to the nearest pixel (text elsewhere is cut down to whole pixels).
+        dl.AddText(V(tx, std::floor(y + (h - ts.y) * 0.5f + 0.5f)), Col(UI::Style().text), overlay);
     }
 }
 } // namespace
@@ -434,15 +454,24 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             const UI::Vec2 rp = V(o.x, ly);
             res.rows[i] = UI::Rect{rp.x, rp.y, cw, rowH};
             const bool hov = UI::IsMouseHoveringRect(rp, V(rp.x + cw, rp.y + rowH));
-            HairlineBox(dl, rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f);
+            dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f, 1.0f);   // one pixel, anti-aliased (a baked ring at the corners)
             if (hov) dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), Col(th.accent), 7.0f, 2.0f);
             const float ix = rp.x + padX, inW = cw - 2.0f * padX;
             float iy = rp.y + padY;
             dl.AddText(V(ix, iy), Col(th.text), FitTextWidth(d.title, inW).c_str());
             iy = NextY(iy, fs);
-            char overlay[64];
-            if (d.total > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
-            else std::snprintf(overlay, sizeof(overlay), "%s", HumanBytes(d.received).c_str());
+            // "12.0 MB / 48.0 MB", formatted again only when the numbers change (a few rows remembered).
+            struct Ov { long long rec = -2, tot = -2; char text[64] = ""; };
+            static Ov ovs[16]; static int ovNext = 0;
+            const char* overlay = nullptr;
+            for (const Ov& o : ovs) if (o.rec == d.received && o.tot == d.total) { overlay = o.text; break; }
+            if (!overlay) {
+                Ov& o = ovs[ovNext]; ovNext = (ovNext + 1) % 16;
+                o.rec = d.received; o.tot = d.total;
+                if (d.total > 0) std::snprintf(o.text, sizeof(o.text), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
+                else std::snprintf(o.text, sizeof(o.text), "%s", HumanBytes(d.received).c_str());
+                overlay = o.text;
+            }
             const float barW = std::max(40.0f, inW - 220.0f);
             LauncherProgressBar(dl, ix, iy, barW, 16.0f, DownloadFraction(d), overlay);
             const char* st = DownloadStatusText(d.status);

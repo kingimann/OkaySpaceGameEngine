@@ -29,6 +29,8 @@ struct Token {
     uint64_t number = 0;
     // 0 for an integer, 5 for a float literal, 6 for a double literal.
     int real = 0;
+    // Line of the preprocessed text, counted from 1.
+    int line = 0;
 };
 
 struct Type {
@@ -141,6 +143,8 @@ struct Node {
     Type type{};
     int32_t offset = 0;
     bool imported = false;
+    // Line of the preprocessed text where a statement starts. 0 is unknown.
+    int line = 0;
     std::vector<Node> kids;
 };
 
@@ -175,6 +179,9 @@ struct FuncDecl {
     std::vector<Local> locals;
     int nparams = 0;
     int max_args = 0;
+    // First and last line of the body (the braces), for the line table.
+    int line = 0;
+    int end_line = 0;
 };
 
 std::string strip_comments(const std::string& in) {
@@ -197,7 +204,11 @@ std::string strip_comments(const std::string& in) {
         }
         if (in[i] == '/' && i + 1 < in.size() && in[i + 1] == '*') {
             i += 2;
-            while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/')) ++i;
+            // Keep the newlines so a line number still names its source line.
+            while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/')) {
+                if (in[i] == '\n') out.push_back('\n');
+                ++i;
+            }
             if (i + 1 < in.size()) i += 2;
             continue;
         }
@@ -224,6 +235,10 @@ struct Preprocessor {
     std::vector<std::string> includes;
     std::string error;
     int depth = 0;
+    // File names (index 0 is the main source) and, for each line of the
+    // output, the file and line it came from.
+    std::vector<std::string> files;
+    std::vector<std::pair<int, int>> origin;
 
     bool defined(const std::string& name) const { return macros.find(name) != macros.end(); }
 
@@ -577,7 +592,7 @@ struct Preprocessor {
         return "";
     }
 
-    std::string run(const std::string& text, const std::string& dir) {
+    std::string run(const std::string& text, const std::string& dir, int file = 0) {
         if (depth > 16) {
             error = "include nesting is too deep";
             return "";
@@ -598,7 +613,9 @@ struct Preprocessor {
         };
         std::string out;
         size_t i = 0;
+        int ln = 0;
         while (i < text.size()) {
+            ++ln;
             size_t end = text.find('\n', i);
             if (end == std::string::npos) end = text.size();
             std::string line = text.substr(i, end - i);
@@ -612,6 +629,12 @@ struct Preprocessor {
                 while (a < rest.size() && (rest[a] == ' ' || rest[a] == '\t')) ++a;
                 rest = rest.substr(a);
                 auto word = [&](const char* w) { return rest.compare(0, std::strlen(w), w) == 0; };
+                // Every output line has an origin. A directive leaves a blank
+                // line, except an include, which is replaced by the file's lines.
+                if (!(word("include") && active())) {
+                    out += "\n";
+                    origin.push_back({file, ln});
+                }
                 if (word("include")) {
                     if (!active()) continue;
                     const size_t q1 = rest.find_first_of("\"<");
@@ -629,7 +652,8 @@ struct Preprocessor {
                         --depth;
                         return "";
                     }
-                    out += run(strip_comments(body), dir);
+                    files.push_back(name);
+                    out += run(strip_comments(body), dir, static_cast<int>(files.size()) - 1);
                     if (!error.empty()) {
                         --depth;
                         return "";
@@ -732,7 +756,8 @@ struct Preprocessor {
                 }
                 continue;
             }
-            if (active()) out += expand(line, 0) + "\n";
+            out += active() ? expand(line, 0) + "\n" : std::string("\n");
+            origin.push_back({file, ln});
         }
         --depth;
         return out;
@@ -854,13 +879,16 @@ bool decode_escape(const std::string& text, size_t* i, unsigned char* out) {
 
 std::vector<Token> lex(const std::string& text, std::string* error) {
     std::vector<Token> tokens;
+    int line = 1;
     for (size_t i = 0; i < text.size();) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         if (std::isspace(c)) {
+            if (c == '\n') ++line;
             ++i;
             continue;
         }
         Token tok;
+        tok.line = line;
         if (std::isalpha(c) || c == '_') {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
@@ -1067,7 +1095,9 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         ++i;
         tokens.push_back(tok);
     }
-    tokens.push_back(Token{});
+    Token end_token;
+    end_token.line = line;
+    tokens.push_back(end_token);
     return tokens;
 }
 
@@ -1543,6 +1573,7 @@ struct Parser {
         return id >= 0 && structs[static_cast<size_t>(id)].cxx;
     }
     bool parse_stmt(Node* out, std::vector<Local>* locals);
+    bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_block(Node* out, std::vector<Local>* locals);
 
     int prec(Tok op) const {
@@ -1868,7 +1899,9 @@ struct Parser {
         fn->nparams = static_cast<int>(fn->params.size());
         current_fn = fn->name;
         cur_locals = &locals;
+        fn->line = cur().line;
         const bool ok = parse_block(&fn->body, &locals);
+        fn->end_line = at > 0 ? tokens[at - 1].line : 0;
         (void)saved_locals;
         cur_locals = nullptr;
         current_fn = saved_fn;
@@ -2084,6 +2117,13 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
 }
 
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
+    const int stmt_line = cur().line;
+    const bool ok = parse_stmt_inner(out, locals, stmt_line);
+    out->line = stmt_line;
+    return ok;
+}
+
+bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line) {
     cur_locals = locals;
     if (is(TLBrace)) return parse_block(out, locals);
     if (is(TGoto)) {
@@ -2346,6 +2386,7 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             store.kids.push_back(std::move(as_ptr));
             Node stmt;
             stmt.kind = Node::ExprStmt;
+            stmt.line = stmt_line;
             stmt.kids.push_back(std::move(store));
             out->kids.push_back(std::move(stmt));
         }
@@ -2360,6 +2401,7 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             assign.kids.push_back(std::move(init));
             Node stmt;
             stmt.kind = Node::ExprStmt;
+            stmt.line = stmt_line;
             stmt.kids.push_back(std::move(assign));
             out->kids.push_back(std::move(stmt));
         }
@@ -2941,6 +2983,10 @@ struct Gen {
     int sret_dest_off = 0;
     bool save_nv = false;
     bool optimize = false;
+    // Offset and line (of the preprocessed text) for each statement of the
+    // function being generated, when line records are wanted.
+    bool debug_lines = false;
+    std::vector<std::pair<uint32_t, int>> lines;
     std::vector<uint8_t> extra_pops;
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
@@ -4400,6 +4446,8 @@ bool Gen::gen_expr(const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (debug_lines && node.line > 0 && node.kind != Node::Block)
+        lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {
         const bool scoped = node.text == "scope";
         if (scoped) push_scope();
@@ -4997,10 +5045,22 @@ int struct_arg_space(const Node& node, const std::vector<FuncDecl>& funcs, const
     return best;
 }
 
+// Where the lines of the preprocessed text came from, for the line table.
+struct LineSource {
+    bool enabled = false;
+    const std::vector<std::pair<int, int>>* origin = nullptr;
+    const std::vector<std::string>* files = nullptr;
+};
+
+void put32(std::vector<uint8_t>* out, uint32_t value) {
+    for (int i = 0; i < 4; ++i) out->push_back(static_cast<uint8_t>(value >> (8 * i)));
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
-                    int opt_level, std::string* error, CompileOutput* out) {
+                    int opt_level, const LineSource& line_source, std::string* error, CompileOutput* out) {
     Gen gen(funcs);
+    gen.debug_lines = line_source.enabled;
     gen.structs = &structs;
     gen.globals = &globals;
     gen.func_types = &func_types;
@@ -5011,6 +5071,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         uint32_t size = 0;
         bool exported = false;
         bool is_static = false;
+        std::vector<std::pair<uint32_t, int>> lines;
     };
     std::vector<PlacedFn> placed;
     std::vector<uint32_t> unwind_offs;
@@ -5116,6 +5177,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.struct_copy = -((((local_end + 7) & ~7) + 64 + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        gen.lines.clear();
+        if (gen.debug_lines) gen.lines.push_back({start, fn.line});
         uint8_t cursor = 0;
         auto mark = [&](uint8_t bytes) { cursor = static_cast<uint8_t>(cursor + bytes); return cursor; };
         std::vector<UnwindPush> pushes;
@@ -5245,8 +5308,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             *error = gen.error.empty() ? "codegen failed" : gen.error;
             return false;
         }
+        if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});
         gen.epilogue();
-        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static});
+        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static, {}});
+        placed.back().lines = gen.lines;
         for (const auto& site : gen.gotos) {
             const auto found = gen.labels.find(site.first);
             if (found == gen.labels.end()) {
@@ -5406,6 +5471,110 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     add_data(".rdata", gen.rdata);
     add_data(".xdata", gen.xdata);
     add_data(".pdata", gen.pdata);
+    int debug_index = -1;
+    if (line_source.enabled && line_source.origin != nullptr && line_source.files != nullptr) {
+        // CodeView C13 subsections in .debug$S: signature 4, then one
+        // DEBUG_S_LINES (0xF2) per function, DEBUG_S_STRINGTABLE (0xF3) and
+        // DEBUG_S_FILECHKSMS (0xF4). A LINES header names its code range by a
+        // SECREL and a SECTION relocation against the function symbol.
+        std::vector<uint8_t> cv;
+        std::vector<Relocation> cv_relocs;
+        std::vector<std::string> used_files;
+        auto table_index = [&](int file) {
+            for (size_t k = 0; k < used_files.size(); ++k)
+                if (used_files[k] == (*line_source.files)[static_cast<size_t>(file)]) return static_cast<uint32_t>(k);
+            used_files.push_back((*line_source.files)[static_cast<size_t>(file)]);
+            return static_cast<uint32_t>(used_files.size() - 1);
+        };
+        put32(&cv, 4);
+        for (const PlacedFn& fn : placed) {
+            // (file table index, offset in function, line) with same-line and same-offset entries merged.
+            struct Entry {
+                uint32_t file;
+                uint32_t offset;
+                uint32_t line;
+            };
+            std::vector<Entry> entries;
+            for (const auto& item : fn.lines) {
+                const int out_line = item.second;
+                if (out_line <= 0 || static_cast<size_t>(out_line) > line_source.origin->size()) continue;
+                const auto& where = (*line_source.origin)[static_cast<size_t>(out_line) - 1];
+                if (where.second <= 0) continue;
+                Entry entry{table_index(where.first), item.first - fn.start, static_cast<uint32_t>(where.second)};
+                if (!entries.empty() && entries.back().offset == entry.offset) entries.pop_back();
+                if (!entries.empty() && entries.back().file == entry.file && entries.back().line == entry.line) continue;
+                entries.push_back(entry);
+            }
+            if (entries.empty()) continue;
+            std::vector<uint8_t> payload;
+            put32(&payload, 0);
+            payload.push_back(0);
+            payload.push_back(0);
+            payload.push_back(0);
+            payload.push_back(0);
+            put32(&payload, fn.size);
+            for (size_t k = 0; k < entries.size();) {
+                size_t end = k;
+                while (end < entries.size() && entries[end].file == entries[k].file) ++end;
+                put32(&payload, entries[k].file * 8u);
+                put32(&payload, static_cast<uint32_t>(end - k));
+                put32(&payload, 12u + static_cast<uint32_t>(end - k) * 8u);
+                for (size_t e = k; e < end; ++e) {
+                    put32(&payload, entries[e].offset);
+                    // 24 bits of line, 7 bits of extra lines, then the statement bit.
+                    put32(&payload, (entries[e].line & 0x00FFFFFFu) | 0x80000000u);
+                }
+                k = end;
+            }
+            put32(&cv, 0xF2);
+            put32(&cv, static_cast<uint32_t>(payload.size()));
+            const auto sym = index.find(fn.name);
+            if (sym == index.end()) {
+                *error = "missing symbol " + fn.name;
+                return false;
+            }
+            Relocation secrel;
+            secrel.offset = static_cast<uint32_t>(cv.size());
+            secrel.symbol = sym->second;
+            secrel.type = kRelAmd64Secrel;
+            Relocation section_rel = secrel;
+            section_rel.offset += 4;
+            section_rel.type = kRelAmd64Section;
+            cv_relocs.push_back(secrel);
+            cv_relocs.push_back(section_rel);
+            cv.insert(cv.end(), payload.begin(), payload.end());
+        }
+        if (!used_files.empty()) {
+            std::vector<uint8_t> names(1, 0);
+            std::vector<uint8_t> sums;
+            for (const std::string& file : used_files) {
+                put32(&sums, static_cast<uint32_t>(names.size()));
+                sums.push_back(0);
+                sums.push_back(0);
+                sums.push_back(0);
+                sums.push_back(0);
+                names.insert(names.end(), file.begin(), file.end());
+                names.push_back(0);
+            }
+            while (names.size() % 4 != 0) names.push_back(0);
+            put32(&cv, 0xF4);
+            put32(&cv, static_cast<uint32_t>(sums.size()));
+            cv.insert(cv.end(), sums.begin(), sums.end());
+            put32(&cv, 0xF3);
+            put32(&cv, static_cast<uint32_t>(names.size()));
+            cv.insert(cv.end(), names.begin(), names.end());
+            Section debug;
+            debug.name = ".debug$S";
+            debug.virtual_size = static_cast<uint32_t>(cv.size());
+            debug.data = std::move(cv);
+            debug.relocations = std::move(cv_relocs);
+            // Initialized data, readable, discardable, 1-byte alignment.
+            debug.characteristics = kScnCntInitData | kScnMemRead | 0x02000000u | kScnAlign1;
+            object.sections.push_back(std::move(debug));
+            debug_index = static_cast<int>(object.sections.size()) - 1;
+        }
+    }
+    (void)debug_index;
     for (const Gen::NamedReloc& named : gen.relocs) {
         // section 0 text, 1 rdata (unused), 2 pdata in the Gen numbering.
         int sec = 0;
@@ -5453,6 +5622,7 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         else pp.macros[def.substr(0, eq)] = macro;
     }
     const std::string stripped = strip_comments(input.source);
+    pp.files.push_back(input.name);
     const std::string expanded = pp.run(stripped, "");
     if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);
     std::string lex_error;
@@ -5460,10 +5630,14 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
     Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}, {}};
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
+    LineSource line_source;
+    line_source.enabled = input.debug_lines;
+    line_source.origin = &pp.origin;
+    line_source.files = &pp.files;
     CompileOutput output;
     std::string error;
     if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, input.opt_level,
-                        &error, &output))
+                        line_source, &error, &output))
         return Result<CompileOutput>::fail(error);
     return Result<CompileOutput>::success(std::move(output));
 }

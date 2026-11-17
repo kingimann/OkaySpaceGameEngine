@@ -228,6 +228,9 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         for (size_t si = 0; si < object.sections.size(); ++si) {
             const Section& section = object.sections[si];
             if ((section.characteristics & kScnLnkRemove) != 0) continue;
+            // CodeView data (.debug$S, .debug$T) is for a debugger's database.
+            // There is no PDB writer here, so these sections are not copied.
+            if (section.name.compare(0, 7, ".debug$") == 0) continue;
             if ((section.characteristics & kScnLnkComdat) != 0) {
                 uint8_t selection = 0;
                 std::string key;

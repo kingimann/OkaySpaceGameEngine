@@ -190,7 +190,9 @@ std::string exprStr(const Expr& e) {
     case Expr::Kind::Char: return "(char " + std::to_string(e.ival) + ")";
     case Expr::Kind::String: return "(string \"" + esc(e.text) + "\")";
     case Expr::Kind::Name: return "(name " + e.text + ")";
-    case Expr::Kind::Unary: return "(unary " + e.text + " " + kid(0) + ")";
+    case Expr::Kind::Unary:
+        if (e.text == "sizeof" && e.ty && e.kids.empty()) return "(sizeof " + typeStr(*e.ty) + ")";
+        return "(unary " + e.text + " " + kid(0) + ")";
     case Expr::Kind::Pre: return "(pre " + e.text + " " + kid(0) + ")";
     case Expr::Kind::Post: return "(post " + e.text + " " + kid(0) + ")";
     case Expr::Kind::Bin: return "(bin " + e.text + " " + kid(0) + " " + kid(1) + ")";
@@ -1000,6 +1002,20 @@ private:
             e->kids.push_back(std::move(inner));
             return e;
         }
+        if (isKw("sizeof")) {
+            Token op = cur();
+            advance();
+            auto e = ex(Expr::Kind::Unary, op);
+            e->text = "sizeof";
+            if (eatP("(")) {
+                if (!atEnd() && isTypeKw(cur())) e->ty = parseTypeName();
+                else e->kids.push_back(parseExpr());
+                expectP(")", ")");
+                return e;
+            }
+            e->kids.push_back(parseUnary());
+            return e;
+        }
         if (isP("&") || isP("*") || isP("+") || isP("-") || isP("~") || isP("!")) {
             Token op = cur();
             advance();
@@ -1311,6 +1327,24 @@ private:
             return lookup(e.text, e.line, e.col);
         case Expr::Kind::Unary: {
             if (!need(0)) return bad(e.line, e.col);
+            if (e.text == "sizeof") {
+                if (e.ty) {
+                    if (e.ty->kind == Type::Kind::Void || e.ty->kind == Type::Kind::Function) {
+                        err(e.line, e.col, "sizeof this type is not allowed");
+                        return bad(e.line, e.col);
+                    }
+                } else {
+                    if (!need(0)) return bad(e.line, e.col);
+                    ET inner = checkExpr(*e.kids[0]);
+                    if (inner.bad || !inner.type || inner.type->kind == Type::Kind::Void ||
+                        inner.type->kind == Type::Kind::Function) {
+                        err(e.line, e.col, "sizeof this expression is not allowed");
+                        return bad(e.line, e.col);
+                    }
+                }
+                r.type = prim(Type::Kind::Int);
+                return r;
+            }
             if (e.text == "&") {
                 ET inner = checkExpr(*e.kids[0]);
                 if (inner.bad) return bad(e.line, e.col);
@@ -1713,6 +1747,7 @@ private:
         int width = 8;
         int step = 0;
         int inner = 0;
+        int objSize = 8;
         std::vector<FieldOff> fields;
     };
     struct Loop {
@@ -1810,6 +1845,7 @@ private:
         }
         s.step = valueStep(t);
         s.inner = innerOf(t);
+        s.objSize = sizeOf(t);
         if (t->kind == Type::Kind::Struct) {
             s.agg = true;
             s.fields = layoutOf(t);
@@ -2251,7 +2287,71 @@ private:
         return {};
     }
 
+    std::vector<FieldOff> fieldsOf(Expr& e) {
+        if (e.kind == Expr::Kind::Name) {
+            Sym* s = find(e.text);
+            if (s) return s->fields;
+        } else if (e.kind == Expr::Kind::Member && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
+            std::vector<FieldOff> fields = fieldsOf(*e.kids[0]);
+            for (const FieldOff& f : fields)
+                if (f.name == e.kids[1]->text) return f.fields;
+        }
+        return {};
+    }
+
+    int sizeofValue(Expr& e) {
+        switch (e.kind) {
+        case Expr::Kind::Int:
+        case Expr::Kind::Char:
+            return 8;
+        case Expr::Kind::String:
+            return static_cast<int>(e.text.size()) + 1;
+        case Expr::Kind::Name: {
+            Sym* s = find(e.text);
+            if (!s) {
+                err(e.line, e.col, "not lowered: " + e.text);
+                return 8;
+            }
+            return s->objSize;
+        }
+        case Expr::Kind::Unary:
+            if (e.text == "*" && !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
+                Sym* s = find(e.kids[0]->text);
+                if (s && s->step != 0) return s->step;
+            }
+            break;
+        case Expr::Kind::Index:
+            if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
+                Sym* s = find(e.kids[0]->text);
+                if (s && s->array) return s->width;
+                if (s && s->step != 0) return s->step;
+            }
+            break;
+        case Expr::Kind::Member:
+            if (e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
+                std::vector<FieldOff> fields = fieldsOf(*e.kids[0]);
+                for (const FieldOff& f : fields)
+                    if (f.name == e.kids[1]->text) return f.width;
+            }
+            break;
+        default:
+            break;
+        }
+        err(e.line, e.col, "sizeof this expression is not allowed");
+        return 8;
+    }
+
+    int sizeofOf(Expr& e) {
+        if (e.ty) return sizeOf(e.ty.get());
+        if (e.kids.empty() || !e.kids[0]) {
+            err(e.line, e.col, "sizeof this expression is not allowed");
+            return 8;
+        }
+        return sizeofValue(*e.kids[0]);
+    }
+
     Val lowerUnary(Expr& e) {
+        if (e.text == "sizeof") return Val{Operand::number(sizeofOf(e)), 0, 0};
         if (e.kids.empty() || !e.kids[0]) return {};
         if (e.text == "&") {
             if (e.kids[0]->kind == Expr::Kind::Name) {

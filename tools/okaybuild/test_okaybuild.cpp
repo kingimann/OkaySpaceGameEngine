@@ -140,10 +140,31 @@ static void testRawActions() {
     o = sh("x.o --dry-run"); check(ran(o) == 0, "selecting one output works", o);
 }
 
+static void testImportGenerated() {
+    printf("test: importer keeps order-only edges for generated files (real CMake+Ninja configure of a tiny project)\n");
+    if (system("cmake --version >/dev/null 2>&1 && ninja --version >/dev/null 2>&1") != 0) { printf("  skipped (no cmake/ninja)\n"); return; }
+    fresh("gen");
+    write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(g CXX)\n"
+          "add_custom_command(OUTPUT gen.h COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/gen.h.in gen.h DEPENDS ${CMAKE_SOURCE_DIR}/gen.h.in)\n"
+          "add_library(lib1 STATIC a.cpp gen.h)\ntarget_include_directories(lib1 PUBLIC ${CMAKE_CURRENT_BINARY_DIR})\n"
+          "add_executable(app main.cpp)\ntarget_link_libraries(app lib1)\n");
+    write("gen.h.in", "#define GEN 5\n"); write("a.cpp", "#include \"gen.h\"\nint a(){return GEN;}\n"); write("main.cpp", "#include \"gen.h\"\nint a(); int main(){return a()==GEN?0:1;}\n");
+    string cfg = "cd '" + gRoot.string() + "' && cmake -S . -B nb -G Ninja -DCMAKE_BUILD_TYPE=Debug >/dev/null 2>&1";
+    check(system(cfg.c_str()) == 0, "tiny CMake project configures");
+    string o = sh("import nb --run-dir run -o imp.okay", nullptr); string man; { std::ifstream f(gRoot / "imp.okay"); man.assign(std::istreambuf_iterator<char>(f), {}); }
+    check(o.find("custom") != string::npos && o.find("1 custom output(s) found") != string::npos, "custom command and its output were identified", o + man);
+    check(man.find("after =") != string::npos && man.find("gen.h") != string::npos, "compiles wait for gen.h (order-only edge kept)", man);
+    int rc; o = sh("-f imp.okay -j4", &rc); check(rc == 0, "imported build succeeds (generated header exists before compile)", o);
+    check(system(("'" + gRoot.string() + "/run/app'").c_str()) == 0, "built program runs");
+    check(ran(sh("-f imp.okay")) == 0, "no-op");
+    write("gen.h.in", "#define GEN 9\n"); o = sh("-f imp.okay --explain"); check(o.find("CC ") == string::npos && ran(o) >= 3, "changing the generator input regenerates and rebuilds dependents", o);
+    check(system(("'" + gRoot.string() + "/run/app'").c_str()) == 0, "program still correct with GEN=9");
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
-    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions();
+    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testImportGenerated();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

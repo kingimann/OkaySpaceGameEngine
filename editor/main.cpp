@@ -1801,9 +1801,16 @@ bool pendingQuit = false; // set true after a successful self-update relaunch
 // Absolute path of the running executable.
 std::string SelfPath() {
 #if defined(_WIN32)
-    char buf[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    return std::string(buf, n);
+    // The whole path, however deep the folder: a MAX_PATH buffer cut it. Still the ANSI
+    // form, because the callers turn it into a path with fs::path(std::string).
+    std::string buf(512, '\0');
+    for (;;) {
+        const DWORD n = GetModuleFileNameA(nullptr, buf.data(), (DWORD)buf.size());
+        if (n == 0) return {};
+        if (n < buf.size()) { buf.resize(n); return buf; }
+        if (buf.size() >= 32768) return {};   // the longest path Windows has
+        buf.assign(buf.size() * 2, '\0');
+    }
 #else
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -8058,8 +8065,8 @@ void DrawDockSpace(EditorState& ed) {
 // The folder the editor exe lives in — where the crash handler writes its reports.
 static std::string OkayExeDir() {
 #if defined(_WIN32)
-    char buf[MAX_PATH] = ""; GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    std::string p(buf); auto s = p.find_last_of("\\/");
+    const std::string p = updater::SelfPath();   // the whole path, any length
+    auto s = p.find_last_of("\\/");
     return s == std::string::npos ? std::string(".") : p.substr(0, s);
 #else
     char buf[4096]; ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);

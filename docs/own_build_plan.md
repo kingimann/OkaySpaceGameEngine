@@ -91,6 +91,11 @@ commands are CMake's, so include order and flags are exact by construction; the 
 Per-module manifests (the idea on branch `claude/modular-1`, `engine/modules/*/module.okaymodule`) would list sources,
 public include dirs, defines and deps. A generator step turns them into `build.okay`. Not depending on that branch yet.
 
+First slice (2026-11-17): `okay-build modules DIR [-o build.okay]` reads every `*.okaymodule` in that directory
+(flat `key = values` lines: name, kind lib|exe, sources, include, export_include, define, deps) and writes one
+`build.okay`. Unknown deps and a dep on an exe are errors. It does not build; the usual `okay-build` does that next.
+It does not read the engine's real modules.
+
 ## Stage D (design only): CMake option logic
 Today CMake decides: which backends (SDL/own), platform, MinGW cross, crypto (libsodium default), tests, packaging. Replace by a
 `config.okay` of named options with typed values, `if` conditions on options/platform in the manifest, and a printed config
@@ -118,6 +123,13 @@ and `tests/test_math`: 339 files, 339 identical. The okay-build program also pri
 No-op of that same 339-step import, measured after a clean okay-build so every stamp matched (median of 5, process start included):
 okay-build 66 ms, Ninja 24 ms. Inside okay-build: plan+state load 42 ms, dirty check 9 ms, wall 52 ms, hashed 0, trusted 1835.
 The state file is 11 MB and 105,057 rows because every compile records every header. A rewrite that interned paths and stored hashes as integers was not faster (state load about 54 ms, wall about 67 ms), so it was not kept. The gap with Ninja is that table, not re-reading file bytes.
+
+## Player through the importer (2026-11-17)
+Same configure as test_math, plus `-DOKAY_BUILD_PLAYER=ON` (SDL2 2.30 dev headers were installed). Ninja `okay-player`:
+347 steps, `bin/okay-player` is 87 MB. okay-build import: 350 compile, 6 archive, 1 link, 14 order-only edges.
+`okay-build -j2` in a separate directory: `ran 357 of 357 steps`, exit 0. Byte comparison of every `.o`, every
+archive and `bin/okay-player`: 357 files, 357 identical. Both binaries exit 0 on `--help`. The help text differs
+only because it prints its own path. The player was not given a scene and was not opened on a display.
 
 ## Windows host (2026-11-17, implemented, POSIX path unchanged)
 `okay-build.cpp` compiles with `x86_64-w64-mingw32-g++-win32` (`-std=c++17 -O2 -static-libgcc -static-libstdc++`).

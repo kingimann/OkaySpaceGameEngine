@@ -74,7 +74,10 @@ int main() {
         for (const auto& p : ps->Particles()) {
             if (!p.alive) continue;
             if (k == 0) { CHECK_NEAR(p.position.x, 3.851500f, 1e-4f); CHECK_NEAR(p.position.y, 2.167596f, 1e-4f);
-                          CHECK_NEAR(p.position.z, 4.133247f, 1e-4f); CHECK_NEAR(p.color.a, 0.0f, 1e-4f); }
+                          CHECK_NEAR(p.position.z, 4.133247f, 1e-4f);
+                          // Fade Out is linear in age (#888 finding 140): 2 frames of 1.5 s left = 0.0444. The old
+                          // golden 0.0 came from the fade compounding every frame.
+                          CHECK_NEAR(p.color.a, (2.0f / 30.0f) / 1.5f, 1e-3f); }
             if (k == 1) { CHECK_NEAR(p.position.x, 5.671357f, 1e-4f); CHECK_NEAR(p.position.y, 6.232997f, 1e-4f);
                           CHECK_NEAR(p.position.z, 3.987682f, 1e-4f); }
             ++k;

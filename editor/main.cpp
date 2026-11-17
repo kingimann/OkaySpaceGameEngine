@@ -19907,7 +19907,9 @@ void DrawProjectSettings(EditorState& ed) {
         ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
     }
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
-        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);   // wrapped: it ran off the window's edge
+        ImGui::TextWrapped("Defaults a new build/scene inherits. Saved with the project as you change it.");
+        ImGui::PopStyleColor();
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
             ImGui::SetNextItemWidth(160);
@@ -19949,8 +19951,9 @@ void DrawProjectSettings(EditorState& ed) {
             {
                 auto& p3 = ed.scene().physics3D();
                 int q = (int)p3.quality;
-                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
-                ImGui::SetNextItemWidth(330);
+                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
+                const char* qn[] = {"Classic", "Improved"};
+                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
                 if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
                     p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
                     ed.scene().physics().quality = p3.quality;
@@ -19961,6 +19964,10 @@ void DrawProjectSettings(EditorState& ed) {
                                       "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
                                       "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
                                       "New scenes start Improved. The setting is part of the scene file.");
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
+                                                                                     : "The original step, for old scenes.");
+                ImGui::PopStyleColor();
                 if (p3.quality == okay::PhysicsQuality::Improved) {
                     int it = p3.solverIterations;
                     ImGui::SetNextItemWidth(160);

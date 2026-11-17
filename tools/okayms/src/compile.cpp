@@ -1793,6 +1793,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         bool exported = false;
     };
     std::vector<PlacedFn> placed;
+    std::vector<uint32_t> unwind_offs;
     for (FuncDecl& fn : funcs) {
         if (!fn.defined) continue;
         int max_args = count_args(fn.body);
@@ -1801,10 +1802,6 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         int frame = local_end + 64 + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
-        if (frame > 112) {
-            *error = "function frame is too large";
-            return false;
-        }
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
         gen.frame = frame;
@@ -1813,10 +1810,18 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.b(0x48);
         gen.b(0x89);
         gen.b(0xE5);
-        gen.b(0x48);
-        gen.b(0x83);
-        gen.b(0xEC);
-        gen.b(static_cast<uint8_t>(frame));
+        const bool large_alloc = frame > 127;
+        if (large_alloc) {
+            gen.b(0x48);
+            gen.b(0x81);
+            gen.b(0xEC);
+            gen.u32(static_cast<uint32_t>(frame));
+        } else {
+            gen.b(0x48);
+            gen.b(0x83);
+            gen.b(0xEC);
+            gen.b(static_cast<uint8_t>(frame));
+        }
         for (int p = fn.nparams - 1; p >= 0 && p < 4; --p) {
             const Type& param = fn.locals[p].type;
             const int param_size = gen.size_of(param);
@@ -1846,12 +1851,20 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.epilogue();
         placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported});
         if (fn.exported) out->exports.push_back(fn.name);
-        const auto unwind = encode_frame_unwind(static_cast<uint32_t>(frame));
+        UnwindPrologue prolog;
+        prolog.size = large_alloc ? 11 : 8;
+        prolog.frame_register = 5;
+        prolog.frame_at = 4;
+        prolog.alloc = static_cast<uint32_t>(frame);
+        prolog.alloc_at = prolog.size;
+        prolog.pushes.push_back({5, 1});
+        const auto unwind = encode_unwind(prolog);
         if (!unwind.ok()) {
             *error = unwind.error;
             return false;
         }
         const uint32_t xat = static_cast<uint32_t>(gen.xdata.size());
+        unwind_offs.push_back(xat);
         gen.xdata.insert(gen.xdata.end(), unwind.value.begin(), unwind.value.end());
         const std::string unw = "unwind_" + fn.name;
         // pdata: begin, end (addend = size), unwind info.
@@ -1925,10 +1938,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         }
     }
     for (const auto& str : gen.string_at) add_sym(str.first, str.second, static_cast<int16_t>(rdata_section), kClassStatic, 0);
-    uint32_t unwind_at = 0;
-    for (const PlacedFn& fn : placed) {
-        add_sym("unwind_" + fn.name, unwind_at, static_cast<int16_t>(xdata_section), kClassStatic, 0);
-        unwind_at += 12;
+    for (size_t i = 0; i < placed.size(); ++i) {
+        add_sym("unwind_" + placed[i].name, unwind_offs[i], static_cast<int16_t>(xdata_section), kClassStatic, 0);
     }
 
     std::map<std::string, uint32_t> index;

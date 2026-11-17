@@ -929,9 +929,14 @@ public:
             HDROP drop = (HDROP)wp;
             const UINT n = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
             for (UINT i = 0; i < n; ++i) {
-                wchar_t path[MAX_PATH * 2];
-                const UINT len = DragQueryFileW(drop, i, path, (UINT)(sizeof(path) / sizeof(path[0])));
-                Event d; d.type = EventType::DropFile; d.windowId = e.windowId; d.timestampMs = e.timestampMs; d.text = Utf8(path, (int)len);
+                // Ask for the length first: a fixed buffer cut the path of a file dropped from
+                // a deep folder, and the editor then looked for a file that does not exist.
+                const UINT need = DragQueryFileW(drop, i, nullptr, 0);
+                if (need == 0) continue;
+                std::wstring path((std::size_t)need + 1, L'\0');
+                const UINT len = DragQueryFileW(drop, i, path.data(), need + 1);
+                if (len == 0) continue;
+                Event d; d.type = EventType::DropFile; d.windowId = e.windowId; d.timestampMs = e.timestampMs; d.text = Utf8(path.c_str(), (int)len);
                 b->m_pending.push_back(d);
             }
             DragFinish(drop);

@@ -102,6 +102,14 @@ A damaged file is one with no `okayscene` header, a bad version, a duplicate obj
 object without its closing `end`, a record cut short, or a parent loop. All of these are found
 before any object is made, and object loading itself is all-or-nothing.
 
+A file whose last line has no line end and is not a whole record (for example `override 2 ` or
+`gameob`) was cut in the middle of that line, and is refused as "cut short". Before 2026-11-17 such a
+variant loaded with that record dropped, so a variant cut just after `override 2 ` came out without its
+override (the `prefab_variants` test failed for some temp folder path lengths because of this). A last
+line that is a whole record with no line end (a hand-written `remove 1` at the very end) still loads.
+Paths of any length work: `prefab_variants` loads a variant from a folder over 300 characters deep and
+cuts it at every byte.
+
 ## Variants
 
 A variant is a prefab file that says which prefab it is a variant of and lists only what it

@@ -1,113 +1,19 @@
-# Modular engine
+# Modular engine (internal notes)
 
-The engine is a list of **modules** (physics, audio, animation, UI, weapons, inventory, networking and so on). A
-project picks which modules it uses. The design and the reasons are in
-[design/modular_gameplay_contracts.md](design/modular_gameplay_contracts.md) (section 11 lists the decisions taken).
-This page says what exists today, how to use it and what is not done.
+Design and decisions: `design/modular_gameplay_contracts.md` (section 11).
 
-## What exists today
+## What exists
+- 40 module manifests (`engine/modules/<name>/module.okaymodule`), `ModuleRegistry`, `OKAY_MODULES` (default all), generated `modules_enabled.cpp`.
+- A manifest `compile=` list names source files built only when the module is on; `register.cpp` runs only for modules that are on.
+- Stripped for real so far: the model readers (`model_import`) and `Interactable` (`interaction`).
+- Contracts: `health::`, `interact::`, `seat::`, `weapon::` (adapters in each module's `register.cpp`).
+- `scripts/check_modules.py` (CI, baseline of known forbidden includes), `scripts/module_sizes.py`.
+- Editor: New Project module choice, Project Settings > Modules, Add Component and Inspector hide components of modules that are off, Build warns about scenes that use them.
+- Join handshake carries the module list; a mismatch is refused with a plain message.
 
-| Part | Where | State |
-|---|---|---|
-| Module manifests, one per module (40) | `engine/modules/<name>/module.okaymodule` | Done. Name, version, requires, provides, components, scene records, editor items, source globs. |
-| `ModuleManifest` (parser) and `ModuleRegistry` | `engine/include/okay/Modules/ModuleRegistry.hpp`, `engine/src/Modules/` | Done. Which modules exist and are on, what each adds, requirements in dependency order, `Resolve` (add what is needed), `Validate`. |
-| `OKAY_MODULES` build option and the generated `modules_enabled.cpp` | `cmake/OkayModules.cmake`, `engine/CMakeLists.txt` | Done. Default `all`: nothing changes. See below. |
-| Per-module `register.cpp` (linked only when the module is on) | `engine/modules/<name>/register.cpp` | Done for 7 modules (health, survival, RPG stats, AI behaviour, interaction, dialogue, vehicles). |
-| Dependency check | `scripts/check_modules.py`, run in CI by `branch-lint.yml` | Done. Fails on a new forbidden include or a broken manifest; today's 700+ known ones are in `scripts/module_deps_baseline.txt` and can only shrink. |
-| Size report | `scripts/module_sizes.py` | Source lines per module, and object-file bytes when given a build folder. Not a link map. |
-| Health, damage, hit zones contract | `okay/Modules/Damage.hpp`, `Health.hpp`, `Components/HitZones.hpp` | Done as adapters over the old components. |
-| Interaction and seat contracts | `okay/Modules/Interact.hpp`, `ISeat.hpp` | Done as adapters; the interact key is the `Interact` input action. |
-| New Project asks which modules; Project Settings > Modules | `editor/ModulesModel.hpp`, `ModulesPanelUI.hpp`, `editor/main.cpp` | Written and unit tested (the model); the drawing is not run in the real editor window. See "Unverified". |
-
-## Using it
-
-**See the modules.** `ModuleRegistry::Get().All()` lists them; each has `manifest` (what it says) and `enabled`.
-`scripts/module_sizes.py` prints the size table.
-
-**Choose modules when you build the engine** (developers and dedicated-server operators):
-
-```
-cmake -S . -B build                                       # every module (the default)
-cmake -S . -B build -DOKAY_MODULES=core                   # only the core
-cmake -S . -B build -DOKAY_MODULES=physics3d,health_damage,weapons
-```
-
-Every requirement must be in the list. A missing one fails configure and says which
-(`module 'weapons' requires 'health_damage'; add it to the list`), as does an unknown name. The configure output ends
-its module line with the counts: `OkaySpace: modules all (40 on, 0 off)`.
-
-**Choose modules for a project.** File > New Project has a "Modules" part: four presets (2D game, 3D action,
-Survival, Everything), a summary ("27 of 39 modules are on") and "Choose modules one by one". Picking a template
-picks the fitting preset until you choose yourself. Edit > Project Settings > Modules shows the same list for the open
-project, with how many objects of the open scene use each module, and warns about objects of a module that is off. The
-choice is saved in `project.okayproj` as `modules=a,b,c` (core is always on and not listed). A project with no
-`modules=` line has every module on, so projects made before modules existed behave as before.
-
-Ticking a module ticks what it needs and says so. Unticking one that another ticked module needs is refused with the
-reason (hover the greyed box). Turning a module off never edits a scene.
-
-## The manifest
-
-```
-name=weapons
-title=Weapons
-area=Gameplay
-description=Ranged and melee weapons, projectiles, weapon definitions.
-version=1                  (optional, default 1)
-default=on
-core=0
-requires=health_damage,physics3d
-provides=IWeapon
-components=RangedWeapon,Projectile3D,MeleeAttacker,Crosshair
-serializers=rangedweapon,projectile3d      (scene record names it reads and writes)
-vs_nodes=                  (visual-script node names it adds)
-vs_group=
-editor=                    (editor items it adds)
-sources=include/okay/Components/RangedWeapon.hpp src/Components/RangedWeapon.cpp ...   (globs under engine/)
-```
-
-`sources` lists the files a module owns while the code still lives in the shared folders (the files move into
-`engine/modules/<name>/` later; the list is what the dependency check and the size report use). A file no module
-claims belongs to `core`.
-
-To add a module: make the folder and manifest, run `python3 scripts/check_modules.py`, add a `register.cpp` with
-`void okay::modules::Register_<name>(ModuleContext&)` if it has anything to register (run cmake again so the
-generated file sees it), and add the new forbidden includes it reveals to nothing: fix them instead.
-
-## The shared contracts
-
-All three are small interfaces in `engine/include/okay/Modules/`. A module registers an **adapter** for each of its
-components from its `register.cpp`, so a module that is off simply has no adapter. The components, their settings and
-their saved records are unchanged: old scenes load as before.
-
-- **Health and damage** (`health::`): `health::Damage(go, DamageEvent, parents)`, `health::Heal`, `health::Find`.
-  `DamageEvent` carries amount, type (`Bullet`, `Melee`, `Fire`, ...), source, instigator, weapon, zone, hit point and
-  origin. `HitZones` (new component, Add Component > Hit Zones) scales a hit by zone (`head` x2, `body`, `legs` x0.75;
-  a hit with only a point is sorted by height) and by damage type. Adapters: `HealthStat` (first), `SurvivalStats`,
-  `Stats`, `NPCController`. **Replaced and deleted:** `DamageGameObject`, `DamageHealthOn`, `HealOn`, the cascade in
-  `ApplyCombatDamage`, `CanBeHurt`. Shots and blows now hurt every kind of health; before, a shot hurt only a
-  `HealthStat`.
-- **Interaction** (`interact::`, `IInteractable`): `interact::Pressed(key)`, `Take(key)` (one press is used once),
-  `Find`, `Nearest`, `Use`. Adapters: `ItemPickup`, chests and crafting stations (`InventoryInteractable`),
-  `DialogueRunner`, `Seat`, `VehicleSeat`. The key: a component's saved `interactKey` of `'e'` means the `Interact`
-  input action (default E and pad X, rebindable), another letter stays a raw key, `0` means "not interactable". **Replaced
-  and deleted:** `ItemPickup::BlockInteract/ClearInteractBlock`, the raw `GetKeyDown('e')` in `Seat`, in the visual-script
-  `interact` input and in `VehicleSeat` (now the shared key).
-- **Seats** (`seat::`, `ISeat`): `seat::Find(go)`, `seat::SeatOf(who)`; adapters for `Seat` and `VehicleSeat`.
-
-## What is not stripped yet
-
-Turning a module off today changes what the registry reports, what the editor lists and warns about, and whether that
-module's `register.cpp` (its adapters) is compiled. It does **not** yet remove the module's other code from the
-binary, because the scene serializer, the OkayScript VM, the property tables, the visual-script factory and the
-renderer still name every component directly (about 740 baseline entries in `scripts/module_deps_baseline.txt` are those
-edges). Cutting them is design stage 1; stripping the binary (per-module libraries, CI preset player variants) follows.
-Until then there is no smaller player to download.
-
-Also not done: the scene format v3 to v4 health merge (the old health fields still exist next to the contract), the
-weapon contract (`IWeapon`) and ammo, the Add Component and GameObject menus hiding modules that are off, the export
-gate that drops components of disabled modules, the size column (needs a measured link map), module list in the
-multiplayer join handshake, `Interactable` and `InteractionSensor` components, `HoldPrompt` as a pure view.
+## Missing
+- Serializer, OkayScript VM, property tables, visual-script factory, validators and renderer still name every component, so most modules cannot be stripped yet.
+- Scene v3 to v4 health merge, GameObject menu filtering, exporter drops nothing (warns only), preset player builds.
 
 ## Measured sizes (stage 0)
 
@@ -162,8 +68,3 @@ player, which needs the per-module libraries (not built yet).
 | **total** | 1013 | 314074 | | 73905 |
 
 
-## Tests
-
-`test_modules` (parser, registry, the real list), `test_health_contract`, `test_interact_contract`,
-`test_modules_model` (presets, ticking rules, project file). `python3 scripts/check_modules.py` is the dependency check.
-`tools/modules_shots.cpp` draws the two pages into a software surface for pictures; pictures are not kept in the repository (it writes to `$OKAY_SHOT_DIR`, else the system temp folder).

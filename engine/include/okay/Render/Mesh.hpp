@@ -2143,7 +2143,7 @@ struct Mesh {
     /// UVs follow the engine's convention: v = 0 is the top of the image, and a
     /// face reads the right way round seen from outside (from + along the axis).
     void ProjectUVPlanar(int axis, float tile = 1.0f) {
-        if (vertices.empty() || axis < 0 || axis > 2) return;
+        if (vertices.empty() || axis < 0 || axis > 2 || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
@@ -2162,7 +2162,7 @@ struct Mesh {
     /// normal axis, turned so the texture reads the right way round from
     /// outside on all six sides. The go-to for buildings and hand-edited geometry.
     void ProjectUVBox(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
@@ -2193,7 +2193,7 @@ struct Mesh {
     /// to top. For columns, cans, tree trunks, lathe/screw results. Faces that
     /// straddle the wrap-around keep their corners on one side (no smeared band).
     void ProjectUVCylinder(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         float h = (hi.y - lo.y) > 1e-6f ? (hi.y - lo.y) : 1.0f;
@@ -2211,7 +2211,7 @@ struct Mesh {
 
     /// Spherical projection from the bounds centre — planets, rocks, heads.
     void ProjectUVSphere(float tile = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(tile)) return;   // a typed NaN or infinite value would turn every UV into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         const float kPi = 3.14159265358979323846f;
@@ -2774,6 +2774,7 @@ public:
     /// Push every vertex onto a sphere of the given radius about the origin —
     /// pair with Subdivide() to turn a cube/icosphere into a smooth ball.
     void ProjectToSphere(float radius = 0.5f) {
+        if (!std::isfinite(radius)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         for (Vec3& v : vertices) {
             float m = v.Magnitude();
             if (m > 1e-6f) v = v * (radius / m);
@@ -3007,7 +3008,7 @@ public:
     /// Shrink/Fatten (Alt+S): inflate or carve a selected patch without dragging
     /// an axis. Uses smooth per-vertex normals so the offset follows curvature.
     void ShrinkFattenVertices(const std::vector<int>& verts, float dist) {
-        if (verts.empty() || std::fabs(dist) < 1e-8f || vertices.empty()) return;
+        if (verts.empty() || !std::isfinite(dist) || std::fabs(dist) < 1e-8f || vertices.empty()) return;
         std::vector<Vec3> n = Normals();
         for (int v : verts)
             if (v >= 0 && v < (int)vertices.size()) vertices[v] += n[v] * dist;
@@ -3020,7 +3021,7 @@ public:
     /// To Sphere (Shift+Alt+S). The sphere radius is the selection's mean distance
     /// from its centre, so the patch rounds without ballooning.
     void SphereizeVertices(const std::vector<int>& verts, float amount) {
-        if (verts.empty() || amount <= 0.0f || vertices.empty()) return;
+        if (verts.empty() || !(amount > 0.0f) || vertices.empty()) return;   // (NaN fails the test)
         float t = amount > 1.0f ? 1.0f : amount;
         Vec3 c{0, 0, 0}; int n = 0;
         for (int v : verts) if (v >= 0 && v < (int)vertices.size()) { c += vertices[v]; ++n; }
@@ -3471,7 +3472,8 @@ public:
     /// centre, sharpening creases). SMOOTH/FLATTEN read a snapshot so the
     /// relaxation doesn't feed back within one call.
     void SculptBrush(const Vec3& center, const Vec3& dir, float radius, float strength, int mode) {
-        if (radius <= 1e-6f || vertices.empty()) return;
+        if (!(radius > 1e-6f) || vertices.empty()) return;
+        if (!std::isfinite(radius + strength + center.x + center.y + center.z + dir.x + dir.y + dir.z)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         std::vector<Vec3> vn;
         if (mode == 1 || mode == 3) vn = Normals();    // vertex normals for INFLATE/FLATTEN
         std::vector<Vec3> snapshot = vertices;         // SMOOTH reads positions pre-edit
@@ -3805,7 +3807,7 @@ public:
     /// `dist` — positive inflates, negative deflates. Normals are oriented outward
     /// (away from the mesh centre) so it inflates regardless of triangle winding.
     void ShrinkFatten(float dist) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(dist)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         ComputeSmoothNormals();
         Vec3 ctr{0, 0, 0};
         for (const Vec3& v : vertices) ctr += v;
@@ -3824,7 +3826,7 @@ public:
     /// section (`thickness` across), turning the mesh into its wire lattice — handy
     /// for cages, scaffolds, and stylised low-poly props.
     void Wireframe(float thickness) {
-        if (triangles.empty() || thickness <= 1e-6f) return;
+        if (triangles.empty() || !(thickness > 1e-6f) || !std::isfinite(thickness)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         Mesh w = *this; w.WeldVertices();
         std::set<std::pair<int, int>> edges;
         for (std::size_t t = 0; t + 2 < w.triangles.size(); t += 3) {
@@ -3866,7 +3868,7 @@ public:
     /// `axis`: 0=X,1=Y,2=Z) toward `radius`, by `amount` (0 = none, 1 = full). Rounds
     /// a boxy shape into a barrel/tube. Cast-to-sphere already exists as Spherify().
     void CastToCylinder(float radius, int axis = 1, float amount = 1.0f) {
-        if (vertices.empty()) return;
+        if (vertices.empty() || !std::isfinite(radius) || !std::isfinite(amount)) return;   // a typed NaN or infinite value would turn every vertex into NaN
         for (Vec3& v : vertices) {
             float a, b;
             if (axis == 0)      { a = v.y; b = v.z; }
@@ -4627,7 +4629,7 @@ public:
     /// Displace vertices by a deterministic random offset up to `amount` — quick
     /// organic roughness (rocks, rubble, hand-made look). Empty `verts` = whole mesh.
     void JitterVertices(const std::vector<int>& verts, float amount, int seed = 0) {
-        if (amount == 0.0f || vertices.empty()) return;
+        if (amount == 0.0f || !std::isfinite(amount) || vertices.empty()) return;   // a typed NaN or infinite value would turn every vertex into NaN
         auto h = [&](int i, int c) {
             unsigned x = ((unsigned)i * 73856093u) ^ ((unsigned)c * 19349663u) ^ ((unsigned)seed * 83492791u);
             x = (x ^ (x >> 13)) * 1274126177u;
@@ -4649,7 +4651,7 @@ public:
     /// `along` (about the centre) — slanted walls, italic text blocks, leaning towers.
     void Shear(int axis, int along, float amount) {
         if (axis < 0 || axis > 2 || along < 0 || along > 2 || axis == along
-            || amount == 0.0f || vertices.empty()) return;
+            || amount == 0.0f || !std::isfinite(amount) || vertices.empty()) return;   // a typed NaN or infinite value would turn every vertex into NaN
         Vec3 lo, hi; Bounds(lo, hi);
         float c = ((&lo.x)[along] + (&hi.x)[along]) * 0.5f;
         for (Vec3& v : vertices)

@@ -199,6 +199,25 @@ void AppendTests() {
         for (unsigned k = c.IdxOffset; k < c.IdxOffset + c.ElemCount; ++k)
             if ((unsigned)dl->IdxBuffer[(int)k] + c.VtxOffset >= (unsigned)dl->VtxBuffer.Size) inRange = false;
     CHECK(inRange);
+    {   // With an offset (multi-window panels: OkayUI's main-window pixels to ImGui's desktop pixels) every position and clip
+        // rectangle moves by it; without one nothing moves (the 0,0 default).
+        OkayUI::CapturedGeometry one;
+        one.vertices = {{10, 20, 9, 9, 9, 255, 0, 0}, {14, 20, 9, 9, 9, 255, 0, 0}, {14, 24, 9, 9, 9, 255, 0, 0}};
+        one.indices = {0, 1, 2};
+        OkayUI::DrawCmd c; c.idxOffset = 0; c.idxCount = 3; c.clipOn = true; c.clipX = 5; c.clipY = 6; c.clipW = 50; c.clipH = 40;
+        one.cmds = {c};
+        const int v1 = dl->VtxBuffer.Size;
+        okayimgui::AppendGeometry(dl, one, [](const void*) { return ImTextureID_Invalid; }, ImVec2(160.0f, 100.0f));
+        CHECK(dl->VtxBuffer.Size - v1 == 3);
+        CHECK(dl->VtxBuffer[v1].pos.x == 170.0f && dl->VtxBuffer[v1].pos.y == 120.0f);
+        CHECK(dl->VtxBuffer[v1 + 2].pos.x == 174.0f && dl->VtxBuffer[v1 + 2].pos.y == 124.0f);
+        bool moved = false;   // the clip rectangle moved too (intersected with the window's own, which starts beyond 165,106)
+        for (const ImDrawCmd& dc : dl->CmdBuffer) if (dc.ElemCount == 3 && dc.ClipRect.x >= 165.0f && dc.ClipRect.y >= 106.0f && dc.ClipRect.z <= 215.0f && dc.ClipRect.w <= 146.0f) moved = true;
+        CHECK(moved);
+        const int v2 = dl->VtxBuffer.Size;
+        okayimgui::AppendGeometry(dl, one, [](const void*) { return ImTextureID_Invalid; });
+        CHECK(dl->VtxBuffer[v2].pos.x == 10.0f && dl->VtxBuffer[v2].pos.y == 20.0f);
+    }
     ImGui::End();
     ImGui::EndFrame();
 }

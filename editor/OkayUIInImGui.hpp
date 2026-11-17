@@ -28,8 +28,11 @@ namespace okayimgui {
 /// Append geometry taken out of an OkayUI frame to an ImGui draw list. `textureFor` turns an OkayUI DrawCmd::texture (the
 /// launcher look's atlas, a fallback font, an image) into the ImTextureID of the ImGui renderer backend; a command whose
 /// texture it cannot give is skipped. Untextured geometry (the classic look) samples the white pixel of ImGui's font atlas.
-/// Clip rectangles are intersected with the draw list's current one.
-inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, const std::function<ImTextureID(const void*)>& textureFor) {
+/// Clip rectangles are intersected with the draw list's current one. `offset` is added to every position and clip rectangle:
+/// OkayUI works in the main window's pixels, an ImGui draw list in desktop pixels when multi-window panels are on (then pass
+/// ImGui::GetMainViewport()->Pos; without them it is 0,0).
+inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, const std::function<ImTextureID(const void*)>& textureFor,
+                           ImVec2 offset = ImVec2(0.0f, 0.0f)) {
     if (!dl || g.indices.empty() || g.vertices.empty()) return;
     const ImVec2 white = ImGui::GetFontTexUvWhitePixel();
     const ImTextureRef fontTex = ImGui::GetIO().Fonts->TexRef;
@@ -43,11 +46,12 @@ inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, co
             if (id == ImTextureID_Invalid) continue;
             tex = ImTextureRef(id);
         }
-        if (c.clipOn) dl->PushClipRect(ImVec2((float)c.clipX, (float)c.clipY), ImVec2((float)(c.clipX + c.clipW), (float)(c.clipY + c.clipH)), true);
+        if (c.clipOn) dl->PushClipRect(ImVec2((float)c.clipX + offset.x, (float)c.clipY + offset.y),
+                                       ImVec2((float)(c.clipX + c.clipW) + offset.x, (float)(c.clipY + c.clipH) + offset.y), true);
         dl->PushTexture(tex);
         auto put = [&](const OkayUI::DrawVertex& v) {
             ImDrawVert* w = dl->_VtxWritePtr++;
-            w->pos.x = v.x; w->pos.y = v.y;
+            w->pos.x = v.x + offset.x; w->pos.y = v.y + offset.y;
             if (flat) w->uv = white; else { w->uv.x = v.u; w->uv.y = v.v; }
             w->col = IM_COL32(v.r, v.g, v.b, v.a);
         };
@@ -86,15 +90,17 @@ inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, co
 /// Run `draw` inside a bare OkayUI window at (pos, size) and put what it draws into the current ImGui window's draw list, at
 /// this point of the ImGui frame. Needs an open OkayUI frame and an open ImGui window. OkayUI tooltips (the overlay) are not
 /// moved: they stay on top; a CodeEdit's own hover help is moved into ImGui's tooltip layer with SetHostDrawsTooltip and
-/// ShowCodeHover. `geo` is scratch space kept between frames.
+/// ShowCodeHover. `geo` is scratch space kept between frames. `pos` is in OkayUI's (the main window's) pixels; `offset` turns
+/// them into the draw list's (AppendGeometry).
 inline void DrawOkayUIHere(const char* id, ImVec2 pos, ImVec2 size, const std::function<void()>& draw,
-                           const std::function<ImTextureID(const void*)>& textureFor, OkayUI::CapturedGeometry& geo) {
+                           const std::function<ImTextureID(const void*)>& textureFor, OkayUI::CapturedGeometry& geo,
+                           ImVec2 offset = ImVec2(0.0f, 0.0f)) {
     OkayUI::BeginGeometryCapture();
     OkayUI::BareNextWindow();
     if (OkayUI::Begin(id, pos.x, pos.y, size.x, size.y)) draw();
     OkayUI::End();
     OkayUI::EndGeometryCapture(geo);
-    AppendGeometry(ImGui::GetWindowDrawList(), geo, textureFor);
+    AppendGeometry(ImGui::GetWindowDrawList(), geo, textureFor, offset);
 }
 
 #ifdef OKAY_PLATFORM_HAVE_SDL2

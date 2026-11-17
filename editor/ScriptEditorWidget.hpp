@@ -141,12 +141,13 @@ public:
         OkayUI::PushTextScale(oked::g_uiScale * zoom_);         // 16 px code at 100 %, the ImGui editor's kCodeFontDispPx x zoom
         OkayUI::MouseCursor cursor = OkayUI::MouseCursor_Arrow;   // the I-beam over the text, as the ImGui editor shows it
         okayimgui::DrawOkayUIHere(id, p, a, [&] { cursor = okayimgui::CursorOf([&] { okay_.Edit().Draw("##codeedit", a.x, a.y); }); },
-                                  CodeTextures(), geo_);
+                                  CodeTextures(), geo_, vp);   // drawn back in ImGui's (desktop) pixels
         okayimgui::SetImGuiCursor(cursor);
         OkayUI::PopTextScale();
         if (border) {                                           // the child window's border the ImGui editor has
             const ImGuiStyle& st = ImGui::GetStyle();
-            ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
+            const ImVec2 s0(p.x + vp.x, p.y + vp.y);            // (ImGui's pixels)
+            ImGui::GetWindowDrawList()->AddRect(s0, ImVec2(s0.x + a.x, s0.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
                                                 st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
         }
         okayFocused_ = okay_.Edit().Focused() && hostFocused;

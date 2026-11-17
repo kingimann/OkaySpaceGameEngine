@@ -126,6 +126,11 @@ struct Theme {
     // edge that fades to alpha 0, so curves and slanted edges are smooth instead of stair-stepped. Plain axis-aligned
     // rectangles are not affected. Off by default (the classic look and its golden images); the launcher pages turn it on.
     bool  antiAliased = false;
+    // DrawList::AddText of four or more characters with the launcher look keeps each text run's quads and copies them when
+    // the same text is drawn again with the same scale, colour and fraction of a pixel (the DrawList::Cached store), instead of
+    // placing every glyph again: the same pixels, less work for pages that draw the same texts every frame. Off by default;
+    // the launcher pages turn it on.
+    bool  cacheText = false;
     // Popups (BeginPopup, BeginPopupContextItem) and combo lists the Dear ImGui way when imguiPopups is on: a popup is as wide
     // as its widest item plus popupPadX on each side (measured the frame before; a combo's list is as wide as the combo and
     // padded by the frame padding), popupPadY above and below, corners popupRounding, a one-pixel Col_Border edge and the

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <cstring>
+#include <string>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -822,6 +823,48 @@ void ImageRoundedTests() {
     CHECK(UI::GetDrawData().vertexCount - before == 4);
 }
 
+// Theme::cacheText: text runs copied from the store draw the same pixels as text placed glyph by glyph, at whole and
+// fractional positions, after a move and in other colours; a changed text shows the change.
+void CacheTextTests() {
+    Sim sim(220, 120);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    float ox = 0.0f;
+    std::string msg = "Cached text run";
+    auto scene = [&] {
+        dl.AddText({10 + ox, 10}, kRed, msg.c_str());
+        dl.AddText({12.4f + ox, 40.6f}, UI::RGBA(80, 200, 255), "Fractional position");
+        dl.AddText({10 + ox, 70}, kRed, "Scaled", 1.5f);
+        dl.AddText({150, 10}, kRed, "ab");   // short texts are drawn directly
+    };
+    auto render = [&](bool cache, int frames, int* verts = nullptr) {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().cacheText = cache;
+        for (int i = 0; i < frames; ++i) sim.Frame(scene);
+        if (verts) *verts = UI::GetDrawData().vertexCount;
+        const Bitmap b = sim.Draw(0, 0, 0);
+        UI::Style().cacheText = false;
+        UI::UseLauncherLook(false);
+        return b;
+    };
+    int vPlain = 0, vCached = 0;
+    const Bitmap plain = render(false, 1, &vPlain), cached = render(true, 3, &vCached);   // frames 2 and 3 are copies
+    CHECK(plain.rgba == cached.rgba && vPlain == vCached);
+    ox = 7.0f;   // moved by whole pixels: copied with an offset
+    const Bitmap plainMoved = render(false, 1);
+    Reset(); UI::UseLauncherLook(true); UI::Style().cacheText = true;
+    ox = 0.0f; sim.Frame(scene); ox = 7.0f; sim.Frame(scene);
+    const Bitmap cachedMoved = sim.Draw(0, 0, 0);
+    msg = "Another text run";   // a different text is not mistaken for the one kept
+    sim.Frame(scene);
+    const Bitmap changed = sim.Draw(0, 0, 0);
+    UI::Style().cacheText = false; UI::UseLauncherLook(false);
+    CHECK(plainMoved.rgba == cachedMoved.rgba);
+    const Bitmap plainChanged = render(false, 1);
+    CHECK(plainChanged.rgba == changed.rgba && changed.rgba != cachedMoved.rgba);
+    ox = 0.0f; msg = "Cached text run";
+}
+
 } // namespace
 
 int main() {
@@ -845,5 +888,6 @@ int main() {
     CachedTests();
     ClipSkipTests();
     ImageRoundedTests();
+    CacheTextTests();
     TEST_MAIN_RESULT();
 }

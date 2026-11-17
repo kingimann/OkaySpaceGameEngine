@@ -5873,12 +5873,14 @@ void DrawList::AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, f
     AddPolyline(pts, n + 1, col, false, th);
 }
 
+namespace { void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]); }
 void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) const {
     if (!text || !*text || !finite2(pos)) return;
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
     if (!overlay && culledY(pos.y - 2.0f, pos.y + 2.0f * fH() * scale + 2.0f)) return;   // generous: glyphs below the line
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    if (g_theme.cacheText && g_ttf && !g_toOverlay && !(g_cullRow) && text[1] && text[2] && text[3]) { cachedText(pos.x, pos.y, text, scale, c); return; }
     drawText(pos.x, pos.y, text, scale, c);
 }
 
@@ -5949,23 +5951,33 @@ void DrawList::PathFillConvex(Color32 col) const {
 
 // ---- Cached geometry (DrawList::Cached) ----------------------------------------------------------------------------------
 // A fixed store (no allocation): entries point into one vertex pool and one index pool, filled in order; when either is full
-// the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex.
+// the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex. An
+// open-addressing table finds an entry by its key, fraction of a pixel and layer. Text runs use it too (cachedText).
 namespace {
 struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; float y0, y1; };
-constexpr int kGeoEntries = 128, kGeoVerts = 32768, kGeoIdx = 65536;
+constexpr int kGeoEntries = 1024, kGeoVerts = 131072, kGeoIdx = 196608, kGeoSlots = 4096;   // slots: a power of two
 GeoEntry   g_geo[kGeoEntries];
 int        g_ngeo = 0;
+int        g_geoSlot[kGeoSlots];   // entry index + 1, 0 = empty
 SDL_Vertex g_geoV[kGeoVerts];
 int        g_geoI[kGeoIdx];
 int        g_geoNv = 0, g_geoNi = 0;
 bool       g_geoAA = false, g_geoLook = false;   // the state the store was filled under
+const fontatlas::Atlas* g_geoTtf = nullptr;
+inline unsigned geoHash(unsigned long long key, int fx, int fy, bool ov) {
+    unsigned long long h = key ^ ((unsigned long long)(unsigned)fx << 7) ^ ((unsigned long long)(unsigned)fy << 17) ^ (ov ? 0x9e3779b97f4a7c15ull : 0ull);
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;
+    return (unsigned)h & (kGeoSlots - 1);
+}
 } // namespace
-void geoClear() { g_ngeo = 0; g_geoNv = g_geoNi = 0; }
+void geoClear() { g_ngeo = 0; g_geoNv = g_geoNi = 0; std::memset(g_geoSlot, 0, sizeof(g_geoSlot)); }
 
-void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const {
+namespace {
+// The body of DrawList::Cached, for the window list (overlay false) or the foreground list.
+void cachedRun(bool overlay, unsigned long long key, Vec2 origin, DrawList::DrawFn draw, void* user) {
     if (!draw || !finite2(origin)) return;
     ListScope s(overlay);
-    if (g_geoAA != aaOn() || g_geoLook != g_look) { geoClear(); g_geoAA = aaOn(); g_geoLook = g_look; }
+    if (g_geoAA != aaOn() || g_geoLook != g_look || g_geoTtf != g_ttf) { geoClear(); g_geoAA = aaOn(); g_geoLook = g_look; g_geoTtf = g_ttf; }
     // The origin in 1/64 pixels: its whole part moves the copy, its fraction is part of what was drawn.
     const long long qx = (long long)std::floor((double)origin.x * 64.0 + 0.5), qy = (long long)std::floor((double)origin.y * 64.0 + 0.5);
     const int fx = (int)(qx & 63), fy = (int)(qy & 63);
@@ -5974,7 +5986,10 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    for (int k = 0; k < g_ngeo; ++k) {
+    unsigned slot = geoHash(key, fx, fy, g_toOverlay);
+    for (int probe = 0; probe < kGeoSlots; ++probe, slot = (slot + 1) & (kGeoSlots - 1)) {
+        const int k = g_geoSlot[slot] - 1;
+        if (k < 0) break;
         const GeoEntry& e = g_geo[k];
         if (e.key != key || e.fx != fx || e.fy != fy || e.overlay != g_toOverlay) continue;
         if (g_cullRow && !g_toOverlay) return;
@@ -5982,8 +5997,13 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
         if (culledY(e.y0 + dy, e.y1 + dy)) return;   // the copy would land wholly outside the clip
         if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
         const int base = nv;
-        for (int i = 0; i < e.nv; ++i) { SDL_Vertex v = g_geoV[e.v0 + i]; v.position.x += dx; v.position.y += dy; V[nv++] = v; }
-        for (int i = 0; i < e.ni; ++i) I[ni++] = base + g_geoI[e.i0 + i];
+        std::memcpy(&V[nv], &g_geoV[e.v0], sizeof(SDL_Vertex) * (std::size_t)e.nv);
+        if (dx != 0.0f || dy != 0.0f) for (int i = 0; i < e.nv; ++i) { V[nv + i].position.x += dx; V[nv + i].position.y += dy; }
+        nv += e.nv;
+        const int* src = &g_geoI[e.i0];
+        int* dst = &I[ni];
+        for (int i = 0; i < e.ni; ++i) dst[i] = base + src[i];
+        ni += e.ni;
         return;
     }
     // Not kept yet: draw it, then keep it if it is a plain run of triangles in the current state.
@@ -5997,14 +6017,41 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
     if (cull || dv <= 0 || di <= 0 || g_nspans != spans0 || g_novSpans != ovSpans0 || g_dropped != drop0 || g_curTex != tex0) return;
     if (dv > kGeoVerts || di > kGeoIdx) return;
     if (g_ngeo == kGeoEntries || g_geoNv + dv > kGeoVerts || g_geoNi + di > kGeoIdx) geoClear();
-    GeoEntry& e = g_geo[g_ngeo++];
+    const int k = g_ngeo++;
+    GeoEntry& e = g_geo[k];
     e.key = key; e.fx = fx; e.fy = fy; e.bx = bx; e.by = by; e.overlay = g_toOverlay;
     e.v0 = g_geoNv; e.nv = dv; e.i0 = g_geoNi; e.ni = di;
     e.y0 = e.y1 = V[nv0].position.y;
     for (int i = 1; i < dv; ++i) { const float y = V[nv0 + i].position.y; e.y0 = y < e.y0 ? y : e.y0; e.y1 = y > e.y1 ? y : e.y1; }
     std::memcpy(&g_geoV[g_geoNv], &V[nv0], sizeof(SDL_Vertex) * (std::size_t)dv); g_geoNv += dv;
     for (int i = 0; i < di; ++i) g_geoI[g_geoNi++] = I[ni0 + i] - nv0;
+    unsigned sl = geoHash(key, fx, fy, e.overlay);
+    while (g_geoSlot[sl] != 0) sl = (sl + 1) & (kGeoSlots - 1);   // at most 1024 of 4096 slots are used: always ends
+    g_geoSlot[sl] = k + 1;
 }
+
+// Text runs of the launcher look are kept the same way (Theme::cacheText): a page draws the same texts at the same places frame
+// after frame, and copying a run's quads is cheaper than placing every glyph again. The key is the text's bytes, its scale,
+// colour and the placement settings; the fraction of a pixel of its position is part of the entry (as for any Cached drawing).
+struct TextRunArgs { float x, y, scale; const char* text; const unsigned char* c; };
+void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]) {
+    unsigned long long h = 1469598103934665603ull;
+    std::size_t n = 0;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p, ++n) h = (h ^ *p) * 1099511628211ull;
+    unsigned sb; std::memcpy(&sb, &scale, 4);
+    const unsigned col = (unsigned)c[0] | ((unsigned)c[1] << 8) | ((unsigned)c[2] << 16) | ((unsigned)c[3] << 24);
+    h = (h ^ sb) * 1099511628211ull;
+    h = (h ^ col) * 1099511628211ull;
+    h = (h ^ (unsigned)n ^ (g_theme.ascentRoundsUp ? 0x10000u : 0u) ^ (g_theme.snapAdvances ? 0x20000u : 0u)) * 1099511628211ull;
+    TextRunArgs a{x, y, scale, text, c};
+    cachedRun(false, h ^ 0x7465787400000000ull, Vec2{x, y}, [](void* u) {
+        const TextRunArgs& m = *(const TextRunArgs*)u;
+        drawText(m.x, m.y, m.text, m.scale, m.c);
+    }, &a);
+}
+} // namespace
+
+void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const { cachedRun(overlay, key, origin, draw, user); }
 
 static const DrawList g_windowList = { false };
 static const DrawList g_foregroundList = { true };

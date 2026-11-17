@@ -923,6 +923,11 @@ add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
 
+# Damaged or unusual project, texture-meta and material files load safely (issue #888 findings 74, 75, 78).
+add_executable(test_data_load_checks test_data_load_checks.cpp)
+target_link_libraries(test_data_load_checks PRIVATE okay::engine)
+add_test(NAME data_load_checks COMMAND test_data_load_checks)
+
 # Upgrading a project to the editor's version (editor/ProjectUpgrade.*, ImGui-free): backup, check and rewrite of scenes and prefabs, stamp, restore, failure injection at every step, and the gate that asks before anything is touched.
 add_executable(test_project_upgrade test_project_upgrade.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
 target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)

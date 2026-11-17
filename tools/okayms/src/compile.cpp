@@ -2244,9 +2244,12 @@ struct Gen {
         store_slot(off, true);
         return off;
     }
-    void reload_ecx(int off) {
+    void reload_r10(int off) {
+        // The left operand of an integer operation lives in r10, so rcx can
+        // hold a local. r10 is not given to a local.
+        b(0x44);
         b(0x8B);
-        b(0x8D);
+        b(0x95);
         disp(off);
         --temp_depth;
     }
@@ -2283,6 +2286,35 @@ struct Gen {
         b(0x89);
         b(static_cast<uint8_t>(0xC0 | ((src & 7) << 3) | (dest & 7)));
     }
+    static bool caller_saved(int reg) { return reg == 1 || reg == 2 || (reg >= 8 && reg <= 11); }
+    void store_reg_local(int reg, int offset) {
+        if (reg >= 8) b(0x44);
+        b(0x89);
+        b(static_cast<uint8_t>(0x85 | ((reg & 7) << 3)));
+        disp(offset);
+    }
+    void load_reg_local(int reg, int offset) {
+        if (reg >= 8) b(0x44);
+        b(0x8B);
+        b(static_cast<uint8_t>(0x85 | ((reg & 7) << 3)));
+        disp(offset);
+    }
+    void spill_caller() {
+        for (const Local& local : locals)
+            if (caller_saved(local.reg)) store_reg_local(local.reg, local.offset);
+    }
+    void reload_caller() {
+        for (const Local& local : locals)
+            if (caller_saved(local.reg)) load_reg_local(local.reg, local.offset);
+    }
+    void spill_reg(int reg) {
+        for (const Local& local : locals)
+            if (local.reg == reg) store_reg_local(reg, local.offset);
+    }
+    void reload_reg(int reg) {
+        for (const Local& local : locals)
+            if (local.reg == reg) load_reg_local(reg, local.offset);
+    }
     void epilogue() {
         b(0x48);
         b(0x89);
@@ -2309,8 +2341,9 @@ struct Gen {
         for (int i = 0; i < 4; ++i) text[at + i] = static_cast<uint8_t>(static_cast<uint32_t>(rel) >> (8 * i));
     }
     void cmp_set(uint8_t setcc) {
+        b(0x41);
         b(0x39);
-        b(0xC1);
+        b(0xC2);
         b(0x0F);
         b(setcc);
         b(0xC0);
@@ -2910,24 +2943,32 @@ bool Gen::gen_expr(const Node& node) {
             const int left = spill();
             if (!error.empty()) return false;
             if (!gen_expr(node.kids[1])) return false;
-            reload_ecx(left);
+            reload_r10(left);
             if (node.op == TPlusEq) {
+                b(0x44);
                 b(0x01);
-                b(0xC8);
+                b(0xD0);
             } else if (node.op == TMinusEq) {
+                b(0x41);
                 b(0x29);
-                b(0xC1);
+                b(0xC2);
+                b(0x44);
                 b(0x89);
-                b(0xC8);
+                b(0xD0);
             } else if (node.op == TStarEq) {
+                b(0x41);
                 b(0x0F);
                 b(0xAF);
-                b(0xC1);
+                b(0xC2);
             } else {
-                b(0x91);
+                spill_reg(2);
+                b(0x41);
+                b(0x92);
                 b(0x99);
+                b(0x41);
                 b(0xF7);
-                b(0xF9);
+                b(0xFA);
+                reload_reg(2);
                 if (node.op == TPercentEq) {
                     b(0x89);
                     b(0xD0);
@@ -3223,6 +3264,7 @@ bool Gen::gen_expr(const Node& node) {
             b(0x8D);
             disp(hidden);
         }
+        spill_caller();
         for (int i = 0; i < static_cast<int>(saved.size()); ++i) {
             const int reg = i + reg_base;
             const Type& at = saved_types[static_cast<size_t>(i)];
@@ -3293,6 +3335,7 @@ bool Gen::gen_expr(const Node& node) {
             relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
             u32(0);
         }
+        reload_caller();
         last_type = sig.ret;
         if (sret) {
             b(0x48);
@@ -3432,35 +3475,43 @@ bool Gen::gen_expr(const Node& node) {
             }
             return true;
         }
-        reload_ecx(off);
+        reload_r10(off);
         if (node.op == TComma) {
             last_type = last_type;
             return true;
         }
         if (node.op == TPlus) {
+            b(0x44);
             b(0x01);
-            b(0xC8);
+            b(0xD0);
             last_type = left_type;
             return true;
         }
         if (node.op == TMinus) {
+            b(0x41);
             b(0x29);
-            b(0xC1);
+            b(0xC2);
+            b(0x44);
             b(0x89);
-            b(0xC8);
+            b(0xD0);
             return true;
         }
         if (node.op == TStar) {
+            b(0x41);
             b(0x0F);
             b(0xAF);
-            b(0xC1);
+            b(0xC2);
             return true;
         }
         if (node.op == TSlash || node.op == TPercent) {
-            b(0x91);
+            spill_reg(2);
+            b(0x41);
+            b(0x92);
             b(0x99);
+            b(0x41);
             b(0xF7);
-            b(0xF9);
+            b(0xFA);
+            reload_reg(2);
             if (node.op == TPercent) {
                 b(0x89);
                 b(0xD0);
@@ -3919,13 +3970,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 spans.push_back({i, found->second.first, found->second.second});
             }
             std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.start < b.start; });
-            std::vector<int> pool = {3, 6, 7, 12, 13, 14, 15};
-            if (max_args == 0) {
-                pool.push_back(8);
-                pool.push_back(9);
-                pool.push_back(10);
-                pool.push_back(11);
-            }
+            // Callee-saved first, then caller-saved. r10 stays the scratch
+            // register for integer expressions, so it is not in this list.
+            std::vector<int> pool = {3, 6, 7, 12, 13, 14, 15, 8, 9, 11, 1, 2};
             struct Active {
                 int end;
                 int reg;

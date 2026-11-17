@@ -882,6 +882,7 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
 static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
 static std::atomic<int> gCacheHit{0}, gCacheMiss{0};
 static bool gUseCache = true;
+static uint64_t gCacheMax = 0;
 static int gMemLimit = 0;
 static bool gWantJobserver = false, gJobOn = false;
 static int gJsR = -1, gJsW = -1;
@@ -1023,6 +1024,7 @@ static vector<string> preprocessArgv(const Action& a) {
     return p;
 }
 static string cacheDirOf(const string& key) { return under(".okaybuild/cache/" + key); }
+static void rememberCache(const string&);
 // 1 hit, 0 miss, -1 could not preprocess.
 static int lookupCache(const Action& a, string& key, string& errOut) {
     vector<string> pp = preprocessArgv(a);
@@ -1040,14 +1042,85 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     fs::copy_file(dir + "/obj", a.output, fs::copy_options::overwrite_existing, ec);
     if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
     if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
+    rememberCache(key);
     return 1;
 }
+static void rememberCache(const string&);
 static void storeCache(const Action& a, const string& key) {
     if (key.empty() || a.output.empty() || !fs::is_regular_file(a.output)) return;
     string dir = cacheDirOf(key); fs::create_directories(dir); std::error_code ec;
     fs::copy_file(a.output, dir + "/obj", fs::copy_options::overwrite_existing, ec);
     if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) fs::copy_file(a.depfile, dir + "/dep", fs::copy_options::overwrite_existing, ec);
     std::ofstream m(dir + "/meta", std::ios::trunc); m << "okaybuild-cache 1\n" << key << "\n";
+    rememberCache(key);
+}
+struct CacheRow { string key; uint64_t bytes = 0, used = 0; };
+static uint64_t gCacheTick = 1;
+static uint64_t cacheDirBytes(const string& dir) {
+    uint64_t n = 0; std::error_code ec;
+    if (!fs::exists(dir, ec)) return 0;
+    for (auto& e : fs::directory_iterator(dir, ec)) if (!ec && e.is_regular_file()) n += (uint64_t)e.file_size();
+    return n;
+}
+static string cacheIndexPath() { return under(".okaybuild/cache/index"); }
+static vector<CacheRow> loadCacheIndex() {
+    vector<CacheRow> rows; std::ifstream in(cacheIndexPath()); string l;
+    if (!std::getline(in, l) || l != "okaybuild-cache-index 1") return rows;
+    while (std::getline(in, l)) {
+        auto a = l.find('\t'); auto b = a == string::npos ? string::npos : l.find('\t', a + 1);
+        if (a == string::npos || b == string::npos) continue;
+        CacheRow r; r.key = l.substr(0, a); r.bytes = strtoull(l.c_str() + a + 1, nullptr, 10); r.used = strtoull(l.c_str() + b + 1, nullptr, 10);
+        if (r.used >= gCacheTick) gCacheTick = r.used + 1;
+        rows.push_back(r);
+    }
+    return rows;
+}
+static void saveCacheIndex(const vector<CacheRow>& rows) {
+    fs::create_directories(under(".okaybuild/cache"));
+    string tmp = cacheIndexPath() + ".tmp";
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-cache-index 1\n";
+      f << "limit\t" << gCacheMax << "\n";
+      for (auto& r : rows) f << r.key << '\t' << r.bytes << '\t' << r.used << '\n'; }
+    fs::rename(tmp, cacheIndexPath());
+}
+static void evictCache(vector<CacheRow>& rows) {
+    if (gCacheMax == 0) return;
+    auto total = [&]() { uint64_t s = 0; for (auto& r : rows) s += r.bytes; return s; };
+    while (rows.size() > 1 && total() > gCacheMax) {
+        size_t oldest = 0;
+        for (size_t i = 1; i < rows.size(); ++i) if (rows[i].used < rows[oldest].used) oldest = i;
+        std::error_code ec; fs::remove_all(cacheDirOf(rows[oldest].key), ec);
+        rows.erase(rows.begin() + oldest);
+    }
+}
+static void rememberCache(const string& key) {
+    if (key.empty()) return;
+    OK_LOCK(l, gStateMu);
+    auto rows = loadCacheIndex();
+    uint64_t bytes = cacheDirBytes(cacheDirOf(key));
+    bool found = false;
+    for (auto& r : rows) if (r.key == key) { r.bytes = bytes; r.used = gCacheTick++; found = true; break; }
+    if (!found) rows.push_back(CacheRow{key, bytes, gCacheTick++});
+    evictCache(rows);
+    saveCacheIndex(rows);
+}
+static int cmdCache(const string& sub) {
+    if (sub == "clean") {
+        std::error_code ec; fs::remove_all(under(".okaybuild/cache"), ec);
+        printf("okay-build cache: removed\n"); return 0;
+    }
+    if (sub != "stats") throw Fail("usage: okay-build cache stats|clean");
+    int entries = 0; uint64_t bytes = 0; std::error_code ec;
+    string root = under(".okaybuild/cache");
+    if (fs::exists(root, ec)) for (auto& e : fs::directory_iterator(root, ec)) if (!ec && e.is_directory()) { ++entries; bytes += cacheDirBytes(e.path().generic_string()); }
+    uint64_t limit = gCacheMax;
+    if (limit == 0) {
+        std::ifstream in(cacheIndexPath()); string l;
+        while (std::getline(in, l)) if (l.compare(0, 6, "limit\t") == 0) { limit = strtoull(l.c_str() + 6, nullptr, 10); break; }
+    }
+    printf("entries: %d\nbytes: %llu\nlimit: ", entries, (unsigned long long)bytes);
+    if (limit == 0) printf("none\n"); else printf("%llu\n", (unsigned long long)limit);
+    return 0;
 }
 static bool hasShowIncludes(const Action& a) {
     for (auto& s : a.argv) if (s == "/showIncludes") return true;
@@ -2089,6 +2162,18 @@ int main(int argc, char** argv) {
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;
+            else if (a == "--cache-max" && i + 1 < argc) {
+                string s = argv[++i]; uint64_t n = 0; size_t k = 0;
+                if (s.empty()) throw Fail("--cache-max wants a number of bytes");
+                for (; k < s.size() && isdigit((unsigned char)s[k]); ++k) n = n * 10 + (uint64_t)(s[k] - '0');
+                if (k == 0) throw Fail("--cache-max wants a number of bytes");
+                if (k < s.size()) {
+                    char u = (char)tolower((unsigned char)s[k]);
+                    if (k + 1 != s.size() || (u != 'k' && u != 'm' && u != 'g')) throw Fail("--cache-max wants a number of bytes");
+                    if (u == 'k') n *= 1024ull; else if (u == 'm') n *= 1024ull * 1024ull; else n *= 1024ull * 1024ull * 1024ull;
+                }
+                gCacheMax = n;
+            }
             else if (a == "--jobserver") gWantJobserver = true;
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
@@ -2102,7 +2187,8 @@ int main(int argc, char** argv) {
             }
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test") cmd = a;
+            else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache") cmd = a;
             else if (a == "-h" || a == "--help") {
                 puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
@@ -2125,6 +2211,7 @@ int main(int argc, char** argv) {
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
+        if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "report") return showReport();
         if (cmd == "test") return cmdTest(m, o);
         if (cmd == "clean") {

@@ -670,6 +670,35 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testCacheLimit() {
+    printf("test: cache size limit evicts the least recently used entry\n");
+    fresh("cmax");
+    write("a.cpp", "int a(){return 1;}\n");
+    write("b.cpp", "int b(){return 2;}\n");
+    write("c.cpp", "int a(); int b(); int main(){return a()+b()==3?0:1;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp b.cpp c.cpp\nend\n");
+    int rc; string o = sh("-j1 --cache-max 1", &rc);
+    check(rc == 0, "build with a tiny cache limit", o);
+    int entries = 0;
+    if (fs::exists(gRoot / ".okaybuild/cache")) for (auto& e : fs::directory_iterator(gRoot / ".okaybuild/cache")) if (e.is_directory()) ++entries;
+    check(entries == 1, "only the newest cache entry is kept", "entries=" + std::to_string(entries));
+    o = sh("cache stats", &rc);
+    check(rc == 0 && o.find("entries: 1") != string::npos && o.find("limit: 1") != string::npos, "cache stats shows the entry and the limit", o);
+    fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/app/b.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/app/c.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o.d");
+    fs::remove(gRoot / ".okaybuild/obj/app/b.cpp.o.d");
+    fs::remove(gRoot / ".okaybuild/obj/app/c.cpp.o.d");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && o.find("cache miss") != string::npos, "the kept entry hits and the evicted ones miss", o);
+    o = sh("cache clean", &rc);
+    check(rc == 0, "cache clean exits 0", o);
+    o = sh("cache stats", &rc);
+    check(rc == 0 && o.find("entries: 0") != string::npos, "cache stats is empty after clean", o);
+    check(!fs::exists(gRoot / ".okaybuild/cache"), "the cache directory is gone");
+}
+
 static void testJobserver() {
     printf("test: a jobserver keeps nested okay-build runs inside -j\n");
     auto tree = [&](const string& name) {
@@ -811,6 +840,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

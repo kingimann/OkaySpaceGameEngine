@@ -74,7 +74,7 @@ struct Module {
 
 std::string printModule(const Module& m);
 
-// Lower a type-checked integer program. Pointers, arrays, and globals are refused.
+// Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
 Module lowerSource(const std::string& source, Diagnostics& diags);
 std::string irText(const std::string& source, Diagnostics& diags);
 

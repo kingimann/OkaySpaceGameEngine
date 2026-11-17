@@ -10,7 +10,7 @@ FLAGS=(-std=c++17 -Wall -Wextra -Wpedantic -Wshadow -g -O0 -I src)
 mkdir -p build
 
 objs=()
-for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp src/ir.cpp src/codegen.cpp; do
+for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp src/ir.cpp src/codegen.cpp src/elf.cpp; do
   obj="build/$(basename "${src%.cpp}").o"
   "$CXX" "${FLAGS[@]}" -c "$src" -o "$obj"
   objs+=("$obj")
@@ -23,6 +23,7 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_typecheck tests/test_typecheck.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_ir tests/test_ir.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_codegen tests/test_codegen.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_elf tests/test_elf.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
@@ -30,4 +31,5 @@ done
 ./build/test_typecheck
 ./build/test_ir
 ./build/test_codegen
+./build/test_elf
 tests/test_plan.sh

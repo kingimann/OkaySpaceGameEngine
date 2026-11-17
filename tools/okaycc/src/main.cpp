@@ -1,5 +1,6 @@
 #include "codegen.hpp"
 #include "diag.hpp"
+#include "elf.hpp"
 #include "files.hpp"
 #include "ir.hpp"
 #include "lexer.hpp"
@@ -28,8 +29,10 @@ void usage(std::ostream& out) {
         << "okay-cc --check [file]\n"
         << "okay-cc --ir [file]\n"
         << "okay-cc --asm [file]\n"
+        << "okay-cc --elf outfile [file]\n"
         << "  --lex tokens, --pp preprocessor, --ast tree, --check types,\n"
-        << "  --ir three-address code, --asm System V x86-64 assembly.\n"
+        << "  --ir three-address code, --asm System V x86-64 assembly,\n"
+        << "  --elf a static executable written by this compiler.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -42,6 +45,8 @@ int main(int argc, char** argv) {
     bool check = false;
     bool ir = false;
     bool asmm = false;
+    bool elf = false;
+    std::string elfOut;
     std::string path;
     std::vector<std::string> includes;
     for (int i = 1; i < argc; ++i) {
@@ -58,6 +63,13 @@ int main(int argc, char** argv) {
             ir = true;
         } else if (a == "--asm") {
             asmm = true;
+        } else if (a == "--elf") {
+            elf = true;
+            if (i + 1 >= argc) {
+                std::cerr << "--elf needs an output path\n";
+                return 2;
+            }
+            elfOut = argv[++i];
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -78,7 +90,7 @@ int main(int argc, char** argv) {
         }
     }
     int modes = static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) +
-                static_cast<int>(ir) + static_cast<int>(asmm);
+                static_cast<int>(ir) + static_cast<int>(asmm) + static_cast<int>(elf);
     if (modes != 1) {
         usage(std::cerr);
         return 2;
@@ -98,7 +110,17 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
-    if (asmm) {
+    if (elf) {
+        std::vector<unsigned char> bin = okaycc::compileToElf(src, diags);
+        if (diags.ok()) {
+            std::ofstream out(elfOut, std::ios::binary);
+            if (!out) {
+                std::cerr << "cannot write " << elfOut << "\n";
+                return 1;
+            }
+            out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
+        }
+    } else if (asmm) {
         std::cout << okaycc::compileToAssembly(src, diags);
     } else if (ir) {
         std::cout << okaycc::irText(src, diags);

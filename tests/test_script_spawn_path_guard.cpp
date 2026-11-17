@@ -6,7 +6,7 @@
 // outside/ with a real prefab. Every spawn entry point is tried with
 //   /etc/x.okayprefab, C:\x.okayprefab (a real file of that name sits in the
 //   game folder: on Linux it is a valid file name, so only the guard stops it),
-//   ../outside/evil.okayprefab and the absolute path of that same file,
+//   and ../outside/evil.okayprefab,
 // and must create nothing and log a "refusing" line naming the path. A relative
 // prefab inside the game (prefabs/good.okayprefab) must still spawn.
 //
@@ -136,8 +136,11 @@ int main() {
         "/etc/x.okayprefab",
         "C:\\x.okayprefab",
         "../outside/evil.okayprefab",
-        (root / "outside" / "evil.okayprefab").string(),
     };
+    // Not in `bad`: the absolute path of outside/evil.okayprefab. That folder sits in the system temp folder, which
+    // ScriptAssetPathOk allows on purpose (the editor's Play and tests hand prefabs over by absolute temp paths).
+    // A script may read a prefab there, so it is checked below as allowed, not refused.
+    const std::string tempAbs = (root / "outside" / "evil.okayprefab").string();
     const std::string good = "prefabs/good.okayprefab";
 
     struct ScriptCase { const char* name; const char* call; };
@@ -202,6 +205,11 @@ int main() {
         if (n >= 1) ++goodOk;
         const int n2 = RunVs("@prefab:" + good, "Good");   // an asset reference still works
         CHECK(n2 >= 1);
+    }
+
+    {
+        const int n = RunScript("spawn({P}, 1, 2)", tempAbs, "Evil");
+        CHECK(n >= 1);   // absolute path inside the temp folder: allowed by design (see ScriptAssetPathOk)
     }
 
     std::printf("    refused %d/%d outside paths (with a log line); spawned %d/%d inside paths\n", refused, total, goodOk,

@@ -7,6 +7,10 @@ useless." This page lists each thing that is shipped (or finished and waiting fo
 in the release you run (`OkaySpace.exe`, `Tools\OkayEngine.exe`, `Tools\OkaySpacePlayer.exe`, the installer or the
 zip), and how to tell it worked. CLAUDE.md rule 4a keeps it current: every change adds its row here.
 
+**File > Examples is gone (owner request, 2026-11-17).** Where an entry below still says "File > Examples", open the same scene with
+**File > Open Scene...** instead: the example scenes still ship in the `examples` folder beside the program (for example
+`examples\input\...`, `examples\ui_library\...`). The older wording will be corrected as entries are touched.
+
 Honest status words used below:
 
 * **Verified here** means a command was run on the Linux machine that wrote this page, and the result was seen.

@@ -63,19 +63,20 @@ If `MAKEFLAGS` or `OKAY_JOBSERVER` contains `--jobserver-auth=fifo:PATH`, okay-b
 ## Compact state (OKB1)
 The state file is now binary, version 1, magic `OKB1`. Paths are stored once. Hashes are 8-byte integers. The whole file is read in one shot (mapped, then copied into a pool the records point at). A file that still starts with `okaybuild-state 3` or `okaybuild-state 4` is read as the old text. A journal after a killed build is still text and is applied on top. The mtime+size shortcut is unchanged: a matching stamp is not hashed again. `--profile` prints plan time and state time apart.
 
-## Benchmarks on the 339-step test_math tree (2026-11-17, this machine)
-Fresh shallow clone of `grok/okaybuild-1`, Ninja Debug `-O0 -g0`, tests on, player/editor/launcher/sandbox/assimp off, sodium on. `ninja` reported `[339/339]`. Import: 335 compiles, 3 archives, 1 link. `-j2`. Not Windows.
+## Benchmarks on the 339-step test_math tree (2026-11-17, this machine, OKB1)
+Same configure as before: shallow clone, Ninja Debug `-O0 -g0`, tests on, player/editor/launcher/sandbox/assimp off, sodium on, `-j2`. Import is 335 compiles, 3 archives, 1 link. Not Windows. These numbers replace the earlier 63.5 ms no-op.
 
-The first okay-build had no state, so it recompiled all 339 steps (cache cold, and each compile also preprocesses for the cache). Wall clock 392.6 s. Profile: dirty-check 4 ms, run command 778266 ms summed across the two workers, depfile+hash 1463 ms, wall 392608 ms. That 1.5 s is the cost of hashing inputs while the state file is written. The state file ended at 11 MB and 105,599 lines.
+No-op, median of 20, process start included, after the binary state existed:
+- okay-build: 29.6 ms (runs from 27.8 to 35.0). Profile of one of them: plan 2 ms, state 12 ms, dirty-check 8 ms, wall 23 ms inside the process.
+- Ninja `test_math`: 28.7 ms (27.8 to 33.3).
 
-A later pass with `--no-stat` (mtime shortcut off, so every input is read) hashed 1983 files, trusted 0, dirty-check 1300 ms, plan+state load 43 ms, wall 1344 ms, and ran 0 steps.
+The state file is 3.9 MB (`OKB1`) instead of 11 MB of text. The old gap of about 38 ms is about 1 ms on this run.
 
-No-op, median of 20, process start included, stat shortcut on:
-- okay-build, cache warm: 63.5 ms (runs from 58.1 to 84.3)
-- okay-build, cache directory deleted: 61.4 ms (59.0 to 90.9)
-- Ninja `test_math`: 25.6 ms (23.0 to 55.9)
+Cold build, clean tree, same `-j2`:
+- Ninja: 439.7 s
+- okay-build: 413.5 s. Profile: plan 3 ms, state 0 ms (nothing saved yet), dirty-check 5 ms, preprocess 0 ms, run command 819723 ms summed on two workers, depfile+hash 1495 ms, wall 413489 ms. Ran 339 of 339.
 
-A no-op does not compile, so a cold cache and a warm cache take the same time. The gap versus Ninja is the state file, same finding as the earlier median-of-5 (66 ms vs 24–28 ms).
+Preprocess is 0 because an imported step is the compiler command itself, not a structured compile that runs `-E` first. The cache therefore does not restore those outputs: deleting them and building again would compile them again. A cache-hit rebuild was not measured on this tree for that reason. The separate preprocess timer is in `--profile` for structured compiles.
 
 ## Asset pipeline (design only, not built)
 A pipeline would be a rule in the manifest: a source suffix, a tool, an output suffix, and a folder to scan. okay-build would turn each match into an action edge. The engine's importers are inside the engine and the editor, not a program this tool can run. Until there is a command-line importer, assets stay as hand-written `action` blocks. No engine file was changed. The question for the owner is in the round report: is a small importer program allowed, or do assets stay as actions?

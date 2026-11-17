@@ -123,7 +123,8 @@ struct DistDecl {
     vector<string> tools, examples;
 };
 struct Manifest {
-    Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
+    Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
+     vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
     DistDecl dist;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
@@ -610,7 +611,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string rel = fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
-            a.output = under(".okaybuild/obj/" + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
+            a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
             if (m.tc.msvc) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
@@ -1519,12 +1520,21 @@ static void printCache() {
     int h = gCacheHit.load(), m = gCacheMiss.load();
     if (h + m > 0) printf("okay-build: cache %d hit, %d miss\n", h, m);
 }
-struct StepNote { long long ns = 0; string kind, cache, desc; };
+struct StepNote { long long ns = 0; string kind, cache, desc; long long start = 0; int tid = 0; };
+static string gTracePath; // --trace FILE: Chrome trace JSON of the steps of this run
 static vector<StepNote> gSteps;
 static void noteStep(const string& kind, const string& desc, long long ns, const string& cache) {
     string d = desc; for (char& c : d) if (c == '\t' || c == '\n') c = ' ';
-    OK_LOCK(l, gStateMu); gSteps.push_back(StepNote{ns, kind, cache, d});
+    OK_LOCK(l, gStateMu);
+    int tid = 0;
+#ifndef _WIN32
+    static std::map<std::thread::id, int> ids; // one small number per worker thread, in order of first use
+    auto it = ids.find(std::this_thread::get_id()); if (it == ids.end()) it = ids.emplace(std::this_thread::get_id(), (int)ids.size() + 1).first;
+    tid = it->second;
+#endif
+    gSteps.push_back(StepNote{ns, kind, cache, d, nowNs() - ns, tid});
 }
+static void writeTrace();
 static void archiveReport();
 static void writeReport() {
     fs::create_directories(under(".okaybuild"));
@@ -1535,6 +1545,27 @@ static void writeReport() {
       f << "hits\t" << gCacheHit.load() << "\nmisses\t" << gCacheMiss.load() << "\n"; }
     fs::rename(tmp, under(".okaybuild/report"));
     archiveReport();
+    writeTrace();
+}
+// Chrome trace event format (the JSON that chrome://tracing and similar viewers load): one "X" (complete) event per step,
+// times in microseconds from the first step, one row per worker thread. Written by us, temp file then rename.
+static string jsonEsc(const string& s);
+static void writeTrace() {
+    if (gTracePath.empty()) return;
+    long long t0 = 0; bool first = true; int maxTid = 0;
+    for (auto& s : gSteps) { if (first || s.start < t0) t0 = s.start; first = false; maxTid = std::max(maxTid, s.tid); }
+    string j = "{\"traceEvents\":[\n";
+    j += "{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":1,\"tid\":0,\"args\":{\"name\":\"okay-build\"}}";
+    for (int t = 1; t <= maxTid; ++t) j += ",\n{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":1,\"tid\":" + std::to_string(t) + ",\"args\":{\"name\":\"worker " + std::to_string(t) + "\"}}";
+    for (auto& s : gSteps)
+        j += ",\n{\"name\":\"" + jsonEsc(s.desc) + "\",\"cat\":\"" + jsonEsc(s.kind) + "\",\"ph\":\"X\",\"ts\":" + std::to_string((s.start - t0) / 1000) +
+             ",\"dur\":" + std::to_string(s.ns / 1000) + ",\"pid\":1,\"tid\":" + std::to_string(s.tid) + ",\"args\":{\"cache\":\"" + jsonEsc(s.cache) + "\"}}";
+    j += "\n],\"displayTimeUnit\":\"ms\"}\n";
+    std::error_code ec; fs::path pth(gTracePath); if (!pth.parent_path().empty()) fs::create_directories(pth.parent_path(), ec);
+    string tmp = gTracePath + ".tmp";
+    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << j; }
+    fs::rename(tmp, gTracePath, ec);
+    if (ec) fprintf(stderr, "okay-build: cannot write trace %s: %s\n", gTracePath.c_str(), ec.message().c_str());
 }
 static int gReportKeep = 20;
 static void archiveReport() {
@@ -1917,6 +1948,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            writeTrace();
             if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
@@ -2070,6 +2102,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            writeTrace();
             if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
@@ -2594,6 +2627,10 @@ static void applyConfiguration(Manifest& m, const string& cliConfig, const strin
         if (cfg->debug == 1) m.tc.flags.push_back("-g");
         addFlags(cfg->flags, cfg->linkFlags, cfg->defines);
     }
+    // `outdir = build/{config}`: each configuration gets its own program folder and its own object folder, so switching
+    // configurations does not rebuild the other one (outputs are tracked by path).
+    { size_t at = m.outdir.find("{config}");
+      if (at != string::npos) { string n = cfg ? cfg->name : "default"; m.outdir.replace(at, 8, n); m.objSub = n + "/"; } }
     for (auto& c : m.conds) {
         auto it = decl.find(c.opt);
         if (it == decl.end()) throw Fail("if uses unknown option '" + c.opt + "'");
@@ -2914,6 +2951,7 @@ int main(int argc, char** argv) {
             else if (a == "--explain") o.explain = true;
             else if (a == "-v") o.verbose = true;
             else if (a == "--profile") o.profile = true;
+            else if (a == "--trace" && i + 1 < argc) gTracePath = argv[++i];
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;

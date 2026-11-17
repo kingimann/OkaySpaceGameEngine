@@ -1218,6 +1218,39 @@ static void testImporters() {
     write("build.okay", "importer d\n pattern = a/*.x\n output = same.bin\n cmd = true\nend\n");
     o = sh("", &rc); check(rc == 2 && o.find("every file would write the same output") != string::npos, "one output for every file is an error", o);
 }
+static int countOf(const string& hay, const string& needle) { int n = 0; for (size_t p = 0; (p = hay.find(needle, p)) != string::npos; p += needle.size()) ++n; return n; }
+static void testPerConfigDirsAndTrace() {
+    printf("test: outdir with {config} keeps each configuration apart, and --trace writes Chrome trace JSON\n"); fresh("cfgdir"); basicProject();
+    write("build.okay", "outdir = build/{config}\nconfig debug\n optimize = 0\nend\nconfig release\n optimize = 2\nend\n"
+          "target util lib\n sources = src/util.cpp\n export_include = inc\nend\ntarget app exe\n sources = src/main.cpp\n deps = util\nend\n");
+    int rc; string o = sh("-j2 --config debug", &rc);
+    check(rc == 0 && ran(o) == 4 && fs::exists(gRoot / "build/debug/app") && !fs::exists(gRoot / "build/release"), "debug builds into build/debug only", o);
+    check(fs::exists(gRoot / ".okaybuild/obj/debug/util/src/util.cpp.o"), "objects live under .okaybuild/obj/debug");
+    o = sh("-j2 --config release", &rc);
+    check(rc == 0 && ran(o) == 4 && fs::exists(gRoot / "build/release/app") && fs::exists(gRoot / "build/debug/app"), "release builds beside it and leaves debug alone", o);
+    o = sh("--config debug", &rc); check(ran(o) == 0, "going back to debug rebuilds nothing", o);
+    o = sh("", &rc); check(ran(o) == 0, "no --config uses the first configuration (debug), still up to date", o);
+    o = sh("clean --config release", &rc); check(!fs::exists(gRoot / "build/release/app") && fs::exists(gRoot / "build/debug/app"), "clean --config release removes only that program folder", o);
+    fresh("nocfg"); basicProject();
+    write("build.okay", "outdir = out/{config}\ntarget util lib\n sources = src/util.cpp\n export_include = inc\nend\ntarget app exe\n sources = src/main.cpp\n deps = util\nend\n");
+    o = sh("", &rc); check(rc == 0 && fs::exists(gRoot / "out/default/app"), "without any config block the folder is named default", o);
+    // trace
+    fresh("trace"); basicProject();
+    o = sh("-j2 --trace out/trace.json", &rc);
+    string t = readFile(gRoot / "out/trace.json");
+    check(rc == 0 && t.find("\"traceEvents\"") != string::npos && countOf(t, "\"ph\":\"X\"") == 4, "trace has one complete event per step", t);
+    check(t.find("\"cat\":\"CC\"") != string::npos && t.find("\"cat\":\"LD\"") != string::npos && t.find("src/util.cpp") != string::npos, "events carry kind and step name", t);
+    check(t.find("\"dur\":") != string::npos && t.find("\"ts\":") != string::npos && t.find("\"tid\":1") != string::npos, "events have ts, dur and a worker row", t);
+    check(!fs::exists(gRoot / "out/trace.json.tmp") && countOf(t, "{") == countOf(t, "}") && countOf(t, "[") == countOf(t, "]"), "no temp file, braces balance");
+    o = sh("--trace out/noop.json", &rc); t = readFile(gRoot / "out/noop.json");
+    check(ran(o) == 0 && t.find("\"traceEvents\"") != string::npos && countOf(t, "\"ph\":\"X\"") == 0, "a no-op run writes a trace with no steps", t);
+    write("src/main.cpp", "#include \"nope.h\"\nint main(){}\n"); o = sh("-j1 --trace out/fail.json", &rc);
+    t = readFile(gRoot / "out/fail.json"); check(rc == 1 && countOf(t, "\"ph\":\"X\"") >= 1, "a failed build still writes its trace", o + t);
+    // importer outputs can be waited on with a target's needs
+    fresh("impneeds"); write("assets/a.txt", "1\n"); write("tools/c.sh", "cat \"$1\" > \"$2\"\n"); write("src/m.cpp", "int main(){return 0;}\n");
+    write("build.okay", "importer t\n pattern = assets/*.txt\n output = out/{stem}.bin\n cmd = sh tools/c.sh {input} {output}\nend\ntarget m exe\n sources = src/m.cpp\n needs = out/a.bin\nend\n");
+    o = sh("-j2 m", &rc); check(rc == 0 && fs::exists(gRoot / "out/a.bin") && fs::exists(gRoot / "build/m"), "a target can need an importer output", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
@@ -1226,5 +1259,6 @@ int main(int argc, char** argv) {
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
     testRestoredObjectsStayTrusted();
     testImporters();
+    testPerConfigDirsAndTrace();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

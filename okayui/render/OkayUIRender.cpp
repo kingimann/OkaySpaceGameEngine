@@ -194,6 +194,7 @@ Stats Renderer::Render(const DrawData& d, const FrameInfo& f) {
             }
             return ft.id;
         }
+        if (m_o.hostTextures) return m_b.WrapHostTexture(key);
         return 0;
     };
 

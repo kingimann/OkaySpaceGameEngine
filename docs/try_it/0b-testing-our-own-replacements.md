@@ -19,7 +19,8 @@ Nothing to set: just start the programs as usual.
 | Reading `.wav` sounds | SDL_LoadWAV / old reader | our own WAV reader (already the default since 2.880) | `set OKAY_OWN_WAV=0` |
 | Text (font rasteriser) in the launcher and editor | Dear ImGui's | our own TrueType rasteriser | `set OKAY_OWN_FONT_RASTER=0` |
 | The script editor's code box | ImGuiColorTextEdit | our own code editor (OkayUI CodeEdit) | `set OKAY_CODE_EDITOR=imgui` |
-| Ported screens (launcher: What's New, Tips, Downloads, Achievements, Notifications; editor: Console, Crash Log, Audio Mixer, Problems, Stats, History, Profiler, Import settings, Post-processing, and the Project Settings sections Player, Physics, Rendering, Tags and Layers) | Dear ImGui | OkayUI | `set OKAY_UI_BACKEND=imgui` (Project Settings alone: `set OKAY_UI_PROJECT_SETTINGS=imgui`) |
+| Ported screens (launcher: What's New, Tips, Downloads, Achievements, Notifications, Friends, Community; editor: Console, Crash Log, Audio Mixer, Problems, Stats, History, Profiler, Import settings, Post-processing, and the Project Settings sections Player, Physics, Rendering, Tags and Layers) | Dear ImGui | OkayUI | `set OKAY_UI_BACKEND=imgui` (Project Settings alone: `set OKAY_UI_PROJECT_SETTINGS=imgui`) |
+| The launcher's Versions page on OkayUI | Dear ImGui | **still Dear ImGui** (preview: not yet faster than the Dear ImGui page) | to preview it: `set OKAY_UI_VERSIONS=okayui` |
 | The Hierarchy on OkayUI | Dear ImGui | **still Dear ImGui** (preview: its keyboard use in menus is not tested yet) | to preview it: `set OKAY_UI_HIERARCHY=okayui` |
 | Cryptography | libsodium | **still libsodium** (owner rule 18: no switch) | nothing to do |
 

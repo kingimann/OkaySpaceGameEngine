@@ -5,7 +5,10 @@
 #include "../demo/DemoScene.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include <cstring>
+#include <string>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -742,6 +745,141 @@ void CachedTests() {
     }
 }
 
+// Shapes wholly above or below the clip rectangle are not emitted; partly visible ones are; a Cached drawing made out of view
+// still holds everything (its copy in view is whole), and a copy out of view is skipped.
+void ClipSkipTests() {
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    Sim sim(100, 300);
+    auto count = [&](const std::function<void()>& f) {
+        Reset();
+        sim.Frame([&] { dl.PushClipRect({0, 0}, {100, 50}); f(); dl.PopClipRect(); });
+        return UI::GetDrawData().vertexCount;
+    };
+    const int none = count([] {});
+    CHECK(count([&] { dl.AddRectFilled({0, 60}, {10, 70}, kRed); dl.AddRectFilled({0, -30}, {10, -20}, kRed, 3.0f); }) == none);
+    CHECK(count([&] { dl.AddCircleFilled({20, 90}, 5.0f, kRed); dl.AddCircle({20, 90}, 5.0f, kRed); dl.AddLine({0, 80}, {50, 90}, kRed, 2.0f); }) == none);
+    CHECK(count([&] { dl.AddText({0, 120}, kRed, "below"); dl.AddRect({0, 70}, {20, 90}, kRed, 4.0f, 1.0f); }) == none);
+    CHECK(count([&] { dl.AddRectFilled({0, 45}, {10, 55}, kRed); }) > none);   // partly visible
+    CHECK(count([&] { dl.AddText({0, 40}, kRed, "edge"); }) > none);
+    // without a clip rectangle nothing is skipped
+    Reset();
+    sim.Frame([&] { dl.AddRectFilled({0, 260}, {10, 270}, kRed); });
+    CHECK(UI::GetDrawData().vertexCount > none);
+    // Cached: first drawn out of view (kept whole), then copied into view; a copy out of view adds nothing
+    struct A { const UI::DrawList* dl; UI::Vec2 o; } a{&dl, {0, 0}};
+    auto draw = [](void* u) { const A& m = *(const A*)u; m.dl->AddRectFilled(m.o, {m.o.x + 10, m.o.y + 10}, kRed); m.dl->AddText({m.o.x, m.o.y}, kRed, "ab"); };
+    int inView = 0, outView = 0, fresh = 0;
+    Reset();
+    sim.Frame([&] {
+        dl.PushClipRect({0, 0}, {100, 50});
+        const int v0 = UI::GetDrawData().vertexCount; (void)v0;
+        a.o = {0, 200}; dl.Cached(77, a.o, draw, &a);
+        dl.PopClipRect();
+    });
+    outView = UI::GetDrawData().vertexCount;
+    Reset();   // ResetState empties the store: draw fresh in view for the reference count
+    sim.Frame([&] { dl.PushClipRect({0, 0}, {100, 50}); a.o = {0, 10}; dl.Cached(78, a.o, draw, &a); dl.PopClipRect(); });
+    fresh = UI::GetDrawData().vertexCount;
+    CHECK(outView == fresh);   // the recording out of view was not skipped
+    sim.Frame([&] {
+        dl.PushClipRect({0, 0}, {100, 50});
+        a.o = {0, 10}; dl.Cached(78, a.o, draw, &a);    // copy in view
+        a.o = {0, 210}; dl.Cached(78, a.o, draw, &a);   // copy out of view: skipped
+        dl.PopClipRect();
+    });
+    inView = UI::GetDrawData().vertexCount;
+    CHECK(inView == fresh);
+}
+
+// AddImageRounded: a fan whose texture coordinates follow the position; a texture is required; junk is ignored.
+void ImageRoundedTests() {
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    Sim sim(100, 100);
+    SDL_Texture* fake = (SDL_Texture*)(std::uintptr_t)0x1000;   // never sampled: the headless backend skips textured commands
+    Reset();
+    sim.Frame([] {});
+    const int before = UI::GetDrawData().vertexCount, beforeIdx = UI::GetDrawData().indexCount;
+    Reset();
+    sim.Frame([&] { dl.AddImageRounded(fake, {10, 20}, {50, 60}, 20.0f); });
+    UI::DrawData d = UI::GetDrawData();
+    CHECK(d.vertexCount - before == 29 && d.indexCount - beforeIdx == 84);
+    bool uvOk = true, onCircle = true, found = false;
+    const UI::DrawVertex* v = (const UI::DrawVertex*)d.vertices;
+    for (int i = before; i < d.vertexCount; ++i) {
+        const float eu = (v[i].x - 10.0f) / 40.0f, ev = (v[i].y - 20.0f) / 40.0f;
+        if (std::fabs(v[i].u - eu) > 1e-4f || std::fabs(v[i].v - ev) > 1e-4f) uvOk = false;
+        if (i > before && std::fabs(std::hypot(v[i].x - 30.0f, v[i].y - 40.0f) - 20.0f) > 0.01f) onCircle = false;   // a circle
+    }
+    for (int k = 0; k < d.cmdCount; ++k) if (d.cmds[k].texture == fake) found = true;
+    CHECK(uvOk && onCircle && found);
+    Reset();
+    sim.Frame([&] {
+        dl.AddImageRounded(nullptr, {0, 0}, {5, 5}, 2.0f); dl.AddImageRounded(fake, {5, 5}, {0, 0}, 2.0f);
+        dl.AddImageRounded(fake, {0, 0}, {NAN, 5}, 2.0f); dl.AddImageRounded(fake, {0, 0}, {5, 5}, 2.0f, {NAN, 0}, {1, 1});
+    });
+    CHECK(UI::GetDrawData().vertexCount == before);
+    Reset();
+    sim.Frame([&] { dl.AddImageRounded(fake, {0, 0}, {10, 10}, 0.0f); });   // no rounding: the plain quad
+    CHECK(UI::GetDrawData().vertexCount - before == 4);
+}
+
+// Theme::cacheDrawing: text runs and rounded rectangles copied from the store draw the same pixels as drawn afresh, at whole
+// and fractional positions, after a move and in other colours; a changed text shows the change; widths are the same.
+void CacheTextTests() {
+    Sim sim(220, 120);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    float ox = 0.0f;
+    std::string msg = "Cached text run";
+    auto scene = [&] {
+        dl.AddText({10 + ox, 10}, kRed, msg.c_str());
+        dl.AddText({12.4f + ox, 40.6f}, UI::RGBA(80, 200, 255), "Fractional position");
+        dl.AddText({10 + ox, 70}, kRed, "Scaled", 1.5f);
+        dl.AddText({150, 10}, kRed, "ab");   // short texts are drawn directly
+        dl.AddRectFilled({100 + ox, 60}, {180 + ox, 100}, kRed, 8.0f);   // rounded rectangles are kept too
+        dl.AddRectFilled({100.5f, 20.3f}, {170, 50}, UI::RGBA(80, 200, 255), 6.0f);
+    };
+    auto render = [&](bool cache, int frames, int* verts = nullptr) {
+        Reset();
+        UI::UseLauncherLook(true);
+        UI::Style().cacheDrawing = cache;
+        for (int i = 0; i < frames; ++i) sim.Frame(scene);
+        if (verts) *verts = UI::GetDrawData().vertexCount;
+        const Bitmap b = sim.Draw(0, 0, 0);
+        UI::Style().cacheDrawing = false;
+        UI::UseLauncherLook(false);
+        return b;
+    };
+    int vPlain = 0, vCached = 0;
+    const Bitmap plain = render(false, 1, &vPlain), cached = render(true, 3, &vCached);   // frames 2 and 3 are copies
+    CHECK(plain.rgba == cached.rgba && vPlain == vCached);
+    ox = 7.0f;   // moved by whole pixels: copied with an offset
+    const Bitmap plainMoved = render(false, 1);
+    Reset(); UI::UseLauncherLook(true); UI::Style().cacheDrawing = true;
+    ox = 0.0f; sim.Frame(scene); ox = 7.0f; sim.Frame(scene);
+    const Bitmap cachedMoved = sim.Draw(0, 0, 0);
+    msg = "Another text run";   // a different text is not mistaken for the one kept
+    sim.Frame(scene);
+    const Bitmap changed = sim.Draw(0, 0, 0);
+    UI::Style().cacheDrawing = false; UI::UseLauncherLook(false);
+    CHECK(plainMoved.rgba == cachedMoved.rgba);
+    const Bitmap plainChanged = render(false, 1);
+    CHECK(plainChanged.rgba == changed.rgba && changed.rgba != cachedMoved.rgba);
+    ox = 0.0f; msg = "Cached text run";
+    Reset(); UI::UseLauncherLook(true);
+    float wPlain[3], wCached[3][2];
+    const char* texts[3] = {"Width of this text", "Another width", "Width of this text!"};
+    sim.Frame([&] { for (int i = 0; i < 3; ++i) wPlain[i] = UI::CalcTextSize(texts[i]).x; });
+    UI::Style().cacheDrawing = true;
+    sim.Frame([&] { for (int k = 0; k < 2; ++k) for (int i = 0; i < 3; ++i) wCached[i][k] = UI::CalcTextSize(texts[i]).x; });
+    float scaledCached = 0.0f; sim.Frame([&] { UI::PushTextScale(1.5f); scaledCached = UI::CalcTextSize(texts[0]).x; UI::PopTextScale(); });
+    UI::Style().cacheDrawing = false;
+    float scaledPlain = 0.0f; sim.Frame([&] { UI::PushTextScale(1.5f); scaledPlain = UI::CalcTextSize(texts[0]).x; UI::PopTextScale(); });
+    UI::UseLauncherLook(false);
+    bool same = true;
+    for (int i = 0; i < 3; ++i) for (int k = 0; k < 2; ++k) same = same && wCached[i][k] == wPlain[i];
+    CHECK(same && scaledCached == scaledPlain && scaledPlain > wPlain[0]);
+}
+
 } // namespace
 
 int main() {
@@ -763,5 +901,8 @@ int main() {
     LabTests();
     AntiAliasTests();
     CachedTests();
+    ClipSkipTests();
+    ImageRoundedTests();
+    CacheTextTests();
     TEST_MAIN_RESULT();
 }

@@ -7,8 +7,8 @@ roadmap: Our own replacements are the default (platform, renderers, WAV, fonts, 
   mouse and sound layer (instead of SDL), our own drawing for the launcher
   and the editor, our own font drawing (sharper text), our own code box in
   the Script Editor, and our own UI (OkayUI) for the pages that have been
-  rebuilt: in the launcher What's New, Tips, Downloads, Achievements and
-  Notifications; in the editor Console, Crash Log, Audio Mixer, Problems,
+  rebuilt: in the launcher What's New, Tips, Downloads, Achievements,
+  Notifications, Friends and Community; in the editor Console, Crash Log, Audio Mixer, Problems,
   Stats, History, Profiler, Import settings, Post-processing and Project
   Settings. Passwords and encryption still use libsodium, as before.
 - How to tell: the launcher writes one line to okay_launcher.log (next to

@@ -128,6 +128,11 @@ struct Theme {
     // edge that fades to alpha 0, so curves and slanted edges are smooth instead of stair-stepped. Plain axis-aligned
     // rectangles are not affected. Off by default (the classic look and its golden images); the launcher pages turn it on.
     bool  antiAliased = false;
+    // With the launcher look, what pages draw again and again is kept in the DrawList::Cached store and copied instead of
+    // being worked out again: DrawList::AddText runs of four or more characters (keyed by the text, scale, colour and fraction
+    // of a pixel), DrawList::AddRectFilled rounded rectangles (by size, rounding, colour and fraction), and CalcTextSize widths
+    // (by the text and scale). The same pixels and sizes, less work. Off by default; the launcher pages turn it on.
+    bool  cacheDrawing = false;
     // Popups (BeginPopup, BeginPopupContextItem) and combo lists the Dear ImGui way when imguiPopups is on: a popup is as wide
     // as its widest item plus popupPadX on each side (measured the frame before; a combo's list is as wide as the combo and
     // padded by the frame padding), popupPadY above and below, corners popupRounding, a one-pixel Col_Border edge and the
@@ -1068,6 +1073,10 @@ struct DrawList {
     /// skips textured commands.
     void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
                   Color32 tint = 0xffffffffu) const;
+    /// The same with rounded corners (`rounding` at most half the shorter side: a circle for a square at half its side), a
+    /// fan of 1 + 4 x 7 points whose texture coordinates follow the position. For profile pictures and game covers.
+    void AddImageRounded(SDL_Texture* tex, Vec2 min, Vec2 max, float rounding, Vec2 uv0 = Vec2{0.0f, 0.0f},
+                         Vec2 uv1 = Vec2{1.0f, 1.0f}, Color32 tint = 0xffffffffu) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).

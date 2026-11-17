@@ -4,6 +4,7 @@
 // uses (its style in DarkTheme and shared/OkayTheme.hpp: a 17 px font, frames padded 10 x 7, items 9 x 8 apart, windows padded
 // 14 x 12), and the icons are the launcher's own line icons (DrawNavIcon in launcher/main.cpp) drawn again with OkayUI.
 #include "OkayUILauncherPages.hpp"
+#include "OkayUILauncherLook.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -17,104 +18,12 @@ namespace UI = OkayUI;
 
 namespace okayuiscreens {
 
-namespace {
+namespace look {
 
-constexpr float kPi = 3.14159265f;
-
-UI::Color32 Col(const unsigned char c[4], float alpha = 1.0f) {
-    return UI::RGBA(c[0], c[1], c[2], (unsigned)(c[3] * std::max(0.0f, std::min(1.0f, alpha)) + 0.5f));
-}
-UI::Color32 Rgb(int r, int g, int b, int a = 255) { return UI::RGBA((unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a); }
-// The accent mixed toward white (the launcher's "accent light" for text on accent-tinted fills).
-UI::Color32 AccentLight() {
-    const unsigned char* a = UI::Style().accent;
-    return Rgb((int)(a[0] * 0.55f + 115), (int)(a[1] * 0.55f + 115), (int)(a[2] * 0.55f + 115));
-}
-UI::Color32 AccentAlpha(float alpha) { const unsigned char* a = UI::Style().accent; return Rgb(a[0], a[1], a[2], (int)(alpha * 255.0f + 0.5f)); }
-UI::Vec2 V(float x, float y) { return UI::Vec2{x, y}; }
-
-std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
-
-// ---- the launcher's Dear ImGui look ----------------------------------------------------------------------------------------
-// Sizes from the launcher's style (launcher/main.cpp DarkTheme): frames are padded 10 x 7, items sit 9 x 8 apart, the gap
-// inside an item is 7. Positions move down the way the launcher's layout moves them: an item's bottom plus the 8 px gap, cut
-// to a whole pixel.
-constexpr float kFrameX = 10.0f, kFrameY = 7.0f, kSpX = 9.0f, kSpY = 8.0f, kInnerX = 7.0f;
-float Tr(float v) { return std::floor(v); }
-// Text scaled by k, rounded to whole pixels as the launcher's scaled text is (17 px x 1.34 is drawn at 23 px).
-void PushScale(float k) {
-    const float fs = std::max(1.0f, UI::GetTextLineHeight());
-    UI::PushTextScale(std::max(1.0f, std::round(fs * k)) / fs);
-}
-float NextY(float itemY, float itemH) { return Tr(itemY + itemH + kSpY); }
-
-// The launcher's Slate colours (shared/OkayTheme.hpp) in bytes.
-UI::Color32 CRaised() { return Rgb(38, 42, 51); }
-UI::Color32 CField() { return Rgb(41, 46, 59); }
-UI::Color32 CControl(float alpha = 1.0f) { return Rgb(51, 56, 71, (int)(255.0f * alpha + 0.5f)); }
-UI::Color32 CControlHover(float alpha = 1.0f) { return Rgb(67, 72, 86, (int)(255.0f * alpha + 0.5f)); }
-UI::Color32 CBorder() { return Rgb(255, 255, 255, 19); }
-UI::Color32 CTitle() { return Rgb(242, 245, 250); }
-UI::Color32 CProgress() { return Rgb(230, 179, 0); }   // the bar fill the launcher's progress bars use
-
-// For the length of a page: text at the launcher's 17 px (16 px times 17/16; the atlas has that size baked), frames padded as
-// the launcher's, and the launcher's tooltip and combo box. Theme values it changes are put back at the end.
-class LauncherLook {
-public:
-    LauncherLook() {
-        UI::Theme& t = UI::Style();
-        m_tipOffX = t.tooltipOffsetX; m_tipOffY = t.tooltipOffsetY; m_tipPadX = t.tooltipPadX; m_tipPadY = t.tooltipPadY;
-        m_tipGap = t.tooltipLineGap; m_tipRound = t.tooltipRounding; std::memcpy(m_tipBg, t.tooltipBg, 4); m_combo = t.comboArrowBox;
-        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances; m_aa = t.antiAliased;
-        // Its tooltips: 25 px right of and 10 px below the mouse, padded as its windows (14 x 12), lines touching, 8 px corners,
-        // the popup colour; its combo: a frame-coloured box with an arrow button.
-        t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f;
-        t.tooltipLineGap = 0.0f; t.tooltipRounding = 8.0f;
-        t.tooltipBg[0] = 35; t.tooltipBg[1] = 39; t.tooltipBg[2] = 48; t.tooltipBg[3] = 251;
-        t.comboArrowBox = true;
-        t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
-        t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
-        t.antiAliased = true;      // its shapes have smooth (anti-aliased) edges, as the launcher's do
-        // Its text fields and combo boxes brighten by 5% towards white under the mouse and 9% while typing (the Slate theme's
-        // FrameBgHovered and FrameBgActive).
-        auto mix = [](float k) {   // the launcher's field colour (0.16, 0.18, 0.23) mixed towards white by k
-            const float f[3] = {0.16f, 0.18f, 0.23f};
-            int o[3]; for (int i = 0; i < 3; ++i) o[i] = (int)((f[i] + (1.0f - f[i]) * k) * 255.0f + 0.5f);
-            return Rgb(o[0], o[1], o[2]);
-        };
-        UI::PushStyleColor(UI::Col_FrameBgHovered, mix(0.05f));
-        UI::PushStyleColor(UI::Col_FrameBgActive, mix(0.09f));
-        // Its popups (the sort list, the right-click menu): Dear ImGui's padding (14 x 12), 8 px corners, a hairline edge, the
-        // Slate popup colour, rows 8 px apart, hover and current-item colours (measured from the Dear ImGui page).
-        m_pop = t.imguiPopups; t.imguiPopups = true;
-        UI::PushStyleColor(UI::Col_PopupBg, Rgb(35, 39, 48, 251));
-        UI::PushStyleColor(UI::Col_Border, Rgb(255, 255, 255, 19));
-        UI::PushStyleColor(UI::Col_Header, Rgb(53, 68, 95));
-        UI::PushStyleColor(UI::Col_HeaderHovered, Rgb(65, 70, 84));
-        const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
-        UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
-        UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
-    }
-    ~LauncherLook() {
-        UI::PopStyleColor(6);
-        UI::PopStyleVar(1);
-        UI::PopTextScale();
-        UI::Theme& t = UI::Style();
-        t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
-        t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
-        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap; t.antiAliased = m_aa; t.imguiPopups = m_pop;
-    }
-    LauncherLook(const LauncherLook&) = delete;
-    LauncherLook& operator=(const LauncherLook&) = delete;
-private:
-    float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
-    unsigned char m_tipBg[4];
-    bool m_combo, m_ascent, m_snap, m_aa, m_pop;
-};
 
 // A child region the way the launcher's children are: no padding inside, a thin 8 px (or `bar`) scrollbar that takes room only
 // while the content overflows.
-bool BeginPlainChild(const char* id, float w, float h, float bar = 8.0f) {
+bool BeginPlainChild(const char* id, float w, float h, float bar) {
     UI::PushStyleVar(UI::StyleVar_ChildPadding, 0.0f);
     UI::PushStyleVar(UI::StyleVar_ScrollbarSize, bar);
     return UI::BeginChild(id, w, h, false);
@@ -154,7 +63,7 @@ float PageHeader(const UI::DrawList& dl, float x0, float y0, float w, const char
 
 // A button as the launcher draws one: its control colour, lighter under the mouse, the accent while held, the label centred;
 // a disabled one at 55% strength. `primary` is the accent-coloured kind. Returns true on a click.
-bool FlatButton(const char* id, const char* label, float x, float y, float w, float h, bool enabled = true, bool primary = false) {
+bool FlatButton(const char* id, const char* label, float x, float y, float w, float h, bool enabled, bool primary, float rounding) {
     UI::SetCursorScreenPos(V(x, y));
     const bool clicked = UI::InvisibleButton(id, w, h) && enabled;
     const bool hov = enabled && UI::IsItemHovered(), held = hov && UI::IsItemActive();
@@ -168,12 +77,15 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
                   : Rgb((int)(acc[0] + (255 - acc[0]) * lift), (int)(acc[1] + (255 - acc[1]) * lift), (int)(acc[2] + (255 - acc[2]) * lift),
                         (int)((hov ? 255.0f : 235.0f) * a));
     } else bg = held ? Rgb(acc[0], acc[1], acc[2], (int)(255 * a)) : hov ? CControlHover(a) : CControl(a);
-    dl.AddRectFilled(V(x, y), V(x + w, y + h), bg, 6.0f);
+    dl.AddRectFilled(V(x, y), V(x + w, y + h), bg, rounding);
     const UI::Vec2 ts = UI::CalcTextSize(label);
     const UI::Color32 tc = primary ? Rgb(255, 255, 255, (int)(255 * a)) : Col(UI::Style().text, a);
     const bool cut = ts.x > w - 2.0f;   // a label wider than its button is cut at the button's edge
     if (cut) dl.PushClipRect(V(x, y), V(x + w, y + h));
-    dl.AddText(V(x + std::max(kFrameX, (w - ts.x) * 0.5f), Tr(y + (h - ts.y) * 0.5f)), tc, label);
+    // Centred; a padded button shorter than its text and padding keeps the text at the top padding (a small button, as tall
+    // as its text, has none).
+    const float ty = h > ts.y + 0.5f ? std::max(kFrameY, (h - ts.y) * 0.5f) : (h - ts.y) * 0.5f;
+    dl.AddText(V(Tr(x + std::max(kFrameX, (w - ts.x) * 0.5f)), Tr(y + ty)), tc, label);
     if (cut) dl.PopClipRect();
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;
@@ -200,14 +112,18 @@ void ArcTo(const UI::DrawList& dl, UI::Vec2 c, float r, float a0, float a1, int 
     const UI::Vec2* u = UnitArc(a0, a1, n);
     for (int i = 0; i <= n; ++i) dl.PathLineTo(V(c.x + u[i].x * r, c.y + u[i].y * r));
 }
+// A rectangle outline stroked `t` wide centred half a pixel inside its edge, where the launcher's outlines put it (OkayUI's own
+// AddRect strokes inward from the edge).
+void OutlineRect(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float rounding, float t) {
+    const float o = t * 0.5f - 0.5f;
+    dl.AddRect(V(mn.x - o, mn.y - o), V(mx.x + o, mx.y + o), col, rounding + o, t);
+}
 // A ring stroked `t` wide centred half a pixel inside radius r (where the launcher's circles put their outline).
 void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, float t) {
     dl.AddCircle(c, r - 0.5f + t * 0.5f, col, n, t);
 }
 
 // The launcher's line icons (DrawNavIcon in launcher/main.cpp): 1.6 px strokes in a 15 px box.
-enum NavIcon { kIcoTrophy = 5, kIcoFriends = 6, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
-void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
 // Drawn once per icon and colour and copied after that (DrawList::Cached), as the medals.
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
     struct Args { const UI::DrawList* d; int id; UI::Vec2 c; UI::Color32 col; } a{&d, id, c, col};
@@ -246,6 +162,29 @@ void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) 
         ArcTo(d, c, 6.8f, kPi * 0.80f, kPi * 2.62f, 26);
         d.PathLineTo(V(c.x - r, c.y + r));
         d.PathStroke(col, true, t);
+        break;
+    case kIcoPlay:   // a play button in a circle
+        Ring(d, c, r, col, 28, t);
+        d.AddTriangleFilled(V(c.x - 2.3f, c.y - 3.8f), V(c.x - 2.3f, c.y + 3.8f), V(c.x + 4.0f, c.y), col);
+        break;
+    case kIcoGrid:   // a 2 x 2 grid of rounded squares
+        for (int k = 0; k < 4; ++k) {
+            const float gx = (k % 2) ? c.x + 1.2f : c.x - r, gy = (k / 2) ? c.y + 1.2f : c.y - r;
+            OutlineRect(d, V(gx, gy), V(gx + r - 1.2f, gy + r - 1.2f), col, 1.5f, t);
+        }
+        break;
+    case kIcoBag:   // a shopping bag
+        OutlineRect(d, V(c.x - 6.2f, c.y - 3.0f), V(c.x + 6.2f, c.y + r), col, 2.0f, t);
+        d.PathClear(); ArcTo(d, V(c.x, c.y - 3.0f), 3.2f, kPi, 2.0f * kPi, 10); d.PathStroke(col, false, t);
+        break;
+    case kIcoDownload:   // an arrow down into a tray
+        d.AddLine(V(c.x, c.y - r), V(c.x, c.y + 2.6f), col, t);
+        d.AddLine(V(c.x - 3.6f, c.y - 1.0f), V(c.x, c.y + 2.6f), col, t);
+        d.AddLine(V(c.x + 3.6f, c.y - 1.0f), V(c.x, c.y + 2.6f), col, t);
+        d.PathClear();
+        d.PathLineTo(V(c.x - r, c.y + 2.2f)); d.PathLineTo(V(c.x - r, c.y + r));
+        d.PathLineTo(V(c.x + r, c.y + r)); d.PathLineTo(V(c.x + r, c.y + 2.2f));
+        d.PathStroke(col, false, t);
         break;
     case kIcoRefresh: {
         d.PathClear(); ArcTo(d, c, 5.6f, -kPi * 0.35f, kPi * 1.45f, 20); d.PathStroke(col, false, t);
@@ -317,7 +256,9 @@ void DrawCross(const UI::DrawList& dl, UI::Vec2 c, float r, float arm, bool hove
     dl.AddLine(V(c.x + arm, c.y - arm), V(c.x - arm, c.y + arm), col, t);
 }
 
-} // namespace
+} // namespace look
+
+using namespace look;
 
 // ---- text helpers ----------------------------------------------------------------------------------------------------------
 
@@ -336,6 +277,28 @@ std::string FitTextWidth(const std::string& s, float maxW) {
         if (UI::CalcTextSize(s.substr(0, starts[mid]).c_str()).x + ew <= maxW) lo = mid; else hi = mid - 1;
     }
     return s.substr(0, lo < starts.size() ? starts[lo] : 0) + kEll;
+}
+
+const std::string& FitTextCached(const std::string& s, float maxW, float* width) {
+    struct Entry { std::string src, out; float maxW = 0.0f, fs = 0.0f, w = 0.0f; };
+    static std::unordered_map<unsigned long long, Entry> cache;
+    const float fs = UI::GetTextLineHeight();
+    unsigned long long h = 1469598103934665603ull;
+    for (char c : s) h = (h ^ (unsigned char)c) * 1099511628211ull;
+    h = (h ^ FloatBits(maxW)) * 1099511628211ull;
+    h = (h ^ FloatBits(fs)) * 1099511628211ull;
+    auto it = cache.find(h);
+    if (it == cache.end() || it->second.maxW != maxW || it->second.fs != fs || it->second.src != s) {
+        if (it == cache.end() && cache.size() >= 1024) { cache.clear(); it = cache.end(); }
+        Entry& e = it == cache.end() ? cache[h] : it->second;
+        e.src = s; e.maxW = maxW; e.fs = fs;
+        e.out = FitTextWidth(s, maxW);
+        e.w = e.out.empty() ? 0.0f : UI::CalcTextSize(e.out.c_str()).x;
+        if (width) *width = e.w;
+        return e.out;
+    }
+    if (width) *width = it->second.w;
+    return it->second.out;
 }
 
 void WrapTwoLines(const std::string& s, float maxW, std::string& l1, std::string& l2) {
@@ -371,6 +334,13 @@ bool DownloadIsZip(const std::string& dest) {
     return ext == ".zip" || ext == ".ZIP";
 }
 
+void DownloadOverlay(const DownloadEntry& d, char* out, std::size_t n) {
+    if (!out || n == 0) return;
+    if (d.total > 0) std::snprintf(out, n, "%s / %s", d.received > 0 ? HumanBytes(d.received).c_str() : "0 B", HumanBytes(d.total).c_str());
+    else if (d.received > 0) std::snprintf(out, n, "%s", HumanBytes(d.received).c_str());
+    else out[0] = '\0';   // nothing received and no size yet (a queued download): the bar stays empty, the status says "Queued"
+}
+
 float DownloadFraction(const DownloadEntry& d) {
     float f = d.total > 0 ? (float)((double)d.received / (double)d.total) : (d.status == 2 ? 1.0f : 0.0f);
     if (!(f > 0.0f)) f = 0.0f;
@@ -396,7 +366,21 @@ void LauncherProgressBar(const UI::DrawList& dl, float x, float y, float w, floa
         const UI::Vec2 ts = UI::CalcTextSize(overlay);
         const float tx = std::max(x, std::min(x + fillW + kSpX, x + w - ts.x - kInnerX));
         // Dear ImGui's progress bar rounds this text's centred y to the nearest pixel (text elsewhere is cut down to whole pixels).
-        dl.AddText(V(tx, std::floor(y + (h - ts.y) * 0.5f + 0.5f)), Col(UI::Style().text), overlay);
+        const float ty = std::floor(y + (h - ts.y) * 0.5f + 0.5f);
+        // The part of the text over the yellow fill is dark (light text on it could hardly be read), the rest light. Both launcher
+        // pages split it at the fill's end the same way (launcher/main.cpp, DlProgressBar).
+        const float fillEnd = x + fillW;
+        if (fillW > 0.0f && tx < fillEnd) {
+            dl.PushClipRect(V(x, y), V(fillEnd, y + h));
+            dl.AddText(V(tx, ty), CProgressText(), overlay);
+            dl.PopClipRect();
+        }
+        if (tx + ts.x > fillEnd) {
+            const bool split = fillW > 0.0f && tx < fillEnd;
+            if (split) dl.PushClipRect(V(fillEnd, y), V(x + w, y + h));
+            dl.AddText(V(tx, ty), Col(UI::Style().text), overlay);
+            if (split) dl.PopClipRect();
+        }
     }
 }
 } // namespace
@@ -458,7 +442,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             if (hov) dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), Col(th.accent), 7.0f, 2.0f);
             const float ix = rp.x + padX, inW = cw - 2.0f * padX;
             float iy = rp.y + padY;
-            dl.AddText(V(ix, iy), Col(th.text), FitTextWidth(d.title, inW).c_str());
+            dl.AddText(V(ix, iy), Col(th.text), FitTextCached(d.title, inW).c_str());
             iy = NextY(iy, fs);
             // "12.0 MB / 48.0 MB", formatted again only when the numbers change (a few rows remembered).
             struct Ov { long long rec = -2, tot = -2; char text[64] = ""; };
@@ -468,8 +452,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             if (!overlay) {
                 Ov& o = ovs[ovNext]; ovNext = (ovNext + 1) % 16;
                 o.rec = d.received; o.tot = d.total;
-                if (d.total > 0) std::snprintf(o.text, sizeof(o.text), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
-                else std::snprintf(o.text, sizeof(o.text), "%s", HumanBytes(d.received).c_str());
+                DownloadOverlay(d, o.text, sizeof(o.text));
                 overlay = o.text;
             }
             const float barW = std::max(40.0f, inW - 220.0f);
@@ -651,7 +634,9 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
                 cx += cwid + 6.0f;
             }
             const float ly = cy + ch + 12.0f;
-            dl.AddLine(V(cp.x - 16.0f, ly), V(cp.x + cw + 16.0f, ly), Rgb(255, 255, 255, 16), 1.0f);
+            // The hairline under the chips: one whole pixel row, where Dear ImGui's 1 px AddLine lands (it draws through the
+            // pixel centres, y + 0.5); a line centred on ly itself would smear over two rows at half strength.
+            dl.AddRectFilled(V(cp.x - 16.0f, std::floor(ly)), V(cp.x + cw + 16.0f, std::floor(ly) + 1.0f), Rgb(255, 255, 255, 16));
             listTop = NextY(ly, 4.0f);
         }
 
@@ -710,7 +695,7 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
                     const UI::Color32 icol = Rgb((int)(c[0] * 0.8f + 51), (int)(c[1] * 0.8f + 51), (int)(c[2] * 0.8f + 51));
                     DrawNavIcon(ld, kind == 1 ? kIcoFriends : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell, ic, icol);
                     // the title (doubled for weight when unread), then up to two body lines
-                    const std::string title = FitTextWidth(n.title.empty() ? std::string("Notification") : n.title, textW);
+                    const std::string& title = FitTextCached(n.title.empty() ? std::string("Notification") : n.title, textW);
                     const UI::Color32 tcol = n.unread ? cText : Col(th.text, 0.80f);
                     ld.AddText(V(tx, rp.y + 11.0f), tcol, title.c_str());
                     if (n.unread) ld.AddText(V(tx + 0.7f, rp.y + 11.0f), tcol, title.c_str());
@@ -1020,12 +1005,12 @@ AchievementsResult DrawAchievements(const AchievementsModel& m, AchievementsStat
                 if (a.showcased) dl.AddRect(p, V(p.x + tileW, p.y + tileH), Rgb(255, 204, 77, 115), 12.0f, 1.5f);
                 DrawMedal(dl, V(p.x + 38.0f, p.y + tileH * 0.5f), 24.0f, a.color, 1.0f);
                 const float tx = p.x + 74.0f, maxW = tileW - 74.0f - 14.0f - (a.showcased ? 16.0f : 0.0f);
-                dl.AddText(V(tx, p.y + 18.0f), cText, FitTextWidth(a.label.empty() ? AchPrettyId(a.id) : a.label, maxW).c_str());
+                dl.AddText(V(tx, p.y + 18.0f), cText, FitTextCached(a.label.empty() ? AchPrettyId(a.id) : a.label, maxW).c_str());
                 char ptxt[16]; std::snprintf(ptxt, sizeof(ptxt), "+%d", a.points);
                 const UI::Vec2 pts = UI::CalcTextSize(ptxt);
                 dl.AddRectFilled(V(tx, p.y + 40.0f), V(tx + pts.x + 12.0f, p.y + 40.0f + pts.y + 2.0f), Rgb(250, 200, 70, a.points >= 50 ? 60 : 32), 8.0f);
                 dl.AddText(V(tx + 6.0f, p.y + 41.0f), gold, ptxt);
-                dl.AddText(V(tx + pts.x + 20.0f, p.y + 40.0f), cDim, FitTextWidth(a.date.empty() ? std::string("Unlocked") : a.date, maxW - pts.x - 20.0f).c_str());
+                dl.AddText(V(tx + pts.x + 20.0f, p.y + 40.0f), cDim, FitTextCached(a.date.empty() ? std::string("Unlocked") : a.date, maxW - pts.x - 20.0f).c_str());
                 if (a.showcased) DrawStar(dl, V(p.x + tileW - 18.0f, p.y + 18.0f), 6.0f, gold);
                 if (fresh) {   // "NEW" on the last two days' unlocks
                     UI::PushTextScale(0.72f);   // an exact size (not rounded), as the launcher draws its NEW pill

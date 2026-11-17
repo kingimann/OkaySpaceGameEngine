@@ -6,6 +6,7 @@
 // and do), not from any other project's code.
 #include "okay/UI/OkayUI.hpp"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,9 @@ namespace okayuiscreens {
 /// `s` cut to fit `maxW` pixels in the current font and text scale, ending in an ellipsis when cut (never splits a UTF-8
 /// character). An empty string for maxW <= 0.
 std::string FitTextWidth(const std::string& s, float maxW);
+/// The same, remembered (the pages fit the same texts to the same widths frame after frame): the answer and, in `width`, its
+/// width. The string returned stays valid until the next call that has to work something out (use it at once).
+const std::string& FitTextCached(const std::string& s, float maxW, float* width = nullptr);
 /// The first line of `s` that fits `maxW` (broken at a space), and the rest fitted onto a second line with an ellipsis.
 /// A text with no space that fits nothing is fitted onto the first line alone.
 void WrapTwoLines(const std::string& s, float maxW, std::string& line1, std::string& line2);
@@ -51,6 +55,9 @@ const char* DownloadStatusText(int status);
 bool DownloadIsZip(const std::string& dest);
 /// The bar's fill 0..1: received / total, full for a completed download of unknown size.
 float DownloadFraction(const DownloadEntry& d);
+/// The text in the bar: "12.0 MB / 48.0 MB" ("0 B / 48.0 MB" before the first byte), "1.5 KB" when the size is not known, and
+/// nothing at all while nothing is known (a queued download: the status beside the bar already says "Queued").
+void DownloadOverlay(const DownloadEntry& d, char* out, std::size_t n);
 
 DownloadsResult DrawDownloads(const DownloadsModel& model, float x, float y, float w, float h);
 

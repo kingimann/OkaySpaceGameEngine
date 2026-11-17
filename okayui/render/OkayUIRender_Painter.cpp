@@ -14,7 +14,7 @@ namespace ui2d = okay::ui2d;
 class PainterBackend final : public Backend {
 public:
     explicit PainterBackend(plat::Painter& p) : m_p(p) {}
-    ~PainterBackend() override { for (auto& kv : m_tex) m_p.DestroyTexture(kv.second.tex); }
+    ~PainterBackend() override { for (auto& kv : m_tex) if (kv.second.owned) m_p.DestroyTexture(kv.second.tex); }
     const char* Name() const override { return m_p.Kind() == plat::PainterKind::Sdl2 ? "painter-sdl2" : "painter-software"; }
     Caps Capabilities() const override { Caps c; c.maxTexture = 16384; return c; }
 
@@ -45,8 +45,21 @@ public:
     void DestroyTexture(TexId id) override {
         auto it = m_tex.find(id);
         if (it == m_tex.end()) return;
-        m_p.DestroyTexture(it->second.tex);
+        if (it->second.owned) m_p.DestroyTexture(it->second.tex);
+        else m_hosted.erase(it->second.tex);
         m_tex.erase(it);
+    }
+    // The host's painter textures are ui2d::Tex values: remembered under an id of ours, never destroyed by us.
+    TexId WrapHostTexture(const void* hostTexture) override {
+        if (!hostTexture) return 0;
+        ui2d::Tex t = (ui2d::Tex)hostTexture;
+        auto it = m_hosted.find(t);
+        if (it != m_hosted.end()) return it->second;
+        const TexId id = ++m_next;
+        Entry e; e.tex = t; e.owned = false;
+        m_tex[id] = e;
+        m_hosted[t] = id;
+        return id;
     }
 
     bool BeginFrame(int fbW, int fbH, float dpi) override {
@@ -90,7 +103,8 @@ public:
     bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) override { return m_p.ReadPixels(rgba, w, h); }
 
 private:
-    struct Entry { ui2d::Tex tex = nullptr; int w = 0, h = 0; bool linear = false; };
+    struct Entry { ui2d::Tex tex = nullptr; int w = 0, h = 0; bool linear = false; bool owned = true; };
+    std::unordered_map<ui2d::Tex, TexId> m_hosted;   // WrapHostTexture: the host's textures already given an id
     plat::Painter& m_p;
     float m_dpi = 1.0f;
     plat::BlendMode m_savedBlend = plat::BlendMode::Blend;

@@ -81,10 +81,21 @@
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
 #include "OkayUILauncherPages.hpp"   // Downloads, Notifications, Achievements
+#include "OkayUILauncherMorePages.hpp"   // Friends, Community, Versions
 #else
 // Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
 namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
+// Where the notifications panel is this frame (set while it is drawn, before the page). OkayUI is flushed after every Dear ImGui
+// window, so an OkayUI page under the open panel would be painted over it: while the panel overlaps a page, the page draws its
+// Dear ImGui version (as it does under a Dear ImGui popup).
+static bool g_ntPanelShown = false;
+static float g_ntPanelRect[4] = {0, 0, 0, 0};
+static bool OkayPageCovered(float x, float y, float w, float h) {
+    if (okayuihost::PopupCoversRect(x, y, w, h)) return true;
+    const float* r = g_ntPanelRect;
+    return g_ntPanelShown && r[0] + r[2] > x && r[0] < x + w && r[1] + r[3] > y && r[1] < y + h;
+}
 
 #include <algorithm>
 #include <atomic>
@@ -552,6 +563,30 @@ struct DlItem {
 std::vector<std::shared_ptr<DlItem>> g_dls;
 okay::lt::Mutex* g_dlMutex = nullptr;
 int g_dlNextId = 1;
+
+// The Downloads page's progress bar text, drawn over the bar ImGui::ProgressBar just drew (called with an empty overlay) at the
+// place Dear ImGui puts it: just right of the fill, kept inside the bar. The part over the yellow fill is dark so it can be read
+// there, the rest is the normal text colour (the OkayUI page does the same: okayui/screens/OkayUILauncherPages.cpp).
+static void DlProgressBarText(float frac, const char* overlay) {
+    if (!overlay || !*overlay) return;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    ImRect bb(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    bb.Expand(ImVec2(-st.FrameBorderSize, -st.FrameBorderSize));
+    const float fillX = ImLerp(bb.Min.x, bb.Max.x, ImSaturate(frac));
+    const ImVec2 ts = ImGui::CalcTextSize(overlay);
+    const ImVec2 pos(ImClamp(fillX + st.ItemSpacing.x, bb.Min.x, bb.Max.x - ts.x - st.ItemInnerSpacing.x), bb.Min.y);
+    const bool onFill = frac > 0.0f && pos.x < fillX;
+    if (onFill) {
+        const ImRect clip(bb.Min, ImVec2(fillX, bb.Max.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(26, 28, 35, 255));
+        ImGui::RenderTextClipped(pos, bb.Max, overlay, nullptr, &ts, ImVec2(0.0f, 0.5f), &clip);
+        ImGui::PopStyleColor();
+    }
+    if (pos.x + ts.x > fillX) {
+        const ImRect clip(onFill ? ImVec2(fillX, bb.Min.y) : bb.Min, bb.Max);
+        ImGui::RenderTextClipped(pos, bb.Max, overlay, nullptr, &ts, ImVec2(0.0f, 0.5f), &clip);
+    }
+}
 
 // OKAY_UI_DEMO_USER (the dev screenshot hook): the Downloads page starts with sample rows in every state (nothing is fetched;
 // the "downloading" one never moves), so both its Dear ImGui and its OkayUI version can be looked at without a marketplace.
@@ -2181,6 +2216,15 @@ int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
 std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" (persisted as ui_backend; OKAY_UI_BACKEND overrides it)
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
+// The Versions page on OkayUI is preview only: it is not yet faster than its Dear ImGui page (coordinator, 2026-11-17, the owner's
+// "faster and up to par" rule). OKAY_UI_VERSIONS=okayui, or OKAY_UI_BACKEND=okayui, shows it; otherwise Dear ImGui draws it.
+static bool OkayUIVersionsPage() {
+    okayuibackend::Backend b = okayuibackend::Backend::ImGui;
+    if (const char* e = std::getenv("OKAY_UI_VERSIONS"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    b = okayuibackend::Backend::ImGui;
+    if (const char* e = std::getenv("OKAY_UI_BACKEND"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    return false;
+}
 static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
@@ -4765,8 +4809,10 @@ static void OkayUIFrameBegin() {
     const std::uint32_t mb = WindowSeam().MouseState(&mx, &my);   // SDL_GetMouseState on the sdl2 backend
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
-                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
+    OkayUI::Input in = g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
+                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys);
+    in.displayW = io.DisplaySize.x; in.displayH = io.DisplaySize.y;   // menus stay inside the window; dialogs centre in it
+    OkayUI::BeginFrame(in);
 }
 #ifdef OKAY_LAUNCHER_HAVE_OKAYUI_RENDER
 static std::unique_ptr<OkayUI::render::Backend> g_okayRenderBackend;   // the own renderer: OkayUI on the launcher's painter
@@ -4786,7 +4832,9 @@ static void OkayUIFrameEnd() {
     if (ww <= 0 || wh <= 0 || fw <= 0 || fh <= 0) return;
     if (!g_okayRenderer) {
         g_okayRenderBackend = OkayUI::render::CreatePainterBackend(g_gfx->Painter());
-        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend));
+        OkayUI::render::Options ro;
+        ro.hostTextures = true;   // images OkayUI is given (pictures, covers, icons) are this painter's own textures
+        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend, ro));
     }
     OkayUI::render::FrameInfo fi;
     fi.fbWidth = fw; fi.fbHeight = fh; fi.dpi = (float)fw / (float)ww;
@@ -15420,6 +15468,209 @@ static AchPageData& AchPageDataRefresh(bool kAchDemo) {
     return data;
 }
 
+// The Community page's library details (both the Dear ImGui page and its OkayUI port use them): the size and kind of each item,
+// worked out once per item (folder walks are slow) and forgotten on Refresh.
+static std::map<std::string, std::string>& CommunityMetaCache() { static std::map<std::string, std::string> m; return m; }
+static const std::string& CommunityItemMeta(const fs::path& root, const fs::path& scene) {
+    std::map<std::string, std::string>& cache = CommunityMetaCache();
+    auto it = cache.find(scene.string());
+    if (it != cache.end()) return it->second;
+    std::error_code ec;
+    std::uintmax_t bytes = 0; int n = 0;
+    if (fs::is_directory(root, ec)) {
+        for (auto f = fs::recursive_directory_iterator(root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n)
+            if (f->is_regular_file(ec)) bytes += f->file_size(ec);
+    } else bytes = fs::file_size(root, ec);
+    char sz[32];
+    if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
+    else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
+    std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
+    return cache.emplace(scene.string(), meta).first->second;
+}
+// The Community library (the scenes under community/), shared by both Community pages: each item's scene index, its folder,
+// title, file age ("4 d ago") and its lower-case search text. Worked out again when the scene list changes, after a refresh
+// (the size cache emptied) or once a second (the ages), not every frame: CommunityItemRoot and ModifiedAgo ask the file system
+// about every scene. `gen` counts the rebuilds.
+struct CommunityLibItem { std::size_t idx; fs::path root; std::string title, ago, search; };
+struct CommunityLib { std::vector<CommunityLibItem> items; unsigned gen = 0; };
+static const CommunityLib& CommunityLibrary(const std::vector<fs::path>& scenes) {
+    static CommunityLib lib;
+    static std::vector<fs::path::string_type> made;   // the scene list it was made from
+    static std::uint32_t next = 0;
+    static bool metaWasFilled = false;
+    bool same = made.size() == scenes.size() && okay::platform::TicksMs32() < next && !(metaWasFilled && CommunityMetaCache().empty());
+    for (std::size_t i = 0; same && i < scenes.size(); ++i) same = made[i] == scenes[i].native();
+    metaWasFilled = !CommunityMetaCache().empty();
+    if (same) return lib;
+    next = okay::platform::TicksMs32() + 1000;
+    made.clear();
+    for (const fs::path& p : scenes) made.push_back(p.native());
+    lib.items.clear();
+    ++lib.gen;
+    for (std::size_t i = 0; i < scenes.size(); ++i) {
+        fs::path croot = CommunityItemRoot(scenes[i]);
+        if (croot.empty()) continue;
+        CommunityLibItem it{i, croot, croot.filename().string(), ModifiedAgo(scenes[i]), {}};
+        it.search = scenes[i].filename().string() + " " + it.title;
+        for (char& ch : it.search) ch = (char)std::tolower((unsigned char)ch);
+        lib.items.push_back(std::move(it));
+    }
+    return lib;
+}
+// "Remove from library?": the confirmation both Community pages open by setting `path` (a Dear ImGui modal on both).
+static void DrawCommunityRemoveModal(std::string& commRemovePath, const std::string& commRemoveName, std::vector<fs::path>& scenes) {
+    auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
+    if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
+        ImGui::OpenPopup("Remove from library?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Remove from library?", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
+        ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+        bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
+        ImGui::PopStyleColor(2);
+        if (doRemove) {
+            std::error_code rec; fs::remove_all(commRemovePath, rec);
+            Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
+            refreshLibrary();
+            commRemovePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) {
+            commRemovePath.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+// The Friends page's data (both the Dear ImGui page and its OkayUI port read it): the friends and requests, the activity feed,
+// my friend code (all from the Friends worker, never on this thread), the follows (from the follow worker), and what the two
+// pages share while the person uses them (the view, the search, the typed names, the Add friend messages). Viewing the page
+// clears the unread-DM badge. With OKAY_UI_DEMO_USER set (the dev screenshot hook) fixed demo lists are used instead.
+#ifdef OKAY_HAVE_OKAYUI
+using FriendsUiState = okayuiscreens::FriendsState;
+#else
+struct FriendsUiState { int view = 0; char filter[64] = ""; char addBuf[48] = ""; char followBuf[48] = ""; };
+#endif
+struct FriendsPageData {
+    std::vector<okay::Friend> list;
+    std::vector<okay::FriendEvent> feed;
+    std::string code;
+    std::vector<okay::FollowEntry> following, followers;
+    bool followSupported = true;
+    std::uint32_t nextRefresh = 0, followNext = 0;
+    std::string err, ok;               // the Add friend card's last message
+    FriendsUiState ui;
+    std::string nickUid; char nickBuf[48] = ""; bool nickOpen = false;   // the Set nickname dialog (a Dear ImGui modal on both pages)
+    unsigned gen = 0;                  // bumped whenever the lists above are replaced (the OkayUI page rebuilds its model then)
+};
+// The Set nickname dialog (both Friends pages open it through FriendsPageData::nickOpen).
+static void DrawFriendNicknameModal(FriendsPageData& d) {
+    if (d.nickOpen) { ImGui::OpenPopup("Set nickname"); d.nickOpen = false; }
+    if (ImGui::BeginPopupModal("Set nickname", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("Only you see this nickname.");
+        ImGui::SetNextItemWidth(260);
+        bool ok = ImGui::InputText("##nick", d.nickBuf, sizeof(d.nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
+            if (!d.nickUid.empty()) {
+                if (d.nickBuf[0]) g_friendNicks[d.nickUid] = d.nickBuf; else g_friendNicks.erase(d.nickUid);
+                SavePrefs(); ++d.gen;
+            }
+            d.nickUid.clear(); ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0))) { d.nickUid.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+}
+static FriendsPageData& FriendsPageDataRefresh(okay::account::AccountService& account, bool kFrDemo) {
+    static FriendsPageData d;
+    static bool init = false;
+    if (!init) {
+        init = true;
+        if (const char* v = std::getenv("OKAY_UI_DEMO_FRVIEW")) d.ui.view = std::atoi(v);   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (dev screenshot hook)
+    }
+    if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {   // viewing Friends clears the unread-DM badge
+        g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
+    }
+    const std::uint32_t now = okay::platform::TicksMs32();
+    // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
+    if (kFrDemo) {
+        static bool flSeeded = false;
+        if (!flSeeded) {
+            flSeeded = true;
+            const long t0 = (long)std::time(nullptr);
+            auto fe = [&](std::vector<okay::FollowEntry>& v, const char* id, const char* u, const char* dn, bool on, long ago) {
+                okay::FollowEntry e; e.id = id; e.username = u; e.display = dn; e.online = on; e.lastSeen = t0 - ago; v.push_back(e); };
+            fe(d.following, "u-maya", "maya", "Maya Chen", true, 0);
+            fe(d.following, "u-studio", "pixelforge", "PixelForge Studio", false, 3 * 3600);
+            fe(d.following, "u-ren", "ren", "Ren Ito", false, 2 * 86400);
+            fe(d.followers, "u-maya", "maya", "Maya Chen", true, 0);
+            fe(d.followers, "u-sam", "samw", "Sam Wilde", true, 0);
+            fe(d.followers, "u-ola", "ola", "Ola Nordmann", false, 26 * 3600);
+            fe(d.followers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
+        }
+    } else if (account.IsLoggedIn() && account.IsOnline()) {
+        if (!g_flMutex) g_flMutex = okay::lt::NewMutex();
+        if (now >= d.followNext && !g_flBusy) { QueueFollowJob(0); d.followNext = now + 60000; }
+        okay::lt::LockMutex(g_flMutex);
+        if (g_flReady) {
+            g_flReady = false;
+            d.following = g_flFollowing; d.followers = g_flFollowers; d.followSupported = g_flSupported; ++d.gen;
+            if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
+            g_flMsg.clear();
+        }
+        okay::lt::UnlockMutex(g_flMutex);
+    }
+    if (kFrDemo) {
+        static bool seeded = false;
+        if (!seeded) {
+            seeded = true;
+            long t0 = (long)std::time(nullptr);
+            auto mk = [&](long row, const char* id, const char* user, const char* disp, const char* st, bool in, bool on, const char* playing, const char* custom) {
+                okay::Friend f; f.rowId = row; f.id = id; f.username = user; f.display = disp; f.status = st;
+                f.incoming = in; f.online = on; f.playing = playing; f.customStatus = custom; d.list.push_back(f); };
+            mk(1, "u-maya", "maya", "Maya Chen", "accepted", false, true, "Playing Neon Drift", "");
+            mk(2, "demo-uid", "alexr", "Alex Rivera", "accepted", false, true, "", "shipping the jam build");
+            mk(3, "u-priya", "priya", "Priya Natarajan", "accepted", false, true, "In the editor", "");
+            mk(4, "u-jon", "jonas", "Jonas Berg", "accepted", false, false, "", "");
+            mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
+            mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
+            mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
+            d.list[3].lastSeen = t0 - 12 * 60; d.list[4].lastSeen = t0 - 3 * 3600 - 600;   // "Last online ..."
+            d.list[0].sessionCode = "QX7-42";
+            g_favFriends.insert("u-maya");
+            auto ev = [&](const char* a, const char* k, const char* dt, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = dt; e.when = t0 - ago; d.feed.push_back(e); };
+            ev("maya", "playing", "Neon Drift", 240); ev("alexr", "publish", "Coin Collector Deluxe", 3600);
+            ev("priya", "achievement", "First Build", 7200); ev("jonas", "online", "", 86400);
+            d.code = "OKAY-7K2F";
+        }
+    } else {
+        // EVERYTHING network for this page (ensure-profile, presence, my code, list, feed) runs on the Friends worker thread:
+        // the page never blocks on the network, so switching to Friends can't freeze.
+        if (!g_frMutex) g_frMutex = okay::lt::NewMutex();
+        if (now >= d.nextRefresh && !g_frFetching) {
+            g_frFetching = true; d.nextRefresh = now + 10000;
+            if (okay::lt::Thread* t = okay::lt::StartThread(FriendsListWorker, "okay-frlist", nullptr))
+                okay::lt::DetachThread(t);
+            else g_frFetching = false;
+        }
+        if (g_frMutex) {
+            okay::lt::LockMutex(g_frMutex);
+            if (g_frReady) { d.list = g_frList; d.feed = g_frFeed; d.code = g_frCode; g_frReady = false; ++d.gen; }
+            okay::lt::UnlockMutex(g_frMutex);
+        }
+    }
+    return d;
+}
+
 // "first_win" -> "First Win" (label for showcase ids we have no row for).
 static std::string PfPrettyId(const std::string& id) {
     std::string o; bool up = true;
@@ -19294,6 +19545,7 @@ int main(int argc, char** argv) {
         static bool ntWasOpen = false;
         static int  ntFilter = 0;                  // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
         std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
+        g_ntPanelShown = false;
         if (g_notifPanelOpen) {
             ImGuiViewport* vp = ImGui::GetMainViewport();
             const float navWNow = g_navCollapsed ? 64.0f : 232.0f;
@@ -19316,6 +19568,8 @@ int main(int argc, char** argv) {
             ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
             const ImVec2 wpos = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
+            g_ntPanelShown = true;
+            g_ntPanelRect[0] = wpos.x; g_ntPanelRect[1] = wpos.y; g_ntPanelRect[2] = wsz.x; g_ntPanelRect[3] = wsz.y;
             ImDrawList* dl = ImGui::GetWindowDrawList();
             {   // Soft drop shadow just outside the panel edge.
                 const ImVec2 a = wpos, b(wpos.x + wsz.x, wpos.y + wsz.y);
@@ -20898,7 +21152,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 12 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
@@ -21029,7 +21283,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
-        } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 13 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
@@ -21617,7 +21871,76 @@ int main(int argc, char** argv) {
                 }
                 }   // end list view
             }
+        } else if (tab == 2 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                         ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Community, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same hero, drop zone, library (search, cards, menu, double-click to play), share steps and templates as the Dear ImGui
+            // page below; differences in docs/own_ui_toolkit.md section 8.8.
+            uitiming::Scope uiT("Community", "OkayUI");
+            auto mutedTile = [](const std::string& name, unsigned char out[3]) {   // IconTile's colour: the name colour toward steel
+                const ImVec4 raw = NameColor(name);
+                auto mute = [](float c) { return 0.40f + (c - 0.40f) * 0.38f; };
+                out[0] = (unsigned char)(mute(raw.x) * 255.0f + 0.5f); out[1] = (unsigned char)(mute(raw.y) * 255.0f + 0.5f); out[2] = (unsigned char)(mute(raw.z) * 255.0f + 0.5f);
+            };
+            // The library model is rebuilt when the library is (CommunityLibrary: the scene list changes or once a second), not every frame.
+            static okayuiscreens::CommunityModel cm;
+            static std::vector<std::pair<std::size_t, fs::path>> cmItems;   // scene index and item root, parallel to cm.items
+            static unsigned cmGen = 0;
+            const CommunityLib& lib = CommunityLibrary(scenes);
+            if (cmGen != lib.gen || CommunityMetaCache().empty()) {
+                cmGen = lib.gen;
+                cm = okayuiscreens::CommunityModel();
+                cmItems.clear();
+                for (const CommunityLibItem& li : lib.items) {
+                    okayuiscreens::CommunityItem it;
+                    it.title = li.title;
+                    it.file = scenes[li.idx].filename().string();
+                    it.meta = CommunityItemMeta(li.root, scenes[li.idx]);
+                    it.ago = li.ago;
+                    mutedTile(it.title, it.tile);
+                    cm.items.push_back(it);
+                    cmItems.push_back({li.idx, li.root});
+                }
+                for (const auto& t : templates) {
+                    okayuiscreens::CommunityTemplate ct; ct.name = t.name; ct.desc = t.desc; mutedTile(t.name, ct.tile);
+                    cm.templates.push_back(ct);
+                }
+            }
+            // Cover art: looked up every frame (GameCover keeps its own cache), as the Dear ImGui page does.
+            for (std::size_t i = 0; i < cm.items.size() && i < cmItems.size(); ++i)
+                cm.items[i].cover = cmItems[i].first < scenes.size() ? (SDL_Texture*)GameCover(scenes[cmItems[i].first].string()) : nullptr;   // a painter texture, as an OkayUI image key
+            cm.havePlayer = !player.empty(); cm.haveEditor = !editor.empty();
+            static okayuiscreens::CommunityState cs;
+            cs.libFilter = commFilter; cs.libCap = (int)sizeof(commFilter);
+            cs.tplFilter = marketFilter; cs.tplCap = (int)sizeof(marketFilter);
+            if (focusSearch) { cs.focusLibrarySearch = true; focusSearch = false; }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's body ends; the footer stays below
+            ImGui::InvisibleButton("##okayui_community", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::CommunityResult r = okayuiscreens::DrawCommunity(cm, cs, rp.x, rp.y, ra.x, ra.y);
+            // The same actions as the Dear ImGui page.
+            auto itemAt = [&](int i) -> const std::pair<std::size_t, fs::path>* {
+                return i >= 0 && i < (int)cmItems.size() && cmItems[(std::size_t)i].first < scenes.size() ? &cmItems[(std::size_t)i] : nullptr;
+            };
+            if (r.publish) { tab = 7; g_openPublishForm = true; }
+            if (r.openFolder) OpenExternal(CommunityDir().string());
+            if (r.revealGames) OpenExternal(g_exeDir);
+            if (r.refresh) { scenes = FindScenes(); CommunityMetaCache().clear(); Toast("Library refreshed", 1); }
+            if (const auto* it = itemAt(r.play)) { const std::string cpath = scenes[it->first].string(); Launch(player, cpath); RecordPlayed(cpath); SavePrefs(); }
+            if (const auto* it = itemAt(r.reveal)) OpenExternal(it->second.string());
+            if (const auto* it = itemAt(r.copyPath)) ImGui::SetClipboardText(scenes[it->first].string().c_str());
+            if (const auto* it = itemAt(r.remove)) { commRemovePath = it->second.string(); commRemoveName = cm.items[(std::size_t)r.remove].title; }
+            if (r.useTemplate >= 0 && r.useTemplate < (int)(sizeof(templates) / sizeof(templates[0])) && !editor.empty()) {
+                g_wizardTemplateRequest = templates[r.useTemplate].tmpl;   // a card only opens the New Project wizard
+                tab = 0; g_lastTab = 0;
+            }
+            DrawCommunityRemoveModal(commRemovePath, commRemoveName, scenes);
+#endif
         } else if (tab == 2) {                            // ---- Community ----
+            uitiming::Scope uiT("Community", "Dear ImGui");
             sectionHeader("Community", nullptr);
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text);
             const ImU32 cDim  = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -21675,37 +21998,17 @@ int main(int argc, char** argv) {
                 d->PathLineTo(ImVec2(c.x + 7.5f, c.y + 5.5f)); d->PathLineTo(ImVec2(c.x - 7.5f, c.y + 5.5f));
                 d->PathStroke(col, ImDrawFlags_Closed, 1.6f);
             };
-            // Size + kind of each library item, computed once (folder walks are slow).
-            static std::map<std::string, std::string> s_commMeta;
-            auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& {
-                auto it = s_commMeta.find(scene.string());
-                if (it != s_commMeta.end()) return it->second;
-                std::error_code ec;
-                std::uintmax_t bytes = 0; int n = 0;
-                if (fs::is_directory(root, ec)) {
-                    for (auto f = fs::recursive_directory_iterator(root, ec); !ec && f != fs::recursive_directory_iterator() && n < 20000; f.increment(ec), ++n)
-                        if (f->is_regular_file(ec)) bytes += f->file_size(ec);
-                } else bytes = fs::file_size(root, ec);
-                char sz[32];
-                if (bytes >= 1024ull * 1024ull * 1024ull) std::snprintf(sz, sizeof(sz), "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-                else if (bytes >= 1024ull * 1024ull)      std::snprintf(sz, sizeof(sz), "%.1f MB", bytes / (1024.0 * 1024.0));
-                else                                      std::snprintf(sz, sizeof(sz), "%.0f KB", std::max(1.0, bytes / 1024.0));
-                std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
-                return s_commMeta.emplace(scene.string(), meta).first->second;
-            };
-            auto refreshLibrary = [&]() { scenes = FindScenes(); s_commMeta.clear(); };
+            // Size + kind of each library item, computed once (folder walks are slow; shared with the OkayUI page).
+            auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& { return CommunityItemMeta(root, scene); };
+            auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
 
-            // Collect library items (scenes living under community/).
-            struct CommItem { std::size_t idx; fs::path root; std::string title; };
-            std::vector<CommItem> commAll, commShown;
-            for (std::size_t i = 0; i < scenes.size(); ++i) {
-                fs::path croot = CommunityItemRoot(scenes[i]);
-                if (croot.empty()) continue;
-                CommItem ci{i, croot, croot.filename().string()};
-                commAll.push_back(ci);
-                std::string cneedle = lowerStr(commFilter);
-                if (cneedle.empty() || lowerStr(scenes[i].filename().string() + " " + ci.title).find(cneedle) != std::string::npos)
-                    commShown.push_back(ci);
+            // The library items (scenes living under community/), worked out once a second (CommunityLibrary).
+            const std::vector<CommunityLibItem>& commAll = CommunityLibrary(scenes).items;
+            std::vector<const CommunityLibItem*> commShown;
+            {
+                const std::string cneedle = lowerStr(commFilter);
+                for (const CommunityLibItem& ci : commAll)
+                    if (cneedle.empty() || ci.search.find(cneedle) != std::string::npos) commShown.push_back(&ci);
             }
 
             const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
@@ -21837,7 +22140,8 @@ int main(int argc, char** argv) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 g0 = ImGui::GetCursorScreenPos();
                 int n = 0;
-                for (const CommItem& it : commShown) {
+                for (const CommunityLibItem* itp : commShown) {
+                    const CommunityLibItem& it = *itp;
                     const fs::path& scene = scenes[it.idx];
                     const std::string cpath = scene.string();
                     ImGui::PushID((int)(it.idx + 5000));
@@ -21874,7 +22178,7 @@ int main(int argc, char** argv) {
                     const float tx = cp.x + 14 + A + 12, tr = cp.x + cardW - 14;
                     dl->AddText(ImVec2(tx, cp.y + 16), cText, FitText(it.title, tr - tx).c_str());
                     dl->AddText(ImVec2(tx, cp.y + 37), ImGui::GetColorU32(accLt), FitText(itemMeta(it.root, scene), tr - tx).c_str());
-                    std::string ago = ModifiedAgo(scene);
+                    const std::string& ago = it.ago;
                     std::string sub = scene.filename().string() + (ago.empty() ? "" : "  \xC2\xB7  " + ago);
                     dl->AddText(ImVec2(tx, cp.y + 56), cDim, FitText(sub, tr - tx).c_str());
                     // Actions: Play (primary) + reveal folder + more.
@@ -22014,34 +22318,7 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();   // ##commbody
 
-            // Confirm before deleting a community game's folder from disk.
-            if (!commRemovePath.empty() && !ImGui::IsPopupOpen("Remove from library?"))
-                ImGui::OpenPopup("Remove from library?");
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
-                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            if (ImGui::BeginPopupModal("Remove from library?", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("Remove \"%s\"?", commRemoveName.c_str());
-                ImGui::TextDisabled("This deletes its folder from disk and can't be undone.");
-                ImGui::Dummy(ImVec2(0, 6));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-                bool doRemove = ImGui::Button("Remove", ImVec2(110, 0));
-                ImGui::PopStyleColor(2);
-                if (doRemove) {
-                    std::error_code rec; fs::remove_all(commRemovePath, rec);
-                    Toast(rec ? "Remove failed" : "Removed from library", rec ? 2 : 1);
-                    refreshLibrary();
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel", ImVec2(110, 0))) {
-                    commRemovePath.clear();
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
+            DrawCommunityRemoveModal(commRemovePath, commRemoveName, scenes);   // confirm before deleting a community game's folder
         } else if (tab == 3) {                            // ---- Account ----
             sectionHeader("Account", nullptr);
 
@@ -23865,7 +24142,7 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
         } else if (tab == 5 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || account.IsLoggedIn()) &&
-                   !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                   !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                 ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Achievements, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same achievements, header, chips, sort, search, tiles and right-click menu as the Dear ImGui page below
@@ -24165,103 +24442,184 @@ int main(int argc, char** argv) {
             }
             ImGui::EndChild();
             }   // end achievements login gate
-        } else if (tab == 6) {                            // ---- Friends ----
-            sectionHeader("Friends", nullptr);
-            // Viewing Friends clears the unread-DM badge.
-            if (account.IsLoggedIn() && (g_dmUnread > 0 || g_newestDmId > g_lastDmId)) {
-                g_lastDmId = g_newestDmId; g_dmUnread = 0; SavePrefs();
+        } else if (tab == 6 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || okay::Friends(account).Available()) &&
+                   !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Friends, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same lists, chips, presence, rows, menus, follows, Add friend, code and activity as the Dear ImGui page below (signed
+            // out, that page's sign-in card shows instead); differences in docs/own_ui_toolkit.md section 8.8.
+            uitiming::Scope uiT("Friends", "OkayUI");
+            static const bool kFrDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+            okay::Friends fr(account);
+            FriendsPageData& fd = FriendsPageDataRefresh(account, kFrDemo);
+            auto nameOf = [&](const okay::Friend& f) -> std::string {
+                auto it = g_friendNicks.find(f.id);
+                if (it != g_friendNicks.end() && !it->second.empty()) return it->second;
+                return f.display.empty() ? f.username : f.display;
+            };
+            auto avatarRgb = [](const std::string& name, unsigned char out[3]) {   // DrawAvatar's disc: the name colour at 55%
+                const ImVec4 c = NameColor(name);
+                out[0] = (unsigned char)(c.x * 0.55f * 255.0f + 0.5f); out[1] = (unsigned char)(c.y * 0.55f * 255.0f + 0.5f); out[2] = (unsigned char)(c.z * 0.55f * 255.0f + 0.5f);
+            };
+            // The model is rebuilt when the data changed (a new list from the worker, a favourite, a nickname, a message to show) or
+            // once a second (the "Last online" and "4m ago" texts), not every frame.
+            static okayuiscreens::FriendsModel fm;
+            static std::uint32_t fmNext = 0;
+            static std::string fmSig;
+            const std::string sig = std::to_string(fd.gen) + "|" + std::to_string(g_favFriends.size()) + "|" + std::to_string(g_friendNicks.size()) + "|" +
+                                    std::to_string(g_onlineStatus) + "|" + std::to_string(fd.list.size()) + "|" + std::to_string(fd.following.size()) + "|" +
+                                    std::to_string(fd.followers.size()) + "|" + (g_flBusy ? "b" : "") + (MpCanInvite() ? "i" : "") + MpPartyId() + "|" + fd.err + "|" + fd.ok + "|" + fd.code;
+            if (sig != fmSig || okay::platform::TicksMs32() >= fmNext) {
+            fmSig = sig; fmNext = okay::platform::TicksMs32() + 1000;
+            fm = okayuiscreens::FriendsModel();
+            for (const okay::Friend& f : fd.list) {
+                okayuiscreens::FriendRow r;
+                r.rowId = f.rowId; r.id = f.id; r.username = f.username; r.name = nameOf(f);
+                r.kind = f.status == "accepted" ? 0 : f.incoming ? 1 : 2;
+                r.online = f.online; r.favorite = g_favFriends.count(f.id) != 0;
+                r.joinable = r.kind == 0 && f.online && !f.sessionCode.empty();
+                r.hasNickname = g_friendNicks.count(f.id) != 0;
+                r.playing = f.playing; r.customStatus = f.customStatus; r.lastSeen = f.lastSeen;
+                r.lastOnline = f.lastSeen > 0 ? LastOnline(f.lastSeen) : std::string();
+                avatarRgb(r.name, r.avatar);
+                fm.friends.push_back(r);
             }
+            auto follows = [&](const std::vector<okay::FollowEntry>& v, std::vector<okayuiscreens::FollowRow>& out) {
+                for (const okay::FollowEntry& e : v) {
+                    okayuiscreens::FollowRow r;
+                    r.id = e.id; r.username = e.username; r.display = e.display; r.online = e.online;
+                    r.seen = e.lastSeen > 0 ? "seen " + RelTime(e.lastSeen) : std::string();
+                    avatarRgb(e.display, r.avatar);
+                    out.push_back(r);
+                }
+            };
+            follows(fd.following, fm.following);
+            follows(fd.followers, fm.followers);
+            for (const okay::FriendEvent& e : fd.feed) {
+                okayuiscreens::FeedRow r;
+                r.who = e.actor;
+                for (const okay::Friend& f : fd.list) if (f.username == e.actor) { r.who = nameOf(f); break; }
+                const char* verb = e.kind == "playing" ? "is playing " : e.kind == "achievement" ? "unlocked "
+                                 : e.kind == "publish" ? "published " : e.kind == "online" ? "came online" : "";
+                r.text = r.who + " " + verb + e.detail;
+                r.ago = RelTime(e.when);
+                avatarRgb(r.who, r.avatar);
+                fm.feed.push_back(r);
+                if (fm.feed.size() >= 8) break;
+            }
+            fm.code = fd.code;
+            fm.presence = std::clamp(g_onlineStatus, 0, 2);
+            fm.followSupported = fd.followSupported; fm.followBusy = g_flBusy;
+            fm.canInvite = MpCanInvite(); fm.inviteLabel = "Invite to " + MpGameTitle();
+            fm.partyLabel = MpPartyId().empty() ? "Start a party with them" : "Invite to party";
+            fm.addError = fd.err; fm.addOk = fd.ok;
+            static unsigned fmRev = 0;
+            fm.revision = ++fmRev;
+            }
+            // Profile pictures: looked up every frame (the texture cache can change under the model), as the Dear ImGui page does.
+            {
+                auto pic = [](const std::string& url) -> SDL_Texture* { return url.empty() ? nullptr : (SDL_Texture*)AvatarTexture(url); };   // OkayUI takes image keys as SDL_Texture* (opaque): a painter texture here
+                for (std::size_t i = 0; i < fm.friends.size() && i < fd.list.size(); ++i) fm.friends[i].picture = pic(fd.list[i].avatar);
+                for (std::size_t i = 0; i < fm.following.size() && i < fd.following.size(); ++i) fm.following[i].picture = pic(fd.following[i].avatar);
+                for (std::size_t i = 0; i < fm.followers.size() && i < fd.followers.size(); ++i) fm.followers[i].picture = pic(fd.followers[i].avatar);
+                for (std::size_t i = 0; i < fm.feed.size() && i < fd.feed.size(); ++i) {
+                    SDL_Texture* t = nullptr;
+                    for (const okay::Friend& f : fd.list) if (f.username == fd.feed[i].actor) { t = pic(f.avatar); break; }
+                    fm.feed[i].picture = t;
+                }
+            }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's lists end; the footer stays below
+            ImGui::InvisibleButton("##okayui_friends", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::FriendsResult r = okayuiscreens::DrawFriends(fm, fd.ui, rp.x, rp.y, ra.x, ra.y);
+            // The same actions as the Dear ImGui page.
+            auto F = [&](int i) -> const okay::Friend& { return fd.list[(std::size_t)i]; };
+            if (r.viewChanged) { fd.err.clear(); fd.ok.clear(); }
+            if (r.presence >= 0) { g_onlineStatus = r.presence; fd.nextRefresh = 0; SavePrefs(); }   // the worker broadcasts it
+            if (r.copyCode && !fd.code.empty()) { ImGui::SetClipboardText(fd.code.c_str()); Toast("Friend code copied", 1); }
+            if (r.openProfile >= 0) OpenPublicProfile(F(r.openProfile).id, F(r.openProfile).username, nameOf(F(r.openProfile)), F(r.openProfile).avatar, F(r.openProfile).accent);
+            if (r.message >= 0) OpenChatWith(F(r.message).id, nameOf(F(r.message)), F(r.message).avatar);
+            if (r.join >= 0) MpJoinFriend(F(r.join).sessionCode, nameOf(F(r.join)));
+            if (r.invite >= 0) MpInviteUser(F(r.invite).id, nameOf(F(r.invite)));
+            if (r.party >= 0) MpPartyInvite(F(r.party).id, nameOf(F(r.party)));
+            if (r.toggleFavorite >= 0) {
+                const std::string& id = F(r.toggleFavorite).id;
+                if (g_favFriends.count(id)) g_favFriends.erase(id); else g_favFriends.insert(id);
+                SavePrefs();
+            }
+            if (r.setNickname >= 0) {
+                fd.nickUid = F(r.setNickname).id;
+                std::snprintf(fd.nickBuf, sizeof(fd.nickBuf), "%s", g_friendNicks.count(fd.nickUid) ? g_friendNicks[fd.nickUid].c_str() : "");
+                fd.nickOpen = true;
+            }
+            if (r.clearNickname >= 0) { g_friendNicks.erase(F(r.clearNickname).id); SavePrefs(); }
+            if (r.copyUsername >= 0) { ImGui::SetClipboardText(F(r.copyUsername).username.c_str()); Toast("Username copied", 1); }
+            if (r.accept >= 0) {
+                const std::string nm = nameOf(F(r.accept));
+                if (fr.Accept(F(r.accept).rowId)) Toast("You're now friends with " + nm, 1);
+                fd.nextRefresh = 0;
+            }
+            if (r.remove >= 0) { fr.Remove(F(r.remove).rowId); fd.nextRefresh = 0; }
+            if (!r.addRequest.empty()) {   // username first, then a friend code (as the Dear ImGui page)
+                std::string e1, e2;
+                if (fr.Request(r.addRequest, &e1) || fr.RequestByCode(r.addRequest, &e2)) {
+                    fd.ok = "Friend request sent to " + r.addRequest + ".";
+                    Toast(fd.ok, 1);
+                    fd.ui.addBuf[0] = '\0'; fd.err.clear(); fd.nextRefresh = 0;
+                } else {
+                    fd.err = okay::privacy::IsRuleText(e1) ? e1 : okay::privacy::IsRuleText(e2) ? e2
+                           : "Hmm, no player with that username or code. Check the spelling?";
+                    fd.ok.clear();
+                }
+            }
+            if (!r.follow.empty()) { if (kFrDemo) Toast("Now following @" + r.follow, 1); else QueueFollowJob(4, r.follow); }
+            const std::vector<okay::FollowEntry>& flShown = fd.ui.view == 4 ? fd.following : fd.followers;
+            if (r.openFollowProfile >= 0 && r.openFollowProfile < (int)flShown.size()) {
+                const okay::FollowEntry& e = flShown[(std::size_t)r.openFollowProfile];
+                OpenPublicProfile(e.id, e.username, e.display, e.avatar);
+            }
+            auto followAct = [&](const std::string& act, int actKind) {
+                if (act.empty()) return;
+                if (kFrDemo) {
+                    if (actKind == 2) fd.following.erase(std::remove_if(fd.following.begin(), fd.following.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), fd.following.end());
+                    else if (actKind == 3) fd.followers.erase(std::remove_if(fd.followers.begin(), fd.followers.end(), [&](const okay::FollowEntry& x) { return x.id == act; }), fd.followers.end());
+                    else for (const auto& x : fd.followers) if (x.id == act) { fd.following.insert(fd.following.begin(), x); break; }
+                } else QueueFollowJob(actKind, act);
+            };
+            followAct(r.followBack, 1); followAct(r.unfollow, 2); followAct(r.removeFollower, 3);
+            if (r.toggleFavorite >= 0 || r.clearNickname >= 0 || !r.followBack.empty() || !r.unfollow.empty() || !r.removeFollower.empty() || r.presence >= 0)
+                ++fd.gen;   // shown at once, not a second later
+            DrawFriendNicknameModal(fd);
+#endif
+        } else if (tab == 6) {                            // ---- Friends ----
+            uitiming::Scope uiT("Friends", "Dear ImGui");
+            sectionHeader("Friends", nullptr);
             static const bool kFrDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
             okay::Friends fr(account);
             if (!fr.Available() && !kFrDemo) {
                 loginGate("Friends");
             } else {
-                static char addBuf[48] = "";
-                static std::string fErr, fOk;
-                static std::vector<okay::Friend> fCache;
-                static std::vector<okay::FriendEvent> fFeed;
-                static std::string fCode;
-                // Follows (one-way): lists refreshed on a worker (QueueFollowJob).
-                static std::vector<okay::FollowEntry> flFollowing, flFollowers;
-                static bool flSupported = true;
-                static std::uint32_t flNext = 0;
-                static char flAddBuf[48] = "";
-                {
-                    const std::uint32_t tnow = okay::platform::TicksMs32();
-                    if (kFrDemo) {
-                        static bool flSeeded = false;
-                        if (!flSeeded) {
-                            flSeeded = true;
-                            const long t0 = (long)std::time(nullptr);
-                            auto fe = [&](std::vector<okay::FollowEntry>& v, const char* id, const char* u, const char* d, bool on, long ago) {
-                                okay::FollowEntry e; e.id = id; e.username = u; e.display = d; e.online = on; e.lastSeen = t0 - ago; v.push_back(e); };
-                            fe(flFollowing, "u-maya", "maya", "Maya Chen", true, 0);
-                            fe(flFollowing, "u-studio", "pixelforge", "PixelForge Studio", false, 3 * 3600);
-                            fe(flFollowing, "u-ren", "ren", "Ren Ito", false, 2 * 86400);
-                            fe(flFollowers, "u-maya", "maya", "Maya Chen", true, 0);
-                            fe(flFollowers, "u-sam", "samw", "Sam Wilde", true, 0);
-                            fe(flFollowers, "u-ola", "ola", "Ola Nordmann", false, 26 * 3600);
-                            fe(flFollowers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
-                        }
-                    } else if (account.IsLoggedIn() && account.IsOnline()) {
-                        if (!g_flMutex) g_flMutex = okay::lt::NewMutex();
-                        if (tnow >= flNext && !g_flBusy) { QueueFollowJob(0); flNext = tnow + 60000; }
-                        okay::lt::LockMutex(g_flMutex);
-                        if (g_flReady) {
-                            g_flReady = false;
-                            flFollowing = g_flFollowing; flFollowers = g_flFollowers; flSupported = g_flSupported;
-                            if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
-                            g_flMsg.clear();
-                        }
-                        okay::lt::UnlockMutex(g_flMutex);
-                    }
-                }
+                // The lists, the feed, my code and the follows: read by FriendsPageDataRefresh (shared with the OkayUI page), as is
+                // what the two pages share (the view, the search, the typed names, the Add friend messages).
+                FriendsPageData& frData = FriendsPageDataRefresh(account, kFrDemo);
+                std::vector<okay::Friend>& fCache = frData.list;
+                std::vector<okay::FriendEvent>& fFeed = frData.feed;
+                std::string& fCode = frData.code;
+                std::vector<okay::FollowEntry>& flFollowing = frData.following;
+                std::vector<okay::FollowEntry>& flFollowers = frData.followers;
+                const bool flSupported = frData.followSupported;
+                std::string& fErr = frData.err;
+                std::string& fOk = frData.ok;
+                std::uint32_t& fNextRefresh = frData.nextRefresh;
+                int& fView = frData.ui.view;
+                char (&addBuf)[48] = frData.ui.addBuf;
+                char (&flAddBuf)[48] = frData.ui.followBuf;
                 // Direct messages live in the floating Chat window (DrawChatWindow);
                 // the "Message" buttons call OpenChatWith(). Clicking a row opens
                 // the full public profile page (OpenPublicProfile).
-                static std::uint32_t fNextRefresh = 0;
-                static int fView = std::getenv("OKAY_UI_DEMO_FRVIEW") ? std::atoi(std::getenv("OKAY_UI_DEMO_FRVIEW")) : 0;   // 0 Online, 1 All, 2 Pending, 3 Add friend, 4 Following, 5 Followers (env: dev screenshot hook)
-                std::uint32_t now = okay::platform::TicksMs32();
-                if (kFrDemo) {
-                    static bool seeded = false;
-                    if (!seeded) {
-                        seeded = true;
-                        long t0 = (long)std::time(nullptr);
-                        auto mk = [&](long row, const char* id, const char* user, const char* disp, const char* st, bool in, bool on, const char* playing, const char* custom) {
-                            okay::Friend f; f.rowId = row; f.id = id; f.username = user; f.display = disp; f.status = st;
-                            f.incoming = in; f.online = on; f.playing = playing; f.customStatus = custom; fCache.push_back(f); };
-                        mk(1, "u-maya", "maya", "Maya Chen", "accepted", false, true, "Playing Neon Drift", "");
-                        mk(2, "demo-uid", "alexr", "Alex Rivera", "accepted", false, true, "", "shipping the jam build");
-                        mk(3, "u-priya", "priya", "Priya Natarajan", "accepted", false, true, "In the editor", "");
-                        mk(4, "u-jon", "jonas", "Jonas Berg", "accepted", false, false, "", "");
-                        mk(5, "u-leo", "leo", "Leo Martins", "accepted", false, false, "", "");
-                        mk(6, "u-kai", "kai_dev", "Kai", "pending", true, true, "", "");
-                        mk(7, "u-zoe", "zoe", "Zoe Park", "pending", false, false, "", "");
-                        fCache[3].lastSeen = t0 - 12 * 60; fCache[4].lastSeen = t0 - 3 * 3600 - 600;   // "Last online …"
-                        fCache[0].sessionCode = "QX7-42";
-                        g_favFriends.insert("u-maya");
-                        auto ev = [&](const char* a, const char* k, const char* d, long ago) { okay::FriendEvent e; e.actor = a; e.kind = k; e.detail = d; e.when = t0 - ago; fFeed.push_back(e); };
-                        ev("maya", "playing", "Neon Drift", 240); ev("alexr", "publish", "Coin Collector Deluxe", 3600);
-                        ev("priya", "achievement", "First Build", 7200); ev("jonas", "online", "", 86400);
-                        fCode = "OKAY-7K2F";
-                    }
-                } else {
-                    // EVERYTHING network for this tab (ensure-profile, presence, my code,
-                    // list, feed) runs on the Friends worker thread — the tab never
-                    // blocks on the network, so switching to Friends can't freeze.
-                    if (!g_frMutex) g_frMutex = okay::lt::NewMutex();
-                    if (now >= fNextRefresh && !g_frFetching) {
-                        g_frFetching = true; fNextRefresh = now + 10000;
-                        if (okay::lt::Thread* t = okay::lt::StartThread(FriendsListWorker, "okay-frlist", nullptr))
-                            okay::lt::DetachThread(t);
-                        else g_frFetching = false;
-                    }
-                    if (g_frMutex) {
-                        okay::lt::LockMutex(g_frMutex);
-                        if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
-                        okay::lt::UnlockMutex(g_frMutex);
-                    }
-                }
 
                 // Private display name: a nickname you set, else their display
                 // name, else the username.
@@ -24358,8 +24716,8 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(0, 0));
                 }
 
-                // Nickname editor popup state.
-                static std::string nickUid; static char nickBuf[48] = ""; static bool nickOpen = false;
+                // Nickname editor popup state (shared with the OkayUI page).
+                std::string& nickUid = frData.nickUid; char (&nickBuf)[48] = frData.nickBuf; bool& nickOpen = frData.nickOpen;
 
                 // ---- One friend row (chat-list style) ------------------------------
                 // kind: 0 friend, 1 incoming request, 2 sent request.
@@ -24678,7 +25036,7 @@ int main(int argc, char** argv) {
                     if (!side) { ImGui::Dummy(ImVec2(0, 10)); codeCard(); }
                 } else {
                     // Search pill.
-                    static char friendFilter[64] = "";
+                    char (&friendFilter)[64] = frData.ui.filter;
                     {
                         ImVec2 sp = ImGui::GetCursorScreenPos();
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
@@ -24768,23 +25126,7 @@ int main(int argc, char** argv) {
                     ImGui::EndChild();
                 }
 
-                // Nickname editor popup.
-                if (nickOpen) { ImGui::OpenPopup("Set nickname"); nickOpen = false; }
-                if (ImGui::BeginPopupModal("Set nickname", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ImGui::TextDisabled("Only you see this nickname.");
-                    ImGui::SetNextItemWidth(260);
-                    bool ok = ImGui::InputText("##nick", nickBuf, sizeof(nickBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                    if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
-                        if (!nickUid.empty()) {
-                            if (nickBuf[0]) g_friendNicks[nickUid] = nickBuf; else g_friendNicks.erase(nickUid);
-                            SavePrefs();
-                        }
-                        nickUid.clear(); ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(110, 0))) { nickUid.clear(); ImGui::CloseCurrentPopup(); }
-                    ImGui::EndPopup();
-                }
+                DrawFriendNicknameModal(frData);   // the Set nickname dialog
             }
         } else if (tab == 7) {                            // ---- Market / Workshop ----
             sectionHeader("Marketplace", nullptr);
@@ -27352,7 +27694,7 @@ int main(int argc, char** argv) {
                     foReplyFocus = true;   // keep typing (Enter deactivates a single-line input)
                 }
             }
-        } else if (tab == 10 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 10 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Downloads, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same list, buttons and actions as the Dear ImGui page below; differences in docs/own_ui_toolkit.md section 8.
@@ -27474,11 +27816,14 @@ int main(int argc, char** argv) {
                 // Progress bar.
                 float frac = (tot > 0) ? (float)rec / (float)tot : (stt==2?1.0f:0.0f);
                 if (frac > 1.0f) frac = 1.0f;
+                // "12.0 MB / 48.0 MB"; nothing at all while nothing is known (a queued download: the status says "Queued").
                 char overlay[64];
-                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", humanBytes(rec).c_str(), humanBytes(tot).c_str());
-                else         std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
+                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", rec > 0 ? humanBytes(rec).c_str() : "0 B", humanBytes(tot).c_str());
+                else if (rec > 0) std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
+                else overlay[0] = '\0';
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
-                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), overlay);
+                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), "");
+                DlProgressBarText(frac, overlay);
                 ImGui::SameLine();
                 ImGui::TextColored(stCol, "%s", stTxt);
                 // Actions.
@@ -27511,7 +27856,33 @@ int main(int argc, char** argv) {
                 ImGui::PopID();
             }
             ImGui::EndChild();
+        } else if (tab == 15 && okayFrame && OkayUIVersionsPage() && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Versions, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same cards, rows, buttons and choices as the Dear ImGui page below, decided by the same rules in VersionsUI.cpp; the
+            // page scrolls with the launcher's own page (the wheel stays with Dear ImGui). Differences in docs/own_ui_toolkit.md 8.8.
+            uitiming::Scope uiT("Versions", "OkayUI");
+            const okayversionsui::Host& vh = VersionsHost();
+            // The model (texts worked out by the module's rules) is rebuilt ten times a second, and at once after a click.
+            static okayuiscreens::VersionsModel vm;
+            static std::uint32_t vmNext = 0;
+            if (okay::platform::TicksMs32() >= vmNext) { okayversionsui::BuildOkayUIModel(vh, vm); vmNext = okay::platform::TicksMs32() + 100; }
+            static float vContentH = 900.0f;   // the page's height last frame (the scroll range Dear ImGui keeps)
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            const float vw = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+            const ImRect clip = ImGui::GetCurrentWindow()->InnerClipRect;
+            ImGui::InvisibleButton("##okayui_versions", ImVec2(vw, std::max(8.0f, vContentH)));
+            const float vy0 = std::max(rp.y, clip.Min.y), vy1 = std::min(rp.y + vContentH, clip.Max.y);
+            OkayUIOffer(rp.x, vy0, vw, std::max(1.0f, vy1 - vy0), ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::VersionsResult vr = okayuiscreens::DrawVersions(vm, rp.x, rp.y, vw, clip.Min.y, clip.Max.y);
+            if (vr.contentHeight > 0.0f) vContentH = vr.contentHeight;
+            okayversionsui::ApplyOkayUIResult(vh, vr);
+            if (vr.dismissBanner || vr.checkAgain || vr.ltsAction || vr.ltsDefaultAction || vr.pruneNow || vr.retry || vr.cancelDownload || vr.toggleShowAll ||
+                vr.channel >= 0 || vr.defaultChoice >= 0 || vr.keep >= 0 || vr.makeDefault >= 0 || vr.remove >= 0 || vr.install >= 0) vmNext = 0;
+            okayversionsui::DrawDialogs(vh);
+#endif
         } else if (tab == 15) {                           // ---- Versions ----
+            uitiming::Scope uiT("Versions", "Dear ImGui");
             sectionHeader("Versions", "Keep other versions of the editor next to this one, so every project can open with the version it was made with.");
             okayversionsui::DrawPage(VersionsHost());
         } else if (tab == 11) {                           // ---- Admin ----

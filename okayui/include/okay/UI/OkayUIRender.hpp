@@ -155,6 +155,10 @@ public:
     /// Replace the pixels; the size may differ from the old one. False on failure (the texture is then unusable).
     virtual bool  UpdateTexture(TexId t, int w, int h, const std::uint8_t* rgba) = 0;
     virtual void  DestroyTexture(TexId t) = 0;
+    /// A texture the host made itself on the same target (an image key OkayUI::Image / DrawList::AddImage was given, e.g. the
+    /// launcher's profile pictures on its painter): its id for Draw, without copying or owning it. 0 when the backend cannot
+    /// (the default). Used only with Options::hostTextures.
+    virtual TexId WrapHostTexture(const void* hostTexture) { (void)hostTexture; return 0; }
 
     /// Start a frame on a target of fbW x fbH pixels; logical coordinates are multiplied by `dpi`.
     virtual bool BeginFrame(int fbW, int fbH, float dpi) = 0;
@@ -185,6 +189,9 @@ struct Options {
     /// the software draw-list rasteriser and its committed golden images use.
     bool atlasLinear = true;
     bool checkIndices = true, checkVertices = true;
+    /// Image keys that are not SetImage'd, the atlas or a fallback font are the backend's own textures (Backend::WrapHostTexture):
+    /// the host draws OkayUI on the same painter its images were made on.
+    bool hostTextures = false;
 };
 
 struct FrameInfo {

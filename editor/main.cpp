@@ -49823,7 +49823,9 @@ static void EditorOkayUIEndFrame() {
     if (!g_gfx || ww <= 0 || wh <= 0 || fw <= 0 || fh <= 0) return;
     if (!g_okayRenderer) {
         g_okayRenderBackend = OkayUI::render::CreatePainterBackend(g_gfx->Painter());
-        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend));
+        OkayUI::render::Options ro;
+        ro.hostTextures = true;   // images OkayUI is given (pictures, covers, icons) are this painter's own textures
+        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend, ro));
     }
     OkayUI::render::FrameInfo fi;
     fi.fbWidth = fw; fi.fbHeight = fh; fi.dpi = (float)fw / (float)ww;

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <initializer_list>
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
@@ -2423,30 +2424,57 @@ void EndFrame(SDL_Renderer* r) {
     static int scratch[kMaxIdx];
     auto submit = [&](SDL_Texture* tex, const int* idx, int count) {
         if (count <= 0) return;
+        // The whole index list in one call (a page under one clip): every index is below g_nv already, so the vertices are
+        // handed over as they are, without looking through the indices first.
+        if (idx == g_idx && count == g_ni) { SDL_RenderGeometry(r, tex, g_verts, g_nv, idx, count); return; }
         int lo = idx[0], hi = idx[0];
         for (int i = 1; i < count; ++i) { const int v = idx[i]; lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
+        if (lo == 0) { SDL_RenderGeometry(r, tex, g_verts, hi + 1, idx, count); return; }   // already relative: no copy
         for (int i = 0; i < count; ++i) scratch[i] = idx[i] - lo;
         SDL_RenderGeometry(r, tex, (const SDL_Vertex*)(g_verts + lo), hi - lo + 1, scratch, count);
     };
     if (g_nspans == 0) {
         submit(defTex, g_idx, g_ni);   // fast path: no clipping
     } else {
-        // Draw each contiguous index range under its clip rect. Ranges run from one
-        // span's startIdx to the next span's (last extends to g_ni).
+        // Draw each contiguous index range under its clip rect. Ranges run from one span's startIdx to the next span's (the last
+        // extends to g_ni); geometry before the first span (window frames drawn pre-clip) is unclipped. Ranges are merged into
+        // fewer calls where that draws the same pixels: the same texture and clip, or a range wholly inside its own clip (the clip
+        // cuts nothing) and inside the previous range's clip (a combo's text, a short label clipped to its box).
         SDL_bool hadClip = SDL_RenderIsClipEnabled(r);
         SDL_Rect savedClip; SDL_RenderGetClipRect(r, &savedClip);
-        // Geometry before the first span (window frames drawn pre-clip) is unclipped.
-        if (g_spans[0].startIdx > 0) {
-            SDL_RenderSetClipRect(r, nullptr);
-            submit(defTex, &g_idx[0], g_spans[0].startIdx);
+        struct Run { int from, to; bool on; okay::ui2d::Rect rect; SDL_Texture* tex; };
+        static Run runs[kMaxSpans + 1];
+        int nr = 0;
+        auto addRun = [&](int from, int to, bool on, const okay::ui2d::Rect& rect, SDL_Texture* tex) {
+            if (to <= from) return;
+            if (nr > 0) {
+                Run& p = runs[nr - 1];
+                const bool sameClip = p.on == on && (!on || (p.rect.x == rect.x && p.rect.y == rect.y && p.rect.w == rect.w && p.rect.h == rect.h));
+                if (p.tex == tex && p.to == from) {
+                    if (sameClip) { p.to = to; return; }
+                    if (to - from > 1024) { runs[nr++] = Run{from, to, on, rect, tex}; return; }   // only small ranges are looked into
+                    float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;   // the range's vertex bounds
+                    for (int i = from; i < to; ++i) {
+                        const auto& v = g_verts[g_idx[i]].position;
+                        x0 = v.x < x0 ? v.x : x0; x1 = v.x > x1 ? v.x : x1; y0 = v.y < y0 ? v.y : y0; y1 = v.y > y1 ? v.y : y1;
+                    }
+                    auto inside = [&](bool c, const okay::ui2d::Rect& q) {
+                        return !c || (x0 >= (float)q.x && y0 >= (float)q.y && x1 <= (float)(q.x + q.w) && y1 <= (float)(q.y + q.h));
+                    };
+                    if (inside(on, rect) && inside(p.on, p.rect)) { p.to = to; return; }
+                }
+            }
+            runs[nr++] = Run{from, to, on, rect, tex};
+        };
+        addRun(0, g_spans[0].startIdx, false, okay::ui2d::Rect{0, 0, 0, 0}, defTex);
+        SDL_Texture* lastIn = g_defTex; SDL_Texture* lastOut = defTex;   // spans mostly share one texture: look it up once
+        for (int s = 0; s < g_nspans && nr < kMaxSpans + 1; ++s) {
+            if (g_spans[s].tex != lastIn) { lastIn = g_spans[s].tex; lastOut = resolveTex(r, lastIn); }
+            addRun(g_spans[s].startIdx, (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni, g_spans[s].on, g_spans[s].rect, lastOut);
         }
-        for (int s = 0; s < g_nspans; ++s) {
-            int from = g_spans[s].startIdx;
-            int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
-            if (to <= from) continue;
-            if (g_spans[s].on) SDL_RenderSetClipRect(r, (const SDL_Rect*)&g_spans[s].rect);
-            else               SDL_RenderSetClipRect(r, nullptr);
-            submit(resolveTex(r, g_spans[s].tex), &g_idx[from], to - from);
+        for (int k = 0; k < nr; ++k) {
+            SDL_RenderSetClipRect(r, runs[k].on ? (const SDL_Rect*)&runs[k].rect : nullptr);
+            submit(runs[k].tex, &g_idx[runs[k].from], runs[k].to - runs[k].from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);
@@ -2800,7 +2828,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         scrollY = slot->scroll; scrollable = true;
     } else if (slot) slot->scroll = 0.0f;
     const bool showBar = scrollable && !(wf & Window_NoScrollbar);
-    if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
+    // A framed window clips inside its 1 px hairline; a bare window has no frame, so it clips to its whole rectangle (its content
+    // may reach the edges: the launcher pages' cards put their 1 px outline on the first and last column, as Dear ImGui does).
+    if (bare && (g_look || scrollable)) { PushClipRect(wx, wy, w, h); g_lay.winClip = true; }
+    else if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
     g_lay.active = true;
     g_lay.seed = id;
     g_lay.ox = wx + pad;
@@ -3006,7 +3037,10 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     float* scroll  = floatState(cid, 0.0f);
     float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
     const bool hovered = hit(rx, ry, rw, rh);
-    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * rowH(); if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
+    // The wheel scrolls a row per notch; a child with the Dear ImGui-style padding and bar (StyleVar_ChildPadding) scrolls five
+    // lines of text per notch, at most two thirds of its height, as the Dear ImGui lists it stands in for do.
+    const float wheelStep = imguiBar ? std::floor(std::min(5.0f * textH(), rh * 0.67f)) : rowH();
+    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * wheelStep; if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
     // Clamp with the previous frame's content extent so layout uses a sane offset.
     if (*scroll < 0.0f) *scroll = 0.0f;
     if (*scroll > *maxSlot) *scroll = *maxSlot;
@@ -3091,14 +3125,19 @@ void EndChild() {
         // imguiBar (a ChildPadding child, the launcher's): the bar spans the child and the track is inset by `in` at both ends, the
         // thumb drawn at its full length on it. sbInside (a pushed ScrollbarSize in a bordered child): the bar itself stops one pixel
         // short of each edge. Otherwise the track is the whole bar.
-        const float in = c.imguiBar ? std::min(3.0f, std::max(0.0f, std::floor((c.sbW - 2.0f) * 0.5f))) : (c.sbInside ? 1.0f : 0.0f);
+        // imguiBar: `in` is Dear ImGui's ScrollbarPadding (2 px, or half the bar when it is thinner).
+        const float in = c.imguiBar ? std::floor(std::min(2.0f, std::min(c.sbW, c.rh) * 0.5f)) : (c.sbInside ? 1.0f : 0.0f);
         const float sbx = c.rx + c.rw - c.sbW - (c.imguiBar ? 0.0f : in), trackY = c.ry + in, trackH = std::max(0.0f, c.rh - 2.0f * in);
         if (!g_look || colorIsSet(Col_ScrollbarBg)) {
             if (c.imguiBar) quad(sbx, c.ry, c.sbW, c.rh, pick(Col_ScrollbarBg, g_theme.track));
             else quad(sbx, trackY, c.sbW, trackH, pick(Col_ScrollbarBg, g_theme.track));
         }
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
-        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f; if (c.imguiBar && thumbH > trackH) thumbH = trackH;
+        // The thumb: with the Dear ImGui look (imguiBar) a whole number of pixels long, at least 11 (its GrabMinSize, the launcher's
+        // value) or the thumb's width; otherwise at least 16.
+        float thumbH = frac * trackH;
+        if (c.imguiBar) thumbH = std::floor(std::max(std::min(c.sbW - 2.0f * in, 11.0f), std::min(thumbH, trackH)));
+        else if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
         float thumbY = trackY + t * (trackH - thumbH);
         // Drag the thumb.
@@ -4992,6 +5031,8 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
     const float ty = y + (h - textH()) * 0.5f;
+    const VisLabel vis(label);   // "##id" is not shown (a row the caller draws itself)
+    if (label && std::strstr(label, "##")) label = vis.b;
     if (flags & Selectable_Header) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
         unsigned char tmp[4];
         const unsigned char* bg = nullptr;
@@ -5045,11 +5086,15 @@ static bool beginPopupBody(int id) {
     const bool im = g_theme.imguiPopups;
     const float padX = im ? g_theme.popupPadX : (g_popupPadX >= 0.0f ? g_popupPadX : 6.0f);
     const float padY = im ? g_theme.popupPadY : (g_popupPadY >= 0.0f ? g_popupPadY : 6.0f);
-    float* wSlot = im ? floatState(id ^ 0x5151, 0.0f) : nullptr;   // imguiPopups: last frame's widest item
-    const float w = p->w > 0.0f ? p->w : (im && *wSlot > 0.0f ? *wSlot + 2.0f * padX : (g_popupW > 0.0f ? g_popupW : 160.0f));
+    // Width: the caller's (combos); else, with imguiPopups, last frame's widest item plus the padding; else a pushed PopupWidth, or
+    // 160 or as wide as last frame's widest item (a Selectable with an explicit size).
+    float* wSlot = floatState(id ^ (im ? 0x5151 : 0x9191), 0.0f);
+    const float w = p->w > 0.0f ? p->w : im ? (*wSlot > 0.0f ? *wSlot + 2.0f * padX : 160.0f)
+                                        : (g_popupW > 0.0f ? g_popupW : std::max(160.0f, *wSlot));
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
-    // Kept inside the display (Input::displayW/H), as Dear ImGui keeps a popup inside its viewport: moved left and up as needed.
+    // Kept inside the display when its size is known (Input::displayW / displayH): a menu opened near the right or bottom edge
+    // opens to the left of or above where it would not fit.
     if (g_dispW > 0.0f && px + w > g_dispW) px = std::max(0.0f, g_dispW - w);
     if (g_dispH > 0.0f && py + *hSlot + padY * 2.0f > g_dispH) py = std::max(0.0f, g_dispH - (*hSlot + padY * 2.0f));
     // Frame (overlay so it sits above everything). Height is last frame's content.
@@ -5074,15 +5119,17 @@ static bool beginPopupBody(int id) {
     g_lay.indent = 0.0f; g_lay.seed = id;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_lay.maxRight = g_lay.ox;
     return true;
 }
 
 void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
-    // Measured content for next frame: the height (without the gap after the last item when exact), and the widest item.
+    // Measured content for next frame: the height (without the gap after the last item when exact), and the widest item (an
+    // auto-width popup's width).
     *c.hSlot = std::max(0.0f, g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f));
-    if (c.wSlot) *c.wSlot = std::max(0.0f, g_lay.maxRight - (c.x + c.padX));
+    if (c.wSlot) *c.wSlot = c.im ? std::max(0.0f, g_lay.maxRight - (c.x + c.padX)) : g_lay.maxRight - (c.x + c.padX) + 2.0f * c.padX;
     g_toOverlay = g_popupTop > 0;   // back in the popup this one was opened from: still on top
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
@@ -6305,6 +6352,16 @@ void unpack(Color32 c, unsigned char out[4]) {
 }
 
 // A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
+// A window-list shape wholly above or below the current clip rectangle is not emitted at all: it would be scissored away, and
+// a long page (Community, the Friends list) lays out much more than it shows. Only on the main list, and never while a
+// DrawList::Cached drawing is being made (that copy may later land in view).
+int g_cachedDepth = 0;
+inline bool culledY(float y0, float y1) {
+    if (g_toOverlay || g_clipTop <= 0 || g_cachedDepth > 0) return false;
+    const okay::ui2d::Rect& c = g_clipStack[g_clipTop - 1];
+    return y1 < (float)c.y - 2.0f || y0 > (float)(c.y + c.h) + 2.0f;
+}
+
 struct ListScope {
     bool prevRaw, prevOv;
     explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay || prevOv; }   // the window list draws where the widgets around it do: in a popup, that is the overlay
@@ -6423,20 +6480,29 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul) {
 }
 
 // ---- DrawList ---------------------------------------------------------------------------------
+namespace {
+void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]);
+void cachedRoundRect(bool overlay, Vec2 mn, Vec2 mx, float r, Color32 col, const unsigned char c[4]);
+} // namespace
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(std::min(a.y, b.y) - th, std::max(a.y, b.y) + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     line(a.x, a.y, b.x, b.y, th, c);
 }
 
 void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    if (!overlay && culledY(mn.y, mx.y)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
+    const float rr = finite1(rounding) ? rounding : 0.0f;
+    if (g_theme.cacheDrawing && g_ttf && rr > 0.5f && !g_cullRow) { cachedRoundRect(overlay, mn, mx, rr, col, c); return; }
+    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, rr, c);
 }
 
 void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(mn.y - th, mx.y + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     const float w = mx.x - mn.x, h = mx.y - mn.y;
     if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }   // the stroke fills the box
@@ -6479,12 +6545,14 @@ void DrawList::AddRectFilledMultiColor(Vec2 mn, Vec2 mx, Color32 tl, Color32 tr,
 
 void DrawList::AddCircleFilled(Vec2 center, float radius, Color32 col, int segments) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f) return;
+    if (!overlay && culledY(center.y - radius, center.y + radius)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     fillCircle(center.x, center.y, radius, c, circleSegments(radius, segments));
 }
 
 void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, float th) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(center.y - radius - th, center.y + radius + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     const int n = circleSegments(radius, segments);
     float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
@@ -6590,7 +6658,9 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     if (!text || !*text || !finite2(pos)) return;
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
+    if (!overlay && culledY(pos.y - 2.0f, pos.y + 2.0f * fH() * scale + 2.0f)) return;   // generous: glyphs below the line
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    if (g_theme.cacheDrawing && g_ttf && !g_toOverlay && !(g_cullRow) && text[1] && text[2] && text[3]) { cachedText(pos.x, pos.y, text, scale, c); return; }
     drawText(pos.x, pos.y, text, scale, c);
 }
 
@@ -6598,6 +6668,40 @@ void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, 
     if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
     ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
     texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
+}
+
+void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, float rounding, Vec2 uv0, Vec2 uv1, Color32 tint) const {
+    if (!tex || !finite2(mn) || !finite2(mx) || !finite2(uv0) || !finite2(uv1) || mx.x <= mn.x || mx.y <= mn.y) return;
+    const float w = mx.x - mn.x, h = mx.y - mn.y;
+    float r = finite1(rounding) && rounding > 0.0f ? rounding : 0.0f;
+    if (r > 0.5f * std::min(w, h)) r = 0.5f * std::min(w, h);
+    if (r < 0.5f) { AddImage(tex, mn, mx, uv0, uv1, tint); return; }
+    if (culledY(mn.y, mx.y)) return;
+    if (g_cullRow) return;
+    ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
+    constexpr int kSteps = 6;                                   // each corner: 7 points, 0 to 90 degrees
+    const int n = 4 * (kSteps + 1);
+    if (g_nv + n + 1 > kMaxVerts || g_ni + n * 3 > kMaxIdx) { noteDrop(); return; }
+    setTexture(tex);
+    const okay::ui2d::RGBA sc = toColor(c);
+    auto put = [&](float x, float y) {
+        okay::ui2d::Vertex v; v.color = sc; v.position.x = x; v.position.y = y;
+        v.tex_coord.x = uv0.x + (uv1.x - uv0.x) * (x - mn.x) / w; v.tex_coord.y = uv0.y + (uv1.y - uv0.y) * (y - mn.y) / h;
+        g_verts[g_nv++] = v;
+    };
+    const int base = g_nv;
+    put(mn.x + w * 0.5f, mn.y + h * 0.5f);
+    // Corners clockwise from the top left, each from its start angle through a quarter turn (screen y grows downwards).
+    const float cx[4] = {mn.x + r, mx.x - r, mx.x - r, mn.x + r}, cy[4] = {mn.y + r, mn.y + r, mx.y - r, mx.y - r};
+    for (int q = 0; q < 4; ++q) {
+        const float a0 = 3.14159265f * (1.0f + 0.5f * (float)q);
+        for (int i = 0; i <= kSteps; ++i) {
+            const float a = a0 + 1.57079633f * (float)i / (float)kSteps;
+            put(cx[q] + r * std::cos(a), cy[q] + r * std::sin(a));
+        }
+    }
+    for (int i = 0; i < n; ++i) { g_idx[g_ni++] = base; g_idx[g_ni++] = base + 1 + i; g_idx[g_ni++] = base + 1 + (i + 1) % n; }
+    setTexture(g_defTex);
 }
 
 void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
@@ -6627,23 +6731,33 @@ void DrawList::PathFillConvex(Color32 col) const {
 
 // ---- Cached geometry (DrawList::Cached) ----------------------------------------------------------------------------------
 // A fixed store (no allocation): entries point into one vertex pool and one index pool, filled in order; when either is full
-// the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex.
+// the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex. An
+// open-addressing table finds an entry by its key, fraction of a pixel and layer. Text runs use it too (cachedText).
 namespace {
-struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; };
-constexpr int kGeoEntries = 128, kGeoVerts = 32768, kGeoIdx = 65536;
+struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; float y0, y1; };
+constexpr int kGeoEntries = 1024, kGeoVerts = 131072, kGeoIdx = 196608, kGeoSlots = 4096;   // slots: a power of two
 GeoEntry   g_geo[kGeoEntries];
 int        g_ngeo = 0;
+int        g_geoSlot[kGeoSlots];   // entry index + 1, 0 = empty
 okay::ui2d::Vertex g_geoV[kGeoVerts];
 int        g_geoI[kGeoIdx];
 int        g_geoNv = 0, g_geoNi = 0;
 bool       g_geoAA = false, g_geoLook = false;   // the state the store was filled under
+const fontatlas::Atlas* g_geoTtf = nullptr;
+inline unsigned geoHash(unsigned long long key, int fx, int fy, bool ov) {
+    unsigned long long h = key ^ ((unsigned long long)(unsigned)fx << 7) ^ ((unsigned long long)(unsigned)fy << 17) ^ (ov ? 0x9e3779b97f4a7c15ull : 0ull);
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33;
+    return (unsigned)h & (kGeoSlots - 1);
+}
 } // namespace
-void geoClear() { g_ngeo = 0; g_geoNv = g_geoNi = 0; }
+void geoClear() { g_ngeo = 0; g_geoNv = g_geoNi = 0; std::memset(g_geoSlot, 0, sizeof(g_geoSlot)); }
 
-void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const {
+namespace {
+// The body of DrawList::Cached, for the window list (overlay false) or the foreground list.
+void cachedRun(bool overlay, unsigned long long key, Vec2 origin, DrawList::DrawFn draw, void* user) {
     if (!draw || !finite2(origin)) return;
     ListScope s(overlay);
-    if (g_geoAA != aaOn() || g_geoLook != g_look) { geoClear(); g_geoAA = aaOn(); g_geoLook = g_look; }
+    if (g_geoAA != aaOn() || g_geoLook != g_look || g_geoTtf != g_ttf) { geoClear(); g_geoAA = aaOn(); g_geoLook = g_look; g_geoTtf = g_ttf; }
     // The origin in 1/64 pixels: its whole part moves the copy, its fraction is part of what was drawn.
     const long long qx = (long long)std::floor((double)origin.x * 64.0 + 0.5), qy = (long long)std::floor((double)origin.y * 64.0 + 0.5);
     const int fx = (int)(qx & 63), fy = (int)(qy & 63);
@@ -6652,32 +6766,83 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
-    for (int k = 0; k < g_ngeo; ++k) {
+    unsigned slot = geoHash(key, fx, fy, g_toOverlay);
+    for (int probe = 0; probe < kGeoSlots; ++probe, slot = (slot + 1) & (kGeoSlots - 1)) {
+        const int k = g_geoSlot[slot] - 1;
+        if (k < 0) break;
         const GeoEntry& e = g_geo[k];
         if (e.key != key || e.fx != fx || e.fy != fy || e.overlay != g_toOverlay) continue;
         if (g_cullRow && !g_toOverlay) return;
-        if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
         const float dx = (float)(bx - e.bx), dy = (float)(by - e.by);
+        if (culledY(e.y0 + dy, e.y1 + dy)) return;   // the copy would land wholly outside the clip
+        if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
         const int base = nv;
-        for (int i = 0; i < e.nv; ++i) { okay::ui2d::Vertex v = g_geoV[e.v0 + i]; v.position.x += dx; v.position.y += dy; V[nv++] = v; }
-        for (int i = 0; i < e.ni; ++i) I[ni++] = base + g_geoI[e.i0 + i];
+        std::memcpy(&V[nv], &g_geoV[e.v0], sizeof(okay::ui2d::Vertex) * (std::size_t)e.nv);
+        if (dx != 0.0f || dy != 0.0f) for (int i = 0; i < e.nv; ++i) { V[nv + i].position.x += dx; V[nv + i].position.y += dy; }
+        nv += e.nv;
+        const int* src = &g_geoI[e.i0];
+        int* dst = &I[ni];
+        for (int i = 0; i < e.ni; ++i) dst[i] = base + src[i];
+        ni += e.ni;
         return;
     }
     // Not kept yet: draw it, then keep it if it is a plain run of triangles in the current state.
     const int nv0 = nv, ni0 = ni, spans0 = g_nspans, ovSpans0 = g_novSpans, drop0 = g_dropped;
     const bool cull = g_cullRow && !g_toOverlay;
     const SDL_Texture* tex0 = g_curTex;
+    ++g_cachedDepth;
     draw(user);
+    --g_cachedDepth;
     const int dv = nv - nv0, di = ni - ni0;
     if (cull || dv <= 0 || di <= 0 || g_nspans != spans0 || g_novSpans != ovSpans0 || g_dropped != drop0 || g_curTex != tex0) return;
     if (dv > kGeoVerts || di > kGeoIdx) return;
     if (g_ngeo == kGeoEntries || g_geoNv + dv > kGeoVerts || g_geoNi + di > kGeoIdx) geoClear();
-    GeoEntry& e = g_geo[g_ngeo++];
+    const int k = g_ngeo++;
+    GeoEntry& e = g_geo[k];
     e.key = key; e.fx = fx; e.fy = fy; e.bx = bx; e.by = by; e.overlay = g_toOverlay;
     e.v0 = g_geoNv; e.nv = dv; e.i0 = g_geoNi; e.ni = di;
+    e.y0 = e.y1 = V[nv0].position.y;
+    for (int i = 1; i < dv; ++i) { const float y = V[nv0 + i].position.y; e.y0 = y < e.y0 ? y : e.y0; e.y1 = y > e.y1 ? y : e.y1; }
     std::memcpy(&g_geoV[g_geoNv], &V[nv0], sizeof(okay::ui2d::Vertex) * (std::size_t)dv); g_geoNv += dv;
     for (int i = 0; i < di; ++i) g_geoI[g_geoNi++] = I[ni0 + i] - nv0;
+    unsigned sl = geoHash(key, fx, fy, e.overlay);
+    while (g_geoSlot[sl] != 0) sl = (sl + 1) & (kGeoSlots - 1);   // at most 1024 of 4096 slots are used: always ends
+    g_geoSlot[sl] = k + 1;
 }
+
+// Text runs of the launcher look are kept the same way (Theme::cacheDrawing): a page draws the same texts at the same places frame
+// after frame, and copying a run's quads is cheaper than placing every glyph again. The key is the text's bytes, its scale,
+// colour and the placement settings; the fraction of a pixel of its position is part of the entry (as for any Cached drawing).
+struct TextRunArgs { float x, y, scale; const char* text; const unsigned char* c; };
+void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]) {
+    unsigned long long h = 1469598103934665603ull;
+    std::size_t n = 0;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p, ++n) h = (h ^ *p) * 1099511628211ull;
+    unsigned sb; std::memcpy(&sb, &scale, 4);
+    const unsigned col = (unsigned)c[0] | ((unsigned)c[1] << 8) | ((unsigned)c[2] << 16) | ((unsigned)c[3] << 24);
+    h = (h ^ sb) * 1099511628211ull;
+    h = (h ^ col) * 1099511628211ull;
+    h = (h ^ (unsigned)n ^ (g_theme.ascentRoundsUp ? 0x10000u : 0u) ^ (g_theme.snapAdvances ? 0x20000u : 0u)) * 1099511628211ull;
+    TextRunArgs a{x, y, scale, text, c};
+    cachedRun(false, h ^ 0x7465787400000000ull, Vec2{x, y}, [](void* u) {
+        const TextRunArgs& m = *(const TextRunArgs*)u;
+        drawText(m.x, m.y, m.text, m.scale, m.c);
+    }, &a);
+}
+// A rounded rectangle (anti-aliased corners from the baked discs and bands) is the same shape for the same size, rounding and
+// colour wherever it is: kept and copied (Theme::cacheDrawing).
+struct RoundRectArgs { Vec2 mn, mx; float r; const unsigned char* c; };
+void cachedRoundRect(bool overlay, Vec2 mn, Vec2 mx, float r, Color32 col, const unsigned char c[4]) {
+    unsigned wb, hb, rb; const float w = mx.x - mn.x, h = mx.y - mn.y;
+    std::memcpy(&wb, &w, 4); std::memcpy(&hb, &h, 4); std::memcpy(&rb, &r, 4);
+    unsigned long long k = 1469598103934665603ull;
+    for (unsigned v : {0x72726563u, wb, hb, rb, (unsigned)col, aaOn() ? 1u : 0u}) k = (k ^ v) * 1099511628211ull;
+    RoundRectArgs a{mn, mx, r, c};
+    cachedRun(overlay, k, mn, [](void* u) { const RoundRectArgs& m = *(const RoundRectArgs*)u; rrect(m.mn.x, m.mn.y, m.mx.x - m.mn.x, m.mx.y - m.mn.y, m.r, m.c); }, &a);
+}
+} // namespace
+
+void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const { cachedRun(overlay, key, origin, draw, user); }
 
 static const DrawList g_windowList = { false };
 static const DrawList g_foregroundList = { true };
@@ -6687,6 +6852,20 @@ const DrawList& GetForegroundDrawList() { return g_foregroundList; }
 // ---- Measurement and cursor -------------------------------------------------------------------
 Vec2 CalcTextSize(const char* text) {
     if (!text || !*text) return Vec2{ 0.0f, textH() };
+    if (g_theme.cacheDrawing && g_ttf) {   // Theme::cacheDrawing: widths remembered by text and scale (a direct-mapped table)
+        struct WidthSlot { unsigned long long h; float w; };
+        static WidthSlot slots[1024];
+        static const fontatlas::Atlas* slotsTtf = nullptr;
+        if (slotsTtf != g_ttf) { std::memset(slots, 0, sizeof(slots)); slotsTtf = g_ttf; }
+        unsigned long long h = 1469598103934665603ull;
+        for (const unsigned char* p = (const unsigned char*)text; *p; ++p) h = (h ^ *p) * 1099511628211ull;
+        unsigned sb; std::memcpy(&sb, &g_theme.textScale, 4);
+        h = (h ^ sb ^ (g_theme.snapAdvances ? 0x80000000u : 0u)) * 1099511628211ull;
+        h |= 1ull;   // never 0 (an empty slot)
+        WidthSlot& sl = slots[(h >> 20) & 1023];
+        if (sl.h != h) { sl.h = h; sl.w = labelW(text); }
+        return Vec2{ sl.w, textH() };
+    }
     return Vec2{ labelW(text), textH() };
 }
 float GetTextLineHeight() { return textH(); }

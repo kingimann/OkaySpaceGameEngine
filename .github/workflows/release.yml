@@ -400,10 +400,11 @@ jobs:
   # `gh release edit v<version> --latest`.
   finalize:
     name: Make the release visible (latest)
-    needs: [windows-exe, linux-server]
-    # Only when BOTH jobs succeeded: a failed or cancelled Linux server build leaves the release hidden (not "latest"), because the
-    # editor's Dedicated Server export downloads okay-server-linux-x64 from the latest release and it would be missing.
-    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result == 'success' }}
+    # Owner rule (11a, 2026-11-17: "i don't want to wait hours"): the release goes "latest" as soon as the Windows programs are built
+    # and their checksums are published. It no longer waits the extra ~12 minutes for the Linux game server build; that file is
+    # attached to the same release a little later (the editor's Dedicated Server export downloads it from the latest release).
+    needs: [windows-exe]
+    if: ${{ always() && needs.windows-exe.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

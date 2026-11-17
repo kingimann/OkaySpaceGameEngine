@@ -422,7 +422,7 @@ idea of action maps, in our own words and format; no code, text or tests from an
 - **The asset** (`Input/InputAsset.hpp`): text file `.okayinput` (format in the header). `SerializeInputAsset`, `ParseInputAsset` (errors name the
   line and change nothing), `LoadInputAsset`, `SaveInputAsset`. `DefaultInputAsset()` is the default for new projects (Gameplay: Move, Look, Jump,
   Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause; UI map, off, consuming: Navigate, Submit, Cancel; schemes Keyboard+Mouse, Gamepad,
-  Touch); the same text ships as `examples/input/default.okayinput` (a test keeps them equal). `MigrateInputActions()` turns the old table into an
+  Touch); the same text ships as `examples/input/default.okayinput` (a test keeps them equal). **New Project** also writes it to `Assets/input.okayinput` (the Input Actions window opens that file; not compile-checked or run, `editor/main.cpp` was not built). `MigrateInputActions()` turns the old table into an
   asset (contexts become maps, the response becomes processors); a test compares its readings with `InputActions` for the same keys.
 - **Local players** (`Input/PlayerInput.hpp`): `PlayerInputManager` gives each player their own copy of the asset, one device (keyboard, or
   controller n, or `Any` for a single player with auto switch), their own scheme and their own saved overrides. `Join`, `PollJoin` (press any
@@ -444,7 +444,7 @@ idea of action maps, in our own words and format; no code, text or tests from an
   \"Controllers and typed actions\" section are drawn with the REAL ImGui code of those two headers in a headless software rasteriser (`tools/input_shots.cpp`, built by hand with `tools/input_shots.sh`; ImGui's default
   look and scalable font, not the editor's own skin; 1280x720 and 1920x1080). They are not screenshots of the running editor.
 - **Not done yet:** the Inspector Player Input component, visual-script nodes for the `ia_*` calls, a ready in-game rebinding screen for this system (the existing `RemapModel` / keybind field cover `InputActions`),
-  a hook that copies the default asset into new projects, touch scheme bindings (the scheme exists, no touch leaf inputs yet), and
+  touch scheme bindings (the scheme exists, no touch leaf inputs yet), and
   per-binding interactions (interactions are per action).
 
 ### Recording and replay (`InputRecorder`)

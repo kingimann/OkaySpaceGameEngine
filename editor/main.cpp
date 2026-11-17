@@ -19712,7 +19712,12 @@ void DrawNewProjectPopup(EditorState& ed) {
         live.productName = folder;
         live.outputDir = "build/" + folder;
         if (gpu == 0 || gpu == 1) live.settings.gpuRenderer = gpu == 1;
-        return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
+        if (!okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err)) return false;
+        {   // a new project starts with the default input asset (Assets/input.okayinput; the Input Actions window edits it); a failure here is not fatal
+            std::string ignore;
+            okayproj::WriteTextAtomic((fs::path(rt) / "Assets" / "input.okayinput").string(), okay::SerializeInputAsset(okay::DefaultInputAsset()), &ignore);
+        }
+        return true;
     };
     const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
     if (!r.ok) {

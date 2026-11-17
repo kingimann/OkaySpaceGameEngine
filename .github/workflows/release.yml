@@ -18,6 +18,16 @@ on:
         type: choice
         options: [latest, lts]
         default: latest
+  # Called by fast-release.yml (docs/fast_release.md). stamp_version is the version to build; it is empty on every other kind of run,
+  # and every step marked "fast release" below is skipped then, so the old path is exactly what it was.
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: latest
+      stamp_version:
+        type: string
+        default: ''
 
 permissions:
   contents: write          # needed to attach assets to a Release
@@ -53,6 +63,25 @@ jobs:
       OKAY_REQUIRE_ACCOUNT: "1"
     steps:
       - uses: actions/checkout@v6
+
+      # FAST RELEASE ONLY (skipped unless fast-release.yml passes stamp_version). The version is put into THIS runner's copy of
+      # CMakeLists.txt (never committed), so the programs, VERSION.txt, the zip name, the tag and versions.json all carry it. The
+      # assembled changelog replaces dist/CHANGELOG.txt, which this workflow attaches to the release.
+      - name: Fast release - fetch the prepared release notes
+        if: inputs.stamp_version
+        uses: actions/download-artifact@v6
+        with:
+          name: release-notes
+          path: release-notes
+      - name: Fast release - put the new version and changelog into this build
+        if: inputs.stamp_version
+        env:
+          STAMP_VERSION: ${{ inputs.stamp_version }}
+        run: |
+          python3 -I scripts/fast_release.py stamp --version "$STAMP_VERSION"
+          cp release-notes/CHANGELOG.txt dist/CHANGELOG.txt
+          echo "NOTES_FILE=$PWD/release-notes/NOTES.txt" >> "$GITHUB_ENV"
+          git diff --stat
 
       # Without keys the launcher can't tell the official game's signed build
       # from an edited one: its anti-cheat checks are only telemetry. A warning
@@ -209,6 +238,24 @@ jobs:
           name: ${{ steps.pkg.outputs.name }}
           path: ${{ steps.pkg.outputs.zip }}
 
+      # FAST RELEASE ONLY: the programs must really carry the stamped version (the same check dev-build.yml makes), and the update
+      # server's changelog for this version is the assembled one (publish-supabase.sh uploads build-win-dist/CHANGELOG.txt). Added
+      # after the zip and installer are made, so neither of them changes.
+      - name: Fast release - check the programs carry the version, add the changelog
+        if: inputs.stamp_version
+        env:
+          STAMP_VERSION: ${{ inputs.stamp_version }}
+          PKG_VER: ${{ steps.pkg.outputs.ver }}
+        run: |
+          [ "$PKG_VER" = "$STAMP_VERSION" ] || { echo "::error::the build says v$PKG_VER but v$STAMP_VERSION was asked for"; exit 1; }
+          for f in build-win-dist/VERSION.txt build-win-dist/Tools/VERSION.txt; do
+            [ "$(tr -d '\r\n ' < "$f")" = "$STAMP_VERSION" ] || { echo "::error::$f does not say $STAMP_VERSION"; exit 1; }
+          done
+          for f in build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe; do
+            LC_ALL=C grep -aqF -- "$STAMP_VERSION" "$f" || { echo "::error::$f does not contain $STAMP_VERSION, so it would fail its own start-up check"; exit 1; }
+          done
+          cp dist/CHANGELOG.txt build-win-dist/CHANGELOG.txt
+
       # On a tag push, release that tag. On a manual run, create/refresh a
       # release for the version in dist/VERSION.txt (the runner's GITHUB_TOKEN
       # can push the tag).
@@ -238,6 +285,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true
+          # Fast release only: the notes players read come from the changelog entries (empty = none, as before).
+          body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || '' }}
           # An LTS patch must not become GitHub's "latest" release: the in-app
           # updater downloads releases/latest/download/<name> on the latest channel.
           # Never "latest" here. A launcher that reads releases/latest sees the version the moment it is "latest", and

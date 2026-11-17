@@ -1,4 +1,5 @@
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Net/NetSim.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
@@ -3205,9 +3206,12 @@ void NetworkManager::ServerTick(float dt) {
             // Trailing: the join version byte (sealed joins only), then, from a client
             // that is rejoining, the resume token its last Welcome gave it.
             std::uint64_t resumeToken = 0;
+            std::string clientModules;   // the client's engine module list (NetSignature), when it sent one
+            bool hasModules = false;
             if (!existed && p.Ok()) {
                 if (viaPending) p.ReadU8();
                 if (p.Remaining() >= 8) { const std::uint64_t t = ReadU64(p); if (p.Ok()) resumeToken = t; }
+                if (p.Ok() && p.Remaining() > 0) { clientModules = p.ReadString(); hasModules = p.Ok(); }   // absent from older clients: accepted
             }
             std::string userId;
             const bool acOn = anticheat.settings.enabled;
@@ -3229,7 +3233,7 @@ void NetworkManager::ServerTick(float dt) {
                 // checked in the clear), then the password, then identity;
                 // refuse politely.
                 const char* why = nullptr;
-                std::string ticketWhy, banWhy;
+                std::string ticketWhy, banWhy, modWhy;
                 const std::string addrIdent = "a:" + std::to_string(from.address);
                 auto kickedRecently = [&](const std::string& ident) {
                     const float left = KickBanLeft(ident);
@@ -3245,6 +3249,7 @@ void NetworkManager::ServerTick(float dt) {
                 };
                 if (!anticheat.configError.empty()) why = "server misconfigured (its anti-cheat rules didn't load)";
                 else if ((int)m_clients.size() >= maxPlayers && !holdsToken(resumeToken)) why = "server is full";
+                else if (hasModules && !(modWhy = ModuleRegistry::Get().DescribeMismatch(clientModules)).empty()) why = modWhy.c_str();
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
                     why = net::SecureChannel::Available() ? kNeedsEncryption
@@ -3911,7 +3916,11 @@ void NetworkManager::ClientTick(float dt) {
                 p.Write(std::string(pk.begin(), pk.end()));
             }
             if (m_keyed) p.Write(kJoinVersion);
-            if (m_resumeToken) WriteU64(p, m_resumeToken);   // rejoining: take our old state back
+            // Rejoining: take our old state back (0 = a fresh join). After it, the engine modules this game was built with:
+            // the host refuses a join whose modules differ (a server that predates this reads the 0 as "no token" and
+            // ignores the rest, so older hosts still accept us).
+            WriteU64(p, m_resumeToken);
+            p.Write(ModuleRegistry::Get().NetSignature());
             // Step 2 of the sealed join goes encrypted; the plaintext Join is pre-handshake.
             SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/m_keyed);
             m_joinTimer = 0.5f;

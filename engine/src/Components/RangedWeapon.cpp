@@ -61,6 +61,8 @@ int RangedWeapon::Rounds() const {
     return std::max(0, t.magazine);
 }
 
+int RangedWeapon::MagazineSize() const { return std::max(0, Current().magazine); }
+
 int RangedWeapon::Spare() const {
     if (!m_ready) return Current().reserve;
     return m_infinite ? -1 : m_reserve;

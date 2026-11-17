@@ -1,5 +1,6 @@
 #include "okay/Modules/Interact.hpp"
 #include "okay/Modules/ISeat.hpp"
+#include "okay/Modules/Weapon.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
@@ -15,6 +16,8 @@ struct InteractFinder { std::string name; interact::Finder fn; };
 std::vector<InteractFinder>& InteractFinders() { static std::vector<InteractFinder> v; return v; }
 struct SeatFinder { std::string name; seat::Finder fn; };
 std::vector<SeatFinder>& SeatFinders() { static std::vector<SeatFinder> v; return v; }
+struct WeaponFinder { std::string name; weapon::Finder fn; };
+std::vector<WeaponFinder>& WeaponFinders() { static std::vector<WeaponFinder> v; return v; }
 bool& BlockFlag() { static bool b = false; return b; }
 
 // True while the keyboard binding of the Interact action is still the old default (E). Then the raw key
@@ -123,4 +126,21 @@ std::unique_ptr<ISeat> SeatOf(GameObject* who) {
 }
 
 } // namespace seat
+namespace weapon {
+
+void AddFinder(const std::string& name, Finder f) {
+    for (auto& e : WeaponFinders()) if (e.name == name) { e.fn = std::move(f); return; }
+    WeaponFinders().push_back({name, std::move(f)});
+}
+void ClearFinders() { WeaponFinders().clear(); }
+
+std::unique_ptr<IWeapon> Find(GameObject* go) {
+    (void)ModuleRegistry::Get();
+    if (!go) return nullptr;
+    for (auto& f : WeaponFinders())
+        if (auto w = f.fn(go)) return w;
+    return nullptr;
+}
+
+} // namespace weapon
 } // namespace okay

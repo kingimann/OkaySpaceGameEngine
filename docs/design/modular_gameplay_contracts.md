@@ -855,3 +855,12 @@ Decisions taken while building (none were in the list above):
   decides which modules the `ModuleRegistry` reports as on, and decides which `register.cpp` files are compiled (the
   health, survival, RPG stats, NPC, interaction, dialogue and seat adapters). It does not yet remove other code from the
   binary: that needs the serializer, script, property and node registries cut (section 9, stage 1). Default is `all`.
+
+Decisions taken in the stripping slices:
+
+- **Stripping goes through `compile=` and registries.** A manifest `compile=` list names files built only when the module is on. The model readers (slots 3 and up) now register through `RegisterModelReader` from `model_import/register.cpp`; the importer looks them up by slot and says "the model_import module is off in this build" when absent. OBJ, STL and PLY stay core.
+- **Weapon contract is adapters again** (`weapon::Find`, `IWeapon` with rounds, magazine, spare). `RangedWeapon` and `TopDownShooterController` stay separate components; merging them is the v4 step.
+- **Interactable / InteractionSensor** are new components in `interaction`. The sensor acts only on `Interactable` targets (other models read the key themselves) and shows the prompt of whatever is nearest; `HoldPrompt` falls back to that prompt when nothing of its own applies (still handles drop).
+- **Join handshake:** after the resume token (now always sent, 0 = fresh) the client sends its module list; the host refuses a different set with a plain message. Older clients send none and are accepted; older hosts read the 0 as no token and ignore the rest.
+- **Exporter only warns** about scenes that use modules that are off (console), because the player still contains them.
+- **Preset players:** `.github/workflows/preset-players.yml` (workflow_dispatch, never run) and `scripts/preset_modules.py` (presets read from `editor/ModulesModel.hpp`, requirements added, `--smallest` picks the variant).

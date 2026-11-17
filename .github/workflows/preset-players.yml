@@ -1,0 +1,54 @@
+name: Preset player builds (plan, run by hand)
+
+# PLAN, NOT YET RUN. Builds the player for each module preset of the editor (2D game, 3D action, Survival, Everything) so that
+# the editor can download the smallest player that contains the modules a project uses. Today turning a module off removes only
+# the model readers and Interactable from the binary (see docs/modular_engine.md), so the variants differ little until the
+# serializer, script, property and node registries are cut. Never part of a release: only workflow_dispatch.
+#
+# The editor side: `python3 scripts/preset_modules.py --smallest <project modules>` picks the preset (the same rule is meant for
+# the editor: first preset whose module list contains every module the project uses, else "full"); the asset would be named
+# OkaySpacePlayer-<preset>.exe next to OkaySpacePlayer.exe. Not wired into Build Game or the release yet.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  player:
+    name: Player (${{ matrix.preset }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: ["2d", "3d_action", "survival", "full"]
+    env:
+      SDL2_VERSION: 2.30.9
+    steps:
+      - uses: actions/checkout@v6
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev python3
+      - name: Fetch SDL2 (MinGW dev)
+        run: |
+          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
+            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
+          mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
+          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+      - name: Module list of the preset (requirements added)
+        run: echo "MODULES=$(python3 scripts/preset_modules.py ${{ matrix.preset }})" >> "$GITHUB_ENV"
+      - name: Configure and build the player only
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLAYER=ON \
+            -DOKAY_MODULES="$MODULES" -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX"
+          cmake --build build --target okay-player -j "$(nproc)"
+      - name: Size and upload
+        run: |
+          mkdir -p out && cp build/player/okay-player.exe "out/OkaySpacePlayer-${{ matrix.preset }}.exe"
+          ls -l out | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: player-${{ matrix.preset }}
+          path: out/

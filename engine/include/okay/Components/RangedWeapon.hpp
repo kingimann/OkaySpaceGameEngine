@@ -38,6 +38,8 @@ public:
     int Rounds() const;
     /// Spare rounds right now (-1 when they never run out).
     int Spare() const;
+    /// Rounds the magazine holds (the weapon definition's number when one is used; 0 = it never reloads).
+    int MagazineSize() const;
 
     void Start() override;
     void Update(float dt) override;

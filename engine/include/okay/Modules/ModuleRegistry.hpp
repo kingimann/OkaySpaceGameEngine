@@ -82,6 +82,12 @@ public:
     /// two modules, a core module that requires a non-core one. Empty = fine.
     std::vector<std::string> Validate() const;
 
+    /// The enabled modules as a sorted comma list ("ai_behavior,audio,..."), what two peers compare in the join handshake.
+    std::string NetSignature() const;
+    /// "" when `other` (a NetSignature) names the same modules as this registry, else a plain sentence saying what the other
+    /// side is missing and what it has extra. `other` is the remote side; this registry is the local one.
+    std::string DescribeMismatch(const std::string& other) const;
+
     /// "39 modules, 39 on" (for logs and the startup line).
     std::string Summary() const;
 

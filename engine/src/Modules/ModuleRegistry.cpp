@@ -186,6 +186,29 @@ std::vector<std::string> ModuleRegistry::Validate() const {
     return p;
 }
 
+std::string ModuleRegistry::NetSignature() const {
+    std::vector<std::string> on;
+    for (auto& e : mods_) if (e.enabled) on.push_back(e.manifest.name);
+    std::sort(on.begin(), on.end());
+    std::string out;
+    for (auto& n : on) { if (!out.empty()) out += ","; out += n; }
+    return out;
+}
+
+std::string ModuleRegistry::DescribeMismatch(const std::string& other) const {
+    const std::string mine = NetSignature();
+    if (other == mine) return "";
+    const auto theirs = ModuleManifest::SplitList(other), ours = ModuleManifest::SplitList(mine);
+    std::string missing, extra;
+    for (auto& n : ours) if (!Has(theirs, n)) missing += (missing.empty() ? "" : ", ") + n;
+    for (auto& n : theirs) if (!Has(ours, n)) extra += (extra.empty() ? "" : ", ") + n;
+    std::string msg = "the game modules differ: your game";
+    if (!missing.empty()) msg += " is missing " + missing;
+    if (!missing.empty() && !extra.empty()) msg += " and";
+    if (!extra.empty()) msg += " has " + extra + " that this server does not";
+    return msg + ". Use the same game build as the server.";
+}
+
 std::string ModuleRegistry::Summary() const {
     size_t on = 0;
     for (auto& e : mods_) if (e.enabled) ++on;

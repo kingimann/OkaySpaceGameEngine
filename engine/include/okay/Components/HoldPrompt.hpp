@@ -101,7 +101,13 @@ private:
         } else if (ItemPickup* pk = Nearest(gameObject)) {
             msg = localized ? Localize("hold.pickup", interact::KeyLabel(pk->interactKey))
                             : interact::KeyLabel(pk->interactKey) + " to pick up";
-        } else msg = ExtraPrompt();
+        } else {
+            msg = ExtraPrompt();
+            if (msg.empty()) {   // nothing of its own to say: show the prompt of whatever can be used (a lever, a seat, a chest)
+                InteractContext ctx; ctx.actor = gameObject;
+                if (auto it = interact::Nearest(*sc, gameObject)) msg = it->Prompt(ctx);
+            }
+        }
         tr->text = msg;
         tr->background = !msg.empty();
     }

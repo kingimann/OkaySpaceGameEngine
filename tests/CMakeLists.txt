@@ -3939,3 +3939,9 @@ target_link_libraries(test_modules_model PRIVATE okay::engine)
 target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 add_test(NAME modules_model COMMAND test_modules_model)
 set_tests_properties(modules_model PROPERTIES LABELS "module:core")
+
+# Weapon contract (IWeapon + ammo), Interactable and InteractionSensor, the module list in the join handshake
+add_executable(test_weapon_contract test_weapon_contract.cpp)
+target_link_libraries(test_weapon_contract PRIVATE okay::engine)
+add_test(NAME weapon_contract COMMAND test_weapon_contract)
+set_tests_properties(weapon_contract PROPERTIES LABELS "module:weapons")

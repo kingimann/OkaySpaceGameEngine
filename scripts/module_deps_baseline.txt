@@ -101,7 +101,6 @@ include/okay/Components/HoldableObject.hpp -> physics3d
 include/okay/Components/IKBones.hpp -> physics3d
 include/okay/Components/Inventory.hpp -> scripting_okayscript
 include/okay/Components/InventoryPlayer.hpp -> cutscenes
-include/okay/Components/InventoryPlayer.hpp -> inventory
 include/okay/Components/InventoryUI.hpp -> scripting_okayscript
 include/okay/Components/ItemPickup.hpp -> inventory
 include/okay/Components/ItemPickup.hpp -> physics2d
@@ -252,6 +251,7 @@ include/okay/Components/Water.hpp -> physics3d
 include/okay/Components/Water.hpp -> sky_weather
 include/okay/Components/WorldUI.hpp -> localization_tools
 include/okay/Core/AccessibilitySettings.hpp -> localization_tools
+include/okay/Core/ScriptPaths.hpp -> save_games
 include/okay/Core/SystemCost.hpp -> dev_diagnostics
 include/okay/ECS/NetWorldSync.hpp -> networking
 include/okay/Environment/Weather.hpp -> audio
@@ -582,9 +582,6 @@ src/Render/ModelImport.cpp -> animation
 src/Render/ModelImport.cpp -> character_controllers
 src/Render/ModelImport.cpp -> ik
 src/Render/ModelImport.cpp -> physics3d
-src/Render/ModelImportInternal.hpp -> model_import
-src/Render/ModelReaders.cpp -> model_import
-src/Render/ReaderCommon.hpp -> model_import
 src/Render/Visibility.cpp -> animation
 src/Render/Visibility.cpp -> render3d_effects
 src/Scene/BuiltinProperties.cpp -> audio

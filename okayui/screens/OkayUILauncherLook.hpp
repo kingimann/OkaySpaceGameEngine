@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -73,7 +74,10 @@ public:
         t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
         t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
         t.antiAliased = true;      // its shapes have smooth (anti-aliased) edges, as the launcher's do
-        t.cacheDrawing = true;        // its texts are copied from the frame before when unchanged (the same pixels, less work)
+        // its texts, rounded rectangles and text widths are copied from the frame before when unchanged (the same pixels, less
+        // work); OKAY_UI_NO_DRAW_CACHE=1 turns that off, to compare
+        static const bool kNoCache = std::getenv("OKAY_UI_NO_DRAW_CACHE") != nullptr;
+        t.cacheDrawing = !kNoCache;
         // Its text fields and combo boxes brighten by 5% towards white under the mouse and 9% while typing (the Slate theme's
         // FrameBgHovered and FrameBgActive).
         auto mix = [](float k) {   // the launcher's field colour (0.16, 0.18, 0.23) mixed towards white by k

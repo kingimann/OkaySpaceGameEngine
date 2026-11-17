@@ -2159,28 +2159,50 @@ void EndFrame(SDL_Renderer* r) {
         if (count <= 0) return;
         int lo = idx[0], hi = idx[0];
         for (int i = 1; i < count; ++i) { const int v = idx[i]; lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
+        if (lo == 0) { SDL_RenderGeometry(r, tex, g_verts, hi + 1, idx, count); return; }   // already relative: no copy
         for (int i = 0; i < count; ++i) scratch[i] = idx[i] - lo;
         SDL_RenderGeometry(r, tex, g_verts + lo, hi - lo + 1, scratch, count);
     };
     if (g_nspans == 0) {
         submit(defTex, g_idx, g_ni);   // fast path: no clipping
     } else {
-        // Draw each contiguous index range under its clip rect. Ranges run from one
-        // span's startIdx to the next span's (last extends to g_ni).
+        // Draw each contiguous index range under its clip rect. Ranges run from one span's startIdx to the next span's (the last
+        // extends to g_ni); geometry before the first span (window frames drawn pre-clip) is unclipped. Ranges are merged into
+        // fewer calls where that draws the same pixels: the same texture and clip, or a range wholly inside its own clip (the clip
+        // cuts nothing) and inside the previous range's clip (a combo's text, a short label clipped to its box).
         SDL_bool hadClip = SDL_RenderIsClipEnabled(r);
         SDL_Rect savedClip; SDL_RenderGetClipRect(r, &savedClip);
-        // Geometry before the first span (window frames drawn pre-clip) is unclipped.
-        if (g_spans[0].startIdx > 0) {
-            SDL_RenderSetClipRect(r, nullptr);
-            submit(defTex, &g_idx[0], g_spans[0].startIdx);
-        }
-        for (int s = 0; s < g_nspans; ++s) {
-            int from = g_spans[s].startIdx;
-            int to   = (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni;
-            if (to <= from) continue;
-            if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
-            else               SDL_RenderSetClipRect(r, nullptr);
-            submit(resolveTex(r, g_spans[s].tex), &g_idx[from], to - from);
+        struct Run { int from, to; bool on; SDL_Rect rect; SDL_Texture* tex; };
+        static Run runs[kMaxSpans + 1];
+        int nr = 0;
+        auto addRun = [&](int from, int to, bool on, const SDL_Rect& rect, SDL_Texture* tex) {
+            if (to <= from) return;
+            if (nr > 0) {
+                Run& p = runs[nr - 1];
+                const bool sameClip = p.on == on && (!on || (p.rect.x == rect.x && p.rect.y == rect.y && p.rect.w == rect.w && p.rect.h == rect.h));
+                if (p.tex == tex && p.to == from) {
+                    if (sameClip) { p.to = to; return; }
+                    if (to - from > 1024) { runs[nr++] = Run{from, to, on, rect, tex}; return; }   // only small ranges are looked into
+                    float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;   // the range's vertex bounds
+                    for (int i = from; i < to; ++i) {
+                        const SDL_FPoint& v = g_verts[g_idx[i]].position;
+                        x0 = v.x < x0 ? v.x : x0; x1 = v.x > x1 ? v.x : x1; y0 = v.y < y0 ? v.y : y0; y1 = v.y > y1 ? v.y : y1;
+                    }
+                    auto inside = [&](bool c, const SDL_Rect& q) {
+                        return !c || (x0 >= (float)q.x && y0 >= (float)q.y && x1 <= (float)(q.x + q.w) && y1 <= (float)(q.y + q.h));
+                    };
+                    if (inside(on, rect) && inside(p.on, p.rect)) { p.to = to; return; }
+                }
+            }
+            runs[nr++] = Run{from, to, on, rect, tex};
+        };
+        addRun(0, g_spans[0].startIdx, false, SDL_Rect{0, 0, 0, 0}, defTex);
+        for (int s = 0; s < g_nspans && nr < kMaxSpans + 1; ++s)
+            addRun(g_spans[s].startIdx, (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni, g_spans[s].on, g_spans[s].rect,
+                   resolveTex(r, g_spans[s].tex));
+        for (int k = 0; k < nr; ++k) {
+            SDL_RenderSetClipRect(r, runs[k].on ? &runs[k].rect : nullptr);
+            submit(runs[k].tex, &g_idx[runs[k].from], runs[k].to - runs[k].from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);

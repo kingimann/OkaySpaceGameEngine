@@ -114,6 +114,27 @@ void ProfiledFrames(const std::function<void()>& frame) { for (int i = 0; i < 20
 
 int main() {
     kH = 1480;
+    if (std::getenv("OKAYUI_GLYPHS")) {   // each printable character's width in both, to see how their advances are rounded (stage 8)
+        ImGuiRig im; OkayRig ok;
+        for (int ch = 32; ch < 127; ++ch) {
+            char t[2] = {(char)ch, 0}; float a = 0, b = 0;
+            im.Frame([&] { a = ImGui::CalcTextSize(t).x; });
+            ok.Frame([&] { b = UI::CalcTextWidth(t); });
+            std::printf("glyph %d %.3f %.3f\n", ch, a, b);
+        }
+        const char* lines[] = {"Pins a point, spins about the axis. Needs Freeze Rotation OFF.", "Pins a point, spins about the axis. Needs Freeze Rotation",
+                               "Moves over the navigation on its own (add a Nav Mesh Agent for avoidance).", "Moves over the navigation on its own (add a Nav Mesh Agent for"};
+        for (const char* l : lines) {
+            float a = 0, wrapped = 0, avail = 0;
+            im.Frame([&] {
+                a = ImGui::CalcTextSize(l).x;
+                wrapped = ImGui::CalcTextSize(l, nullptr, false, 528.0f).x;   // the widest line when wrapped at 528
+                avail = ImGui::GetContentRegionAvail().x;
+            });
+            std::printf("line %.2f wrapped-at-528 %.2f avail %.2f : %s\n", a, wrapped, avail, l);
+        }
+        return 0;
+    }
     const float bx = kPadX, by = kPadY, bw = kW - 2 * kPadX, bh = kH - 2 * kPadY;
     oked::PanelViewHooks hooks;
     inspfix::StackResult okRes;
@@ -256,7 +277,8 @@ int main() {
         const inspbody::Body b = (inspbody::Body)bi;
         // the bodies taller than the usual canvas get one tall enough that Dear ImGui adds no scroll bar (which narrowed its value column
         // and made the UI Button 4.54% different, section 19)
-        const bool tall = b == inspbody::BodyButton || b == inspbody::BodyTerrain || b == inspbody::BodyVoxelDigger || b == inspbody::BodyVoxelTerrain;
+        const bool tall = b == inspbody::BodyButton || b == inspbody::BodyTerrain || b == inspbody::BodyVoxelDigger || b == inspbody::BodyVoxelTerrain ||
+                          b == inspbody::BodyFpHands;
         kH = tall ? 2700 : 1480;
         const float bh = (float)kH - 2 * kPadY;
         inspbody::Values imv, okv;
@@ -364,6 +386,19 @@ int main() {
             std::printf("logarithmic drag %g..%g speed %g from %g by %+g px: Dear ImGui %.4f, OkayUI %.4f\n", c.lo, c.hi, c.speed, c.start, c.dx, iv, ov);
             CHECK(std::fabs(iv - ov) <= 0.02f * std::max(1.0f, std::fabs(iv)));
         }
+    }
+
+    // ================= stage 8: where a wrapped note breaks (the Vehicle's drive note broke a word apart in the real editor) =================
+    {
+        const char* note = "Drive: W/S or arrows = gas/reverse, A/D = steer, Space = handbrake. Needs a Rigidbody3D + collider.";
+        ImGuiRig im; OkayRig ok;
+        float imW[4] = {}, okW[4] = {};
+        const char* parts[4] = {"Drive: W/S or arrows = gas/reverse, A/D = steer, Space", "Drive: W/S or arrows = gas/reverse, A/D = steer, Space =", " ", "="};
+        im.Frame([&] { for (int i = 0; i < 4; ++i) imW[i] = ImGui::CalcTextSize(parts[i]).x; });
+        ok.Frame([&] { for (int i = 0; i < 4; ++i) okW[i] = UI::CalcTextWidth(parts[i]); });
+        std::printf("wrap widths (Dear ImGui / OkayUI): line to 'Space' %.2f / %.2f, to 'Space =' %.2f / %.2f, ' ' %.2f / %.2f, '=' %.2f / %.2f\n",
+                    imW[0], okW[0], imW[1], okW[1], imW[2], okW[2], imW[3], okW[3]);
+        (void)note;
     }
 
     // ================= the tables =================

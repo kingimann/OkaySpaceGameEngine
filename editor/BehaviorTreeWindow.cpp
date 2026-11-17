@@ -1825,7 +1825,7 @@ static bool DrawBehaviorTreeRunnerRows(EditorState& ed, GameObject* go, Behavior
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(32 + 4 * r->overrides.size());
-    L.Text("Tree##btr", &r->treePath); L.Last().width = -60.0f; L.Tip("The .okaybt file, relative to the project folder (Assets/Guard.okaybt).");
+    L.Text("Tree##btr", &r->treePath); L.Last().width = -84.0f; L.Tip("The .okaybt file, relative to the project folder (Assets/Guard.okaybt).");
     L.SameLine(); const int kPick = L.SmallButton("...##btrpick");
     const int kOpen = L.SmallButton("Open in Behavior Tree window##btr");
     L.SameLineOrWrap(); const int kGuard = L.SmallButton("Guard sample##btr");
@@ -1848,7 +1848,7 @@ static bool DrawBehaviorTreeRunnerRows(EditorState& ed, GameObject* go, Behavior
             ov[i].key = L.Combo("##ok", &ov[i].idx, keys.data(), (int)keys.size()); L.Last().width = 110.0f;
             L.Last().preview = o.first.empty() ? "(key)" : o.first.c_str();
         } else { ov[i].key = L.Text("##ok", &o.first, "key"); L.Last().width = 110.0f; }
-        L.SameLine(); L.Text("##ov", &o.second, "value"); L.Last().width = -30.0f;
+        L.SameLine(); L.Text("##ov", &o.second, "value"); L.Last().width = -36.0f;
         L.SameLine(); ov[i].remove = L.SmallButton("x");
     }
     const int kAdd = L.SmallButton("+ Override##btr");
@@ -1919,7 +1919,7 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
     {
         char buf[260];
         std::snprintf(buf, sizeof(buf), "%s", r->treePath.c_str());
-        ImGui::SetNextItemWidth(-60);
+        ImGui::SetNextItemWidth(-84);   // room for the label and the "..." after it (-60 ran them past the panel's edge)
         if (ImGui::InputText("Tree##btr", buf, sizeof(buf))) { r->treePath = buf; ed.dirty = true; }
         Tip("The .okaybt file, relative to the project folder (Assets/Guard.okaybt).");
         ImGui::SameLine();
@@ -1980,7 +1980,7 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
             }
         } else if (ImGui::InputTextWithHint("##ok", "key", kb, sizeof(kb))) { ov.first = kb; ed.dirty = true; }
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(-30);
+        ImGui::SetNextItemWidth(-36);   // room for the "x" after it (-30 put it 6 pixels past the edge)
         if (ImGui::InputTextWithHint("##ov", "value", vb, sizeof(vb))) { ov.second = vb; ed.dirty = true; }
         ImGui::SameLine();
         if (ImGui::SmallButton("x")) removeAt = (int)i;

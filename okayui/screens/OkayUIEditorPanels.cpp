@@ -1586,7 +1586,7 @@ const unsigned char kManaged[3] = {242, 191, 89};                // ImVec4(0.95,
 
 // Dear ImGui's SmallButton with the host's frame padding: one text line tall, the label FramePadding.x in on each side.
 // How far a CollapsingHeader's bar reaches into the window's padding on each side (Dear ImGui: half the window padding, less a pixel).
-constexpr float kCollapsingBleed = 3.0f;
+constexpr float kCollapsingBleed = 7.0f;   // the editor's window padding is 16: trunc(16 / 2 - 1)
 
 bool InspSmallButton(const char* label) {
     UI::CenterNextOnLine();
@@ -3166,19 +3166,22 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     const bool hov = UI::IsItemHovered(), held = UI::IsItemActive();
                     InspHeaderFrameAt(regionX - ext, p.y, w + 2.0f * ext, fh, hov, held);
                     const std::string vis = Visible(r.label);
-                    const float ax = regionX - ext + g_metrics.framePadding.x;
-                    InspArrow(UI::GetWindowDrawList(), ax + 0.15f * fs, p.y + g_metrics.framePadding.y, 0.7f * fs, open, UI::GetColorU32(UI::Col_Text));
-                    UI::GetWindowDrawList().AddText(UI::Vec2{ax + fs + g_metrics.framePadding.x, p.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
+                    // Dear ImGui's framed tree node: the arrow a text line square, the frame padding in from the region's left (not the
+                    // bar's); the label the text line and three frame paddings in
+                    InspArrow(UI::GetWindowDrawList(), regionX + g_metrics.framePadding.x, p.y + g_metrics.framePadding.y, fs, open, UI::GetColorU32(UI::Col_Text));
+                    UI::GetWindowDrawList().AddText(UI::Vec2{regionX + fs + 3.0f * g_metrics.framePadding.x, p.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
                     *r.B() = open;
                     if (!open) skipDepth = 1;
                     break;
                 }
                 const std::string vis = Visible(r.label);
                 const float tw = fs + g_metrics.framePadding.x * 2.0f + UI::CalcTextWidth(vis.c_str());
-                const UI::Vec2 p = UI::GetCursorScreenPos();
+                // on a frame's line (a check box before it: the Modifiers) Dear ImGui puts the node on the line's text: centred on the frame
+                if (r.sameLine) UI::CenterNextOnLine();
                 // the item is the arrow and the label, as Dear ImGui's TreeNode: a row put on its line (SameLine: Auto Fit beside a closed
                 // Physics Material) goes after the label; it used to be the whole width, so such a row was drawn past the right edge
                 if (UI::InvisibleButton("##tree", tw, fs)) open = !open;
+                const UI::Vec2 p{UI::GetItemRect().x, UI::GetItemRect().y};
                 const bool hov = UI::IsItemHovered();
                 if (hov) {
                     const UI::Rect b = UI::GetItemRect();

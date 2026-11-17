@@ -32,7 +32,10 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   BodyItemPickup, BodyHoldPrompt, BodyWater, BodyFlashlight, BodyPauseMenu, BodyFpHand, BodyVoxelDigger, BodyVoxelTerrain,
                   // stage 7 (section 20): Stats, Inventory (two slots, a weight limit), Camera Follow, World UI, Vehicle Seat, Vehicle
                   // Controller (Car), Joint 3D (a hinge with motor and limits)
-                  BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyWorldSpaceUI, BodyCount };
+                  BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyWorldSpaceUI,
+                  // stage 8 (section 21): Modifiers (a Mirror and an Array Along Curve), Behavior Tree Runner (two overrides), First Person
+                  // Hands (the left hand open)
+                  BodyModifiers, BodyBtRunner, BodyFpHands, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
@@ -40,7 +43,7 @@ inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody"
                                                   "objholding", "holdable", "character", "firstperson", "playerview", "animsm",
                                                   "itempickup", "holdprompt", "water", "flashlight", "pausemenu", "fphand", "voxeldigger",
                                                   "voxelterrain", "stats", "inventory", "camerafollow", "worldui", "vehicleseat", "vehicle",
-                                                  "joint3d", "worldspaceui"};
+                                                  "joint3d", "worldspaceui", "modifiers", "btrunner", "fphands"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -193,6 +196,16 @@ struct Values {
     int jtMode = 3; std::string jtBody; float jtAnchor[3] = {0, 2, 0}, jtAxis[3] = {0, 1, 0}, jtSpeed = 90, jtTorque = 50, jtMin = -45, jtMax = 45, jtBreak = 10;
     bool jtMotor = true, jtLimits = true, jtBreakable = false;
     float w3Ppu = 200.0f, w3Scale = 1.0f; bool w3Bill = true, w3Const = true;
+    // stage 8
+    bool mdOn[2] = {true, true}, mdX = true, mdY = false, mdZ = false, mdMerge = true, mdAlign = true, mdShow[2] = {true, true};
+    int mdAdd = -1, mdCount = 6; float mdPath[3][3] = {{0, 0, 0}, {1, 0.5f, 0}, {2, 0, 0}};
+    std::string mdPicked;   // the "..." menu's pick
+    std::string btTree = "Assets/Guard.okaybt", btKey[2] = {"speed", "target"}, btVal[2] = {"3.5", "Player"};
+    float btRate = 10.0f, btHome[3] = {0, 0, 0}; bool btRun = true, btDebug = false, btHomeOn = true;
+    int fsPreset = 0, fsMode = 0; bool fsSwing = true, fsEmpty = false, fsRunning = true, fsEnabled = true, fsCustom = false, fsForearm = true, fsMatch = true, fsSleeve = true;
+    float fsBob = 1, fsSway = 1, fsPunch = 1, fsFov = 0, fsItemOff[3] = {0.2f, -0.2f, 0.4f}, fsItemRot[3] = {0, 0, 0}, fsScale = 1;
+    float fsPos[3] = {-0.2f, -0.25f, 0.35f}, fsRot[3] = {0, 10, 0}, fsUni = 1, fsSc[3] = {1, 1, 1}, fsSize[3] = {1, 1, 1}, fsWo[3] = {0, 0, 0}, fsWr[3] = {0, 0, 0};
+    float fsElbow = 20, fsReach = 0, fsFl = 0.3f, fsFt = 0.06f, fsFc[3] = {0.8f, 0.6f, 0.5f}, fsSl = 0.2f, fsSc2[3] = {0.2f, 0.3f, 0.6f};
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -1332,6 +1345,89 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Note("This UI widget renders in the 3D world at this object's position. Move it with the transform gizmo.", false, true);
         L.SmallButton("Remove##w3");
         break;
+    case BodyModifiers: {
+        static const char* const kTypes[] = {"Mirror", "Array", "Subdivision Surface", "Solidify", "Bevel", "Boolean", "Decimate", "Displace", "Array Along Curve"};
+        static std::vector<P::PanelMenuEntry> menu;
+        if (menu.empty()) {
+            const char* ids[] = {"up", "down", "", "apply", "copy", "remove"};
+            const char* names[] = {"Move Up", "Move Down", "", "Apply", "Copy", "Remove"};
+            for (int i = 0; i < 6; ++i) { P::PanelMenuEntry e; e.id = ids[i]; e.label = names[i]; if (!*ids[i]) e.kind = P::PanelMenuSeparator; menu.push_back(e); }
+        }
+        L.Note("Base 12 tris  ->  result 96 tris", false, false);
+        L.Combo("##addmod", &v.mdAdd, kTypes, 9); L.Last().width = 160.0f; L.Last().preview = "+ Add Modifier";
+        L.SameLine(); L.SmallButton("Apply All##mods");
+        L.Separator(); L.Check("##on", &v.mdOn[0]); L.SameLine(); L.Tree("Mirror###mod0"); L.Last().on = true;
+        L.SameLine(); L.MenuButton("...", &menu); L.Last().alignRight = true;
+        L.Note("0.04 ms");
+        L.Check("X##mx", &v.mdX); L.SameLine(); L.Check("Y##my", &v.mdY); L.SameLine(); L.Check("Z##mz", &v.mdZ);
+        L.SameLine(); L.Note("axes"); L.Last().alignFrame = true;
+        L.Check("Merge at the mirror##mm", &v.mdMerge); L.Check("Show in edit mode##se", &v.mdShow[0]);
+        L.TreeEnd();
+        L.Separator(); L.Check("##on", &v.mdOn[1]); L.SameLine(); L.Tree("Array Along Curve###mod1"); L.Last().on = true;
+        L.SameLine(); L.MenuButton("...", &menu); L.Last().alignRight = true;
+        L.Note("0.31 ms");
+        L.DragInt("Count##cac", &v.mdCount, 0.1f, 1, 1000); L.Check("Follow the curve##caa", &v.mdAlign);
+        L.Note("Curve points (x, y, z), start to end:");
+        for (int i = 0; i < 3; ++i) { L.Drag("##cp", v.mdPath[i], 3, 0.02f, -1000.0f, 1000.0f, "%.2f"); L.Last().width = 190.0f; L.SameLine(); L.SmallButton("X##cpx"); }
+        L.SmallButton("+ Point##cpa"); L.SameLine(); L.SmallButton("Arc##cpr"); L.SameLine(); L.SmallButton("Wave##cpw"); L.SameLine(); L.SmallButton("Helix##cph");
+        L.Check("Show in edit mode##se", &v.mdShow[1]);
+        L.TreeEnd();
+        break;
+    }
+    case BodyBtRunner: {
+        static const char* const kKeys[] = {"speed", "target", "alert"};
+        L.Text("Tree##btr", &v.btTree); L.Last().width = -84.0f; L.SameLine(); L.SmallButton("...##btrpick");
+        L.SmallButton("Open in Behavior Tree window##btr"); L.SameLineOrWrap(); L.SmallButton("Guard sample##btr");
+        L.Drag("Tick Rate##btr", &v.btRate, 1, 0.5f, 0.0f, 120.0f, "%.0f /s");
+        L.Check("Run On Start##btr", &v.btRun); L.SameLineOrWrap(); L.Check("Debug Log##btr", &v.btDebug);
+        L.Check("Home Point##btr", &v.btHomeOn); L.SameLine(); L.Drag("##btrhome", v.btHome, 3, 0.05f); L.Last().width = -1.0f;
+        L.Note("Blackboard overrides");
+        static int idx[2] = {0, 1};
+        for (int i = 0; i < 2; ++i) {
+            L.Combo("##ok", &idx[i], kKeys, 3); L.Last().width = 110.0f; L.Last().preview = v.btKey[i].c_str();
+            L.SameLine(); L.Text("##ov", &v.btVal[i], "value"); L.Last().width = -36.0f;
+            L.SameLine(); L.SmallButton("x");
+        }
+        L.SmallButton("+ Override##btr");
+        L.Note("Moves over the navigation on its own (add a Nav Mesh Agent for avoidance).", false, true);
+        L.SmallButton("Remove##btrunner");
+        break;
+    }
+    case BodyFpHands: {
+        static const char* const kPresets[] = {"Normal", "Both arms", "Right hand only", "Minimal", "Old look"};
+        static const char* const kModes[] = {"One hand (right)", "One hand (left)", "Two hands"};
+        L.Note("Your own arm in first person. Other players always see the full character. Pick a Preset to compare looks; the Preview window updates as you change it.", false, true);
+        L.Combo("Preset", &v.fsPreset, kPresets, 5);
+        L.Note("Normal: both hands, the usual size and place.", false, true);
+        L.Button("Use normal first-person arms"); L.SameLine(); L.Button("Old look");
+        L.Check("Left click swings the arm", &v.fsSwing);
+        L.Separator();
+        L.Button("Open Preview"); L.SameLine(); L.Button("Apply");
+        L.SmallSection("Player View");
+        L.Check("Show when empty", &v.fsEmpty); L.Check("Show while running", &v.fsRunning);
+        L.Combo("Hold mode", &v.fsMode, kModes, 3);
+        L.Note("A two-handed item uses both hands even if the mode is one hand.", false, true);
+        L.Drag("Bob amount", &v.fsBob, 1, 0.01f, 0.0f, 3.0f); L.Drag("Sway amount", &v.fsSway, 1, 0.01f, 0.0f, 3.0f);
+        L.Drag("Punch", &v.fsPunch, 1, 0.01f, 0.0f, 3.0f); L.Drag("Hand FOV", &v.fsFov, 1, 0.2f, 0.0f, 120.0f);
+        L.Drag("Item offset", v.fsItemOff, 3, 0.005f); L.Drag("Item rotation", v.fsItemRot, 3, 0.5f); L.Drag("Item scale", &v.fsScale, 1, 0.01f, 0.1f, 3.0f);
+        L.Header("Left hand", true);
+        L.Check("Enabled", &v.fsEnabled); L.Drag("Position", v.fsPos, 3, 0.005f); L.Drag("Rotation", v.fsRot, 3, 0.5f);
+        L.Drag("Uniform scale", &v.fsUni, 1, 0.01f, 0.2f, 3.0f); L.Drag("Scale", v.fsSc, 3, 0.01f);
+        L.Check("Custom colour", &v.fsCustom); L.Note("Colour comes from the character's skin.");
+        L.Drag("Width", &v.fsSize[0], 1, 0.01f, 0.2f, 3.0f); L.Drag("Height", &v.fsSize[1], 1, 0.01f, 0.2f, 3.0f); L.Drag("Depth", &v.fsSize[2], 1, 0.01f, 0.2f, 3.0f);
+        L.Drag("Wrist offset", v.fsWo, 3, 0.005f); L.Drag("Wrist rotation", v.fsWr, 3, 0.5f);
+        L.Drag("Elbow bend", &v.fsElbow, 1, 0.5f, -80.0f, 120.0f); L.Drag("Reach", &v.fsReach, 1, 0.005f, -0.4f, 0.6f);
+        L.Check("Forearm", &v.fsForearm); L.Check("Sleeve and forearm use the shirt colour", &v.fsMatch);
+        L.Drag("Forearm length", &v.fsFl, 1, 0.01f, 0.05f, 1.2f); L.Drag("Forearm thickness", &v.fsFt, 1, 0.005f, 0.02f, 0.4f);
+        L.Color("Forearm colour", v.fsFc, 3);
+        L.Check("Sleeve", &v.fsSleeve); L.Drag("Sleeve length", &v.fsSl, 1, 0.01f, 0.04f, 0.8f); L.Color("Sleeve colour", v.fsSc2, 3);
+        L.HeaderEnd();
+        L.Header("Right hand"); L.HeaderEnd();
+        L.SmallButton("Reset##player"); L.SameLine(); L.Note("Player view");
+        L.SmallSection("Others View");
+        L.Note("Where the held item sits on the full body, and where each hand grips it. The arms follow the item.", false, true);
+        break;
+    }
     default: break;
     }
     return L;
@@ -1351,6 +1447,9 @@ inline void Apply(Body b, Values& v, P::InspFieldList& L) {
                 v.ivOrder.insert(v.ivOrder.begin() + (from < at ? at - 1 : at), moved);
                 break;
             }
+    if (b == BodyModifiers)
+        for (P::InspRow& r : L.rows)
+            if (r.menu && r.changed) v.mdPicked = r.sv;
     if (b == BodyItemPickup)
         for (P::InspRow& r : L.rows)
             if (r.changed && r.search && *r.I() == -1) v.ipTyped = r.sv;

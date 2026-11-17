@@ -550,6 +550,22 @@ inline float fMeasure(const char* s) {
 }
 // Average character width in cell units (spacing glyph-like icons).
 inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
+// A text's width as Dear ImGui measures it for wrapping: each glyph's advance at the drawn size rounded to a whole pixel (its baked
+// advances are whole pixels; ours are exact, so a long line came out about 2 pixels wider than Dear ImGui's and a wrapped note broke a
+// word earlier: the Vehicle's "Space =", stage 8). In pixels at the current text scale.
+inline float fMeasureWhole(const char* s, float scale) {
+    if (g_ttf && s && !fontatlas::FallbackFont(s)) {
+        const fontatlas::Size& z = g_ttf->Pick(16.0f);
+        const float k = 8.0f / z.px * scale;
+        float w = 0.0f;
+        for (const char* p = s; *p;) {
+            const fontatlas::Glyph* g = asciiGlyph(z, p); if (!g) g = z.Find('?');
+            if (g) w += std::floor(g->advance * k + 0.5f);
+        }
+        return w;
+    }
+    return s && *s ? fMeasure(s) * scale : 0.0f;
+}
 
 // StyleVar_FramePadding (y): -1 = OkayUI's frames (a text line + 15, or + 12 without the launcher look); 0 or more: a text line plus
 // twice that (Dear ImGui's frame height). Checkbox and RadioButton boxes follow it too (boxSize).
@@ -2742,7 +2758,7 @@ void wrapLines(const char* text, float maxW, const unsigned char* col, float max
                 char piece[512]; int k = 0;
                 for (const char* c = r; c < we && k < 500; ++c) piece[k++] = *c;
                 piece[k] = 0;
-                const float add = labelW(piece);
+                const float add = fMeasureWhole(piece, g_theme.textScale);   // whole-pixel advances, as Dear ImGui's wrap measures
                 if (fitEnd && w + add > maxW) break;
                 w += add; fitEnd = we; r = we;
             }

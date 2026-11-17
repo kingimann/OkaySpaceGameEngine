@@ -1197,5 +1197,50 @@ int main() {
         CHECK(std::abs((int)c[0] - (int)d[0]) < 6 && std::abs((int)c[1] - (int)d[1]) < 6 && std::abs((int)c[2] - (int)d[2]) < 6);
     }
 
+    // ================= stage 8 (section 21): Modifiers, Behavior Tree Runner, First Person Hands =================
+    {   // every body is drawn and no row runs past the region by a pixel or more
+        for (inspbody::Body b : {inspbody::BodyModifiers, inspbody::BodyBtRunner, inspbody::BodyFpHands}) {
+            BRig r(b, 460.0f, 2000.0f);
+            r.Frames(3);
+            CHECK(r.res.contentHeight > 200.0f);
+            for (std::size_t k = 0; k < r.res.rows.size(); ++k) {
+                const float right = r.res.rows[k].x + r.res.rows[k].w;
+                if (r.L.rows[k].collapsing) continue;   // a collapsing header reaches into the window's padding, as Dear ImGui's
+                if (right > 16.0f + 428.0f + 1.0f) std::printf("  %s row %d '%s' ends at %.2f\n", inspbody::kBodyNames[b], (int)k, r.L.rows[k].label, right);
+                CHECK(right <= 16.0f + 428.0f + 1.0f);
+            }
+        }
+    }
+    {   // Modifiers: "..." sits at the region's right edge on its fold-out's line, opens the menu, a pick comes back; a closed fold-out
+        // keeps its "..."
+        BRig r(inspbody::BodyModifiers, 460.0f, 900.0f);
+        r.Frames(3);
+        Check("inspector_modifiers", r.Draw());
+        const int t0 = r.Row("Mirror###mod0");
+        const UI::Rect tree = r.res.rows[(std::size_t)t0], dots = r.res.rows[(std::size_t)t0 + 1];
+        CHECK(std::fabs(dots.x + dots.w - (16.0f + 428.0f)) < 1.5f && std::fabs(CY(dots) - CY(tree)) < 3.0f);
+        r.Click(CX(dots), CY(dots));
+        CHECK(r.res.listRows.size() >= 5);
+        Check("inspector_modifiers_menu", r.Draw());
+        r.Click(r.res.listRows[3]);   // Copy (Move Up, Move Down, Apply, Copy, Remove)
+        CHECK(r.v.mdPicked == "copy");
+        r.Click(tree.x + 30.0f, CY(tree));   // fold the Mirror
+        const UI::Rect dots2 = r.res.rows[(std::size_t)t0 + 1];
+        CHECK(dots2.w > 0.0f && std::fabs(CY(dots2) - CY(tree)) < 3.0f);
+        CHECK(r.res.rows[(std::size_t)r.Row("Merge at the mirror##mm")].w == 0.0f);
+    }
+    {   // First Person Hands: the collapsing header is a bar across the region; its rows are not indented; a click folds it
+        BRig r(inspbody::BodyFpHands, 460.0f, 2000.0f);
+        r.Frames(3);
+        Check("inspector_fphands", r.Draw());
+        const UI::Rect hdr = r.res.rows[(std::size_t)r.Row("Left hand")], en = r.R("Enabled");
+        CHECK(hdr.w > 428.0f && std::fabs(en.x - 16.0f) < 0.5f);
+        r.Click(hdr.x + 60.0f, CY(hdr));
+        CHECK(r.R("Enabled").w == 0.0f);
+        BRig b(inspbody::BodyBtRunner, 460.0f, 900.0f);
+        b.Frames(3);
+        Check("inspector_btrunner", b.Draw());
+    }
+
     TEST_MAIN_RESULT();
 }

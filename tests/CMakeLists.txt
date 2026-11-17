@@ -3967,3 +3967,9 @@ endforeach()
 add_executable(test_modeling_easy test_modeling_easy.cpp)
 target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME modeling_easy COMMAND test_modeling_easy)
+
+# One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
+add_executable(test_modeling_starters test_modeling_starters.cpp)
+target_include_directories(test_modeling_starters PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_starters PRIVATE okay::engine)
+add_test(NAME modeling_starters COMMAND test_modeling_starters)

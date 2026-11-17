@@ -122,7 +122,8 @@ public:
         a.x = size.x > 0.0f ? size.x : a.x + size.x;
         a.y = size.y > 0.0f ? size.y : a.y + size.y;
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 vp = ImGui::GetMainViewport()->Pos;       // ImGui's desktop pixels to OkayUI's main-window ones (multi-viewports)
+        const ImVec2 p(ImGui::GetCursorScreenPos().x - vp.x, ImGui::GetCursorScreenPos().y - vp.y);
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         const ImGuiID item = ImGui::GetItemID();
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);

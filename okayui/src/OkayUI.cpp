@@ -6012,6 +6012,13 @@ Rect GetItemRect() {
     return r;
 }
 
+int GetOverlayCount() { return g_ovCurN; }
+Rect GetOverlayRect(int index) {
+    if (index < 0 || index >= g_ovCurN) return Rect{};
+    const OvRect& o = g_ovCur[index];
+    return Rect{o.x, o.y, o.w, o.h};
+}
+
 unsigned GetID(const char* label) { return (unsigned)hashLabel(label ? label : ""); }
 
 bool IsItemHovered() {

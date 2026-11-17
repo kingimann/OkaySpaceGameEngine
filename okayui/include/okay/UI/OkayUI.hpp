@@ -887,6 +887,11 @@ struct Rect { float x = 0, y = 0, w = 0, h = 0; };
 /// The rectangle of the last auto-layout item (Button, Checkbox, SliderFloat, InputText, Combo,
 /// Selectable, TreeNode, Text ...): the whole row including a label. Zero outside a window.
 Rect GetItemRect();
+/// The overlays opened so far this frame (combo lists, popups, menu dropdowns), in the order they were opened, each as a rectangle in
+/// screen pixels (index out of range: a zero Rect). A host that hands the mouse to OkayUI by region offers the ones its panel opened,
+/// so a list that hangs out of the panel still takes the click.
+int GetOverlayCount();
+Rect GetOverlayRect(int index);
 /// True when the mouse is over the last auto-layout item and nothing covers it (a blocked
 /// Input, or an open combo list / popup, counts as covered).
 bool IsItemHovered();

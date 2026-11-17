@@ -388,6 +388,108 @@ int main() {
         Report("rendering", imPic, okPic, t);
     }
 
+    // ================= section heights (the hosted sections of Project Settings, the Inspector and the Lighting window) =========
+    // A host puts one Dear ImGui item as tall as the OkayUI body says it is, and Dear ImGui adds its item spacing after it. The body's
+    // height must therefore be the Dear ImGui body's from its first row to the bottom of its last (without the spacing after it), or
+    // the next header moves down. Checked with the editor's spacing and with the Inspector's (Appearance > Density, Comfortable:
+    // items 10 and 12 apart, frames 9 and 8, labels 8 after; a 250-pixel value column), which the host passes in EditorMetrics.
+    kH = 1240; bh = kH - 2 * kPadY;
+    {
+        struct Look { const char* name; okayuiscreens::EditorMetrics m; };
+        okayuiscreens::EditorMetrics insp;
+        insp.itemSpacing = UI::Vec2{10.0f, 12.0f}; insp.framePadding = UI::Vec2{9.0f, 8.0f}; insp.innerSpacing = UI::Vec2{8.0f, 6.0f};
+        insp.itemWidth = 250.0f;
+        const Look looks[] = {{"editor", okayuiscreens::EditorMetrics{}}, {"inspector", insp}};
+        for (const Look& look : looks) {
+            const bool custom = look.m.itemWidth > 0.0f;
+            // One Dear ImGui frame with the look pushed; answers the body's height without the spacing after its last row.
+            auto imHeight = [&](ImGuiRig& im, const std::function<void()>& body) {
+                float h = -1.0f;
+                im.Frame([&] {
+                    if (custom) {
+                        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(look.m.itemSpacing.x, look.m.itemSpacing.y));
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(look.m.framePadding.x, look.m.framePadding.y));
+                        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(look.m.innerSpacing.x, look.m.innerSpacing.y));
+                        ImGui::PushItemWidth(look.m.itemWidth);
+                    }
+                    const float y0 = ImGui::GetCursorScreenPos().y;
+                    body();
+                    h = ImGui::GetCursorScreenPos().y - y0 - ImGui::GetStyle().ItemSpacing.y;
+                    if (custom) { ImGui::PopItemWidth(); ImGui::PopStyleVar(3); }
+                });
+                return h;
+            };
+            auto same = [&](const char* what, float imH, float okH) {
+                if (std::fabs(imH - okH) > 1.0f) std::printf("height %s (%s): imgui %.1f okayui %.1f\n", what, look.name, imH, okH);
+                CHECK(std::fabs(imH - okH) <= 1.0f);
+            };
+            okayuiscreens::SetEditorMetrics(look.m);
+            {
+                panelfix::PlayerData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawPlayerSettingsBodyImGui(imD.model, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawPlayerSettings(okD.model, bx, by, bw, bh).contentHeight; });
+                }
+                same("player", imH, okH);
+            }
+            {
+                panelfix::RenderingData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawRenderingSettingsBodyImGui(imD.model, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawRenderingSettings(okD.model, bx, by, bw, bh).contentHeight; });
+                }
+                same("rendering", imH, okH);
+            }
+            {
+                panelfix::PhysicsData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawPhysicsSettingsBodyImGui(imD.model, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawPhysicsSettings(okD.model, bx, by, bw, bh).contentHeight; });
+                }
+                same("physics", imH, okH);
+            }
+            {
+                const P::TagsLayersModel tm = panelfix::TagsLayers(); P::TagsLayersState imSt, okSt; ImGuiRig im; OkayRig ok;
+                float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawTagsLayersBodyImGui(tm, imSt, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawTagsLayers(tm, okSt, bx, by, bw, bh).contentHeight; });
+                }
+                same("tags and layers", imH, okH);
+            }
+            for (int kind : {P::ImportModel, P::ImportTexture, P::ImportAudio}) {
+                panelfix::ImportData imD(kind), okD(kind); ImGuiRig im; OkayRig ok; Raster ras; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawImportSettingsBodyImGui(imD.model, imD.state, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawImportSettings(okD.model, okD.state, bx, by, bw, bh).contentHeight; });
+                }
+                same(kind == P::ImportModel ? "import model" : kind == P::ImportTexture ? "import texture" : "import sound", imH, okH);
+                if (custom && kind == P::ImportAudio) {   // the Inspector's sound panel as a picture too (the one that was furthest off)
+                    ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+                    ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+                    Report("import-audio-inspector", imPic, okPic, Timing{});
+                }
+            }
+            {
+                panelfix::PostData imD, okD; ImGuiRig im; OkayRig ok; float okH = 0.0f, imH = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    imH = imHeight(im, [&] { oked::DrawPostProcessBodyImGui(imD.model, hooks); });
+                    ok.Frame([&] { okH = okayuiscreens::DrawPostProcess(okD.model, bx, by, bw, bh).contentHeight; });
+                }
+                same("post-processing", imH, okH);
+            }
+        }
+        okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{});
+        // hostile metrics fall back to the defaults
+        okayuiscreens::EditorMetrics bad;
+        bad.itemSpacing = UI::Vec2{std::nanf(""), -3.0f}; bad.framePadding = UI::Vec2{1e30f, 8.0f}; bad.itemWidth = -5.0f;
+        okayuiscreens::SetEditorMetrics(bad);
+        const okayuiscreens::EditorMetrics& got = okayuiscreens::GetEditorMetrics();
+        CHECK(got.itemSpacing.x == 12.0f && got.itemSpacing.y == 8.0f && got.framePadding.x == 12.0f && got.framePadding.y == 8.0f &&
+              got.itemWidth == 0.0f);
+        okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{});
+    }
+
     // ================= the tables =================
     std::printf("\n| Panel | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |\n|---|---:|---:|---:|---:|---|\n");
     for (const Row& r : g_rows) {

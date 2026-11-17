@@ -18,19 +18,35 @@ using namespace okaypanels;
 namespace okayuiscreens {
 
 namespace {
+EditorMetrics g_metrics;
+} // namespace
+
+void SetEditorMetrics(const EditorMetrics& in) {
+    const EditorMetrics d;
+    auto ok = [](float v, float hi) { return std::isfinite(v) && v >= 0.0f && v <= hi; };
+    auto pick = [&](OkayUI::Vec2 v, OkayUI::Vec2 def) { return OkayUI::Vec2{ok(v.x, 200.0f) ? v.x : def.x, ok(v.y, 200.0f) ? v.y : def.y}; };
+    g_metrics.itemSpacing = pick(in.itemSpacing, d.itemSpacing);
+    g_metrics.framePadding = pick(in.framePadding, d.framePadding);
+    g_metrics.innerSpacing = pick(in.innerSpacing, d.innerSpacing);
+    g_metrics.itemWidth = ok(in.itemWidth, 100000.0f) ? in.itemWidth : 0.0f;
+}
+const EditorMetrics& GetEditorMetrics() { return g_metrics; }
+
+namespace {
 
 unsigned char B(float v) { return (unsigned char)std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f); }
 UI::Color32 C32(const float c[3], float a = 1.0f) { return UI::RGBA(B(c[0]), B(c[1]), B(c[2]), B(a)); }
 
-// Dear ImGui's spacing in the editor (12 across, 8 down), its frames (a text line and 8 pixels above and below, the text 12 in), its
+// Dear ImGui's spacing in the editor (EditorMetrics: by default 12 across, 8 down; frames a text line and 8 pixels above and below,
+// the text 12 in; the host passes the real values), its
 // text rows (a text line is one line tall, not a frame tall), its framed children (16 and 12 pixels of padding), its 14-pixel scroll
 // bars with a faint grab, its dim text colour, and its check boxes and combos (a frame with a tick; a field with a square arrow button),
 // for as long as the panel draws.
 struct EditorRows {
     EditorRows() {
-        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemSpacing, g_metrics.itemSpacing);
         UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());
-        UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+        UI::PushStyleVar(UI::StyleVar_FramePadding, g_metrics.framePadding);
         UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
         UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 14.0f);
         UI::PushStyleVar(UI::StyleVar_FramedWidgets, 1.0f);
@@ -113,14 +129,19 @@ struct FieldColors {
     FieldColors& operator=(const FieldColors&) = delete;
 };
 // The width to give OkayUI for a framed widget `frameW` wide with its label after it (OkayUI's item width includes the label).
-float WithLabel(float frameW, const char* label, float gap = 8.0f) {
+float WithLabel(float frameW, const char* label, float gap = -1.0f) {
+    if (gap < 0.0f) gap = g_metrics.innerSpacing.x;
     std::string vis(label);
     const std::size_t hh = vis.find("##");
     if (hh != std::string::npos) vis.resize(hh);
     return frameW + (vis.empty() ? 0.0f : gap + UI::CalcTextWidth(vis.c_str()));
 }
-// The hosted panels report their height: the cursor's distance from the top they were given.
-float ContentHeight(float top) { return UI::GetCursorScreenPos().y - top; }
+// Dear ImGui's default field width where the panel is hosted: the host's (EditorMetrics::itemWidth) or 65% of the window.
+float ItemWidthFor(float bodyW) { return g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : DefaultItemWidth(bodyW); }
+// The hosted panels report their height: the cursor's distance from the top they were given, less the item spacing after the last
+// row. The host puts one Dear ImGui item that tall in its window, and Dear ImGui adds its own spacing after that item; counting the
+// last row's spacing too made every hosted section 8 pixels taller than the Dear ImGui version.
+float ContentHeight(float top) { return std::max(0.0f, UI::GetCursorScreenPos().y - top - g_metrics.itemSpacing.y); }
 
 } // namespace
 
@@ -236,14 +257,14 @@ StatsResult DrawStats(StatsModel& m, float x, float y, float w, float h) {
         // window's right padding, outside the area a host hands to OkayUI, and its table keeps the whole width.
         UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 0.0f);
         UI::BeginChild("##statsbody", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_None);
-        {   // the big FPS number, the frame time, average and minimum at the right: one frame-tall row, as in the editor
-            UI::PushStyleVar(UI::StyleVar_TextRowHeight, 0.0f);
+        {   // the FPS number, the frame time, average and minimum at the right: one frame-tall row, as in the editor. The number is
+            // one text line at the row's top (the editor pushes its heading face for it, and Dear ImGui keeps the current size when a
+            // face is pushed without one, so it comes out at the body size); the rest is a frame-tall row with the text centred.
             float c[3]; FpsColor(m.framerate, c);
             char big[24]; std::snprintf(big, sizeof(big), "%.0f", m.framerate);
-            UI::PushTextScale(22.0f / 18.0f);
             UI::TextColored(B(c[0]), B(c[1]), B(c[2]), big);
-            UI::PopTextScale();
             res.fpsText = UI::GetItemRect();
+            UI::PushStyleVar(UI::StyleVar_TextRowHeight, 0.0f);
             UI::SameLine();
             char ms[48]; std::snprintf(ms, sizeof(ms), "FPS   %.2f ms", m.framerate > 0 ? 1000.0f / m.framerate : 0.0f);
             UI::TextDisabled(ms);
@@ -277,14 +298,19 @@ StatsResult DrawStats(StatsModel& m, float x, float y, float w, float h) {
         UI::Spacing(0.0f);
 
         // ---- the census: name, number, name, number; zero counts dimmed ----
+        // Dear ImGui's proportional columns (weights 1, 0.8, 1, 0.8), measured from its output at two widths: the first column's text
+        // starts at the left edge, each later one 2 x CellPadding.x (10) after the previous column's share, and the shares split what is
+        // left once those gaps are taken: share = (width - 3 x 20) x weight / 3.6. Written as fixed columns with no cell padding across.
         UI::BeginGroup();
-        UI::PushStyleVar(UI::StyleVar_CellPadding, UI::Vec2{2.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_CellPadding, UI::Vec2{0.0f, 6.0f});
         UI::PushStyleColor(UI::Col_TableBorderStrong, UI::RGBA(0, 0, 0, 0));   // no lines between the columns
+        const float gridW = UI::GetContentRegionAvail().x, gap = 20.0f;
+        const float unit = std::max(0.0f, gridW - 3.0f * gap) / 3.6f;
         if (UI::BeginTable("##statgrid", 4, UI::Table_NoResize)) {
-            UI::TableSetupColumn("n1", UI::Col_None, 1.0f);
-            UI::TableSetupColumn("v1", UI::Col_None, 0.8f);
-            UI::TableSetupColumn("n2", UI::Col_None, 1.0f);
-            UI::TableSetupColumn("v2", UI::Col_None, 0.8f);
+            UI::TableSetupColumn("n1", UI::Col_WidthFixed, unit * 1.0f + gap);
+            UI::TableSetupColumn("v1", UI::Col_WidthFixed, unit * 0.8f + gap);
+            UI::TableSetupColumn("n2", UI::Col_WidthFixed, unit * 1.0f + gap);
+            UI::TableSetupColumn("v2", UI::Col_WidthFixed, std::max(1.0f, gridW - unit * 2.8f - 3.0f * gap));
             for (std::size_t i = 0; i < m.counters.size(); ++i) {
                 if (i % 2 == 0) UI::TableNextRow();
                 UI::TableNextColumn();
@@ -311,7 +337,7 @@ StatsResult DrawStats(StatsModel& m, float x, float y, float w, float h) {
         UI::Spacing(0.0f);
 
         // ---- the switches: the editor's frame-tall check boxes ----
-        UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+        UI::PushStyleVar(UI::StyleVar_FramePadding, g_metrics.framePadding);
         auto box = [&](const char* label, bool* v, UI::Rect& out) {
             if (!v) return false;
             if (UI::Checkbox(label, v)) res.intent.changed = true;
@@ -422,7 +448,7 @@ namespace {
 const unsigned char kBad[3] = {242, 115, 102}, kWarn[3] = {242, 191, 77};   // (0.95, 0.45, 0.40) and (0.95, 0.75, 0.30)
 // Dear ImGui's frame-tall check box (the editor's frame padding: a text line and 8 pixels above and below).
 bool FrameCheckbox(const char* label, bool* v) {
-    UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{12.0f, 8.0f});
+    UI::PushStyleVar(UI::StyleVar_FramePadding, g_metrics.framePadding);
     const bool ch = UI::Checkbox(label, v);
     UI::PopStyleVar();
     return ch;
@@ -458,7 +484,7 @@ TagsLayersResult DrawTagsLayers(const TagsLayersModel& m, TagsLayersState& st, f
         UI::PopTextWrapPos();
         if (m.custom.empty()) UI::TextDisabled("No custom tags yet.");
         else {
-            const float rowH = UI::GetFontSize() + 16.0f + 8.0f + 2.0f;   // a frame, the spacing, and 2
+            const float rowH = UI::GetFontSize() + 2.0f * g_metrics.framePadding.y + g_metrics.itemSpacing.y + 2.0f;   // a frame, the spacing, and 2
             const float listH = std::min(rowH * 4.5f, 12.0f + rowH * (float)m.custom.size());
             UI::BeginChild("##pstags", UI::Vec2{0.0f, listH}, UI::ChildFlags_Borders);
             res.tagList = UI::Rect{UI::GetItemRectMin().x, UI::GetItemRectMin().y, 0.0f, 0.0f};
@@ -570,9 +596,9 @@ PhysicsSettingsResult DrawPhysicsSettings(PhysicsSettingsModel& m, float x, floa
     if (UI::Begin("Physics##okayui", x, y, w, h)) {
         EditorRows rows_;
         FieldColors fields_;
-        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
-        const float itemW = DefaultItemWidth(w);
+        const float itemW = ItemWidthFor(w);
         if (m.gravity2D) {
             UI::SetNextItemWidth(WithLabel(itemW, "Gravity 2D"));
             if (UI::DragFloat2("Gravity 2D##ps", m.gravity2D, 0.05f, 0.0f, 0.0f, "%.3f")) res.intent.gravityChanged = true;
@@ -810,7 +836,7 @@ ImportSettingsResult DrawImportSettings(ImportSettingsModel& m, ImportSettingsSt
     if (UI::Begin("ImportSettings##okayui", x, y, w, h)) {
         EditorRows rows_;
         FieldColors fields_;
-        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
         bool body = m.edit != nullptr;
         if (body) UI::TextDisabled(kImportHeading);
@@ -899,9 +925,9 @@ PostProcessResult DrawPostProcess(PostProcessModel& m, float x, float y, float w
     if (UI::Begin("PostProcess##okayui", x, y, w, h) && m.v) {
         EditorRows rows_;
         FieldColors fields_;
-        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
-        const float itemW = DefaultItemWidth(w);
+        const float itemW = ItemWidthFor(w);
         PostValues& p = *m.v;
         bool& ch = res.intent.changed;
         auto tip = [](const char* t) { if (UI::IsItemHovered()) UI::SetTooltip("%s", t); };
@@ -1022,11 +1048,11 @@ PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y
     if (UI::Begin("PlayerSettings##okayui", x, y, w, h)) {
         EditorRows rows_;
         FieldColors fields_;
-        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
         if (m.company && m.companySize > 0) {
             m.company[m.companySize - 1] = '\0';
-            UI::SetNextItemWidth(WithLabel(DefaultItemWidth(w), "Company"));
+            UI::SetNextItemWidth(WithLabel(ItemWidthFor(w), "Company"));
             if (UI::InputText("Company##ps", m.company, (int)std::min<std::size_t>(m.companySize, 1u << 20))) res.intent.changed = true;
             res.company = UI::GetItemRect();
         }
@@ -1066,10 +1092,10 @@ RenderingSettingsResult DrawRenderingSettings(RenderingSettingsModel& m, float x
     if (UI::Begin("RenderingSettings##okayui", x, y, w, h)) {
         EditorRows rows_;
         FieldColors fields_;
-        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, UI::Vec2{8.0f, 6.0f});
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
         const float top = UI::GetCursorScreenPos().y;
         if (m.ambient) {
-            UI::SetNextItemWidth(WithLabel(DefaultItemWidth(w), "Ambient"));
+            UI::SetNextItemWidth(WithLabel(ItemWidthFor(w), "Ambient"));
             if (UI::SliderFloat("Ambient##ps", m.ambient, 0.0f, 1.0f, "%.3f")) res.intent.changed = true;
             res.ambient = UI::GetItemRect();
         }

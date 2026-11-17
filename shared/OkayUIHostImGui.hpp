@@ -26,4 +26,15 @@ inline bool PopupCoversRect(float x, float y, float w, float h) {
     return false;
 }
 
+/// ImGui positions are desktop coordinates while multi-viewports are on (the editor turns them on): the main window's inside
+/// starts at the main viewport's Pos, not at (0, 0). OkayUI draws into the main window and reads the mouse from SDL in that
+/// window's own pixels, so a host moves its rectangle by this before it offers and draws it. Without viewports Pos is (0, 0).
+inline ImVec2 ToMainWindowPixels(ImVec2 p) {
+    const ImVec2 o = ImGui::GetMainViewport()->Pos;
+    return ImVec2(p.x - o.x, p.y - o.y);
+}
+
+/// True when the ImGui window was dragged out into another OS window: OkayUI only draws into the main one.
+inline bool OutsideMainWindow(const ImGuiWindow* w) { return w && w->Viewport && w->Viewport != ImGui::GetMainViewport(); }
+
 } // namespace okayuihost

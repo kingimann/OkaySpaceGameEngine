@@ -8,30 +8,62 @@
 #include "OkayUIHostImGui.hpp"
 #include "OkayUIPanels.hpp"
 #include "OkayUIEditorPanels.hpp"
+#include "EditorPanelViews.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 
 namespace oked {
 
 namespace {
 
+// The spacing of the ImGui window being drawn (with whatever the window pushed, such as the Inspector's density), for the OkayUI body
+// that stands in for its Dear ImGui version, so rows are as tall and as far apart as Dear ImGui's there. Put back after the body.
+struct MetricsFromImGui {
+    MetricsFromImGui() {
+        const ImGuiStyle& st = ImGui::GetStyle();
+        okayuiscreens::EditorMetrics m;
+        m.itemSpacing = OkayUI::Vec2{st.ItemSpacing.x, st.ItemSpacing.y};
+        m.framePadding = OkayUI::Vec2{st.FramePadding.x, st.FramePadding.y};
+        m.innerSpacing = OkayUI::Vec2{st.ItemInnerSpacing.x, st.ItemInnerSpacing.y};
+        m.itemWidth = ImGui::CalcItemWidth();
+        okayuiscreens::SetEditorMetrics(m);
+    }
+    ~MetricsFromImGui() { okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{}); }
+    MetricsFromImGui(const MetricsFromImGui&) = delete;
+    MetricsFromImGui& operator=(const MetricsFromImGui&) = delete;
+};
+
 // The ImGui window stays: it is the dock tab and the close box, and hands its free area to OkayUI as one rectangle (the same
 // arrangement as the Console panel). Returns false when an ImGui popup covers the window.
+//
+// The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to an OkayUI body. `fitBody`, when
+// given, is the panel's Dear ImGui body: a window that does not exist yet and has no saved place is fitted by Dear ImGui to what its
+// first frame holds, and that frame is never shown, so the first frame draws the Dear ImGui body and the window opens exactly as big
+// as the Dear ImGui version does; OkayUI draws from the next frame on. Without `fitBody` a new window gets a fixed first size.
 template <class Draw>
-bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
+bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, const std::function<void()>& fitBody = {}) {
     const ImGuiWindow* cw = ImGui::FindWindowByName(title);
     if (cw && okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;
+    if (okayuihost::OutsideMainWindow(cw)) return false;
+    if (fitBody && !cw && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
+        if (ImGui::Begin(title, open)) fitBody();   // the hidden first frame: Dear ImGui measures it, nobody sees it
+        ImGui::End();
+        return true;
+    }
+    if (!fitBody) ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton(itemId, a);               // an ImGui item, so ImGui does not move or scroll the window under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);    // the wheel scrolls the OkayUI body, not the ImGui window
         OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         OkayUI::PushTextScale(g_uiScale);
+        MetricsFromImGui metrics_;
         draw(p, a);
         OkayUI::PopTextScale();
     }
@@ -47,23 +79,45 @@ template <class Draw>
 bool HostSection(const char* itemId, Draw draw) {
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (!win || okayuihost::PopupCoversRect(win->Pos.x, win->Pos.y, win->Size.x, win->Size.y)) return false;
-    float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), 300.0f);
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f), h = std::max(*height, 8.0f);
+    if (okayuihost::OutsideMainWindow(win)) return false;
+    float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
+    const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    MetricsFromImGui metrics_;
+    if (*height < 0.0f) {
+        // The first frame: draw the body into an empty clip only to learn its height, and place a placeholder that tall. A new
+        // window fits itself to this frame's content (with a guessed height Project Settings opened far too tall, and so in its own
+        // OS window, where OkayUI cannot draw). The body shows from the next frame.
+        OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
+        OkayUI::PushClipRect(p.x, p.y, 0.0f, 0.0f);
+        const SectionDrawn d = draw(p.x, p.y, w, 20000.0f);
+        OkayUI::PopClipRect();
+        OkayUI::PopTextScale();
+        *height = (d.height > 1.0f && std::isfinite(d.height)) ? std::min(d.height, 20000.0f) : 300.0f;
+        ImGui::InvisibleButton(itemId, ImVec2(w, std::max(*height, 8.0f)));
+        return true;
+    }
+    const float h = std::max(*height, 8.0f);
     ImGui::InvisibleButton(itemId, ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    const ImRect clip = win->InnerClipRect;
+    const ImVec2 c0 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Min), c1 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Max);
+    const ImRect clip(c0, c1);
     const float x0 = std::max(p.x, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
     const float x1 = std::min(p.x + w, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
     if (x1 <= x0 || y1 <= y0) return true;            // scrolled out of view: the space stays, nothing is drawn
     OkayUIRegion().Offer(x0, y0, x1 - x0, y1 - y0, hovered);
     OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
     OkayUI::PushClipRect(x0, y0, x1 - x0, y1 - y0);
+    const int overlays = OkayUI::GetOverlayCount();
     const SectionDrawn d = draw(p.x, p.y, w, h + 400.0f);   // room below: the height is measured, not cut
     OkayUI::PopClipRect();
     OkayUI::PopTextScale();
     if (d.height > 1.0f && std::isfinite(d.height)) *height = std::min(d.height, 20000.0f);
     if (d.popup.w > 0.0f && d.popup.h > 0.0f) OkayUIRegion().Offer(d.popup.x, d.popup.y, d.popup.w, d.popup.h, true);   // it is drawn over everything
+    for (int i = overlays; i < OkayUI::GetOverlayCount(); ++i) {   // an open combo list hangs out of the section: it takes the mouse too
+        const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
+        if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true);
+    }
     return true;
 }
 
@@ -127,7 +181,7 @@ bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypa
         OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
         intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
-    });
+    }, [&] { DrawHistoryBodyImGui(model, PanelViewHooks()); });
 }
 
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
@@ -187,7 +241,7 @@ bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::Profile
         intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
         if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
-    });
+    }, [&] { okaypanels::ProfilerModel model; fill(model); DrawProfilerBodyImGui(model, PanelViewHooks()); });
 }
 
 bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent) {

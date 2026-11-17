@@ -1464,3 +1464,73 @@ with `OKAYUI_SHOT_DIR`): `<scratchpad>/shots/ohy/final/<case>-imgui.png`, `-okay
 
 The totals grew because this branch merged the row-model branch and added the model body (183 calls) next to the editor's own
 `DrawHierarchy` (182 calls), which stays the default: the 183 are counted as ported, but no call left the editor yet.
+
+## 13. The ten ported panels in the real editor: same row heights, same first window sizes
+
+The editor was built (Linux, `-O1`, assertions on) and run under Xvfb at 1920 x 1200 with a scratch project, once with Dear ImGui and once
+with `OKAY_UI_BACKEND=okayui`, driven by the same recorded clicks; each panel's rectangle was compared pixel by pixel ("clearly different":
+some channel more than 48 apart). Before this step four panels were far off: Project Settings 15 to 17%, History 10.7%, the Profiler 10%,
+the Inspector's sound import settings 8.6 to 9.3%, and Stats 8.4%. What caused it and what changed (written from measurements of Dear
+ImGui's output in the editor and in the comparison test; no code from any other project):
+
+- **Hosted sections were 8 pixels too tall each.** A section (Project Settings' Player, Physics, Rendering, Tags and Layers; the import
+  settings; Post-processing) reported its height including the item spacing after its last row, and the host's placeholder item then got
+  Dear ImGui's spacing again. `ContentHeight` now leaves the last spacing out. Project Settings lost 8 pixels per section and its
+  headers line up with Dear ImGui's.
+- **The host's spacing.** The panels used the editor's default spacing (items 12 and 8 apart, frames 8 pixels above and below the text,
+  labels 8 after the field). The Inspector pushes its own (Appearance > Density; Comfortable is 10 and 12, frames 9 and 8, and a value
+  column of its own width), so the sound import panel's rows came out 4 pixels closer each. The panels now take `EditorMetrics` (item
+  spacing, frame padding, inner spacing, default field width) that the host copies from `ImGui::GetStyle()` and `CalcItemWidth()` just
+  before it draws; the defaults are the editor's style, so the tests and goldens did not move. The tag list's row height now follows them
+  too (it was a fixed number).
+- **History and the Profiler opened at a fixed 440 x 340.** Dear ImGui fits a new window (one with no saved place) to what its first frame
+  holds, and does not show that frame. The OkayUI host now draws the Dear ImGui body in exactly that frame, so the window opens at the size
+  the Dear ImGui version opens at; OkayUI draws from the next frame. A window that has a saved place, or is docked, is not touched.
+- **Stats.** The FPS number now sits at the top of a frame-tall row as Dear ImGui's does (the row was 4 pixels taller, pushing the plot,
+  table and switches down), and the census columns are placed as Dear ImGui's proportional table places them, measured at two widths: the
+  first column's text at the left edge, each later column 20 pixels (twice the cell padding) after the previous one's share, the shares
+  splitting what is left by the weights 1, 0.8, 1, 0.8. The `editorpanels_stats` golden was re-made for this (looked at side by side: the
+  number is at the body size, the plot 4 pixels higher, the right-hand columns further right); no other golden changed.
+
+### 13.1 Pixels in the real editor
+
+| Panel (shot) | Rectangle | Before | After |
+|---|---|---:|---:|
+| Problems | 1232 x 130 | 1.34% | 1.34% |
+| Problems, search typed | 1232 x 130 | 2.51% | 2.51% |
+| Stats | 430 x 550 | 8.42% | 5.02% |
+| Stats, a switch toggled | 430 x 550 | 8.20% | 5.03% |
+| History | 440 x 335 | 10.72% | 0.93% |
+| Profiler | 440 x 335 | 10.24% | 1.09% |
+| Profiler, paused | 440 x 335 | 10.50% | 1.07% |
+| Lighting > Post-processing | 430 x 465 | 4.96% | 4.36% |
+| Post-processing, Bloom ticked | 430 x 465 | 4.06% | 2.84% |
+| Import settings, a picture | 430 x 430 | 3.80% | 2.19% |
+| Import settings, a model | 430 x 430 | 6.47% | 3.09% |
+| Import settings, a sound | 430 x 430 | 8.61% | 4.60% |
+| Import settings, a sound, changed | 430 x 430 | 9.26% | 4.72% |
+| Project Settings | 460 x 975 | 17.32% | 3.20% |
+| Project Settings, edited | 460 x 975 | 16.98% | 3.45% |
+| Project Settings, Tags and Layers open | 460 x 975 | 14.97% | 3.92% |
+
+Every panel is now under 8%. The Dear ImGui pictures of both runs are the same to within 0.7% (the FPS numbers and the plot change). The
+Profiler figure is weak: in both versions the Profiler's first window is a strip about 25 pixels wide behind History (Dear ImGui fits it to
+a body whose items all stretch to the window's width, so it fits it to almost nothing), so the rectangle mostly holds History. The OkayUI
+window now opens the same way; that the Dear ImGui Profiler opens so narrow is a separate thing to fix in the editor. Pictures:
+`<scratchpad>/shots/vpa/after/{im,ok}-<shot>.png` and `diff-<shot>.png` in the session that made this step (not committed).
+
+In the comparison test (`okayui_editor_panels_imgui`) Stats went from 5.76% to 4.19%; the other panels did not change. New there: every
+hosted section's height is checked against the Dear ImGui body's (from its first row to the bottom of its last), with the editor's spacing
+and with the Inspector's, to within one pixel; and a picture of the sound import panel with the Inspector's spacing (1.37%).
+
+### 13.2 What still differs
+
+- Text edges (OkayUI's baked Roboto against Dear ImGui's) are most of what is left in every panel.
+- Text that runs past a hosted section's right edge: Dear ImGui lets it run into the window's padding, OkayUI cuts it at the section's
+  edge (the long notes under the import settings).
+- Stats: the narrow scroll bar is still OkayUI's; the plot's line differs slightly.
+
+### 13.3 Not verified
+
+Windows (not built or run here; the measurements are from Linux under Xvfb with the software SDL renderer), other UI scales and the
+Compact density in the real editor (the headless test covers the Inspector's Comfortable spacing only), a docked History or Profiler.

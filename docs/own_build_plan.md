@@ -102,6 +102,18 @@ install/package steps, shader and asset generation, third-party fetch/config, Mi
 job. Realistic total 6-10 weeks of agent time to match the current CI matrix, and CMake must stay until every CI job passes
 with okay-build. Worth continuing only as the staged, optional path: B first (cheap, shows whether the engine builds).
 
+## Real engine executable through the importer (2026-11-17)
+Configure: Ninja, Debug, `-O0 -g0`, tests ON, sandbox/launcher/editor/player/assimp/tools/OkayUI tests OFF,
+libsodium found (packet encryption on). C files used clang (`/usr/bin/cc`), C++ used g++ (`/usr/bin/c++`).
+`GL/gl.h` was missing at first (`libgl1-mesa-dev` installed, then the build continued). No code change in okay-build.
+
+`ninja -j2 test_math`: 339 steps, exit 0. The program printed `15 checks, 0 failures`.
+`okay-build import` of that target: 335 compile, 3 archive, 1 link, 2 order-only edges, 0 custom commands.
+Built with `okay-build -j2` into a separate directory so Ninja's tree stayed put. 339 of 339 steps, exit 0.
+Byte comparison of every `.o`, the three archives (`libokay_engine.a`, `libokay_crypto.a`, `libokay_platform.a`)
+and `tests/test_math`: 339 files, 339 identical. The okay-build program also printed `15 checks, 0 failures`.
+`libokay_engine.a` is 463,143,278 bytes on both sides. No-op of that tree was not re-timed.
+
 ## Windows host plan (not implemented)
 Replace `runCmd` (fork/exec/pipe) with CreateProcessW and an inheritable pipe; run raw actions with `cmd /C` instead of `sh -c`
 (or run argv directly); lexically-normal paths use `/` already; mtime via `std::filesystem` is fine; 32767-char command limit

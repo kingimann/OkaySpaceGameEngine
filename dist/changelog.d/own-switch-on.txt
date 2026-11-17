@@ -29,3 +29,7 @@ roadmap: Our own replacements are the default (platform, renderers, WAV, fonts, 
 - The launcher's background work (downloads, news, chat, updates) uses our
   own threads. The Downloads rows show their buttons in full, and a click
   right after moving onto a page or chip works the first time.
+- Editor: the size readout and "Edit mode - press Play to run" at the top
+  left of the Game view (and the PLAYING label) move to the bottom left
+  when the game's own text is drawn there, instead of being drawn on top
+  of it. The Scene view's stats line does the same.

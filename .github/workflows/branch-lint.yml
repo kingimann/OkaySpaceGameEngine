@@ -46,6 +46,10 @@ jobs:
           cat collision.md >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+      - name: "Test registration: no unmarked duplicate, no shared or new fixed /tmp path (fatal)"
+        if: always()
+        run: python3 scripts/lint_test_registration.py --base origin/main
+
       - name: "Try-it entries are valid (fatal)"
         if: always()
         run: python3 scripts/gen_try_it.py --check-entries
@@ -88,7 +92,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           sudo apt-get $APT install -y --no-install-recommends g++-mingw-w64-x86-64 mingw-w64-x86-64-dev
 
-      - name: "MinGW -fsyntax-only on changed engine files (warning)"
+      - name: "MinGW -fsyntax-only on changed Windows-reachable files (warning here; fatal in the CI quick-checks job)"
         if: always() && steps.eng.outputs.count != '0'
         continue-on-error: true
         run: python3 scripts/branch_lint.py mingw --base origin/main --head HEAD

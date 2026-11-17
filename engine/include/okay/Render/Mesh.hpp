@@ -1908,9 +1908,14 @@ struct Mesh {
 
     /// Translate so the bounding-box center sits at the origin — fixes imported
     /// OBJs modeled off to one side so they rotate/scale about their middle.
+    /// Like every other edit, a change marks the mesh custom (clears `name`) so the
+    /// moved geometry is what a scene saves, not a primitive rebuilt from its name.
     void RecenterToOrigin() {
+        if (vertices.empty()) return;
         Vec3 c = Center();
+        if (!std::isfinite(c.x + c.y + c.z) || (c.x == 0.0f && c.y == 0.0f && c.z == 0.0f)) return;
         for (Vec3& v : vertices) v -= c;
+        name = "";
     }
 
     /// Move the pivot to the base: centered in X/Z with the lowest point at
@@ -1919,18 +1924,23 @@ struct Mesh {
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c{(lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f};
+        if (!std::isfinite(c.x + c.y + c.z) || (c.x == 0.0f && c.y == 0.0f && c.z == 0.0f)) return;
         for (Vec3& v : vertices) v -= c;
+        name = "";   // saved as real geometry (a primitive's name would rebuild the old pivot on load)
     }
 
     /// Uniformly scale (about the origin) so the largest bounding-box dimension
     /// equals `maxExtent` — normalize wildly-sized imported models to a usable
     /// scale. No-op on a flat/empty mesh.
     void ScaleToFit(float maxExtent = 1.0f) {
+        if (!std::isfinite(maxExtent) || vertices.empty()) return;   // a typed NaN/inf would turn every vertex into NaN
         Vec3 s = Size();
         float biggest = std::fmax(s.x, std::fmax(s.y, s.z));
-        if (biggest <= 1e-6f) return;
+        if (!(biggest > 1e-6f) || !std::isfinite(biggest)) return;
         float k = maxExtent / biggest;
+        if (!std::isfinite(k) || k == 1.0f) return;
         for (Vec3& v : vertices) v = v * k;
+        name = "";   // saved as real geometry (a primitive's name would rebuild the old size on load)
     }
 
     /// Normalize an imported mesh's size in place. Exporters disagree on units —

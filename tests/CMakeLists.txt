@@ -2268,6 +2268,12 @@ add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
 target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
 add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
 
+# Modeling fixes from issue #888 findings 134-139: pivot ops saved, one undo step per button, NaN guards,
+# Solidify rim, OBJ export round trip (colours, polygons, normals, precision), one implementation per tool
+add_executable(test_modeling_fixes_134_139 test_modeling_fixes_134_139.cpp)
+target_link_libraries(test_modeling_fixes_134_139 PRIVATE okay::engine)
+add_test(NAME modeling_fixes_134_139 COMMAND test_modeling_fixes_134_139)
+
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
 target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)

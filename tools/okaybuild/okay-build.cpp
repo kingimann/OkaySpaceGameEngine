@@ -85,8 +85,18 @@ struct Target {
     string name; bool isLib = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs;
 };
+struct ConfigBlock {
+    string name; int line = 0; int optimize = -1; int debug = -1;
+    vector<string> flags, linkFlags, defines;
+};
+struct OptionDecl { string name, type, deflt; int line = 0; };
+struct CondBlock {
+    string opt, equals; bool hasEquals = false; int line = 0;
+    vector<string> flags, linkFlags, defines;
+};
 struct Manifest {
     Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
+    vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -124,13 +134,13 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
-        if (v[0] == "1" || v[0] == "true" || v[0] == "yes") return true;
-        if (v[0] == "0" || v[0] == "false" || v[0] == "no") return false;
-        throw err(k + " is 1 or 0");
+        if (v[0] == "1" || v[0] == "true" || v[0] == "yes" || v[0] == "on") return true;
+        if (v[0] == "0" || v[0] == "false" || v[0] == "no" || v[0] == "off") return false;
+        throw err(k + " is on or off");
     };
     while (std::getline(in, line)) {
         ++ln;
@@ -173,7 +183,35 @@ static Manifest parseManifest(const string& file) {
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
                 Target x; x.name = t[1]; x.isLib = t[2] == "lib"; x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target, pool, action, buildfile or outdir)");
+            if (t[0] == "option") {
+                if (t.size() < 5 || t[3] != "=") throw err("expected: option NAME bool|int|string = VALUE");
+                string name = t[1], type = t[2];
+                if (type != "bool" && type != "int" && type != "string") throw err("option type is bool, int or string");
+                for (auto& o : m.options) if (o.name == name) throw err("duplicate option '" + name + "'");
+                string value;
+                if (type == "string") { for (size_t i = 4; i < t.size(); ++i) { if (!value.empty()) value += ' '; value += t[i]; } }
+                else if (t.size() != 5) throw err("option '" + name + "' takes one value");
+                else value = t[4];
+                if (type == "bool" && !(value == "1" || value == "0" || value == "true" || value == "false" || value == "yes" || value == "no" || value == "on" || value == "off"))
+                    throw err("option '" + name + "' default is not a bool");
+                if (type == "int") {
+                    size_t i = (!value.empty() && (value[0] == '-' || value[0] == '+')) ? 1 : 0;
+                    if (i >= value.size()) throw err("option '" + name + "' default is not an int");
+                    for (; i < value.size(); ++i) if (!isdigit((unsigned char)value[i])) throw err("option '" + name + "' default is not an int");
+                }
+                m.options.push_back(OptionDecl{name, type, value, ln}); continue;
+            }
+            if (t[0] == "config") {
+                if (t.size() != 2) throw err("expected: config NAME");
+                for (auto& c : m.configs) if (c.name == t[1]) throw err("duplicate config '" + t[1] + "'");
+                ConfigBlock c; c.name = t[1]; c.line = ln; m.configs.push_back(c); mode = CONFIG; continue;
+            }
+            if (t[0] == "if") {
+                if (!(t.size() == 2 || (t.size() == 4 && t[2] == "=="))) throw err("expected: if OPTION   or   if OPTION == VALUE");
+                CondBlock c; c.opt = t[1]; c.line = ln; if (t.size() == 4) { c.hasEquals = true; c.equals = t[3]; }
+                m.conds.push_back(c); mode = COND; continue;
+            }
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, config, option, if, pool, action, buildfile or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
@@ -206,6 +244,24 @@ static Manifest parseManifest(const string& file) {
             if (k == "inputs") add(m.buildInputs);
             else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); m.buildDepfile = v[0]; }
             else throw err("unknown buildfile key '" + k + "'");
+        } else if (mode == CONFIG || mode == COND) {
+            vector<string>& flags = mode == CONFIG ? m.configs.back().flags : m.conds.back().flags;
+            vector<string>& lflags = mode == CONFIG ? m.configs.back().linkFlags : m.conds.back().linkFlags;
+            vector<string>& defs = mode == CONFIG ? m.configs.back().defines : m.conds.back().defines;
+            if (k == "flags") add(flags);
+            else if (k == "link_flags") add(lflags);
+            else if (k == "define") add(defs);
+            else if (mode == CONFIG && k == "optimize") {
+                if (v.size() != 1) throw err("optimize takes one value");
+                size_t i = 0; if (!v[0].empty() && (v[0][0] == '-' || v[0][0] == '+')) i = 1;
+                bool digits = i < v[0].size();
+                for (; i < v[0].size(); ++i) if (!isdigit((unsigned char)v[0][i])) digits = false;
+                int n = atoi(v[0].c_str());
+                if (!digits || n < 0 || n > 3) throw err("optimize is 0, 1, 2 or 3");
+                m.configs.back().optimize = n;
+            } else if (mode == CONFIG && k == "debug") {
+                m.configs.back().debug = oneFlag(v, "debug") ? 1 : 0;
+            } else throw err(string("unknown ") + (mode == CONFIG ? "config" : "if") + " key '" + k + "'");
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
@@ -1270,8 +1326,221 @@ static int writeModules(const string& dir, const string& outFile) {
     return 0;
 }
 
+static bool optBoolWord(const string& v) {
+    return v == "1" || v == "0" || v == "true" || v == "false" || v == "yes" || v == "no" || v == "on" || v == "off";
+}
+static bool optIntWord(const string& v) {
+    size_t i = (!v.empty() && (v[0] == '-' || v[0] == '+')) ? 1 : 0;
+    if (i >= v.size()) return false;
+    for (; i < v.size(); ++i) if (!isdigit((unsigned char)v[i])) return false;
+    return true;
+}
+static bool optTruthy(const string& type, const string& v) {
+    if (type == "bool") return v == "1" || v == "true" || v == "yes" || v == "on";
+    if (type == "int") return v != "0";
+    return !v.empty();
+}
+static void checkOptValue(const OptionDecl& o, const string& v, const string& where) {
+    if (o.type == "bool" && !optBoolWord(v)) throw Fail(where + ": option '" + o.name + "' is not a bool");
+    if (o.type == "int" && !optIntWord(v)) throw Fail(where + ": option '" + o.name + "' is not an int");
+}
+
+// config.okay assigns the values declared in the manifest. It is the same key = value shape, not a second language.
+struct FileSets { string config; bool sawConfig = false; struct Row { string name, type, value; }; vector<Row> rows; };
+static FileSets readConfigOkay(const string& file) {
+    std::ifstream in(file); if (!in) throw Fail("cannot open " + file);
+    FileSets s; string line; int ln = 0;
+    while (std::getline(in, line)) {
+        ++ln; line = stripComment(line); auto t = tokens(line); if (t.empty()) continue;
+        if (t[0] == "config" && t.size() >= 2 && t[1] == "=") {
+            if (t.size() != 3) throw Fail(file + ":" + std::to_string(ln) + ": expected: config = NAME");
+            s.config = t[2]; s.sawConfig = true; continue;
+        }
+        if (t[0] == "option") {
+            string name, type, value;
+            if (t.size() >= 4 && t[2] == "=") {
+                name = t[1]; for (size_t i = 3; i < t.size(); ++i) { if (!value.empty()) value += ' '; value += t[i]; }
+            } else if (t.size() >= 5 && t[3] == "=") {
+                name = t[1]; type = t[2]; for (size_t i = 4; i < t.size(); ++i) { if (!value.empty()) value += ' '; value += t[i]; }
+            } else throw Fail(file + ":" + std::to_string(ln) + ": expected: option NAME = VALUE");
+            s.rows.push_back(FileSets::Row{name, type, value}); continue;
+        }
+        throw Fail(file + ":" + std::to_string(ln) + ": expected: config = NAME   or   option NAME = VALUE");
+    }
+    return s;
+}
+
+static void applyConfiguration(Manifest& m, const string& cliConfig, const string& configPath, bool configRequired, const vector<std::pair<string, string>>& cliOpts) {
+    std::map<string, const OptionDecl*> decl;
+    for (auto& o : m.options) decl[o.name] = &o;
+    std::map<string, string> val;
+    for (auto& o : m.options) val[o.name] = o.deflt;
+    string chosen = cliConfig;
+    if (!configPath.empty() && (configRequired || fs::exists(configPath))) {
+        FileSets f = readConfigOkay(configPath);
+        if (f.sawConfig && chosen.empty()) chosen = f.config;
+        for (auto& row : f.rows) {
+            auto it = decl.find(row.name);
+            if (it == decl.end()) throw Fail(configPath + ": unknown option '" + row.name + "'");
+            if (!row.type.empty() && row.type != it->second->type)
+                throw Fail(configPath + ": option '" + row.name + "' is " + it->second->type + ", not " + row.type);
+            checkOptValue(*it->second, row.value, configPath);
+            val[row.name] = row.value;
+        }
+    }
+    for (auto& kv : cliOpts) {
+        auto it = decl.find(kv.first);
+        if (it == decl.end()) throw Fail("unknown option '" + kv.first + "'");
+        checkOptValue(*it->second, kv.second, "--opt");
+        val[kv.first] = kv.second;
+    }
+    const ConfigBlock* cfg = nullptr;
+    if (!m.configs.empty()) {
+        if (chosen.empty()) cfg = &m.configs[0];
+        else { for (auto& c : m.configs) if (c.name == chosen) cfg = &c; if (!cfg) throw Fail("unknown config '" + chosen + "'"); }
+    } else if (!chosen.empty()) throw Fail("unknown config '" + chosen + "'");
+    auto addFlags = [&](const vector<string>& flags, const vector<string>& lflags, const vector<string>& defs) {
+        m.tc.flags.insert(m.tc.flags.end(), flags.begin(), flags.end());
+        m.tc.linkFlags.insert(m.tc.linkFlags.end(), lflags.begin(), lflags.end());
+        for (auto& d : defs) m.tc.flags.push_back("-D" + d);
+    };
+    if (cfg) {
+        if (cfg->optimize >= 0) m.tc.flags.push_back("-O" + std::to_string(cfg->optimize));
+        if (cfg->debug == 1) m.tc.flags.push_back("-g");
+        addFlags(cfg->flags, cfg->linkFlags, cfg->defines);
+    }
+    for (auto& c : m.conds) {
+        auto it = decl.find(c.opt);
+        if (it == decl.end()) throw Fail("if uses unknown option '" + c.opt + "'");
+        bool on = c.hasEquals ? val[c.opt] == c.equals : optTruthy(it->second->type, val[c.opt]);
+        if (on) addFlags(c.flags, c.linkFlags, c.defines);
+    }
+}
+
+// Toolchain probe. Directories are searched in the order given, then PATH.
+// MSVC is cl.exe plus link.exe. On Windows the roots also come from VSINSTALLDIR,
+// VCToolsInstallDir, and the Visual Studio SxS registry key (no vswhere). This process
+// only runs that registry read when it was itself built for Windows.
+static vector<string> splitEnv(const string& s) {
+    vector<string> o; string cur; char sep =
+#ifdef _WIN32
+        ';';
+#else
+        ':';
+#endif
+    for (char c : s) { if (c == sep) { if (!cur.empty()) o.push_back(cur); cur.clear(); } else cur += c; }
+    if (!cur.empty()) o.push_back(cur);
+    return o;
+}
+static bool isRunnable(const string& p) {
+    std::error_code ec; if (!fs::is_regular_file(p, ec)) return false;
+#ifdef _WIN32
+    return true;
+#else
+    return access(p.c_str(), X_OK) == 0;
+#endif
+}
+static string findNamed(const vector<string>& dirs, std::initializer_list<const char*> names) {
+    for (auto& d : dirs) for (const char* n : names) {
+        string p = d; if (!p.empty() && p.back() != '/' && p.back() != '\\') p += '/'; p += n;
+        if (isRunnable(p)) return p;
+    }
+    return "";
+}
+static void considerMsvcBin(const string& bin, string& cl, string& link) {
+    if (cl.empty()) cl = findNamed({bin}, {"cl.exe", "cl"});
+    if (link.empty()) link = findNamed({bin}, {"link.exe", "link"});
+}
+static void findMsvcUnder(const string& root, string& cl, string& link) {
+    considerMsvcBin(root, cl, link);
+    considerMsvcBin(root + "/bin/Hostx64/x64", cl, link);
+    string parent = root + "/VC/Tools/MSVC";
+    std::error_code ec; if (!fs::is_directory(parent, ec)) return;
+    vector<string> vers;
+    for (auto& e : fs::directory_iterator(parent, ec)) if (!ec && e.is_directory()) vers.push_back(e.path().generic_string());
+    std::sort(vers.begin(), vers.end());
+    for (auto it = vers.rbegin(); it != vers.rend(); ++it) considerMsvcBin(*it + "/bin/Hostx64/x64", cl, link);
+}
+#ifdef _WIN32
+static string narrow(const wchar_t* w) {
+    if (!w || !*w) return "";
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return "";
+    string s((size_t)n - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+static vector<string> vsRootsFromRegistry() {
+    vector<string> roots;
+    HMODULE adv = LoadLibraryW(L"advapi32.dll");
+    if (!adv) return roots;
+    typedef LONG (WINAPI *OpenFn)(HKEY, LPCWSTR, DWORD, REGSAM, PHKEY);
+    typedef LONG (WINAPI *EnumFn)(HKEY, DWORD, LPWSTR, LPDWORD, LPDWORD, LPDWORD, LPBYTE, LPDWORD);
+    typedef LONG (WINAPI *CloseFn)(HKEY);
+    auto open = (OpenFn)GetProcAddress(adv, "RegOpenKeyExW");
+    auto en = (EnumFn)GetProcAddress(adv, "RegEnumValueW");
+    auto closeK = (CloseFn)GetProcAddress(adv, "RegCloseKey");
+    if (!open || !en || !closeK) { FreeLibrary(adv); return roots; }
+    const wchar_t* keys[] = {
+        L"SOFTWARE\\WOW6432Node\\Microsoft\\VisualStudio\\SxS\\VS7",
+        L"SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7"
+    };
+    for (auto* key : keys) {
+        HKEY h = nullptr;
+        if (open(HKEY_LOCAL_MACHINE, key, 0, KEY_READ | KEY_WOW64_64KEY, &h) != 0) continue;
+        for (DWORD i = 0; i < 64; ++i) {
+            wchar_t name[256]; DWORD nlen = 255, typ = 0, dlen = 1024; BYTE data[1024];
+            if (en(h, i, name, &nlen, nullptr, &typ, data, &dlen) != 0) break;
+            if (typ == REG_SZ) { string s = narrow(reinterpret_cast<wchar_t*>(data)); if (!s.empty()) roots.push_back(s); }
+            nlen = 255; dlen = 1024;
+        }
+        closeK(h);
+    }
+    FreeLibrary(adv);
+    return roots;
+}
+#else
+static vector<string> vsRootsFromRegistry() { return {}; }
+#endif
+static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
+    vector<string> dirs = extra;
+    const char* env = getenv("PATH");
+    if (env) { auto p = splitEnv(env); dirs.insert(dirs.end(), p.begin(), p.end()); }
+    string gcc = findNamed(dirs, {"gcc", "gcc.exe"}), gxx = findNamed(dirs, {"g++", "g++.exe"});
+    if (!gcc.empty() && !gxx.empty()) printf("gcc\tfound\tcc=%s\tcxx=%s\n", gcc.c_str(), gxx.c_str());
+    else printf("gcc\tmissing\n");
+    string clang = findNamed(dirs, {"clang", "clang.exe"}), clangxx = findNamed(dirs, {"clang++", "clang++.exe"});
+    if (!clang.empty() && !clangxx.empty()) printf("clang\tfound\tcc=%s\tcxx=%s\n", clang.c_str(), clangxx.c_str());
+    else printf("clang\tmissing\n");
+    string mingw = findNamed(dirs, {"x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++-win32.exe", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-g++.exe"});
+    if (!mingw.empty()) printf("mingw\tfound\tcxx=%s\n", mingw.c_str());
+    else printf("mingw\tmissing\n");
+#ifdef _WIN32
+    string cl = findNamed(dirs, {"cl.exe", "cl"}), link = findNamed(dirs, {"link.exe", "link"});
+#else
+    // Bare "link" is a different program on this host. MSVC's tools are cl.exe and link.exe.
+    string cl = findNamed(dirs, {"cl.exe"}), link = findNamed(dirs, {"link.exe"});
+#endif
+    vector<string> all = roots;
+#ifdef _WIN32
+    if (const char* e = getenv("VSINSTALLDIR")) all.push_back(e);
+    if (const char* e = getenv("VCToolsInstallDir")) all.push_back(e);
+    const char* host = "windows";
+    string probe = roots.empty() ? "registry+path" : "root+registry+path";
+#else
+    const char* host = "posix";
+    string probe = roots.empty() ? "path" : "root+path";
+#endif
+    for (auto& r : vsRootsFromRegistry()) all.push_back(r);
+    for (auto& r : all) findMsvcUnder(r, cl, link);
+    if (!cl.empty() && !link.empty()) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s\n", cl.c_str(), link.c_str(), probe.c_str(), host);
+    else printf("msvc\tmissing\tprobe=%s\thost=%s\n", probe.c_str(), host);
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    Opts o; string cmd = "build", runDir, importOut = "build.okay"; vector<string> want;
+    Opts o; string cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
+    vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
         for (int i = 1; i < argc; ++i) {
             string a = argv[i];
@@ -1287,15 +1556,25 @@ int main(int argc, char** argv) {
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules") cmd = a;
+            else if (a == "--config" && i + 1 < argc) configName = argv[++i];
+            else if (a == "--config-file" && i + 1 < argc) { configFile = argv[++i]; configFileSet = true; }
+            else if (a == "--opt" && i + 1 < argc) {
+                string s = argv[++i]; auto eq = s.find('=');
+                if (eq == string::npos || eq == 0) throw Fail("--opt wants name=value");
+                optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
+            }
+            else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
+            else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules] [-f build.okay] [-j N] [-k] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);
             else want.push_back(a);
         }
+        if (cmd == "toolchains") return cmdToolchains(searchDirs, msvcRoots);
         if (cmd == "modules") {
             if (want.empty()) throw Fail("usage: okay-build modules <directory> [-o build.okay]");
             return writeModules(want[0], importOut);
@@ -1307,6 +1586,8 @@ int main(int argc, char** argv) {
         if (gBuildDir != ".") gBuildDir = fs::absolute(gBuildDir).string();
         fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
+        if (!configFileSet) configFile = "config.okay";
+        applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

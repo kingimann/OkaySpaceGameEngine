@@ -38,6 +38,13 @@ Claude's 12-row table, confirmed or corrected:
 
 Order after this audit, set by the owner and the coordinator together: configurations and toolchain detection, then the compiler cache, then diagnostics, then the test runner. Packages, assets and packaging stay later. The scheduler gaps (memory, Ctrl+C, a killed build) stay later too.
 
+## Configurations and toolchain detection
+Named configs live in the manifest: `config NAME` then `optimize` (0–3, emitted as `-O`), `debug` (on adds `-g`), `flags`, `link_flags`, `define`. `--config NAME` selects one. With no selection, the first config is used. A custom name is just another block.
+
+Typed options are one line, the same shape in the manifest and in `config.okay`: `option NAME bool|int|string = VALUE`. `config.okay` sits next to the manifest and may also say `config = NAME`. `--opt name=value` overrides the file. `if OPTION` and `if OPTION == VALUE` add flags and defines when the value matches. Bool words are on/off, yes/no, true/false, 1/0. A bad value is an error at load time. The chosen flags become part of the command line, so the existing incremental check rebuilds when the config changes.
+
+`okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
+
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
 - Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`

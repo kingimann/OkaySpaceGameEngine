@@ -372,6 +372,63 @@ static string capture(const string& cmd, int* rc = nullptr) {
 }
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testConfigsAndToolchains() {
+    printf("test: named configs, typed options, config.okay, toolchain probe\n");
+    fresh("cfg");
+    write("main.cpp",
+          "#include <cstdio>\nint main(){\n"
+          "#if defined(REL)\nputs(\"release\");\n#elif defined(DBG)\nputs(\"debug\");\n#else\nputs(\"none\");\n#endif\n"
+          "#ifdef WITH_TESTS\nputs(\"tests\");\n#endif\nreturn 0;}\n");
+    write("build.okay",
+          "option tests bool = off\n"
+          "config debug\n optimize = 0\n debug = on\n define = DBG\nend\n"
+          "config release\n optimize = 2\n debug = off\n define = REL\nend\n"
+          "config asan\n flags = -DOKAY_ASAN=1\nend\n"
+          "if tests\n define = WITH_TESTS\nend\n"
+          "target app exe\n sources = main.cpp\nend\n");
+    int rc; string o = sh("--config release", &rc);
+    check(rc == 0, "release config builds", o);
+    o = readFile(gRoot / "build/app"); // not the program output
+    int prc = 0; string prog = capture("'" + (gRoot / "build/app").string() + "'", &prc);
+    check(prc == 0 && prog.find("release") != string::npos && prog.find("debug") == string::npos, "release config selects REL", prog);
+    o = sh("--config debug --opt tests=on", &rc);
+    check(rc == 0, "debug config with option builds", o);
+    prog = capture("'" + (gRoot / "build/app").string() + "'", &prc);
+    check(prog.find("debug") != string::npos && prog.find("tests") != string::npos, "debug config and bool option both apply", prog);
+    write("config.okay", "config = release\noption tests = on\n");
+    o = sh("", &rc);
+    check(rc == 0, "config.okay builds", o);
+    prog = capture("'" + (gRoot / "build/app").string() + "'", &prc);
+    check(prog.find("release") != string::npos && prog.find("tests") != string::npos, "config.okay picks the config and the option", prog);
+    o = sh("--config no-such", &rc);
+    check(rc == 2 && o.find("no-such") != string::npos, "unknown config is an error", o);
+    write("badopt.okay", "option level int = no\ntarget app exe\n sources = main.cpp\nend\n");
+    o = sh("-f badopt.okay", &rc);
+    check(rc == 2 && o.find("level") != string::npos, "int option rejects a non-number", o);
+    fs::path bin = gRoot / "fakebin"; fs::create_directories(bin);
+    for (const char* n : {"gcc", "g++", "clang", "clang++", "x86_64-w64-mingw32-g++-win32"}) {
+        write(("fakebin/" + string(n)).c_str(), ""); fs::permissions(gRoot / "fakebin" / n, fs::perms::owner_all);
+    }
+    fs::create_directories(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64");
+    write("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe", "");
+    write("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/link.exe", "");
+    fs::permissions(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe", fs::perms::owner_all);
+    fs::permissions(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/link.exe", fs::perms::owner_all);
+    o = sh("toolchains --search '" + bin.string() + "' --msvc-root '" + (gRoot / "fakevs").string() + "'", &rc);
+    check(rc == 0, "toolchains exits 0", o);
+    check(o.find("gcc\tfound") != string::npos && o.find((bin / "gcc").string()) != string::npos, "gcc found in the probe dir", o);
+    check(o.find("clang\tfound") != string::npos && o.find((bin / "clang++").string()) != string::npos, "clang found in the probe dir", o);
+    check(o.find("mingw\tfound") != string::npos && o.find("x86_64-w64-mingw32-g++-win32") != string::npos, "mingw found in the probe dir", o);
+    check(o.find("msvc\tfound") != string::npos && o.find("cl.exe") != string::npos && o.find("link.exe") != string::npos, "msvc cl.exe and link.exe found under the root", o);
+    check(o.find("host=posix") != string::npos, "this machine reports a posix host", o);
+    check(o.find((gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe").string()) != string::npos, "msvc compiler path is under the given root", o);
+    fs::path exe = fs::temp_directory_path() / "okay-build-win-host.exe";
+    if (fs::exists(exe) && system("command -v wine >/dev/null 2>&1") == 0) {
+        string wo = capture("WINEPREFIX=$HOME/.wine-okay WINEDEBUG=-all wine '" + exe.string() + "' toolchains 2>&1", &rc);
+        check(rc == 0 && wo.find("host=windows") != string::npos && wo.find("msvc\t") != string::npos, "cross-compiled probe runs under wine and names the windows host", wo);
+    }
+}
+
 static void testAuditHelp() {
     printf("test: --help names the audit note and the commands that exist\n");
     fresh("audit"); write("a.cpp", "int main(){return 0;}\n");
@@ -488,6 +545,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -18,7 +18,7 @@ enum Tok {
     TPlus, TMinus, TSlash, TPercent, TAssign, TEq, TNe, TLt, TGt, TLe, TGe,
     TPlusPlus, TMinusMinus, TPlusEq, TMinusEq, TStarEq, TSlashEq, TPercentEq, TQuestion,
     TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon,
-    TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TReturn,
+    TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TContinue, TReturn,
     TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
     TSizeof, TConst, TStatic, TGoto, TFloat, TDouble
 };
@@ -36,9 +36,8 @@ struct Type {
     // 0 void, 1 int, 2 char, 3 struct or union, 4 short
     int base = 1;
     int array_len = -1;
-    // Further dimensions of an array. int a[2][3][4] is 2, then 3, then 4.
-    int dim2 = -1;
-    int dim3 = -1;
+    // Dimensions after the first. int a[2][3][4][5] stores 3, 4, 5 here.
+    std::vector<int> more;
     int struct_id = -1;
     int func_id = -1;
     int bits = -1;
@@ -82,9 +81,11 @@ struct Global {
 Type peel_array(const Type& type) {
     Type elem = type;
     if (elem.array_len >= 0) {
-        elem.array_len = elem.dim2;
-        elem.dim2 = elem.dim3;
-        elem.dim3 = -1;
+        if (elem.more.empty()) elem.array_len = -1;
+        else {
+            elem.array_len = elem.more.front();
+            elem.more.erase(elem.more.begin());
+        }
         return elem;
     }
     if (elem.pointers > 0) --elem.pointers;
@@ -93,7 +94,7 @@ Type peel_array(const Type& type) {
 
 struct Node {
     enum Kind {
-        Block, Return, If, While, For, Do, Switch, Case, Break, ExprStmt,
+        Block, Return, If, While, For, Do, Switch, Case, Break, Continue, ExprStmt,
         IntLit, StringLit, Name, Unary, Binary, Assign, Call, Index, Field,
         Ternary, Goto, Label
     } kind = Block;
@@ -713,6 +714,7 @@ Tok keyword(const std::string& text) {
     if (text == "case") return TCase;
     if (text == "default") return TDefault;
     if (text == "break") return TBreak;
+    if (text == "continue") return TContinue;
     if (text == "struct") return TStruct;
     if (text == "union") return TUnion;
     if (text == "enum") return TEnum;
@@ -1252,12 +1254,7 @@ struct Parser {
 
     bool add_dim(Type* type, int length) {
         if (type->array_len < 0) type->array_len = length;
-        else if (type->dim2 < 0) type->dim2 = length;
-        else if (type->dim3 < 0) type->dim3 = length;
-        else {
-            error = "too many array dimensions";
-            return false;
-        }
+        else type->more.push_back(length);
         return true;
     }
     bool parse_brackets(Type* type) {
@@ -1783,6 +1780,11 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         out->kind = Node::Break;
         return expect(TSemi, "';'");
     }
+    if (is(TContinue)) {
+        next();
+        out->kind = Node::Continue;
+        return expect(TSemi, "';'");
+    }
     if (is(TReturn)) {
         next();
         out->kind = Node::Return;
@@ -2163,6 +2165,7 @@ struct Gen {
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
     std::vector<std::vector<size_t>> break_stack;
+    std::vector<std::vector<size_t>> continue_stack;
     Type last_type{};
     int scope_depth = 0;
     std::vector<int> scope_parent{0};
@@ -3554,22 +3557,26 @@ bool Gen::gen_stmt(const Node& node) {
     }
     if (node.kind == Node::While) {
         break_stack.emplace_back();
+        continue_stack.emplace_back();
         const size_t start = text.size();
         if (!gen_expr(node.kids[0])) return false;
         b(0x85);
         b(0xC0);
         const size_t jz = emit_jcc(0x84);
         if (!gen_stmt(node.kids[1])) return false;
+        for (size_t site : continue_stack.back()) patch(site, start);
         const size_t jmp = emit_jmp();
         patch(jmp, start);
         const size_t end = text.size();
         patch(jz, end);
         for (size_t site : break_stack.back()) patch(site, end);
         break_stack.pop_back();
+        continue_stack.pop_back();
         return true;
     }
     if (node.kind == Node::For) {
         break_stack.emplace_back();
+        continue_stack.emplace_back();
         auto skipped = [](const Node& item) { return item.kind == Node::Block && item.text == "skip"; };
         if (!skipped(node.kids[0]) && !gen_expr(node.kids[0])) return false;
         const size_t start = text.size();
@@ -3582,27 +3589,34 @@ bool Gen::gen_stmt(const Node& node) {
             jz = emit_jcc(0x84);
         }
         if (!gen_stmt(node.kids[3])) return false;
+        const size_t step_at = text.size();
         if (!skipped(node.kids[2]) && !gen_expr(node.kids[2])) return false;
+        for (size_t site : continue_stack.back()) patch(site, step_at);
         const size_t jmp = emit_jmp();
         patch(jmp, start);
         const size_t end = text.size();
         if (has_cond) patch(jz, end);
         for (size_t site : break_stack.back()) patch(site, end);
         break_stack.pop_back();
+        continue_stack.pop_back();
         return true;
     }
     if (node.kind == Node::Do) {
         break_stack.emplace_back();
+        continue_stack.emplace_back();
         const size_t start = text.size();
         if (!gen_stmt(node.kids[0])) return false;
+        const size_t cond_at = text.size();
         if (!gen_expr(node.kids[1])) return false;
         b(0x85);
         b(0xC0);
         const size_t jne = emit_jcc(0x85);
         patch(jne, start);
+        for (size_t site : continue_stack.back()) patch(site, cond_at);
         const size_t end = text.size();
         for (size_t site : break_stack.back()) patch(site, end);
         break_stack.pop_back();
+        continue_stack.pop_back();
         return true;
     }
     if (node.kind == Node::Switch) {
@@ -3661,6 +3675,14 @@ bool Gen::gen_stmt(const Node& node) {
             return false;
         }
         break_stack.back().push_back(emit_jmp());
+        return true;
+    }
+    if (node.kind == Node::Continue) {
+        if (continue_stack.empty()) {
+            error = "continue is outside a loop";
+            return false;
+        }
+        continue_stack.back().push_back(emit_jmp());
         return true;
     }
     error = "bad statement";
@@ -4002,6 +4024,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.scope_depth = 0;
         gen.scope_parent.clear();
         gen.scope_parent.push_back(0);
+        gen.continue_stack.clear();
         gen.current = &fn;
         for (int p = 0; p < fn.nparams; ++p) {
             const int reg = p + (fn.sret ? 1 : 0);

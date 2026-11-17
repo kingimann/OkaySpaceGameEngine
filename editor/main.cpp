@@ -50005,7 +50005,18 @@ int main(int argc, char** argv) {
             // button and stops the game. The game still reads relative motion.
             const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
                 || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
-            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
+            // A press or the wheel over an open OkayUI menu or list (a hosted panel's popup, which OkayUI draws over every ImGui
+            // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
+            bool okayOverlay = false;
+#ifdef OKAY_HAVE_OKAYUI
+            if (UseOkayUIBackend() && (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) {
+                int ox = 0, oy = 0;
+                if (e.type == SDL_MOUSEBUTTONDOWN) { ox = e.button.x; oy = e.button.y; } else SDL_GetMouseState(&ox, &oy);
+                const Uint32 wid = e.type == SDL_MOUSEBUTTONDOWN ? e.button.windowID : e.wheel.windowID;
+                okayOverlay = wid == SDL_GetWindowID(window) && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
+            }
+#endif
+            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay)
                 ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);

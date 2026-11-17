@@ -519,6 +519,74 @@ int main() {
         CHECK(ext.empty() && !UI::IsDragging());
         sim.blocked = false;
     }
+    {   // Menus in a short window: the row menu opened at the bottom moves up to fit; a sub-menu longer than the display starts at the
+        // top and scrolls (the wheel), with rows as tall as the popup's own (Dear ImGui's menu rows); Escape closes the open sub-menu,
+        // then the menu; what lies under a menu does not show through it.
+        HRig r(hierfix::Village(), 720.0f, 320.0f);
+        r.scene.parentToCount = 40;
+        r.Frames(2);
+        CHECK(!r.res.rows.empty());
+        UI::Rect last = r.res.rows.front();   // the lowest row that is wholly in view
+        for (const UI::Rect& q : r.res.rows) if (q.y + q.h <= 300.0f && q.y > last.y) last = q;
+        CHECK(last.y > 200.0f);
+        last.x += 120.0f; last.w = 0.0f;       // right-click on the name, as above
+        r.RightClick(CX(last), CY(last));
+        r.Frames(3);
+        CHECK(r.st.menuKind == P::HierMenuRow);
+        const UI::Rect menu = r.res.menu;
+        CHECK(menu.h > 100.0f && menu.y >= 0.0f && menu.y + menu.h - 4.0f + 12.0f <= 320.5f);   // the rows (their highlight reaches 4 px past the item) and the popup's bottom padding fit
+        const UI::Rect copy = r.MenuRow("h.copy"), pt = r.MenuRow("h.parentto");
+        CHECK(copy.h > 10.0f && pt.w > 0.0f);
+        // the sub-menu's list: the overlay to the right of the menu
+        auto subList = [&]() {
+            for (int i = 0; i < UI::GetOverlayCount(); ++i) {
+                const UI::Rect o = UI::GetOverlayRect(i);
+                if (o.x >= menu.x + menu.w - 1.0f) return o;
+            }
+            return UI::Rect{};
+        };
+        auto openSub = [&]() {
+            if (r.st.menuKind != P::HierMenuRow) { r.RightClick(CX(last), CY(last)); r.Frames(2); }
+            const UI::Rect row = r.MenuRow("h.parentto");
+            r.At(CX(row), CY(row)); r.Frames(3);
+        };
+        openSub();
+        UI::Rect list = subList();
+        CHECK(list.w > 50.0f && list.y >= -0.5f && list.y + list.h <= 320.5f && list.h > 300.0f);   // inside the display, filling it
+        {   // opaque: on a white canvas the list's background is exactly the menu colour
+            const Bitmap& b = r.sim.Draw(255, 255, 255);
+            const unsigned px = PixelAt(b, (int)(list.x + list.w - 4.0f), (int)(list.y + copy.h * 0.5f));
+            CHECK((px >> 8) == ((35u << 16) | (39u << 8) | 48u));
+        }
+        // rows as tall as the popup's: the fourth row is where four popup rows would put it
+        r.Click(list.x + 40.0f, list.y + copy.h * 3.5f);
+        CHECK(r.seen.menuId == "h.parentto/3" && r.st.menuKind == P::HierMenuNone);
+        // one notch of the wheel down scrolls three rows: the top row is now the fourth object
+        openSub();
+        list = subList();
+        r.sim.Move(list.x + 40.0f, list.y + 40.0f); r.Frame();
+        r.sim.wheel = -1.0f; r.Frame(); r.Frames(2);
+        list = subList();
+        r.seen = P::HierarchyIntent{};
+        r.Click(list.x + 40.0f, list.y + copy.h * 0.5f);
+        CHECK(r.seen.menuId == "h.parentto/3");
+        // Escape: first the sub-menu, then the menu
+        openSub();
+        list = subList();
+        r.At(list.x + 40.0f, list.y + 40.0f);
+        CHECK(subList().w > 0.0f);
+        r.Key(UI::KeyId_Escape);
+        r.Frames(2);
+        CHECK(r.st.menuKind == P::HierMenuRow && subList().w == 0.0f);
+        r.Key(UI::KeyId_Escape);
+        r.Frames(2);
+        CHECK(r.st.menuKind == P::HierMenuNone);
+        // and the edge form of Escape (a host that hands OkayUI the key edges) closes it as well
+        r.RightClick(CX(last), CY(last)); r.Frames(2);
+        CHECK(r.st.menuKind == P::HierMenuRow);
+        r.sim.Press(okayuitest::Key_Escape); r.Frame(); r.Frames(2);
+        CHECK(r.st.menuKind == P::HierMenuNone);
+    }
     {   // MenuItem and BeginMenu inside a popup: rows, a tick, a shortcut, a greyed-out row, a sub-menu whose item closes the popup
         Sim sim(400, 300); Reset(); UI::UseLauncherLook(true);
         std::string chosen; UI::Rect sub, item, openR;

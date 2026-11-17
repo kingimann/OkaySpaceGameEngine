@@ -157,7 +157,8 @@ float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragg
 // Menu bar / open-menu state.
 bool  g_inMenuBar = false;
 float g_barX = 0.0f, g_barY = 0.0f, g_barH = 0.0f;
-struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false; };
+struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false;
+                bool keyMoved = false; };   // keyMoved: the arrows moved the highlight this frame (a scrolling list brings it into view)
 MenuKb g_menuKbs[16];
 MenuKb* kbSlot(int id) {
     for (auto& s : g_menuKbs) if (s.id == id) return &s;
@@ -176,6 +177,16 @@ struct CurMenu {
     unsigned long long mask = 0;                 // which of them are enabled
     bool  activate = false;                      // Enter pressed for the highlighted item this frame
     int   popupId = 0;                           // a sub-menu opened from a popup's row: that popup (picking an item closes it too)
+    // The list's rows: their height (0: rowH()) and where the label starts. A chain of sub-menus opened from a popup's row uses the
+    // popup's row height and padding (Dear ImGui's menu rows: one text line plus the item spacing), so it matches the popup.
+    float rowH = 0.0f, textInset = 10.0f;
+    bool  fromPopup = false;
+    // Kept inside the display: the list starts higher when last frame's height would run past the bottom; when it is taller than the
+    // display it shows the band [clipY0, clipY1) and scrolls by whole rows (the wheel over it, or the keyboard highlight).
+    float clipY0 = 0.0f, clipY1 = 0.0f;
+    float virtTop = 0.0f;                        // where row 0 would be (itemStartY minus the scroll)
+    float* heightSlot = nullptr;                 // the list's full height last frame
+    float* scrollSlot = nullptr;                 // its scroll offset in pixels
 };
 CurMenu g_curMenu;
 CurMenu g_menuStack[4];
@@ -984,6 +995,7 @@ struct WinRect { int id; unsigned long long z; float x, y, w, h; };
 WinRect g_wCur[64], g_wPrev[64]; int g_wCurN = 0, g_wPrevN = 0;
 unsigned long long g_zCounter = 0;
 bool g_wheelUsed = false;   // a scrolling child took this frame's wheel (the window does not scroll as well)
+bool g_escapeUsed = false;  // a popup closed on this frame's Escape (the popups it was opened from stay open)
 bool g_hitWinOn = false; int g_hitWinId = 0; unsigned long long g_hitWinZ = 0;   // the window being built, for hit()
 inline bool coveredByHigher(float px, float py, unsigned long long z, int selfId) {
     for (int i = 0; i < g_wCurN; ++i) {
@@ -1162,7 +1174,7 @@ void BeginFrame(const Input& in) {
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
     for (int i = 0; i < g_wCurN; ++i) g_wPrev[i] = g_wCur[i];   // last frame's window rectangles, for stacking
-    g_wPrevN = g_wCurN; g_wCurN = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_wheelUsed = false;
+    g_wPrevN = g_wCurN; g_wCurN = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_wheelUsed = false; g_escapeUsed = false;
     g_lay.active = false;            // widgets called outside Begin/End no-op
     g_lay.pendingSameLine = false;
     ++g_frame;
@@ -4054,15 +4066,55 @@ void EndMenuBar() { g_inMenuBar = false; }
 
 
 namespace {
+// The height of the open list's rows.
+float menuRowH() { return g_curMenu.rowH > 0.0f ? g_curMenu.rowH : rowH(); }
+// The open list starts at `y` (level with its row, or under its bar button). Moved up when last frame's height would run past the
+// display's bottom (Input::displayH), as Dear ImGui keeps a menu inside its viewport; taller than the display, it starts at the top
+// and scrolls. Sets itemStartY (the visible top), virtTop and itemY (row 0, scroll included).
+void menuListBegin(int id, float y) {
+    float* full = floatState(id ^ 0x6d1a0b, 0.0f);
+    float* scroll = floatState(id ^ 0x6d1b0c, 0.0f);
+    g_curMenu.heightSlot = full; g_curMenu.scrollSlot = scroll;
+    g_curMenu.clipY0 = g_curMenu.clipY1 = 0.0f;
+    float top = y, off = 0.0f;
+    if (g_dispH > 0.0f && *full > 0.0f) {
+        if (*full > g_dispH) {   // does not fit at all: the whole display, scrolled
+            top = 0.0f;
+            g_curMenu.clipY0 = 0.0f; g_curMenu.clipY1 = g_dispH;
+            const float maxOff = *full - g_dispH, rh = menuRowH();
+            *scroll = std::clamp(*scroll, 0.0f, maxOff);
+            off = *scroll >= maxOff ? maxOff : std::floor(*scroll / rh + 0.5f) * rh;   // whole rows (the last step shows the end)
+            off = std::min(off, maxOff);
+        } else {
+            if (top + *full > g_dispH) top = g_dispH - *full;
+            *scroll = 0.0f;
+        }
+    } else *scroll = 0.0f;
+    g_curMenu.itemStartY = top; g_curMenu.virtTop = top - off; g_curMenu.itemY = top - off;
+}
+// Is a row at (y, h) of the open list inside its visible band? (always, unless the list scrolls)
+bool menuRowShown(float y, float h) {
+    if (g_curMenu.clipY1 <= g_curMenu.clipY0) return true;
+    return y >= g_curMenu.clipY0 - 0.5f && y + h <= g_curMenu.clipY1 + 0.5f;
+}
+// The keyboard highlight is on a row outside the band: scroll it into view next frame.
+void menuRowReveal(float y, float h) {
+    if (g_curMenu.clipY1 <= g_curMenu.clipY0 || !g_curMenu.scrollSlot) return;
+    const float rowTop = y - g_curMenu.virtTop;
+    if (y < g_curMenu.clipY0) *g_curMenu.scrollSlot = rowTop;
+    else if (y + h > g_curMenu.clipY1) *g_curMenu.scrollSlot = rowTop + h - (g_curMenu.clipY1 - g_curMenu.clipY0);
+}
 // Per-menu keyboard handling at the start of its item list. Only the innermost open menu reacts (the one with no open child).
 void menuKeysBegin(int menuId, bool nestedMenu) {
     MenuKb* kb = kbSlot(menuId);
     kb->childOpen = kb->childOpenNext; kb->childOpenNext = false;
     g_curMenu.kb = kb; g_curMenu.n = 0; g_curMenu.mask = 0; g_curMenu.activate = false;
+    kb->keyMoved = false;
     if (kb->childOpen) return;
     const int cnt = kb->count;
     auto enabledAt = [&](int i) { return i >= 0 && i < cnt && i < 64 && ((kb->mask >> i) & 1ull); };
     if ((g_in.down || g_in.up) && cnt > 0) {
+        kb->keyMoved = true;
         int i = kb->idx;
         for (int step = 0; step < cnt; ++step) {
             i = g_in.down ? (i < 0 ? 0 : (i + 1) % cnt) : (i <= 0 ? cnt - 1 : i - 1);
@@ -4070,7 +4122,11 @@ void menuKeysBegin(int menuId, bool nestedMenu) {
         }
     }
     if (g_in.enter && enabledAt(kb->idx)) g_curMenu.activate = true;
-    if (g_in.escape || (nestedMenu && g_in.left)) *openState(menuId, false) = false;
+    // Escape (as an edge, or as the held key a host passes while no field types) closes the innermost list.
+    if (((g_in.escape || IsKeyPressed(KeyId_Escape, false)) && !g_escapeUsed) || (nestedMenu && g_in.left)) {
+        *openState(menuId, false) = false;
+        if (!(nestedMenu && g_in.left)) g_escapeUsed = true;
+    }
 }
 }
 
@@ -4093,8 +4149,11 @@ bool BeginMenu(const char* label) {
         g_curMenu.active = true; g_curMenu.menuId = id;
         g_curMenu.x = x + w; g_curMenu.w = g_popupW > 0.0f ? g_popupW : 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
-        g_curMenu.itemStartY = y; g_curMenu.itemY = y;
+        g_curMenu.fromPopup = true;
+        g_curMenu.rowH = h;   // the popup's own row height (a text line and the item spacing)
+        g_curMenu.textInset = (g_popupPadX >= 0.0f ? g_popupPadX : g_lay.spacingX * 0.5f + 4.0f);
         if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);   // no room on the right: the left
+        menuListBegin(id, y);
         menuKeysBegin(id, true);
         return true;
     }
@@ -4102,30 +4161,39 @@ bool BeginMenu(const char* label) {
         if (g_menuDepth >= 4) return false;
         const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
         bool* open = openState(id, false);
-        const float h = rowH(), s = g_theme.textScale;
+        const float h = menuRowH(), s = g_theme.textScale;
         const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
         g_curMenu.itemY += h;
-        const bool ih = hitOverlay(x, y, w, h);
+        const bool shown = menuRowShown(y, h);
+        const bool ih = shown && hitOverlay(x, y, w, h);
         const int ord = g_curMenu.n++;
         if (ord < 64) g_curMenu.mask |= 1ull << ord;
         MenuKb* pk = g_curMenu.kb;
         if (ih) { g_hot = id; *open = true; if (pk) pk->idx = ord; }          // hovering the row opens it (and highlights it)
         const bool ksel = pk && pk->idx == ord && !pk->childOpen;
+        if (ksel && !shown && pk->keyMoved) menuRowReveal(y, h);
         if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
-        const bool wasOverlay = g_toOverlay;   // inside a popup (a context menu's sub-menu) the popup's later rows stay on top too
-        g_toOverlay = true;
-        quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
-        drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-        drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, pick(Col_TextDisabled, g_theme.textDim));
-        g_toOverlay = wasOverlay;
+        if (shown) {
+            const bool wasOverlay = g_toOverlay;   // inside a popup (a context menu's sub-menu) the popup's later rows stay on top too
+            g_toOverlay = true;
+            const float ty = y + (h - textH()) * 0.5f;
+            quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
+            drawText(x + g_curMenu.textInset, ty, label, s, g_theme.text);
+            if (g_curMenu.fromPopup) {   // Dear ImGui's arrow, as on the popup's own sub-menu rows
+                const float th = textH(), r = th * 0.40f, cx = x + w - g_curMenu.textInset - th * 0.5f, cy = ty + th * 0.5f;
+                tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, g_theme.text);
+            } else drawText(x + w - labelW(">") - 8.0f, ty, ">", s, pick(Col_TextDisabled, g_theme.textDim));
+            g_toOverlay = wasOverlay;
+        }
         if (!*open) { kbSlot(id)->idx = -1; return false; }
         if (pk) pk->childOpenNext = true;
         g_menuStack[g_menuDepth++] = g_curMenu;
         g_curMenu.menuId = id;
-        g_curMenu.x = x + w; g_curMenu.w = 180.0f;
+        g_curMenu.x = x + w; g_curMenu.w = (g_curMenu.fromPopup && g_popupW > 0.0f) ? g_popupW : 180.0f;
+        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
-        g_curMenu.itemStartY = y; g_curMenu.itemY = y;
         g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
+        menuListBegin(id, y);
         menuKeysBegin(id, true);
         return true;
     }
@@ -4145,11 +4213,11 @@ bool BeginMenu(const char* label) {
     drawText(x + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
 
     if (*open) {
+        g_curMenu = CurMenu();
         g_curMenu.active = true; g_curMenu.menuId = id;
         g_curMenu.x = x; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
-        g_curMenu.itemStartY = y + h; g_curMenu.itemY = y + h;
-        g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
+        menuListBegin(id, y + h);
         menuKeysBegin(id, false);
     } else kbSlot(id)->idx = -1;
     return *open;
@@ -4199,17 +4267,19 @@ bool popupMenuItem(const char* label, const char* shortcut, bool selected, bool 
 bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool enabled) {
     if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) return popupMenuItem(label, shortcut, selected, enabled);
     if (!g_lay.active || !g_curMenu.active || !label) return false;
-    const float h = rowH(), s = g_theme.textScale;
+    const float h = menuRowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
     g_curMenu.itemY += h;
     const int iid = hashLabel(label) ^ g_curMenu.menuId;
-    const bool ih = enabled && hitOverlay(x, y, w, h);
+    const bool shown = menuRowShown(y, h);
+    const bool ih = shown && enabled && hitOverlay(x, y, w, h);
     if (ih) g_hot = iid;
     const int ord = g_curMenu.n++;
     if (enabled && ord < 64) g_curMenu.mask |= 1ull << ord;
     MenuKb* kb = g_curMenu.kb;
     if (ih && kb) kb->idx = ord;
     const bool ksel = kb && kb->idx == ord && enabled && !kb->childOpen;
+    if (ksel && !shown && kb->keyMoved) menuRowReveal(y, h);
     bool clicked = false;
     if (ksel && g_curMenu.activate) {   // Enter on the highlighted item
         clicked = true; *openState(g_curMenu.menuId, false) = false;
@@ -4221,15 +4291,17 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     if (clicked)   // a chain of sub-menus opened from a popup's row: the popup closes as well, as a context menu does
         for (int i = 0; i < g_menuDepth; ++i)
             if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
+    if (!shown) return clicked;
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     const bool wasOverlay = g_toOverlay;   // a sub-menu of a popup: the popup's rows after it must stay on top
     g_toOverlay = true;
+    const float in = g_curMenu.textInset;
     quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
     if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
-    drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, col);
+    drawText(x + in, y + (h - textH()) * 0.5f, label, s, col);
     if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
-        const float sw = labelW(shortcut), sx = x + w - sw - 10.0f;
-        if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
+        const float sw = labelW(shortcut), sx = x + w - sw - in;
+        if (sx > x + in + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
     }
     g_toOverlay = wasOverlay;
     return clicked;
@@ -4243,6 +4315,7 @@ void MenuSeparator() {
     if (!g_lay.active || !g_curMenu.active) return;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
     g_curMenu.itemY += h;
+    if (!menuRowShown(y, h)) return;
     const bool wasOverlay = g_toOverlay;
     g_toOverlay = true;
     quad(x, y, w, h, pick(Col_PopupBg, g_theme.panel));
@@ -4254,23 +4327,32 @@ void EndMenu() {
     if (!g_curMenu.active) return;
     const bool nested = g_menuDepth > 0;
     // A press outside both the menu button (or the sub-menu's row) and its item list closes the menu.
+    // The list as drawn: from its visible top to its last row, or the band it scrolls in.
+    const bool scrolls = g_curMenu.clipY1 > g_curMenu.clipY0;
+    const float fullH = g_curMenu.itemY - g_curMenu.virtTop;
+    if (g_curMenu.heightSlot) *g_curMenu.heightSlot = fullH;   // where next frame's list starts depends on it
+    const float listY0 = g_curMenu.itemStartY;
+    const float listY1 = scrolls ? std::min(g_curMenu.itemY, g_curMenu.clipY1) : g_curMenu.itemY;
     const bool inBtn  = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.bx, g_curMenu.by, g_curMenu.bw, g_curMenu.bh);
-    const bool inList = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.x, g_curMenu.itemStartY,
-                               g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY);
+    const bool inList = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0);
+    if (scrolls && g_curMenu.scrollSlot && g_in.wheel != 0.0f && !g_wheelUsed && hitOverlay(g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0)) {
+        *g_curMenu.scrollSlot -= g_in.wheel * menuRowH() * 3.0f;   // three rows a notch
+        g_wheelUsed = true;
+    }
     const bool inSub  = g_curMenu.subW > 0.0f && pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.subX, g_curMenu.subY, g_curMenu.subW, g_curMenu.subH);
     if (g_pressed && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
     // A sub-menu also closes when the pointer leaves its row, its list and any list opened from it.
     // (only while the mouse is moving: a sub-menu opened from the keyboard stays open under a parked pointer)
     if (nested && !inBtn && !inList && !inSub && (g_mouseDX != 0.0f || g_mouseDY != 0.0f)) *openState(g_curMenu.menuId, false) = false;
     if (g_curMenu.kb) { g_curMenu.kb->count = g_curMenu.n; g_curMenu.kb->mask = g_curMenu.mask; }
-    const bool hasItems = g_curMenu.itemY > g_curMenu.itemStartY;
+    const bool hasItems = listY1 > listY0;
     if (hasItems)
-        registerOverlay(g_curMenu.x, g_curMenu.itemStartY, g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY, false);
+        registerOverlay(g_curMenu.x, listY0, g_curMenu.w, listY1 - listY0, false);
     if (nested) {   // back to the menu this one was opened from; it needs to know where this list is
         const CurMenu child = g_curMenu;
         g_curMenu = g_menuStack[--g_menuDepth];
         if (hasItems) {   // the bounding box of its list and of any list opened from it (a press in either is "inside" for the outer menus)
-            float x0 = child.x, y0 = child.itemStartY, x1 = child.x + child.w, y1 = child.itemY;
+            float x0 = child.x, y0 = listY0, x1 = child.x + child.w, y1 = listY1;
             if (child.subW > 0.0f) { x0 = std::min(x0, child.subX); y0 = std::min(y0, child.subY); x1 = std::max(x1, child.subX + child.subW); y1 = std::max(y1, child.subY + child.subH); }
             g_curMenu.subX = x0; g_curMenu.subY = y0; g_curMenu.subW = x1 - x0; g_curMenu.subH = y1 - y0;
             if (!g_curMenu.active && g_popupTop > 0) {   // back in the popup the chain started from: a press in these lists is inside it
@@ -4389,6 +4471,13 @@ void EndPopup() {
     g_toOverlay = g_popupTop > 0;   // back in the popup this one was opened from: still on top
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
+    // Escape closes the innermost popup, as in Dear ImGui: not while a text field in it has the keyboard (Escape gives the field up),
+    // nor while a sub-menu list is open from one of its rows (that list closes first).
+    if (p && p->open && !p->modal && !g_escapeUsed && (g_in.escape || IsKeyPressed(KeyId_Escape, false)) &&
+        g_focusAtFrameStart == 0 && g_editId == 0 && !(c.subX1 > c.subX0)) {
+        p->open = false;
+        g_escapeUsed = true;
+    }
     if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
         const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f);
         const bool inSub = c.subX1 > c.subX0 && pointIn(g_in.mouseX, g_in.mouseY, c.subX0, c.subY0, c.subX1 - c.subX0, c.subY1 - c.subY0);

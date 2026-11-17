@@ -74,7 +74,7 @@ bool LineButton(const char* label) {
 }
 
 // The editor's Slate theme values (shared/OkayTheme.hpp) that OkayUI's launcher look does not have, as bytes.
-const UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 251);         // Mix(kRaised, kBase, 0.35), alpha 0.985
+const UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 255);         // Mix(kRaised, kBase, 0.35), opaque (what lies under a menu must not show through)
 const UI::Color32 kHeader = UI::RGBA(53, 68, 95);               // Mix(kControl, accent, 0.18): a selected row
 const UI::Color32 kHeaderHovered = UI::RGBA(65, 70, 84);        // Mix(kControl, white, 0.07)
 const UI::Color32 kHeaderActive = UI::RGBA(55, 85, 131);        // Mix(kControl, accent, 0.45)

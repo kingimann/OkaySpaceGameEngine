@@ -153,13 +153,14 @@ public:
     static constexpr int kMax = 8;
     /// Called by a hosted panel each frame it draws: `rect` is its screen rectangle, `hovered` ImGui's answer to "is the
     /// mouse over my placeholder item and not covered by another window or popup" (ImGui::IsItemHovered).
-    void Offer(float x, float y, float w, float h, bool hovered) {
+    /// `overlay`: a popup, menu list or dropdown OkayUI draws over everything (the host keeps a press there from ImGui too).
+    void Offer(float x, float y, float w, float h, bool hovered, bool overlay = false) {
         int pick = -1;
         for (int i = 0; i < kMax && pick < 0; ++i)   // the same rectangle offered again this frame: the newest answer wins
             if (m_r[i].valid && m_r[i].age == 0 && m_r[i].x == x && m_r[i].y == y && m_r[i].w == w && m_r[i].h == h) pick = i;
         for (int i = 0; i < kMax && pick < 0; ++i) if (!m_r[i].valid || m_r[i].age > 0) pick = i;   // a slot not offered this frame yet
         if (pick < 0) return;                                                                      // more than kMax in one frame: ignored
-        m_r[pick] = Rect{x, y, w, h, hovered, true, 0};
+        m_r[pick] = Rect{x, y, w, h, hovered, true, 0, overlay};
     }
     /// Start of the next frame: a rectangle that was not offered last frame (panel closed, another page showing) is dropped.
     void NextFrame() { for (Rect& r : m_r) if (r.valid && ++r.age > 1) r.valid = false; }
@@ -169,11 +170,17 @@ public:
             if (r.valid && r.hovered && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
         return false;
     }
+    /// True when the mouse is over an overlay offered last frame: a press or the wheel there is OkayUI's alone.
+    bool OwnsOverlay(float x, float y) const {
+        for (const Rect& r : m_r)
+            if (r.valid && r.overlay && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
+        return false;
+    }
     bool Valid() const { return Count() > 0; }
     /// How many rectangles are remembered.
     int Count() const { int n = 0; for (const Rect& r : m_r) n += r.valid ? 1 : 0; return n; }
 private:
-    struct Rect { float x = 0, y = 0, w = 0, h = 0; bool hovered = false, valid = false; int age = 0; };
+    struct Rect { float x = 0, y = 0, w = 0, h = 0; bool hovered = false, valid = false; int age = 0; bool overlay = false; };
     Rect m_r[kMax];
 };
 

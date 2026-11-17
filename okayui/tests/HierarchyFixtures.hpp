@@ -39,6 +39,7 @@ struct Scene {
     long fills = 0;                   // rows the panel asked for, since the last reset
     int isolate = -1;
     bool sortAZ = false;
+    int parentToCount = 0;   // > 0: the row menu ends with a "Parent To" sub-menu of this many objects (a long list)
     std::vector<std::string> log;     // what the host did, for the tests
     bool flatDirty = true;            // the rows need flattening again (like the editor's row model: only when something changed)
     int activeRowCache = -1, activeFor = -2;
@@ -120,6 +121,14 @@ struct Scene {
                 P::PanelMenuEntry off = item("h.unparent", "Unparent (to top level)");
                 if (nodes[(std::size_t)NodeOf(row)].parent < 0) { off.enabled = false; off.reason = "It is already at the top level."; }
                 out.push_back(off);
+                if (parentToCount > 0) {
+                    P::PanelMenuEntry pt; pt.kind = P::PanelMenuSub; pt.id = "h.parentto"; pt.label = "Parent To";
+                    for (int i = 0; i < parentToCount; ++i) {
+                        const std::string n = std::to_string(i);
+                        P::PanelMenuEntry e; e.id = "h.parentto/" + n; e.label = "Object " + n; pt.children.push_back(e);
+                    }
+                    out.push_back(pt);
+                }
             } else {
                 out.push_back(item("h.createempty", "Create Empty"));
                 out.push_back(sep);

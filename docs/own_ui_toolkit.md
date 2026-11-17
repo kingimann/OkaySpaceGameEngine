@@ -1363,6 +1363,15 @@ editor's host fills a row (its components, prefab facts and problems) only when 
   Dear ImGui's context menus: rows one text line tall with the highlight reaching half the spacing past them, a sub-menu that opens to
   the right on hover (to the left when there is no room), a press in a sub-menu's list does not close the popup, and picking an item
   in a sub-menu closes the whole menu.
+- **Menus seen in the real editor (fixed after the first run).** A sub-menu opened from a popup row now has the popup's row height
+  (one text line and the item spacing, Dear ImGui's 26 pixels at the editor's size, not OkayUI's taller row) and the popup's padding and
+  arrow. Every menu list (a sub-menu, a menu-bar menu) starts higher when last frame's height would run past the bottom of the window;
+  one taller than the window fills it and scrolls by whole rows (three a wheel notch; the keyboard highlight is brought into view).
+  Escape closes the innermost open list, then the popup (not while a text field in it has the keyboard). The editor's menu colour is
+  opaque (it was 98.5%, which let the text under a menu show faintly). The editor host offers the menus a hosted panel opens as mouse
+  regions (a menu hanging over the Scene view could not be hovered or clicked there) and keeps a press or the wheel over an open OkayUI
+  menu from Dear ImGui (so choosing a row does not also click the Scene view). Tested in `okayui_hierarchy` (a 40-row Parent To in a
+  320-pixel window) and `okayui_host`; checked in the editor under Xvfb at 1920 x 1200 and with the window at (120, 100), 1920 x 800.
 - **Speed (no picture changed).** Rounded rectangle outlines take their corner points from a table worked out once (they computed 56
   sines and cosines per rectangle), and circle outlines are drawn straight from the cached unit circle as a ring (the mitre of a
   regular polygon is radial), with no sines, cosines or square roots per call. Every golden image of every OkayUI suite is unchanged.

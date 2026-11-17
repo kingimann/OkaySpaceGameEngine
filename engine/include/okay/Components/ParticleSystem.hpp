@@ -135,7 +135,8 @@ public:
         float size0 = 0.25f;   // size at birth (for size-over-life lerp)
         float rotation = 0.0f; // billboard spin, degrees
         float angularVel = 0.0f;  // degrees/second
-        Color color = Color::White;
+        Color color = Color::White;   // current (rendered) colour
+        Color color0 = Color::White;  // colour at birth (Fade Out scales its alpha; never compounded)
         bool  alive = false;
     };
 
@@ -529,6 +530,9 @@ public:
                 p.color.b = startColor.b + (endColor.b - startColor.b) * t;
                 p.color.a = startColor.a + (endColor.a - startColor.a) * t;
             }
+            else p.color = p.color0;   // no colour over life: the birth colour (the fade below starts from it each frame)
+            // Fade Out: alpha = base alpha x remaining life. The base is recomputed above every frame, so the
+            // fade depends only on the particle's age, never on the frame rate (#888 finding 140).
             if (fadeOverLife) p.color.a *= Mathf::Clamp01(p.life / p.maxLife);
         }
     }
@@ -559,7 +563,7 @@ private:
                          ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
             p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
                            ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
-            p.color = startColor;
+            p.color = p.color0 = startColor;
 
             Vec3 origin = transform ? transform->Position() : Vec3::Zero;
             Vec3 off{0.0f, 0.0f, 0.0f};

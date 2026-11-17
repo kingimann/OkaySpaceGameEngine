@@ -898,6 +898,12 @@ add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+# Issue #888 findings 140 (particle fade), 141 (Scene Manager rename keeps unsaved edits in memory),
+# 142 (quit request while another modal is open) and 131 (UIInputField repeat, Delete, caret).
+add_executable(test_fix_140_141_142_131 test_fix_140_141_142_131.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_fix_140_141_142_131 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_fix_140_141_142_131 PRIVATE okay::engine)
+add_test(NAME fix_140_141_142_131 COMMAND test_fix_140_141_142_131)
 add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
 target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
@@ -2323,6 +2329,12 @@ add_test(NAME modeling_more_scene COMMAND test_modeling_more_scene)
 add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
 target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
 add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
+
+# Modeling fixes from issue #888 findings 134-139: pivot ops saved, one undo step per button, NaN guards,
+# Solidify rim, OBJ export round trip (colours, polygons, normals, precision), one implementation per tool
+add_executable(test_modeling_fixes_134_139 test_modeling_fixes_134_139.cpp)
+target_link_libraries(test_modeling_fixes_134_139 PRIVATE okay::engine)
+add_test(NAME modeling_fixes_134_139 COMMAND test_modeling_fixes_134_139)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

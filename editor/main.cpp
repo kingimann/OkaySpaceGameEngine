@@ -18755,8 +18755,9 @@ void DrawFileDialogs(EditorState& ed) {
             }
             if (s_buildSec == 2) {
                 ImGui::Spacing();
-                ImGui::SetNextItemWidth(90); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
-                ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height, 0);
+                const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;   // five digits at any text size
+                ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
+                ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height", &g_build.height, 0);
                 const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
                 static int presetSel = 0; ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Resolution preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
@@ -19942,13 +19943,18 @@ void DrawProjectSettings(EditorState& ed) {
         ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
     }
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
-        ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);   // wrapped: it ran off the window's edge
+        ImGui::TextWrapped("Defaults a new build/scene inherits. Saved with the project as you change it.");
+        ImGui::PopStyleColor();
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
             ImGui::SetNextItemWidth(160);
             ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Width##ps", &g_project.defaultWidth); ImGui::SameLine();
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
+            // Wide enough for five digits at any text size, and no -/+ buttons: at 110 px the buttons took the
+            // room and 1280 x 720 showed as "12" and "72".
+            const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width##ps", &g_project.defaultWidth, 0); ImGui::SameLine();
+            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height##ps", &g_project.defaultHeight, 0);
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
@@ -19981,8 +19987,9 @@ void DrawProjectSettings(EditorState& ed) {
             {
                 auto& p3 = ed.scene().physics3D();
                 int q = (int)p3.quality;
-                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
-                ImGui::SetNextItemWidth(330);
+                // Short names in the box (the long ones were cut off at "fas"); what each does is the line below.
+                const char* qn[] = {"Classic", "Improved"};
+                ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
                 if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
                     p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
                     ed.scene().physics().quality = p3.quality;
@@ -19993,6 +20000,10 @@ void DrawProjectSettings(EditorState& ed) {
                                       "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
                                       "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
                                       "New scenes start Improved. The setting is part of the scene file.");
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+                ImGui::TextWrapped("%s", p3.quality == okay::PhysicsQuality::Improved ? "Stacks stand, bodies sleep, fast bodies stop."
+                                                                                     : "The original step, for old scenes.");
+                ImGui::PopStyleColor();
                 if (p3.quality == okay::PhysicsQuality::Improved) {
                     int it = p3.solverIterations;
                     ImGui::SetNextItemWidth(160);
@@ -42403,9 +42414,15 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
 // in the 2D Scene view, the 3D Scene view and the Game view — calling it from
 // all three is what makes created UI actually appear (it used to draw only in
 // the 2D scene, so UI added to a 3D project was invisible).
+// Where the scene's own UI (screen-space text, panels, buttons) was drawn in an editor view, in screen pixels, so the
+// view's stats line can keep off it (okay::edlayout::PlaceStatsLine). Filled by DrawUIOverlay for the view at
+// `canvas` (its position before the authoring zoom) on frame `frame`.
+struct SceneUIRects { ImVec2 canvas{-1e9f, -1e9f}; int frame = -10; std::vector<okay::edlayout::Rc> rects; };
+SceneUIRects g_sceneUIRects;
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    if (!gameView) { g_sceneUIRects.canvas = canvasPos; g_sceneUIRects.frame = ImGui::GetFrameCount(); g_sceneUIRects.rects.clear(); }
     // Clip ALL UI geometry to the visible panel rect (captured before the authoring
     // zoom rescales the working copies below). A widget with a bad anchor / stretch /
     // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
@@ -42443,6 +42460,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         opt.interactive = gameView && ed.isPlaying();
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
+    }
+    if (!gameView) {
+        for (const auto& up : objs) {
+            if (!up || !up->ActiveInHierarchy()) continue;
+            Vec2 o, sz;
+            if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
+            g_sceneUIRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
+        }
     }
 
     // Multi-selection: outline every selected widget (the primary gets the full
@@ -44069,7 +44094,7 @@ Rc ModePillsRect(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
 }
 // "Cube | 3D | 5 objects | 25 FPS": the line at the top left of the Scene view. In a narrow view it gives up the
 // selected name, then the object count, rather than run under the mode pills.
-Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text);
+Rc SceneStatsLineRect(ImVec2 canvasPos, ImVec2 canvasSize, const std::string& text);
 std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
     char buf[200];
     const char* mode = ed.view3D ? "3D" : "2D";
@@ -44082,15 +44107,20 @@ std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 c
         else if (v == 1) std::snprintf(buf, sizeof(buf), "%s  |  %d objects  |  %.0f FPS", mode, (int)ed.scene().Objects().size(), ImGui::GetIO().Framerate);
         else std::snprintf(buf, sizeof(buf), "%.0f FPS", ImGui::GetIO().Framerate);
         best = buf;
-        const Rc r = SceneStatsLineRect(canvasPos, best);
+        const Rc r = SceneStatsLineRect(canvasPos, canvasSize, best);
         if (r.x1 <= canvasRc.x1 && !okay::edlayout::Overlaps(r, pills)) break;
     }
     return best;
 }
-// Where that line sits (the camera readout and the labels keep clear of it).
-Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text) {
+// Where that line sits (the camera readout and the labels keep clear of it): the top left, or the bottom left when
+// the scene's own UI text is drawn at the top left (it used to be drawn straight over an example's instructions).
+Rc SceneStatsLineRect(ImVec2 canvasPos, ImVec2 canvasSize, const std::string& text) {
     const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
-    return okay::edlayout::MakeRc(canvasPos.x + 4.0f, canvasPos.y + 3.0f, ts.x + 12.0f, ts.y + 6.0f);
+    const Rc canvasRc{canvasPos.x, canvasPos.y, canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y};
+    static const std::vector<Rc> kNone;
+    const bool fresh = g_sceneUIRects.canvas.x == canvasPos.x && g_sceneUIRects.canvas.y == canvasPos.y &&
+                       ImGui::GetFrameCount() - g_sceneUIRects.frame <= 1;
+    return okay::edlayout::PlaceStatsLine(canvasRc, Pt{ts.x + 12.0f, ts.y + 6.0f}, 4.0f, 3.0f, 6.0f, fresh ? g_sceneUIRects.rects : kNone);
 }
 // A name that wants a spot near a point of the Scene view; placed together once per frame.
 struct SceneLabel { ImVec2 anchor; std::string text; ImU32 col; float keepOut; int priority; bool selected; ImVec2 size{0, 0}; };
@@ -45012,7 +45042,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Rc hudRect{}; bool hudDrawn = false;
     std::vector<Rc> hudAvoid;
     if (!gameView) {
-        if (g_view.statsLine) hudAvoid.push_back(SceneStatsLineRect(canvasPos, SceneStatsLineText(ed, canvasPos, canvasSize)));
+        if (g_view.statsLine) hudAvoid.push_back(SceneStatsLineRect(canvasPos, canvasSize, SceneStatsLineText(ed, canvasPos, canvasSize)));
         if (canvasSize.x > 160.0f && canvasSize.y > 120.0f)   // the view-axis gizmo in the top-right corner (drawn after this, in DrawViewport)
             hudAvoid.push_back(okay::edlayout::MakeRc(canvasEnd.x - 94.0f, canvasPos.y + 2.0f, 92.0f, 92.0f));
         if (ed.selected()) if (auto* pc = ed.selected()->GetComponent<Camera>(); pc && pc->projection == Camera::Projection::Perspective)
@@ -45077,6 +45107,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // camera and light names. (Off with "Object names": the Hierarchy rows still drag an object into a script slot.)
     if (!gameView && g_view.showNames) {
         int selReq = -1;
+        Rc selBody{}; std::vector<okay::edlayout::Seg> selAvoid; float selAvoidPad = 0.0f;   // the selected object's outline and gizmo lines
         if (GameObject* sel = ed.selected(); sel && sel->transform) {
             const Vec3 P = sel->transform->Position();
             ImVec2 sp;
@@ -45095,6 +45126,60 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 SceneLabel sl{sp, "", 0, gz, 100, true};
                 sl.size = SceneObjectChipSize(sel);
                 sceneLabels.push_back(sl);
+
+                // The object's outline on screen (its mesh bounds, else a small box at its origin), so the name sits
+                // just above it. It used to sit outside the whole gizmo circle, a gizmo's length to the right, which
+                // put A's name on the next cube over.
+                selBody = okay::edlayout::MakeRc(sp.x - 6.0f, sp.y - 6.0f, 12.0f, 12.0f);
+                if (auto* mr = sel->GetComponent<MeshRenderer>()) {
+                    Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+                    const Mat4 m = vp * sel->transform->LocalToWorldMatrix();
+                    okay::edlayout::Rc box{1e30f, 1e30f, -1e30f, -1e30f}; bool all = true;
+                    for (int ci = 0; ci < 8 && all; ++ci) {
+                        ImVec2 c;
+                        all = toScreen(m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x, (ci & 2) ? hi.y : lo.y, (ci & 4) ? hi.z : lo.z}, 1}, c);
+                        box.x0 = std::min(box.x0, c.x); box.y0 = std::min(box.y0, c.y);
+                        box.x1 = std::max(box.x1, c.x); box.y1 = std::max(box.y1, c.y);
+                    }
+                    if (all && hi.x >= lo.x) selBody = box;   // a corner behind the camera: keep the small box
+                }
+                // The transform gizmo's handles, worked out as the gizmo draws them further down: the name must not
+                // cover an arm (or a ring for Rotate), or a click on the name would land on the handle's grab zone.
+                const bool gizmoDrawn = g_showGizmos && !(g_meshEdit && g_meshEditObj == sel && sel->GetComponent<MeshRenderer>()) &&
+                                        !(g_colliderEdit && sel->GetComponent<BoxCollider3D>()) && !SplinePointPicked(ed);
+                if (gizmoDrawn) {
+                    Transform* t = sel->transform;
+                    const bool noScale = sel->GetComponent<Camera>() != nullptr;
+                    const Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
+                    const float L = ed.camDist * 0.18f;
+                    Vec3 axis[3] = {Vec3{1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, 0, 1}};
+                    if (g_gizmoLocal || tool == Tool::Scale) { axis[0] = t->Right(); axis[1] = t->Up(); axis[2] = t->Forward(); }
+                    const okay::edlayout::Pt o{sp.x, sp.y};
+                    selAvoid.push_back({o, o});                                     // the centre dot
+                    if (tool == Tool::Rotate) {
+                        const Vec3 vdir = (eye - P).Normalized();
+                        const Vec3 vright = Vec3::Cross(Vec3::Up, vdir).Normalized(), vup = Vec3::Cross(vdir, vright);
+                        const int seg = 32;
+                        for (int i = 0; i < 4; ++i) {
+                            const Vec3 u = i < 3 ? axis[(i + 1) % 3] : vright, v = i < 3 ? axis[(i + 2) % 3] : vup;
+                            const float rad = i < 3 ? L : L * 1.2f;
+                            ImVec2 prev; bool prevOk = toScreen(vp * Vec4{P + u * rad, 1}, prev);
+                            for (int k = 1; k <= seg; ++k) {
+                                const float a = (float)k / seg * 2.0f * Mathf::PI;
+                                ImVec2 cur; const bool curOk = toScreen(vp * Vec4{P + (u * Mathf::Cos(a) + v * Mathf::Sin(a)) * rad, 1}, cur);
+                                if (prevOk && curOk) selAvoid.push_back({{prev.x, prev.y}, {cur.x, cur.y}});
+                                prev = cur; prevOk = curOk;
+                            }
+                        }
+                        selAvoidPad = 8.0f;                                         // the ring grab distance
+                    } else {
+                        for (int i = 0; i < 3; ++i) {
+                            ImVec2 tip;
+                            if (toScreen(vp * Vec4{P + axis[i] * L, 1}, tip)) selAvoid.push_back({o, {tip.x, tip.y}});
+                        }
+                        selAvoidPad = 11.0f;                                        // the arm grab distance (covers the knobs)
+                    }
+                }
             }
         }
         if (!sceneLabels.empty()) {
@@ -45102,7 +45187,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (const SceneLabel& l : sceneLabels) {
                 const ImVec2 ts = l.selected ? l.size : ImGui::CalcTextSize(l.text.c_str());
                 okay::edlayout::LabelReq q; q.anchor = {l.anchor.x, l.anchor.y}; q.size = {ts.x, ts.y};
-                q.keepOut = l.keepOut; q.priority = l.priority; reqs.push_back(q);
+                q.keepOut = l.keepOut; q.priority = l.priority;
+                if ((int)reqs.size() == selReq) { q.hasBody = true; q.body = selBody; q.avoid = selAvoid; q.avoidPad = selAvoidPad; }
+                reqs.push_back(q);
             }
             std::vector<Rc> obstacles = hudAvoid;
             if (hudDrawn) obstacles.push_back(hudRect);
@@ -47845,7 +47932,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     OKAY_BREADCRUMB(uiPanel ? "UItab:corner" : "Scene:corner");
     if (g_view.statsLine) {
         const std::string overlay = SceneStatsLineText(ed, canvasPos, canvasSize);
-        const Rc r = SceneStatsLineRect(canvasPos, overlay);
+        const Rc r = SceneStatsLineRect(canvasPos, canvasSize, overlay);
         dl->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(12, 14, 20, 110), 4.0f);
         DrawOutlinedText(dl, ImVec2(r.x0 + 6.0f, r.y0 + 3.0f), IM_COL32(215, 218, 228, 255), overlay.c_str());
     }

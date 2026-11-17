@@ -15,6 +15,7 @@
 #include "okay/Components/PlayerDebug.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include "okay/Scene/PrefabTools.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include <map>
 #include <set>
 #include <filesystem>
@@ -1017,6 +1018,19 @@ bool EditorState::LoadRecoveredText(const std::string& text, const std::string& 
     return true;
 }
 
+// The view a scene is made for: 3D when the camera it renders through is a perspective camera, 2D when it is
+// orthographic. -1 when the scene has no camera (the editor then keeps the view it is in). The editor used to keep
+// whatever view it was in, so a 3D scene opened in the 2D view: every object flattened onto X/Y and the world text
+// labels of examples/physics/physics_playground.okayscene, which differ only in depth, were drawn on top of each other.
+int EditorState::SceneViewFor(const Scene& scene) {
+    std::vector<Camera*> cams;
+    for (const auto& go : scene.Objects())
+        if (auto* c = go->GetComponent<Camera>()) cams.push_back(c);
+    const Camera* cam = okay::PickRenderCamera(scene.mainCamera, cams);
+    if (!cam) return -1;
+    return cam->projection == Camera::Projection::Perspective ? 1 : 0;
+}
+
 bool EditorState::Load(const std::string& path, std::string* error) {
     if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
         std::string why;
@@ -1032,6 +1046,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
+    if (const int v = SceneViewFor(m_scene); v >= 0) view3D = (v == 1);   // open the scene in the view it is made for
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
     // Re-home the project to the scene's own project folder (the parent of its

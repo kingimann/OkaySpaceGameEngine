@@ -3,9 +3,10 @@
 // (tests/test_editor_layout.cpp). The drawing code in main.cpp only measures text, asks
 // these functions where things go, and draws the answer.
 //   - Overlay anchoring: the Scene view's camera readout sits in a corner and steps clear
-//     of the top-left stats line (PlaceOverlay)
+//     of the top-left stats line (PlaceOverlay); the stats line keeps off the scene's own UI text (PlaceStatsLine)
 //   - Label placement: the selected object's name, camera / light names and gizmo hints
-//     are placed so they do not sit on each other, and fade when the view is crowded
+//     are placed so they do not sit on each other, and fade when the view is crowded; the
+//     selected object's name sits just above the object, clear of the gizmo's handles
 //   - Density metrics: Compact / Comfortable spacing for the Inspector, and the width the
 //     value column gets at the Inspector's narrow widths
 //   - Toolbar planning: icons only or icons + text, and what moves into the "..." menu
@@ -92,13 +93,56 @@ inline OverlayPlacement PlaceOverlay(const Rc& canvas, Pt size, Corner corner, f
     return out;
 }
 
+/// Where the Scene view's stats line ("3D | 5 objects | 25 FPS") goes. It sits at the top left (`x`, `topY` in from
+/// the canvas edges) unless that covers something the scene itself draws there (`content`: the screen-space UI text
+/// and panels, such as an example's instruction text, which it used to be drawn straight over). Then it moves to the
+/// bottom left (`bottomGap` in from the bottom), if that covers less. When both cover the same amount (a full-screen
+/// panel, or nothing at all) it stays at the top.
+inline Rc PlaceStatsLine(const Rc& canvas, Pt size, float x, float topY, float bottomGap, const std::vector<Rc>& content) {
+    const Rc top = MakeRc(canvas.x0 + x, canvas.y0 + topY, size.x, size.y);
+    const Rc low = MakeRc(canvas.x0 + x, canvas.y1 - bottomGap - size.y, size.x, size.y);
+    float aTop = 0.0f, aLow = 0.0f;
+    for (const Rc& c : content) { aTop += OverlapArea(top, c); aLow += OverlapArea(low, c); }
+    if (aTop <= 0.0f || low.y0 < top.y1) return top;   // clear, or the view is too short for a second spot
+    return aLow < aTop ? low : top;
+}
+
 // ---- Label placement -----------------------------------------------------------------------------
+
+/// A straight line on screen (a gizmo arm, or one piece of a gizmo ring). `a == b` is a single point.
+struct Seg { Pt a, b; };
+
+/// Does the line a-b touch `r` grown by `pad` on every side? The line is cut against the box's left, right, top and
+/// bottom edges in turn (the part of it with t in [t0, t1] is inside all the edges seen so far); it touches the box
+/// when some part is left over.
+inline bool SegmentHitsRect(Pt a, Pt b, Rc r, float pad = 0.0f) {
+    r.x0 -= pad; r.y0 -= pad; r.x1 += pad; r.y1 += pad;
+    float t0 = 0.0f, t1 = 1.0f;
+    // Keep the part of the line where p * t <= q.
+    auto keep = [&](float p, float q) -> bool {
+        if (p == 0.0f) return q >= 0.0f;              // parallel to this edge: all in or all out
+        const float t = q / p;
+        if (p < 0.0f) { if (t > t1) return false; t0 = std::max(t0, t); }
+        else          { if (t < t0) return false; t1 = std::min(t1, t); }
+        return true;
+    };
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    return keep(-dx, a.x - r.x0) && keep(dx, r.x1 - a.x) && keep(-dy, a.y - r.y0) && keep(dy, r.y1 - a.y) && t0 <= t1;
+}
 
 struct LabelReq {
     Pt anchor;                 // the screen point the label belongs to (object origin, gizmo centre)
     Pt size;                   // text size in px
     float keepOut = 0;         // radius round the anchor to stay out of (a gizmo's handles)
     int priority = 0;          // higher gets its pick of spots first (selected name > hint > camera names)
+    // An object's name: `body` is the object's outline on screen. The name then goes just above the object (or on
+    // it), not round the keep-out circle: that circle is as wide as the gizmo, so the name used to land a gizmo's
+    // length away, on the next object over. `avoid` are the gizmo's handle lines it must not cover (grown by
+    // `avoidPad`, the distance a click still grabs them); the keep-out circle is then only the last resort.
+    bool hasBody = false;
+    Rc body{};
+    std::vector<Seg> avoid;
+    float avoidPad = 0.0f;
 };
 struct LabelPlaced {
     Rc rect;                   // where the text box goes
@@ -126,6 +170,46 @@ inline std::vector<Rc> LabelCandidates(const LabelReq& q, float scale, float pad
     return c;
 }
 
+/// Spots for an object's name (`q.hasBody`), nearest the object first: just above it (centred, then either side of
+/// the middle, where a gizmo's up arm usually is), on its top edge, below it, to its right and to its left; then higher
+/// above it, up past the gizmo; last the eight spots round the keep-out circle.
+inline std::vector<Rc> BodyLabelCandidates(const LabelReq& q, float scale, float pad) {
+    const float w = q.size.x * scale + pad * 2, h = q.size.y * scale + pad * 2;
+    const Rc& b = q.body;
+    const float cx = (b.x0 + b.x1) * 0.5f, cy = (b.y0 + b.y1) * 0.5f;
+    const float side = q.avoidPad + pad;              // clear of a line straight up through the middle
+    const float above = b.y0 - pad - h, onTop = b.y0 + pad;
+    std::vector<Rc> c;
+    c.push_back(MakeRc(cx - w * 0.5f,   above, w, h));   // above, centred
+    c.push_back(MakeRc(cx + side,       above, w, h));   // above, right of the middle
+    c.push_back(MakeRc(cx - side - w,   above, w, h));   // above, left of the middle
+    if (b.H() >= h + pad * 2) {                          // on the object's top edge, when it is tall enough
+        c.push_back(MakeRc(cx - w * 0.5f, onTop, w, h));
+        c.push_back(MakeRc(cx + side,     onTop, w, h));
+        c.push_back(MakeRc(cx - side - w, onTop, w, h));
+    }
+    c.push_back(MakeRc(cx - w * 0.5f,   b.y1 + pad,    w, h));   // below
+    c.push_back(MakeRc(b.x1 + pad,      cy - h * 0.5f, w, h));   // right
+    c.push_back(MakeRc(b.x0 - pad - w,  cy - h * 0.5f, w, h));   // left
+    // Still covered (a Rotate gizmo's rings round a small object): higher and higher above it, half a line at a time,
+    // up past the outer ring (1.2 times the keep-out radius), so the name stays over its object rather than off to a side.
+    const float highest = q.anchor.y - q.keepOut * 1.25f - pad - h;
+    for (float y = above - h * 0.5f; y >= highest - h * 0.5f; y -= h * 0.5f) {
+        c.push_back(MakeRc(cx - w * 0.5f, y, w, h));
+        c.push_back(MakeRc(cx + side,     y, w, h));
+        c.push_back(MakeRc(cx - side - w, y, w, h));
+    }
+    for (const Rc& r : LabelCandidates(q, scale, pad)) c.push_back(r);
+    return c;
+}
+
+/// How far apart two boxes are (0 when they touch or overlap).
+inline float RectGap(const Rc& a, const Rc& b) {
+    const float dx = std::max(0.0f, std::max(a.x0 - b.x1, b.x0 - a.x1));
+    const float dy = std::max(0.0f, std::max(a.y0 - b.y1, b.y0 - a.y1));
+    return std::sqrt(dx * dx + dy * dy);
+}
+
 /// Place every label. Highest priority first; each takes the first candidate spot that is inside `canvas`, clear
 /// of the earlier labels and of the `obstacles` (HUD boxes). When nothing is clear it shrinks to 85%, tries again,
 /// and then settles for the least-overlapping spot at reduced alpha; if even that covers more than half of
@@ -143,13 +227,20 @@ inline std::vector<LabelPlaced> PlaceLabels(const std::vector<LabelReq>& reqs, c
         LabelPlaced best; bool found = false; float bestOv = 1e30f;
         for (int pass = 0; pass < 2 && !found; ++pass) {
             const float scale = pass == 0 ? 1.0f : 0.85f;
-            const std::vector<Rc> cand = LabelCandidates(q, scale, pad);
+            const std::vector<Rc> cand = q.hasBody ? BodyLabelCandidates(q, scale, pad) : LabelCandidates(q, scale, pad);
             for (std::size_t ci = 0; ci < cand.size(); ++ci) {
                 Rc r = ClampInto(cand[ci], canvas);
                 float ov = 0;
                 for (const Rc& t : taken) ov += OverlapArea(r, t);
-                // A clamp that dragged the box back over its own anchor's keep-out disc is not clear either.
-                if (q.keepOut > 0) ov += OverlapArea(r, disc);
+                if (q.hasBody) {
+                    // An object's name only has to keep off the handle lines themselves (each one it covers counts
+                    // as half the box covered).
+                    for (const Seg& sg : q.avoid)
+                        if (SegmentHitsRect(sg.a, sg.b, r, q.avoidPad)) ov += r.Area() * 0.5f;
+                } else if (q.keepOut > 0) {
+                    // A clamp that dragged the box back over its own anchor's keep-out disc is not clear either.
+                    ov += OverlapArea(r, disc);
+                }
                 const bool clear = ov <= 0.0f;
                 if (clear || ov < bestOv) {
                     bestOv = ov;
@@ -157,7 +248,8 @@ inline std::vector<LabelPlaced> PlaceLabels(const std::vector<LabelReq>& reqs, c
                     best.alpha = clear ? (pass == 1 ? 0.85f : 1.0f) : 0.55f;
                     best.visible = true;
                     const float cx = (r.x0 + r.x1) * 0.5f - q.anchor.x, cy = (r.y0 + r.y1) * 0.5f - q.anchor.y;
-                    best.leader = std::sqrt(cx * cx + cy * cy) > q.keepOut + std::max(q.size.x, q.size.y) * 1.2f;
+                    best.leader = q.hasBody ? RectGap(r, q.body) > std::max(q.size.y, 10.0f) * 2.0f
+                                            : std::sqrt(cx * cx + cy * cy) > q.keepOut + std::max(q.size.x, q.size.y) * 1.2f;
                     if (clear) { found = true; break; }
                 }
             }

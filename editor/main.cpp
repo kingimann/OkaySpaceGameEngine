@@ -42395,9 +42395,15 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
 // in the 2D Scene view, the 3D Scene view and the Game view — calling it from
 // all three is what makes created UI actually appear (it used to draw only in
 // the 2D scene, so UI added to a 3D project was invisible).
+// Where the scene's own UI (screen-space text, panels, buttons) was drawn in an editor view, in screen pixels, so the
+// view's stats line can keep off it (okay::edlayout::PlaceStatsLine). Filled by DrawUIOverlay for the view at
+// `canvas` (its position before the authoring zoom) on frame `frame`.
+struct SceneUIRects { ImVec2 canvas{-1e9f, -1e9f}; int frame = -10; std::vector<okay::edlayout::Rc> rects; };
+SceneUIRects g_sceneUIRects;
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
+    if (!gameView) { g_sceneUIRects.canvas = canvasPos; g_sceneUIRects.frame = ImGui::GetFrameCount(); g_sceneUIRects.rects.clear(); }
     // Clip ALL UI geometry to the visible panel rect (captured before the authoring
     // zoom rescales the working copies below). A widget with a bad anchor / stretch /
     // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
@@ -42435,6 +42441,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         opt.interactive = gameView && ed.isPlaying();
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
+    }
+    if (!gameView) {
+        for (const auto& up : objs) {
+            if (!up || !up->ActiveInHierarchy()) continue;
+            Vec2 o, sz;
+            if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
+            g_sceneUIRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
+        }
     }
 
     // Multi-selection: outline every selected widget (the primary gets the full
@@ -44061,7 +44075,7 @@ Rc ModePillsRect(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
 }
 // "Cube | 3D | 5 objects | 25 FPS": the line at the top left of the Scene view. In a narrow view it gives up the
 // selected name, then the object count, rather than run under the mode pills.
-Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text);
+Rc SceneStatsLineRect(ImVec2 canvasPos, ImVec2 canvasSize, const std::string& text);
 std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize) {
     char buf[200];
     const char* mode = ed.view3D ? "3D" : "2D";
@@ -44074,15 +44088,20 @@ std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 c
         else if (v == 1) std::snprintf(buf, sizeof(buf), "%s  |  %d objects  |  %.0f FPS", mode, (int)ed.scene().Objects().size(), ImGui::GetIO().Framerate);
         else std::snprintf(buf, sizeof(buf), "%.0f FPS", ImGui::GetIO().Framerate);
         best = buf;
-        const Rc r = SceneStatsLineRect(canvasPos, best);
+        const Rc r = SceneStatsLineRect(canvasPos, canvasSize, best);
         if (r.x1 <= canvasRc.x1 && !okay::edlayout::Overlaps(r, pills)) break;
     }
     return best;
 }
-// Where that line sits (the camera readout and the labels keep clear of it).
-Rc SceneStatsLineRect(ImVec2 canvasPos, const std::string& text) {
+// Where that line sits (the camera readout and the labels keep clear of it): the top left, or the bottom left when
+// the scene's own UI text is drawn at the top left (it used to be drawn straight over an example's instructions).
+Rc SceneStatsLineRect(ImVec2 canvasPos, ImVec2 canvasSize, const std::string& text) {
     const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
-    return okay::edlayout::MakeRc(canvasPos.x + 4.0f, canvasPos.y + 3.0f, ts.x + 12.0f, ts.y + 6.0f);
+    const Rc canvasRc{canvasPos.x, canvasPos.y, canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y};
+    static const std::vector<Rc> kNone;
+    const bool fresh = g_sceneUIRects.canvas.x == canvasPos.x && g_sceneUIRects.canvas.y == canvasPos.y &&
+                       ImGui::GetFrameCount() - g_sceneUIRects.frame <= 1;
+    return okay::edlayout::PlaceStatsLine(canvasRc, Pt{ts.x + 12.0f, ts.y + 6.0f}, 4.0f, 3.0f, 6.0f, fresh ? g_sceneUIRects.rects : kNone);
 }
 // A name that wants a spot near a point of the Scene view; placed together once per frame.
 struct SceneLabel { ImVec2 anchor; std::string text; ImU32 col; float keepOut; int priority; bool selected; ImVec2 size{0, 0}; };
@@ -45004,7 +45023,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Rc hudRect{}; bool hudDrawn = false;
     std::vector<Rc> hudAvoid;
     if (!gameView) {
-        if (g_view.statsLine) hudAvoid.push_back(SceneStatsLineRect(canvasPos, SceneStatsLineText(ed, canvasPos, canvasSize)));
+        if (g_view.statsLine) hudAvoid.push_back(SceneStatsLineRect(canvasPos, canvasSize, SceneStatsLineText(ed, canvasPos, canvasSize)));
         if (canvasSize.x > 160.0f && canvasSize.y > 120.0f)   // the view-axis gizmo in the top-right corner (drawn after this, in DrawViewport)
             hudAvoid.push_back(okay::edlayout::MakeRc(canvasEnd.x - 94.0f, canvasPos.y + 2.0f, 92.0f, 92.0f));
         if (ed.selected()) if (auto* pc = ed.selected()->GetComponent<Camera>(); pc && pc->projection == Camera::Projection::Perspective)
@@ -47837,7 +47856,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     OKAY_BREADCRUMB(uiPanel ? "UItab:corner" : "Scene:corner");
     if (g_view.statsLine) {
         const std::string overlay = SceneStatsLineText(ed, canvasPos, canvasSize);
-        const Rc r = SceneStatsLineRect(canvasPos, overlay);
+        const Rc r = SceneStatsLineRect(canvasPos, canvasSize, overlay);
         dl->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(12, 14, 20, 110), 4.0f);
         DrawOutlinedText(dl, ImVec2(r.x0 + 6.0f, r.y0 + 3.0f), IM_COL32(215, 218, 228, 255), overlay.c_str());
     }

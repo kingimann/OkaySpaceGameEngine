@@ -31,6 +31,7 @@ on:
 
 permissions:
   contents: write          # needed to attach assets to a Release
+  actions: read            # the Windows job reads this run's artifacts/jobs to pick up the Linux server build
 
 # Only one release run at a time (CLAUDE.md rules 12 and 13): a second run for the same or another version waits for the first
 # to finish instead of racing it for the tag, the assets, versions.json and the "latest" mark. Never cancelled midway: a
@@ -44,7 +45,8 @@ jobs:
     name: Cross-compile Windows exes (MinGW)
     runs-on: ubuntu-latest
     # A normal release takes ~11 min; never let a stuck download hold one for hours.
-    timeout-minutes: 45
+    # (Includes the last step, which waits for the Linux server build that runs beside this job.)
+    timeout-minutes: 60
     outputs:
       ver: ${{ steps.pkg.outputs.ver }}
     env:
@@ -345,78 +347,45 @@ jobs:
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
 
-  # The Linux game server: the player runtime built for Linux, which runs games
-  # headless with --server. The editor's "Dedicated Server" export downloads it
-  # (releases/latest/download/okay-server-linux-x64) to make a Linux server
-  # folder from Windows. Built on 22.04 so it runs on most VPS distros (glibc 2.35+).
-  linux-server:
-    name: Build the Linux game server
-    needs: windows-exe
-    runs-on: ubuntu-22.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install toolchain
-        timeout-minutes: 20
+      # FINALIZE (was the separate job "Make the release visible"; folded in so it does not wait for another runner: on v2.881.0 that
+      # 13 s job queued 10.7 min). Nothing changed about WHEN a release becomes latest: only after (1) the Linux server build
+      # passed and its file is attached, and (2) the checksums of all three programs are in versions.json. Any failure here leaves the
+      # release hidden (make_latest is false everywhere else), exactly as the old job's failure did.
+      - name: Wait for the Linux server build, attach okay-server-linux-x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          VER: ${{ steps.pkg.outputs.ver }}
+          TAG_REF: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
         run: |
-          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
-          for i in 1 2 3; do
-            if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev; then
-              exit 0
-            fi
-            echo "apt attempt $i failed or timed out; retrying"
-            sleep 10
+          TAG="${TAG_REF:-v$VER}"
+          # Poll every 20 s. The Linux job usually finished long ago (about 4-11 min against 8-28 for this job).
+          deadline=$(( $(date +%s) + 35*60 ))
+          while :; do
+            n="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=okay-server-linux-x64" --jq '[.artifacts[] | select(.expired == false)] | length')" || n=0
+            [ "$n" -ge 1 ] && break
+            # Stop at once if the Linux job already failed or was cancelled: no artifact will ever come.
+            st="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" --jq '[.jobs[] | select(.name | test("Linux game server")) | .conclusion] | first // ""')" || st=""
+            case "$st" in
+              failure|cancelled|timed_out|skipped) echo "::error title=Linux server build did not pass::The Linux game server job ended as '$st', so v$VER is NOT marked latest (no okay-server-linux-x64). Fix it on main and make a new release; never re-run this version (rule 12)."; exit 1 ;;
+            esac
+            [ "$(date +%s)" -lt "$deadline" ] || { echo "::error title=Linux server build missing::No okay-server-linux-x64 artifact after 35 min. v$VER is NOT marked latest."; exit 1; }
+            echo "waiting for the Linux server build..."; sleep 20
           done
-          exit 1
+          mkdir -p linux-server-dl
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n okay-server-linux-x64 -D linux-server-dl
+          test -s linux-server-dl/okay-server-linux-x64
+          gh release upload "$TAG" linux-server-dl/okay-server-linux-x64 --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx okay-server-linux-x64
+          echo "okay-server-linux-x64 is attached to $TAG."
 
-      - name: Build the server runtime
-        run: |
-          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
-                -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF \
-                -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF \
-                -DOKAY_REQUIRE_SODIUM=ON
-          scripts/check_release_own_stack.sh --cache build-linux
-          cmake --build build-linux --target okay-player
-          # This binary runs on this runner: it must itself say crypto=libsodium (a build without libsodium says otherwise).
-          scripts/check_release_own_stack.sh --binary build-linux/bin/okay-player
-          cp build-linux/bin/okay-player okay-server-linux-x64
-          strip okay-server-linux-x64
-          ./okay-server-linux-x64 --help | head -n 3
-
-      - name: Attach to the release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: okay-server-linux-x64
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.windows-exe.outputs.ver) }}
-          target_commitish: ${{ github.sha }}
-          make_latest: false
-
-  # Make the release visible to launchers ("latest") only once its checksums are published. The in-app updater refuses
-  # any file that has no SHA-256 in versions.json, so announcing a version first just shows users an error. Without the
-  # SUPABASE_SERVICE_KEY secret nothing publishes the checksums, so this job fails loudly instead of letting the release
-  # slip out unchecked: run scripts/publish-supabase.sh (or scripts/release-local.sh), then
-  # `gh release edit v<version> --latest`.
-  finalize:
-    name: Make the release visible (latest)
-    needs: [windows-exe, linux-server]
-    # Only when BOTH jobs succeeded: a failed or cancelled Linux server build leaves the release hidden (not "latest"), because the
-    # editor's Dedicated Server export downloads okay-server-linux-x64 from the latest release and it would be missing.
-    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      VER: ${{ needs.windows-exe.outputs.ver }}
-      HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
-      SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
-      CHANNEL: ${{ inputs.channel || 'latest' }}
-    steps:
-      - uses: actions/checkout@v6   # for config/public-account.json (the project address)
       - name: Check the checksums are published, then mark the release latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.pkg.outputs.ver }}
+          HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+          CHANNEL: ${{ inputs.channel || 'latest' }}
         run: |
           . scripts/public-account.sh
           SUPABASE_URL="${SUPABASE_URL:-$(okay_public_account url)}"
@@ -444,3 +413,76 @@ jobs:
           if [ "$CHANNEL" = "lts" ]; then echo "LTS patch: left as a normal release (never latest)"; exit 0; fi
           gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --latest
           echo "v$VER is now the latest release, with checksums published." >> "$GITHUB_STEP_SUMMARY"
+
+  # The Linux game server: the player runtime built for Linux, which runs games
+  # headless with --server. The editor's "Dedicated Server" export downloads it
+  # (releases/latest/download/okay-server-linux-x64) to make a Linux server
+  # folder from Windows. Built on 22.04 so it runs on most VPS distros (glibc 2.35+).
+  #
+  # It runs BESIDE the Windows job (it does not need its version: it never touches the release itself). It uploads the file as a
+  # run artifact; the last step of the Windows job attaches it to the release and only then marks the release latest, so the
+  # server file is still always there before "latest" (issue #975). No race over who creates the release object.
+  linux-server:
+    name: Build the Linux game server
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 1G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        timeout-minutes: 20
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev ccache; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
+
+      # Same rule as ci.yml (#953): every run restores, only a run from main saves (a release from a tag or a branch never writes one).
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-linux-server-${{ github.sha }}
+          restore-keys: ccache-linux-server-
+
+      - name: Build the server runtime
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+                -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF \
+                -DOKAY_REQUIRE_SODIUM=ON
+          scripts/check_release_own_stack.sh --cache build-linux
+          ccache -z || true
+          cmake --build build-linux --target okay-player
+          ccache -s || true
+          scripts/check_release_own_stack.sh --binary build-linux/bin/okay-player
+          cp build-linux/bin/okay-player okay-server-linux-x64
+          strip okay-server-linux-x64
+          ./okay-server-linux-x64 --help | head -n 3
+
+      - name: Save compiler cache (main only)
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ccache-linux-server-${{ github.sha }}
+
+      # Last step on purpose: the Windows job treats "the artifact exists" as "the build passed and the checks ran".
+      - name: Keep the server for the Windows job
+        uses: actions/upload-artifact@v6
+        with:
+          name: okay-server-linux-x64
+          path: okay-server-linux-x64
+          retention-days: 1
+          if-no-files-found: error

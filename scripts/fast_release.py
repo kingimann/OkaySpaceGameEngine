@@ -161,6 +161,48 @@ def ci_jobs_decision(jobs):
     return {"ok": not bad, "bad": bad, "count": len(jobs)}
 
 
+# The smaller "release gate": the CI jobs that build and test what ships (the Windows programs, the player/editor, the scripting
+# sanitizers, the update-signing tests). The other jobs (Assimp comparison, own HTTP, own stack, no-libsodium crypto, WebGL, SQL) are
+# informational for a release: they do not build anything that is released. Display names of ci.yml jobs; a test keeps this list honest.
+RELEASE_GATE_JOBS = (
+    "Build & test (Ubuntu)",
+    "Build player runtime (Ubuntu)",
+    "Build & self-test editor (Ubuntu)",
+    "Export a game and check its visual scripts (Ubuntu)",
+    "Scripting and robustness tests (ASan + UBSan)",
+    "Cross-compile Windows build (MinGW)",
+    "Windows export check",
+    "Windows updater restart",
+    "Ticket function, update signing and account server tests",
+    "Anti-cheat tests with libsodium (Ubuntu)",
+)
+
+
+def ci_gate_decision(jobs, gate=RELEASE_GATE_JOBS):
+    """The release gate, for a CI run that may still be going: every gate job success/skipped, and NO job anywhere already red or
+    cancelled. Jobs outside the gate that are still running are not waited for. Returns {ok, bad, pending, count}."""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    by = {j.get("name"): j for j in jobs}
+    bad = ci_jobs_failed(jobs)["bad"]
+    pending = []
+    for n in gate:
+        j = by.get(n)
+        c = j.get("conclusion") if j else None
+        if c not in ("success", "skipped") and not (j and c in ("failure", "cancelled", "timed_out", "startup_failure", "action_required")):
+            pending.append("%s: %s" % (n, (j.get("status") if j else None) or "not started"))
+    return {"ok": not bad and not pending, "bad": bad, "pending": pending, "count": len(jobs)}
+
+
+def ci_jobs_failed(jobs):
+    """Jobs of a CI run that is still going which already ended red or cancelled (so waiting longer cannot make that run green)."""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    bad = ["%s: %s" % (j.get("name", "?"), j.get("conclusion")) for j in jobs
+           if j.get("conclusion") in ("failure", "cancelled", "timed_out", "startup_failure", "action_required")]
+    return {"ok": not bad, "bad": bad, "count": len(jobs)}
+
+
 # ---- changelog entries ---------------------------------------------------------------------------------------------
 def natural_key(s):
     return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", s)]
@@ -446,6 +488,8 @@ def main(argv):
     a.add_argument("--sha", required=True)
     a = sub.add_parser("ci-jobs")
     a.add_argument("--jobs", required=True)
+    a.add_argument("--gate", choices=("release",), help="the smaller release gate (RELEASE_GATE_JOBS); exit 0 ok, 1 red, 3 still pending")
+    a.add_argument("--failed-only", action="store_true", help="only look for jobs that already ended red/cancelled (a run still in progress)")
     a = sub.add_parser("notes")
     a.add_argument("--entries-dir", default=os.path.join(ROOT, "dist", "changelog.d"))
     a.add_argument("--released-list")
@@ -489,7 +533,11 @@ def main(argv):
             print(json.dumps(d))
             return 0 if d["state"] == "pass-run" else 1
         elif args.cmd == "ci-jobs":
-            d = ci_jobs_decision(_read_json(args.jobs) or [])
+            if args.gate:
+                d = ci_gate_decision(_read_json(args.jobs) or [])
+                print(json.dumps(d))
+                return 0 if d["ok"] else (1 if d["bad"] else 3)
+            d = (ci_jobs_failed if args.failed_only else ci_jobs_decision)(_read_json(args.jobs) or [])
             print(json.dumps(d))
             return 0 if d["ok"] else 1
         elif args.cmd == "notes":

@@ -61,6 +61,17 @@ int main() {
             "  call v0, fact(5)\n"
             "  ret v0\n");
 
+    checkIr("dead",
+            "int main(){int x; int y; x=1; y=2; return y;}\n",
+            "func main\n"
+            "entry:\n"
+            "  ret 2\n");
+    checkIr("propagate",
+            "int main(){int x; x=20+3; x=x+19; return x;}\n",
+            "func main\n"
+            "entry:\n"
+            "  ret 42\n");
+
     checkIr("pointer", "int main(){int x; int *p; x=7; p=&x; *p=9; return x;}\n",
             "func main\n"
             "entry:\n"

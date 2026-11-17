@@ -1,6 +1,9 @@
 #include "ir.hpp"
 
+#include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace okaycc {
 namespace {
@@ -40,6 +43,122 @@ const char* opName(Inst::Op op) {
     case Inst::Op::GStore: return "gstore";
     }
     return "?";
+}
+
+bool pure(Inst::Op op) {
+    switch (op) {
+    case Inst::Op::Mov:
+    case Inst::Op::Add:
+    case Inst::Op::Sub:
+    case Inst::Op::Mul:
+    case Inst::Op::And:
+    case Inst::Op::Or:
+    case Inst::Op::Xor:
+    case Inst::Op::Shl:
+    case Inst::Op::Shr:
+    case Inst::Op::Neg:
+    case Inst::Op::Not:
+    case Inst::Op::Ceq:
+    case Inst::Op::Cne:
+    case Inst::Op::Clt:
+    case Inst::Op::Cle:
+    case Inst::Op::Cgt:
+    case Inst::Op::Cge:
+    case Inst::Op::Lea:
+    case Inst::Op::LeaSym:
+    case Inst::Op::LeaFrame:
+    case Inst::Op::Local:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::int64_t fitWidth(std::int64_t v, int width, bool uns) {
+    if (width >= 8 || width <= 0) return v;
+    std::uint64_t mask = width >= 4 ? 0xffffffffull : width == 2 ? 0xffffull : 0xffull;
+    std::uint64_t bits = static_cast<std::uint64_t>(v) & mask;
+    if (!uns && (bits & (1ull << (width * 8 - 1)))) bits |= ~mask;
+    return static_cast<std::int64_t>(bits);
+}
+
+bool asImm(const Operand& o, std::int64_t& v) {
+    if (o.kind != Operand::Kind::Imm) return false;
+    v = o.imm;
+    return true;
+}
+
+bool cmpFold(Inst::Op op, std::uint64_t x, std::uint64_t y, bool uns, bool& out) {
+    std::int64_t sx = static_cast<std::int64_t>(x);
+    std::int64_t sy = static_cast<std::int64_t>(y);
+    switch (op) {
+    case Inst::Op::Ceq: out = x == y; return true;
+    case Inst::Op::Cne: out = x != y; return true;
+    case Inst::Op::Clt: out = uns ? x < y : sx < sy; return true;
+    case Inst::Op::Cle: out = uns ? x <= y : sx <= sy; return true;
+    case Inst::Op::Cgt: out = uns ? x > y : sx > sy; return true;
+    case Inst::Op::Cge: out = uns ? x >= y : sx >= sy; return true;
+    default: return false;
+    }
+}
+
+bool foldInst(const Inst& in, std::int64_t& out) {
+    std::int64_t x = 0;
+    std::int64_t y = 0;
+    if (in.op == Inst::Op::Mov && asImm(in.a, x)) {
+        out = fitWidth(x, in.extra, in.uns);
+        return true;
+    }
+    if (in.op == Inst::Op::Neg && asImm(in.a, x)) {
+        out = static_cast<std::int64_t>(0 - static_cast<std::uint64_t>(x));
+        return true;
+    }
+    if (in.op == Inst::Op::Not && asImm(in.a, x)) {
+        out = static_cast<std::int64_t>(~static_cast<std::uint64_t>(x));
+        return true;
+    }
+    if (!asImm(in.a, x) || !asImm(in.b, y)) return false;
+    switch (in.op) {
+    case Inst::Op::Add:
+        out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
+        return true;
+    case Inst::Op::Sub:
+        out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) - static_cast<std::uint64_t>(y));
+        return true;
+    case Inst::Op::Mul:
+        out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) * static_cast<std::uint64_t>(y));
+        return true;
+    case Inst::Op::And: out = x & y; return true;
+    case Inst::Op::Or: out = x | y; return true;
+    case Inst::Op::Xor: out = x ^ y; return true;
+    case Inst::Op::Shl:
+    case Inst::Op::Shr:
+        if (y < 0 || y >= 63) return false;
+        {
+            auto ux = static_cast<std::uint64_t>(x);
+            unsigned s = static_cast<unsigned>(y);
+            out = static_cast<std::int64_t>(in.op == Inst::Op::Shl ? (ux << s) : (ux >> s));
+        }
+        return true;
+    case Inst::Op::Div:
+    case Inst::Op::Mod:
+        if (y == 0 || (x == INT64_MIN && y == -1)) return false;
+        out = in.op == Inst::Op::Div ? x / y : x % y;
+        return true;
+    default:
+        break;
+    }
+    bool bit = false;
+    if (!cmpFold(in.op, static_cast<std::uint64_t>(x), static_cast<std::uint64_t>(y), in.uns, bit)) return false;
+    out = bit ? 1 : 0;
+    return true;
+}
+
+void rewrite(Operand& o, const std::map<int, std::int64_t>& known) {
+    if (o.kind != Operand::Kind::Reg) return;
+    auto it = known.find(o.reg);
+    if (it == known.end()) return;
+    o = Operand::number(it->second);
 }
 
 std::string opnd(const Operand& o) {
@@ -156,6 +275,65 @@ std::string printModule(const Module& m) {
         }
     }
     return s;
+}
+
+void optimizeModule(Module& m) {
+    for (Function& f : m.funcs) {
+        for (Block& b : f.blocks) {
+            std::map<int, std::int64_t> known;
+            for (Inst& in : b.code) {
+                rewrite(in.a, known);
+                rewrite(in.b, known);
+                for (Operand& arg : in.args) rewrite(arg, known);
+                for (Operand& word : in.stack) rewrite(word, known);
+                std::int64_t folded = 0;
+                if (in.dst >= 0 && foldInst(in, folded)) {
+                    in.op = Inst::Op::Mov;
+                    in.a = Operand::number(folded);
+                    in.b = Operand::none();
+                    in.extra = 8;
+                    in.uns = false;
+                    in.args.clear();
+                    in.stack.clear();
+                    in.func.clear();
+                    known[in.dst] = folded;
+                } else if (in.dst >= 0) {
+                    known.erase(in.dst);
+                }
+            }
+        }
+        std::map<int, int> uses;
+        auto add = [&](const Operand& o) {
+            if (o.kind == Operand::Kind::Reg) uses[o.reg] += 1;
+        };
+        for (const Block& b : f.blocks) {
+            for (const Inst& in : b.code) {
+                add(in.a);
+                add(in.b);
+                for (const Operand& arg : in.args) add(arg);
+                for (const Operand& word : in.stack) add(word);
+            }
+        }
+        bool again = true;
+        while (again) {
+            again = false;
+            for (Block& b : f.blocks) {
+                for (int i = static_cast<int>(b.code.size()) - 1; i >= 0; --i) {
+                    Inst& in = b.code[static_cast<std::size_t>(i)];
+                    if (!pure(in.op) || in.dst < 0 || uses[in.dst] != 0) continue;
+                    auto drop = [&](const Operand& o) {
+                        if (o.kind == Operand::Kind::Reg && uses[o.reg] > 0) uses[o.reg] -= 1;
+                    };
+                    drop(in.a);
+                    drop(in.b);
+                    for (const Operand& arg : in.args) drop(arg);
+                    for (const Operand& word : in.stack) drop(word);
+                    b.code.erase(b.code.begin() + i);
+                    again = true;
+                }
+            }
+        }
+    }
 }
 
 std::string irText(const std::string& source, Diagnostics& diags, const std::string& file) {

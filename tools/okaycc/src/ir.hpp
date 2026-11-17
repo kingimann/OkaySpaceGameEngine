@@ -78,6 +78,11 @@ struct Module {
 
 std::string printModule(const Module& m);
 
+// Constant folding and dead-code elimination. Folding stays inside one block, so a
+// value that changes in a loop is not treated as a constant. From the integer rules
+// in ISO/IEC 9899 and two's-complement wrapping.
+void optimizeModule(Module& m);
+
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",
                    const std::vector<std::string>& includes = {});

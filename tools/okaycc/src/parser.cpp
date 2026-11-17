@@ -3972,7 +3972,9 @@ void checkSource(const std::string& source, Diagnostics& diags, const std::strin
 
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file,
                    const std::vector<std::string>& includes) {
-    return lowerProgram(source, diags, file, includes);
+    Module m = lowerProgram(source, diags, file, includes);
+    if (diags.ok()) optimizeModule(m);
+    return m;
 }
 
 }  // namespace okaycc

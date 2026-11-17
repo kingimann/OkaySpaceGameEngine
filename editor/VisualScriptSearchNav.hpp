@@ -109,4 +109,86 @@ inline int StepCategory(const std::vector<int>& ids, int cur, int dir) {
     return ids[(std::size_t)std::min(std::max(i, 0), (int)ids.size() - 1)];
 }
 
+// ---- Recent ----------------------------------------------------------------------------------------------------------
+
+constexpr std::size_t kRecentMax = 8;   // the last 8 nodes added
+
+/// Put `key` at the front; an earlier copy is removed; the list never holds more than kRecentMax. An empty key is ignored.
+inline void RecentPush(std::vector<std::string>& list, const std::string& key) {
+    if (key.empty()) return;
+    list.erase(std::remove(list.begin(), list.end(), key), list.end());
+    list.insert(list.begin(), key);
+    if (list.size() > kRecentMax) list.resize(kRecentMax);
+}
+/// After loading from the settings file: drop empty and repeated keys (first one wins) and cut to kRecentMax.
+inline void RecentClean(std::vector<std::string>& list) {
+    std::vector<std::string> out;
+    for (const auto& k : list)
+        if (!k.empty() && std::find(out.begin(), out.end(), k) == out.end()) out.push_back(k);
+    if (out.size() > kRecentMax) out.resize(kRecentMax);
+    list = std::move(out);
+}
+
+// ---- Pin context and empty results -----------------------------------------------------------------------------------
+
+/// Is a node listed? With no wire being dragged everything is; with one, only nodes that fit its pin, unless "show all".
+inline bool ShowEntry(bool wireDragged, bool showAll, bool fits) { return !wireDragged || showAll || fits; }
+
+/// The short line at the top of the popup while a wire is dragged.
+inline const char* PinContextLine(bool fitOnly) {
+    return fitOnly ? "Showing nodes that fit this plug" : "Showing all nodes (the ones that fit come first)";
+}
+
+/// What to say when the list is empty. `side`: -4 Starter, -2 Recent, -1 Favourites, otherwise a topic or All.
+inline std::string EmptyMessage(int side, bool searching, bool fitOnly, bool levelFiltered) {
+    if (searching) {
+        if (fitOnly) return "Nothing that fits this plug matches that. Press Show all to search every node.";
+        if (levelFiltered) return "No node matches that at this level. Try the All button to see every level.";
+        return "No node matches that. Check the spelling, or try a simpler word.";
+    }
+    if (side == -1) return "No favourites yet. Click the star on a node to keep it here.";
+    if (side == -2) return "Nodes you add show up here, newest first.";
+    if (fitOnly) return "No node in this list fits this plug. Press Show all to see every node.";
+    if (levelFiltered) return "Nothing here at this level. Try the All button to see every level.";
+    return "Nothing here yet. Pick another topic on the left.";
+}
+
+/// Number of single-letter edits (insert, delete, change) between two strings.
+inline int EditDistance(const std::string& a, const std::string& b) {
+    std::vector<int> prev(b.size() + 1), cur(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j) prev[j] = (int)j;
+    for (std::size_t i = 1; i <= a.size(); ++i) {
+        cur[0] = (int)i;
+        for (std::size_t j = 1; j <= b.size(); ++j)
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1)});
+        std::swap(prev, cur);
+    }
+    return prev[b.size()];
+}
+
+/// For a search that found nothing: the indexes of up to `maxN` titles (already lower-case) that look most like `needle`,
+/// closest first. It compares the needle with the whole title and with each word of it, and always gives the best few
+/// (so the list is never a blank box). No needle, no titles or maxN 0 give nothing.
+inline std::vector<int> NearestIndices(const std::vector<std::string>& titlesLower, const std::string& needle, std::size_t maxN) {
+    std::vector<int> out;
+    if (needle.empty() || titlesLower.empty() || maxN == 0) return out;
+    std::vector<std::pair<int, int>> scored;   // (distance, index)
+    scored.reserve(titlesLower.size());
+    for (std::size_t i = 0; i < titlesLower.size(); ++i) {
+        const std::string& t = titlesLower[i];
+        int best = EditDistance(needle, t);
+        std::size_t start = 0;
+        while (start <= t.size()) {
+            std::size_t end = t.find(' ', start);
+            if (end == std::string::npos) end = t.size();
+            if (end > start) best = std::min(best, EditDistance(needle, t.substr(start, end - start)));
+            start = end + 1;
+        }
+        scored.push_back({best, (int)i});
+    }
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (std::size_t i = 0; i < scored.size() && i < maxN; ++i) out.push_back(scored[i].second);
+    return out;
+}
+
 }  // namespace okay::editor::vsed::searchnav

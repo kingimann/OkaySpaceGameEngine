@@ -76,5 +76,52 @@ int main() {
         CHECK(StepCategory(ids, 77, +1) == -4);                // unknown current: start at the first
         CHECK(StepCategory({}, 5, +1) == 5);
     }
+    {   // Recent: newest first, no repeats, at most 8, junk dropped when loaded.
+        std::vector<std::string> r;
+        for (int i = 0; i < 10; ++i) RecentPush(r, "n" + std::to_string(i));
+        CHECK(r.size() == 8 && r[0] == "n9" && r[7] == "n2");
+        RecentPush(r, "n5");                                   // seen again: moves to the front, nothing grows
+        CHECK(r.size() == 8 && r[0] == "n5" && r[1] == "n9");
+        int count5 = 0; for (const auto& k : r) count5 += k == "n5";
+        CHECK(count5 == 1);
+        RecentPush(r, "");                                     // an empty key is ignored
+        CHECK(r.size() == 8 && r[0] == "n5");
+        std::vector<std::string> loaded = {"a", "b", "a", "", "c", "d", "e", "f", "g", "h", "i", "j"};
+        RecentClean(loaded);
+        CHECK(loaded.size() == 8 && loaded[0] == "a" && loaded[1] == "b" && loaded[2] == "c");
+        CHECK(kRecentMax == 8);
+    }
+    {   // Pin context: a dragged pin shows only nodes that fit, unless "show all" is on.
+        CHECK(ShowEntry(false, false, false));                 // no wire: everything shows
+        CHECK(ShowEntry(true, false, true));
+        CHECK(!ShowEntry(true, false, false));                 // wire, does not fit, not all: hidden
+        CHECK(ShowEntry(true, true, false));                   // wire, show all: visible
+        CHECK(std::string(PinContextLine(true)) == "Showing nodes that fit this plug");
+        CHECK(std::string(PinContextLine(false)) == "Showing all nodes (the ones that fit come first)");
+    }
+    {   // Empty results always say something friendly and useful.
+        std::vector<std::string> msgs;
+        for (int side : {-4, -2, -1, -3, 3})
+            for (bool needle : {false, true})
+                for (bool fitOnly : {false, true})
+                    for (bool lvl : {false, true}) msgs.push_back(EmptyMessage(side, needle, fitOnly, lvl));
+        for (const auto& m : msgs) CHECK(m.size() > 12);
+        CHECK(EmptyMessage(-1, false, false, false).find("star") != std::string::npos);
+        CHECK(EmptyMessage(-3, true, true, false).find("Show all") != std::string::npos);
+        CHECK(EmptyMessage(-3, true, false, true).find("All") != std::string::npos);
+    }
+    {   // Nearest suggestions for a search that matched nothing: typos and word-ends still land close.
+        const std::vector<std::string> t = {"play sound", "set position", "move towards", "wait", "when game starts", "print text", "random number"};
+        auto near = [&](const char* q) { return NearestIndices(t, q, 3); };
+        auto has = [](const std::vector<int>& v, int i) { return std::find(v.begin(), v.end(), i) != v.end(); };
+        CHECK(near("plya sound").front() == 0);                // swapped letters
+        CHECK(has(near("positon"), 1));                        // a missing letter
+        CHECK(near("randm").front() == 6);
+        CHECK(near("zzzzzz").size() == 3);                     // nothing alike: still the best three, never a blank box
+        CHECK(near("").empty());                               // no search text: no suggestions
+        CHECK(NearestIndices({}, "abc", 3).empty());
+        CHECK(NearestIndices(t, "wait", 0).empty());
+        CHECK(EditDistance("kitten", "sitting") == 3 && EditDistance("", "abc") == 3 && EditDistance("abc", "abc") == 0);
+    }
     TEST_MAIN_RESULT();
 }

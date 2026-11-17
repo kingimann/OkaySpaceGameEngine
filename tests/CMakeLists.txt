@@ -3916,3 +3916,16 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+# Every test gets its own temp folder (docs/ci_failures.md, cause "shared temp folder"). Tests that build a path from
+# std::filesystem::temp_directory_path() (TMPDIR on Linux and macOS, TMP/TEMP on Windows) used to share /tmp, so two
+# tests that use the same file name, or one executable registered under two names (guided_quality and guided_roundtrip),
+# raced when ctest ran with -j. With one folder per test name no two tests can ever see each other's files.
+# Tests that hard-code a "/tmp/..." literal are not covered by this; scripts/lint_test_registration.py checks that no
+# literal is shared between two test sources.
+get_directory_property(_okay_all_tests TESTS)
+foreach(_okay_t IN LISTS _okay_all_tests)
+    set(_okay_tmp "${CMAKE_CURRENT_BINARY_DIR}/test_tmp/${_okay_t}")
+    file(MAKE_DIRECTORY "${_okay_tmp}")
+    set_property(TEST ${_okay_t} APPEND PROPERTY ENVIRONMENT "TMPDIR=${_okay_tmp}" "TMP=${_okay_tmp}" "TEMP=${_okay_tmp}")
+endforeach()

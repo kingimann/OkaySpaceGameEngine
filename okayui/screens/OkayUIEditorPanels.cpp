@@ -2787,7 +2787,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 UI::Dummy(w, rh);
                 const UI::DrawList& dl = UI::GetWindowDrawList();
                 const UI::Color32 sc = UI::GetColorU32(UI::Col_Separator);
-                const float ly = std::floor(q.y + rh * 0.5f - bt * 0.5f);
+                const float ly = q.y + rh * 0.5f - bt * 0.5f;
                 dl.AddRectFilled(UI::Vec2{regionX, ly}, UI::Vec2{tx - g_metrics.itemSpacing.x, ly + bt}, sc, 0.0f);
                 dl.AddRectFilled(UI::Vec2{tx + tw + g_metrics.itemSpacing.x, ly}, UI::Vec2{regionX + w, ly + bt}, sc, 0.0f);
                 dl.AddText(UI::Vec2{tx, q.y + py}, UI::GetColorU32(UI::Col_Text), r.Text());

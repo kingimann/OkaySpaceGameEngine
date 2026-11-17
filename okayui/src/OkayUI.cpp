@@ -3548,8 +3548,9 @@ void PushStyleVar(StyleVar var, Vec2 value) {
                                      g_cellPadX = std::isfinite(value.x) ? std::min(std::max(value.x, 0.0f), 256.0f) : 4.0f;
                                      g_cellPadY = std::isfinite(value.y) ? std::min(std::max(value.y, 0.0f), 256.0f) : -1.0f; break;
         case StyleVar_FramePadding:  s.a = g_framePadY; s.b = g_framePadX;
-                                     g_framePadY = std::isfinite(value.y) ? std::min(std::max(value.y, 0.0f), 64.0f) : -1.0f;
-                                     g_framePadX = std::isfinite(value.x) ? std::min(std::max(value.x, 0.0f), 64.0f) : -1.0f; break;
+                                     // junk (not a number, negative) means "not pushed": the widget's own default
+                                     g_framePadY = std::isfinite(value.y) && value.y >= 0.0f ? std::min(value.y, 64.0f) : -1.0f;
+                                     g_framePadX = std::isfinite(value.x) && value.x >= 0.0f ? std::min(value.x, 64.0f) : -1.0f; break;
         case StyleVar_ChildPadding:  s.a = g_childPad; g_childPad = styleLen(value.x); break;
         case StyleVar_ScrollbarSize: s.a = g_sbSize; g_sbSize = std::isfinite(value.x) && value.x >= 4.0f ? std::min(value.x, 64.0f) : -1.0f; break;
         case StyleVar_FramedWidgets: s.a = g_framedWidgets ? 1.0f : 0.0f; g_framedWidgets = std::isfinite(value.x) && value.x != 0.0f; break;

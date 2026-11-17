@@ -1479,7 +1479,7 @@ void AtlasTests() {
     };
     const UI::FontAtlasInfo a = UI::GetFontAtlasInfo();
     say("atlas at start", a);
-    CHECK(a.ok && a.codeSizes == 6 && a.uiSizes == 6 && a.largestCodePx == 46.0f);
+    CHECK(a.ok && a.codeSizes == 6 && a.uiSizes == 12 && a.largestCodePx == 46.0f);   // 12 UI sizes: the launcher pages' Dear ImGui sizes too
     CHECK(a.width == 1024 && a.height == 1024 && a.usedRows > 0 && a.usedRows <= a.height - 4);
     CHECK(a.bytes == 1024ull * 1024ull * 4ull);
     // UI text drawn before the growth, to compare with after
@@ -1514,7 +1514,7 @@ void AtlasTests() {
     CHECK(s9.ok && s9.height == 2048 && s9.grows == 3 && s9.codeSizes == 9 && s9.usedRows == g.usedRows);
     // no room for the code font: the UI font alone (the code font falls back to it)
     const UI::FontAtlasInfo n = UI::TestBuildFontAtlas(1024, 1024, 9);
-    CHECK(n.ok && n.codeSizes == 0 && n.uiSizes == 6 && n.height == 1024);
+    CHECK(n.ok && n.codeSizes == 0 && n.uiSizes == 12 && n.height == 1024);
     // no room for anything: no atlas (the classic look's 8x8 font is used then)
     CHECK(!UI::TestBuildFontAtlas(64, 64, 6).ok);
     CHECK(UI::GetFontAtlasInfo().height == 2048 && UI::GetFontAtlasInfo().codeSizes == 9);   // the real atlas is untouched

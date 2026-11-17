@@ -1538,7 +1538,11 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowColorText:
         case InspRowLabel:
             if (r.alignFrame) ImGui::AlignTextToFramePadding();
-            if (r.kind == InspRowColorText || r.color) ImGui::TextColored(FromU32(r.color), "%s", r.Text());
+            if (r.kind == InspRowColorText || r.color) {
+                if (r.wrap) ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(FromU32(r.color), "%s", r.Text());
+                if (r.wrap) ImGui::PopTextWrapPos();
+            }
             else if (r.wrap) ImGui::TextWrapped("%s", r.Text());
             else ImGui::TextUnformatted(r.Text());
             break;

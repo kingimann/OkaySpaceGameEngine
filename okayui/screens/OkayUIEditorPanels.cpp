@@ -2584,7 +2584,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             // A fold-out's state is kept by its label alone (as Dear ImGui keeps the editor's, whose id does not depend on the component):
             // rows coming and going above it, and an undo that rebuilds the component, keep it open.
             unsigned treeKey = 0u;
-            if (r.kind == InspRowTree) { treeKey = 2166136261u; for (const char* q = r.label; *q; ++q) treeKey = (treeKey ^ (unsigned char)*q) * 16777619u; }
+            if (r.kind == InspRowTree) {   // a "###id" part alone keys it (a count in the shown text must not fold it again)
+                const char* key = std::strstr(r.label, "###");
+                treeKey = 2166136261u;
+                for (const char* q = key ? key : r.label; *q; ++q) treeKey = (treeKey ^ (unsigned char)*q) * 16777619u;
+            }
             UI::PushID((int)k);
             const float frameW = RowFrameW(r, itemW, w, UI::GetCursorScreenPos().x - regionX);
             bool hoverTip = true;   // the row's tooltip on hover (an asset field and an image show their own)

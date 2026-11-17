@@ -32615,6 +32615,957 @@ static bool DrawVisualScriptWithOkayUI(EditorState& ed, GameObject* go, VisualSc
     return true;
 }
 
+// ---- The Inspector's OkayUI parts, stage 5 (docs/own_ui_toolkit.md section 18) --------------------------------------------------------
+// The next most used bodies in the example scenes: the Player Controller and its parts (First-person settings, Third-person settings,
+// View toggle), the Character, Holdable Object, Procedural Object Holding and the Animator state machine. Written as the earlier stages:
+// the Dear ImGui body's rows in its order with its labels, ranges, formats and tooltips; the helpers they share (CharacterModelTools,
+// KeyBindCombo, NaturalSpeedsButton, WalkSpeedHintLine, the preview buttons and transport of AnimatorPreview.hpp) become rows too.
+
+// Labels built at run time stay alive while the rows are drawn.
+struct RowText {
+    std::deque<std::string> text;
+    const char* operator()(std::string s) { text.push_back(std::move(s)); return text.back().c_str(); }
+};
+
+// KeyBindCombo as a row (96 wide); Run writes the chosen keys back.
+struct KeyRows {
+    struct K { int row = -1, idx = 0; char* key = nullptr; };
+    std::deque<K> keys;
+    void Add(okaypanels::InspFieldList& L, const char* label, char& key) {
+        const int n = (int)(sizeof kStanceKeys / sizeof kStanceKeys[0]);
+        K k; k.key = &key;
+        for (int i = 0; i < n; ++i) if (kStanceKeys[i].code == key) { k.idx = i; break; }
+        keys.push_back(k);
+        keys.back().row = L.Combo(label, &keys.back().idx, StanceKeyNames(), n); L.Last().width = 96.0f;
+    }
+    bool Run(okaypanels::InspFieldList& L) {
+        bool any = false;
+        for (K& k : keys) if (k.row >= 0 && L[k.row].changed) { *k.key = kStanceKeys[k.idx].code; any = true; }
+        return any;
+    }
+};
+// The gamepad button list of the controllers ("None", A, B ...): a combo of `button + 1`, 130 wide.
+static const char* const kPadButtons[] = {"None", "A", "B", "X", "Y", "Back", "Start", "L", "R", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right"};
+struct PadRow { int row = -1, idx = 0; };
+static void AddPadRow(okaypanels::InspFieldList& L, const char* label, int button, PadRow& p) {
+    p.idx = button + 1; if (p.idx < 0 || p.idx > 12) p.idx = 0;
+    p.row = L.Combo(label, &p.idx, kPadButtons, 13); L.Last().width = 130.0f;
+}
+// WalkSpeedHintLine and NaturalSpeedsButton as rows.
+static void AddWalkHintRows(okaypanels::InspFieldList& L, float walkSpeed, RowText& T) {
+    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
+    if (!hint.empty()) { L.ColorText(RowCol(0.95f, 0.75f, 0.35f), T(hint)); L.Last().wrap = true; }
+}
+static int AddNaturalSpeedsRows(okaypanels::InspFieldList& L, const char* id, RowText& T) {
+    const int k = L.SmallButton(T(std::string("Use natural walk and run speeds##") + id));
+    L.Tip(okay::NaturalGait::ButtonTooltip());
+    if (okay::NaturalGait::Old()) {
+        L.ColorText(RowCol(0.95f, 0.75f, 0.35f), "The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
+        L.Last().wrap = true;
+    }
+    return k;
+}
+
+// CharacterModelTools as rows: Set Character Model, the setup checklist, Wire animation and IK, Open Animator, the facing buttons.
+struct ModelToolRows { int set = -1, wire = -1, open = -1, fix = -1, turn180 = -1, turn90 = -1, fit = -1; GameObject* model = nullptr; };
+static void AddCharacterModelToolRows(okaypanels::InspFieldList& L, EditorState& ed, GameObject* go, const char* id, ModelToolRows& m, RowText& T) {
+    m.set = L.Button(T(std::string("Set Character Model...##") + id));
+    L.Tip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
+    m.model = okay::FindCharacterModelRoot(ed.scene(), go);
+    const bool showSetup = std::strcmp(id, "char") != 0 || !okay::PlayerController::Of(go);
+    const okay::PlayerAnimStatus setup = showSetup ? okay::InspectPlayerAnimation(ed.scene(), go) : okay::PlayerAnimStatus{};
+    if (showSetup && !setup.hasModel) {
+        L.ColorText(RowCol(0.95f, 0.75f, 0.35f), "No character model.");
+        L.Label("Set Character Model, or right-click a model file and choose Make Playable Character. A new player starts in third person. V switches to the eyes. Player Controller, View, changes that.");
+        L.Last().wrap = true;
+    } else if (showSetup) {
+        L.Label("Rig:");
+        L.SameLine();
+        L.ColorText(setup.bones >= 8 ? RowCol(0.45f, 0.85f, 0.55f) : RowCol(0.95f, 0.75f, 0.35f), T(std::to_string(setup.bones) + "/15 humanoid bones"));
+        if (setup.bones < 8) {
+            L.Label("Built-in walk, foot planting and look-at need 8 bones. Right-click the model and choose Map Humanoid Bones or Rig Model (Humanoid).");
+            L.Last().wrap = true;
+        }
+        char line[160];
+        std::snprintf(line, sizeof line, "Foot IK: %s    Look-at: %s    Animator: %s", setup.footIk ? "on" : "not added", setup.lookAt ? "on" : "not added",
+                      setup.animator ? "on" : "not added");
+        L.Label(T(line));
+    }
+    if (showSetup) {
+        m.wire = L.Button(T(std::string("Wire animation and IK##") + id));
+        L.Tip("Adds Foot IK, Look-At and the default Animator only when they are missing,\nand matches empty animation slots. A graph, a clip choice, or an IK weight\nyou already set is left as it is. Safe to press again.");
+        L.SameLine();
+        m.open = L.Button(T(std::string("Open Animator##") + id));
+        L.Tip("Opens the Animator window. Edit the state graph there. Clip slots stay in the Character Model panel.");
+    }
+    if (!m.model) return;
+    m.fix = L.SmallButton(T(std::string("Fix Facing##") + id));
+    L.Tip("Read the model's facing from its skeleton and turn it to face\nthe direction the controller walks (forward).");
+    L.SameLine(); m.turn180 = L.SmallButton(T(std::string("Turn 180##") + id));
+    L.SameLine(); m.turn90 = L.SmallButton(T(std::string("90##") + id));
+    L.SameLine(); m.fit = L.SmallButton(T(std::string("Fit Collider##") + id));
+    L.Tip("Size the player's collider around the model (adds a capsule +\nRigidbody 3D when missing).");
+}
+static void RunCharacterModelToolRows(okaypanels::InspFieldList& L, EditorState& ed, GameObject* go, const ModelToolRows& m) {
+    if (m.set >= 0 && L[m.set].clicked)
+        OpenModelFileDialog("Set character model", false, [go](const std::vector<std::string>& v) { if (!v.empty()) QueueCharacterModel(go, v[0]); });
+    if (m.wire >= 0 && L[m.wire].clicked) { ed.PushUndo(); ConsoleLog(okay::WirePlayerAnimation(ed.scene(), go)); ed.dirty = true; }
+    if (m.open >= 0 && L[m.open].clicked) g_showAnimatorGraph = true;
+    GameObject* model = m.model;
+    if (m.fix >= 0 && L[m.fix].clicked) {
+        ed.PushUndo();
+        const int d = okay::FaceCharacterModel(ed.scene(), go, model, 0.0f);
+        if (d < 0) ConsoleLog("Couldn't read which way '" + model->name + "' faces (no left/right bones) - use Turn 180 / 90.", 1);
+        else ConsoleLog(d == 0 ? "'" + model->name + "' already faces forward" : "Turned '" + model->name + "' " + std::to_string(d) + " deg to face forward");
+        ed.dirty = true;
+    }
+    if (m.turn180 >= 0 && L[m.turn180].clicked) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 180.0f); ed.dirty = true; }
+    if (m.turn90 >= 0 && L[m.turn90].clicked) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 90.0f); ed.dirty = true; }
+    if (m.fit >= 0 && L[m.fit].clicked) sPendingFitCollider = go;
+}
+
+// AnimatorPreview's DrawTransport as rows (while a preview runs): Play / Pause, the time, the time slider, Speed, Loop, the motion list.
+struct TransportRows { int play = -1, time = -1, loop = -1, motion = -1, motionIdx = 0; std::vector<const char*> motions; };
+static void AddTransportRows(okaypanels::InspFieldList& L, TransportRows& tr, RowText& T) {
+    namespace ap = okay::editor::apreview;
+    ap::Preview& p = ap::Cur();
+    if (p.kind == ap::Kind::None) return;
+    tr.play = L.SmallButton(p.playing ? "Pause##ap" : "Play##ap");
+    char t[48]; std::snprintf(t, sizeof t, "%.2f / %.2fs", p.t, p.length);
+    L.SameLine(); L.Label(T(t));
+    const float tmax = p.length > 0.05f ? p.length : 1.0f;
+    tr.time = L.Slider("##apt", &p.t, 0.0f, tmax, "time %.2fs"); L.Last().width = -1.0f;
+    L.Slider("Speed##aps", &p.speed, 0.0f, 3.0f, "%.2f"); L.Last().width = 120.0f;
+    L.SameLine(); tr.loop = L.Check("Loop##apl", &p.loop);
+    if (!p.motions.empty()) {
+        for (std::size_t i = 0; i < p.motions.size(); ++i) { tr.motions.push_back(p.motions[i].c_str()); if (p.motions[i] == p.clip) tr.motionIdx = (int)i; }
+        tr.motion = L.Combo("Motion##apm", &tr.motionIdx, tr.motions.data(), (int)tr.motions.size());
+        L.Last().width = -1.0f; L.Last().preview = p.clip.empty() ? "(motion)" : nullptr;
+        L.Tip("One motion of this blend tree. Mixing several at once\nbelongs to the running Animator, not the preview.");
+    }
+}
+static void RunTransportRows(okaypanels::InspFieldList& L, TransportRows& tr) {
+    namespace ap = okay::editor::apreview;
+    ap::Preview& p = ap::Cur();
+    if (tr.play >= 0 && L[tr.play].clicked) {
+        if (!p.playing && !p.loop && p.length > 0.0f && p.t >= p.length - 1e-4f) p.t = 0.0f;
+        p.playing = !p.playing;
+    }
+    if (tr.time >= 0 && L[tr.time].changed) p.playing = false;
+    if (tr.loop >= 0 && L[tr.loop].changed && p.kind != ap::Kind::Model && p.target)
+        if (Character* ch = p.target->GetComponent<Character>()) ap::AdoptClip(ch, p.clip, p);
+    if (tr.motion >= 0 && L[tr.motion].changed) ap::UseMotion(tr.motions[(std::size_t)tr.motionIdx]);
+}
+
+static bool DrawObjectHoldingWithOkayUI(EditorState& ed, ProceduralObjectHolding* ph, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kHands[] = {"Left", "Right", "Both"};
+    static const char* const kStyles[] = {"Automatic", "Custom"};
+    static const char* const kMouse[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+    InspFieldList L;
+    L.rows.reserve(32);
+    RowText T;
+    L.Note("Hold objects with the hands: IK onto each object's grips.");
+    int hand = (int)ph->primaryHand, st = (int)ph->holdingStyle, ca = (int)ph->carryAnimations;
+    const int kHand = L.Combo("Primary Hand##poh", &hand, kHands, 3);
+    L.Tip("The hand a one-handed object goes in.\nBoth: the support hand helps on pistols and swords, and small items are carried in both hands.");
+    const int kStyle = L.Combo("Holding Style##poh", &st, kStyles, 2);
+    L.Tip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
+    L.Check("Arm IK##poh", &ph->armIK); L.TipLookup();
+    L.Drag("Transition (s)##poh", &ph->transitionTime, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+    L.Check("Body Adjustment##poh", &ph->bodyAdjustment); L.Tip("Heavy or big loads: lean back, walk slower, kept off the body.");
+    const int kCarry = L.Combo("Carry Animations##poh", &ca, kStyles, 2);
+    L.Tip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+    L.Section("Throw");
+    std::string tk(ph->throwKey ? 1 : 0, ph->throwKey);
+    const int kKey = L.Text("Throw Key##poh", &tk);
+    L.Tip("Hold to charge, release to throw along the camera aim.\nWith empty hands, pressing it picks up the nearest object. Blank = no key.\nDrop is separate (scripts: hold_drop).");
+    int tbi = (ph->throwMouseButton < 0 || ph->throwMouseButton > 2) ? 3 : ph->throwMouseButton;
+    const int kMouseRow = L.Combo("Throw Mouse##poh", &tbi, kMouse, 4); L.TipLookup();
+    L.DragInt("Throw Pad Button##poh", &ph->throwGamepadButton, 0.1f, -1, 11); L.Tip("0=A 1=B 2=X 3=Y 4=Back 5=Start 6=L 7=R. -1 = none.");
+    L.Drag("Charge Time##poh", &ph->throwChargeTime, 1, 0.01f, 0.05f, 3.0f); L.TipLookup();
+    L.Drag("Min Speed##poh", &ph->throwMinSpeed, 1, 0.1f, 0.0f, 40.0f); L.TipLookup();
+    L.Drag("Max Speed##poh", &ph->throwMaxSpeed, 1, 0.1f, 0.0f, 60.0f); L.TipLookup();
+    L.Drag("Pickup Range##poh", &ph->pickupRange, 1, 0.05f, 0.0f, 8.0f); L.TipLookup();
+    char line[160];
+    if (ed.isPlaying()) { std::snprintf(line, sizeof line, "Charge %.0f%%", ph->ThrowCharge() * 100.0f); L.Label(T(line)); }
+    if (GameObject* held = ph->Held()) {
+        std::snprintf(line, sizeof line, "Holding: %s (%s)", held->name.c_str(),
+                      ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+        L.Label(T(line));
+        std::snprintf(line, sizeof line, "Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+        L.Label(T(line));
+    } else if (ed.isPlaying()) L.Note("Holding nothing");
+    const int kRemove = L.SmallButton("Remove##poh");
+    if (!DrawRowsOkayUI(ph, "##okayui_objholding", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kHand].changed) ph->primaryHand = (ProceduralObjectHolding::Hand)hand;
+    if (L[kStyle].changed) ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st;
+    if (L[kCarry].changed) ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca;
+    if (L[kKey].changed) ph->throwKey = tk.empty() ? 0 : tk[0];
+    if (L[kMouseRow].changed) ph->throwMouseButton = (tbi == 3) ? -1 : tbi;
+    if (L[kRemove].clicked) toRemove = ph;
+    return true;
+}
+
+static bool DrawHoldableWithOkayUI(EditorState& ed, HoldableObject* ho, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kStyles[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+                                          "One hand right", "One hand left", "Two handed", "Carry in front", "Over the shoulder"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    RowText T;
+    L.Note("A character's Procedural Object Holding can pick this up.");
+    int st = (int)ho->style;
+    const int kStyle = L.Combo("Style##hold", &st, kStyles, 14);
+    const int kBlock = L.SmallButton("Preset: block##hold");
+    L.SameLine(); const int kCrate = L.SmallButton("Preset: crate##hold");
+    L.Tip("Automatic: from the tag / name (\"pistol\", \"crate\"...), else its shape and weight.\nCustom: the hands go to the grip points below.\nGuns and lights point along -Z, a sword's blade along +Y, a cup's handle along +X\n(Hold Rotation corrects a model built another way).");
+    if (ho->style == HoldableObject::Style::Automatic) {
+        const HoldableObject::Style rs = ho->ResolvedStyle();
+        L.Note(T(std::string("  -> ") + (rs == HoldableObject::Style::Automatic ? "small item (one hand under it)" : HoldableObject::StyleName(rs))), true);
+    }
+    L.Check("Support Hand##hold", &ho->supportHand); L.Tip("Pistol: the other hand wraps the first. Sword: held in two hands.");
+    L.Check("Two Handed##hold", &ho->twoHanded); L.Tip("First person draws both hands on this item. Rifle, Box and Heavy do that already, and so do two enabled grips.");
+    L.Drag("Weight (kg)##hold", &ho->weight, 1, 0.1f, 0.0f, 500.0f); L.Tip("0 = the Rigidbody's mass.");
+    L.Text("Socket##hold", &ho->socket); L.Tip("Hold it at this object inside the character (a holster, a back slot) instead of in front of the chest.");
+    L.Drag("Hold Offset##hold", &ho->holdOffset.x, 3, 0.01f); L.Tip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
+    L.Drag("Hold Rotation##hold", &ho->holdRotation.x, 3, 1.0f); L.TipLookup();
+    L.Drag("In-hand scale##hold", &ho->inHandScale, 1, 0.01f, 0.1f, 3.0f); L.TipLookup();
+    L.Drag("FP offset##hold", &ho->fpOffset.x, 3, 0.005f); L.TipLookup();
+    L.Drag("FP rotation##hold", &ho->fpRotation.x, 3, 1.0f); L.TipLookup();
+    L.Drag("FP scale##hold", &ho->fpScale, 1, 0.01f, 0.1f, 3.0f); L.TipLookup();
+    L.Drag("TP offset##hold", &ho->tpOffset.x, 3, 0.005f); L.Tip("Side, up, forward, added on top of the hold. Use this when a third-person grip sits too high.");
+    L.Drag("TP rotation##hold", &ho->tpRotation.x, 3, 1.0f);
+    L.Tip("Custom: the object's turn relative to the body (degrees).\nOther styles: turns a model built another way (e.g. 0, 180, 0 for a gun facing backwards).");
+    HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
+    for (int g = 0; g < 2; ++g) {
+        HoldableObject::Grip& gr = *grips[g];
+        L.Check(g == 0 ? "Left Grip" : "Right Grip", &gr.enabled);
+        if (gr.enabled) {
+            L.Drag("Position##grip", &gr.position.x, 3, 0.005f); L.TipLookup();
+            L.Drag("Rotation##grip", &gr.rotation.x, 3, 1.0f); L.TipLookup();
+        }
+    }
+    L.Note("Grip rotation 0 = palm down, the hand points along -Z.");
+    if (GameObject* holder = ho->Holder()) L.Label(T("Held by: " + holder->name));
+    const int kRemove = L.SmallButton("Remove##hold");
+    if (!DrawRowsOkayUI(ho, "##okayui_holdable", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kStyle].changed) ho->style = (HoldableObject::Style)st;
+    if (L[kBlock].clicked) { ho->ApplyPreset(HoldableObject::Preset::OneHandRight); ed.dirty = true; }
+    if (L[kCrate].clicked) { ho->ApplyPreset(HoldableObject::Preset::CarryFront); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = ho;
+    return true;
+}
+
+static bool DrawCharacterWithOkayUI(EditorState& ed, GameObject* go, Character* ch) {
+    using namespace okaypanels;
+    static const char* const kShirts[] = {"Tank (bare arms)", "Short sleeve", "Long sleeve"};
+    static const char* const kLegs[] = {"Trousers", "Shorts"};
+    static const char* const kHairs[] = {"Short", "Long", "Mohawk", "Bun", "Spiky", "Afro", "Ponytail", "Buzz"};
+    static const char* const kBeards[] = {"None", "Full", "Goatee", "Mustache"};
+    static const char* const kHats[] = {"Cap", "Helmet", "Top Hat", "Wizard", "Beanie", "Cowboy", "Crown", "Bandana"};
+    static const char* const kGlasses[] = {"None", "Glasses", "Sunglasses"};
+    static const char* const kAnims[] = {"None", "Idle", "Walk", "Run", "Wave", "Jump", "Crouch", "Prone", "Point", "Clap", "Thumbs Up", "Salute",
+                                         "Wave Both", "Cheer (happy)", "Sad", "Angry", "Think", "Crouch Walk", "Fall", "Hang"};
+    InspFieldList L;
+    L.rows.reserve(120);
+    RowText T;
+    std::vector<int> applyRows;   // a change on these rebuilds the body (Character::Apply)
+    auto ap = [&](int k) { applyRows.push_back(k); return k; };
+    ModelToolRows mt;
+    AddCharacterModelToolRows(L, ed, go, "char", mt, T);
+    if (!ch->enabled) L.Note("(default body hidden - a custom model is the character)");
+    int kUnrig = -1;
+    if (ch->HasCustomBind()) {
+        L.Note(T("(rigged model: " + std::to_string((int)ch->CustomBindMesh().vertices.size()) + " verts bound to the skeleton)"));
+        L.SameLine(); kUnrig = L.SmallButton("Unrig##char");
+    }
+    ap(L.Slider("Height##char", &ch->height, 0.6f, 1.8f));
+    L.Section("Rig");
+    if (ch->driveExternal) L.Note("Driving an imported rig (Humanoid Retarget): this character\nrenders nothing itself - its animations play on the model.");
+    const bool rigLocked = !ch->enabled || ch->HasCustomBind() || ch->driveExternal;
+    static bool s_off = false;
+    s_off = false;
+    int kParts = -1;
+    if (rigLocked) {
+        L.Check("Separate Into Parts (editable rig)##char", &s_off); L.Last().disabled = true;
+        L.Note(ch->HasCustomBind() ? "(unavailable: a rigged model drives this character - Unrig first)"
+               : ch->driveExternal ? "(unavailable: the animations retarget onto an imported model)"
+                                   : "(unavailable: a custom model replaced this body - re-enable the Character first)");
+    } else kParts = L.Check("Separate Into Parts (editable rig)##char", &ch->separateParts);
+    L.Tip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nright here in the editor \xE2\x80\x94 select, recolour, attach things to, and animate them part-by-part.\nThe rig is rebuilt from the Character on load (not spawned at Play).");
+    if (ch->separateParts) { L.Check("Play built-in animation on parts##char", &ch->animateParts); L.Tip("Off = the parts hold still so you can pose / keyframe them yourself."); }
+    L.Section("Movement animations");
+    L.Note("Play YOUR authored clips as the character moves (no scripting).");
+    const std::vector<std::string> clips = ch->ClipNames();
+    std::vector<const char*> opts{"(built-in)"};
+    for (const auto& n : clips) opts.push_back(n.c_str());
+    struct Bind { int row = -1, cur = 0; std::string* field = nullptr; };
+    Bind binds[3];
+    if (clips.empty()) L.Note("No clips yet \xE2\x80\x94 make one in View > Animation, then Apply to Character.");
+    else {
+        const char* lbl[3] = {"Idle##charstate", "Walk##charstate", "Run##charstate"};
+        std::string* fld[3] = {&ch->clipIdle, &ch->clipWalk, &ch->clipRun};
+        for (int b = 0; b < 3; ++b) {
+            binds[b].field = fld[b];
+            for (std::size_t i = 0; i < clips.size(); ++i) if (clips[i] == *fld[b]) { binds[b].cur = (int)i + 1; break; }
+            binds[b].row = L.Combo(lbl[b], &binds[b].cur, opts.data(), (int)opts.size()); L.Last().width = 150.0f;
+        }
+    }
+    L.Slider("Blend (s)##charblend", &ch->blendTime, 0.0f, 0.6f, "%.2f"); L.Last().width = 150.0f;
+    L.Tip("Crossfade time when switching animations (idle/walk/run or any clip).\n0 = snap instantly.");
+    L.Section("Clothing");
+    ap(L.Combo("Shirt##char", &ch->shirtStyle, kShirts, 3)); L.Last().width = 150.0f;
+    ap(L.Combo("Legs##char", &ch->legStyle, kLegs, 2)); L.Last().width = 150.0f;
+    ap(L.Check("Belt##char", &ch->hasBelt));
+    L.SameLine(); ap(L.Check("Jacket##char", &ch->hasJacket));
+    L.SameLine(); ap(L.Check("Gloves##char", &ch->hasGloves));
+    L.Section("Hair");
+    ap(L.Check("Hair##char", &ch->hasHair));
+    if (ch->hasHair) { L.SameLine(); ap(L.Combo("##hairstyle", &ch->hairStyle, kHairs, 8)); L.Last().width = 120.0f; }
+    ap(L.Combo("Beard##char", &ch->beardStyle, kBeards, 4)); L.Last().width = 150.0f;
+    L.Section("Accessories");
+    ap(L.Check("Hat##char", &ch->hasHat));
+    if (ch->hasHat) { L.SameLine(); ap(L.Combo("##hatstyle", &ch->hatStyle, kHats, 8)); L.Last().width = 120.0f; }
+    ap(L.Combo("Eyewear##char", &ch->glassesStyle, kGlasses, 3)); L.Last().width = 150.0f;
+    ap(L.Check("Mask##char", &ch->hasMask));
+    L.SameLine(); ap(L.Check("Scarf##char", &ch->hasScarf));
+    ap(L.Check("Shoulder Pads##char", &ch->hasShoulderPads));
+    ap(L.Check("Backpack##char", &ch->hasBackpack));
+    L.SameLine(); ap(L.Check("Cape##char", &ch->hasCape));
+    L.Section("Colors");
+    struct ColorRow { const char* label; Color* c; };
+    const ColorRow colors[] = {{"Skin##char", &ch->skin}, {"Shirt##char", &ch->shirt}, {"Pants##char", &ch->pants}, {"Shoes##char", &ch->shoes},
+                               {"Hair##char", &ch->hair}, {"Eyes##char", &ch->eyes}, {"Hat##char", &ch->hat}, {"Jacket##char", &ch->jacket},
+                               {"Gloves##char", &ch->gloves}, {"Belt##char", &ch->belt}, {"Backpack##char", &ch->pack}};
+    for (const ColorRow& c : colors) ap(L.Color(c.label, &c.c->r, 3));
+    L.Section("Animation (plays in Play mode)");
+    L.Combo("Animation##char", &ch->anim, kAnims, 20); L.Last().width = 150.0f;
+    L.Tip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
+    if (ch->anim != 0) L.Slider("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+    std::vector<std::pair<int, std::string>> previews;   // (row, clip): this character's own clips, each with Preview / Stop
+    TransportRows transport;
+    if (!clips.empty()) {
+        L.Tree(T("Clips (" + std::to_string(clips.size()) + ")##charprev"));
+        namespace apv = okay::editor::apreview;
+        for (const std::string& n : clips) {
+            L.Label(n.c_str());
+            L.SameLine();
+            const bool on = apv::IsClip(ch, n);
+            previews.emplace_back(L.SmallButton(on ? "Stop##apcl" : "Preview##apcl"), n);
+            if (on) AddTransportRows(L, transport, T);
+        }
+        L.TreeEnd();
+    }
+    L.Section("Head look");
+    L.Check("Look at Camera##char", &ch->lookAtCamera);
+    L.Tip("Turn the head to face the main camera each frame (no controller/script needed). A First/Third-Person controller overrides this with its own aim.");
+    L.Text("Look at Object##char", &ch->lookAtTarget);
+    L.Tip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera.");
+    L.Slider("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f); L.TipLookup();
+    L.Section("Feel");
+    L.Slider("Jump Crouch (s)##char", &ch->jumpCrouchTime, 0.0f, 0.4f, "%.2f"); L.Tip("How long the knees dip as a jump starts. The jump is not delayed.");
+    L.Slider("Jump Crouch Bend##char", &ch->jumpCrouchBend, 0.0f, 60.0f, "%.0f deg"); L.TipLookup();
+    L.Slider("Turn Step Angle##char", &ch->turnStepAngle, 0.0f, 120.0f, "%.0f deg"); L.Tip("Standing still, the body can twist this far before a foot steps.");
+    L.Slider("Turn Step Time##char", &ch->turnStepTime, 0.05f, 0.6f, "%.2f"); L.TipLookup();
+    L.Slider("Turn Step Lift##char", &ch->turnStepLift, 0.0f, 70.0f, "%.0f deg"); L.TipLookup();
+    L.Slider("Turn Still Speed##char", &ch->turnStillSpeed, 0.0f, 2.0f, "%.2f"); L.TipLookup();
+    L.Slider("Motion Lean##char", &ch->motionLean, 0.0f, 2.0f, "%.2f"); L.Tip("Lean into speeding up and turning. 0 turns it off.");
+    L.Slider("Motion Lean Max##char", &ch->motionLeanMax, 0.0f, 15.0f, "%.0f deg"); L.TipLookup();
+    if (!DrawRowsOkayUI(ch, "##okayui_character", L)) return false;
+    RunCharacterModelToolRows(L, ed, go, mt);
+    bool apply = false;
+    for (int k : applyRows) if (L[k].changed) apply = true;
+    for (std::size_t k = 0; k < L.rows.size(); ++k)
+        if (L.rows[k].changed && std::find(applyRows.begin(), applyRows.end(), (int)k) == applyRows.end()) ed.dirty = true;   // the rest: dirty only
+    if (kUnrig >= 0 && L[kUnrig].clicked) { ed.PushUndo(); ch->ClearCustomBind(); ch->Apply(); ed.dirty = true; ConsoleLog("Removed the rigged model; blocky body restored"); }
+    if (kParts >= 0 && L[kParts].changed) { if (ch->separateParts) ch->BuildParts(); else ch->RemoveParts(); ed.dirty = true; }
+    for (Bind& b : binds) if (b.row >= 0 && L[b.row].changed) { *b.field = b.cur == 0 ? std::string() : clips[(std::size_t)b.cur - 1]; ed.dirty = true; }
+    for (const auto& pv : previews)
+        if (L[pv.first].clicked) {
+            namespace apv = okay::editor::apreview;
+            if (apv::IsClip(ch, pv.second)) apv::Stop(ed.scene()); else apv::StartCharacterClip(ed.scene(), ch, pv.second, ed.isPlaying());
+        }
+    RunTransportRows(L, transport);
+    if (apply) { ch->Apply(); ed.dirty = true; }
+    return true;
+}
+
+static bool DrawPlayerControllerWithOkayUI(EditorState& ed, GameObject* go, PlayerController* pc) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"First Person only", "Third Person only", "Both"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    RowText T;
+    int mode = (int)pc->viewMode();
+    const int kMode = L.Combo("View##pc", &mode, kModes, 3);
+    L.Tip("Which views the player has.\nBoth: a key switches between them and the camera blends.\nOne view only: no toggle, and the other view's settings are dropped.");
+    const int kNatural = AddNaturalSpeedsRows(L, "pc", T);
+    ModelToolRows mt;
+    AddCharacterModelToolRows(L, ed, go, "pc", mt, T);
+    if (pc->viewMode() != PlayerController::ViewMode::Both)
+        L.Note(pc->viewMode() == PlayerController::ViewMode::First ? "First person only. Pick Both to let the player switch."
+                                                                   : "Third person only. Pick Both to let the player switch.");
+    if (!DrawRowsOkayUI(pc, "##okayui_playerctrl", L)) return false;
+    if (L[kMode].changed && mode != (int)pc->viewMode()) { sPendingViewModeCtrl = pc; sPendingViewMode = mode; }
+    if (L[kNatural].clicked) {
+        ed.PushUndo("Natural walk and run speeds");
+        if (auto* f = pc->first()) okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
+        if (auto* t = pc->third()) okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
+        ed.dirty = true;
+    }
+    RunCharacterModelToolRows(L, ed, go, mt);
+    return true;
+}
+
+static bool DrawPlayerViewWithOkayUI(EditorState& ed, PlayerView* pv, bool owned, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kViews[] = {"First person", "Third person"};
+    static const char* const kEases[] = {"Linear", "Smooth", "Ease In", "Ease Out"};
+    InspFieldList L;
+    L.rows.reserve(20);
+    L.Check("Allow Toggle##pv", &pv->allowToggle); L.Tip("V (or the gamepad button) switches first and third person. Off leaves the controller's camera alone.");
+    int view = (pv->defaultView == PlayerView::View::First) ? 0 : 1;
+    const int kView = L.Combo("Default View##pv", &view, kViews, 2);
+    KeyRows keys;
+    keys.Add(L, "Toggle Key##pv", pv->toggleKey);
+    PadRow pad;
+    AddPadRow(L, "Toggle Pad Button##pv", pv->toggleGamepadButton, pad);
+    L.Tip("Gamepad button that switches view. Back is the right-stick stand-in (the engine has no stick-click id).");
+    L.Drag("Switch Blend Time##pv", &pv->blendTime, 1, 0.01f, 0.0f, 3.0f, "%.2f s");
+    L.Tip("How long a full switch takes. Reversing starts from wherever the camera is. Zero snaps.");
+    int ease = (int)pv->switchEase;
+    const int kEase = L.Combo("Easing##pv", &ease, kEases, 4); L.Tip("How the camera, the hands and a held item move between the eyes and the orbit.");
+    L.Check("Snap##pv", &pv->snapSwitch); L.Tip("Jump between first and third person in one frame.");
+    L.Drag("Eye Offset##pv", &pv->eyeOffset.x, 3, 0.01f); L.Tip("Added at the eyes. +X right, +Y up, +Z back.");
+    L.Drag("Third Person Distance##pv", &pv->thirdPersonDistance, 1, 0.05f, -1.0f, 40.0f);
+    L.Tip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
+    L.Drag("Shoulder Offset##pv", &pv->shoulderOffset, 1, 0.01f, -3.0f, 3.0f); L.Tip("Over-the-shoulder shift while this view is driving.");
+    L.Note("V eases between the eyes and the orbit.");
+    const int kRemove = owned ? -1 : L.SmallButton("Remove##pv");
+    if (!DrawRowsOkayUI(pv, "##okayui_playerview", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kView].changed) pv->defaultView = view == 0 ? PlayerView::View::First : PlayerView::View::Third;
+    keys.Run(L);
+    if (L[pad.row].changed) pv->toggleGamepadButton = pad.idx - 1;
+    if (L[kEase].changed) pv->switchEase = (PlayerView::SwitchEase)ease;
+    if (kRemove >= 0 && L[kRemove].clicked) toRemove = pv;
+    return true;
+}
+
+// The parts both controllers share after their own rows: Lean, Slide, Dodge, Traversal, Animation & IK.
+template <class C>
+static void AddDodgeRows(okaypanels::InspFieldList& L, C* c, const char* id, std::string& dodgeKey, int& kDodgeKey, RowText& T, bool firstPerson) {
+    L.Section("Dodge");
+    L.Check(T(std::string("Can Dodge##") + id), &c->dodge.canDodge);
+    if (firstPerson) L.Tip("Off by default. dodge() from a script still works.\nThe key does nothing until this is on.");
+    else L.TipLookup();
+    if (c->dodge.canDodge) {
+        dodgeKey.assign(c->dodge.key ? 1 : 0, c->dodge.key);
+        kDodgeKey = L.Text(T(std::string("Dodge Key##") + id), &dodgeKey); L.TipLookup();
+        L.Drag(T(std::string("Dodge Speed##") + id), &c->dodge.impulse, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+        L.Drag(T(std::string("Dodge Time##") + id), &c->dodge.duration, 1, 0.01f, 0.05f, 2.0f, "%.2f s"); L.TipLookup();
+        L.Drag(T(std::string("Cooldown##") + id), &c->dodge.cooldown, 1, 0.01f, 0.0f, 5.0f, "%.2f s"); L.TipLookup();
+        L.Drag(T(std::string("Stamina##") + id), &c->dodge.stamina, 1, 0.5f, 0.0f, 100.0f); L.TipLookup();
+        L.Check(T(std::string("I-Frames##") + id), &c->dodge.iFrames);
+        if (firstPerson) L.Tip("Off by default. While on, Health ignores damage during the burst.");
+        else L.TipLookup();
+    }
+}
+template <class C>
+static void AddTraversalRows(okaypanels::InspFieldList& L, C* c, const char* id, RowText& T) {
+    L.Section("Traversal");
+    L.Check(T(std::string("Can Vault##") + id), &c->canVault); L.Tip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+    L.Check(T(std::string("Can Mantle##") + id), &c->canMantle); L.Tip("Walk into a low or high ledge and climb it. Off by default.");
+    L.Check(T(std::string("Can Ledge Grab##") + id), &c->canLedgeGrab); L.Tip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
+    L.Section("Animation & IK");
+    L.Check(T(std::string("Drive State Machine##") + id), &c->driveStateMachine);
+    L.Tip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
+    L.Check(T(std::string("Full Body IK looks with camera##") + id), &c->ikLook); L.TipLookup();
+}
+
+static bool DrawFirstPersonWithOkayUI(EditorState& ed, GameObject* go, FirstPersonController* fp, bool owned, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kFeel[3] = {"Tactical", "Arcade", "Floaty"};
+    InspFieldList L;
+    L.rows.reserve(140);
+    RowText T;
+    ModelToolRows mt;
+    if (!owned) AddCharacterModelToolRows(L, ed, go, "fp", mt, T);
+    L.Note("Feel:");
+    int kFeelRow[3];
+    for (int i = 0; i < 3; ++i) { L.SameLine(i ? 4.0f : -1.0f); kFeelRow[i] = L.SmallButton(kFeel[i]); }
+    L.Drag("Walk Speed##fp", &fp->walkSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Drag("Run Speed##fp", &fp->runSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    AddWalkHintRows(L, fp->walkSpeed, T);
+    const int kNatural = owned ? -1 : AddNaturalSpeedsRows(L, "fp", T);
+    L.Drag("Jump Force##fp", &fp->jumpForce, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Drag("Walk Accel##fp", &fp->walkAcceleration, 1, 1.0f, 1.0f, 300.0f); L.TipLookup();
+    L.Drag("Run Accel##fp", &fp->acceleration, 1, 1.0f, 1.0f, 300.0f); L.TipLookup();
+    L.Drag("Decel##fp", &fp->deceleration, 1, 1.0f, 1.0f, 300.0f); L.TipLookup();
+    L.Drag("Turn Rate##fp", &fp->steerRate, 1, 1.0f, 1.0f, 600.0f); L.Tip("How fast a turn drops the old heading. The mouse still aims directly.");
+    L.Drag("Air Control##fp", &fp->airControl, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+    L.Drag("Coyote Time##fp", &fp->coyoteTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+    L.Drag("Jump Buffer##fp", &fp->jumpBufferTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+    L.Drag("Mouse Sensitivity##fp", &fp->mouseSensitivity, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+    L.Drag("Captured Sensitivity##fp", &fp->capturedSensitivity, 1, 0.005f, 0.0f, 1.0f); L.Tip("Degrees per pixel while the cursor is locked or confined.");
+    L.Drag("Captured Pixel Cap##fp", &fp->capturedPixelCap, 1, 1.0f, 4.0f, 120.0f, "%.0f px"); L.TipLookup();
+    L.Check("Invert Y##fp", &fp->invertY); L.TipLookup();
+    L.Check("Can Jump##fp", &fp->canJump); L.TipLookup();
+    if (fp->canJump) { L.SameLine(); L.DragInt("Max Jumps##fp", &fp->maxJumps, 0.1f, 1, 5); L.Last().width = 90.0f; L.Tip("1 = single, 2 = double jump, ..."); }
+    L.Check("Drive Animation##fp", &fp->driveAnimation); L.TipLookup();
+    L.Check("Foot IK##fp", &fp->footIK); L.Tip("Plant the Character's feet on the ground (foot IK) at Play.");
+    L.Check("Lock + Hide Cursor##fp", &fp->lockCursor);
+    L.Tip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
+    L.Section("Run / Stance");
+    KeyRows keys;
+    keys.Add(L, "Sprint Key##fp", fp->sprintKey);
+    L.SameLine(); L.Check("Toggle Run##fp", &fp->toggleRun);
+    keys.Add(L, "Crouch Key##fp", fp->crouchKey);
+    L.SameLine(); keys.Add(L, "Prone Key##fp", fp->proneKey);
+    L.Check("Toggle Stance##fp", &fp->toggleStance); L.Tip("Tap to toggle the stance; off = hold the key");
+    L.Drag("Crouch Speed##fp", &fp->crouchSpeed, 1, 0.1f, 0.0f, 20.0f); L.TipLookup();
+    L.Drag("Prone Speed##fp", &fp->proneSpeed, 1, 0.1f, 0.0f, 20.0f); L.TipLookup();
+    L.Check("Allow Prone##fp", &fp->allowProne); L.Tip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
+    L.SameLine(); L.Check("Resize Body##fp", &fp->resizeBody);
+    L.Tip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
+    if (fp->resizeBody) {
+        L.Slider("Crouch Height##fp", &fp->crouchHeight, 0.3f, 1.0f, "%.2f x standing"); L.TipLookup();
+        L.Slider("Prone Height##fp", &fp->proneHeight, 0.15f, 0.8f, "%.2f x standing"); L.TipLookup();
+    }
+    PadRow pad;
+    AddPadRow(L, "Stance Pad Button##fp", fp->stanceGamepadButton, pad); L.Tip("Gamepad: tap to crouch / stand up, hold to go prone.");
+    if (fp->allowProne) { L.SameLine(); L.Drag("Hold For Prone##fp", &fp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
+    L.Drag("Stand Eye Height##fp", &fp->standEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
+    L.Drag("Crouch Eye Height##fp", &fp->crouchEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
+    L.Drag("Prone Eye Height##fp", &fp->proneEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
+    L.Drag("Stance Ease##fp", &fp->stanceLerp, 1, 0.5f, 0.0f, 40.0f); L.TipLookup();
+    L.Section("Lean (peek)");
+    keys.Add(L, "Lean Left##fp", fp->leanLeftKey);
+    L.SameLine(); keys.Add(L, "Lean Right##fp", fp->leanRightKey);
+    L.Drag("Lean Angle##fp", &fp->leanAngle, 1, 0.5f, 0.0f, 45.0f, "%.1f deg"); L.TipLookup();
+    L.Drag("Lean Offset##fp", &fp->leanOffset, 1, 0.02f, 0.0f, 2.0f); L.TipLookup();
+    L.Drag("Lean Ease##fp", &fp->leanSpeed, 1, 0.5f, 0.0f, 40.0f); L.TipLookup();
+    L.Section("Feel");
+    L.Drag("Look Smoothing##fp", &fp->lookSmoothing, 1, 0.002f, 0.0f, 0.2f, fp->lookSmoothing <= 0 ? "raw" : "%.3f s"); L.TipLookup();
+    L.Drag("Sprint FOV Boost##fp", &fp->sprintFovBoost, 1, 0.2f, 0.0f, 30.0f, "%.1f deg"); L.TipLookup();
+    L.Check("Right-mouse Zoom##fp", &fp->zoomWithRightMouse); L.TipLookup();
+    if (fp->zoomWithRightMouse) {
+        L.SameLine(); L.Drag("FOV##fpz", &fp->zoomFov, 1, 0.5f, 5.0f, 90.0f, "%.0f"); L.Last().width = 70.0f; L.TipLookup();
+        L.Drag("Zoom Sensitivity##fp", &fp->zoomSensitivity, 1, 0.01f, 0.05f, 1.0f); L.TipLookup();
+    }
+    L.Drag("Landing Dip##fp", &fp->landDip, 1, 0.005f, 0.0f, 0.5f); L.TipLookup();
+    L.Drag("Eye Step Smoothing##fp", &fp->eyeStepSmoothing, 1, 0.2f, 0.0f, 60.0f, fp->eyeStepSmoothing <= 0 ? "off" : "%.1f");
+    L.Tip("When the body is lifted or dropped on the ground (a step, a curb, a platform),\nthe eye eases there instead of popping. Higher = quicker; 0 = off.");
+    L.Section("Head Bob");
+    L.Check("Head Bob##fp", &fp->headBob); L.TipLookup();
+    if (fp->headBob) {
+        L.Drag("Bob##fp", &fp->bobAmount, 1, 0.001f, 0.0f, 0.3f, "%.3f m"); L.Tip("Camera bob height. At a walk it follows the footstep cycle.");
+        L.Drag("Bob Speed##fp", &fp->bobSpeed, 1, 0.1f, 0.0f, 30.0f); L.Tip("Bob cadence at walking speed (it speeds up with you).");
+        L.Drag("Bob Sway##fp", &fp->bobSway, 1, 0.05f, 0.0f, 15.0f, fp->bobSway <= 0 ? "off" : "%.2f deg");
+        L.Tip("Side-to-side camera roll while walking, in degrees, once per stride\nin step with the bob. 0 = off. Fades out in the air and when you stop.");
+        L.Drag("Bob Run Scale##fp", &fp->bobRunScale, 1, 0.01f, 0.0f, 2.0f, "x%.2f"); L.Tip("Bob size at run speed, times the walking bob.");
+        L.Drag("Bob Blend##fp", &fp->bobBlend, 1, 0.1f, 0.0f, 40.0f); L.Tip("How fast the bob fades in and out as you start and stop (0 = at once).");
+        L.Drag("Bob Ground Grace##fp", &fp->bobGroundGrace, 1, 0.005f, 0.0f, 0.5f, "%.3f s");
+        L.Tip("The bob and the landing dip still count you as grounded this long\nafter you leave the ground, so stairs and slopes don't twitch them.");
+    }
+    L.Section("Slide (sprint + crouch)");
+    L.Check("Can Slide##fp", &fp->canSlide); L.TipLookup();
+    if (fp->canSlide) {
+        L.Drag("Slide Speed##fp", &fp->slideSpeed, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+        L.Drag("Slide Time##fp", &fp->slideTime, 1, 0.01f, 0.05f, 3.0f, "%.2f s"); L.TipLookup();
+        L.Drag("Slide Eye Height##fp", &fp->slideEyeHeight, 1, 0.01f, 0.1f, 2.0f); L.TipLookup();
+    }
+    L.Check("Dive On Prone While Sprinting##fp", &fp->diveOnProneWhileSprinting);
+    L.Tip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged. Off: prone works as before.");
+    if (fp->diveOnProneWhileSprinting) {
+        L.Drag("Dive Hop##fp", &fp->diveHop, 1, 0.01f, 0.0f, 1.5f, "%.2f m"); L.TipLookup();
+        L.Drag("Dive Slide Time##fp", &fp->diveSlideTime, 1, 0.01f, 0.05f, 2.0f, "%.2f s"); L.TipLookup();
+    }
+    std::string dodgeKey; int kDodgeKey = -1;
+    AddDodgeRows(L, fp, "fp", dodgeKey, kDodgeKey, T, true);
+    AddTraversalRows(L, fp, "fp", T);
+    L.Note("Mouse look + WASD. Put a Camera as a child (eye height).");
+    const int kRemove = owned ? -1 : L.SmallButton("Remove##fp");
+    if (!DrawRowsOkayUI(fp, "##okayui_firstperson", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (!owned) RunCharacterModelToolRows(L, ed, go, mt);
+    for (int i = 0; i < 3; ++i) if (L[kFeelRow[i]].clicked) {
+        ed.PushUndo();
+        FirstPersonController& F = *fp;
+        switch (i) {
+            case 0: F.walkSpeed = 2.0f; F.runSpeed = 5.5f; F.jumpForce = 4.5f; F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
+                    F.deceleration = 35.0f; F.airControl = 0.15f; F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f; break;
+            case 1: F.walkSpeed = 5.5f; F.runSpeed = 9.0f; F.jumpForce = 6.5f; F.walkAcceleration = 70.0f; F.acceleration = 90.0f; F.steerRate = 280.0f;
+                    F.deceleration = 100.0f; F.airControl = 0.6f; F.coyoteTime = 0.12f; F.jumpBufferTime = 0.12f; break;
+            default: F.walkSpeed = 4.0f; F.runSpeed = 7.0f; F.jumpForce = 9.0f; F.walkAcceleration = 28.0f; F.acceleration = 40.0f; F.steerRate = 80.0f;
+                     F.deceleration = 25.0f; F.airControl = 0.8f; F.coyoteTime = 0.15f; F.jumpBufferTime = 0.15f; break;
+        }
+        ed.dirty = true;
+    }
+    if (kNatural >= 0 && L[kNatural].clicked) {
+        ed.PushUndo("Natural walk and run speeds");
+        okay::NaturalGait::UseNaturalSpeeds(fp->walkSpeed, fp->runSpeed, fp->crouchSpeed, fp->proneSpeed, okay::NaturalGait::kRunSpeed);
+        ed.dirty = true;
+    }
+    keys.Run(L);
+    if (L[pad.row].changed) fp->stanceGamepadButton = pad.idx - 1;
+    if (kDodgeKey >= 0 && L[kDodgeKey].changed) fp->dodge.key = dodgeKey.empty() ? 0 : dodgeKey[0];
+    if (kRemove >= 0 && L[kRemove].clicked) toRemove = fp;
+    return true;
+}
+
+static bool DrawThirdPersonWithOkayUI(EditorState& ed, GameObject* go, ThirdPersonController* tp, bool owned, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTFeel[3] = {"Grounded", "Arcade", "Floaty"};
+    static const char* const kCursor[] = {"None", "Locked", "Confined"};
+    static const char* const kFace[] = {"Face Movement", "Face Camera"};
+    InspFieldList L;
+    L.rows.reserve(160);
+    RowText T;
+    ModelToolRows mt;
+    if (!owned) AddCharacterModelToolRows(L, ed, go, "tp", mt, T);
+    L.Section("Movement");
+    L.Note("Feel:");
+    int kFeelRow[3];
+    for (int i = 0; i < 3; ++i) { L.SameLine(i ? 4.0f : -1.0f); kFeelRow[i] = L.SmallButton(kTFeel[i]); }
+    L.Drag("Walk Speed##tp", &tp->walkSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Drag("Run Speed##tp", &tp->runSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    AddWalkHintRows(L, tp->walkSpeed, T);
+    const int kNatural = owned ? -1 : AddNaturalSpeedsRows(L, "tp", T);
+    L.Drag("Jump Force##tp", &tp->jumpForce, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Drag("Turn Rate##tp", &tp->turnSpeed, 1, 0.1f, 0.0f, 40.0f); L.Tip("How fast the body rotates toward the way it is moving.");
+    L.Drag("Walk Accel##tp", &tp->walkAcceleration, 1, 1.0f, 1.0f, 300.0f); L.TipLookup();
+    L.Drag("Run Accel##tp", &tp->acceleration, 1, 1.0f, 1.0f, 300.0f); L.Tip("Higher = snappier starts; very high ~= instant (no momentum)");
+    L.Drag("Decel##tp", &tp->deceleration, 1, 1.0f, 1.0f, 300.0f); L.TipLookup();
+    L.Drag("Steer##tp", &tp->steerRate, 1, 1.0f, 1.0f, 600.0f); L.Tip("How fast a turn drops the old velocity heading.");
+    L.Drag("Air Control##tp", &tp->airControl, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+    L.Drag("Coyote Time##tp", &tp->coyoteTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.Tip("Grace window to still jump just after leaving a ledge");
+    L.Drag("Jump Buffer##tp", &tp->jumpBufferTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.Tip("Remembers a jump pressed just before landing");
+    L.Check("Can Jump##tp", &tp->canJump); L.TipLookup();
+    L.SameLine(); L.Check("Drive Animation##tp", &tp->driveAnimation); L.TipLookup();
+    L.Check("Foot IK##tp", &tp->footIK); L.TipLookup();
+    L.Drag("Step Offset##tp", &tp->stepOffset, 1, 0.01f, 0.0f, 1.0f); L.Tip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+    int cmode = tp->cursorMode;
+    if (cmode < 0 || cmode > 2) cmode = tp->lockCursor ? 1 : 0;
+    const int kCursorRow = L.Combo("Cursor##tp", &cmode, kCursor, 3);
+    L.Tip("Hide and lock the mouse to the window while playing. Off keeps a normal pointer for clicking UI.");   // the later of Dear ImGui's two tips wins
+    if (tp->canJump) { L.DragInt("Max Jumps##tp", &tp->maxJumps, 0.1f, 1, 5); L.Last().width = 90.0f; L.Tip("1 = single, 2 = double jump, ..."); }
+    int fm = (int)tp->faceMode;
+    const int kFaceRow = L.Combo("Body Facing##tp", &fm, kFace, 2); L.Last().width = 160.0f; L.TipLookup();
+    L.Section("Camera");
+    L.Drag("Mouse Sensitivity##tp", &tp->mouseSensitivity, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+    L.Drag("Captured Sensitivity##tp", &tp->capturedSensitivity, 1, 0.005f, 0.0f, 1.0f);
+    L.Tip("Degrees per pixel while the cursor is locked or confined.\nA captured delta is raw device motion, so this stays gentler than a free cursor.");
+    L.Drag("Captured Pixel Cap##tp", &tp->capturedPixelCap, 1, 1.0f, 4.0f, 120.0f, "%.0f px");
+    L.Tip("One captured frame cannot turn more than this many pixels.\nStops a warp, or one injected move, from pitching the camera through the ground.");
+    L.Check("Invert X##tp", &tp->invertX); L.TipLookup();
+    L.SameLine(); L.Check("Invert Y##tp", &tp->invertY); L.TipLookup();
+    L.Drag("Distance##tp", &tp->distance, 1, 0.1f, 1.0f, 20.0f); L.TipLookup();
+    L.Drag("Min Distance##tp", &tp->minDistance, 1, 0.1f, 0.5f, 20.0f); L.TipLookup();
+    L.Drag("Max Distance##tp", &tp->maxDistance, 1, 0.1f, 1.0f, 40.0f); L.TipLookup();
+    L.Drag("Zoom Speed##tp", &tp->zoomSpeed, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+    L.Drag("Camera Height##tp", &tp->cameraHeight, 1, 0.05f, 0.0f, 5.0f); L.TipLookup();
+    L.Drag("Shoulder Offset##tp", &tp->shoulderOffset, 1, 0.02f, -3.0f, 3.0f); L.TipLookup();
+    L.Drag("Follow Damping##tp", &tp->pivotDampingXZ, 1, 0.1f, 0.0f, 60.0f, "%.1f");
+    L.Tip("How tightly the camera's pivot (the player's head) follows sideways.\nHigher = tighter; 0 = instant. The camera always turns around the pivot\nwith no lag of its own, so the player stays centred while you orbit.");
+    L.Drag("Vertical Damping##tp", &tp->pivotDampingY, 1, 0.1f, 0.0f, 60.0f, "%.1f");
+    L.Tip("How tightly the pivot follows up and down. Lower than Follow Damping\nso steps, landings and bob don't pop the view. 0 = instant.");
+    L.Drag("Max Follow Lag##tp", &tp->maxPivotLag, 1, 0.01f, 0.0f, 5.0f, "%.2f m"); L.Tip("The pivot never trails the player by more than this (0 = no limit).");
+    L.Drag("Orbit Smoothing##tp", &tp->orbitSmoothing, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.Tip("Eases the camera's turning toward the mouse (seconds). 0 = raw.");
+    L.Check("Camera Collision##tp", &tp->cameraCollision); L.Tip("Pull the camera in so it never clips through walls/floors");
+    std::string layers;
+    int kLayers = -1;
+    if (tp->cameraCollision) {
+        L.Drag("Collision Skin##tp", &tp->cameraCollisionSkin, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+        L.Drag("Collision Radius##tp", &tp->cameraCollisionRadius, 1, 0.01f, 0.0f, 1.0f);
+        L.Tip("The camera is a sphere this big: it doesn't flicker on edges, poles and railings.\nTriggers and the player's own parts never block it.");
+        layers = LayerMaskToList(tp->cameraCollisionMask);
+        kLayers = L.Text("Collision Layers##tp", &layers, "all layers");
+        L.Tip("Collider layers that block the camera: numbers or names\nseparated by commas (0,3 or Default,Walls). Blank = all layers.");
+        L.Drag("Collision Recover##tp", &tp->cameraCollisionRecover, 1, 0.1f, 0.0f, 30.0f); L.Tip("How fast the camera glides back out once an obstacle clears (0 = at once).");
+    }
+    L.Drag("Min Pitch##tp", &tp->minPitch, 1, 0.5f, -89.0f, 0.0f); L.TipLookup();
+    L.Drag("Max Pitch##tp", &tp->maxPitch, 1, 0.5f, 0.0f, 89.0f); L.TipLookup();
+    L.Section("Run / Stance");
+    KeyRows keys;
+    keys.Add(L, "Sprint Key##tp", tp->sprintKey);
+    L.SameLine(); L.Check("Toggle Run##tp", &tp->toggleRun);
+    keys.Add(L, "Crouch Key##tp", tp->crouchKey);
+    L.SameLine(); keys.Add(L, "Prone Key##tp", tp->proneKey);
+    L.Check("Toggle Stance##tp", &tp->toggleStance); L.Tip("Tap to toggle the stance; off = hold the key");
+    L.Drag("Crouch Speed##tp", &tp->crouchSpeed, 1, 0.1f, 0.0f, 20.0f); L.TipLookup();
+    L.Drag("Prone Speed##tp", &tp->proneSpeed, 1, 0.1f, 0.0f, 20.0f); L.TipLookup();
+    L.Check("Allow Prone##tp", &tp->allowProne); L.Tip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
+    L.SameLine(); L.Check("Resize Body##tp", &tp->resizeBody);
+    L.Tip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
+    if (tp->resizeBody) {
+        L.Slider("Crouch Height##tp", &tp->crouchHeight, 0.3f, 1.0f, "%.2f x standing"); L.TipLookup();
+        L.Slider("Prone Height##tp", &tp->proneHeight, 0.15f, 0.8f, "%.2f x standing"); L.TipLookup();
+    }
+    PadRow pad;
+    AddPadRow(L, "Stance Pad Button##tp", tp->stanceGamepadButton, pad); L.Tip("Gamepad: tap to crouch / stand up, hold to go prone.");
+    if (tp->allowProne) { L.SameLine(); L.Drag("Hold For Prone##tp", &tp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
+    L.Drag("Crouch Drop##tp", &tp->crouchHeightDrop, 1, 0.05f, 0.0f, 3.0f); L.Tip("How far the camera's look target lowers when crouched");
+    L.Drag("Prone Drop##tp", &tp->proneHeightDrop, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
+    L.Drag("Stance Ease##tp", &tp->stanceLerp, 1, 0.5f, 0.0f, 40.0f); L.TipLookup();
+    L.Section("Lean (peek)");
+    keys.Add(L, "Lean Left##tp", tp->leanLeftKey);
+    L.SameLine(); keys.Add(L, "Lean Right##tp", tp->leanRightKey);
+    L.Drag("Lean Angle##tp", &tp->leanAngle, 1, 0.5f, 0.0f, 45.0f, "%.1f deg"); L.TipLookup();
+    L.Drag("Lean Offset##tp", &tp->leanOffset, 1, 0.02f, 0.0f, 2.0f); L.TipLookup();
+    L.Drag("Lean Ease##tp", &tp->leanSpeed, 1, 0.5f, 0.0f, 40.0f); L.TipLookup();
+    L.Section("Feel");
+    L.Drag("Look Smoothing##tp", &tp->lookSmoothing, 1, 0.002f, 0.0f, 0.2f, tp->lookSmoothing <= 0 ? "raw" : "%.3f s"); L.TipLookup();
+    L.Drag("Sprint FOV Boost##tp", &tp->sprintFovBoost, 1, 0.2f, 0.0f, 30.0f, "%.1f deg"); L.TipLookup();
+    L.Drag("Landing Shake##tp", &tp->landShake, 1, 0.005f, 0.0f, 1.0f); L.TipLookup();
+    L.Drag("Stride Length##tp", &tp->strideLength, 1, 0.02f, 0.2f, 5.0f); L.Tip("Distance per footstep event (onFootstep) at walking speed.");
+    L.Section("Aim (hold right mouse)");
+    L.Check("Right-mouse Aim##tp", &tp->aimWithRightMouse); L.TipLookup();
+    if (tp->aimWithRightMouse) {
+        L.Drag("Aim Distance##tp", &tp->aimDistance, 1, 0.05f, 0.5f, 10.0f); L.TipLookup();
+        L.Drag("Aim Shoulder##tp", &tp->aimShoulder, 1, 0.02f, -3.0f, 3.0f); L.TipLookup();
+        L.Drag("Aim FOV##tp", &tp->aimFov, 1, 0.5f, 10.0f, 90.0f, "%.0f"); L.TipLookup();
+        L.Drag("Aim Sensitivity##tp", &tp->aimSensitivity, 1, 0.01f, 0.05f, 1.0f); L.TipLookup();
+    }
+    L.Check("Auto-recenter Camera##tp", &tp->autoRecenter); L.TipLookup();
+    if (tp->autoRecenter) {
+        L.Drag("Recenter Delay##tp", &tp->recenterDelay, 1, 0.05f, 0.0f, 10.0f, "%.2f s"); L.TipLookup();
+        L.Drag("Recenter Speed##tp", &tp->recenterSpeed, 1, 0.05f, 0.1f, 20.0f); L.TipLookup();
+    }
+    L.Section("Slide (sprint + crouch)");
+    L.Check("Can Slide##tp", &tp->canSlide); L.TipLookup();
+    if (tp->canSlide) {
+        L.Drag("Slide Speed##tp", &tp->slideSpeed, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+        L.Drag("Slide Time##tp", &tp->slideTime, 1, 0.01f, 0.05f, 3.0f, "%.2f s"); L.TipLookup();
+    }
+    L.Check("Dive On Prone While Sprinting##tp", &tp->diveOnProneWhileSprinting);
+    L.Tip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged.");
+    if (tp->diveOnProneWhileSprinting) {
+        L.Drag("Dive Hop##tp", &tp->diveHop, 1, 0.01f, 0.0f, 1.5f, "%.2f m"); L.TipLookup();
+        L.Drag("Dive Slide Time##tp", &tp->diveSlideTime, 1, 0.01f, 0.05f, 2.0f, "%.2f s"); L.TipLookup();
+    }
+    std::string dodgeKey; int kDodgeKey = -1;
+    AddDodgeRows(L, tp, "tp", dodgeKey, kDodgeKey, T, false);
+    AddTraversalRows(L, tp, "tp", T);
+    L.Note("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
+    const int kRemove = owned ? -1 : L.SmallButton("Remove##tp");
+    if (!DrawRowsOkayUI(tp, "##okayui_thirdperson", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (!owned) RunCharacterModelToolRows(L, ed, go, mt);
+    for (int i = 0; i < 3; ++i) if (L[kFeelRow[i]].clicked) {
+        ed.PushUndo();
+        ThirdPersonController& C = *tp;
+        switch (i) {
+            case 0: C.walkSpeed = 2.0f; C.runSpeed = 5.5f; C.jumpForce = 5.0f; C.walkAcceleration = 22.0f; C.acceleration = 30.0f; C.steerRate = 90.0f; C.turnSpeed = 10.0f;
+                    C.deceleration = 35.0f; C.airControl = 0.2f; C.coyoteTime = 0.08f; break;
+            case 1: C.walkSpeed = 5.0f; C.runSpeed = 8.5f; C.jumpForce = 7.0f; C.walkAcceleration = 70.0f; C.acceleration = 90.0f; C.steerRate = 280.0f; C.turnSpeed = 30.0f;
+                    C.deceleration = 100.0f; C.airControl = 0.7f; C.coyoteTime = 0.12f; break;
+            default: C.walkSpeed = 4.0f; C.runSpeed = 7.0f; C.jumpForce = 9.5f; C.walkAcceleration = 28.0f; C.acceleration = 40.0f; C.steerRate = 80.0f; C.turnSpeed = 12.0f;
+                     C.deceleration = 25.0f; C.airControl = 0.85f; C.coyoteTime = 0.15f; break;
+        }
+        ed.dirty = true;
+    }
+    if (kNatural >= 0 && L[kNatural].clicked) {
+        ed.PushUndo("Natural walk and run speeds");
+        okay::NaturalGait::UseNaturalSpeeds(tp->walkSpeed, tp->runSpeed, tp->crouchSpeed, tp->proneSpeed, okay::NaturalGait::kRunSpeed);
+        ed.dirty = true;
+    }
+    if (L[kCursorRow].changed) { tp->cursorMode = cmode; tp->lockCursor = cmode != 0; if (cmode == 0) Cursor::Capture(false); }
+    if (L[kFaceRow].changed) tp->faceMode = (ThirdPersonController::FaceMode)fm;
+    if (kLayers >= 0 && L[kLayers].changed) tp->cameraCollisionMask = okay::Layers::MaskFromList(layers);
+    keys.Run(L);
+    if (L[pad.row].changed) tp->stanceGamepadButton = pad.idx - 1;
+    if (kDodgeKey >= 0 && L[kDodgeKey].changed) tp->dodge.key = dodgeKey.empty() ? 0 : dodgeKey[0];
+    if (kRemove >= 0 && L[kRemove].clicked) toRemove = tp;
+    return true;
+}
+
+// The Animator state machine: Open Animator Graph, the default-graph buttons on a Character, the entry state, the stance and gait
+// fold-outs, then each state (name, clip, speed, loop, x; Preview / Edit clip with the transport) and its transitions fold-out (target,
+// condition, parameter, value, blend, x; + Transition), + Add State and the script note.
+static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, AnimStateMachine* sm) {
+    using namespace okaypanels;
+    namespace apv = okay::editor::apreview;
+    static const char* const kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
+    InspFieldList L;
+    L.rows.reserve(64 + sm->states.size() * 16);
+    RowText T;
+    const int kGraph = L.Button("Open Animator Graph##asm");
+    L.Tip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
+    auto* ma = go->GetComponent<ModelAnimator>();
+    auto* body = ma ? nullptr : go->GetComponent<Character>();
+    if (!ma && !body) L.ColorText(RowCol(0.95f, 0.7f, 0.4f), "Needs a Model Animator (import a model here) or a Character on this object.");
+    int kReset = -1, kActions = -1;
+    if (body && sm->layer == 0) {
+        L.SameLine(); kReset = L.Button("Reset to default##asm");
+        L.Tip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\nProne, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
+        L.SameLine(); kActions = L.Button("Add built-in actions##asm");
+        L.Tip("Add any built-in action states this graph is missing (Death, and later\nones). States you already edited are left as they are.");
+    }
+    auto shownClip = [](const AnimStateMachine::State& st) -> std::string {   // as the Dear ImGui body: a blend tree's middle motion
+        if (!st.blendTree || st.motions.empty()) return st.clip;
+        std::vector<float> along;
+        for (const auto& m : st.motions) along.push_back(st.blendDims == 2 ? m.posY : m.threshold);
+        std::nth_element(along.begin(), along.begin() + along.size() / 2, along.end());
+        const float mid = along[along.size() / 2];
+        const AnimStateMachine::Motion* best = nullptr; float bd = 1e30f;
+        for (const auto& m : st.motions) {
+            const float dx = st.blendDims == 2 ? m.threshold : 0.0f, dy = (st.blendDims == 2 ? m.posY : m.threshold) - mid;
+            if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = &m; }
+        }
+        return best->clip;
+    };
+    std::vector<std::string> bodyClips;
+    if (body) {
+        const std::vector<std::string> own = body->ClipNames();
+        const std::vector<std::string>& lib = HumanoidLibrary::Names();
+        std::set_union(own.begin(), own.end(), lib.begin(), lib.end(), std::back_inserter(bodyClips));
+    }
+    const std::vector<std::string> clipList = ma ? ma->ClipNames() : bodyClips;
+    std::vector<const char*> clipItems;
+    for (const auto& c : clipList) clipItems.push_back(c.c_str());
+    if (ed.isPlaying()) L.ColorText(RowCol(0.235f, 0.475f, 0.8f), T(std::string("Current state: ") + (sm->Current().empty() ? "(entering)" : sm->Current())));
+    std::vector<const char*> entryItems{"(first state)"}, stateItems;
+    for (const auto& st : sm->states) { entryItems.push_back(st.name.c_str()); stateItems.push_back(st.name.c_str()); }
+    int entry = 0;
+    for (std::size_t i = 0; i < sm->states.size(); ++i) if (sm->entry == sm->states[i].name) entry = (int)i + 1;
+    const int kEntry = L.Combo("Entry##asm", &entry, entryItems.data(), (int)entryItems.size()); L.Last().width = 200.0f;
+    L.Last().preview = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
+    int kStance[3] = {-1, -1, -1}, kGait[4] = {-1, -1, -1, -1};
+    if (sm->layer == 0) {
+        StanceTimes& t = sm->stanceTimes;
+        L.Tree("Stance changes##asm");
+        kStance[0] = L.Drag("Stand <-> crouch##asm", &t.standCrouch, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        kStance[1] = L.Drag("Crouch <-> prone##asm", &t.crouchProne, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        kStance[2] = L.Drag("Prone -> stand##asm", &t.proneStand, 1, 0.01f, 0.05f, 4.0f, "%.2fs");
+        L.Tip("How long the body takes to crouch, go prone and get up. The collider,\nthe camera, the speed limit and the default graph's blends follow it;\nthe Animator gets `stance` (0..2).");
+        L.TreeEnd();
+        GaitCrossfades& g = sm->crossfades;
+        L.Tree("Gait crossfades##asm");
+        kGait[0] = L.Drag("Idle <-> walk##xf", &g.idleWalk, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[1] = L.Drag("Walk <-> run##xf", &g.walkRun, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[2] = L.Drag("Ground -> air##xf", &g.groundAir, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        kGait[3] = L.Drag("Air -> ground##xf", &g.airGround, 1, 0.01f, 0.0f, 2.0f, "%.2fs");
+        L.Tip("How long idle, walk and run crossfade, and how long a jump or landing\ntakes. Either direction can interrupt the blend. Stance changes stay\non the times above. 0 = instant.");
+        L.TreeEnd();
+    }
+    struct TrRow { int to = -1, toIdx = 0, cond = -1, condIdx = 0, del = -1; std::string param; int paramRow = -1; };
+    struct StRow { int name = -1, clip = -1, clipIdx = 0, del = -1, preview = -1, edit = -1, addTr = -1; std::string shown; std::deque<TrRow> tr; };
+    std::deque<StRow> sr(sm->states.size());
+    TransportRows transport;
+    for (std::size_t si = 0; si < sm->states.size(); ++si) {
+        AnimStateMachine::State& st = sm->states[si];
+        StRow& s = sr[si];
+        L.Separator();
+        s.name = L.Text("State##asm", &st.name); L.Last().width = 140.0f; L.TipLookup();
+        L.SameLine();
+        if (st.blendTree) { L.Note(T("blend tree, " + std::to_string((int)st.motions.size()) + " clips")); L.Tip("Open Animator Graph to edit its motions."); }
+        else if (ma || body) {
+            s.clipIdx = -1;
+            for (std::size_t i = 0; i < clipList.size(); ++i) if (clipList[i] == st.clip) s.clipIdx = (int)i;
+            s.clip = L.Combo("##asmclip", &s.clipIdx, clipItems.data(), (int)clipItems.size()); L.Last().width = 150.0f;
+            L.Last().preview = st.clip.empty() ? "(clip)" : st.clip.c_str();
+        }
+        L.SameLine(); L.Drag("##asmspd", &st.speed, 1, 0.02f, 0.05f, 5.0f, "x%.2f"); L.Last().width = 70.0f; L.TipLookup();
+        L.SameLine(); L.Check("loop##asm", &st.loop); L.TipLookup();
+        L.SameLine(); s.del = L.SmallButton("x##asmst"); L.Tip("Remove");
+        s.shown = body ? shownClip(st) : std::string();
+        if (body && BodyClip(body, s.shown)) {
+            const bool on = apv::IsState(body->gameObject, st.name);
+            s.preview = L.SmallButton(on ? "Stop##apst" : "Preview##apst");
+            L.SameLine(); s.edit = L.SmallButton("Edit clip##asm");
+            L.Tip(T("Edit " + s.shown + " in the Animation tab. Apply there saves it on this\nCharacter, where it replaces the default clip of that name."));
+            if (on) AddTransportRows(L, transport, T);
+        } else if (ma && ma->FindClip(apv::MiddleMotion(st)) >= 0) {
+            const bool on = apv::IsState(ma->gameObject, st.name);
+            s.preview = L.SmallButton(on ? "Stop##apmst" : "Preview##apmst");
+            if (on) AddTransportRows(L, transport, T);
+        }
+        L.Tree(T(std::to_string((int)st.transitions.size()) + " transition(s)###asmtr" + std::to_string(si)));
+        for (auto& tr : st.transitions) {
+            s.tr.emplace_back();
+            TrRow& r = s.tr.back();
+            L.Note("  ->"); L.SameLine();
+            r.toIdx = -1;
+            for (std::size_t i = 0; i < sm->states.size(); ++i) if (sm->states[i].name == tr.to) r.toIdx = (int)i;
+            r.to = L.Combo("##trto", &r.toIdx, stateItems.data(), (int)stateItems.size()); L.Last().width = 120.0f;
+            L.Last().preview = tr.to.empty() ? "(state)" : tr.to.c_str();
+            L.SameLine();
+            r.condIdx = (int)tr.cond;
+            r.cond = L.Combo("##trcond", &r.condIdx, kCondNames, 6); L.Last().width = 110.0f; L.TipLookup();
+            if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
+                L.SameLine(); r.paramRow = L.Text("##trparam", &tr.param, "param"); L.Last().width = 90.0f; L.TipLookup();
+            }
+            if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
+                L.SameLine(); L.Drag("##trval", &tr.value, 1, 0.05f); L.Last().width = 60.0f; L.TipLookup();
+            }
+            L.SameLine(); L.Drag("##trblend", &tr.blend, 1, 0.01f, 0.0f, 2.0f, "%.2fs"); L.Last().width = 60.0f; L.TipLookup();
+            L.SameLine(); r.del = L.SmallButton("x##tr"); L.Tip("Remove");
+        }
+        s.addTr = L.SmallButton("+ Transition##asm");
+        L.TreeEnd();
+    }
+    L.Separator();
+    const int kAdd = L.SmallButton("+ Add State##asm");
+    L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.");
+    if (!DrawRowsOkayUI(sm, "##okayui_animsm", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kGraph].clicked) g_showAnimatorGraph = true;
+    if (kReset >= 0 && L[kReset].clicked) { ed.PushUndo(); HumanoidLibrary::DefaultGraph(*sm, body); ed.dirty = true; return true; }
+    if (kActions >= 0 && L[kActions].clicked) { ed.PushUndo(); HumanoidActions::MergeMissing(*sm, body, true); ed.dirty = true; return true; }
+    if (L[kEntry].changed) sm->entry = entry == 0 ? std::string() : sm->states[(std::size_t)entry - 1].name;
+    for (int k : kStance) if (k >= 0 && L[k].changed) { HumanoidLibrary::ApplyStanceTimes(*sm); break; }
+    for (int k : kGait) if (k >= 0 && L[k].changed) { HumanoidLibrary::ApplyCrossfades(*sm); break; }
+    RunTransportRows(L, transport);
+    int delState = -1;
+    for (std::size_t si = 0; si < sm->states.size() && si < sr.size(); ++si) {
+        AnimStateMachine::State& st = sm->states[si];
+        StRow& s = sr[si];
+        if (s.clip >= 0 && L[s.clip].changed && s.clipIdx >= 0) st.clip = clipList[(std::size_t)s.clipIdx];
+        if (L[s.del].clicked) delState = (int)si;
+        if (s.preview >= 0 && L[s.preview].clicked) {
+            if (body) { if (apv::IsState(body->gameObject, st.name)) apv::Stop(ed.scene()); else apv::StartCharacterState(ed.scene(), body, st, ed.isPlaying()); }
+            else if (ma) { if (apv::IsState(ma->gameObject, st.name)) apv::Stop(ed.scene()); else apv::StartModelState(ed.scene(), ma, st, ed.isPlaying()); }
+        }
+        if (s.edit >= 0 && L[s.edit].clicked) {
+            const std::string key = AnimDraftKey(go);
+            AnimDraft& d = g_animDrafts[key];
+            PushAnimDraftUndo(ed, key, d);
+            d.clip = *BodyClip(body, s.shown);
+            d.t = 0.0f; d.playing = false; d.playOnStart = false;
+            d.pose = d.clip.keys.empty() ? std::vector<Vec3>() : d.clip.keys.front().pose;
+            d.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+            d.root = d.clip.keys.empty() ? Vec3{0, 0, 0} : d.clip.keys.front().root;
+            d.sel.clear(); d.viewLen = 0.0f;
+            g_showAnimation = true;
+            g_focusQueue.push_back("Animation###AnimationDock");
+        }
+        int delTr = -1;
+        for (std::size_t ti = 0; ti < s.tr.size() && ti < st.transitions.size(); ++ti) {
+            TrRow& r = s.tr[ti];
+            AnimStateMachine::Transition& tr = st.transitions[ti];
+            if (L[r.to].changed && r.toIdx >= 0) tr.to = sm->states[(std::size_t)r.toIdx].name;
+            if (L[r.cond].changed) tr.cond = (okay::AnimStateMachine::Cond)r.condIdx;
+            if (L[r.del].clicked) delTr = (int)ti;
+        }
+        if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
+        if (s.addTr >= 0 && L[s.addTr].clicked) { ed.PushUndo(); st.transitions.push_back({}); ed.dirty = true; }
+    }
+    if (delState >= 0) { ed.PushUndo(); sm->states.erase(sm->states.begin() + delState); ed.dirty = true; }
+    if (L[kAdd].clicked) {
+        ed.PushUndo();
+        AnimStateMachine::State st;
+        st.name = "State " + std::to_string((int)sm->states.size() + 1);
+        if (ma && ma->ClipCount() > 0) st.clip = ma->clips[0].name;
+        sm->states.push_back(std::move(st));
+        ed.dirty = true;
+    }
+    return true;
+}
+
 // What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
 static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIBackend() && DrawRowsOkayUI(comp, id, L); }
 static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
@@ -34573,7 +35524,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
-        if (CompHeader("Animator", sm, &toRemove)) {
+        if (CompHeader("Animator", sm, &toRemove) && !(UseOkayUIBackend() && DrawAnimStateMachineWithOkayUI(ed, go, sm))) {   // OkayUI's with the preview switch (section 18)
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
@@ -35219,7 +36170,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ch = dynamic_cast<Character*>(curComp)) {
-        if (CompHeader("Character", ch, &toRemove)) {
+        if (CompHeader("Character", ch, &toRemove) && !(UseOkayUIBackend() && DrawCharacterWithOkayUI(ed, go, ch))) {   // OkayUI's with the preview switch (section 18)
             bool c = false;
             auto coledit = [&](const char* lbl, Color& col){ float v[3]={col.r,col.g,col.b}; if (ImGui::ColorEdit3(lbl, v)) { col={v[0],v[1],v[2],1.0f}; c=true; } };
 
@@ -36838,7 +37789,7 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* ph = dynamic_cast<ProceduralObjectHolding*>(curComp)) {
-            if (CompHeader("Procedural Object Holding", ph, &toRemove)) {
+            if (CompHeader("Procedural Object Holding", ph, &toRemove) && !(UseOkayUIBackend() && DrawObjectHoldingWithOkayUI(ed, ph, toRemove))) {   // OkayUI's with the preview switch (section 18)
                 ImGui::TextDisabled("Hold objects with the hands: IK onto each object's grips.");
                 int hand = (int)ph->primaryHand;
                 if (ImGui::Combo("Primary Hand##poh", &hand, "Left\0Right\0Both\0")) { ph->primaryHand = (ProceduralObjectHolding::Hand)hand; ed.dirty = true; }
@@ -36899,7 +37850,7 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
-            if (CompHeader("Holdable Object", ho, &toRemove)) {
+            if (CompHeader("Holdable Object", ho, &toRemove) && !(UseOkayUIBackend() && DrawHoldableWithOkayUI(ed, ho, toRemove))) {   // OkayUI's with the preview switch (section 18)
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
                 int st = (int)ho->style;
                 if (ImGui::Combo("Style##hold", &st,
@@ -39588,7 +40539,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
         bool owned = false;
-        if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
+        if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned) && !(UseOkayUIBackend() && DrawFirstPersonWithOkayUI(ed, go, fp, owned, toRemove))) {   // OkayUI's with the preview switch (section 18)
             if (!owned) CharacterModelTools(ed, go, "fp");
             // Movement-feel presets: speed/accel/air-control/jump tuned together.
             {
@@ -39814,7 +40765,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
         bool owned = false;
-        if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
+        if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned) && !(UseOkayUIBackend() && DrawThirdPersonWithOkayUI(ed, go, tp, owned, toRemove))) {   // OkayUI's with the preview switch (section 18)
             if (!owned) CharacterModelTools(ed, go, "tp");
             SectionHeader("Movement");
             // Same movement-feel presets as the First Person controller.
@@ -40103,7 +41054,7 @@ void DrawInspector(EditorState& ed) {
                          "a view that is off has no settings here and nothing of it is saved.";
         sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
         pc->SyncEnabled();
-        if (sPlayerControllerOpen) {
+        if (sPlayerControllerOpen && !(UseOkayUIBackend() && DrawPlayerControllerWithOkayUI(ed, go, pc))) {   // OkayUI's with the preview switch (section 18)
             int mode = (int)pc->viewMode();
             const char* modes[] = {"First Person only", "Third Person only", "Both"};
             if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
@@ -40128,7 +41079,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pv = dynamic_cast<PlayerView*>(curComp)) {
         bool owned = false;
-        if (PlayerPartHeader(go, "View toggle", pv, &toRemove, &owned)) {
+        if (PlayerPartHeader(go, "View toggle", pv, &toRemove, &owned) && !(UseOkayUIBackend() && DrawPlayerViewWithOkayUI(ed, pv, owned, toRemove))) {   // OkayUI's with the preview switch (section 18)
             if (ImGui::Checkbox("Allow Toggle##pv", &pv->allowToggle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("V (or the gamepad button) switches first and third person. Off leaves the controller's camera alone.");
             {

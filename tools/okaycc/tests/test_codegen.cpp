@@ -90,6 +90,25 @@ int main() {
     expectExit("string 1", "int main(){char *s; s=\"hi\"; return s[1];}\n", 105);
     expectExit("ptr arith",
                "int main(){int a[3]; int *p; a[0]=10; a[1]=20; p=&a[0]; p=p+1; return *p;}\n", 20);
+    expectExit("struct",
+               "struct P { int x; int y; };\n"
+               "int main(){struct P p; p.x=10; p.y=3; return p.x-p.y;}\n",
+               7);
+    expectExit("arrow",
+               "struct P { int x; int y; };\n"
+               "int main(){struct P p; struct P *q; p.x=4; p.y=1; q=&p; return q->x+q->y;}\n",
+               5);
+    expectExit("nested",
+               "struct P { int x; int y; };\n"
+               "struct Q { struct P p; int z; };\n"
+               "int main(){struct Q q; q.p.x=8; q.p.y=1; q.z=2; return q.p.x-q.p.y+q.z;}\n",
+               9);
+    expectExit("struct global",
+               "struct P { int x; }; struct P g; int main(){g.x=6; return g.x;}\n", 6);
+    expectExit("struct char",
+               "struct C { char a; char b; };\n"
+               "int main(){struct C c; c.a=65; c.b=66; return c.a+c.b;}\n",
+               131);
 
     okaycc_test::gPass += gOk;
     std::printf("codegen: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);

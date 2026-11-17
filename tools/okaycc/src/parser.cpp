@@ -33,7 +33,7 @@ struct Param {
 
 struct Expr {
     enum class Kind {
-        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Cast, Comma, Brace
+        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Member, Cast, Comma, Brace
     } kind = Kind::Int;
     std::string text;
     std::uint64_t ival = 0;
@@ -46,7 +46,8 @@ struct Expr {
 };
 
 struct Type {
-    enum class Kind { Void, Char, Int, Pointer, Array, Function } kind = Kind::Int;
+    enum class Kind { Void, Char, Int, Pointer, Array, Function, Struct } kind = Kind::Int;
+    std::string tag;
     std::unique_ptr<Type> inner;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
@@ -119,6 +120,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
 std::unique_ptr<Type> cloneType(const Type& t) {
     auto n = std::make_unique<Type>();
     n->kind = t.kind;
+    n->tag = t.tag;
     n->unsized = t.unsized;
     if (t.inner) n->inner = cloneType(*t.inner);
     if (t.bound) n->bound = cloneExpr(*t.bound);
@@ -163,6 +165,8 @@ std::string typeStr(const Type& t) {
         std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
         return "(arr " + typeStr(*t.inner) + " " + b + ")";
     }
+    case Type::Kind::Struct:
+        return t.tag.empty() ? "(struct)" : "(struct " + t.tag + ")";
     case Type::Kind::Function: {
         std::string s = "(fn " + typeStr(*t.inner);
         for (const Param& p : t.params) {
@@ -193,6 +197,7 @@ std::string exprStr(const Expr& e) {
     case Expr::Kind::Assign: return "(assign " + e.text + " " + kid(0) + " " + kid(1) + ")";
     case Expr::Kind::Cond: return "(cond " + kid(0) + " " + kid(1) + " " + kid(2) + ")";
     case Expr::Kind::Index: return "(index " + kid(0) + " " + kid(1) + ")";
+    case Expr::Kind::Member: return "(member " + e.text + " " + kid(0) + " " + kid(1) + ")";
     case Expr::Kind::Cast: return "(cast " + (e.ty ? typeStr(*e.ty) : "?") + " " + kid(0) + ")";
     case Expr::Kind::Call: {
         std::string s = "(call";
@@ -385,6 +390,7 @@ private:
     Diagnostics& diags_;
     std::size_t i_ = 0;
     bool reported_ = false;
+    std::map<std::string, std::unique_ptr<Type>> structs_;
 
     const Token& cur() const { return toks_[i_]; }
     bool atEnd() const { return i_ >= toks_.size() || toks_[i_].kind == Tok::End; }
@@ -406,7 +412,7 @@ private:
     }
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
-        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "int");
+        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "int") || isKwTok(t, "struct");
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
@@ -469,6 +475,7 @@ private:
         if (eatKw("void")) return ty(Type::Kind::Void);
         if (eatKw("char")) return ty(Type::Kind::Char);
         if (eatKw("int")) return ty(Type::Kind::Int);
+        if (isKw("struct")) return parseStructType();
         if (!atEnd() && cur().kind == Tok::Keyword) {
             err("'" + cur().text + "' is not in this subset");
             advance();
@@ -476,6 +483,52 @@ private:
             err("expected a type");
         }
         return ty(Type::Kind::Int);
+    }
+
+    std::unique_ptr<Type> parseStructType() {
+        Token at = cur();
+        advance();
+        std::string tag;
+        if (!atEnd() && cur().kind == Tok::Ident) {
+            tag = cur().text;
+            advance();
+        }
+        if (!eatP("{")) {
+            if (tag.empty()) {
+                err("expected a struct name");
+                return ty(Type::Kind::Int);
+            }
+            auto it = structs_.find(tag);
+            if (it == structs_.end() || !it->second) {
+                err("unknown struct '" + tag + "'");
+                return ty(Type::Kind::Int);
+            }
+            return cloneType(*it->second);
+        }
+        auto t = ty(Type::Kind::Struct);
+        t->tag = tag;
+        while (!atEnd() && !isP("}")) {
+            if (!isTypeKw(cur())) {
+                err("expected a field");
+                break;
+            }
+            auto base = parseBase();
+            Parsed d = parseDeclarator(true);
+            Param field;
+            field.name = d.name;
+            field.type = apply(std::move(base), d.mods);
+            t->params.push_back(std::move(field));
+            expectP(";", ";");
+        }
+        expectP("}", "}");
+        if (!tag.empty()) {
+            if (structs_.count(tag)) {
+                diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column, "redefined struct '" + tag + "'");
+            } else {
+                structs_[tag] = cloneType(*t);
+            }
+        }
+        return t;
     }
 
     Parsed parseDeclarator(bool needName) {
@@ -606,6 +659,10 @@ private:
 
     void parseExternal(Tu& tu) {
         auto base = parseBase();
+        if (base && base->kind == Type::Kind::Struct && isP(";")) {
+            advance();
+            return;
+        }
         if (atEnd()) {
             err("expected a declarator");
             return;
@@ -642,6 +699,11 @@ private:
 
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
         auto base = parseBase();
+        if (base && base->kind == Type::Kind::Struct && isP(";")) {
+            advance();
+            (void)forInit;
+            return;
+        }
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
         if (type && type->kind == Type::Kind::Function && isP("{")) {
@@ -987,9 +1049,18 @@ private:
                 continue;
             }
             if (isP(".") || isP("->")) {
-                err("structs are not in this subset");
+                Token op = cur();
                 advance();
-                if (!atEnd() && cur().kind == Tok::Ident) advance();
+                if (atEnd() || cur().kind != Tok::Ident) {
+                    err("expected a field name");
+                    continue;
+                }
+                auto n = ex(Expr::Kind::Member, op);
+                n->text = op.text;
+                n->kids.push_back(std::move(e));
+                n->kids.push_back(leafName(cur()));
+                advance();
+                e = std::move(n);
                 continue;
             }
             break;
@@ -1055,6 +1126,15 @@ bool sameType(const Type& a, const Type& b) {
         if (!a.inner || !b.inner || !sameType(*a.inner, *b.inner) || a.params.size() != b.params.size())
             return false;
         for (std::size_t i = 0; i < a.params.size(); ++i) {
+            if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
+                return false;
+        }
+    }
+    if (a.kind == Type::Kind::Struct) {
+        if (!a.tag.empty() || !b.tag.empty()) return a.tag == b.tag;
+        if (a.params.size() != b.params.size()) return false;
+        for (std::size_t i = 0; i < a.params.size(); ++i) {
+            if (a.params[i].name != b.params[i].name) return false;
             if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
                 return false;
         }
@@ -1145,7 +1225,7 @@ private:
             if (e.type->kind == Type::Kind::Function) {
                 e.lvalue = false;
                 e.mod = false;
-            } else if (e.type->kind == Type::Kind::Array) {
+            } else if (e.type->kind == Type::Kind::Array || e.type->kind == Type::Kind::Struct) {
                 e.lvalue = true;
                 e.mod = false;
             } else {
@@ -1197,6 +1277,8 @@ private:
             return e.kids.size() == 2 && e.kids[0] && e.kids[1] && isConst(*e.kids[0]) && isConst(*e.kids[1]);
         case Expr::Kind::Cast:
             return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
+        case Expr::Kind::Member:
+            return false;
         default:
             return false;
         }
@@ -1338,6 +1420,32 @@ private:
             r.lvalue = true;
             r.mod = isIntish(*r.type) || isPtr(*r.type);
             return r;
+        }
+        case Expr::Kind::Member: {
+            if (!need(0) || !need(1)) return bad(e.line, e.col);
+            ET obj = e.text == "->" ? decay(checkExpr(*e.kids[0])) : checkExpr(*e.kids[0]);
+            if (obj.bad || !obj.type) return bad(e.line, e.col);
+            const Type* st = obj.type.get();
+            if (e.text == "->") {
+                if (!isPtr(*obj.type) || !obj.type->inner || obj.type->inner->kind != Type::Kind::Struct) {
+                    err(e.line, e.col, "operand of '->' is not a pointer to a struct");
+                    return bad(e.line, e.col);
+                }
+                st = obj.type->inner.get();
+            } else if (st->kind != Type::Kind::Struct) {
+                err(e.line, e.col, "operand of '.' is not a struct");
+                return bad(e.line, e.col);
+            }
+            const std::string& fname = e.kids[1]->text;
+            for (const Param& f : st->params) {
+                if (f.name != fname || !f.type) continue;
+                r.type = cloneType(*f.type);
+                r.lvalue = true;
+                r.mod = isIntish(*r.type) || isPtr(*r.type);
+                return r;
+            }
+            err(e.line, e.col, "struct has no field '" + fname + "'");
+            return bad(e.line, e.col);
         }
         case Expr::Kind::Cast: {
             if (!need(0) || !e.ty) return bad(e.line, e.col);
@@ -1570,24 +1678,42 @@ public:
     }
 
 private:
+    struct FieldOff {
+        std::string name;
+        int offset = 0;
+        int width = 8;
+        int step = 0;
+        int inner = 0;
+        bool agg = false;
+        std::vector<FieldOff> fields;
+    };
     struct Val {
         Operand op;
         int step = 0;
         int inner = 0;
+        std::vector<FieldOff> fields;
+        Val() = default;
+        Val(Operand o, int s, int i) : op(std::move(o)), step(s), inner(i) {}
     };
     struct Addr {
         Operand op;
         int width = 8;
+        int step = 0;
+        int inner = 0;
         bool ok = false;
+        bool agg = false;
+        std::vector<FieldOff> fields;
     };
     struct Sym {
         int reg = -1;
         bool global = false;
         bool array = false;
+        bool agg = false;
         std::string gname;
         int width = 8;
         int step = 0;
         int inner = 0;
+        std::vector<FieldOff> fields;
     };
     struct Loop {
         std::string cont;
@@ -1622,6 +1748,11 @@ private:
         if (!t) return 8;
         if (t->kind == Type::Kind::Char) return 1;
         if (t->kind == Type::Kind::Int || t->kind == Type::Kind::Pointer) return 8;
+        if (t->kind == Type::Kind::Struct) {
+            int n = 0;
+            for (const Param& p : t->params) n += fieldSpan(p.type.get());
+            return n == 0 ? 8 : n;
+        }
         if (t->kind == Type::Kind::Array) {
             int n = 0;
             if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
@@ -1638,6 +1769,53 @@ private:
         if (!t) return 0;
         if (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Array) return valueStep(t->inner.get());
         return 0;
+    }
+
+    static int fieldSpan(const Type* t) {
+        if (t && t->kind == Type::Kind::Struct) return sizeOf(t);
+        return 8;
+    }
+
+    static std::vector<FieldOff> layoutOf(const Type* t) {
+        std::vector<FieldOff> out;
+        if (!t || t->kind != Type::Kind::Struct) return out;
+        int off = 0;
+        for (const Param& p : t->params) {
+            FieldOff f;
+            f.name = p.name;
+            f.offset = off;
+            f.width = sizeOf(p.type.get());
+            f.step = valueStep(p.type.get());
+            f.inner = innerOf(p.type.get());
+            bool nested = p.type && p.type->kind == Type::Kind::Struct;
+            bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
+                           p.type->inner->kind == Type::Kind::Struct;
+            f.agg = nested;
+            if (nested) f.fields = layoutOf(p.type.get());
+            else if (pstruct && (p.type->inner->tag.empty() || p.type->inner->tag != t->tag))
+                f.fields = layoutOf(p.type->inner.get());
+            out.push_back(std::move(f));
+            off += fieldSpan(p.type.get());
+        }
+        return out;
+    }
+
+    static void describe(Sym& s, const Type* t) {
+        if (!t) return;
+        if (t->kind == Type::Kind::Array) {
+            s.array = true;
+            s.width = sizeOf(t->inner.get());
+        } else {
+            s.width = sizeOf(t);
+        }
+        s.step = valueStep(t);
+        s.inner = innerOf(t);
+        if (t->kind == Type::Kind::Struct) {
+            s.agg = true;
+            s.fields = layoutOf(t);
+        } else if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Struct) {
+            s.fields = layoutOf(t->inner.get());
+        }
     }
 
     Sym* find(const std::string& name) {
@@ -1766,15 +1944,13 @@ private:
         Sym s;
         s.global = true;
         s.gname = d.name;
-        s.array = d.type->kind == Type::Kind::Array;
-        s.width = s.array ? sizeOf(d.type->inner.get()) : sizeOf(d.type.get());
-        s.step = valueStep(d.type.get());
-        s.inner = innerOf(d.type.get());
+        describe(s, d.type.get());
         Global g;
         g.name = d.name;
-        if (s.array) {
+        if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
             if (g.size <= 0) err(d.line, d.col, "array length is not a constant");
+            if (d.init) err(d.line, d.col, "global initializer is not supported");
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
             g.size = 8;
             g.reloc = addString(d.init->text);
@@ -1802,7 +1978,7 @@ private:
             err(line, col, "not lowered: " + name);
             return {};
         }
-        if (s->array) {
+        if (s->array || s->agg) {
             if (s->global) {
                 int dst = fresh();
                 Inst in;
@@ -1814,12 +1990,14 @@ private:
                 v.op = Operand::vreg(dst);
                 v.step = s->step;
                 v.inner = s->inner;
+                v.fields = s->fields;
                 return v;
             }
             Val v;
             v.op = Operand::vreg(s->reg);
             v.step = s->step;
             v.inner = s->inner;
+            v.fields = s->fields;
             return v;
         }
         if (s->global) {
@@ -1834,12 +2012,14 @@ private:
             v.op = Operand::vreg(dst);
             v.step = s->step;
             v.inner = s->inner;
+            v.fields = s->fields;
             return v;
         }
         Val v;
         v.op = Operand::vreg(s->reg);
         v.step = s->step;
         v.inner = s->inner;
+        v.fields = s->fields;
         return v;
     }
 
@@ -1857,6 +2037,15 @@ private:
             Sym* s = find(e.text);
             if (!s) {
                 err(e.line, e.col, "not lowered: " + e.text);
+                return a;
+            }
+            if (s->agg) {
+                Val base = readName(e.text, e.line, e.col);
+                a.op = base.op;
+                a.width = s->width;
+                a.agg = true;
+                a.fields = s->fields;
+                a.ok = true;
                 return a;
             }
             if (s->array) {
@@ -1908,6 +2097,41 @@ private:
             Val p = lowerExpr(*e.kids[0]);
             a.op = p.op;
             a.width = p.step == 0 ? 8 : p.step;
+            a.fields = p.fields;
+            a.agg = !p.fields.empty();
+            a.ok = true;
+            return a;
+        }
+        if (e.kind == Expr::Kind::Member && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
+            Operand baseOp;
+            std::vector<FieldOff> fields;
+            if (e.text == "->") {
+                Val p = lowerExpr(*e.kids[0]);
+                baseOp = p.op;
+                fields = p.fields;
+            } else {
+                Addr b = lowerAddr(*e.kids[0]);
+                if (!b.ok) return a;
+                baseOp = b.op;
+                fields = std::move(b.fields);
+            }
+            const std::string& fname = e.kids[1]->text;
+            const FieldOff* field = nullptr;
+            for (const FieldOff& f : fields) {
+                if (f.name == fname) field = &f;
+            }
+            if (!field) {
+                err(e.line, e.col, "not lowered: " + fname);
+                return a;
+            }
+            int dst = fresh();
+            emitBin(Inst::Op::Add, dst, baseOp, Operand::number(field->offset));
+            a.op = Operand::vreg(dst);
+            a.width = field->width;
+            a.step = field->step;
+            a.inner = field->inner;
+            a.agg = field->agg;
+            a.fields = field->fields;
             a.ok = true;
             return a;
         }
@@ -2004,6 +2228,21 @@ private:
             }
             return loadAddr(a, inner);
         }
+        case Expr::Kind::Member: {
+            Addr a = lowerAddr(e);
+            if (!a.ok) return {};
+            if (a.agg) {
+                Val v;
+                v.op = a.op;
+                v.fields = a.fields;
+                return v;
+            }
+            Val v = loadAddr(a, a.inner);
+            v.step = a.step;
+            v.inner = a.inner;
+            v.fields = a.fields;
+            return v;
+        }
         case Expr::Kind::Brace:
             err(e.line, e.col, "not lowered");
             return {};
@@ -2020,6 +2259,11 @@ private:
                 if (!s) {
                     err(e.line, e.col, "not lowered: " + e.kids[0]->text);
                     return {};
+                }
+                if (s->agg) {
+                    Val base = readName(e.kids[0]->text, e.line, e.col);
+                    base.step = s->width > 0 ? s->width : 8;
+                    return base;
                 }
                 if (s->array || s->global) {
                     Val base = readName(e.kids[0]->text, e.line, e.col);
@@ -2161,7 +2405,7 @@ private:
                 err(e.line, e.col, "not lowered: " + lhs.text);
                 return {};
             }
-            if (s->array) {
+            if (s->array || s->agg) {
                 err(e.line, e.col, "not lowered");
                 return {};
             }
@@ -2269,11 +2513,8 @@ private:
     void lowerLocal(Decl& d) {
         if (!d.type) return;
         Sym s;
-        s.width = d.type->kind == Type::Kind::Array ? sizeOf(d.type->inner.get()) : sizeOf(d.type.get());
-        s.step = valueStep(d.type.get());
-        s.inner = innerOf(d.type.get());
-        if (d.type->kind == Type::Kind::Array) {
-            s.array = true;
+        describe(s, d.type.get());
+        if (d.type->kind == Type::Kind::Array || d.type->kind == Type::Kind::Struct) {
             int bytes = sizeOf(d.type.get());
             if (bytes <= 0) {
                 err(d.line, d.col, "array length is not a constant");
@@ -2376,9 +2617,9 @@ private:
                 Sym s;
                 s.reg = nextReg_++;
                 if (p.type) {
-                    s.width = sizeOf(p.type.get());
-                    s.step = valueStep(p.type.get());
-                    s.inner = innerOf(p.type.get());
+                    if (p.type->kind == Type::Kind::Struct)
+                        err(d.line, d.col, "struct parameter is not lowered");
+                    describe(s, p.type.get());
                 }
                 if (!p.name.empty()) scopes_.back()[p.name] = s;
             }

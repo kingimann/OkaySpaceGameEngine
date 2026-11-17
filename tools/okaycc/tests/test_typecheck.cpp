@@ -55,6 +55,9 @@ int main() {
     bad("void var", "void x;\n", "void");
     bad("global not const", "int x = 1; int y = x;\n", "constant");
     bad("ptr sub assign", "int main(){int *p; int *q; p = p - q; return 0;}\n", "cannot assign");
+    ok("struct", "struct P { int x; int y; }; int main(){struct P p; struct P *q; p.x = 1; q = &p; return q->y;}\n");
+    bad("no field", "struct P { int x; }; int main(){struct P p; return p.z;}\n", "no field");
+    bad("dot int", "int main(){int x; return x.y;}\n", "not a struct");
 
     okaycc_test::gPass += gOk;
     std::printf("typecheck: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);

@@ -1292,6 +1292,32 @@ struct Parser {
             bool imp = false;
             bool exp = false;
             if (!parse_type(&pt, &imp, &exp)) return false;
+            if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
+                next();
+                int stars = 0;
+                while (accept(TStar)) ++stars;
+                std::string pname;
+                if (!is(TIdent)) {
+                    error = "expected a name";
+                    return false;
+                }
+                pname = cur().text;
+                next();
+                if (!expect(TRParen, "')'")) return false;
+                if (!expect(TLParen, "'('")) return false;
+                Declarator fp;
+                if (!parse_param_list(&fp)) return false;
+                FuncType ft;
+                ft.ret = pt;
+                ft.params = fp.params;
+                ft.vararg = fp.vararg;
+                pt.pointers += stars;
+                pt.func_id = static_cast<int>(func_types.size());
+                func_types.push_back(ft);
+                out->params.push_back(pt);
+                out->param_names.push_back(pname);
+                continue;
+            }
             while (accept(TStar)) ++pt.pointers;
             std::string pname;
             if (is(TIdent)) {
@@ -3154,13 +3180,25 @@ bool Gen::gen_expr(const Node& node) {
             promote(&last_type);
             return true;
         }
-        const bool indirect = node.text.empty();
+        Local* fp_local = node.text.empty() ? nullptr : find_local(node.text);
+        if (fp_local != nullptr && fp_local->type.func_id < 0) fp_local = nullptr;
+        const bool indirect = node.text.empty() || fp_local != nullptr;
         FuncDecl* fn = nullptr;
         FuncType sig;
         int callee_slot = 0;
         const int depth_before = temp_depth;
         size_t arg0 = 0;
-        if (indirect) {
+        if (fp_local != nullptr) {
+            load_slot(fp_local->offset, true);
+            last_type = fp_local->type;
+            if (func_types == nullptr || static_cast<size_t>(fp_local->type.func_id) >= func_types->size()) {
+                error = "call target is not a function";
+                return false;
+            }
+            sig = (*func_types)[static_cast<size_t>(fp_local->type.func_id)];
+            callee_slot = spill();
+            if (!error.empty()) return false;
+        } else if (indirect) {
             if (node.kids.empty() || !gen_expr(node.kids[0])) return false;
             if (last_type.func_id < 0 || func_types == nullptr ||
                 static_cast<size_t>(last_type.func_id) >= func_types->size()) {
@@ -3678,6 +3716,90 @@ bool Gen::gen_stmt(const Node& node) {
         std::vector<size_t> case_jumps;
         size_t default_jump = 0;
         bool has_default = false;
+        int case_min = 0;
+        int case_max = 0;
+        int case_count = 0;
+        for (size_t i = 1; i < node.kids.size(); ++i) {
+            if (node.kids[i].op == TDefault) {
+                has_default = true;
+                continue;
+            }
+            const int value = static_cast<int>(node.kids[i].number);
+            if (case_count == 0) {
+                case_min = value;
+                case_max = value;
+            } else {
+                if (value < case_min) case_min = value;
+                if (value > case_max) case_max = value;
+            }
+            ++case_count;
+        }
+        const int span = case_max - case_min;
+        // A dense switch is a table of jmp instructions, one per value.
+        if (case_count >= 4 && span >= 0 && span <= 8) {
+            b(0x8B);
+            b(0x85);
+            disp(slot);
+            if (case_min != 0) {
+                b(0x2D);
+                u32(static_cast<uint32_t>(case_min));
+            }
+            b(0x3D);
+            u32(static_cast<uint32_t>(span));
+            const size_t ja = emit_jcc(0x87);
+            const size_t lea_disp = text.size() + 3;
+            b(0x48);
+            b(0x8D);
+            b(0x0D);
+            u32(0);
+            b(0x6B);
+            b(0xC0);
+            b(0x05);
+            b(0x48);
+            b(0x01);
+            b(0xC8);
+            b(0xFF);
+            b(0xE0);
+            std::map<int, size_t> case_at;
+            size_t default_at = 0;
+            for (size_t i = 1; i < node.kids.size(); ++i) {
+                if (node.kids[i].op == TDefault) default_at = text.size();
+                else case_at[static_cast<int>(node.kids[i].number)] = text.size();
+                for (const Node& stmt : node.kids[i].kids)
+                    if (!gen_stmt(stmt)) return false;
+            }
+            const size_t table = text.size();
+            const size_t hole = has_default ? default_at : 0;
+            for (int v = case_min; v <= case_max; ++v) {
+                size_t target = hole;
+                const auto found = case_at.find(v);
+                if (found != case_at.end()) target = found->second;
+                b(0xE9);
+                const size_t rel_at = text.size();
+                u32(0);
+                if (target != 0) patch(rel_at, target);
+            }
+            const size_t end = text.size();
+            if (hole == 0) {
+                for (int v = case_min; v <= case_max; ++v) {
+                    if (case_at.count(v) != 0) continue;
+                    // The hole jmp was left at 0. Point it at the end.
+                }
+                size_t cursor = table;
+                for (int v = case_min; v <= case_max; ++v) {
+                    if (case_at.count(v) == 0) patch(cursor + 1, end);
+                    cursor += 5;
+                }
+            }
+            patch(ja, has_default ? default_at : end);
+            const int32_t lea_rel = static_cast<int32_t>(table - (lea_disp + 4));
+            for (int i = 0; i < 4; ++i)
+                text[lea_disp + static_cast<size_t>(i)] = static_cast<uint8_t>(static_cast<uint32_t>(lea_rel) >> (8 * i));
+            for (size_t site : break_stack.back()) patch(site, end);
+            break_stack.pop_back();
+            --temp_depth;
+            return true;
+        }
         for (size_t i = 1; i < node.kids.size(); ++i) {
             if (node.kids[i].op == TDefault) {
                 has_default = true;

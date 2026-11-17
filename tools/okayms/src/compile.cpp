@@ -689,6 +689,8 @@ struct Parser {
         StructDef def;
         def.name = cur().text;
         next();
+        structs.push_back(def);
+        const int self = static_cast<int>(structs.size()) - 1;
         if (!expect(TLBrace, "'{'")) return false;
         while (!is(TRBrace) && !is(TEnd)) {
             Field field;
@@ -712,6 +714,10 @@ struct Parser {
                 if (!expect(TRBrack, "']'")) return false;
             }
             if (!expect(TSemi, "';'")) return false;
+            if (field.type.base == 3 && field.type.pointers == 0 && field.type.array_len < 0 && field.type.struct_id == self) {
+                error = "struct field is incomplete";
+                return false;
+            }
             def.fields.push_back(field);
         }
         if (!expect(TRBrace, "'}'")) return false;
@@ -730,7 +736,7 @@ struct Parser {
         }
         def.align = align;
         def.size = (offset + align - 1) & ~(align - 1);
-        structs.push_back(std::move(def));
+        structs[static_cast<size_t>(self)] = std::move(def);
         return true;
     }
 
@@ -1292,7 +1298,18 @@ bool Gen::gen_addr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Index) {
-        if (!gen_addr(node.kids[0])) return false;
+        bool from_pointer = false;
+        if (node.kids[0].kind == Node::Name) {
+            if (Local* local = find_local(node.kids[0].text))
+                from_pointer = local->type.pointers > 0 && !local->type.is_array();
+            else if (Global* global = find_global(node.kids[0].text))
+                from_pointer = global->type.pointers > 0 && !global->type.is_array();
+        }
+        if (from_pointer) {
+            if (!gen_expr(node.kids[0])) return false;
+        } else if (!gen_addr(node.kids[0])) {
+            return false;
+        }
         const Type base = last_type;
         const Type elem = element_type(base);
         const int elem_size = std::max(1, size_of(elem));

@@ -45099,6 +45099,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // camera and light names. (Off with "Object names": the Hierarchy rows still drag an object into a script slot.)
     if (!gameView && g_view.showNames) {
         int selReq = -1;
+        Rc selBody{}; std::vector<okay::edlayout::Seg> selAvoid; float selAvoidPad = 0.0f;   // the selected object's outline and gizmo lines
         if (GameObject* sel = ed.selected(); sel && sel->transform) {
             const Vec3 P = sel->transform->Position();
             ImVec2 sp;
@@ -45117,6 +45118,60 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 SceneLabel sl{sp, "", 0, gz, 100, true};
                 sl.size = SceneObjectChipSize(sel);
                 sceneLabels.push_back(sl);
+
+                // The object's outline on screen (its mesh bounds, else a small box at its origin), so the name sits
+                // just above it. It used to sit outside the whole gizmo circle, a gizmo's length to the right, which
+                // put A's name on the next cube over.
+                selBody = okay::edlayout::MakeRc(sp.x - 6.0f, sp.y - 6.0f, 12.0f, 12.0f);
+                if (auto* mr = sel->GetComponent<MeshRenderer>()) {
+                    Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+                    const Mat4 m = vp * sel->transform->LocalToWorldMatrix();
+                    okay::edlayout::Rc box{1e30f, 1e30f, -1e30f, -1e30f}; bool all = true;
+                    for (int ci = 0; ci < 8 && all; ++ci) {
+                        ImVec2 c;
+                        all = toScreen(m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x, (ci & 2) ? hi.y : lo.y, (ci & 4) ? hi.z : lo.z}, 1}, c);
+                        box.x0 = std::min(box.x0, c.x); box.y0 = std::min(box.y0, c.y);
+                        box.x1 = std::max(box.x1, c.x); box.y1 = std::max(box.y1, c.y);
+                    }
+                    if (all && hi.x >= lo.x) selBody = box;   // a corner behind the camera: keep the small box
+                }
+                // The transform gizmo's handles, worked out as the gizmo draws them further down: the name must not
+                // cover an arm (or a ring for Rotate), or a click on the name would land on the handle's grab zone.
+                const bool gizmoDrawn = g_showGizmos && !(g_meshEdit && g_meshEditObj == sel && sel->GetComponent<MeshRenderer>()) &&
+                                        !(g_colliderEdit && sel->GetComponent<BoxCollider3D>()) && !SplinePointPicked(ed);
+                if (gizmoDrawn) {
+                    Transform* t = sel->transform;
+                    const bool noScale = sel->GetComponent<Camera>() != nullptr;
+                    const Tool tool = (noScale && g_tool == Tool::Scale) ? Tool::Move : g_tool;
+                    const float L = ed.camDist * 0.18f;
+                    Vec3 axis[3] = {Vec3{1, 0, 0}, Vec3{0, 1, 0}, Vec3{0, 0, 1}};
+                    if (g_gizmoLocal || tool == Tool::Scale) { axis[0] = t->Right(); axis[1] = t->Up(); axis[2] = t->Forward(); }
+                    const okay::edlayout::Pt o{sp.x, sp.y};
+                    selAvoid.push_back({o, o});                                     // the centre dot
+                    if (tool == Tool::Rotate) {
+                        const Vec3 vdir = (eye - P).Normalized();
+                        const Vec3 vright = Vec3::Cross(Vec3::Up, vdir).Normalized(), vup = Vec3::Cross(vdir, vright);
+                        const int seg = 32;
+                        for (int i = 0; i < 4; ++i) {
+                            const Vec3 u = i < 3 ? axis[(i + 1) % 3] : vright, v = i < 3 ? axis[(i + 2) % 3] : vup;
+                            const float rad = i < 3 ? L : L * 1.2f;
+                            ImVec2 prev; bool prevOk = toScreen(vp * Vec4{P + u * rad, 1}, prev);
+                            for (int k = 1; k <= seg; ++k) {
+                                const float a = (float)k / seg * 2.0f * Mathf::PI;
+                                ImVec2 cur; const bool curOk = toScreen(vp * Vec4{P + (u * Mathf::Cos(a) + v * Mathf::Sin(a)) * rad, 1}, cur);
+                                if (prevOk && curOk) selAvoid.push_back({{prev.x, prev.y}, {cur.x, cur.y}});
+                                prev = cur; prevOk = curOk;
+                            }
+                        }
+                        selAvoidPad = 8.0f;                                         // the ring grab distance
+                    } else {
+                        for (int i = 0; i < 3; ++i) {
+                            ImVec2 tip;
+                            if (toScreen(vp * Vec4{P + axis[i] * L, 1}, tip)) selAvoid.push_back({o, {tip.x, tip.y}});
+                        }
+                        selAvoidPad = 11.0f;                                        // the arm grab distance (covers the knobs)
+                    }
+                }
             }
         }
         if (!sceneLabels.empty()) {
@@ -45124,7 +45179,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (const SceneLabel& l : sceneLabels) {
                 const ImVec2 ts = l.selected ? l.size : ImGui::CalcTextSize(l.text.c_str());
                 okay::edlayout::LabelReq q; q.anchor = {l.anchor.x, l.anchor.y}; q.size = {ts.x, ts.y};
-                q.keepOut = l.keepOut; q.priority = l.priority; reqs.push_back(q);
+                q.keepOut = l.keepOut; q.priority = l.priority;
+                if ((int)reqs.size() == selReq) { q.hasBody = true; q.body = selBody; q.avoid = selAvoid; q.avoidPad = selAvoidPad; }
+                reqs.push_back(q);
             }
             std::vector<Rc> obstacles = hudAvoid;
             if (hudDrawn) obstacles.push_back(hudRect);

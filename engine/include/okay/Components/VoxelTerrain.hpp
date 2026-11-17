@@ -332,6 +332,8 @@ public:
     std::uint32_t editCount = 0;
     /// How many renderer objects currently draw the surface (0 while it is one combined mesh).
     int  ChunkObjectCount() const;
+    /// Triangles of everything that draws the surface (the combined mesh and the chunk objects); cached until the surface changes.
+    long DrawnTriangles() const;
     bool UsesChunkObjects() const { return chunked_; }
     /// Test hook: -1 follows the environment variable, 0 forces the new path, 1 the old one.
     static void ForceOldRemesh(int mode);
@@ -399,6 +401,7 @@ private:
     float genSurface_ = 0.5f, genAmp_ = 6.0f, genCaves_ = 0.0f;
     unsigned genSeed_ = 0;
     LayerRules genRules_;
+    mutable long trisCache_ = -1; mutable int trisCacheTick_ = -1;
     unsigned catchTick_ = 0;
     unsigned matRev_ = 0;                            ///< changes when the material table does
     void LogStroke(int idx);

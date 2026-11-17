@@ -3140,6 +3140,11 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     bool ok = false;
     GameObject* root = ImportModelScene(scene, path, &ok);
     if (!ok || !root || !root->transform) return nullptr;
+    return AttachCharacterModelRoot(scene, player, root, outLog);
+}
+
+GameObject* AttachCharacterModelRoot(Scene& scene, GameObject* player, GameObject* root, std::string* outLog) {
+    if (!player || !player->transform || !root || !root->transform) return nullptr;
     // A swap: the previous model goes, or it stays inside the new one (frozen, or
     // still animating on its own) and keeps the old wiring busy.
     if (GameObject* old = FindCharacterModelRoot(scene, player); old && old != player)

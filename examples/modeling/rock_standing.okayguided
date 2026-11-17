@@ -1,0 +1,15 @@
+okayguided 1
+template rock 1
+param count 1
+param detail 1
+param flatten 2.3999999999999999
+param roughness 0.12
+param seed 1
+param size 0.69999999999999996
+param spread 1.5
+slot moss none
+slot rock boxy
+color moss 0.25 0.449999988 0.200000003 1
+color rock 0.550000012 0.550000012 0.5 1
+material moss 1
+material rock 0

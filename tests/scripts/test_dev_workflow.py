@@ -123,7 +123,7 @@ for name, st in bsteps.items():
 secret_steps = [n for n, st in psteps.items() if "secrets." in json.dumps(st)]
 check(secret_steps == ["Publish to the dev folder"], "only the publish step gets secrets, got %r" % secret_steps)
 penv = psteps["Publish to the dev folder"].get("env", {})
-check(set(penv) == {"SUPABASE_SERVICE_KEY", "OKAY_UPDATE_SIGNING_SEED"}, "the publish step's secrets are the key and the signing seed: %r" % set(penv))
+check(set(penv) == {"SUPABASE_SERVICE_KEY", "SUPABASE_URL", "OKAY_UPDATE_SIGNING_SEED"} and "secrets." not in penv["SUPABASE_URL"], "the publish step has the two secrets (key, signing seed) and the public project URL (a variable): %r" % set(penv))
 check(penv.get("SUPABASE_SERVICE_KEY") == "${{ secrets.SUPABASE_SERVICE_KEY }}" and penv.get("OKAY_UPDATE_SIGNING_SEED") == "${{ secrets.OKAY_UPDATE_SIGNING_SEED }}", "secrets are passed whole, by name")
 for name, st in {**bsteps, **psteps}.items():
     for line in str(st.get("run", "")).split("\n"):   # (naming the secret in a sentence is fine; expanding its value in a script is not)
@@ -220,7 +220,7 @@ with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(work)
         shutil.copy(os.path.join(ROOT, "CMakeLists.txt"), os.path.join(work, "CMakeLists.txt"))
         original = open(os.path.join(work, "CMakeLists.txt")).read()
-        env = {"RUN_NUMBER": "17", "FAKE_CURL_BODY": "2.876.0\n", "FAKE_CURL_FAIL": "0", "FAKE_CURL_LOG": os.path.join(work, "curl.log")}
+        env = {"OKAY_DEFAULT_ACCOUNT_URL": "https://abcdefghij.supabase.co", "RUN_NUMBER": "17", "FAKE_CURL_BODY": "2.876.0\n", "FAKE_CURL_FAIL": "0", "FAKE_CURL_LOG": os.path.join(work, "curl.log")}
         rc_, out_, outputs, _ = run_step("Number this test build", env, work, fake, pipefail)
         check(rc_ == 0, "numbering exits 0 (pipefail=%s): %s" % (pipefail, out_[-300:]))
         check("ver=2.876.0.17" in outputs and "base=2.876.0" in outputs, "numbering outputs ver and base: %r" % outputs)
@@ -246,7 +246,7 @@ with tempfile.TemporaryDirectory() as tmp:
         # the failures
         for label, extra in (("garbage from the server", {"FAKE_CURL_BODY": "<html>oops</html>"}), ("an unreachable server", {"FAKE_CURL_FAIL": "1", "FAKE_CURL_BODY": ""}),
                              ("a four-number release", {"FAKE_CURL_BODY": "2.876.0.5\n"}), ("an empty answer", {"FAKE_CURL_BODY": ""}),
-                             ("a run number of 0", {"RUN_NUMBER": "0"}), ("a run number with letters", {"RUN_NUMBER": "17; rm -rf /"})):
+                             ("a missing server address (repository variable not set)", {"OKAY_DEFAULT_ACCOUNT_URL": ""}), ("a run number of 0", {"RUN_NUMBER": "0"}), ("a run number with letters", {"RUN_NUMBER": "17; rm -rf /"})):
             w2 = os.path.join(tmp, "numfail%d%s" % (pipefail, abs(hash(label))))
             os.makedirs(w2)
             shutil.copy(os.path.join(ROOT, "CMakeLists.txt"), os.path.join(w2, "CMakeLists.txt"))

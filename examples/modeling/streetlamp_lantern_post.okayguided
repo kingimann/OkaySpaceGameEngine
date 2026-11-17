@@ -1,0 +1,19 @@
+okayguided 1
+template streetlamp 1
+param armLength 0.80000000000000004
+param detail 1
+param headSize 0.25
+param height 2.7999999999999998
+param poleRadius 0.070000000000000007
+slot arm none
+slot base plinth
+slot head lantern
+slot pole square
+color arm 0.119999997 0.140000001 0.119999997 1
+color base 0.119999997 0.140000001 0.119999997 1
+color head 0.980000019 0.920000017 0.649999976 1
+color pole 0.400000006 0.280000001 0.180000007 1
+material arm 1
+material base 0
+material head 2
+material pole 0

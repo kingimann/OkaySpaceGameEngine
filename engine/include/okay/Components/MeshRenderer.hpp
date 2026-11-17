@@ -27,6 +27,10 @@ public:
     /// colliders then keep their size instead of chasing each pose.
     bool  deformed = false;
     Color color = Color::White;        // base (albedo) color
+    /// A picture per material slot (Mesh::triSlot): slot i draws with slotTextures[i] when it is
+    /// not empty, else with `texture`. Drawn by the software renderer; the GPU renderers do not
+    /// use it yet (they show the slot colours).
+    std::vector<std::string> slotTextures;
 
     /// Which surface/shading model the renderer uses ("Shader" on a
     /// Material). Standard = the full lit PBR-ish model; Unlit = flat base color, no

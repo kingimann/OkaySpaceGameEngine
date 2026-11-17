@@ -10,6 +10,9 @@
 #include "okay/Components/UIPagination.hpp"
 #include "okay/Components/UISkeleton.hpp"
 #include "okay/Components/UIBottomSheet.hpp"
+#include "okay/Components/UIRangeSlider.hpp"
+#include "okay/Components/UIAspectRatio.hpp"
+#include "okay/Components/UIInputValidator.hpp"
 #include <iostream>
 #include <string>
 
@@ -68,6 +71,7 @@ struct MoreNav {
         if (auto* w = go->GetComponent<UIBreadcrumbs>()) return Usable(w->enabled, w->focusable, w->interactable) && !w->Segments().empty();
         if (auto* w = go->GetComponent<UIPagination>()) return Usable(w->enabled, w->focusable, w->interactable);
         if (auto* w = go->GetComponent<UIBottomSheet>()) return Usable(w->enabled, w->focusable, w->interactable);
+        if (auto* w = go->GetComponent<UIRangeSlider>()) return Usable(w->enabled, w->focusable, w->interactable);
         return false;
     }
     static bool HasKeyboard(GameObject* go) {
@@ -83,6 +87,7 @@ struct MoreNav {
         if (auto* w = go->GetComponent<UIBreadcrumbs>()) return w->IsFocused();
         if (auto* w = go->GetComponent<UIPagination>()) return w->IsFocused();
         if (auto* w = go->GetComponent<UIBottomSheet>()) return w->IsFocused();
+        if (auto* w = go->GetComponent<UIRangeSlider>()) return w->IsFocused();
         return false;
     }
     static void SetFocused(GameObject* go, bool f) {
@@ -94,6 +99,7 @@ struct MoreNav {
         if (auto* w = go->GetComponent<UIBreadcrumbs>()) w->SetFocused(f);
         if (auto* w = go->GetComponent<UIPagination>()) w->SetFocused(f);
         if (auto* w = go->GetComponent<UIBottomSheet>()) w->SetFocused(f);
+        if (auto* w = go->GetComponent<UIRangeSlider>()) w->SetFocused(f);
     }
     static void DropIfUnusable(GameObject* go, bool hidden) {
         if (!go || !IsFocused(go)) return;
@@ -103,7 +109,7 @@ struct MoreNav {
     static bool UsesArrows(GameObject* go) {
         if (!go) return false;
         return go->GetComponent<UIDateTimePicker>() || go->GetComponent<UIPagination>()
-            || go->GetComponent<UIAccordion>() || go->GetComponent<UIBreadcrumbs>();
+            || go->GetComponent<UIAccordion>() || go->GetComponent<UIBreadcrumbs>() || go->GetComponent<UIRangeSlider>();
     }
     static void OnKeys(GameObject* go, bool left, bool right, bool activate) {
         if (!go) return;
@@ -139,6 +145,12 @@ struct MoreNav {
         }
         if (auto* w = go->GetComponent<UIBottomSheet>()) {
             if (activate) w->Toggle();
+            return;
+        }
+        if (auto* w = go->GetComponent<UIRangeSlider>()) {
+            if (right) w->Nudge(1);
+            else if (left) w->Nudge(-1);
+            else if (activate) w->SwapHandle();
         }
     }
 };
@@ -241,11 +253,67 @@ inline void WriteMoreUI(std::ostream& out, GameObject* go) {
         UIWriteColor(out, w->dimColor);
         out << ' ' << UIQuote(w->title) << '\n';
     }
+    if (auto* w = go->GetComponent<UIRangeSlider>()) {
+        out << "  uirange " << w->position.x << ' ' << w->position.y << ' ' << w->size.x << ' ' << w->size.y
+            << ' ' << (int)w->anchor << ' ' << w->minValue << ' ' << w->maxValue << ' ' << w->low << ' ' << w->high
+            << ' ' << w->step << ' ' << UIBit(w->wholeNumbers) << ' ' << w->minGap << ' ' << UIBit(w->showValue)
+            << ' ' << UIBit(w->interactable) << ' ' << UIBit(w->focusable) << ' ' << w->cornerRadius
+            << ' ' << (int)w->shape << ' ';
+        UIWriteColor(out, w->background); out << ' ';
+        UIWriteColor(out, w->fill); out << ' ';
+        UIWriteColor(out, w->knob); out << ' ';
+        UIWriteColor(out, w->textColor);
+        out << ' ' << UIQuote(w->valueFormat) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIAspectRatio>()) {
+        out << "  uiaspect " << w->ratio << ' ' << (int)w->mode << ' ' << w->alignX << ' ' << w->alignY
+            << ' ' << w->padding << '\n';
+    }
+    if (auto* w = go->GetComponent<UIInputValidator>()) {
+        out << "  uivalidate " << (int)w->kind << ' ' << UIBit(w->required) << ' ' << w->minLength << ' ' << w->maxLength
+            << ' ' << UIBit(w->useRange) << ' ' << w->minNumber << ' ' << w->maxNumber << ' ' << UIBit(w->quietUntilTouched)
+            << ' ' << UIBit(w->showMessage) << ' ' << UIBit(w->showOk) << ' ';
+        UIWriteColor(out, w->errorColor); out << ' ';
+        UIWriteColor(out, w->okColor);
+        out << ' ' << UIQuote(w->mustMatch) << ' ' << UIQuote(w->message) << '\n';
+    }
 }
 
 inline bool TryReadMoreUI(const std::string& field, std::istream& in, GameObject* go) {
     if (!go) return false;
     auto bit = [](int v) { return v != 0; };
+    if (field == "uirange") {
+        auto* w = go->AddComponent<UIRangeSlider>();
+        int anchor = 0, shape = 0, whole = 0, show = 1, inter = 1, foc = 1;
+        in >> w->position.x >> w->position.y >> w->size.x >> w->size.y >> anchor >> w->minValue >> w->maxValue
+           >> w->low >> w->high >> w->step >> whole >> w->minGap >> show >> inter >> foc >> w->cornerRadius >> shape;
+        w->anchor = (UIAnchor)anchor; w->shape = (UIShape)shape;
+        w->wholeNumbers = bit(whole); w->showValue = bit(show); w->interactable = bit(inter); w->focusable = bit(foc);
+        UIReadColor(in, w->background); UIReadColor(in, w->fill); UIReadColor(in, w->knob); UIReadColor(in, w->textColor);
+        w->valueFormat = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiaspect") {
+        auto* w = go->AddComponent<UIAspectRatio>();
+        int mode = 0;
+        in >> w->ratio >> mode >> w->alignX >> w->alignY >> w->padding;
+        if (mode < 0 || mode > (int)UIAspectRatio::Mode::HeightControls) mode = 0;
+        w->mode = (UIAspectRatio::Mode)mode;
+        return true;
+    }
+    if (field == "uivalidate") {
+        auto* w = go->AddComponent<UIInputValidator>();
+        int kind = 0, req = 1, range = 0, quiet = 1, msg = 1, ok = 0;
+        in >> kind >> req >> w->minLength >> w->maxLength >> range >> w->minNumber >> w->maxNumber >> quiet >> msg >> ok;
+        if (kind < 0 || kind > (int)UIInputValidator::Kind::LettersAndDigits) kind = 0;
+        w->kind = (UIInputValidator::Kind)kind;
+        w->required = bit(req); w->useRange = bit(range); w->quietUntilTouched = bit(quiet);
+        w->showMessage = bit(msg); w->showOk = bit(ok);
+        UIReadColor(in, w->errorColor); UIReadColor(in, w->okColor);
+        w->mustMatch = UIReadQuoted(in);
+        w->message = UIReadQuoted(in);
+        return true;
+    }
     if (field == "uisearch") {
         auto* w = go->AddComponent<UISearchBar>();
         int anchor = 0, shape = 0, cs = 0, ed = 0, inter = 1, foc = 1, count = 0;

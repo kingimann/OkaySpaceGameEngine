@@ -1,0 +1,59 @@
+okayguided 1
+template robot 1
+param armAngle 10
+param armLength 0.40000000000000002
+param detail 1
+param elbowBend 15
+param headSize 0.29999999999999999
+param height 1.8999999999999999
+param legLength 0.44
+param limbThickness 0.059999999999999998
+param neckLength 0.080000000000000002
+param shoulderWidth 0.59999999999999998
+param stance 5
+param torsoDepth 0.34000000000000002
+slot antenna none
+slot arm thick
+slot backpack none
+slot belt none
+slot face none
+slot foot block
+slot hand fist
+slot head cyclops
+slot leg round
+slot neck piston
+slot pants none
+slot pelvis box
+slot shirt none
+slot shoulder spike
+slot torso power
+color antenna 0.5 0.519999981 0.550000012 1
+color arm 0.5 0.519999981 0.550000012 1
+color backpack 0.5 0.519999981 0.550000012 1
+color belt 0.5 0.519999981 0.550000012 1
+color face 0.899999976 0.75 0.150000006 1
+color foot 0.620000005 0.649999976 0.699999988 1
+color hand 0.620000005 0.649999976 0.699999988 1
+color head 0.620000005 0.649999976 0.699999988 1
+color leg 0.5 0.519999981 0.550000012 1
+color neck 0.5 0.519999981 0.550000012 1
+color pants 0.899999976 0.5 0.150000006 1
+color pelvis 0.5 0.519999981 0.550000012 1
+color shirt 0.899999976 0.5 0.150000006 1
+color shoulder 0.899999976 0.5 0.150000006 1
+color torso 0.620000005 0.649999976 0.699999988 1
+material antenna 5
+material arm 0
+material backpack 7
+material belt 8
+material face 1
+material foot 0
+material hand 0
+material head 0
+material leg 0
+material neck 0
+material pants 4
+material pelvis 0
+material shirt 3
+material shoulder 6
+material torso 0

@@ -4,7 +4,7 @@ Launchers and editors look for updates in two places and use whichever has the
 newer version:
 
 1. **Supabase Storage**: the public `releases` bucket on the project in
-   `CMakeLists.txt` (`OKAY_DEFAULT_ACCOUNT_URL`). Checked first.
+   `config/public-account.json` (`url`; `docs/accounts.md`). Checked first.
 2. **GitHub Releases**: `releases/latest/download/<file>`. The fallback.
 
 So an update can ship without the GitHub workflow: build, then publish to
@@ -16,7 +16,7 @@ Supabase.
 # 1. Bump the version in CMakeLists.txt (project(... VERSION x.y.z)).
 # 2. Build the Windows files (MinGW cross-compile; splits the editor's debug info).
 scripts/build-windows-dist.sh
-# 3. Upload. Either key works; it is read from the environment only.
+# 3. Upload (SUPABASE_URL or OKAY_DEFAULT_ACCOUNT_URL override the project address, which is otherwise read from config/public-account.json). Either key works; it is read from the environment only.
 SUPABASE_ACCESS_TOKEN=sbp_...   scripts/publish-supabase.sh   # management token
 SUPABASE_SERVICE_KEY=eyJ...     scripts/publish-supabase.sh   # or the service_role key
 ```
@@ -46,6 +46,12 @@ Storage and download traffic count against the Supabase plan's quotas.
 
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
+
+## Fast release (one dispatch, no bump PR; off until the owner switches it on)
+
+`.github/workflows/fast-release.yml` works out the next version itself, refuses a commit that has no fully green CI run on main, takes the
+release notes from small files in `dist/changelog.d/` (one per change, so no clashes), builds the checked commit with the version stamped in,
+and checks the result. The by-hand way below keeps working. Everything: [fast_release.md](fast_release.md).
 
 ## Try a branch before it is released (test builds)
 

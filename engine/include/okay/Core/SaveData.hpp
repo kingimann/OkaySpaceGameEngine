@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include "okay/Core/PathSafety.hpp"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -306,27 +307,19 @@ public:
         if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
         BaseDir() = d;
     }
-    /// True if `name` is a safe relative file name for a game script to use:
-    /// not empty, not absolute ("/x", "\\x", "C:x", "\\\\server\\x"), no ".."
-    /// part and no NUL byte. Scripts come from game content, so they must not
-    /// reach files outside the game's own folders.
-    static bool IsSafeRelative(const std::string& name) {
-        if (name.empty() || name.find('\0') != std::string::npos) return false;
-        if (name[0] == '/' || name[0] == '\\' || (name.size() > 1 && name[1] == ':')) return false;
-        std::size_t start = 0;
-        while (start <= name.size()) {
-            std::size_t end = name.find_first_of("/\\", start);
-            if (end == std::string::npos) end = name.size();
-            if (name.compare(start, end - start, "..") == 0 && end - start == 2) return false;
-            start = end + 1;
-        }
-        return true;
-    }
+    /// True if `name` is a safe relative file name for a game script to use. Scripts come from game content, so they
+    /// must not reach files outside the game's own folders. The rules are okay::pathsafety's (PathSafety.hpp, docs/
+    /// security.md): not empty, not too long, no NUL or control character, not absolute ("/x", "\\x", "C:x",
+    /// "\\server\x"), no ".." part, and (the Windows rules, applied on every system) no ':' (drive or hidden stream),
+    /// no device name (CON, NUL, COM1 ...), no part ending in '.' or ' '.
+    static bool IsSafeRelative(const std::string& name) { return pathsafety::IsSafeRelative(name); }
     /// A script-supplied file name resolved into the save folder; false (and
     /// `out` cleared) if the name could escape it.
     static bool SafeResolve(const std::string& name, std::string& out) {
         out.clear();
         if (!IsSafeRelative(name)) return false;
+        // An existing link inside the folder that points out of it is refused too.
+        if (!pathsafety::StaysInside(BaseDir().empty() ? std::filesystem::path() : std::filesystem::path(BaseDir()), name)) return false;
         out = Resolve(name);
         return true;
     }

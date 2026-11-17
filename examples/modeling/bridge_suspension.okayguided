@@ -1,0 +1,17 @@
+okayguided 1
+template bridge 1
+param deckThickness 0.29999999999999999
+param detail 1
+param height 3
+param length 24
+param supports 3
+param width 3.5
+slot deck slab
+slot rail posts
+slot structure suspension
+color deck 0.400000006 0.400000006 0.419999987 1
+color rail 0.419999987 0.439999998 0.479999989 1
+color structure 0.419999987 0.439999998 0.479999989 1
+material deck 0
+material rail 2
+material structure 1

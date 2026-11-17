@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <array>
 #include <unordered_map>
 
 namespace okay {
@@ -220,6 +221,7 @@ private:
         unsigned lastUse = 0, lastFullHash = 0;           // frame stamps
         std::uint64_t version = 0;                        // SkinnedMesh::version when skinned
         unsigned buildSerial = 0;                         // bumped on every re-expansion
+        std::vector<std::array<int, 3>> slotRanges;       // {material slot, first vertex, vertex count} per slot when the mesh has slots (drawn one range per slot)
         unsigned int skinVbo = 0;                         // GPU skinning: joints+weights, expanded alike
         unsigned int skinFor = 0; unsigned skinVer = 0;   // the vbo / build it was made for
     };
@@ -228,7 +230,8 @@ private:
     // version != 0: a CPU-skinned mesh — rebuilt when the version changes (no hashing).
     MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0);
     void BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv, int uSkin, int uBones);
-    void BuildExpandedVerts(const Mesh& mesh);            // fill m_verts (14 floats/vertex)
+    std::vector<std::array<int, 3>> m_slotRanges;         // filled by BuildExpandedVerts when it grouped the triangles by material slot
+    void BuildExpandedVerts(const Mesh& mesh, bool groupBySlot = false);   // fill m_verts (14 floats/vertex)
 };
 
 } // namespace okay

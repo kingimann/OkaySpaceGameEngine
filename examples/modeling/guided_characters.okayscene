@@ -1,0 +1,207 @@
+okayscene 3
+name "Guided characters"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 10 -0.5 10 0 0 0 1 100 1 100
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Human Average adult"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_average.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Human Athletic"
+  active 1
+  parent -1
+  transform 4 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_athletic.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Human Heavy build"
+  active 1
+  parent -1
+  transform 8 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_heavy.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Human Child"
+  active 1
+  parent -1
+  transform 12 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_child.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Human Tall and slim"
+  active 1
+  parent -1
+  transform 16 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_tall_slim.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Human Adventurer"
+  active 1
+  parent -1
+  transform 20 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_adventurer.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Human Caped hero"
+  active 1
+  parent -1
+  transform 24 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_hero.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Human Casual"
+  active 1
+  parent -1
+  transform 28 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_casual.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Human Person in a dress"
+  active 1
+  parent -1
+  transform 32 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_dress.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Robot Standard robot"
+  active 1
+  parent -1
+  transform 0 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_standard.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Robot Heavy robot"
+  active 1
+  parent -1
+  transform 4 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_heavy_bot.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Robot Scout drone"
+  active 1
+  parent -1
+  transform 8 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_scout.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Robot Cyclops bot"
+  active 1
+  parent -1
+  transform 12 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_cyclops.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Robot Android"
+  active 1
+  parent -1
+  transform 16 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_android.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Robot Rover bot"
+  active 1
+  parent -1
+  transform 20 0 5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "robot_rover.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Creature Dog"
+  active 1
+  parent -1
+  transform 0 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_dog.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Creature Horse"
+  active 1
+  parent -1
+  transform 4 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_horse.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Creature Bear"
+  active 1
+  parent -1
+  transform 8 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_bear.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Creature Stag"
+  active 1
+  parent -1
+  transform 12 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_stag.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Creature Eagle"
+  active 1
+  parent -1
+  transform 16 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_eagle.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Creature Duck"
+  active 1
+  parent -1
+  transform 20 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_duck.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Creature Dragon"
+  active 1
+  parent -1
+  transform 24 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_dragon.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Creature Wyvern"
+  active 1
+  parent -1
+  transform 28 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_wyvern.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Creature Beetle"
+  active 1
+  parent -1
+  transform 32 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_beetle.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Creature Ant"
+  active 1
+  parent -1
+  transform 36 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_ant.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Creature Spider"
+  active 1
+  parent -1
+  transform 40 0 10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "creature_spider.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Main Camera"
+  active 1
+  parent -1
+  transform 22 7 36 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

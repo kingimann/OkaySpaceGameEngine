@@ -71,7 +71,8 @@ void HandSection(const char* title, const char* id, FirstPersonHands::HandSide& 
         if (ImGui::DragFloat("Elbow bend", &s.elbowBend, 0.5f, -80.0f, 120.0f)) dirty = true;
         if (ImGui::DragFloat("Reach", &s.reach, 0.005f, -0.4f, 0.6f)) dirty = true;
         if (ImGui::Checkbox("Forearm", &s.forearm)) dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. The hand is only the brick until this is on.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm under the hand. The Old look and Minimal presets turn it off.");
+        if (ImGui::Checkbox("Sleeve and forearm use the shirt colour", &s.matchShirt)) dirty = true;
         if (s.forearm) {
             if (ImGui::DragFloat("Forearm length", &s.forearmLength, 0.01f, 0.05f, 1.2f)) dirty = true;
             if (ImGui::DragFloat("Forearm thickness", &s.forearmThickness, 0.005f, 0.02f, 0.4f)) dirty = true;
@@ -173,8 +174,41 @@ FirstPersonHands* FindHands(EditorState& ed) {
 void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (!h) return;
     bool dirty = false;
-    Help("Nothing shows in first person until this player is holding an item. "
-         "Other players always see the full character.");
+    Help("Your own arm in first person. Other players always see the full character. "
+         "Pick a Preset to compare looks; the Preview window updates as you change it.");
+    {
+        // Compare tool: each preset sets every player-view number at once. Ctrl+Z undoes it.
+        const auto cur = h->preset;
+        if (ImGui::BeginCombo("Preset", FirstPersonHands::PresetName(cur))) {
+            for (int i = 0; i < FirstPersonHands::kPresetCount; ++i) {
+                const auto pr = (FirstPersonHands::Preset)i;
+                if (ImGui::Selectable(FirstPersonHands::PresetName(pr), cur == pr)) {
+                    ed.PushUndo("First person preset");
+                    h->ApplyPreset(pr);
+                    dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FirstPersonHands::PresetHelp(pr));
+            }
+            ImGui::EndCombo();
+        }
+        Help(FirstPersonHands::PresetHelp(cur));
+        if (ImGui::Button("Use normal first-person arms")) {
+            ed.PushUndo("Use normal first-person arms");
+            h->UseNormalArms();
+            dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets every player-view number to the Normal preset. Ctrl+Z puts it back.");
+        ImGui::SameLine();
+        if (ImGui::Button("Old look")) {
+            ed.PushUndo("First person old look");
+            h->UseOldLook();
+            dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The look before presets, for comparing.");
+        if (ImGui::Checkbox("Left click swings the arm", &h->swingOnClick)) dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Others see the same swing on the real arm.");
+        ImGui::Separator();
+    }
     if (ImGui::Button("Open Preview")) {
         g_open = true;
         g_object = h->gameObject ? h->gameObject->name : "";
@@ -260,6 +294,7 @@ int MixHand(int s, const FirstPersonHands::HandSide& h) {
     s = MixFloat(s, h.sleeveLength);
     s = MixFloat(s, h.sleeveColour.r); s = MixFloat(s, h.sleeveColour.g); s = MixFloat(s, h.sleeveColour.b);
     s = s * 33 + (h.forearm ? 1 : 0);
+    s = s * 33 + (h.matchShirt ? 1 : 0);
     s = MixFloat(s, h.forearmLength);
     s = MixFloat(s, h.forearmThickness);
     s = MixVec(s, h.wristOffset);
@@ -350,6 +385,27 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
     presetChanged = preset("Two hands", HoldableObject::Preset::TwoHanded) || presetChanged;
     presetChanged = preset("Carry front", HoldableObject::Preset::CarryFront) || presetChanged;
     presetChanged = preset("Shoulder", HoldableObject::Preset::OverShoulder) || presetChanged;
+    ImGui::TextDisabled("Arm look");
+    for (int i = 0; i < FirstPersonHands::kPresetCount; ++i) {
+        const auto pr = (FirstPersonHands::Preset)i;
+        if (i) ImGui::SameLine();
+        const bool on = live->preset == pr;
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::SmallButton(FirstPersonHands::PresetName(pr))) {
+            ed.PushUndo("First person preset");
+            live->ApplyPreset(pr);
+            presetChanged = true;
+            ed.dirty = true;
+        }
+        if (on) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", FirstPersonHands::PresetHelp(pr));
+    }
+    if (ImGui::Button("Use normal first-person arms")) {
+        ed.PushUndo("Use normal first-person arms");
+        live->UseNormalArms();
+        presetChanged = true;
+        ed.dirty = true;
+    }
     bool foreYou = live->right.forearm || live->left.forearm;
     bool foreThem = live->othersRight.forearm && live->othersLeft.forearm;
     if (ImGui::Checkbox("Your forearm", &foreYou)) {

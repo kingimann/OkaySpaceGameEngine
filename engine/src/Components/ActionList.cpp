@@ -1,4 +1,5 @@
 #include "okay/Components/ActionList.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -1142,9 +1143,7 @@ void ActionList::Update(float dt) {
                 s.replace(p, find.size(), repl);
         }
         else if (op == "spawn3") {
-            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
-                Log::Error("[actions] spawn3: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
-            else if (scene) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn3")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform)
                     g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
@@ -1430,9 +1429,7 @@ void ActionList::Update(float dt) {
                 for (auto& up : scene->Objects()) if (up && up->tag == tg) up->active = on; }
         }
         else if (op == "spawn") {
-            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
-                Log::Error("[actions] spawn: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
-            else if (scene) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
@@ -1570,10 +1567,7 @@ void ActionList::Update(float dt) {
         else if (op == "load_scene") {
             // Action lists are game content: a raw scene path must stay inside the game.
             const std::string path = Str(it, 0);
-            if (SceneManager::IndexOf(path) < 0 && !Save::IsSafeRelative(path)) {
-                Log::Error("[actions] load_scene: refusing '", path, "' (absolute paths and '..' aren't allowed)");
-                return;
-            }
+            if (SceneManager::IndexOf(path) < 0 && !ScriptPathOk(path, "load_scene")) return;
             if (scene) scene->RequestLoad(path);
             return;
         }
@@ -1590,9 +1584,7 @@ void ActionList::Update(float dt) {
         else if (op == "get_prefs") { Vars()[Str(it, 0)] = Prefs::GetFloat(Str(it, 1), Num(it, 2)); }
         else if (op == "save_prefs") {   // like the scripts' prefs_save: into the game's save folder
             const std::string name = Str(it, 0).empty() ? "game.okayprefs" : Str(it, 0);
-            if (!Save::IsSafeRelative(name))
-                Log::Error("[actions] save_prefs: refusing '", name, "' (absolute paths and '..' aren't allowed)");
-            else Prefs::Save(Save::Resolve(name));
+            if (ScriptPathOk(name, "save_prefs")) Prefs::Save(Save::Resolve(name));
         }
         // Save slots (Saveable components mark what is stored; problems go to the Console).
         else if (op == "game_save")        { if (scene) GameSaves::Save(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0), Rest(it, 1)); }
@@ -1739,9 +1731,7 @@ void ActionList::Update(float dt) {
                          Vars()[Str(it, 0)] = Num(it, (std::size_t)(1 + k)); }
         }
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
-            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
-                Log::Error("[actions] spawn_at: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
-            else if (scene) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn_at")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) if (GameObject* at = scene->Find(ObjName(it, 1)))
                     if (at->transform) g->transform->SetPosition(at->transform->Position());
@@ -1808,13 +1798,12 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "spawn_wave") {                       // ring of prefabs around self
-            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
-                Log::Error("[actions] spawn_wave: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
-            else if (scene && t) {
+            if (scene && t) {
                 int count = (int)Num(it, 1); if (count < 1) count = 1;
                 float radius = it.args.size() > 2 ? Num(it, 2) : 3.0f;
                 Vec3 c = t->Position();
                 for (int i = 0; i < count; ++i) {
+                    if (!ScriptAssetPathOk(Str(it, 0), "spawn_wave")) break;
                     GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                     if (!g || !g->transform) continue;
                     float ang = (6.2831853f * i) / count;

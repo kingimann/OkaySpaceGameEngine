@@ -29,4 +29,15 @@ inline bool IsLocallyControlled(const GameObject* go) {
     return true;   // no NetworkSync anywhere up the chain -> single-player / always local
 }
 
+/// True for a copy of ANOTHER player's avatar that the network moves to this peer (a NetworkSync that this peer
+/// does not own). Not true for a player a server runs from that player's inputs: that body is simulated here, so
+/// it keeps every part of its controller that the owner's own machine runs too (client prediction must match).
+inline bool IsRemoteProxy(const GameObject* go) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* ns = t->gameObject->GetComponent<NetworkSync>())
+                return !ns->IsLocallyOwned();
+    return false;
+}
+
 } // namespace okay

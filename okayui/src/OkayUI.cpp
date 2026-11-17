@@ -5589,6 +5589,16 @@ void unpack(Color32 c, unsigned char out[4]) {
 }
 
 // A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
+// A window-list shape wholly above or below the current clip rectangle is not emitted at all: it would be scissored away, and
+// a long page (Community, the Friends list) lays out much more than it shows. Only on the main list, and never while a
+// DrawList::Cached drawing is being made (that copy may later land in view).
+int g_cachedDepth = 0;
+inline bool culledY(float y0, float y1) {
+    if (g_toOverlay || g_clipTop <= 0 || g_cachedDepth > 0) return false;
+    const SDL_Rect& c = g_clipStack[g_clipTop - 1];
+    return y1 < (float)c.y - 2.0f || y0 > (float)(c.y + c.h) + 2.0f;
+}
+
 struct ListScope {
     bool prevRaw, prevOv;
     explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay || prevOv; }   // the window list draws where the widgets around it do: in a popup, that is the overlay
@@ -5703,18 +5713,21 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul) {
 // ---- DrawList ---------------------------------------------------------------------------------
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(std::min(a.y, b.y) - th, std::max(a.y, b.y) + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     line(a.x, a.y, b.x, b.y, th, c);
 }
 
 void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    if (!overlay && culledY(mn.y, mx.y)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
 }
 
 void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(mn.y - th, mx.y + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     const float w = mx.x - mn.x, h = mx.y - mn.y;
     if (th * 2.0f >= w || th * 2.0f >= h) { quad(mn.x, mn.y, w, h, c); return; }   // the stroke fills the box
@@ -5757,12 +5770,14 @@ void DrawList::AddRectFilledMultiColor(Vec2 mn, Vec2 mx, Color32 tl, Color32 tr,
 
 void DrawList::AddCircleFilled(Vec2 center, float radius, Color32 col, int segments) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f) return;
+    if (!overlay && culledY(center.y - radius, center.y + radius)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     fillCircle(center.x, center.y, radius, c, circleSegments(radius, segments));
 }
 
 void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, float th) const {
     if (!finite2(center) || !finite1(radius) || radius <= 0.0f || !finite1(th) || th <= 0.0f) return;
+    if (!overlay && culledY(center.y - radius - th, center.y + radius + th)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     const int n = circleSegments(radius, segments);
     float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
@@ -5862,6 +5877,7 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     if (!text || !*text || !finite2(pos)) return;
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
+    if (!overlay && culledY(pos.y - 2.0f, pos.y + 2.0f * fH() * scale + 2.0f)) return;   // generous: glyphs below the line
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     drawText(pos.x, pos.y, text, scale, c);
 }
@@ -5901,7 +5917,7 @@ void DrawList::PathFillConvex(Color32 col) const {
 // A fixed store (no allocation): entries point into one vertex pool and one index pool, filled in order; when either is full
 // the whole store is emptied and filled again. Vertices are kept as drawn; indices relative to the entry's first vertex.
 namespace {
-struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; };
+struct GeoEntry { unsigned long long key; int fx, fy; long long bx, by; int v0, nv, i0, ni; bool overlay; float y0, y1; };
 constexpr int kGeoEntries = 128, kGeoVerts = 32768, kGeoIdx = 65536;
 GeoEntry   g_geo[kGeoEntries];
 int        g_ngeo = 0;
@@ -5928,8 +5944,9 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
         const GeoEntry& e = g_geo[k];
         if (e.key != key || e.fx != fx || e.fy != fy || e.overlay != g_toOverlay) continue;
         if (g_cullRow && !g_toOverlay) return;
-        if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
         const float dx = (float)(bx - e.bx), dy = (float)(by - e.by);
+        if (culledY(e.y0 + dy, e.y1 + dy)) return;   // the copy would land wholly outside the clip
+        if (nv + e.nv > kMaxVerts || ni + e.ni > kMaxIdx) { noteDrop(); return; }
         const int base = nv;
         for (int i = 0; i < e.nv; ++i) { SDL_Vertex v = g_geoV[e.v0 + i]; v.position.x += dx; v.position.y += dy; V[nv++] = v; }
         for (int i = 0; i < e.ni; ++i) I[ni++] = base + g_geoI[e.i0 + i];
@@ -5939,7 +5956,9 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
     const int nv0 = nv, ni0 = ni, spans0 = g_nspans, ovSpans0 = g_novSpans, drop0 = g_dropped;
     const bool cull = g_cullRow && !g_toOverlay;
     const SDL_Texture* tex0 = g_curTex;
+    ++g_cachedDepth;
     draw(user);
+    --g_cachedDepth;
     const int dv = nv - nv0, di = ni - ni0;
     if (cull || dv <= 0 || di <= 0 || g_nspans != spans0 || g_novSpans != ovSpans0 || g_dropped != drop0 || g_curTex != tex0) return;
     if (dv > kGeoVerts || di > kGeoIdx) return;
@@ -5947,6 +5966,8 @@ void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* us
     GeoEntry& e = g_geo[g_ngeo++];
     e.key = key; e.fx = fx; e.fy = fy; e.bx = bx; e.by = by; e.overlay = g_toOverlay;
     e.v0 = g_geoNv; e.nv = dv; e.i0 = g_geoNi; e.ni = di;
+    e.y0 = e.y1 = V[nv0].position.y;
+    for (int i = 1; i < dv; ++i) { const float y = V[nv0 + i].position.y; e.y0 = y < e.y0 ? y : e.y0; e.y1 = y > e.y1 ? y : e.y1; }
     std::memcpy(&g_geoV[g_geoNv], &V[nv0], sizeof(SDL_Vertex) * (std::size_t)dv); g_geoNv += dv;
     for (int i = 0; i < di; ++i) g_geoI[g_geoNi++] = I[ni0 + i] - nv0;
 }

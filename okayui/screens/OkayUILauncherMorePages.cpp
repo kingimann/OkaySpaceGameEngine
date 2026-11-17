@@ -75,13 +75,16 @@ void CenteredT(const UI::DrawList& dl, float x, float y, float width, const char
 }
 
 // A cache of wrapped texts: the pages wrap the same sentences frame after frame.
-const std::vector<std::string>& WrapCached(const std::string& text, float maxW) {
-    struct Entry { std::string text; float w, fs; std::vector<std::string> lines; };
+// `widest`: the width of the widest line, measured once.
+const std::vector<std::string>& WrapCached(const std::string& text, float maxW, float* widest = nullptr) {
+    struct Entry { std::string text; float w, fs; std::vector<std::string> lines; float widest; };
     static std::deque<Entry> cache;   // a deque: an answer stays valid while later texts are added (until the cache is cleared)
     const float fs = UI::GetTextLineHeight();
-    for (const Entry& e : cache) if (e.w == maxW && e.fs == fs && e.text == text) return e.lines;
+    for (const Entry& e : cache) if (e.w == maxW && e.fs == fs && e.text == text) { if (widest) *widest = e.widest; return e.lines; }
     if (cache.size() > 128) cache.clear();
-    cache.push_back(Entry{text, maxW, fs, WrapLines(text, maxW)});
+    cache.push_back(Entry{text, maxW, fs, WrapLines(text, maxW), 0.0f});
+    for (const std::string& l : cache.back().lines) cache.back().widest = std::max(cache.back().widest, UI::CalcTextSize(l.c_str()).x);
+    if (widest) *widest = cache.back().widest;
     return cache.back().lines;
 }
 // Draw wrapped text from (x, y); returns the height (lines times the line height).
@@ -96,18 +99,27 @@ UI::Color32 CBase() { return Rgb(30, 33, 41); }   // the launcher's page backgro
 UI::Color32 CGreen() { return Rgb(76, 200, 110); }
 UI::Color32 CGrey() { return Rgb(120, 128, 140); }
 
-// The launcher's avatar without a picture: a disc in the name's colour and the initial in white.
-void Avatar(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+// The launcher's avatar without a picture: a disc in the name's colour and the initial in white. The same picture wherever it
+// is, so it is drawn once per colour, size and initial and copied after that (DrawList::Cached).
+void AvatarNow(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], char init0) {
     const UI::Vec2 c = V(x + size * 0.5f, y + size * 0.5f);
     dl.AddCircleFilled(c, size * 0.5f, Rgb(rgb[0], rgb[1], rgb[2]), 32);
-    const char init[2] = {name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0};
+    const char init[2] = {init0, 0};
     const UI::Vec2 ts = UI::CalcTextSize(init);
     Txt(dl, V(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), Rgb(255, 255, 255), init);
 }
+void Avatar(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+    const char init0 = name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]);
+    if (g_layoutOnly) return;
+    struct Args { const UI::DrawList* dl; float x, y, size; const unsigned char* rgb; char init; } a{&dl, x, y, size, rgb, init0};
+    const unsigned long long key = LookKey({0x61767472u, FloatBits(size), FloatBits(UI::GetTextLineHeight()),
+                                            (unsigned)rgb[0] | ((unsigned)rgb[1] << 8) | ((unsigned)rgb[2] << 16), (unsigned char)init0});
+    dl.Cached(key, V(x, y), [](void* u) { const Args& m = *(const Args*)u; AvatarNow(*m.dl, m.x, m.y, m.size, m.rgb, m.init); }, &a);
+}
 
 // The launcher's five-pointed star with a concave outline (DrawStar in launcher/main.cpp): ten points, filled as five tip
-// triangles around a pentagon.
-void Star10(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
+// triangles around a pentagon. Drawn once per size and colour and copied after that.
+void Star10Now(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
     UI::Vec2 p[10];
     for (int i = 0; i < 10; ++i) {
         const float a = -1.5707963f + (float)i * 0.6283185f, rr = (i % 2 == 0) ? r : r * 0.45f;
@@ -117,14 +129,19 @@ void Star10(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
     dl.AddConvexPolyFilled(inner, 5, col);
     for (int i = 0; i < 5; ++i) dl.AddTriangleFilled(p[(i * 2 + 9) % 10], p[i * 2], p[i * 2 + 1], col);
 }
+void Star10(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 c; float r; UI::Color32 col; } a{&dl, c, r, col};
+    dl.Cached(LookKey({0x73746172u, FloatBits(r), col}), c, [](void* u) { const Args& m = *(const Args*)u; Star10Now(*m.dl, m.c, m.r, m.col); }, &a);
+}
 
-// The launcher's round icon buttons on friend rows (RoundIconButton): a disc, lighter under the mouse, and its glyph.
+// The launcher's round icon buttons on friend rows (RoundIconButton): a disc, lighter under the mouse, and its glyph. Drawn
+// once per icon, size and colours and copied after that.
 enum RoundIcon { kRibChat, kRibPlay, kRibCheck, kRibClose, kRibMore };
-void RoundIcon(const UI::DrawList& dl, UI::Vec2 p, float d, int icon, bool hov, UI::Color32 bg, UI::Color32 bgHover, UI::Color32 fg) {
+void RoundIconNow(const UI::DrawList& dl, UI::Vec2 p, float d, int icon, UI::Color32 bg, UI::Color32 fg) {
     const UI::Vec2 c = V(p.x + d * 0.5f, p.y + d * 0.5f);
-    dl.AddCircleFilled(c, d * 0.5f, hov ? bgHover : bg, 28);
+    dl.AddCircleFilled(c, d * 0.5f, bg, 28);
     switch (icon) {
-    case kRibChat: DrawNavIcon(dl, kIcoChat, c, fg); break;
+    case kRibChat: DrawNavIconNow(dl, kIcoChat, c, fg); break;
     case kRibPlay: dl.AddTriangleFilled(V(c.x - 3.5f, c.y - 5.5f), V(c.x - 3.5f, c.y + 5.5f), V(c.x + 5.5f, c.y), fg); break;
     case kRibCheck: {
         const UI::Vec2 pts[3] = {V(c.x - 5.0f, c.y + 0.2f), V(c.x - 1.5f, c.y + 4.0f), V(c.x + 5.5f, c.y - 4.5f)};
@@ -139,6 +156,21 @@ void RoundIcon(const UI::DrawList& dl, UI::Vec2 p, float d, int icon, bool hov, 
         for (int k = -1; k <= 1; ++k) dl.AddCircleFilled(V(c.x + (float)k * 5.0f, c.y), 1.8f, fg, 8);
         break;
     }
+}
+void RoundIcon(const UI::DrawList& dl, UI::Vec2 p, float d, int icon, bool hov, UI::Color32 bg, UI::Color32 bgHover, UI::Color32 fg) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 p; float d; int icon; UI::Color32 bg, fg; } a{&dl, p, d, icon, hov ? bgHover : bg, fg};
+    dl.Cached(LookKey({0x72696267u, FloatBits(d), (unsigned)icon, a.bg, fg}), p,
+              [](void* u) { const Args& m = *(const Args*)u; RoundIconNow(*m.dl, m.p, m.d, m.icon, m.bg, m.fg); }, &a);
+}
+
+// The presence dot on an avatar: a ring of the page colour around a green (online) or grey dot. Drawn once per colour.
+void PresenceDot(const UI::DrawList& dl, UI::Vec2 c, UI::Color32 ring, UI::Color32 dot) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 c; UI::Color32 ring, dot; } a{&dl, c, ring, dot};
+    dl.Cached(LookKey({0x70646f74u, ring, dot}), c, [](void* u) {
+        const Args& m = *(const Args*)u;
+        m.dl->AddCircleFilled(m.c, 7.0f, m.ring, 16);
+        m.dl->AddCircleFilled(m.c, 5.0f, m.dot, 16);
+    }, &a);
 }
 
 bool In(const UI::Rect& r, UI::Vec2 m) { return m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h; }
@@ -547,6 +579,12 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                     secRev = m.revision; secView = st.view; secFilter = st.filter; secN = m.friends.size();
                 }
                 const std::vector<FriendSection>& secs = secCache;
+                {
+                    std::size_t nRows = 0;
+                    for (const FriendSection& sec : secs) nRows += sec.rows.size();
+                    for (auto* v : {&res.rows, &res.messageButtons, &res.joinButtons, &res.moreButtons, &res.acceptButtons, &res.declineButtons}) v->reserve(nRows);
+                    res.shown.reserve(nRows);
+                }
                 const float rowH = 62.0f, A = 40.0f, d = 34.0f;
                 for (const FriendSection& sec : secs) {
                     ly = SectionLabel(dl, o.x, ly, lw, sec.title, (int)sec.rows.size());
@@ -616,22 +654,28 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                             if (rowHov) dl.AddRectFilled(rp, V(rp.x + lw, rp.y + rowH), Rgb(255, 255, 255, 11), 10.0f);
                             const UI::Vec2 ap = V(rp.x + 10.0f, rp.y + (rowH - A) * 0.5f);
                             Avatar(dl, ap.x, ap.y, A, f.avatar, f.name);
-                            if (accepted || sec.kind == 1) {
-                                const UI::Vec2 pd = V(ap.x + A * 0.85f, ap.y + A * 0.85f);
-                                dl.AddCircleFilled(pd, 7.0f, CBase(), 16);
-                                dl.AddCircleFilled(pd, 5.0f, f.online ? CGreen() : CGrey(), 16);
-                            }
+                            if (accepted || sec.kind == 1) PresenceDot(dl, V(ap.x + A * 0.85f, ap.y + A * 0.85f), CBase(), f.online ? CGreen() : CGrey());
                             if (f.favorite) Star10(dl, V(ap.x + 3.0f, ap.y + 3.0f), 6.0f, Rgb(250, 200, 70));
                             const float tx = rp.x + 10.0f + A + 12.0f, ty = rp.y + 12.0f;
                             const float right = rp.x + lw - 12.0f - (float)nBtns * (d + 8.0f);
-                            const std::string nm = FitTextWidth(f.name, right - tx - 10.0f);
-                            Txt(dl, V(tx, ty), cText, nm.c_str());
-                            const float nx = tx + UI::CalcTextSize(nm.c_str()).x + 6.0f;
-                            const std::string un = "@" + f.username;
-                            if (nx + UI::CalcTextSize(un.c_str()).x < right - 6.0f) Txt(dl, V(nx, ty), cDim, un.c_str());
-                            int sc = 0;
-                            const std::string sub = FriendStatusLine(f, &sc);
-                            Txt(dl, V(tx, ty + 20.0f), sc == 1 ? accLt : sc == 2 ? CGreen() : cDim, FitTextWidth(sub, right - tx - 10.0f).c_str());
+                            // The row's texts, fitted and measured, are kept while the model, the room and the text size stay the
+                            // same (a model with revision 0 is worked out every frame).
+                            struct RowText { unsigned rev = 0; float avail = -1.0f, fs = 0.0f, nmW = 0.0f, unW = 0.0f; int sc = 0; std::string nm, un, sub; };
+                            static std::vector<RowText> rowText;
+                            if (rowText.size() < m.friends.size()) rowText.resize(m.friends.size());
+                            RowText& rt = rowText[(std::size_t)idx];
+                            if (m.revision == 0 || rt.rev != m.revision || rt.avail != right - tx || rt.fs != fs) {
+                                rt.rev = m.revision; rt.avail = right - tx; rt.fs = fs;
+                                rt.nm = FitTextWidth(f.name, right - tx - 10.0f);
+                                rt.nmW = UI::CalcTextSize(rt.nm.c_str()).x;
+                                rt.un = "@" + f.username;
+                                rt.unW = UI::CalcTextSize(rt.un.c_str()).x;
+                                rt.sub = FitTextWidth(FriendStatusLine(f, &rt.sc), right - tx - 10.0f);
+                            }
+                            Txt(dl, V(tx, ty), cText, rt.nm.c_str());
+                            const float nx = tx + rt.nmW + 6.0f;
+                            if (nx + rt.unW < right - 6.0f) Txt(dl, V(nx, ty), cDim, rt.un.c_str());
+                            Txt(dl, V(tx, ty + 20.0f), rt.sc == 1 ? accLt : rt.sc == 2 ? CGreen() : cDim, rt.sub.c_str());
                             const UI::Color32 bg = Rgb(255, 255, 255, 16), bgh = Rgb(255, 255, 255, 34);
                             static const char* kTips[5] = {"Message", "Join their game", "Accept", "Decline", "More"};
                             auto rib = [&](int k, int icon, UI::Color32 c0, UI::Color32 c1, UI::Color32 fg, const char* tip) {
@@ -721,19 +765,27 @@ std::vector<int> CommunityTemplateFilter(const CommunityModel& m, const std::str
 namespace {
 
 // The launcher's initial tile (IconTile): a rounded square in the muted name colour, its outline, the initial.
-void IconTile(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+// The same picture wherever it is: drawn once per colour, size and initial and copied after that (DrawList::Cached).
+void IconTileNow(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], char init0) {
     const float rnd = size * 0.14f;
     dl.AddRectFilled(V(x, y), V(x + size, y + size), Rgb(rgb[0], rgb[1], rgb[2], 77), rnd);
     dl.AddRect(V(x, y), V(x + size, y + size), Rgb(rgb[0], rgb[1], rgb[2], 140), rnd, 1.0f);
-    const char init[2] = {name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0};
+    const char init[2] = {init0, 0};
     const UI::Vec2 ts = UI::CalcTextSize(init);
     Txt(dl, V(x + (size - ts.x) * 0.5f, y + (size - ts.y) * 0.5f), Rgb(224, 230, 240), init);
+}
+void IconTile(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+    const char init0 = name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]);
+    struct Args { const UI::DrawList* dl; float x, y, size; const unsigned char* rgb; char init; } a{&dl, x, y, size, rgb, init0};
+    const unsigned long long key = LookKey({0x74696c65u, FloatBits(size), FloatBits(UI::GetTextLineHeight()),
+                                            (unsigned)rgb[0] | ((unsigned)rgb[1] << 8) | ((unsigned)rgb[2] << 16), (unsigned char)init0});
+    dl.Cached(key, V(x, y), [](void* u) { const Args& m = *(const Args*)u; IconTileNow(*m.dl, m.x, m.y, m.size, m.rgb, m.init); }, &a);
 }
 
 // A dashed outline along a rounded rectangle (the launcher's drop zone): the corners are quarter circles of as many segments
 // as the launcher's renderer gives a circle of that radius (its 0.3 px error target), walked clockwise from the top of the
 // left edge, dashes and gaps alternating along the way.
-void DashedRoundRect(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, float r, UI::Color32 col, float th, float dash, float gap) {
+void DashedRoundRectNow(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, float r, UI::Color32 col, float th, float dash, float gap) {
     r = std::min(r, std::min(b.x - a.x, b.y - a.y) * 0.5f);
     int seg = (int)std::ceil(kPi / std::acos(1.0f - std::min(0.3f, r) / std::max(r, 0.01f)));
     seg = std::max(4, std::min(512, seg + (seg & 1)));
@@ -761,6 +813,13 @@ void DashedRoundRect(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, float r, UI
             if (left <= 0.001f) { on = !on; left = on ? dash : gap; }
         }
     }
+}
+// Drawn once per size and colour and copied after that (it is a few hundred short lines).
+void DashedRoundRect(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, float r, UI::Color32 col, float th, float dash, float gap) {
+    struct Args { const UI::DrawList* dl; UI::Vec2 a, b; float r; UI::Color32 col; float th, dash, gap; } x{&dl, a, b, r, col, th, dash, gap};
+    const unsigned long long key = LookKey({0x64617368u, FloatBits(b.x - a.x), FloatBits(b.y - a.y), FloatBits(r), col, FloatBits(th),
+                                            FloatBits(dash), FloatBits(gap)});
+    dl.Cached(key, a, [](void* u) { const Args& m = *(const Args*)u; DashedRoundRectNow(*m.dl, m.a, m.b, m.r, m.col, m.th, m.dash, m.gap); }, &x);
 }
 
 // The small-caps label of a Community section ("YOUR LIBRARY  -  3", or just the title); returns its height.
@@ -971,10 +1030,10 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
                 const float A = 52.0f;
                 IconTile(dl, cp.x + 14.0f, cp.y + 14.0f, A, it.tile, it.title);
                 const float tx = cp.x + 14.0f + A + 12.0f, tr = cp.x + cardW - 14.0f;
-                Txt(dl, V(tx, cp.y + 16.0f), cText, FitTextWidth(it.title, tr - tx).c_str());
-                Txt(dl, V(tx, cp.y + 37.0f), accLt, FitTextWidth(it.meta, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + 16.0f), cText, FitTextCached(it.title, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + 37.0f), accLt, FitTextCached(it.meta, tr - tx).c_str());
                 const std::string sub = it.file + (it.ago.empty() ? "" : "  \xC2\xB7  " + it.ago);
-                Txt(dl, V(tx, cp.y + 56.0f), cDim, FitTextWidth(sub, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + 56.0f), cDim, FitTextCached(sub, tr - tx).c_str());
                 // Play (the accent button), reveal and more
                 {
                     const bool over = hov && In(playR, mouse), held = over && UI::IsItemActive() && m.havePlayer;
@@ -1031,9 +1090,9 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
                 float wmax = UI::CalcTextSize(kTitle[k]).x;
                 std::size_t nLines = 0;
                 {
-                    const std::vector<std::string>& lines = WrapCached(desc, tw);
-                    nLines = lines.size();
-                    for (const std::string& l : lines) wmax = std::max(wmax, UI::CalcTextSize(l.c_str()).x);
+                    float widest = 0.0f;
+                    nLines = WrapCached(desc, tw, &widest).size();
+                    wmax = std::max(wmax, widest);
                 }
                 const float gh = 2.0f + fs + kSpY + fs * (float)nLines;
                 if (k > 0 && !rowLayout) sy = NextY(NextY(sy, 0.0f), 6.0f);
@@ -1092,8 +1151,8 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
                 } else if (over) UI::SetTooltip("%s", "Editor not found next to the launcher");
                 IconTile(dl, cp.x + 14.0f, cp.y + (cardH - 40.0f) * 0.5f, 40.0f, t.tile, t.name);
                 const float tx = cp.x + 14.0f + 40.0f + 12.0f, tr = cp.x + cardW - 12.0f;
-                Txt(dl, V(tx, cp.y + cardH * 0.5f - fs - 1.0f), m.haveEditor ? cText : Rgb(255, 255, 255, 110), FitTextWidth(t.name, tr - tx).c_str());
-                Txt(dl, V(tx, cp.y + cardH * 0.5f + 2.0f), cDim, FitTextWidth(t.desc, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + cardH * 0.5f - fs - 1.0f), m.haveEditor ? cText : Rgb(255, 255, 255, 110), FitTextCached(t.name, tr - tx).c_str());
+                Txt(dl, V(tx, cp.y + cardH * 0.5f + 2.0f), cDim, FitTextCached(t.desc, tr - tx).c_str());
                 if (clicked && m.haveEditor) res.useTemplate = idx;   // a card only opens New Project; the person confirms name and place
                 UI::PopID();
             }
@@ -1233,7 +1292,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             UI::PopTextScale();
             if (m.runningLatest) tx += Pill(dl, tx, p0.y + 5.0f, "Latest", AccentAlpha(0.32f), cText) + 6.0f;
             if (m.runningLts) tx += Pill(dl, tx, p0.y + 5.0f, "LTS", Rgb(70, 170, 120, 90), cText) + 6.0f;
-            Txt(dl, V(p0.x, p0.y + 30.0f), cDim, FitTextWidth(m.runningSub, iw - 330.0f).c_str());
+            Txt(dl, V(p0.x, p0.y + 30.0f), cDim, FitTextCached(m.runningSub, iw - 330.0f).c_str());
             if (Btn("##vercheck", m.checking ? "Checking\xE2\x80\xA6" : "Check again", p0.x + iw - 306.0f, p0.y + 8.0f, 140.0f, 30.0f, !m.checking)) res.checkAgain = true;
             res.checkButton = UI::GetItemRect();
             if (Btn("##verfolder", "Open install folder", p0.x + iw - 306.0f + 148.0f, p0.y + 8.0f, 158.0f, 30.0f)) res.openFolder = true;
@@ -1326,7 +1385,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                 if (r.highlight) highlight(p0, iw, rh);
                 rowTitle(r, p0);
                 const float btnW = 120.0f + 8.0f + 96.0f, sizeW = 92.0f;
-                Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextWidth(r.sub, iw - btnW - sizeW - 24.0f).c_str());
+                Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextCached(r.sub, iw - btnW - sizeW - 24.0f).c_str());
                 Txt(dl, V(p0.x + iw - btnW - 14.0f - UI::CalcTextSize(r.size.c_str()).x, p0.y + 19.0f), cDim, r.size.c_str());
                 if (Btn("##vermkdef", r.isDefault ? "Default" : "Make default", p0.x + iw - btnW, p0.y + 14.0f, 120.0f, 30.0f, !r.isDefault)) res.makeDefault = (int)i;
                 res.makeDefaultButtons[i] = UI::GetItemRect();
@@ -1379,7 +1438,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                 res.availableRows[i] = UI::Rect{p0.x, p0.y, iw, rh};
                 if (r.highlight) highlight(p0, iw, rh);
                 rowTitle(r, p0);
-                Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextWidth(r.sub, iw - rightW - 16.0f).c_str());
+                Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextCached(r.sub, iw - rightW - 16.0f).c_str());
                 if (r.downloading) {
                     const float bx = p0.x + iw - rightW, by = p0.y + 17.0f, bw = rightW - 100.0f, bh = 24.0f;
                     Fill(dl, V(bx, by), V(bx + bw, by + bh), CField(), 6.0f);

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 using namespace okayuitest;
@@ -125,6 +126,9 @@ static S::VersionsModel Versions() {
 
 int main() {
     RUN_SUITE("okayui launcher more pages");
+    // OKAYUI_BENCH_ONLY=1: only the speed block (for profiling the page builds with callgrind).
+    const bool benchOnly = std::getenv("OKAYUI_BENCH_ONLY") != nullptr;
+    if (!benchOnly) {
 
     // ================= text wrapping =================
     {
@@ -626,6 +630,7 @@ int main() {
         rig.Frames(3);
         CHECK(UI::DroppedGeometry() == 0);
     }
+    }   // !benchOnly
     // ================= Speed: per-frame CPU time of each page (headless; information, not a check) =================
     {
         auto bench = [](const char* name, float W, float H, const std::function<void()>& ui) {
@@ -643,7 +648,8 @@ int main() {
                         name, MedianUs(build), dd.vertexCount, dd.indexCount, dd.cmdCount);
             UI::UseLauncherLook(false);
         };
-        const S::FriendsModel fm = Friends(); S::FriendsState fs;
+        S::FriendsModel fm = Friends(); fm.revision = 1;   // as the launcher's model (kept between frames)
+        S::FriendsState fs;
         bench("Friends", 1280, 720, [&] { S::DrawFriends(fm, fs, 248, 60, 1016, 600); });
         const S::CommunityModel cm = Community(); char lib[128] = "", tpl[128] = "";
         S::CommunityState cs; cs.libFilter = lib; cs.libCap = 128; cs.tplFilter = tpl; cs.tplCap = 128;

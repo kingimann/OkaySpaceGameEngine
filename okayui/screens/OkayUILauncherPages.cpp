@@ -124,7 +124,6 @@ void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, f
 }
 
 // The launcher's line icons (DrawNavIcon in launcher/main.cpp): 1.6 px strokes in a 15 px box.
-void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
 // Drawn once per icon and colour and copied after that (DrawList::Cached), as the medals.
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col) {
     struct Args { const UI::DrawList* d; int id; UI::Vec2 c; UI::Color32 col; } a{&d, id, c, col};
@@ -280,6 +279,28 @@ std::string FitTextWidth(const std::string& s, float maxW) {
     return s.substr(0, lo < starts.size() ? starts[lo] : 0) + kEll;
 }
 
+const std::string& FitTextCached(const std::string& s, float maxW, float* width) {
+    struct Entry { std::string src, out; float maxW = 0.0f, fs = 0.0f, w = 0.0f; };
+    static std::unordered_map<unsigned long long, Entry> cache;
+    const float fs = UI::GetTextLineHeight();
+    unsigned long long h = 1469598103934665603ull;
+    for (char c : s) h = (h ^ (unsigned char)c) * 1099511628211ull;
+    h = (h ^ FloatBits(maxW)) * 1099511628211ull;
+    h = (h ^ FloatBits(fs)) * 1099511628211ull;
+    auto it = cache.find(h);
+    if (it == cache.end() || it->second.maxW != maxW || it->second.fs != fs || it->second.src != s) {
+        if (it == cache.end() && cache.size() >= 1024) { cache.clear(); it = cache.end(); }
+        Entry& e = it == cache.end() ? cache[h] : it->second;
+        e.src = s; e.maxW = maxW; e.fs = fs;
+        e.out = FitTextWidth(s, maxW);
+        e.w = e.out.empty() ? 0.0f : UI::CalcTextSize(e.out.c_str()).x;
+        if (width) *width = e.w;
+        return e.out;
+    }
+    if (width) *width = it->second.w;
+    return it->second.out;
+}
+
 void WrapTwoLines(const std::string& s, float maxW, std::string& l1, std::string& l2) {
     l1.clear(); l2.clear();
     if (UI::CalcTextSize(s.c_str()).x <= maxW) { l1 = s; return; }
@@ -400,7 +421,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             if (hov) dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), Col(th.accent), 7.0f, 2.0f);
             const float ix = rp.x + padX, inW = cw - 2.0f * padX;
             float iy = rp.y + padY;
-            dl.AddText(V(ix, iy), Col(th.text), FitTextWidth(d.title, inW).c_str());
+            dl.AddText(V(ix, iy), Col(th.text), FitTextCached(d.title, inW).c_str());
             iy = NextY(iy, fs);
             // "12.0 MB / 48.0 MB", formatted again only when the numbers change (a few rows remembered).
             struct Ov { long long rec = -2, tot = -2; char text[64] = ""; };
@@ -652,7 +673,7 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
                     const UI::Color32 icol = Rgb((int)(c[0] * 0.8f + 51), (int)(c[1] * 0.8f + 51), (int)(c[2] * 0.8f + 51));
                     DrawNavIcon(ld, kind == 1 ? kIcoFriends : kind == 2 ? kIcoChat : kind == 3 ? kIcoRefresh : kIcoBell, ic, icol);
                     // the title (doubled for weight when unread), then up to two body lines
-                    const std::string title = FitTextWidth(n.title.empty() ? std::string("Notification") : n.title, textW);
+                    const std::string& title = FitTextCached(n.title.empty() ? std::string("Notification") : n.title, textW);
                     const UI::Color32 tcol = n.unread ? cText : Col(th.text, 0.80f);
                     ld.AddText(V(tx, rp.y + 11.0f), tcol, title.c_str());
                     if (n.unread) ld.AddText(V(tx + 0.7f, rp.y + 11.0f), tcol, title.c_str());
@@ -962,12 +983,12 @@ AchievementsResult DrawAchievements(const AchievementsModel& m, AchievementsStat
                 if (a.showcased) dl.AddRect(p, V(p.x + tileW, p.y + tileH), Rgb(255, 204, 77, 115), 12.0f, 1.5f);
                 DrawMedal(dl, V(p.x + 38.0f, p.y + tileH * 0.5f), 24.0f, a.color, 1.0f);
                 const float tx = p.x + 74.0f, maxW = tileW - 74.0f - 14.0f - (a.showcased ? 16.0f : 0.0f);
-                dl.AddText(V(tx, p.y + 18.0f), cText, FitTextWidth(a.label.empty() ? AchPrettyId(a.id) : a.label, maxW).c_str());
+                dl.AddText(V(tx, p.y + 18.0f), cText, FitTextCached(a.label.empty() ? AchPrettyId(a.id) : a.label, maxW).c_str());
                 char ptxt[16]; std::snprintf(ptxt, sizeof(ptxt), "+%d", a.points);
                 const UI::Vec2 pts = UI::CalcTextSize(ptxt);
                 dl.AddRectFilled(V(tx, p.y + 40.0f), V(tx + pts.x + 12.0f, p.y + 40.0f + pts.y + 2.0f), Rgb(250, 200, 70, a.points >= 50 ? 60 : 32), 8.0f);
                 dl.AddText(V(tx + 6.0f, p.y + 41.0f), gold, ptxt);
-                dl.AddText(V(tx + pts.x + 20.0f, p.y + 40.0f), cDim, FitTextWidth(a.date.empty() ? std::string("Unlocked") : a.date, maxW - pts.x - 20.0f).c_str());
+                dl.AddText(V(tx + pts.x + 20.0f, p.y + 40.0f), cDim, FitTextCached(a.date.empty() ? std::string("Unlocked") : a.date, maxW - pts.x - 20.0f).c_str());
                 if (a.showcased) DrawStar(dl, V(p.x + tileW - 18.0f, p.y + 18.0f), 6.0f, gold);
                 if (fresh) {   // "NEW" on the last two days' unlocks
                     UI::PushTextScale(0.72f);   // an exact size (not rounded), as the launcher draws its NEW pill

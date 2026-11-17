@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 
 namespace UI = OkayUI;
@@ -109,6 +110,14 @@ private:
     bool m_combo, m_ascent, m_snap, m_aa, m_pop;
 };
 
+// A key for DrawList::Cached: the words that stand for a drawing's look, mixed (FNV-1a over 32-bit words).
+inline unsigned long long LookKey(std::initializer_list<unsigned> words) {
+    unsigned long long k = 1469598103934665603ull;
+    for (unsigned v : words) k = (k ^ v) * 1099511628211ull;
+    return k;
+}
+inline unsigned FloatBits(float f) { unsigned u; std::memcpy(&u, &f, 4); return u; }
+
 // ---- defined in OkayUILauncherPages.cpp ----
 bool BeginPlainChild(const char* id, float w, float h, float bar = 8.0f);
 void EndPlainChild(float contentBottom);
@@ -122,6 +131,7 @@ void Ring(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col, int n, f
 enum NavIcon { kIcoPlay = 1, kIcoGrid = 2, kIcoTrophy = 5, kIcoFriends = 6, kIcoBag = 7, kIcoDownload = 10, kIcoBell = 11, kIcoChat = 12, kIcoRefresh = 14 };
 void OutlineRect(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float rounding, float t);
 void DrawNavIcon(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);
+void DrawNavIconNow(const UI::DrawList& d, int id, UI::Vec2 c, UI::Color32 col);   // drawn each time (inside another Cached drawing)
 void DrawTrophy(const UI::DrawList& dl, UI::Vec2 c, float s, UI::Color32 col);
 void DrawStar(const UI::DrawList& dl, UI::Vec2 c, float r, UI::Color32 col);
 void DrawMedal(const UI::DrawList& dl, UI::Vec2 c, float r, const unsigned char rgb[3], float alpha);

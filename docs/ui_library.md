@@ -315,7 +315,7 @@ Script: `ui_set_style("Play", "Neon Pill")`. Not offered because the renderer ca
 
 **Themes** (`ui_themes.okaydata`). 54: the twelve built-in looks of the UI Theme component plus 42 defined in data (light, dark, retro pixel,
 sci-fi, fantasy, military, cartoon, minimal, neon, wood, stone, metal, horror, kids, mobile, console, high contrast...). A theme bundles colours,
-a font (only fonts we already ship: the built-in pixel font or DejaVu Sans), corner radius, spacing, hover and animation speed, and sound names.
+the name of a font (only fonts we already ship: the built-in pixel font or DejaVu Sans; today every theme draws with the built-in font, because a font file path would have to exist in the player's project), corner radius, spacing, hover and animation speed, and sound names.
 `ui_set_theme("Neon")` (or `UIStyleLib::SetTheme(scene, "Neon")`) switches the whole scene at run time and keeps the pick in Prefs
 (`ui.theme`; `RestoreThemePreference` brings it back). A widget whose Style Variant has a `themeName` stays on that theme: the per-component
 override. Every theme is checked for readable text (contrast at least 4.5 on the panel, 3 on a button). Sounds: the names are stored and read with

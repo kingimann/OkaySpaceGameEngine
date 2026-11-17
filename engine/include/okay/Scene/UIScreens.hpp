@@ -260,6 +260,20 @@ inline void Script(GameObject* g, const std::string& acts, const char* event, co
     g->AddComponent<ScriptComponent>("okayscript")->LoadSource(src);
 }
 
+/// A vector icon that stays visible on top of panels. A plain Image is drawn under every panel (so it can be a background), which would hide an
+/// icon put on a card; a button is drawn above them, so the icon is a button that cannot be clicked, with no label and no fill.
+inline GameObject* AddIconPicture(Scene& s, GameObject* parent, const char* name, const std::string& icon, UIAnchor an, Vec2 pos, float side, Color tint) {
+    GameObject* g = Child(s, parent, name);
+    auto* b = g->AddComponent<UIButton>();
+    b->label.clear(); b->icon = "icon:" + icon; b->iconSize = side;
+    b->anchor = an; b->position = {pos.x - 8.0f, pos.y}; b->size = {side + 16.0f, side};
+    const Color none(0, 0, 0, 0);
+    b->color = b->hoverColor = b->pressedColor = b->disabledColor = none;
+    b->textColor = b->hoverTextColor = tint; b->borderWidth = 0.0f; b->shadow = false; b->hoverScale = 1.0f; b->pressOffset = 0.0f;
+    b->shape = UIShape::Rectangle; b->cornerRadius = 0.0f; b->interactable = false; b->focusable = false;
+    return g;
+}
+
 inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const std::string& rootName, int variant) {
     using UITemplates::ButtonKind;
     const UIAnchor an = Anchor(n.Get("anchor"), UIAnchor::TopLeft);
@@ -353,10 +367,7 @@ inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const 
         tb->sizing = n.Get("fit") == "1" ? UITabs::Sizing::FitText : UITabs::Sizing::Equal;
         tb->selected = slate::Accent(); tb->background = slate::Card();
     } else if (k == "icon") {
-        g = Child(s, parent, n.name.c_str());
-        auto* im = g->AddComponent<UIImage>();
-        im->anchor = an; im->position = pos; im->size = n.Has("size") ? size : Vec2{32, 32};
-        im->texture = "icon:" + n.text; im->color = Role(n.Get("color"), slate::Text());
+        g = AddIconPicture(s, parent, n.name.c_str(), n.text, an, pos, n.Has("size") ? size.x : 32.0f, Role(n.Get("color"), slate::Text()));
     }
     (void)variant;
     if (g && n.Get("page") == "1") g->name = rootName + " " + n.name;   // a tab page: UITabs finds it by this name

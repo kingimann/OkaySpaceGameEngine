@@ -295,7 +295,9 @@ inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     th.padding = s->Num("padding", 16); th.fontScale = s->Num("fontScale", 2); th.hoverScale = s->Num("hoverScale", 1.03f);
     th.transitionSpeed = s->Num("speed", 12);
     const std::string font = s->Str("font", "dejavu");
-    th.fontPath = font == "dejavu" ? "assets/fonts/DejaVuSans.ttf" : "";
+    // `font` names which shipped font the theme wants ("pixel" = the built-in 8x8 font, "dejavu" = DejaVu Sans). It is not written into fontPath:
+    // that is a project file path, and the shipped font is not a file of the player's project. The built-in font is used.
+    th.fontPath.clear();
     return true;
 }
 

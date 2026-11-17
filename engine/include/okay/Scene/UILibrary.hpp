@@ -535,10 +535,8 @@ inline GameObject* BuildSlice4(Scene& scene) {
                                    "trophy", "gem", "crown", "skull", "bomb", "fire", "lightning", "sun", "moon", "cloud",
                                    "tree", "fish", "car", "rocket", "gamepad", "camera", "music", "globe", "search", "check"};
     for (int i = 0; i < 40; ++i) {
-        GameObject* g = Child(scene, icons, (std::string("Icon") + std::to_string(i + 1)).c_str());
-        auto* im = g->AddComponent<UIImage>();
-        im->anchor = UIAnchor::TopLeft; im->position = {24.0f + (i % 8) * 49.0f, 56.0f + (i / 8) * 49.0f}; im->size = {36, 36};
-        im->texture = std::string("icon:") + kIcons[i]; im->color = slate::Text();
+        UIScreens::detail3::AddIconPicture(scene, icons, (std::string("Icon") + std::to_string(i + 1)).c_str(), kIcons[i], UIAnchor::TopLeft,
+                                           {24.0f + (i % 8) * 49.0f, 56.0f + (i / 8) * 49.0f}, 36.0f, slate::Text());
     }
     detail2::Note(scene, icons, "IconNote", "Use one on any Image (texture icon:heart) or Button (icon icon:play). Pick from all 371 in GameObject > UI > Browse All UI...", {20, 470}, 390, 60);
     return root;

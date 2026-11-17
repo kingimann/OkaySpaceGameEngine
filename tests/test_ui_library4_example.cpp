@@ -94,7 +94,7 @@ int main() {
             CHECK(WithoutGuids(SceneSerializer::Serialize(reread)) == WithoutGuids(SceneSerializer::Serialize(p.s)));
         }
         int icons = 0, vectorIcons = 0;
-        for (const auto& o : p.s.Objects()) if (auto* im = o->GetComponent<UIImage>()) { ++icons; vectorIcons += !uilib::IconNameOf(im->texture).empty() && uilib::FindIcon(uilib::IconNameOf(im->texture)); }
+        for (const auto& o : p.s.Objects()) if (auto* ib = o->GetComponent<UIButton>()) { if (!ib->interactable) { ++icons; vectorIcons += !uilib::IconNameOf(ib->icon).empty() && uilib::FindIcon(uilib::IconNameOf(ib->icon)); } }
         CHECK(vectorIcons == 40);   // forty vector icons (the page has a few other pictures)
         p.Begin();
         GameObject* back = p.s.Find("Backdrop");

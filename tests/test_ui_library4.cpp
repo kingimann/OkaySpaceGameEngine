@@ -22,7 +22,7 @@ namespace {
 struct Size { float w, h; };
 
 bool Interactive(GameObject* g) {
-    return g->GetComponent<UIButton>() || g->GetComponent<UIInputField>() || g->GetComponent<UISlider>() || g->GetComponent<UIToggle>() || g->GetComponent<UIDropdown>();
+    return (g->GetComponent<UIButton>() && g->GetComponent<UIButton>()->interactable) || g->GetComponent<UIInputField>() || g->GetComponent<UISlider>() || g->GetComponent<UIToggle>() || g->GetComponent<UIDropdown>();
 }
 
 // Walk the active widgets of a subtree: how many are off screen or poke out of their parent, and how many interactive pairs overlap.

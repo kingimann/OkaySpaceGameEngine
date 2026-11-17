@@ -1586,7 +1586,7 @@ const unsigned char kManaged[3] = {242, 191, 89};                // ImVec4(0.95,
 
 // Dear ImGui's SmallButton with the host's frame padding: one text line tall, the label FramePadding.x in on each side.
 // How far a CollapsingHeader's bar reaches into the window's padding on each side (Dear ImGui: half the window padding, less a pixel).
-constexpr float kCollapsingBleed = 7.0f;   // the editor's window padding is 16: trunc(16 / 2 - 1)
+constexpr float kCollapsingBleed = 8.0f;   // measured on the editor's Inspector: 8 pixels on each side
 
 bool InspSmallButton(const char* label) {
     UI::CenterNextOnLine();
@@ -2372,7 +2372,7 @@ float RowFrameW(const InspRow& r, float itemW, float regionW, float startX = 0.0
 std::string Visible(const char* label) { return std::string(label ? label : "", InspVisibleLen(label)); }
 
 // A body's window reaches this far past its region on both sides: the prefab bar of a changed field sits 5 pixels left of the region.
-constexpr float kMarkBleed = 6.0f;
+constexpr float kMarkBleed = 9.0f;   // 6 was enough for the prefab bars; a collapsing header reaches 8 (stage 8)
 
 // n drag cells sharing the value column (Dear ImGui's DragFloat2..4 and the editor's DragVec3Axis): each cell a whole number of pixels,
 // the last taking the rest; with axisBars the axis colour down each cell's left edge and fewer decimals in a narrow cell; a part that
@@ -2651,7 +2651,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             }
             case InspRowCombo: {
                 MenuLook look_(0.0f);
-                UI::PushStyleVar(UI::StyleVar_PopupWidth, frameW);
+                // the list as wide as the box, or as its widest item when that is wider (Dear ImGui fits a combo's list to its items: the
+                // Modifiers' "Subdivision Surface" ran under the bar of a 160-wide list, stage 8)
+                float listW = frameW;
+                if (r.items && r.count <= 256)
+                    for (int q = 0; q < r.count; ++q) listW = std::max(listW, UI::CalcTextWidth(r.items[q]) + 16.0f + (r.count > kListRows ? 12.0f : 0.0f));
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
                 UI::SetNextItemWidth(WithLabel(frameW, r.label));
                 int* cur = r.I();
                 const int c = *cur >= 0 && *cur < r.count ? *cur : -1;

@@ -1989,9 +1989,11 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
     if (removeAt >= 0) { ed.PushUndo(); r->overrides.erase(r->overrides.begin() + removeAt); ed.dirty = true; }
     if (ImGui::SmallButton("+ Override##btr")) { ed.PushUndo(); r->overrides.emplace_back(tree && !tree->keys.empty() ? tree->keys.front().name : std::string(), std::string()); ed.dirty = true; }
     if (!tree && !r->treePath.empty()) ImGui::TextColored(ImVec4(0.95f, 0.38f, 0.35f, 1), "Cannot read %s", r->treePath.c_str());
+    ImGui::PushTextWrapPos(0.0f);   // the note wraps at the panel's edge (it ran out of a docked Inspector, stage 8)
     if (go->GetComponent<NavMeshAgent>()) ImGui::TextDisabled("Moves through the Nav Mesh Agent.");
     else if (go->GetComponent<NPCController>()) ImGui::TextDisabled("Moves through the NPC Controller (its states stand down).");
     else ImGui::TextDisabled("Moves over the navigation on its own (add a Nav Mesh Agent for avoidance).");
+    ImGui::PopTextWrapPos();
     if (ed.isPlaying()) {
         ImGui::Text("%s", r->IsRunning() ? "Running" : "Stopped");
         ImGui::SameLine();

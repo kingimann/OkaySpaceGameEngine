@@ -50,6 +50,9 @@ Before a compile that is going to run, okay-build preprocesses that file and bui
 
 A hit copies the stored object and its depfile back and does not compile. A miss compiles and stores both under `.okaybuild/cache/<key>/`. Changing the source, a header that the preprocessor sees, the command line, or the compiler file produces a different key, so the old entry is simply not used. The entry is not deleted. There is no cache size limit yet.
 
+## Diagnostics
+Each step that runs records its kind, its description, how long it took, and whether the compiler cache hit, missed, or was not involved. The build writes that to `.okaybuild/report`. `okay-build report` prints the step count, the cache hit rate, the slowest steps (up to ten), and the summed time. `--profile` still prints the older plan/dirty/command/wall line. The report is the per-step view.
+
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
 - Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`

@@ -632,9 +632,9 @@ struct Live {
     HANDLE proc = nullptr;
     HANDLE pipe = nullptr;
     int id = -1;
-    string out, cacheKey;
+    string out, cacheKey, cacheTag;
     bool stream = false;
-    long long started = 0;
+    long long started = 0, began = 0;
 };
 static string winQuote(const string& s) {
     bool need = s.empty();
@@ -884,6 +884,46 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
 static void printCache() {
     int h = gCacheHit.load(), m = gCacheMiss.load();
     if (h + m > 0) printf("okay-build: cache %d hit, %d miss\n", h, m);
+}
+struct StepNote { long long ns = 0; string kind, cache, desc; };
+static vector<StepNote> gSteps;
+static void noteStep(const string& kind, const string& desc, long long ns, const string& cache) {
+    string d = desc; for (char& c : d) if (c == '\t' || c == '\n') c = ' ';
+    OK_LOCK(l, gStateMu); gSteps.push_back(StepNote{ns, kind, cache, d});
+}
+static void writeReport() {
+    fs::create_directories(under(".okaybuild"));
+    string tmp = under(".okaybuild/report.tmp");
+    { std::ofstream f(tmp, std::ios::trunc);
+      f << "okaybuild-report 1\n";
+      for (auto& s : gSteps) f << s.ns << '\t' << s.kind << '\t' << s.cache << '\t' << s.desc << '\n';
+      f << "hits\t" << gCacheHit.load() << "\nmisses\t" << gCacheMiss.load() << "\n"; }
+    fs::rename(tmp, under(".okaybuild/report"));
+}
+static int showReport() {
+    std::ifstream in(under(".okaybuild/report"));
+    if (!in) throw Fail("no report yet; run a build first");
+    string line; if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("report is not from this okay-build");
+    struct Row { long long ns; string kind, cache, desc; };
+    vector<Row> rows; int hits = 0, misses = 0;
+    while (std::getline(in, line)) {
+        if (line.compare(0, 5, "hits\t") == 0) { hits = atoi(line.c_str() + 5); continue; }
+        if (line.compare(0, 7, "misses\t") == 0) { misses = atoi(line.c_str() + 7); continue; }
+        size_t a = line.find('\t'), b = a == string::npos ? string::npos : line.find('\t', a + 1), c = b == string::npos ? string::npos : line.find('\t', b + 1);
+        if (a == string::npos || b == string::npos || c == string::npos) continue;
+        rows.push_back(Row{atoll(line.c_str()), line.substr(a + 1, b - a - 1), line.substr(b + 1, c - b - 1), line.substr(c + 1)});
+    }
+    std::sort(rows.begin(), rows.end(), [](const Row& x, const Row& y) { return x.ns > y.ns; });
+    long long sum = 0; for (auto& r : rows) sum += r.ns;
+    printf("steps: %zu\n", rows.size());
+    int denom = hits + misses;
+    if (denom == 0) printf("cache: no compiles\n");
+    else printf("cache: %d hit, %d miss, %d%%\n", hits, misses, hits * 100 / denom);
+    printf("slowest:\n");
+    size_t n = rows.size() < 10 ? rows.size() : 10;
+    for (size_t i = 0; i < n; ++i) printf("  %lld ms\t%s\t%s\t%s\n", rows[i].ns / 1000000, rows[i].kind.c_str(), rows[i].cache.c_str(), rows[i].desc.c_str());
+    printf("total: %lld ms\n", sum / 1000000);
+    return 0;
 }
 
 // ---------------------------------------------------------------- importer (Stage B)
@@ -1173,21 +1213,23 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (a.kind == "AR" && !a.output.empty()) fs::remove(a.output);
                 string err; string line = commandLineFor(a, err);
                 if (!err.empty()) { done(id, false, err, false); continue; }
-                string cacheKey;
+                long long tStep = nowNs();
+                string cacheKey, tag = "-";
                 if (gUseCache && a.kind == "CC") {
                     int cr = lookupCache(a, cacheKey, out);
-                    if (cr < 0) { done(id, false, out, false); continue; }
+                    if (cr < 0) { noteStep(a.kind, a.desc, nowNs() - tStep, "fail"); done(id, false, out, false); continue; }
                     if (cr == 1) {
-                        ++gCacheHit; printf("        cache hit\n"); fflush(stdout);
+                        ++gCacheHit; tag = "hit"; printf("        cache hit\n"); fflush(stdout);
                         bool ok = true; vector<std::pair<string, FileSig>> old;
                         if (a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) old = it->second.produced; }
                         commitStep(a, out, ok, old);
+                        noteStep(a.kind, a.desc, nowNs() - tStep, tag);
                         done(id, ok, out, false); continue;
                     }
-                    ++gCacheMiss; printf("        cache miss\n"); fflush(stdout);
+                    tag = "miss"; ++gCacheMiss; printf("        cache miss\n"); fflush(stdout);
                 }
                 bool stream = poolIdx[id] >= 0 && pools[poolIdx[id]].name == "console";
-                Live L; L.id = id; L.cacheKey = cacheKey;
+                Live L; L.id = id; L.cacheKey = cacheKey; L.cacheTag = tag; L.began = tStep;
                 if (!spawnLive(line, a.dir, stream, L, err)) { done(id, false, err, false); continue; }
                 if (poolIdx[id] >= 0) ++pools[poolIdx[id]].used;
                 live.push_back(L);
@@ -1215,9 +1257,11 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         vector<std::pair<string, FileSig>> oldProduced;
         if (ok && a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
         commitStep(a, out, ok, oldProduced);
+        noteStep(a.kind, a.desc, nowNs() - (L.began ? L.began : L.started), L.cacheTag.empty() ? "-" : L.cacheTag);
         done(L.id, ok, out, true);
     }
     if (!o.dry) saveState();
+    if (!o.dry) writeReport();
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
@@ -1310,18 +1354,20 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                             for (size_t i = a.rspHead; i < a.argv.size(); ++i) { for (char c : a.argv[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; } r << '\n'; }
                             argv.resize(a.rspHead); argv.push_back("@" + rf);
                         }
-                        string cacheKey; bool cached = false;
+                        long long tStep = nowNs();
+                        string cacheKey, tag = "-"; bool cached = false;
                         if (gUseCache && a.kind == "CC") {
                             int cr = lookupCache(a, cacheKey, out);
-                            if (cr < 0) ok = false;
-                            else if (cr == 1) { cached = true; ++gCacheHit; std::lock_guard<std::mutex> pl(mu); printf("        cache hit\n"); fflush(stdout); }
-                            else { ++gCacheMiss; std::lock_guard<std::mutex> pl(mu); printf("        cache miss\n"); fflush(stdout); }
+                            if (cr < 0) { ok = false; tag = "fail"; }
+                            else if (cr == 1) { cached = true; tag = "hit"; ++gCacheHit; std::lock_guard<std::mutex> pl(mu); printf("        cache hit\n"); fflush(stdout); }
+                            else { tag = "miss"; ++gCacheMiss; std::lock_guard<std::mutex> pl(mu); printf("        cache miss\n"); fflush(stdout); }
                         }
                         long long ts = nowNs();
                         if (ok && !cached) { int rc = runCmd(argv, out, stream); ok = rc == 0; }
                         gNsSpawn += nowNs() - ts;
                         if (ok && !cached && !cacheKey.empty()) storeCache(a, cacheKey);
                         commitStep(a, out, ok, oldProduced);
+                        noteStep(a.kind, a.desc, nowNs() - tStep, tag);
                     } else wouldRun[id] = 1;
                 } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
             } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
@@ -1334,6 +1380,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
     if (!o.dry) saveState();
+    if (!o.dry) writeReport();
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
@@ -1726,9 +1773,9 @@ int main(int argc, char** argv) {
             }
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -1749,6 +1796,7 @@ int main(int argc, char** argv) {
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
+        if (cmd == "report") return showReport();
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

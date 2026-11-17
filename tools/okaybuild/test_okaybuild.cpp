@@ -429,6 +429,25 @@ static void testConfigsAndToolchains() {
     }
 }
 
+static void testReport() {
+    printf("test: okay-build report times steps, cache rate, and slowest steps\n");
+    fresh("rep");
+    write("a.cpp", "int a(){return 1;}\n");
+    write("b.cpp", "int a(); int main(){return a()==1?0:1;}\n");
+    write("build.okay", "target a lib\n sources = a.cpp\nend\ntarget b exe\n sources = b.cpp\n deps = a\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "build before the report", o);
+    o = sh("report", &rc);
+    check(rc == 0 && o.find("slowest") != string::npos && o.find("a.cpp") != string::npos, "report lists a step and the slowest steps", o);
+    check(o.find("cache") != string::npos && o.find("miss") != string::npos && o.find(" ms") != string::npos, "report has cache misses and milliseconds", o);
+    fs::remove(gRoot / ".okaybuild/obj/b/b.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/b/b.cpp.o.d");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "second build restores b.cpp from the cache", o);
+    o = sh("report", &rc);
+    check(rc == 0 && o.find("hit") != string::npos && o.find("%") != string::npos, "report shows the cache hit rate", o);
+}
+
 static void testCompilerCache() {
     printf("test: compiler cache hits, misses, and invalidation\n");
     fresh("cache");
@@ -575,6 +594,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -240,6 +240,25 @@ int main() {
             if (diff >= 0.025) std::printf("  icon %s: ink %.3f at 24 px, %.3f at 96 px\n", d.name.c_str(), area24 / 576.0, area96 / 9216.0);
             CHECK(diff < 0.025);
         }
+        // crisp at 1x, 2x, 3x: edges have in-between coverage, and a bigger icon is drawn at its own size, not the small one stretched up
+        for (const char* nm : {"heart", "sword", "gear", "shield", "coin"}) {
+            const uilib::IconDef* d = uilib::FindIcon(nm);
+            CHECK(d != nullptr);
+            if (!d) continue;
+            const auto small = uilib::RenderIcon(*d, 24);
+            for (int k : {1, 2, 3}) {
+                const int px = 24 * k;
+                const auto big = uilib::RenderIcon(*d, px);
+                int ink = 0, partial = 0;
+                for (auto v : big) { ink += v > 0; partial += v > 0 && v < 255; }
+                CHECK(ink > 0 && partial * 100 >= ink * 3);          // at least 3% of the inked pixels are soft edge pixels
+                if (k > 1) {
+                    int same = 0, total = 0;                          // compare with the 24 px picture stretched up by pixel repeat
+                    for (int y = 0; y < px; ++y) for (int x = 0; x < px; ++x) { ++total; same += big[(std::size_t)y * px + x] == small[(std::size_t)(y / k) * 24 + (x / k)]; }
+                    CHECK(same * 100 < total * 97);                   // not (nearly) the same as nearest-neighbour upscaling
+                }
+            }
+        }
         // a broken line is skipped, not fatal
         const auto bad = uilib::ParseIcons("[icon z]\nc 1 2\nc 12 12 5\n");
         CHECK(bad.icons.size() == 1 && bad.icons[0].shapes.size() == 1);

@@ -384,3 +384,18 @@ click, and the whole Starter Pack flow), `ui_library4_shots` (the pictures), and
   Tutorial Tip); counts are in [ui_catalogue.md](ui_catalogue.md).
 - **Fonts per look: skipped.** The shipped fonts are the built-in pixel font and DejaVu Sans, and DejaVu is not a file in a player's project, so a look cannot
   point at it without a font path that resolves. Every look draws with the built-in font.
+
+### Crisp, not pixelated (round 4)
+
+- The default UI text is already a smooth anti-aliased TrueType face baked at the size it is shown (`UI/UIFontPolicy.hpp`: the 8x8 bitmap and nearest
+  filtering are only used when a scene's UI font is set to "pixel"). The pixelated pictures of earlier rounds came from the picture-making tests, which
+  set that "pixel" font on purpose; `ui_library4_shots` now uses the default font (and starts in the source folder so `assets/fonts/DejaVuSans.ttf`
+  is found, as in the editor) and keeps the pixel font only for the "before" half of the before/after sheets.
+- Vector icons are now rasterised at their **device** size (logical size x the canvas scale, HiDPI or zoom) with 16 levels of coverage and laid on the
+  device pixel grid (`DrawVectorIcon(..., deviceScale)`), never a small picture stretched up. The test checks that edges have in-between coverage at
+  1x, 2x and 3x and that the 2x and 3x pictures are not the 1x picture repeated.
+- The "Retro Pixel" and "Pixel" looks and styles are opt-in only: a look never changes the scene's UI font, so they do not change the default UI.
+- Circles, rings, thick lines, picture filtering (bilinear) and glyph sizes for any zoom are the work on branch `claude/ui-crisp-1`, which at the time of
+  this change existed only as uncommitted edits in `/home/user/wt-ui-crisp` (13 files and a test `ui_crisp`): it is NOT in this branch yet. Merge that branch
+  when it is committed; it touches `UI/UIRenderer.cpp` too, next to the three icon calls changed here.
+

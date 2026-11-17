@@ -23,7 +23,7 @@ namespace {
 
 struct Shot { bool ok = false; Image img{1, 1}; };
 
-Shot Render(int width, int height, const std::function<void(Scene&)>& build) {
+Shot Render(int width, int height, const std::function<void(Scene&)>& build, bool pixelFont = false) {
     Shot out;
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ABGR8888);
     SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
@@ -34,7 +34,7 @@ Shot Render(int width, int height, const std::function<void(Scene&)>& build) {
     SDL_RenderClear(ren);
     Scene scene("shot");
     scene.physicsEnabled = false;
-    scene.uiFont = "pixel";
+    scene.uiFont = pixelFont ? "pixel" : "";   // the default UI font is the smooth TrueType face; "pixel" (the old 8x8 bitmap) is only the opt-in look
     build(scene);
     scene.Start();
     UICanvas::Set((float)width, (float)height);
@@ -90,11 +90,46 @@ void Sample(Scene& s, const std::string& theme) {
 
 int main(int argc, char** argv) {
     RUN_SUITE("ui_library4_shots");
+    std::filesystem::current_path(OKAY_SOURCE_DIR);   // so the shipped font (assets/fonts/DejaVuSans.ttf) is found like in the editor
     std::string dir = std::string(OKAY_TEST_OUTPUT_DIR) + "/ui_library4";
     if (argc >= 2 && argv[1][0]) dir = argv[1];
     std::error_code ec;
     std::filesystem::create_directories(dir + "/screens", ec);
     CHECK(!ec);
+
+    {   // before / after: the old pixel font and the smooth default, at 1x and at 3x zoom (a crop of the 3x render, drawn at its own pixel size)
+        struct Tile { const char* name; std::function<void(Scene&)> build; float cx, cy; };   // cx, cy: the crop centre as a fraction of the screen
+        const std::vector<Tile> tiles = {
+            {"main-menu", [](Scene& s) { UIScreens::Build(s, "main_menu", 0, "Midnight Blue"); }, 0.5f, 0.5f},
+            {"settings", [](Scene& s) { UIScreens::Build(s, "settings", 0, "Midnight Blue"); }, 0.5f, 0.3f},
+            {"hud", [](Scene& s) { UIScreens::Build(s, "hud_shooter", 0, "Midnight Blue"); }, 0.12f, 0.9f},
+            {"icons", [](Scene& s) {
+                 using namespace UITemplates; using namespace UITemplates::detail;
+                 GameObject* canvas = EnsureCanvas(s);
+                 if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+                 Panel(s, canvas, "Bg", UIAnchor::StretchFull, {0, 0}, {0, 0}, Color::FromBytes(28, 32, 44, 255), 0.0f);
+                 static const char* n[] = {"heart", "sword", "shield", "gear", "star", "coin", "key", "map", "bell", "fire", "gem", "lock"};
+                 for (int i = 0; i < 12; ++i) UIScreens::detail3::AddIconPicture(s, canvas, ("I" + std::to_string(i)).c_str(), n[i], UIAnchor::TopLeft, {440.0f + (float)(i % 4) * 110.0f, 250.0f + (float)(i / 4) * 80.0f}, 64.0f, slate::Text());
+                 Button(s, canvas, "B", "Play", UIAnchor::TopLeft, {540, 520}, {200, 54});
+             }, 0.5f, 0.55f}};
+        for (int zoom : {1, 3}) {
+            const int W = 1280 * zoom, H = 720 * zoom, tw = 640, th = 360;
+            Image sheet(tw * 2 + 30, th * (int)tiles.size() + 10 * ((int)tiles.size() + 1));
+            for (int y = 0; y < sheet.Height(); ++y) for (int x = 0; x < sheet.Width(); ++x) sheet.SetPixel(x, y, Color::FromBytes(8, 9, 12, 255));
+            int ok = 0;
+            for (std::size_t t = 0; t < tiles.size(); ++t)
+                for (int after = 0; after < 2; ++after) {
+                    Shot sh = Render(W, H, tiles[t].build, after == 0);
+                    ok += sh.ok;
+                    if (!sh.ok) continue;
+                    int x0 = (int)(tiles[t].cx * (float)W) - tw / 2, y0 = (int)(tiles[t].cy * (float)H) - th / 2;
+                    x0 = std::max(0, std::min(W - tw, x0)); y0 = std::max(0, std::min(H - th, y0));
+                    for (int y = 0; y < th; ++y) for (int x = 0; x < tw; ++x) sheet.SetPixel(10 + after * (tw + 10) + x, 10 + (int)t * (th + 10) + y, sh.img.GetPixel(x0 + x, y0 + y));
+                }
+            CHECK(ok == (int)tiles.size() * 2);
+            CHECK(sheet.SavePNG(dir + "/before-after-" + std::to_string(zoom) + "x.png"));   // left: old pixel font, right: smooth default
+        }
+    }
 
     {   // looks side by side: 24 of the 54 on one sheet (each tile is the same sample screen with another look)
         static const char* names[] = {"Dark", "Light", "Sci-fi", "Fantasy", "Neon", "Retro Pixel", "Cartoon", "Military", "Horror", "Glass", "Minimal", "Modern Flat",

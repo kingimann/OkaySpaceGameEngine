@@ -2998,6 +2998,7 @@ std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build
 std::vector<std::string> g_buildWarnings;  // warnings shown with that build, which still runs
 constexpr float kVsErrListH = 96.0f;       // their list's height in the Build window (scrolls)
 int   g_vsBuildRetry = 0;                  // 1 = build, 2 = build & run, after "Build anyway"
+bool  g_buildAnyway = false;             // the person confirmed: build although the scene uses modules that are off (Project Settings > Modules)
 bool  g_buildDryRun = false;             // the next Build only produces the report (nothing is written to the output folder)
 int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 = Android
 
@@ -4373,6 +4374,7 @@ struct Options {
     bool compress = true;                   // zip: deflate
     bool zipAlso = false;                   // also write <archive>.zip next to the output folder
     bool dryRun = false;                    // build in a scratch folder, keep only the report
+    bool allowOffModules = false;           // build although the scene uses modules the project turned off
     int  buildNumber = 1;
     std::string archiveName = "{name}-{version}-{platform}";
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
@@ -4459,10 +4461,16 @@ std::string Build(EditorState& ed, const std::string& outDir,
     {   // objects of modules this project turned off: say so (the player still contains them until stripping lands)
         const auto usage = okaymod::UsageInScene(okay::ModuleRegistry::Get(), ed.scene());
         okaymod::Selection sel(okay::ModuleRegistry::Get(), g_project.modules);
+        std::string offNames;
         for (auto& u : okaymod::UsedButOff(sel, usage)) {
             const auto* mi = okay::ModuleRegistry::Get().Find(u.first);
-            ConsoleLog("Build: the scene uses " + std::to_string(u.second) + " object(s) of the module \"" + (mi ? mi->manifest.title : u.first) +
-                       "\", which is off in Project Settings > Modules. Turn it on, or remove those components.", 1);
+            offNames += (offNames.empty() ? "" : ", ") + (mi ? mi->manifest.title : u.first) + " (" + std::to_string(u.second) + " object(s))";
+        }
+        if (!offNames.empty()) {
+            ConsoleLog("Build: the scene uses modules that are off in Project Settings > Modules: " + offNames, 1);
+            if (!opt.allowOffModules)
+                return "Refusing to build: the scene uses modules that are off in Project Settings > Modules: " + offNames +
+                       ". Turn them on, remove those components, or tick \"Build anyway\" in the Build window.";
         }
     }
     // A build ships the scene you edited. While Play runs, the scene in memory is the running game (moved,
@@ -19014,6 +19022,16 @@ void DrawFileDialogs(EditorState& ed) {
         const bool  desktop = (g_buildPlatform == 0);
         // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
         // makes sense for the desktop target (we can launch the .exe we produced).
+        {   // a scene that uses a module the project turned off: the build is refused until the person confirms
+            okaymod::Selection msel(okay::ModuleRegistry::Get(), g_project.modules);
+            const auto off = okaymod::UsedButOff(msel, okaymod::UsageInScene(okay::ModuleRegistry::Get(), ed.scene()));
+            if (!off.empty()) {
+                std::string names;
+                for (auto& u : off) { const auto* mi = okay::ModuleRegistry::Get().Find(u.first); names += (names.empty() ? "" : ", ") + (mi ? mi->manifest.title : u.first); }
+                okaymod::WrappedColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f), "The scene uses modules that are off: " + names + ". The build is refused unless you confirm.");
+                ImGui::Checkbox("Build anyway##offmods", &g_buildAnyway);
+            } else g_buildAnyway = false;
+        }
         float footW = bw * 2.0f + ImGui::GetStyle().ItemSpacing.x;
         if (desktop) footW += (bw + ImGui::GetStyle().ItemSpacing.x) * 2.0f;
         ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - footW);
@@ -19096,6 +19114,7 @@ void DrawFileDialogs(EditorState& ed) {
           } else {
             builder::Options o = builder::OptionsFromSettings(g_build, g_project);
             o.dryRun = g_buildDryRun;
+            o.allowOffModules = g_buildAnyway;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
             g_openBuildResult = true;

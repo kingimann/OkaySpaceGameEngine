@@ -135,7 +135,7 @@ void ConsoleClear() {
 }
 
 #ifdef OKAY_HAVE_OKAYUI
-// The Console panel drawn by OkayUI (Edit > Preferences > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
+// The Console panel drawn by OkayUI (View > Rendering & Performance > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
 // is the dock tab, the title with the counts and the close box, and it hands its free area to OkayUI as one rectangle.
 namespace {
 okayuiscreens::ConsoleViewState g_okayView;

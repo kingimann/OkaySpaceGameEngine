@@ -129,6 +129,13 @@ public:
         m_ctx = nullptr;
     }
     bool MakeCurrent() override { return m_ctx && SDL_GL_MakeCurrent(m_win, m_ctx) == 0; }
+    // SDL_GL_MakeCurrent takes any SDL_WINDOW_OPENGL window with a context made for another one (SDL's documentation).
+    bool MakeCurrentWithContextOf(Window& owner) override {
+        SdlWindow* o = dynamic_cast<SdlWindow*>(&owner);
+        if (!o || !o->m_ctx || !(SDL_GetWindowFlags(m_win) & SDL_WINDOW_OPENGL)) return false;
+        return SDL_GL_MakeCurrent(m_win, o->m_ctx) == 0;
+    }
+    bool SetOpacity(float alpha) override { return SDL_SetWindowOpacity(m_win, alpha < 0.0f ? 0.0f : alpha > 1.0f ? 1.0f : alpha) == 0; }
     void SwapBuffers() override { SDL_GL_SwapWindow(m_win); }
     bool SetSwapInterval(int i) override { return SDL_GL_SetSwapInterval(i) == 0; }
     void GetDrawableSize(int& w, int& h) const override { SDL_GL_GetDrawableSize(m_win, &w, &h); }
@@ -221,6 +228,8 @@ public:
         if (d.opengl) fl |= SDL_WINDOW_OPENGL;
         fl |= d.hidden ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
         if (d.borderless) fl |= SDL_WINDOW_BORDERLESS;
+        if (d.skipTaskbar) fl |= SDL_WINDOW_SKIP_TASKBAR;
+        if (d.topmost) fl |= SDL_WINDOW_ALWAYS_ON_TOP;
         if (d.highDpi) fl |= SDL_WINDOW_ALLOW_HIGHDPI;
         if (d.fullscreen) fl |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         else if (d.maximized && d.resizable) fl |= SDL_WINDOW_MAXIMIZED;
@@ -395,6 +404,14 @@ public:
     /// One SDL_Event as ours. `freeDrop`: free SDL's dropped-file string (PollEvent owns the event); false when the app read the
     /// event itself and frees it (TranslateSdl2Event). `preciseWheel`: the wheel's fractional amounts (SDL 2.0.18's preciseX / Y,
     /// what touchpads send) instead of whole notches; PollEvent keeps the whole notches it always gave.
+    // SDL's mouse events are relative to their window only: add the window's position (Event::screenX / screenY).
+    static void ScreenPos(Event& r) {
+        SDL_Window* w = SDL_GetWindowFromID(r.windowId);
+        if (!w) return;
+        int x = 0, y = 0;
+        SDL_GetWindowPosition(w, &x, &y);
+        r.hasScreenPos = true; r.screenX = x + r.x; r.screenY = y + r.y;
+    }
     static bool Translate(const SDL_Event& e, Event& r, bool freeDrop, bool preciseWheel) {
         r.timestampMs = e.common.timestamp;
         switch (e.type) {
@@ -419,11 +436,15 @@ public:
         case SDL_MOUSEMOTION:
             r.type = EventType::MouseMove; r.windowId = e.motion.windowID;
             r.x = e.motion.x; r.y = e.motion.y; r.dx = e.motion.xrel; r.dy = e.motion.yrel;
-            r.fromTouch = e.motion.which == SDL_TOUCH_MOUSEID; return true;
+            r.fromTouch = e.motion.which == SDL_TOUCH_MOUSEID;
+            ScreenPos(r);
+            return true;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
             r.type = e.type == SDL_MOUSEBUTTONDOWN ? EventType::MouseButtonDown : EventType::MouseButtonUp;
             r.windowId = e.button.windowID; r.button = e.button.button; r.clicks = e.button.clicks;
-            r.x = e.button.x; r.y = e.button.y; r.fromTouch = e.button.which == SDL_TOUCH_MOUSEID; return true;
+            r.x = e.button.x; r.y = e.button.y; r.fromTouch = e.button.which == SDL_TOUCH_MOUSEID;
+            ScreenPos(r);
+            return true;
         case SDL_MOUSEWHEEL:
             r.type = EventType::MouseWheel; r.windowId = e.wheel.windowID;
             r.wheelX = (float)e.wheel.x; r.wheelY = (float)e.wheel.y;

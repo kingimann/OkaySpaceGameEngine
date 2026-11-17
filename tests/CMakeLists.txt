@@ -3046,6 +3046,32 @@ if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 
     set_tests_properties(editor_gfx_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
 endif()
 
+# Dear ImGui's multi-window panels on our own code (docs/sdl_removal_plan.md stage E4): the shared glue's platform windows
+# (shared/ImGuiOwnPlatform.*, EnableViewports) and the shared renderer drawing them with the main window's GL context
+# (shared/ImGuiOwnRenderer.*, Painter::SetTarget, Window::MakeCurrentWithContextOf), without the editor: a panel window made, drawn
+# (its pixels read back), moved, sized, given events (a real pointer warp, clicks, typing, a title-bar drag, close), merged back and
+# destroyed. Under Xvfb on our own X11 backend, on the sdl2 backend (when compiled in), and on a two-screen Xvfb (the monitor list,
+# a panel on the second monitor). Own code, off by default in the editor; the test only checks it.
+if(_okay_ep_imgui AND TARGET okay::platform AND NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_editor_viewports test_editor_viewports.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp)
+    target_include_directories(test_editor_viewports PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_viewports PRIVATE ${_okay_ep_imgui} okay::engine okay::platform)   # okay::engine: the GL painter
+    add_test(NAME editor_viewports_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_viewports> own)
+    add_test(NAME editor_viewports_own_2mon
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_viewports> own)
+    set_tests_properties(editor_viewports_own_2mon PROPERTIES
+        ENVIRONMENT "OKAY_XVFB_SCREENS=+xinerama -screen 0 1024x768x24 -screen 1 800x600x24")
+    set(_okay_vp_tests editor_viewports_own editor_viewports_own_2mon)
+    if(TARGET SDL2::SDL2 AND OKAY_WITH_SDL)
+        add_test(NAME editor_viewports_sdl2
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_viewports> sdl2)
+        list(APPEND _okay_vp_tests editor_viewports_sdl2)
+    endif()
+    set_tests_properties(${_okay_vp_tests} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
+
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)

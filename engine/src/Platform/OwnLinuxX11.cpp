@@ -130,6 +130,7 @@ namespace {
     F(Bool, glXMakeCurrent, (Display*, GLXDrawable, GLXContext)) \
     F(void, glXSwapBuffers, (Display*, GLXDrawable)) \
     F(GLXContext, glXGetCurrentContext, (void)) \
+    F(GLXDrawable, glXGetCurrentDrawable, (void)) \
     F(__GLXextFuncPtr, glXGetProcAddressARB, (const GLubyte*)) \
     F(Bool, glXQueryExtension, (Display*, int*, int*))
 
@@ -272,15 +273,18 @@ public:
     bool CreateGLContext(const GLAttributes& a) override;
     void DestroyGLContext() override;
     bool MakeCurrent() override;
+    bool MakeCurrentWithContextOf(Window& owner) override;
     void SwapBuffers() override;
     bool SetSwapInterval(int i) override;
     void GetDrawableSize(int& w, int& h) const override { GetSize(w, h); }
+    bool SetOpacity(float alpha) override;
 
     X11Impl* m_sys;
     ::Window m_win;
     Colormap m_cmap;
     GLXFBConfig m_fbc = nullptr;
     GLXContext m_ctx = nullptr;
+    bool m_borrowed = false;      // MakeCurrentWithContextOf drew into this window with another window's context
     bool m_focused = false;
     bool m_hidden = false;        // Hide() was called (or the window was made hidden): what IsVisible() reports
     bool m_mouseInside = false;   // the pointer is over the window (EnterNotify / LeaveNotify)
@@ -440,11 +444,19 @@ public:
             win->m_ic = m_x.XCreateIC_(m_im, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
                                        XNClientWindow, w, XNFocusWindow, w, (void*)nullptr);
         }
-        {   // start fullscreen / maximised: the initial _NET_WM_STATE is read when the window is mapped
-            Atom st[2]; int n = 0;
+        {   // start fullscreen / maximised / above / off the task bar: the initial _NET_WM_STATE is read when the window is mapped
+            // (EWMH, "_NET_WM_STATE": the window sets the property itself before mapping)
+            Atom st[4]; int n = 0;
             if (d.fullscreen) { st[n++] = m_aNetFull; win->m_fullscreen = true; }
             else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
+            if (d.skipTaskbar) st[n++] = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_SKIP_TASKBAR", False);
+            if (d.topmost) st[n++] = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_ABOVE", False);
             if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
+        }
+        if (d.noActivate) {   // EWMH "_NET_WM_USER_TIME": 0 asks the window manager not to give the window the focus when it is mapped
+            const long zero = 0;
+            m_x.XChangeProperty(m_dpy, w, m_x.XInternAtom(m_dpy, "_NET_WM_USER_TIME", False), XA_CARDINAL, 32, PropModeReplace,
+                                (const unsigned char*)&zero, 1);
         }
         SelectTouch(w);
         win->m_hidden = d.hidden;
@@ -635,6 +647,7 @@ public:
         case MotionNotify:
             if (win) {
                 e.type = EventType::MouseMove; e.x = ev.xmotion.x; e.y = ev.xmotion.y;
+                e.hasScreenPos = true; e.screenX = ev.xmotion.x_root; e.screenY = ev.xmotion.y_root;
                 if (m_relative) {
                     const int cx = win->m_w / 2, cy = win->m_h / 2;
                     if (e.x == cx && e.y == cy && m_warped) { m_warped = false; break; }   // our own warp
@@ -713,6 +726,7 @@ public:
         const bool down = ev.type == ButtonPress;
         const unsigned b = ev.xbutton.button;
         e.x = ev.xbutton.x; e.y = ev.xbutton.y; e.mods = ModsFromX(ev.xbutton.state);
+        e.hasScreenPos = true; e.screenX = ev.xbutton.x_root; e.screenY = ev.xbutton.y_root;
         if (b >= 4 && b <= 7) {   // wheel: 4 up, 5 down, 6 left, 7 right (press only)
             if (!down) return;
             e.type = EventType::MouseWheel;
@@ -1448,6 +1462,9 @@ public:
 X11Win::~X11Win() {
     LeaveFullscreenMode();
     DestroyGLContext();
+    // Another window's context drawing here (MakeCurrentWithContextOf): GLX must not keep a destroyed window as the drawable.
+    if (m_borrowed && m_sys->m_hasGlx && m_sys->m_glx.glXGetCurrentDrawable() == (GLXDrawable)m_win)
+        m_sys->m_glx.glXMakeCurrent(XD, None, nullptr);
     if (m_ic) XF.XDestroyIC(m_ic);
     if (m_gc) XF.XFreeGC(XD, m_gc);
     m_sys->Unregister(m_win);
@@ -1702,9 +1719,33 @@ void X11Win::DestroyGLContext() {
     m_ctx = nullptr;
 }
 bool X11Win::MakeCurrent() { return m_ctx && m_sys->m_glx.glXMakeCurrent(XD, m_win, m_ctx); }
-void X11Win::SwapBuffers() { if (m_ctx) m_sys->m_glx.glXSwapBuffers(XD, m_win); }
+// GLX 1.3 (glXMakeCurrent): a context can be made current on any window whose framebuffer config is compatible with the one the
+// context was made for. Every opengl window here is made from the same config (MakeWindow asks glXChooseFBConfig the same
+// question and takes the first answer), so the owner's context fits this window.
+bool X11Win::MakeCurrentWithContextOf(Window& owner) {
+    X11Win* o = dynamic_cast<X11Win*>(&owner);
+    if (!o || o->m_sys != m_sys || !o->m_ctx || !m_fbc || !m_sys->m_hasGlx) return false;
+    if (!m_sys->m_glx.glXMakeCurrent(XD, m_win, o->m_ctx)) return false;
+    m_borrowed = true;
+    return true;
+}
+void X11Win::SwapBuffers() { if (m_ctx || m_borrowed) m_sys->m_glx.glXSwapBuffers(XD, m_win); }
+// EWMH "_NET_WM_WINDOW_OPACITY": a CARDINAL, 0 = transparent, 0xFFFFFFFF = opaque; a compositing manager applies it. The property is
+// removed at full opacity (no property = opaque).
+bool X11Win::SetOpacity(float alpha) {
+    const Atom a = XF.XInternAtom(XD, "_NET_WM_WINDOW_OPACITY", False);
+    if (!(alpha < 1.0f)) XF.XDeleteProperty(XD, m_win, a);
+    else {
+        const double c = alpha <= 0.0f ? 0.0 : (double)alpha;
+        const unsigned long v = (unsigned long)(c * 4294967295.0);
+        const long l = (long)v;
+        XF.XChangeProperty(XD, m_win, a, XA_CARDINAL, 32, PropModeReplace, (const unsigned char*)&l, 1);
+    }
+    XF.XFlush(XD);
+    return true;
+}
 bool X11Win::SetSwapInterval(int i) {
-    if (!m_ctx) return false;
+    if (!m_ctx && !m_borrowed) return false;
     auto proc = [&](const char* n) { return (void*)m_sys->m_glx.glXGetProcAddressARB((const GLubyte*)n); };
     if (void* f = proc("glXSwapIntervalEXT")) { ((void (*)(Display*, GLXDrawable, int))f)(XD, m_win, i); return true; }
     if (void* f = proc("glXSwapIntervalMESA")) return ((int (*)(unsigned))f)((unsigned)i) == 0;

@@ -11,6 +11,7 @@
 // Written from the okay::platform interfaces (engine/include/okay/Platform/Painter.hpp, Platform.hpp); no code from elsewhere.
 #include "EditorGfx.hpp"
 
+#include "ImGuiOwnPlatform.hpp"
 #include "ImGuiOwnRenderer.hpp"
 
 #include <cstdlib>
@@ -50,9 +51,16 @@ public:
     std::string DriverName() const override { return std::string("own ") + m_p->Name() + " painter"; }
 
     bool InitImGui() override {
-        if (!m_renderer) m_renderer.reset(new okay::imguiown::ImGuiPainterRenderer(*m_p));
+        if (!m_renderer) {
+            m_renderer.reset(new okay::imguiown::ImGuiPainterRenderer(*m_p));
+            // Stage E4: the panel windows ImGui makes (the platform glue keeps each one's window in its viewport) are drawn by this
+            // painter, retargeted to the panel's window with the main window's context, cleared to the colour the sdl side used.
+            m_renderer->EnableViewports(&okay::imguiown::ImGuiPlatformGlue::WindowOf, 15, 16, 20);
+        }
         return true;
     }
+    bool SupportsImGuiViewports() const override { return m_renderer && m_renderer->ViewportsEnabled(); }
+    int PanelsDrawn() const override { return m_renderer ? m_renderer->PanelsDrawn() : 0; }
     void ShutdownImGui() override { m_renderer.reset(); }
     void NewFrame() override {}
     void RenderImGui(ImDrawData* dd) override { if (m_renderer) m_renderer->Render(dd); }

@@ -64,6 +64,7 @@ release job or the installer build for this change.
 | 11d | Editor input and 3D-view OpenGL through our own code (off by default) | `OKAY_EDITOR_PLATFORM=own` (optionally also `OKAY_PLATFORM_BACKEND=own`), then `Tools\OkayEngine.exe` (section "Editor: input and the 3D views' OpenGL through our own code") | Console's first lines say `editor: platform own (...)`; the editor works as usual except that panels cannot be dragged out into their own windows; untested in a real editor run and on Windows |
 | 11e | Editor drawn by our own renderer (off by default) | `OKAY_EDITOR_PLATFORM=own` and `OKAY_EDITOR_RENDERER=own`, then `Tools\OkayEngine.exe` (section "Editor: drawing with our own renderer") | Console's first lines say `editor: renderer own (opengl painter ...)`; no multi-window panels; **untested in a real editor run and on Windows** |
 | 11f | Editor with no SDL at all (off by default) | `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe` (section "Editor with no SDL at all") | Log and Console say `editor: no SDL ...`; drag a file onto the window to import it; Linux/Xvfb only (the whole editor, with an SDL trap), **unverified on Windows** |
+| 11g | Editor panels dragged out into their own windows on our own code (off by default) | The three switches of 11f, then `Tools\OkayEngine.exe`; drag a panel's tab (for example Project) outside the editor window (section "Editor: panels in their own windows on our own code") | The panel opens in its own window and works there (search, clicks, pictures); dragged back it docks again; Linux/Xvfb only, **unverified on Windows** |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
@@ -1334,7 +1335,8 @@ Steps (Windows, from the release, once this branch is in one):
    windowed, borderless and fullscreen switch the window (fullscreen is the desktop size here: no resolution change yet).
 7. Close the editor with the X: it closes normally.
 
-Known differences with the switches on (on purpose, for now): no multi-window panels; the game's resolution list shows only the
+Known differences with the switches on (on purpose, for now): no multi-window panels (they work on the branch
+`claude2/sdl-editor-viewports`, section "Editor: panels in their own windows on our own code"); the game's resolution list shows only the
 desktop size and "fullscreen" does not change the monitor's resolution; no touch-screen input.
 
 **Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor, with a trap that stops the program on any SDL call
@@ -1342,6 +1344,36 @@ desktop size and "fullscreen" does not change the monitor's resolution; no touch
 made no SDL call, and the screens match the default editor's except for frame-rate numbers and the text caret. File drops, the
 refresh rate and the message box of our Linux code are tested on their own (`platform_editor_calls_own`). **Never run on Windows:
 steps 2 to 7 are unverified there until you run them.**
+
+## Editor: panels in their own windows on our own code (branch `claude2/sdl-editor-viewports`, not merged or released yet)
+
+What changed (SDL removal, editor stage E4, `docs/sdl_removal_plan.md`): with the three "no SDL" switches, a panel dragged out of the
+editor now becomes **its own window**, made and drawn by our own code, as it does on the default editor. Before this change the
+panels stayed inside the editor with those switches. It is **off by default**: with no variable nothing changes. A panel window drawn
+by our code also shows pictures (thumbnails, the Scene and Game views). **Fixed for everyone on the same branch:** the default
+editor's panel windows showed those pictures as empty grey boxes; now they show them too. The Project panel's type filter no longer
+cuts "All types" to "All typ".
+
+* **Switches.** `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, all three (as in 11f).
+  `OKAY_EDITOR_OWN_VIEWPORTS=0` keeps the panels inside the editor again.
+* **How you can tell it is on.** The Console's first lines say `editor: platform own (...; main window and events on own; panel
+  windows on)`.
+
+Steps (Windows, from the release, once this branch is in one):
+
+1. Open a Command Prompt and run: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_EDITOR_PLATFORM=own`, `set OKAY_EDITOR_RENDERER=own`,
+   `set OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe`. Open a project (for example the physics example).
+2. Press and hold the mouse on the **Project** tab and drag it outside the editor window (onto the desktop or a second monitor), then
+   let go. Expect: the Project panel in its own window, with its folders and file pictures (not empty boxes). Try the same without
+   the switches (the default editor): the pictures show there too now.
+3. Click into that window's search box and type a few letters (for example `crate`): the list filters as you type.
+4. Drag the window by its tab or title bar back over the editor and drop it on the tab bar where it was: it docks again and its window
+   goes away.
+5. Close the editor with the X: it closes normally.
+
+**Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor (steps 2 to 4, with screenshots, and with the SDL
+trap: no SDL call), and the test program `editor_viewports` (own, sdl2 and two monitors). **Never run on Windows: steps 1 to 5 are
+unverified there until you run them.**
 
 ## Player with no SDL, game resolutions on our own code (branch `claude2/sdl-player-no-sdl`, not merged or released yet)
 

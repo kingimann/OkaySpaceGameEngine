@@ -77,6 +77,12 @@ public:
     virtual bool SetVSync(bool on) = 0;
     /// The target's pixels as RGBA8, top row first (screenshots, tests). False when unsupported.
     virtual bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) = 0;
+    /// Draw into another window from now on, with this painter's context and textures (opengl only: Window::MakeCurrentWithContextOf):
+    /// the output size, clear, drawing, ReadPixels and Present then act on `w`. Null = the painter's own window again. Used for
+    /// Dear ImGui's multi-window panels (shared/ImGuiOwnRenderer.cpp), whose windows show the main window's textures. `w` must come
+    /// from the same backend as the painter's window, with WindowDesc::opengl. False (and the painter's own window stays the
+    /// target) when this painter cannot (sdl2, software) or the window refused; SetTarget(nullptr) is always true.
+    virtual bool SetTarget(Window* w) { return w == nullptr; }
 
     // ---- asset helpers shared by every implementation ---------------------------------------
     /// Where LoadTexture also looks for a relative path (the game folder).

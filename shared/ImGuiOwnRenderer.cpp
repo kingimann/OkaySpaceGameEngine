@@ -12,6 +12,9 @@
 //    AddKeyEvent, AddInputCharactersUTF8, AddFocusEvent; DisplaySize, DisplayFramebufferScale, DeltaTime.
 //  * ImGuiPlatformIO::Platform_SetImeDataFn: called at the end of a frame with the caret position (InputPos, in ImGui's
 //    coordinates, minus the viewport's Pos) and the line height while a text field wants the input method (WantVisible).
+//  * Multi-window panels: ImGuiPlatformIO's Renderer_RenderWindow ("clear framebuffer, setup render target, then render the
+//    viewport->DrawData") and Renderer_SwapBuffers, called by ImGui::RenderPlatformWindowsDefault for each panel window;
+//    ImGuiBackendFlags_RendererHasViewports; ImGuiViewportFlags_NoRendererClear.
 #include "ImGuiOwnRenderer.hpp"
 
 #include "imgui.h"
@@ -46,6 +49,14 @@ ImGuiPainterRenderer::ImGuiPainterRenderer(plat::Painter& p) : m_p(p) {
 
 ImGuiPainterRenderer::~ImGuiPainterRenderer() {
     ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    if (m_windowOf) {
+        if (m_onPanel) m_p.SetTarget(nullptr);
+        pio.Renderer_RenderWindow = nullptr;
+        pio.Renderer_SwapBuffers = nullptr;
+        ImGui::GetIO().BackendRendererUserData = nullptr;
+        ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasViewports;
+        m_windowOf = nullptr;
+    }
     for (ImTextureData* t : pio.Textures) {
         if (t->RefCount != 1) continue;   // shared with another context: not ours to free
         if (t->TexID != ImTextureID_Invalid) m_p.DestroyTexture(TexOf(t->TexID));
@@ -162,6 +173,53 @@ void ImGuiPainterRenderer::Render(ImDrawData* dd) {
         }
     }
     m_p.SetClipRect(nullptr);
+}
+
+} // namespace okay::imguiown
+
+namespace okay::imguiown {
+
+// ---- multi-window panels ----------------------------------------------------------------------------------
+
+bool ImGuiPainterRenderer::EnableViewports(ViewportWindowFn windowOf, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+    if (!windowOf) return false;
+    // Only a painter that can draw into another window: the OpenGL painter (Painter::SetTarget).
+    if (m_p.Kind() != plat::PainterKind::OpenGL) return false;
+    m_windowOf = windowOf;
+    m_clear[0] = r; m_clear[1] = g; m_clear[2] = b;
+    ImGuiIO& io = ImGui::GetIO();
+    io.BackendRendererUserData = this;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
+    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+    pio.Renderer_RenderWindow = VpRender;
+    pio.Renderer_SwapBuffers = VpSwap;
+    return true;
+}
+
+// RenderPlatformWindowsDefault calls, for each panel window: (platform render), VpRender, (platform swap), VpSwap. The painter is
+// pointed at the panel's window for the draw and back at the main window after the swap, so nothing else ever draws into a panel.
+void ImGuiPainterRenderer::VpRender(ImGuiViewport* vp, void*) {
+    ImGuiPainterRenderer* self = (ImGuiPainterRenderer*)ImGui::GetIO().BackendRendererUserData;
+    if (!self || !self->m_windowOf || !vp) return;
+    plat::Window* w = self->m_windowOf(vp);
+    if (!w || !self->m_p.SetTarget(w)) { ++self->m_panelsFailed; self->m_onPanel = false; return; }
+    self->m_onPanel = true;
+    if (!(vp->Flags & ImGuiViewportFlags_NoRendererClear)) {
+        self->m_p.SetScale(1.0f, 1.0f);
+        self->m_p.SetClipRect(nullptr);
+        self->m_p.SetDrawColor(self->m_clear[0], self->m_clear[1], self->m_clear[2], 255);
+        self->m_p.Clear();
+    }
+    self->Render(vp->DrawData);
+    ++self->m_panelsDrawn;
+}
+
+void ImGuiPainterRenderer::VpSwap(ImGuiViewport* vp, void*) {
+    ImGuiPainterRenderer* self = (ImGuiPainterRenderer*)ImGui::GetIO().BackendRendererUserData;
+    if (!self || !vp || !self->m_onPanel) return;
+    self->m_p.Present();             // the panel window's buffers
+    self->m_p.SetTarget(nullptr);    // the main window again
+    self->m_onPanel = false;
 }
 
 } // namespace okay::imguiown

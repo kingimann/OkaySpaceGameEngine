@@ -113,6 +113,13 @@ struct Event {
     std::string text;
     float pressure = 0.0f;                // Finger*: how hard (0..1); 1.0 when the touch device does not measure it
     bool fromTouch = false;               // Mouse*: made from a touch (the first finger acts as the left button), not a real mouse
+    /// MouseMove / MouseButtonDown / MouseButtonUp: where the pointer was on the whole desktop when the OS reported it (the same
+    /// coordinates as Window::GetPosition), when `hasScreenPos`. x / y stay relative to the window. X11: the event's x_root /
+    /// y_root; Win32: ClientToScreen while the message is handled; sdl2: the window's position plus x / y. Dear ImGui's
+    /// multi-window panels need it: while a button is held the events keep coming to the window it was pressed in, and that
+    /// window may be moving (shared/ImGuiOwnPlatform.cpp).
+    bool hasScreenPos = false;
+    int screenX = 0, screenY = 0;
 };
 
 // ---- Display modes -------------------------------------------------------------
@@ -148,6 +155,11 @@ struct WindowDesc {
     bool highDpi = false;
     bool fullscreen = false;  // desktop fullscreen from the start (no mode switch)
     bool maximized = false;   // start maximised (needs resizable; ignored with fullscreen)
+    // For tool windows that float next to a main window (Dear ImGui's panels dragged out of the editor, its pop-up menus and
+    // tooltips). Each is a hint the window manager may ignore.
+    bool skipTaskbar = false; // no task-bar button (X11 _NET_WM_STATE_SKIP_TASKBAR, Win32 WS_EX_TOOLWINDOW, SDL_WINDOW_SKIP_TASKBAR)
+    bool topmost = false;     // above the other windows (X11 _NET_WM_STATE_ABOVE, Win32 WS_EX_TOPMOST, SDL_WINDOW_ALWAYS_ON_TOP)
+    bool noActivate = false;  // Show() does not take the keyboard focus (X11 _NET_WM_USER_TIME 0, Win32 SW_SHOWNA; sdl2: ignored)
 };
 
 struct GLAttributes {
@@ -206,6 +218,14 @@ public:
     virtual bool CreateGLContext(const GLAttributes& attrs) = 0;
     virtual void DestroyGLContext() = 0;
     virtual bool MakeCurrent() = 0;          // this window's context on this thread
+    /// Draw into THIS window with `owner`'s GL context: make `owner`'s context current on this window (its drawable). Both windows
+    /// must come from the same backend and be made with WindowDesc::opengl (the same pixel format), and `owner` must have a context
+    /// (CreateGLContext). Everything the context holds (textures, buffers) can be used here; SwapBuffers on this window then shows
+    /// what was drawn. One context for many windows, as Dear ImGui's multi-window panels need (the editor's textures live in the
+    /// main window's context). X11: glXMakeCurrent(this window, owner's context); Win32: the owner's pixel format set on this
+    /// window, then wglMakeCurrent(this window's DC, owner's context); sdl2: SDL_GL_MakeCurrent(this window, owner's context).
+    /// False when it could not (another backend's window, no context, the format refused).
+    virtual bool MakeCurrentWithContextOf(Window& owner) { (void)owner; return false; }
     virtual void SwapBuffers() = 0;
     virtual bool SetSwapInterval(int interval) = 0;   // 0 = off, 1 = vsync
     virtual void GetDrawableSize(int& w, int& h) const = 0;
@@ -233,6 +253,10 @@ public:
     /// spot location when the input method draws next to the caret). False = not supported here, or the input method of
     /// this window does not place its windows.
     virtual bool SetTextInputArea(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; return false; }
+    /// The whole window's opacity, 0 (invisible) to 1 (opaque) (Dear ImGui fades a panel being docked). X11
+    /// _NET_WM_WINDOW_OPACITY (a compositing manager applies it), Win32 a layered window (SetLayeredWindowAttributes), sdl2
+    /// SDL_SetWindowOpacity. False = not supported here.
+    virtual bool SetOpacity(float alpha) { (void)alpha; return false; }
 };
 
 /// A non-owning Window over an SDL_Window* that the app made itself with SDL_CreateWindow, so the Window methods (and the state

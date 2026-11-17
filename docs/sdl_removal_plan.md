@@ -488,7 +488,7 @@ platform backend)` at start. Every other combination is unchanged; the default (
 * **What the own path does differently** (known): display modes (the game's resolution list shows the desktop size only; exclusive
   fullscreen is desktop fullscreen; fixed on `claude2/sdl-player-no-sdl`, below); no touch input on the own backends; the editor's "open from the launcher" box has the error look on
   every backend; on X11 the refresh rate is whatever RandR reports (Xvfb reports none: 0, so Play's frame pacing falls back as it does
-  when SDL reports none). Still no multi-window panels (E4).
+  when SDL reports none). Still no multi-window panels (E4; done on `claude2/sdl-editor-viewports`).
 * **Proof: `scripts/editor_no_sdl_check.sh`** (the launcher's check made for the editor). A trap library defines every function
   libSDL2 exports (839 here); each one prints `SDL CALL: <name>` and exits with 97; it is preloaded in front of libSDL2.
   Run on 2026-11-16 with the full editor (`-O1`), opening `examples/physics/physics_playground.okayscene` on a 1600 x 900 Xvfb:
@@ -525,6 +525,67 @@ platform backend)` at start. Every other combination is unchanged; the default (
   check); our Win32 backend drawing the editor with WGL, its events and drops in a real session are unrun. A real X11 desktop (a window
   manager, a real file manager's drag, a real monitor's refresh rate) is unrun: Xvfb has no window manager and reports no refresh rate.
   No multi-window panels on `own` (E4). The default stays `sdl` until the owner approves (rule 17).
+
+### Stage E4: multi-window panels on our own code (branch `claude2/sdl-editor-viewports`, on top of `claude2/sdl-touch-tests`)
+
+**Status (2026-11-17): built and run as the whole editor on Linux under Xvfb (software OpenGL), with the SDL trap: no SDL call; off by
+default; not merged; Windows not run (MinGW syntax check only).** With the three switches (`OKAY_EDITOR_PLATFORM=own`,
+`OKAY_EDITOR_RENDERER=own`, `OKAY_PLATFORM_BACKEND=own`; also with only the first two, on okay::platform's sdl2 backend) a panel dragged
+out of the editor becomes its own OS window, as on the default editor. `OKAY_EDITOR_OWN_VIEWPORTS=0` keeps the panels inside. The log
+line says `...; panel windows on)`.
+
+* **Platform side** (`shared/ImGuiOwnPlatform.*`, `ImGuiPlatformGlue::EnableViewports`): Dear ImGui's `Platform_CreateWindow` /
+  `DestroyWindow` / `ShowWindow` / `SetWindowPos` / `GetWindowPos` / `SetWindowSize` / `GetWindowSize` / `GetWindowFramebufferScale` /
+  `SetWindowFocus` / `GetWindowFocus` / `GetWindowMinimized` / `SetWindowTitle` / `SetWindowAlpha` on `okay::platform` windows made by
+  the main window's backend (hidden until ImGui shows them; borderless, no task-bar button, topmost and "do not take the focus" from
+  the viewport's flags). The main viewport is tied to the main window. The monitor list comes from `Backend::Displays()` (read again
+  once a second). Events of every panel window reach ImGui: mouse positions in desktop coordinates (the new `Event::screenX / screenY`,
+  so a drag that leaves a window or moves it stays exact), keys, text, focus, and the OS asking to close or resize a panel window
+  (`PlatformRequestClose` / `PlatformRequestResize`; a decorated panel window moved by a window manager sets `PlatformRequestMove`).
+  The pointer leaving every window is not reported while a button is held (dragging a panel out goes past the edge).
+  **Mouse-hovered viewport: not reported** (`ImGuiBackendFlags_HasMouseHoveredViewport` off): our backends cannot let the pointer pass
+  through the panel being dragged (`NoInputs`), and while a button is held the OS keeps sending the mouse to the window it was pressed
+  in, so ImGui's own rule (rectangles and focus order) is used.
+* **Renderer side** (`shared/ImGuiOwnRenderer.*`, `ImGuiPainterRenderer::EnableViewports`): `Renderer_RenderWindow` points our GL
+  painter at the panel's window (new `Painter::SetTarget`) **with the main window's GL context** (new
+  `Window::MakeCurrentWithContextOf`: X11 `glXMakeCurrent` on the panel window, Win32 the owner's pixel format + `wglMakeCurrent`, sdl2
+  `SDL_GL_MakeCurrent`), clears it and draws its draw data; `Renderer_SwapBuffers` swaps it and points the painter back at the main
+  window. One context, so every texture works in a panel window: ImGui's font, the Project panel's thumbnails, the Scene and Game views.
+* **okay::platform additions** (each with its X11, Win32 and sdl2 side): `Window::MakeCurrentWithContextOf`, `Window::SetOpacity`
+  (`_NET_WM_WINDOW_OPACITY`, a layered window, `SDL_SetWindowOpacity`), `WindowDesc::skipTaskbar / topmost / noActivate`
+  (`_NET_WM_STATE_SKIP_TASKBAR` / `_ABOVE` / `_NET_WM_USER_TIME` 0; `WS_EX_TOOLWINDOW` / `WS_EX_TOPMOST` / `SW_SHOWNA`;
+  `SDL_WINDOW_SKIP_TASKBAR` / `ALWAYS_ON_TOP`), `Event::hasScreenPos / screenX / screenY` (X11 `x_root / y_root`, Win32
+  `ClientToScreen`, sdl2 window position + x / y). **Win32 change:** `Window::GetPosition / SetPosition` and `WindowDesc::x / y` are now
+  the client area's corner, as SDL and our X11 code give it (they were the frame's corner; the mouse and ImGui's panels need the
+  client area). Written from the GLX 1.3, WGL and EWMH documents and imgui.h's "Multi-Viewport Support" comments; nothing copied
+  from ImGui's example backends.
+* **The default (SDL) editor, fixed on the way:** its panel windows showed the editor's pictures as empty boxes (SDL textures cannot
+  cross renderers; seen in the screenshots below). `OkayVp_RenderViaMain` (`editor/main.cpp`) now draws each panel window with the
+  main renderer into an off-screen target, reads it back and shows that in the panel window (falls back to the old drawing if the
+  main renderer cannot). Also the Project panel's type filter is as wide as its longest choice ("All types" was cut to "All typ").
+* **Tests** (2026-11-17, Xvfb, Mesa llvmpipe). `editor_viewports_own`, `editor_viewports_sdl2`, `editor_viewports_own_2mon`
+  (`tests/test_editor_viewports.cpp`: the shared glue and renderer, ImGui, okay::platform, the GL painter; no editor): the backend
+  flags; the monitor list against `Displays()` (two monitors on the `_2mon` entry); a panel outside the main window gets its own window
+  at the place and size asked; its pixels read back from ITS drawable (200 x 150) hold the panel's box and a texture made on the main
+  window; the main window keeps its picture; a real pointer warp from the X server into the panel window gives ImGui the right desktop
+  position and hover; injected clicks press a button in the panel; "crate" typed into a field there, then Backspace; a title-bar drag
+  with desktop positions moves the window by exactly the drag; ImGui moving and sizing the panel moves and sizes the OS window (the
+  same window, not made again); the OS sizing the window reaches ImGui; the panel moved over the main window merges and its window goes;
+  the OS close request closes the panel; shut-down removes every hook. 57 checks (61 with two monitors), all passing. A deliberate break (the renderer not pointing the
+  painter at the panel window) fails. Still passing: every `platform*` suite, `editor_platform(_own)`, `editor_gfx(_own)`,
+  `launcher_imgui_renderer(_gl)`, `launcher_join`, `launcher_versions`, `launcher_wav_window`, `okayui_host` (33 of 33);
+  `scripts/editor_no_sdl_check.sh` and `scripts/launcher_no_sdl_check.sh`: ALL PASS.
+* **The real editor** (full build, `-O1 -g0`, 1920 x 1200 Xvfb, the physics example): with the three switches the Project tab dragged
+  out of the editor became its own window (one panel window made, log `editor-input: panel window made`), it was moved and resized
+  (the same window), its search took "stone" (1 item) and "cube" (2 items), it was dragged back onto the bottom tab bar (ImGui's docking
+  targets showed) and docked again (its window closed, the filter kept). The Scene panel dragged out also works, the 3D view drawn in its
+  window. **Under the SDL trap** (the same drag out, typing, drag back, then the window's close request): no SDL call, exit 0. The default
+  SDL editor did the same steps; its panel window showed empty boxes for the thumbnails (fixed above; see the "after" screenshots).
+  Screenshots kept outside the repository.
+* **Not done / unverified.** Windows: nothing of E4 has run there (WGL with one context on two windows, `SW_SHOWNA`, the client-area
+  position change, layered-window opacity: MinGW syntax check only). A real X11 desktop with a window manager (placement, focus on
+  showing, opacity with a compositor) is unrun: Xvfb has none. `NoFocusOnClick` (a panel that should not take the focus when
+  clicked) is not done. The default stays `sdl` until the owner approves (rule 17).
 
 ## Player, display modes and a build with no SDL (branch `claude2/sdl-player-no-sdl`, on top of E3)
 
@@ -675,7 +736,7 @@ The sdl2 backend grew (199 / 481 to 214 / 506): the display-mode calls.
 * **E3. Done on its branch** (section above): with the three switches the editor makes no SDL call (Linux, Xvfb). Left for it: a run on
   Windows and on a real X11 desktop. (Display modes in `okay::platform`, the game's resolution list and exclusive fullscreen: done on
   `claude2/sdl-player-no-sdl`, section "Player, display modes and a build with no SDL".)
-* **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`). Then the default path's own SDL (its event
+* **E4. Done on its branch** (section "Stage E4" above): multi-window panels on `own` (Linux, Xvfb; Windows unrun). Then the default path's own SDL (its event
   loop, `SDL_Init` / `SDL_Quit`, the base path, the message box, `SdlDisplays.cpp`, `SdlClipboard.hpp`) can go once the owner switches
   the default.
 

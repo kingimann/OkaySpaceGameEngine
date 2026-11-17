@@ -13,6 +13,8 @@ namespace okay::editor {
 void OpenUIGalleryWindow();
 /// Draw it when open (called once per frame from the editor's main loop).
 void DrawUIGalleryWindow(EditorState& ed);
+/// The look and style picked in the Gallery for new screens ("" = none). GameObject > UI screens use them too; there is no scene-wide theme.
+void CurrentScreenLook(std::string& look, std::string& style);
 /// How the window adds a component by its GameObject > UI id ("ui.button"). The editor sets it; the window never needs the menu code.
 void SetUIGalleryAdder(std::function<bool(EditorState&, const std::string&)> adder);
 

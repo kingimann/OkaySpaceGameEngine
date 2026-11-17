@@ -138,7 +138,7 @@ int main() {
         CHECK(S::CombinationCount() == S::AxisCount("shape") * S::AxisCount("fill") * S::AxisCount("border") * S::AxisCount("effect"));
     }
 
-    {   // ---- themes: 30+ complete themes, readable, switchable at run time, with a per-widget override
+    {   // ---- looks: 30+ complete looks, readable, put on ONE screen or widget; there is no global theme
         const auto themes = S::Themes();
         CHECK(themes.size() >= 30);
         std::set<std::string> names;
@@ -151,38 +151,69 @@ int main() {
             // (a built-in preset keeps the older hand-picked button colours; the UI Theme component picks a readable label when it applies them)
             const bool dataTheme = !t.builtin;
             if (UITheme::Contrast(th.text, th.panel) < 4.5f || (dataTheme && UITheme::Contrast(th.buttonText, th.button) < 3.0f))
-                std::printf("  theme %s: text/panel %.2f, button text/button %.2f\n", t.name.c_str(), UITheme::Contrast(th.text, th.panel), UITheme::Contrast(th.buttonText, th.button));
-            CHECK(UITheme::Contrast(th.text, th.panel) >= 4.5f);          // body text reads on the panel
-            if (dataTheme) CHECK(UITheme::Contrast(th.buttonText, th.button) >= 3.0f);   // a label reads on its button
+                std::printf("  look %s: text/panel %.2f, button text/button %.2f\n", t.name.c_str(), UITheme::Contrast(th.text, th.panel), UITheme::Contrast(th.buttonText, th.button));
+            CHECK(UITheme::Contrast(th.text, th.panel) >= 4.5f);
+            if (dataTheme) CHECK(UITheme::Contrast(th.buttonText, th.button) >= 3.0f);
         }
         CHECK(dark >= 10 && light >= 10);
         for (const char* want : {"Neon", "Retro Pixel", "Sci-fi", "Fantasy", "Military", "Horror", "Cartoon", "Minimal", "Wood Plank", "Stone Keep", "Iron Forge", "Game Console", "Mobile Clean", "Candy"})
             CHECK(S::FindTheme(want) != nullptr);
-        CHECK(S::FindTheme("sci fi") != nullptr);   // case, spaces and dashes do not matter
-        CHECK(!S::FindTheme("No Such Theme"));
+        CHECK(S::FindTheme("sci fi") != nullptr && !S::FindTheme("No Such Look"));
         Prefs::Clear();
-        Scene sc("themes");
-        GameObject* canvas = UITemplates::EnsureCanvas(sc);
-        GameObject* a = sc.CreateGameObject("A"); a->transform->SetParent(canvas->transform, false); auto* pa = a->AddComponent<UIPanel>();
-        GameObject* o = sc.CreateGameObject("Own"); o->transform->SetParent(canvas->transform, false); auto* po = o->AddComponent<UIPanel>();
-        o->AddComponent<UIStyleVariant>()->themeName = "Candy";
-        CHECK(S::SetTheme(sc, "Midnight Blue"));
-        const Color first = pa->color;
-        CHECK(Prefs::GetString("ui.theme") == "Midnight Blue");
-        CHECK(S::SetTheme(sc, "Paper"));
-        CHECK(pa->color.r != first.r || pa->color.g != first.g || pa->color.b != first.b);   // the whole scene followed
-        const Color ownColor = po->color;
-        CHECK(S::SetTheme(sc, "Neon City") == false && S::SetTheme(sc, "Cyber Pink"));
-        CHECK(po->color.r == ownColor.r && po->color.g == ownColor.g && po->color.b == ownColor.b);   // the override stays on Candy
-        UITheme* th = UITheme::Find(&sc, "");
-        CHECK(th && th->themeName == "Cyber Pink");
+        // Two screens in one scene, each with its own look and style; nothing changes the other, and no scene theme exists.
+        Scene sc("looks");
+        GameObject* a = UIScreens::Build(sc, "main_menu", 0, "Retro Pixel", "Pixel");
+        GameObject* b = UIScreens::Build(sc, "pause_menu", 0, "Candy", "Bubble");
+        GameObject* c = UIScreens::Build(sc, "game_over", 0);   // no look: the launcher colours
+        auto cardOf = [&](GameObject* root) { GameObject* card = nullptr; for (const auto& o : sc.Objects()) if (o->name == "Card" && S::ScreenRootOf(o.get()) == root) card = o.get(); return card; };
+        auto playBtn = [&](GameObject* root) -> UIButton* { for (const auto& o : sc.Objects()) if (S::ScreenRootOf(o.get()) == root && o->GetComponent<UIButton>() && o->GetComponent<UIButton>()->interactable) return o->GetComponent<UIButton>(); return nullptr; };
+        CHECK(a && b && c && cardOf(a) && cardOf(b) && cardOf(c));
+        UIButton *ba = playBtn(a), *bb = playBtn(b), *bc = playBtn(c);
+        CHECK(ba && bb && bc);
+        CHECK(ba->shape == UIShape::Rectangle && bb->shape == UIShape::Pill);   // each screen has its own style
+        const Color ca = cardOf(a)->GetComponent<UIPanel>()->color, cb = cardOf(b)->GetComponent<UIPanel>()->color, cc = cardOf(c)->GetComponent<UIPanel>()->color;
+        CHECK(ca.r != cb.r || ca.g != cb.g || ca.b != cb.b);
+        CHECK(UITheme::Find(&sc, "") == nullptr);                 // no theme object was made
+        CHECK(!Prefs::Has("ui.theme"));                           // and nothing is remembered
+        CHECK(a->GetComponent<UIStyleVariant>()->themeName == "Retro Pixel" && a->GetComponent<UIStyleVariant>()->style == "Pixel");
+        // changing one screen's look leaves the others alone
+        CHECK(S::ApplyLook(c, "Paper", "Flat Pill"));
+        CHECK(cardOf(a)->GetComponent<UIPanel>()->color.r == ca.r && cardOf(b)->GetComponent<UIPanel>()->color.r == cb.r);
+        CHECK(cardOf(c)->GetComponent<UIPanel>()->color.r != cc.r || cardOf(c)->GetComponent<UIPanel>()->color.g != cc.g);
+        CHECK(bc->shape == UIShape::Pill);
+        CHECK(!S::ApplyLook(c, "No Such Look") && !S::ApplyLook(c, "Paper", "No Such Style") && !S::ApplyLook(nullptr, "Paper"));
+        // re-applying what is stored gives the same result
+        const Color before = cardOf(c)->GetComponent<UIPanel>()->color;
+        CHECK(S::ReapplyLook(c) && cardOf(c)->GetComponent<UIPanel>()->color.r == before.r);
+        // saved with the screen
+        Scene back("back"); std::string err;
+        CHECK(SceneSerializer::Deserialize(back, SceneSerializer::Serialize(sc), &err, nullptr));
+        GameObject* ra = back.Find("Main Menu");
+        CHECK(ra && ra->GetComponent<UIStyleVariant>() && ra->GetComponent<UIStyleVariant>()->themeName == "Retro Pixel");
+        // a style's palette is its own widget's look, never a scene-wide one
+        CHECK(S::PaletteFor(ra->GetComponent<UIStyleVariant>()).accent.r == S::PaletteOf(nullptr).accent.r ? false : true);
+        // the screen root of a widget deep inside a screen
+        CHECK(S::ScreenRootOf(cardOf(a)) == a);
+        // the sound name of a look
         CHECK(S::ThemeSound("Cyber Pink", "click") == "zap-click" && S::ThemeSound("Dark", "click").empty());
-        Scene sc2("pref"); UITemplates::EnsureCanvas(sc2);
-        CHECK(S::RestoreThemePreference(sc2) == "Cyber Pink");   // the saved choice comes back
-        // a style on an object survives a theme switch (it is re-applied under the new colours)
-        auto* sv = a->AddComponent<UIStyleVariant>(); sv->style = "Flat Tint";
-        CHECK(S::SetTheme(sc, "Forest"));
-        const float r1 = pa->color.r; CHECK(S::SetTheme(sc, "Snow")); CHECK(pa->color.r != r1 || pa->color.a < 0.5f);
+        // presets: a look and style as a small file, and an old .okaytheme used as a look
+        const std::string text = S::PresetToText({"Neon", "Glass", "l", "compact"});
+        S::LookPreset lp;
+        CHECK(S::PresetFromText(text, lp) && lp.look == "Neon" && lp.style == "Glass" && lp.size == "l" && lp.density == "compact");
+        CHECK(!S::PresetFromText("not a preset", lp));
+        const std::string pf = std::string(OKAY_SOURCE_DIR) + "/build_look_test.okaylook";
+        CHECK(S::SavePreset(pf, {"Forest", "Bubble", "", ""}));
+        S::LookPreset lp2; CHECK(S::LoadPreset(pf, lp2) && lp2.look == "Forest" && lp2.style == "Bubble");
+        std::remove(pf.c_str());
+        {
+            UITheme th; S::ApplyThemeData(th, "Ocean");
+            const std::string tf = std::string(OKAY_SOURCE_DIR) + "/build_look_test.okaytheme";
+            CHECK(SaveUIThemeAsset(th, tf));
+            GameObject* t = sc.CreateGameObject("T"); auto* pn = t->AddComponent<UIPanel>(); pn->color = Color(1, 0, 1, 1);
+            CHECK(S::ApplyThemeFileAsLook(t, tf) && pn->color.g != 0.0f);
+            CHECK(!S::ApplyThemeFileAsLook(t, tf + ".missing"));
+            std::remove(tf.c_str());
+        }
         Prefs::Clear();
     }
 
@@ -351,7 +382,7 @@ int main() {
         else {
             CHECK(NumberAfter(doc, "Components: ") == c.components);
             CHECK(NumberAfter(doc, "Named styles: ") == c.styles);
-            CHECK(NumberAfter(doc, "Themes: ") == c.themes);
+            CHECK(NumberAfter(doc, "Looks: ") == c.themes);
             CHECK(NumberAfter(doc, "Icons: ") == c.icons);
             CHECK(NumberAfter(doc, "Screens: ") == c.screens);
             CHECK(NumberAfter(doc, "Screen variants: ") == c.screenVariants);

@@ -478,8 +478,8 @@ inline GameObject* BuildSlice3(Scene& scene) {
     return root;
 }
 
-/// Slice 4: the scale of choice. One page with a theme switcher (click a theme: the whole page restyles, and the choice is kept), a strip of
-/// buttons in twelve named styles from the style library, and a sheet of forty of the vector icons. Written from the style, theme and icon
+/// Slice 4: the scale of choice. One page with a looks card (click a look: only the Sample card next to it changes; there is no scene-wide
+/// theme), a strip of buttons in twelve named styles from the style library, and a sheet of forty of the vector icons. Written from the style, theme and icon
 /// registries (okay/Scene/UIStyleLib.hpp, UIIcons.hpp); no other project's looks or artwork.
 inline GameObject* BuildSlice4(Scene& scene) {
     EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
@@ -490,19 +490,26 @@ inline GameObject* BuildSlice4(Scene& scene) {
     scene.Find("Backdrop")->GetComponent<UIPanel>()->borderWidth = 0.0f;
     Text(scene, root, "Title", "UI Library 4", UIAnchor::TopLeft, {32, 12}, {600, 40}, 30.0f, slate::Text(), 0, true);
     detail2::Note(scene, root, "Subtitle",
-         "Press Play, then click a theme on the left: every part on this page changes look. The buttons in the middle use named styles. "
+         "Press Play, then click a look on the left: the Sample card changes look and nothing else on the page does. The buttons in the middle use named styles. "
          "The grid on the right is vector icons, drawn by our own code.", {34, 50}, 1180, 40);
 
-    // Themes: one button each; the action lists a theme by name.
-    GameObject* themes = gx::Card(scene, root, "ThemeCard", "Themes (click one)", {24, 100}, {300, 596});
+    // Looks: one button each; a click puts that look on the Sample card only (the rest of the page does not change).
+    GameObject* themes = gx::Card(scene, root, "ThemeCard", "Looks (click one)", {24, 100}, {300, 596});
     static const char* kThemes[] = {"Dark", "Light", "Neon", "Retro Pixel", "Candy", "Forest", "Paper", "Cyber Pink", "Wood Plank",
                                     "Space Station", "Terminal Green", "Comic", "Ocean", "Sunset", "Stone Keep", "Mobile Clean"};
     for (int i = 0; i < 16; ++i) {
-        GameObject* b = gx::Btn(scene, themes, (std::string("Theme") + std::to_string(i + 1)).c_str(), kThemes[i], {20.0f + (i % 2) * 130.0f, 52.0f + (i / 2) * 44.0f}, {122, 36}, 1);
-        UIScreens::detail3::Script(b, std::string("theme:") + kThemes[i], "on_click");
+        GameObject* b = gx::Btn(scene, themes, (std::string("Theme") + std::to_string(i + 1)).c_str(), kThemes[i], {20.0f + (i % 2) * 130.0f, 52.0f + (i / 2) * 36.0f}, {122, 30}, 1);
+        UIScreens::detail3::Script(b, std::string("look:") + kThemes[i] + "@Sample", "on_click");
     }
-    Text(scene, themes, "ThemeNote", "Script: ui_set_theme(\"Neon\")", UIAnchor::TopLeft, {20, 410}, {260, 20}, 13.0f, slate::Dim());
-    detail2::Note(scene, themes, "ThemeNote2", "Your pick is saved (Prefs key ui.theme) and comes back next time. A widget with its own theme name keeps it.", {20, 436}, 260, 70);
+    {   // the Sample card: what the buttons above restyle
+        GameObject* sample = Panel(scene, themes, "Sample", UIAnchor::TopLeft, {20, 352}, {260, 150}, slate::Card(), 10.0f);
+        Text(scene, sample, "SampleTitle", "Sample card", UIAnchor::TopLeft, {12, 8}, {236, 24}, 16.0f, slate::Text(), 0, true);
+        Button(scene, sample, "SampleButton", "Play", UIAnchor::TopLeft, {12, 40}, {110, 32});
+        Button(scene, sample, "SampleButton2", "More", UIAnchor::TopLeft, {132, 40}, {110, 32}, UITemplates::ButtonKind::Secondary);
+        GameObject* sl = Child(scene, sample, "SampleSlider"); auto* slc = sl->AddComponent<UISlider>(); slc->anchor = UIAnchor::TopLeft; slc->position = {12, 92}; slc->size = {200, 10}; slc->value = 0.6f;
+        GameObject* pb = Child(scene, sample, "SampleBar"); auto* pbc = pb->AddComponent<UIProgressBar>(); pbc->anchor = UIAnchor::TopLeft; pbc->position = {12, 116}; pbc->size = {200, 12}; pbc->value = 0.7f;
+    }
+    detail2::Note(scene, themes, "ThemeNote2", "A look belongs to one screen or widget. Script: ui_set_look(\"Sample\", \"Neon\"). The Styles and Icons cards keep their own look.", {20, 516}, 260, 70);
 
     // Styles: twelve buttons, each a different named style, re-applied under every theme.
     GameObject* styles = gx::Card(scene, root, "StyleCard", "Styles (same button, 12 looks)", {340, 100}, {470, 330});
@@ -542,12 +549,34 @@ inline GameObject* BuildSlice4(Scene& scene) {
     return root;
 }
 
+/// "Mix styles": a retro menu, a sci-fi HUD and a cartoon popup in ONE scene, each with its own look and style. Nothing is global, so nothing
+/// re-skins the others. The popup has no dimmer so the page stays usable.
+inline GameObject* BuildMixStyles(Scene& scene) {
+    EnsureSceneCamera(scene, true);
+    GameObject* canvas = EnsureCanvas(scene);
+    if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+    GameObject* menu = UIScreens::Build(scene, "main_menu", 1, "Retro Pixel", "Pixel");        // card on the left
+    GameObject* hud = UIScreens::Build(scene, "hud_shooter", 0, "Space Station", "Holo");     // bars and counters in the corners
+    GameObject* pop = UIScreens::Build(scene, "confirm_popup", 0, "Comic", "Cartoon");        // a cartoon question
+    auto find = [](GameObject* root, const char* name) -> GameObject* {
+        std::vector<GameObject*> stack{root};
+        while (!stack.empty()) { GameObject* g = stack.back(); stack.pop_back(); if (g->name == name) return g; for (Transform* c : g->transform->Children()) if (c && c->gameObject) stack.push_back(c->gameObject); }
+        return nullptr;
+    };
+    if (pop) {
+        if (GameObject* dim = find(pop, "Dim")) dim->active = false;
+        if (GameObject* card = find(pop, "Card")) if (auto* p = card->GetComponent<UIPanel>()) { p->anchor = UIAnchor::MiddleRight; p->position = {-40.0f, 0.0f}; }
+    }
+    if (menu) if (GameObject* t = find(menu, "Version")) (void)t;
+    return menu ? menu : hud;
+}
+
 /// The Starter Pack as an example scene: a main menu, settings, game HUD, pause menu and game over screen already joined together.
 inline GameObject* BuildStarterExample(Scene& scene) {
     EnsureSceneCamera(scene, true);
     GameObject* canvas = EnsureCanvas(scene);
     if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
-    return UIScreens::BuildStarterPack(scene, "Midnight Blue");
+    return UIScreens::BuildStarterPack(scene, "Midnight Blue");   // the look is put on each of the five screens, not on the scene
 }
 
 }} // namespace okay::UILibrary

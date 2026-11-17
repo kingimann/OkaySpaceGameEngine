@@ -6510,18 +6510,21 @@ bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& la
     if (id.rfind("ui.scr.", 0) == 0) {   // a ready-made screen from the registry
         const std::string sid = id.substr(7);
         ed.PushUndo();
-        GameObject* g = okay::UIScreens::Build(sc, sid, 0);
+        std::string look, style;
+        okay::editor::CurrentScreenLook(look, style);   // the look and style picked in the UI Gallery (none by default)
+        GameObject* g = okay::UIScreens::Build(sc, sid, 0, look, style);
         if (!g) return false;
         HideOtherMenus(ed, g); ed.Select(g); ed.dirty = true; created = true;
         ConsoleLog("Added UI: " + label + " (more layouts: UI Gallery)");
         return true;
     }
+    if (id == "ui.looks") { okay::editor::OpenUIGalleryWindow(); ConsoleLog("UI Gallery: pick a Screen, then its Look and Style; screens added from GameObject > UI use them."); return true; }
     if (id == "ui.browse") {
         okay::editor::SetUIGalleryAdder([](EditorState& e, const std::string& wid) { bool c = false; return RunUIMenuItem(e, wid, wid, c); });
         okay::editor::OpenUIGalleryWindow();
         return true;
     }
-    if (id == "ui.starter") { return sceneUI([&] { GameObject* g = okay::UIScreens::BuildStarterPack(sc); ConsoleLog("Starter Pack: only the Main Menu shows; press Play, then click Play, Settings, Pause..."); return g; }); }
+    if (id == "ui.starter") { return sceneUI([&] { std::string look, style; okay::editor::CurrentScreenLook(look, style); GameObject* g = okay::UIScreens::BuildStarterPack(sc, look, style); ConsoleLog("Starter Pack: only the Main Menu shows; press Play, then click Play, Settings, Pause..."); return g; }); }
     // --- Basics
     if (id == "ui.text")    return widget("Text", [](GameObject* g) { auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
     if (id == "ui.button")  { widget("Button", [](GameObject* g) { g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); return true; }

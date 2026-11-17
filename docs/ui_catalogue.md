@@ -9,7 +9,7 @@ These are the lines the test reads, so keep their form.
 
 - Components: 77
 - Named styles: 111
-- Themes: 54
+- Looks: 54
 - Icons: 371
 - Screens: 56
 - Screen variants: 88
@@ -23,12 +23,12 @@ These are the lines the test reads, so keep their form.
 | Named styles | 111 | one `[style]` entry: a named mix of shape, fill, border, effect, role and the four state looks. Two styles never share the same mix (a test checks), so these are distinct looks, not renamed copies |
 | Style axes | 14 shapes, 12 fills, 9 borders, 9 effects, 5 sizes, 4 densities, 17 state looks | the choices a style is made of; state looks are 5 hover, 4 pressed, 4 disabled and 4 focus |
 | Style combinations | 13608 | shapes x fills x borders x effects, computed, **not hand-made**: any of them can be set in the Inspector. With the 5 sizes and 4 densities that is 272160 option combinations |
-| Themes | 54 | one `[theme]` entry: 12 are the built-in presets of the UI Theme component, 42 are defined in data |
+| Looks | 54 | one `[theme]` entry in the data (a look is put on ONE screen or widget; there is no global theme): 12 are the built-in presets of the UI Theme component, 42 are defined in data |
 | Icons | 371 | one `[icon]` entry, drawn by our own code (no outside artwork): 348 drawn from shapes and 23 made by turning or mirroring another (arrow-left from arrow-right); every name is a different picture |
 | Screens | 56 | one `[screen]` entry: 34 are described in data and built by one builder, 22 are older screens still built by their C++ function |
 | Screen variants | 88 | for each screen the number of layout choices it lists (Centered, Left side, Right side, Dimmed backdrop); a screen without a list has one. A variant moves the card or adds a backdrop, the content is the same |
 
-Any screen can also be built under any of the 54 themes (a theme-ready screen), which is 3024 screen-and-theme previews; that is a product, not a count of separate things.
+Any screen can also be built with any of the 54 looks, which is 3024 screen-and-look pairs; that is a product, not a count of separate things.
 
 ## Screens by section
 
@@ -151,9 +151,9 @@ Screens that show while a level loads.
 | Loading (Logo) | 1 | loading, logo, splash | A logo with a bar under it. |
 | Loading (Cinematic) | 1 | loading, cinematic, film | Black bars and a slow fade. |
 
-## Themes
+## Looks
 
-| Theme | Mode | Tags |
+| Look | Mode | Tags |
 |---|---|---|
 | Dark | dark (built in) | dark,default,blue |
 | Light | light (built in) | light,default,warm |

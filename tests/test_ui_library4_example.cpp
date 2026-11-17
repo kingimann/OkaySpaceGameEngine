@@ -74,11 +74,13 @@ int main() {
     if (const char* out = std::getenv("OKAY_WRITE_UI_LIBRARY_EXAMPLE4")) {
         Scene a("UI Library 4"); UILibrary::BuildSlice4(a);
         Scene b("UI Starter Pack"); UILibrary::BuildStarterExample(b);
+        Scene c("UI Mix Styles"); UILibrary::BuildMixStyles(c);
         std::string err;
+        const bool ok3 = SceneSerializer::SaveToFile(c, std::string(out) + "/ui_mix_styles.okayscene", &err);
         const bool ok1 = SceneSerializer::SaveToFile(a, std::string(out) + "/ui_library_4.okayscene", &err);
         const bool ok2 = SceneSerializer::SaveToFile(b, std::string(out) + "/ui_starter_pack.okayscene", &err);
-        std::printf("  wrote ui_library_4.okayscene and ui_starter_pack.okayscene to %s: %s\n", out, ok1 && ok2 ? "ok" : "FAILED");
-        CHECK(ok1 && ok2);
+        std::printf("  wrote ui_library_4, ui_starter_pack and ui_mix_styles .okayscene to %s: %s\n", out, ok1 && ok2 && ok3 ? "ok" : "FAILED");
+        CHECK(ok1 && ok2 && ok3);
         TEST_MAIN_RESULT();
     }
     UICanvas::Set(1280.0f, 720.0f);
@@ -98,19 +100,23 @@ int main() {
         CHECK(vectorIcons == 40);   // forty vector icons (the page has a few other pictures)
         p.Begin();
         GameObject* back = p.s.Find("Backdrop");
-        CHECK(back && back->GetComponent<UIPanel>());
-        const Color before = back->GetComponent<UIPanel>()->color;
-        CHECK(UITheme::Find(&p.s, "") == nullptr);   // no theme yet: the page uses the launcher colours
-        p.Press(p.s.Find("Theme3"));                  // Neon
-        UITheme* th = UITheme::Find(&p.s, "");
-        CHECK(th && th->themeName == "Neon");
-        CHECK(Prefs::GetString("ui.theme") == "Neon");
-        const Color neon = back->GetComponent<UIPanel>()->color;
-        CHECK(neon.r != before.r || neon.g != before.g || neon.b != before.b || neon.a != before.a);
-        p.Press(p.s.Find("Theme2"));                  // Light
-        const Color light = back->GetComponent<UIPanel>()->color;
-        CHECK(light.r > neon.r + 0.2f);               // a light theme is lighter than Neon
-        CHECK(p.s.Find("Style2")->GetComponent<UIButton>()->shape == UIShape::Pill);   // the Neon Pill style survived the theme switches
+        GameObject* sample = p.s.Find("Sample");
+        CHECK(back && back->GetComponent<UIPanel>() && sample && sample->GetComponent<UIPanel>());
+        const Color backBefore = back->GetComponent<UIPanel>()->color, sampleBefore = sample->GetComponent<UIPanel>()->color;
+        auto* styleBtn = p.s.Find("Style2")->GetComponent<UIButton>();
+        const Color styleBefore = styleBtn->color;
+        p.Press(p.s.Find("Theme3"));                  // the Neon look: only the Sample card
+        CHECK(UITheme::Find(&p.s, "") == nullptr);    // there is no scene-wide theme
+        CHECK(!Prefs::Has("ui.theme"));
+        const Color neon = sample->GetComponent<UIPanel>()->color;
+        CHECK(neon.r != sampleBefore.r || neon.g != sampleBefore.g || neon.b != sampleBefore.b);
+        CHECK(sample->GetComponent<UIStyleVariant>() && sample->GetComponent<UIStyleVariant>()->themeName == "Neon");
+        p.Press(p.s.Find("Theme2"));                  // the Light look
+        CHECK(sample->GetComponent<UIPanel>()->color.r > neon.r + 0.2f);
+        const Color bk = back->GetComponent<UIPanel>()->color;   // nothing else on the page changed
+        CHECK(bk.r == backBefore.r && bk.g == backBefore.g && bk.b == backBefore.b);
+        CHECK(styleBtn->color.r == styleBefore.r && styleBtn->color.g == styleBefore.g);
+        CHECK(styleBtn->shape == UIShape::Pill);       // the Neon Pill style button is as it was
         CHECK(p.s.Find("Style4")->GetComponent<UIButton>()->shape == UIShape::Rectangle);   // Pixel is square
         // the six biggest sizes differ
         CHECK(p.s.Find("Size1")->GetComponent<UIButton>()->size.y < p.s.Find("Size5")->GetComponent<UIButton>()->size.y);
@@ -156,9 +162,34 @@ int main() {
         p.Press(Under(pause, "MenuButton"));
         CHECK(menu->active && !hud->active && !pause->active);
         Game::SetPaused(false);
-        // the theme the pack was built with is in the scene
-        UITheme* th = UITheme::Find(&p.s, "");
-        CHECK(th && th->themeName == "Midnight Blue");
+        // the look the pack was built with is stored on each screen; no scene theme exists
+        CHECK(UITheme::Find(&p.s, "") == nullptr);
+        for (GameObject* g : {menu, settings, hud, pause, over}) CHECK(g->GetComponent<UIStyleVariant>() && g->GetComponent<UIStyleVariant>()->themeName == "Midnight Blue");
+    }
+
+    {   // ---- ui_mix_styles: a retro menu, a sci-fi HUD and a cartoon popup in one scene
+        Play p;
+        if (!p.Load(dir + "/ui_mix_styles.okayscene")) TEST_MAIN_RESULT();
+        {
+            Scene fresh("UI Mix Styles"); UILibrary::BuildMixStyles(fresh);
+            Scene reread("reread"); std::string e2;
+            CHECK(SceneSerializer::Deserialize(reread, SceneSerializer::Serialize(fresh), &e2, nullptr));
+            CHECK(WithoutGuids(SceneSerializer::Serialize(reread)) == WithoutGuids(SceneSerializer::Serialize(p.s)));
+        }
+        p.Begin();
+        GameObject *menu = Named(p.s, "Main Menu"), *hud = Named(p.s, "HUD Shooter"), *pop = Named(p.s, "Confirm Popup");
+        CHECK(menu && hud && pop && menu->active && hud->active && pop->active);
+        if (menu && hud && pop) {
+            CHECK(menu->GetComponent<UIStyleVariant>()->themeName == "Retro Pixel" && menu->GetComponent<UIStyleVariant>()->style == "Pixel");
+            CHECK(hud->GetComponent<UIStyleVariant>()->themeName == "Space Station" && hud->GetComponent<UIStyleVariant>()->style == "Holo");
+            CHECK(pop->GetComponent<UIStyleVariant>()->themeName == "Comic" && pop->GetComponent<UIStyleVariant>()->style == "Cartoon");
+            CHECK(Under(menu, "PlayButton")->GetComponent<UIButton>()->shape == UIShape::Rectangle);       // Pixel
+            CHECK(Under(pop, "Yes")->GetComponent<UIButton>()->shape == UIShape::Pill ? false : true);      // Cartoon is rounded, not Pixel
+            CHECK(Under(menu, "PlayButton")->GetComponent<UIButton>()->color.r != Under(pop, "Yes")->GetComponent<UIButton>()->color.r);
+            p.Press(Under(pop, "No"));                  // the popup closes; the others are untouched
+            CHECK(!pop->active && menu->active && hud->active);
+        }
+        CHECK(UITheme::Find(&p.s, "") == nullptr);
     }
 
     TEST_MAIN_RESULT();

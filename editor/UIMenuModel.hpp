@@ -103,6 +103,7 @@ inline std::vector<Entry> UIMenu(const std::vector<ScreenGroup>& screens) {
     {
         std::vector<Entry> sc;
         sc.push_back(I("ui.starter", "Starter Pack (a whole game UI)", "Builds a main menu, settings, game HUD, pause menu and game over screen already joined together: Play opens the game, Pause opens the pause menu, and so on."));
+        sc.push_back(I("ui.looks", "Choose a Look and Style for new screens...", "Opens the UI Gallery, where you pick the look and style that screens added from this menu get. Each screen keeps its own; there is no global theme."));
         sc.push_back(Sep());
         for (const ScreenGroup& g : screens) {
             std::vector<Entry> items;

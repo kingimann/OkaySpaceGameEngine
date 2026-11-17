@@ -6,62 +6,63 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "f16ca0b8937f7d1ff714bf641126d58f"
+  guid "0f5d0d48142f9c95e8e68c6265e90379"
   active 1
   parent -1
   transform 0 0 10 0 0 0 1 1 1 1
   camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Canvas"
-  guid "17d43d38f9dd90bafa2150e35851cbda"
+  guid "64f96fa5c7ea74c43fa6879cd970447a"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
 end
 gameobject 2 "EventSystem"
-  guid "432826820dbdd5f81afab74a54a5cf65"
+  guid "a1b4b700d270347c8cb7bc9a942a71e0"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   eventsystem
 end
 gameobject 3 "Main Menu"
-  guid "f6a7ebbfd8671ac3d91c7183004c697c"
+  guid "aa064e9f0807266a54aac7eb88e2dbcc"
   active 1
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Midnight Blue"
 end
 gameobject 4 "Card"
-  guid "73c1a6aeef6d2fea5a9c7ff7ed6d411f"
+  guid "a06aa3af80be9d8f38265d4a2b94f9b9"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 400 460 0.078431375 0.101960786 0.18039216 1 4 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 5 "Caption"
-  guid "08ab2b74bd4a997be215f8db631ff2de"
+  guid "264e00c0229f927bf81d8d9e1ee5f105"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
   text "WELCOME TO" 0.9098039 0.92941177 1 1 1.5 1 36 34 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 328 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 6 "Title"
-  guid "b9ebc0cb79021630fefef073ab06b974"
+  guid "423db8b79aa8afab5ad48e8a1add3e32"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
   text "MY GAME" 0.9098039 0.92941177 1 1 5 1 36 54 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 328 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 7 "Line"
-  guid "09a7c7eb66c234935a6fff413cb990f3"
+  guid "df87d6ac90aaa0796b6826685f7873d4"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 36 118 328 1 1 1 1 0.101960786 0 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
 gameobject 8 "PlayButton"
-  guid "62bda29bedd2424766cb61ed20b4b353"
+  guid "c84b2c28290b3935d6f7f55e38fc8d1c"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
@@ -74,7 +75,7 @@ gameobject 8 "PlayButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 9 "SettingsButton"
-  guid "e31f3200d889059ed276d5173ba25dd9"
+  guid "0565e18302fe1deace28b03650b34306"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
@@ -86,7 +87,7 @@ gameobject 9 "SettingsButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 10 "CreditsButton"
-  guid "af724b8fd80a3d76ac88f202b856f4f4"
+  guid "ed6283b202d903877910bd1f18a6937e"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
@@ -99,7 +100,7 @@ gameobject 10 "CreditsButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 11 "QuitButton"
-  guid "e94e701a32fc2b3340dc29d1c9c1274c"
+  guid "610de9eeb6309dcc4133401b041ae3a7"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
@@ -111,20 +112,21 @@ gameobject 11 "QuitButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 12 "Version"
-  guid "4ad4764967332db9a07d9a7ff082685e"
+  guid "b53bd4d18243b21aa0bb31113636e770"
   active 1
   parent 4
   transform 0 0 0 0 0 0 1 1 1 1
   text "v1.0" 0.9098039 0.92941177 1 1 1.5 1 36 -14 6 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 120 18 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 13 "Settings"
-  guid "468f4fd7b4b3bcc3e256c1402c076855"
+  guid "90a080fec9932bcf0e803ab2165f5166"
   active 0
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Midnight Blue"
 end
 gameobject 14 "Dim"
-  guid "1a5772d44d166a22342e0a4d2670441d"
+  guid "a8a9e1292f231b6e6a24d2435661d32c"
   active 1
   parent 13
   transform 0 0 0 0 0 0 1 1 1 1
@@ -132,7 +134,7 @@ gameobject 14 "Dim"
   uix pblock=1
 end
 gameobject 15 "Card"
-  guid "5883648104ecde1b982ce1443a444398"
+  guid "974ddf046ff7522fde0135f6a828cdb4"
   active 1
   parent 13
   transform 0 0 0 0 0 0 1 1 1 1
@@ -140,112 +142,112 @@ gameobject 15 "Card"
   uix pblock=1
 end
 gameobject 16 "Title"
-  guid "1509b575327c1fe93153a543523d9c9f"
+  guid "3a85700ca7651192b3aebce48a4edf74"
   active 1
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   text "Settings" 0.9098039 0.92941177 1 1 3.5 1 28 18 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 584 36 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 17 "Tabs"
-  guid "789c67d1e65a05df16ee3fe1af5c54af"
+  guid "4b20e0a36b255a0663492263091fbde7"
   active 1
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   uitabs 28 64 584 36 0 0 0.06117647 0.07952941 0.14070588 1 0.35686275 0.54901963 1 1 0.54509807 0.5921569 0.7411765 1 0.078431375 0.08627451 0.10980392 1 1 6.6000004 1 4 "Video" "Audio" "Controls" "Accessibility" 4 "Settings Video" "Settings Audio" "Settings Controls" "Settings Access" 1 0 0 12 2 0 3 16 1 1 1 0.14 0 0 0 0.19607843 0.92156863 0.2509804 0.20392157 1 1 1 1 1 1 14 1 "q" "e" 0 1 0 0 0 0
 end
 gameobject 18 "Settings Video"
-  guid "d1e18330003cd5cf34e84f247f106cb6"
+  guid "ac442bbd80d58f3696a9c8159177b7e6"
   active 1
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 28 112 584 330 0.078431375 0.101960786 0.18039216 1 0 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 19 "L1"
-  guid "0e4ee69b60b98404745ffe0f70deb8d9"
+  guid "f84fe79fac139cc748ded2218d390e39"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   text "Display mode" 0.9098039 0.92941177 1 1 2 1 0 8 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 20 "Mode"
-  guid "703cc0094f25e165b766d860f9a91b02"
+  guid "d9f104e66684f31319ba2ff4f7b5bbcb"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   uidropdown 260 4 320 32 0 0 0.05647059 0.07341177 0.12988237 1 0.4854902 0.6392157 1 1 0.078431375 0.101960786 0.18039216 1 0.9098039 0.92941177 1 1 0.9098039 0.92941177 1 0.18 3 "Windowed" "Borderless" "Fullscreen" 1 "Select..." 1 7.2000003 0 0 0
 end
 gameobject 21 "L2"
-  guid "b44d503c80ab4f47bc7c630cb8d73da0"
+  guid "85d99758ab6563f7b1e4159483359561"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   text "Resolution" 0.9098039 0.92941177 1 1 2 1 0 56 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 22 "Res"
-  guid "ad8fae2496c85a09c707f482bf2e69cc"
+  guid "f79a79923f84893fa963e87bf810804e"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   uidropdown 260 52 320 32 0 1 0.05647059 0.07341177 0.12988237 1 0.4854902 0.6392157 1 1 0.078431375 0.101960786 0.18039216 1 0.9098039 0.92941177 1 1 0.9098039 0.92941177 1 0.18 3 "1280 x 720" "1920 x 1080" "2560 x 1440" 1 "Select..." 1 7.2000003 0 0 0
 end
 gameobject 23 "L3"
-  guid "a3651b85d9250d91a5f16814ee321970"
+  guid "699aaf014821abf367f499dbd7ebcb6e"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   text "Quality" 0.9098039 0.92941177 1 1 2 1 0 104 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 24 "Quality"
-  guid "e83c3dc9286327ca01b569beb1a83756"
+  guid "531b4ecab64a2676be1d6bceb3ea69f2"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   uidropdown 260 100 320 32 0 2 0.05647059 0.07341177 0.12988237 1 0.4854902 0.6392157 1 1 0.078431375 0.101960786 0.18039216 1 0.9098039 0.92941177 1 1 0.9098039 0.92941177 1 0.18 4 "Low" "Medium" "High" "Ultra" 1 "Select..." 1 7.2000003 0 0 0
 end
 gameobject 25 "L4"
-  guid "84da4720d12631fbbab52856f8098322"
+  guid "5427bb321dae3d59062f5c39f88d52f1"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   text "VSync" 0.9098039 0.92941177 1 1 2 1 0 152 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 26 "VSync"
-  guid "b0c0a766665de564d32cf0c99cbb3a5f"
+  guid "252f2aedbb0709de49ad627c9f2a42a7"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 152 44 24 1 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 27 "L5"
-  guid "cfba4384e72723b6216f9aa864606eaf"
+  guid "7c5c551d2f935fef898dda792400128d"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   text "Show FPS" 0.9098039 0.92941177 1 1 2 1 0 196 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 28 "Fps"
-  guid "6dc003384702540c12741de5e5511a19"
+  guid "0711207e9748888b4de1fab83ceb9828"
   active 1
   parent 18
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 196 44 24 0 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 29 "Settings Audio"
-  guid "e1a187e8c5f7dda5c9879e9ac27469ba"
+  guid "7c9d07a28386a3b78cc1bfe20fdf67c2"
   active 0
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 28 112 584 330 0.078431375 0.101960786 0.18039216 1 0 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 30 "L1"
-  guid "3e86269504e255ae5a8d1cd0561edf3e"
+  guid "c5a0a326373e11a2a8dc32d2e09d77f6"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "Master volume" 0.9098039 0.92941177 1 1 2 1 0 8 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 31 "Master"
-  guid "f78b303043e5d60a9a6a7d63fff34719"
+  guid "3b81c4bbbc1ee6caebf980e5fd6cc9bf"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
@@ -257,112 +259,112 @@ gameobject 31 "Master"
   comporder "UISlider" "ScriptComponent"
 end
 gameobject 32 "L2"
-  guid "31e15c6c43297a1e500a77ac76e7969b"
+  guid "fd8b87c2d56e3659fd4c8e10fb84f69d"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "Music" 0.9098039 0.92941177 1 1 2 1 0 56 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 33 "Music"
-  guid "85856cc873f880da3bd0189828af5f1a"
+  guid "9db305f7d91431b514a47ae1db11d911"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   uislider 220 62 340 12 0.7 0 1 0.043137256 0.056078434 0.099215694 1 0.35686275 0.54901963 1 1 0.07058824 0.078431375 0.101960786 1 0 12 0.6 1 0.9098039 0.92941177 1 1 0 1 0 3 1 0 0 0.47058824 0.8235294 1 1 -1 ""
 end
 gameobject 34 "L3"
-  guid "41c2ba187b84a8e3a3c8b8b18a145d49"
+  guid "b4948dcc2c31a97de2fe8990d9186929"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "Effects" 0.9098039 0.92941177 1 1 2 1 0 104 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 35 "Sfx"
-  guid "c7b887fe3be2ad32477f62e707007409"
+  guid "8a1a92d0d4ea5def2a24b6e22df5ae4f"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   uislider 220 110 340 12 0.8 0 1 0.043137256 0.056078434 0.099215694 1 0.35686275 0.54901963 1 1 0.07058824 0.078431375 0.101960786 1 0 12 0.6 1 0.9098039 0.92941177 1 1 0 1 0 3 1 0 0 0.47058824 0.8235294 1 1 -1 ""
 end
 gameobject 36 "L4"
-  guid "fb44d363189ddd9826e86d198abc616b"
+  guid "6683141011ea536d384490bd6657df60"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "Voices" 0.9098039 0.92941177 1 1 2 1 0 152 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 37 "Voice"
-  guid "1df72c99db02284dbea75d66d66910da"
+  guid "7083799e0556ac393ad929df2ee562b4"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   uislider 220 158 340 12 0.9 0 1 0.043137256 0.056078434 0.099215694 1 0.35686275 0.54901963 1 1 0.07058824 0.078431375 0.101960786 1 0 12 0.6 1 0.9098039 0.92941177 1 1 0 1 0 3 1 0 0 0.47058824 0.8235294 1 1 -1 ""
 end
 gameobject 38 "L5"
-  guid "60157c3168a532b3bafc0776977d6d85"
+  guid "5fc23022c3b5b98ba457ae59cc097db2"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "Mute when in background" 0.9098039 0.92941177 1 1 2 1 0 200 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 260 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 39 "MuteBg"
-  guid "9605d3bf4c9da4d7bd287a167d4f60d5"
+  guid "e0152abf6b2afe6639668a2f4bf040da"
   active 1
   parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 300 200 44 24 1 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 40 "Settings Controls"
-  guid "9e970431720a138cb7ef8896ec6b3275"
+  guid "6d1ed8d4fe0ab76866b6d6fa7f284c87"
   active 0
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 28 112 584 330 0.078431375 0.101960786 0.18039216 1 0 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 41 "L1"
-  guid "bb0174a7e28250774f3efae87ba683f9"
+  guid "5a792773c5762ad740af395870ba061b"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   text "Mouse sensitivity" 0.9098039 0.92941177 1 1 2 1 0 8 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 42 "Sens"
-  guid "e280caad09ddec7318ffe6cdbb4beffa"
+  guid "a9ffafc2bc3c69f2e81d1264ae046385"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   uislider 220 14 340 12 0.5 0 1 0.043137256 0.056078434 0.099215694 1 0.35686275 0.54901963 1 1 0.07058824 0.078431375 0.101960786 1 0 12 0.6 1 0.9098039 0.92941177 1 1 0 1 0 3 1 0 0 0.47058824 0.8235294 1 1 -1 ""
 end
 gameobject 43 "L2"
-  guid "4a4b45e02ba242f76cc33f7f143f6012"
+  guid "bebe6223f6753e66cbe4b8db786f60e7"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   text "Invert Y axis" 0.9098039 0.92941177 1 1 2 1 0 56 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 44 "Invert"
-  guid "73675e76d106e41e67ce71848a0ad34e"
+  guid "d9698d2c9d959f03e7dc850e80055fd4"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 56 44 24 0 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 45 "L3"
-  guid "fcff9252211dc60bb4487211f6a1664a"
+  guid "3a3aae7fe22ec1ad4836c3898384df43"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   text "Vibration" 0.9098039 0.92941177 1 1 2 1 0 100 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 46 "Rumble"
-  guid "71dbd2f893bf833df67281eb5afa44d7"
+  guid "3931c38de8b5604540745d0fe69eef47"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 100 44 24 1 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 47 "Rebind"
-  guid "6cdc5752f3e079fead0c5eca67b995e0"
+  guid "abea61cf9bb1acef21c250b8d4f96362"
   active 1
   parent 40
   transform 0 0 0 0 0 0 1 1 1 1
@@ -374,84 +376,84 @@ gameobject 47 "Rebind"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 48 "Settings Access"
-  guid "ca3d2d84e84e38f6bdfa3e9e76b649a8"
+  guid "1fb815eff28e27a861f14e92373b592a"
   active 0
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 28 112 584 330 0.078431375 0.101960786 0.18039216 1 0 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 49 "L1"
-  guid "0a829bf419dec6d30f7a65e630e64fde"
+  guid "9571a9eb7689c51101883b62a616949b"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   text "Text size" 0.9098039 0.92941177 1 1 2 1 0 8 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 50 "TextSize"
-  guid "06d1ba23c0b55dc5cb7071978b6406a7"
+  guid "e3652c50b7e2832d83c5d43e1ba9fd83"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   uidropdown 260 4 320 32 0 1 0.05647059 0.07341177 0.12988237 1 0.4854902 0.6392157 1 1 0.078431375 0.101960786 0.18039216 1 0.9098039 0.92941177 1 1 0.9098039 0.92941177 1 0.18 4 "Small" "Normal" "Large" "Extra large" 1 "Select..." 1 7.2000003 0 0 0
 end
 gameobject 51 "L2"
-  guid "9d24afa5a1637c7aa8900b36e8d03e35"
+  guid "b123db23e3d839bdc811e0ec25095604"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   text "Colour filter" 0.9098039 0.92941177 1 1 2 1 0 56 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 52 "Filter"
-  guid "17a02911f1c1418ae64f240de717ec5b"
+  guid "587908e683850273d653dc5eed4d95ef"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   uidropdown 260 52 320 32 0 0 0.05647059 0.07341177 0.12988237 1 0.4854902 0.6392157 1 1 0.078431375 0.101960786 0.18039216 1 0.9098039 0.92941177 1 1 0.9098039 0.92941177 1 0.18 4 "Off" "Protanopia" "Deuteranopia" "Tritanopia" 1 "Select..." 1 7.2000003 0 0 0
 end
 gameobject 53 "L3"
-  guid "48591af8e3b0cfc692011b4042cc317a"
+  guid "79f331bbfdb17bb967c271cf683667af"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   text "High contrast" 0.9098039 0.92941177 1 1 2 1 0 104 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 54 "Contrast"
-  guid "75f1b5e0a12cc59f983be07a42329ee9"
+  guid "8bcd0ff58c7b0e4b5314626c7038410a"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 104 44 24 0 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 55 "L4"
-  guid "36b1a3dc86646a1b9d98927cbf702b8f"
+  guid "787b27ac19fa704513a645e20678e4e8"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   text "Reduce motion" 0.9098039 0.92941177 1 1 2 1 0 148 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 56 "Motion"
-  guid "b2a5788ba7497a8ea1c9e22e83e5633d"
+  guid "9ad3a5add51fb025e3da3ee09bc23af4"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 148 44 24 0 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 57 "L5"
-  guid "c644dd47ad1402767dcb241570667a93"
+  guid "fc29afdac727475a4bf520c66e67189c"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   text "Subtitles" 0.9098039 0.92941177 1 1 2 1 0 192 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 58 "Subs"
-  guid "6b95c4b710fe590f5d8041c16086ab57"
+  guid "60e25454de08025caccbcd3502804f6b"
   active 1
   parent 48
   transform 0 0 0 0 0 0 1 1 1 1
   uitoggle "" 260 192 44 24 1 0.048627455 0.06321569 0.11184314 1 0.35686275 0.54901963 1 1 0.9098039 0.92941177 1 1 0 8 1 0.07058824 0.078431375 0.101960786 1 1 12
 end
 gameobject 59 "CloseButton"
-  guid "b24d7bc14cf5f75982b6ebfd36b38a41"
+  guid "5bfb3d04c2a82f5c11d8affee6e70084"
   active 1
   parent 15
   transform 0 0 0 0 0 0 1 1 1 1
@@ -463,90 +465,91 @@ gameobject 59 "CloseButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 60 "HUD Shooter"
-  guid "f026a0dc3e6c0a52a6da24c66051568c"
+  guid "d6f6607206dd1b28da61f98a243e1fcd"
   active 0
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Midnight Blue"
 end
 gameobject 61 "Health"
-  guid "8c26be62c0ebe090839831fe2ed7fcba"
+  guid "97eeafc057db952129507d7c6b7d87cd"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 24 -24 280 64 0.078431375 0.101960786 0.18039216 1 6 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 62 "Heart"
-  guid "3411207827031941d8c28382d32b63f8"
+  guid "83ede7e3652ab258102922204e8682eb"
   active 1
   parent 61
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 4 10 38 22 0.35686275 0.54901963 1 1 0.4854902 0.6392157 1 1 0.07058824 0.078431375 0.101960786 1 0 0.27835295 0.42823532 0.78 1 0.17819607 0.2012549 0.2787451 1 0 0 9 2 1 0.9098039 0.92941177 1 0.18 1.03 "icon:heart" 22 0.07058824 0.078431375 0.101960786 1 12 0 0 0 0 0 0.4 0.12 1 1 0 0 0 0.55 0 2.6999998 7 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 63 "HealthBar"
-  guid "e1b5295cb5e8ff6ab65a5c7ab086b6a3"
+  guid "f8304fedeaaab1388062221b92cf720b"
   active 1
   parent 61
   transform 0 0 0 0 0 0 1 1 1 1
   uiprogress 44 14 216 14 0.8 0.043137256 0.056078434 0.099215694 1 0.23921569 0.8627451 0.5921569 1 0 12 1 0.9098039 0.92941177 1 1 0 3 1 0.35686275 0.54901963 1 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
 end
 gameobject 64 "Shield"
-  guid "c75902572109f3360af267a2ef307078"
+  guid "02a4bfb676f5bf56c386fda59326ef1f"
   active 1
   parent 61
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 4 36 38 22 0.35686275 0.54901963 1 1 0.4854902 0.6392157 1 1 0.07058824 0.078431375 0.101960786 1 0 0.27835295 0.42823532 0.78 1 0.17819607 0.2012549 0.2787451 1 0 0 9 2 1 0.9098039 0.92941177 1 0.18 1.03 "icon:shield" 22 0.07058824 0.078431375 0.101960786 1 12 0 0 0 0 0 0.4 0.12 1 1 0 0 0 0.55 0 2.6999998 7 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 65 "ArmorBar"
-  guid "19682c07b0945e111e5d21a6a6a67552"
+  guid "9653eb053d1602b68c50624ebd27c368"
   active 1
   parent 61
   transform 0 0 0 0 0 0 1 1 1 1
   uiprogress 44 40 216 10 0.4 0.043137256 0.056078434 0.099215694 1 0.23921569 0.8627451 0.5921569 1 0 12 0 0.9098039 0.92941177 1 1 0 3 1 0.35686275 0.54901963 1 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
 end
 gameobject 66 "Ammo"
-  guid "f0ad6ca82c03d96b63e7b4d16726ca8e"
+  guid "2e264bbb03d1839081090835a44fce27"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel -24 -24 200 64 0.078431375 0.101960786 0.18039216 1 8 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 67 "Mag"
-  guid "48f1a5e96ccb0779fcd6e3ba94886745"
+  guid "a8b762d83c781ed69499d3baf5128b47"
   active 1
   parent 66
   transform 0 0 0 0 0 0 1 1 1 1
   text "24" 0.9098039 0.92941177 1 1 5.5 1 14 4 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 80 56 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 68 "Reserve"
-  guid "aaa802ac1b7d43b261fe46c39be65b18"
+  guid "bf4e534ce00ccbab95536ea7d3512b4e"
   active 1
   parent 66
   transform 0 0 0 0 0 0 1 1 1 1
   text "/ 120" 0.9098039 0.92941177 1 1 2.75 1 94 22 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 90 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 69 "Cross"
-  guid "d771ba487ab62ce1509fd1223e07f1ca"
+  guid "948cd9ae574b9c04e9ebba9fdf0e21ef"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 24 24 0.078431375 0.101960786 0.18039216 1 4 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 70 "H"
-  guid "5f697b1d92ba231186144f4f7cb12e0e"
+  guid "3d97a58afc66b3b2aed6f770827f2657"
   active 1
   parent 69
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 11 24 1 1 1 1 0.101960786 0 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
 gameobject 71 "Timer"
-  guid "836c4d2e55e9ce50a6b48ce134f60b3c"
+  guid "b5892c804a899a80406f6db4d15c575a"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 1 1 1
   text "02:45" 0.9098039 0.92941177 1 1 3.5 1 0 16 1 1 0 0 0 0.9 1 1 1 1 0 0 0 0.9 1 160 34 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 72 "Pause"
-  guid "4ca457332ad5ac1ae778187797e6a326"
+  guid "03798fcef33ea4bc00eb7d01672a368c"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 1 1 1
@@ -559,13 +562,14 @@ gameobject 72 "Pause"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 73 "Pause Menu"
-  guid "9b14f46f6468036dd979e8cbc76d0189"
+  guid "8aeaaa26a0ad354059ea4661b86a6659"
   active 0
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Midnight Blue"
 end
 gameobject 74 "Dim"
-  guid "94593a926def7a63af6cc53dd2188243"
+  guid "8802c2798df8e899abf386a64c297116"
   active 1
   parent 73
   transform 0 0 0 0 0 0 1 1 1 1
@@ -573,28 +577,28 @@ gameobject 74 "Dim"
   uix pblock=1
 end
 gameobject 75 "Card"
-  guid "2f6f005a28592facacc3d6beeb889e95"
+  guid "51414b05e6731a764d1d6802bbe94f51"
   active 1
   parent 73
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 360 400 0.078431375 0.101960786 0.18039216 1 4 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 76 "Caption"
-  guid "7576df85a868077b3d3627db12c85725"
+  guid "32d50b504112565aba555a0149b9bb4a"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
   text "GAME" 0.9098039 0.92941177 1 1 1.5 1 32 28 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 296 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 77 "Title"
-  guid "baf9f71acaa25ddbddfec9b388cc7c32"
+  guid "b6d478901d46ec96de5c1d4e1d7682e2"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
   text "Paused" 0.9098039 0.92941177 1 1 4 1 32 46 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 296 40 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 78 "ResumeButton"
-  guid "66df46ad982c651adfc432ce7b425f9e"
+  guid "53a01533fc8cda50ec71b2c4924cb76c"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
@@ -607,7 +611,7 @@ gameobject 78 "ResumeButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 79 "SettingsButton"
-  guid "b0dab9ba1e88c1a56b1fbbade4eb1180"
+  guid "8e1f7cde6cde7163ff6cdda520e7eec0"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
@@ -619,7 +623,7 @@ gameobject 79 "SettingsButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 80 "GiveUpButton"
-  guid "11c68926495384e165dc1e2dd309405b"
+  guid "e2344b03ea4417766df0b92fe05437fd"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
@@ -634,7 +638,7 @@ gameobject 80 "GiveUpButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 81 "MenuButton"
-  guid "e040eb2e5ff622a2282f94d2980cdd21"
+  guid "adfee599dd4ed09196f06d91e1dd5591"
   active 1
   parent 75
   transform 0 0 0 0 0 0 1 1 1 1
@@ -649,13 +653,14 @@ gameobject 81 "MenuButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 82 "Game Over"
-  guid "aa376d6cd177af4f16ab90bfbcb92e9c"
+  guid "b2d695093883afd5553c5cfda557ae56"
   active 0
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Midnight Blue"
 end
 gameobject 83 "Dim"
-  guid "b0022fe9569162dd88baf7c39ee56a65"
+  guid "026d76bb0ef760cdbb103aa13adc6bc9"
   active 1
   parent 82
   transform 0 0 0 0 0 0 1 1 1 1
@@ -663,49 +668,49 @@ gameobject 83 "Dim"
   uix pblock=1
 end
 gameobject 84 "Card"
-  guid "a70b95a7b50fb237162395ea3c9a7096"
+  guid "b4519afd9ad3ae5b8ba2023829f1bdb6"
   active 1
   parent 82
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 420 420 0.078431375 0.101960786 0.18039216 1 4 12 1 0.9098039 0.92941177 1 0.18 1 0.039215688 0.05490196 0.10980392 1 1 0 0 0 0.55 0 6 1 0 14 0 0 0.35686275 0.54901963 1 0.7 0 1 1 1 0 15
 end
 gameobject 85 "Title"
-  guid "b120230eac19599cfb861fef90cec95e"
+  guid "080c6c1a28cf0d1d81fe2434e4ae3652"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
   text "GAME OVER" 0.9098039 0.92941177 1 1 5.5 1 24 28 0 1 0 0 0 0.9 1 1 1 1 0 0 0 0.9 1 372 56 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 86 "Line"
-  guid "83c49d6efae4ae15d7bd1e673ca80a34"
+  guid "235760bd12c0e1ffc70febb14bf15834"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 40 100 340 1 1 1 1 0.101960786 0 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
 gameobject 87 "Score"
-  guid "5fcfca0ac8ff2cd61c006370b9d61444"
+  guid "c98fadecf853b4c3685e22b1ae316dc9"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
   text "FINAL SCORE" 0.9098039 0.92941177 1 1 1.5 1 40 120 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 340 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 88 "Value"
-  guid "b53cd5b01f5eabefa11db8264671ec75"
+  guid "9cad7bb883be579ccdcba033c1f1beb5"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
   text "12,450" 0.9098039 0.92941177 1 1 4.5 1 40 142 0 1 0 0 0 0.9 1 1 1 1 0 0 0 0.9 1 340 44 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 89 "Best"
-  guid "4e53a8fd6c49041f0afea366f7ea9202"
+  guid "1dc0497a99b58303b6ecbadd4b70a680"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
   text "Best 18,200" 0.9098039 0.92941177 1 1 1.875 1 40 192 0 1 0 0 0 0.9 1 1 1 1 0 0 0 0.9 0 340 22 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 90 "RetryButton"
-  guid "783f981eaadb485cce69b1dd3d637a7c"
+  guid "fc3fc6cd342db1aa3bead46d22ca56eb"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
@@ -718,7 +723,7 @@ gameobject 90 "RetryButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 91 "MenuButton"
-  guid "d530828ad815b47545c16efe34d4a407"
+  guid "0fd715c6e9094dd538ee57f846c3dbe7"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
@@ -731,7 +736,7 @@ gameobject 91 "MenuButton"
   comporder "UIButton" "ScriptComponent"
 end
 gameobject 92 "QuitButton"
-  guid "366d3c89fbbabb695acb0f584e6f5de5"
+  guid "09a1f7a5c0d5dbc5e4e6548cfe80d41a"
   active 1
   parent 84
   transform 0 0 0 0 0 0 1 1 1 1
@@ -741,11 +746,4 @@ gameobject 92 "QuitButton"
 " "" 0
   uibutton "Quit" 40 356 340 44 0.35686275 0.54901963 1 1 0.4854902 0.6392157 1 1 0.07058824 0.078431375 0.101960786 1 0 0.27835295 0.42823532 0.78 1 0.17819607 0.2012549 0.2787451 1 1 1 9 2 1 0.9098039 0.92941177 1 0.18 1.03 "" 0 0.07058824 0.078431375 0.101960786 1 12 0 0 1 0 0 0.4 0.12 1 1 0 0 0 0.55 0 2.6999998 7 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
   comporder "UIButton" "ScriptComponent"
-end
-gameobject 93 "UI Theme"
-  guid "d8bac29e3da4f00d5ba04d7f6e619e92"
-  active 1
-  parent -1
-  transform 0 0 0 0 0 0 1 1 1 1
-  uitheme name="Midnight Blue" apply=0 preset=0 corner=12 mask=15 border=1 shadow=1 soft=14 ox=0 oy=6 pad=16 font=2 tpx=2 trans=12 hscale=1.03 glow=0 opa=1 grad=1 gdir=0 sheen=0 panelR=0.078431375 panelG=0.101960786 panelB=0.18039216 panelA=1 pbotR=0.039215688 pbotG=0.05490196 pbotB=0.10980392 pbotA=1 accentR=0.35686275 accentG=0.54901963 accentB=1 accentA=1 textR=0.9098039 textG=0.92941177 textB=1 textA=1 mutedR=0.54509807 mutedG=0.5921569 mutedB=0.7411765 mutedA=1 buttonR=0.35686275 buttonG=0.54901963 buttonB=1 buttonA=1 hoverR=0.4854902 hoverG=0.6392157 hoverB=1 hoverA=1 pressR=0.27835295 pressG=0.42823532 pressB=0.78 pressA=1 btextR=0.07058824 btextG=0.078431375 btextB=0.101960786 btextA=1 offR=0.17819607 offG=0.2012549 offB=0.2787451 offA=1 dangerR=1 dangerG=0.36078432 dangerB=0.42352942 dangerA=1 okR=0.23921569 okG=0.8627451 okB=0.5921569 okA=1 edgeR=0.9098039 edgeG=0.92941177 edgeB=1 edgeA=0.18 shR=0 shG=0 shB=0 shA=0.55 glowcR=0.35686275 glowcG=0.54901963 glowcB=1 glowcA=0.7 fcolR=0.517647 fcolG=0.66176474 fcolB=1 fcolA=1 fthick=2 fpad=3 fpulse=0 global=1
 end

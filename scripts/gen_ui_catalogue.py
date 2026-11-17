@@ -87,7 +87,7 @@ def main():
     w("")
     w("- Components: %d" % len(comps))
     w("- Named styles: %d" % len(styles))
-    w("- Themes: %d" % len(themes))
+    w("- Looks: %d" % len(themes))
     w("- Icons: %d" % len(icons))
     w("- Screens: %d" % len(screens))
     w("- Screen variants: %d" % variants)
@@ -101,12 +101,12 @@ def main():
     w("| Named styles | %d | one `[style]` entry: a named mix of shape, fill, border, effect, role and the four state looks. Two styles never share the same mix (a test checks), so these are distinct looks, not renamed copies |" % len(styles))
     w("| Style axes | %d shapes, %d fills, %d borders, %d effects, %d sizes, %d densities, %d state looks | the choices a style is made of; state looks are %d hover, %d pressed, %d disabled and %d focus |" % (axis["shape"], axis["fill"], axis["border"], axis["effect"], axis["size"], axis["density"], state_looks, axis["hover"], axis["press"], axis["disabled"], axis["focus"]))
     w("| Style combinations | %d | shapes x fills x borders x effects, computed, **not hand-made**: any of them can be set in the Inspector. With the %d sizes and %d densities that is %d option combinations |" % (combos, axis["size"], axis["density"], combos * axis["size"] * axis["density"]))
-    w("| Themes | %d | one `[theme]` entry: %d are the built-in presets of the UI Theme component, %d are defined in data |" % (len(themes), builtin, len(themes) - builtin))
+    w("| Looks | %d | one `[theme]` entry in the data (a look is put on ONE screen or widget; there is no global theme): %d are the built-in presets of the UI Theme component, %d are defined in data |" % (len(themes), builtin, len(themes) - builtin))
     w("| Icons | %d | one `[icon]` entry, drawn by our own code (no outside artwork): %d drawn from shapes and %d made by turning or mirroring another (arrow-left from arrow-right); every name is a different picture |" % (len(icons), len(icons) - derived, derived))
     w("| Screens | %d | one `[screen]` entry: %d are described in data and built by one builder, %d are older screens still built by their C++ function |" % (len(screens), data_screens, len(screens) - data_screens))
     w("| Screen variants | %d | for each screen the number of layout choices it lists (Centered, Left side, Right side, Dimmed backdrop); a screen without a list has one. A variant moves the card or adds a backdrop, the content is the same |" % variants)
     w("")
-    w("Any screen can also be built under any of the %d themes (a theme-ready screen), which is %d screen-and-theme previews; that is a product, not a count of separate things." % (len(themes), len(screens) * len(themes)))
+    w("Any screen can also be built with any of the %d looks, which is %d screen-and-look pairs; that is a product, not a count of separate things." % (len(themes), len(screens) * len(themes)))
     w("")
 
     w("## Screens by section")
@@ -124,9 +124,9 @@ def main():
             w("| %s | %s | %s | %s |" % (s[2].get("name", s[1]), ", ".join(v) if v else "1", s[2].get("tags", ""), s[2].get("desc", "")))
         w("")
 
-    w("## Themes")
+    w("## Looks")
     w("")
-    w("| Theme | Mode | Tags |")
+    w("| Look | Mode | Tags |")
     w("|---|---|---|")
     preset_mode = {"Light": "light", "Minimal": "light", "Fantasy": "light", "Modern Flat": "light", "Cartoon": "light"}
     for t in themes:
@@ -182,11 +182,11 @@ def main():
         if cur != out:
             print("docs/ui_catalogue.md is out of date: run python3 scripts/gen_ui_catalogue.py", file=sys.stderr)
             return 1
-        print("ui_catalogue up to date (%d components, %d styles, %d themes, %d icons, %d screens)" % (len(comps), len(styles), len(themes), len(icons), len(screens)))
+        print("ui_catalogue up to date (%d components, %d styles, %d looks, %d icons, %d screens)" % (len(comps), len(styles), len(themes), len(icons), len(screens)))
         return 0
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write(out)
-    print("wrote docs/ui_catalogue.md (%d components, %d styles, %d themes, %d icons, %d screens, %d variants)" % (len(comps), len(styles), len(themes), len(icons), len(screens), variants))
+    print("wrote docs/ui_catalogue.md (%d components, %d styles, %d looks, %d icons, %d screens, %d variants)" % (len(comps), len(styles), len(themes), len(icons), len(screens), variants))
     return 0
 
 

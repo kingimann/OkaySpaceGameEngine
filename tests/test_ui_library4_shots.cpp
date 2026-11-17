@@ -82,7 +82,7 @@ void Sample(Scene& s, const std::string& theme) {
     GameObject* pb = Child(s, c, "P"); auto* pbc = pb->AddComponent<UIProgressBar>(); pbc->anchor = UIAnchor::TopLeft; pbc->position = {12, 130}; pbc->size = {200, 12}; pbc->value = 0.7f;
     GameObject* tg = Child(s, c, "G"); auto* tgc = tg->AddComponent<UIToggle>(); tgc->anchor = UIAnchor::TopLeft; tgc->position = {12, 160}; tgc->size = {44, 24}; tgc->style = UIToggle::Style::Switch; tgc->on = true; tgc->label = "";
     Text(s, c, "L", "Music", UIAnchor::TopLeft, {66, 160}, {120, 24}, 14.0f, slate::Dim());
-    UIStyleLib::SetTheme(s, theme, false);
+    UIStyleLib::ApplyLook(c, theme);
 }
 
 } // namespace
@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(dir + "/screens", ec);
     CHECK(!ec);
 
-    {   // themes side by side: 24 of the 54 on one sheet (each tile is the same sample screen under another theme)
+    {   // looks side by side: 24 of the 54 on one sheet (each tile is the same sample screen with another look)
         static const char* names[] = {"Dark", "Light", "Sci-fi", "Fantasy", "Neon", "Retro Pixel", "Cartoon", "Military", "Horror", "Glass", "Minimal", "Modern Flat",
                                       "Midnight Blue", "Paper", "Candy", "Forest", "Wood Plank", "Stone Keep", "Iron Forge", "Terminal Green", "Cyber Pink", "Space Station", "Mobile Clean", "High Contrast"};
         Image sheet(4 * 330, 6 * 230);
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
             if (sh.ok) Blit(sheet, sh.img, 5 + (i % 4) * 330, 5 + (i / 4) * 230, 1);
         }
         CHECK(ok == 24);
-        CHECK(sheet.SavePNG(dir + "/themes-side-by-side.png"));
+        CHECK(sheet.SavePNG(dir + "/looks-side-by-side.png"));
     }
 
     {   // the icon sheet: every icon, 20 to a row, at 32 px
@@ -150,6 +150,12 @@ int main(int argc, char** argv) {
         CHECK(sh.img.SavePNG(dir + "/styles-sheet.png"));
     }
 
+    {   // three screens with three different looks in ONE scene: a retro menu, a sci-fi HUD and a cartoon popup
+        Shot sh = Render(1280, 720, [&](Scene& s) { UILibrary::BuildMixStyles(s); });
+        CHECK(sh.ok);
+        CHECK(sh.img.SavePNG(dir + "/mix-styles.png"));
+    }
+
     {   // a picture of every screen built from data (1280 x 720, saved at half size) and a contact sheet of them
         std::vector<std::string> ids;
         for (const auto& d : UIScreens::Screens()) if (d.native.empty()) ids.push_back(d.id);
@@ -158,8 +164,7 @@ int main(int argc, char** argv) {
         int ok = 0;
         for (std::size_t i = 0; i < ids.size(); ++i) {
             Shot sh = Render(1280, 720, [&](Scene& s) {
-                UIScreens::Build(s, ids[i], 0);
-                UIStyleLib::SetTheme(s, "Midnight Blue", false);
+                UIScreens::Build(s, ids[i], 0, "Midnight Blue");
                 if (ids[i].rfind("hud_", 0) == 0 || ids[i] == "minimap_frame" || ids[i] == "touch_hud") {}
             });
             ok += sh.ok;

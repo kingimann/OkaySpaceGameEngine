@@ -322,7 +322,7 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
             namespace S = UIStyleLib;
             static char filter[48] = "";
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##stylefilter", "Search the 111 styles (name or family)...", filter, sizeof filter);
+            ImGui::InputTextWithHint("##stylefilter", "Search the styles (name or family)...", filter, sizeof filter);
             const std::string curStyle = sv->style.empty() ? std::string("(none)") : sv->style;
             auto matches = [&](const uilib::DataSection& st) {
                 if (!filter[0]) return true;
@@ -333,8 +333,7 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
                 return hay.find(f) != std::string::npos;
             };
             auto applyNow = [&]() {
-                UITheme* th = UITheme::Find(&ed.scene(), sv->themeName);
-                S::ApplyStyle(sv->gameObject, S::SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), S::PaletteOf(th));
+                S::ApplyStyle(sv->gameObject, S::SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), S::PaletteFor(sv));
             };
             if (ImGui::BeginCombo("Style##uisv", curStyle.c_str())) {
                 if (ImGui::Selectable("(none)", sv->style.empty())) { ed.PushUndo(); sv->style.clear(); ed.dirty = true; }
@@ -355,27 +354,54 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
             if (ImGui::Combo("Density##uisv", &di, denss, 4)) { ed.PushUndo(); sv->styleDensity = denss[di]; if (!sv->style.empty()) applyNow(); ed.dirty = true; }
             if (!sv->style.empty()) {
                 const S::StyleSpec sp = S::SpecOf(sv->style, sizes[si], denss[di]);
-                editor::DrawStylePreviewWidget(sp, S::PaletteOf(UITheme::Find(&ed.scene(), sv->themeName)), ImGui::GetContentRegionAvail().x);
+                editor::DrawStylePreviewWidget(sp, S::PaletteFor(sv), ImGui::GetContentRegionAvail().x);
             }
-            // The theme this widget keeps when the scene's theme changes (the per-component override).
+            // The look of this widget or screen (there is no scene-wide theme: each one carries its own).
             {
-                const std::string curTheme = sv->themeName.empty() ? std::string("(follows the scene)") : sv->themeName;
-                if (ImGui::BeginCombo("Own theme##uisv", curTheme.c_str())) {
-                    if (ImGui::Selectable("(follows the scene)", sv->themeName.empty())) { ed.PushUndo(); sv->themeName.clear(); ed.dirty = true; }
+                const std::string curTheme = sv->themeName.empty() ? std::string("(launcher colours)") : sv->themeName;
+                if (ImGui::BeginCombo("Look##uisv", curTheme.c_str())) {
+                    if (ImGui::Selectable("(launcher colours)", sv->themeName.empty())) { ed.PushUndo(); sv->themeName.clear(); ed.dirty = true; }
                     for (const auto& t : S::Themes()) if (ImGui::Selectable(t.name.c_str(), t.name == sv->themeName)) {
-                        ed.PushUndo(); sv->themeName = t.name;
-                        UITheme tmp; S::ApplyThemeData(tmp, t.name); tmp.ApplyTo(sv->gameObject);
-                        if (!sv->style.empty()) applyNow();
-                        ed.dirty = true;
+                        ed.PushUndo(); S::ApplyLook(sv->gameObject, t.name, sv->style, sv->styleSize, sv->styleDensity); ed.dirty = true;
                     }
                     ImGui::EndCombo();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a theme and this widget stays on it when you switch the scene's theme.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The colours, corners and spacing of this object and what is under it. Other objects do not change.");
+                if (ImGui::Button("Apply to this screen##uisv")) {
+                    ed.PushUndo(); GameObject* root = S::ScreenRootOf(sv->gameObject);
+                    S::ApplyLook(root, sv->themeName, sv->style, sv->styleSize, sv->styleDensity); ed.dirty = true;
+                    ConsoleLog("Applied the look and style to the screen " + root->name);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put this look and style on the whole screen this widget is in (the object just under the Canvas).");
+                ImGui::SameLine();
+                if (ImGui::Button("Apply to selection##uisv")) {
+                    ed.PushUndo();
+                    std::vector<GameObject*> targets = ed.MultiSelection();
+                    if (std::find(targets.begin(), targets.end(), sv->gameObject) == targets.end()) targets.push_back(sv->gameObject);
+                    for (GameObject* g : targets) if (g != sv->gameObject) S::ApplyLook(g, sv->themeName, sv->style, sv->styleSize, sv->styleDensity);
+                    ed.dirty = true;
+                }
+                // Presets: the look and style as a small file (.okaylook) in Assets/UI, and an old .okaytheme used as a look.
+                static char presetName[48] = "My look";
+                ImGui::SetNextItemWidth(140.0f); ImGui::InputText("##presetname", presetName, sizeof presetName); ImGui::SameLine();
+                namespace fs = std::filesystem;
+                const fs::path dir = (ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets") / "UI";
+                if (ImGui::Button("Save preset##uisv")) {
+                    std::error_code ec; fs::create_directories(dir, ec);
+                    ConsoleLog(S::SavePreset((dir / (std::string(presetName) + ".okaylook")).string(), {sv->themeName, sv->style, sv->styleSize, sv->styleDensity}) ? "Saved the preset " + std::string(presetName) : "Could not save the preset", 0);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Load preset##uisv")) {
+                    S::LookPreset lp;
+                    if (S::LoadPreset((dir / (std::string(presetName) + ".okaylook")).string(), lp)) { ed.PushUndo(); S::ApplyLook(sv->gameObject, lp.look, lp.style, lp.size, lp.density); ed.dirty = true; }
+                    else if (S::ApplyThemeFileAsLook(sv->gameObject, (dir / (std::string(presetName) + ".okaytheme")).string())) { ed.PushUndo(); ed.dirty = true; ConsoleLog("Used the old theme file as a look"); }
+                    else ConsoleLog("No preset or theme file named " + std::string(presetName) + " in Assets/UI", 1);
+                }
             }
             if (ImGui::Button("Randomise within the theme##uisv")) {
                 static unsigned seed = 1;
                 ed.PushUndo();
-                sv->style = S::RandomiseStyle(sv->gameObject, ++seed, S::PaletteOf(UITheme::Find(&ed.scene(), sv->themeName)));
+                sv->style = S::RandomiseStyle(sv->gameObject, ++seed, S::PaletteFor(sv));
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Try a random style from the library, in the colours of the theme. Press again for another.");

@@ -13,7 +13,7 @@
 //   bar: value=0..1 fill=<role>   slider: min= max= value= step= act=volume   toggle: on=1 style=switch|check|radio
 //   dropdown: options=A|B|C value=0   input: hint="..." password=1   tabs: tabs=A|B pages=Local1|Local2 style=underline|pills|vertical
 //   rep n=8 cols=4 dx=70 dy=70: its child lines are repeated (name gets 1..n, {i} in text becomes the number)
-//   act: ";"-separated: show:<screen> hide:<screen> swap:<a>><b> toggle:<screen> quit scene:<path> pause:0|1 theme:<name> tab:<tabs>:<i> volume
+//   act: ";"-separated: show:<screen> hide:<screen> swap:<a>><b> toggle:<screen> quit scene:<path> pause:0|1 look:<Look>@<screen or object> tab:<tabs>:<i> volume
 //        (a <screen> is a screen id from the data; other names are used as they are). They become a small script on the widget.
 #include "okay/Scene/UITemplates.hpp"
 #include "okay/Scene/UIGallery.hpp"
@@ -242,7 +242,10 @@ inline std::string ActionScript(const std::string& acts, const char* event, cons
         else if (verb == "quit") body += "  quit();\n";
         else if (verb == "scene") body += "  load_scene(\"" + arg + "\");\n";
         else if (verb == "pause") body += std::string("  pause_game(") + (arg == "0" ? "0" : "1") + ");\n";
-        else if (verb == "theme") body += "  ui_set_theme(\"" + arg + "\");\n";
+        else if (verb == "look") {   // look:<Look name>@<object name>: one screen or widget gets the look
+            const std::size_t at = arg.find('@');
+            if (at != std::string::npos) body += "  ui_set_look(\"" + RootName(arg.substr(at + 1)) + "\", \"" + arg.substr(0, at) + "\");\n";
+        }
         else if (verb == "tab") {
             const std::size_t k = arg.find(':');
             if (k != std::string::npos) body += "  ui_set_tab(\"" + arg.substr(0, k) + "\", " + arg.substr(k + 1) + ");\n";
@@ -378,8 +381,10 @@ inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const 
 } // namespace detail3
 
 /// Build screen `id` (variant 0 is the look as written; the others move the card: Left side, Right side, Dimmed backdrop).
-/// Returns the root, or null for an unknown id. A UITheme, when given, restyles the result.
-inline GameObject* Build(Scene& scene, const std::string& id, int variant = 0, UITheme* theme = nullptr) {
+/// Returns the root, or null for an unknown id. `look` (one of the 54) and `style` are put on THIS screen only; with neither, the screen keeps the
+/// launcher colours. There is no scene-wide theme, so screens with different looks live side by side.
+inline GameObject* Build(Scene& scene, const std::string& id, int variant = 0, const std::string& look = std::string(), const std::string& style = std::string(),
+                         const std::string& size = std::string(), const std::string& density = std::string()) {
     using namespace detail3;
     const Def* d = Find(id);
     if (!d) return nullptr;
@@ -387,7 +392,7 @@ inline GameObject* Build(Scene& scene, const std::string& id, int variant = 0, U
         for (const auto& nb : NativeBuilders())
             if (nb.first == d->native) {
                 GameObject* r = nb.second(scene);
-                if (r && theme) theme->ApplyTo(r);
+                if (r && (!look.empty() || !style.empty())) UIStyleLib::ApplyLook(r, look, style, size, density);
                 return r;
             }
         return nullptr;
@@ -430,21 +435,21 @@ inline GameObject* Build(Scene& scene, const std::string& id, int variant = 0, U
         stack.resize((std::size_t)n.depth + 1);
         stack[(std::size_t)n.depth] = g;
     }
-    if (root && theme) theme->ApplyTo(root);
+    if (root && (!look.empty() || !style.empty())) UIStyleLib::ApplyLook(root, look, style, size, density);
     return root;
 }
 
 /// "Starter Pack": a main menu, settings, game HUD, pause menu and game over screen in one scene, already joined by working buttons
-/// (Play opens the HUD, Pause opens the pause menu, Give up opens Game Over, Try again goes back to the game...). `theme` is a library
-/// theme name ("" keeps the scene's). Returns the Main Menu root. Only the Main Menu is visible at the start.
-inline GameObject* BuildStarterPack(Scene& scene, const std::string& theme = std::string()) {
+/// (Play opens the HUD, Pause opens the pause menu, Give up opens Game Over, Try again goes back to the game...). `look` is put on every one of
+/// the five screens ("" keeps the launcher colours); each screen stores it, so any of them can be given another look later. Returns the Main Menu
+/// root. Only the Main Menu is visible at the start.
+inline GameObject* BuildStarterPack(Scene& scene, const std::string& look = std::string(), const std::string& style = std::string()) {
     GameObject* first = nullptr;
     for (const char* id : {"main_menu", "settings", "hud_shooter", "pause_menu", "game_over"}) {
-        GameObject* g = Build(scene, id, 0);
+        GameObject* g = Build(scene, id, 0, look, style);
         if (!first) first = g;
         else if (g) g->active = false;
     }
-    if (!theme.empty()) UIStyleLib::SetTheme(scene, theme, false);
     return first;
 }
 

@@ -1,0 +1,285 @@
+okayscene 3
+name "UI Mix Styles"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "f2576d82df7584415c3d8e520960158e"
+  active 1
+  parent -1
+  transform 0 0 10 0 0 0 1 1 1 1
+  camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Canvas"
+  guid "de8a94062498629ecc9335bb7454db29"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
+end
+gameobject 2 "EventSystem"
+  guid "b73603c3d595296b1f73f106f60b4621"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  eventsystem
+end
+gameobject 3 "Main Menu"
+  guid "2ae709951f75e6cbf0db9a9dbd6f7f32"
+  active 1
+  parent 1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Retro Pixel" vstyle="Pixel"
+end
+gameobject 4 "Card"
+  guid "88b874e64c55d359e69f0e61ad11ded0"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 32 0 400 460 1 0.8 0 1 3 0 4 1 0.8 0 1 0 1 0.8 0 1 1 0 0 0 0.45 4 4 0 0 0 0 0 1 0.87 0.35 1 0 1 1 1 0 15
+end
+gameobject 5 "Caption"
+  guid "b20590b346ca7cebc97767d94757ee91"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "WELCOME TO" 0.9411765 0.9411765 0.78431374 1 1.5 1 36 34 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 328 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 6 "Title"
+  guid "b8ff3546c13452f2431709f5c852a015"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "MY GAME" 0.9411765 0.9411765 0.78431374 1 5 1 36 54 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 328 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 7 "Line"
+  guid "3bf108939b62de87a03e41d5ff0f0941"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 36 118 328 1 1 0.8 0 1 0 0 4 1 0.8 0 1 0 1 0.8 0 1 1 0 0 0 0.45 4 4 0 0 0 0 0 1 0.87 0.35 1 0 1 1 1 0.15686275 15
+end
+gameobject 8 "PlayButton"
+  guid "9c47536a81c524fd09fa7845db7e9516"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"HUD Shooter\", 1);
+  set_active_of(\"Main Menu\", 0);
+}
+" "" 0
+  uibutton "Play" 36 146 328 36 1 0.8 0 1 0.86 0.688 0 1 0.07058824 0.078431375 0.101960786 1 0 0.7 0.56 0 1 0.50176466 0.3945098 0.08627451 0.4 1 1 0 2 4 1 0.8 0 1 1 "icon:play" 24 0.07058824 0.078431375 0.101960786 1 0 0 0 2 0 0 0.4 0.12 0 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 1 0.86 0.3 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 9 "SettingsButton"
+  guid "4916f7231d62e7c0cf8b2966e650faba"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"Settings\", 1);
+}
+" "" 0
+  uibutton "Settings" 36 210 328 36 1 0.8 0 1 0.86 0.688 0 1 0.07058824 0.078431375 0.101960786 1 0 0.7 0.56 0 1 0.50176466 0.3945098 0.08627451 0.4 1 1 0 2 4 1 0.8 0 1 1 "icon:gear" 24 0.07058824 0.078431375 0.101960786 1 0 0 0 2 0 0 0.4 0.12 0 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 1 0.86 0.3 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 10 "CreditsButton"
+  guid "a2bad48747768cdf3db9c2ec9b17d3d5"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"Credits\", 1);
+  set_active_of(\"Main Menu\", 0);
+}
+" "" 0
+  uibutton "Credits" 36 270 328 36 1 0.8 0 1 0.86 0.688 0 1 0.07058824 0.078431375 0.101960786 1 0 0.7 0.56 0 1 0.50176466 0.3945098 0.08627451 0.4 1 1 0 2 4 1 0.8 0 1 1 "icon:star" 24 0.07058824 0.078431375 0.101960786 1 0 0 0 2 0 0 0.4 0.12 0 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 1 0.86 0.3 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 11 "QuitButton"
+  guid "7758b26eea6ca92e7342d846990844d6"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  quit();
+}
+" "" 0
+  uibutton "Quit" 36 330 328 36 1 0.8 0 1 0.86 0.688 0 1 0.07058824 0.078431375 0.101960786 1 0 0.7 0.56 0 1 0.50176466 0.3945098 0.08627451 0.4 1 1 0 2 4 1 0.8 0 1 1 "icon:door" 24 0.07058824 0.078431375 0.101960786 1 0 0 0 2 0 0 0.4 0.12 0 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 1 0.86 0.3 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 12 "Version"
+  guid "115531bbfb7d760a5cf0efb66afc56fc"
+  active 1
+  parent 4
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "v1.0" 0.9411765 0.9411765 0.78431374 1 1.5 1 36 -14 6 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 120 18 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 13 "HUD Shooter"
+  guid "bb5a2976e08bff2f9638303adc001e97"
+  active 1
+  parent 1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Space Station" vstyle="Holo"
+end
+gameobject 14 "Health"
+  guid "72ad5a69bbd6ccb1042a09332857904f"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 24 -24 280 64 0.44117647 0.8382353 1 0.38 6 8 1.5 0.25490198 0.78431374 1 1 0 0.25490198 0.78431374 1 1 1 0.25490198 0.78431374 1 0.65 0 0 7 0 16 0 6 0.25490198 0.78431374 1 0.28 1 1 1 1 0.16 15
+end
+gameobject 15 "Heart"
+  guid "85845b3f8b64ef886b3f7e1d0e43cec2"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 4 10 38 36 0.44117647 0.8382353 1 0.38 0.48588234 0.8511765 1 0.38 0.84705883 0.94509804 1 1 0 0.34411764 0.65382355 0.78 0.38 0.21578431 0.42034313 0.51686275 0.28840002 0 0 8 2 1.5 0.25490198 0.78431374 1 1 1 "icon:heart" 22 0.84705883 0.94509804 1 1 16 0 0 1 0 0 0.4 0.12 7 1 0.25490198 0.78431374 1 0.65 0 0 16 "" "" 0 "" 0 0 1 0.4784314 0.84901965 1 1
+end
+gameobject 16 "HealthBar"
+  guid "bdbf25f388d9439f2593b7245a6dbb2a"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiprogress 44 14 216 14 0.8 0.017254904 0.043137256 0.06686275 1 0.25490198 0.78431374 1 1 0 7 1 0.84705883 0.94509804 1 1 0 7 1 0.25490198 0.78431374 1 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
+end
+gameobject 17 "Shield"
+  guid "a5d17cf79b0c9477bd72d05b38e7fcc3"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 4 36 38 36 0.44117647 0.8382353 1 0.38 0.48588234 0.8511765 1 0.38 0.84705883 0.94509804 1 1 0 0.34411764 0.65382355 0.78 0.38 0.21578431 0.42034313 0.51686275 0.28840002 0 0 8 2 1.5 0.25490198 0.78431374 1 1 1 "icon:shield" 22 0.84705883 0.94509804 1 1 16 0 0 1 0 0 0.4 0.12 7 1 0.25490198 0.78431374 1 0.65 0 0 16 "" "" 0 "" 0 0 1 0.4784314 0.84901965 1 1
+end
+gameobject 18 "ArmorBar"
+  guid "1aea3e48b1ffadad67aac4b2fae722ba"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiprogress 44 40 216 10 0.4 0.017254904 0.043137256 0.06686275 1 0.25490198 0.78431374 1 1 0 5 0 0.84705883 0.94509804 1 1 0 7 1 0.25490198 0.78431374 1 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
+end
+gameobject 19 "Ammo"
+  guid "930da58dc67fde25f9618f9c1c04b950"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -24 -24 200 64 0.44117647 0.8382353 1 0.38 8 8 1.5 0.25490198 0.78431374 1 1 0 0.25490198 0.78431374 1 1 1 0.25490198 0.78431374 1 0.65 0 0 7 0 16 0 6 0.25490198 0.78431374 1 0.28 1 1 1 1 0.16 15
+end
+gameobject 20 "Mag"
+  guid "bd3e8a36cd883e49ff4940b27a45797e"
+  active 1
+  parent 19
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "24" 0.84705883 0.94509804 1 1 5.5 1 14 4 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 1 80 56 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 21 "Reserve"
+  guid "5daa46687a78a6ff416131c6a9a01b6a"
+  active 1
+  parent 19
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "/ 120" 0.84705883 0.94509804 1 1 2.75 1 94 22 0 1 0 0 0 0.9 1 1 0 1 0 0 0 0.9 0 90 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 22 "Cross"
+  guid "51789a7859dfbf761665d0e65b701a76"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 0 24 24 0.44117647 0.8382353 1 0.38 4 8 1.5 0.25490198 0.78431374 1 1 0 0.25490198 0.78431374 1 1 1 0.25490198 0.78431374 1 0.65 0 0 7 0 16 0 6 0.25490198 0.78431374 1 0.28 1 1 1 1 0.16 15
+end
+gameobject 23 "H"
+  guid "f325abf4c358e336d27ea024095afd87"
+  active 1
+  parent 22
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 11 24 1 0.44117647 0.8382353 1 0.38 0 8 1.5 0.25490198 0.78431374 1 1 0 0.25490198 0.78431374 1 1 1 0.25490198 0.78431374 1 0.65 0 0 7 0 16 0 6 0.25490198 0.78431374 1 0.28 1 1 1 1 0.15686275 15
+end
+gameobject 24 "Timer"
+  guid "efc5a7f4bcfb218892288e6720f6d45a"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "02:45" 0.84705883 0.94509804 1 1 3.5 1 0 16 1 1 0 0 0 0.9 1 1 1 1 0 0 0 0.9 1 160 34 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 25 "Pause"
+  guid "afbc6d7ce976aa7622fc886c45cc8d94"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"Pause Menu\", 1);
+  pause_game(1);
+}
+" "" 0
+  uibutton "Pause" -20 16 96 36 0.44117647 0.8382353 1 0.38 0.48588234 0.8511765 1 0.38 0.84705883 0.94509804 1 1 2 0.34411764 0.65382355 0.78 0.38 0.21578431 0.42034313 0.51686275 0.28840002 1 1 8 2 1.5 0.25490198 0.78431374 1 1 1 "icon:pause" 24 0.84705883 0.94509804 1 1 16 0 0 1 0 0 0.4 0.12 7 1 0.25490198 0.78431374 1 0.65 0 0 16 "" "" 0 "" 0 0 1 0.4784314 0.84901965 1 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 26 "Confirm Popup"
+  guid "1fca4c1687d43ce2f15fd7f89e954453"
+  active 1
+  parent 1
+  transform 0 0 0 0 0 0 1 1 1 1
+  uivariant variant=0 vtheme="Comic" vstyle="Cartoon"
+end
+gameobject 27 "Dim"
+  guid "432925b148f22a497b93c4435a3f78a4"
+  active 0
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 0 0 0 0.9019608 0.22352941 0.27450982 1 11 8 2 0 0 0 0.85 0 0.9019608 0.22352941 0.27450982 1 1 0 0 0 0.45 4 4 1 0 0 0 0 0.9362745 0.4952941 0.5284314 1 0 1 1 1 0 15
+  uix pblock=1
+end
+gameobject 28 "Card"
+  guid "c8f883678f7d552e7212fff537f55580"
+  active 1
+  parent 26
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -40 0 420 230 0.9019608 0.22352941 0.27450982 1 5 8 2 0 0 0 0.85 0 0.9019608 0.22352941 0.27450982 1 1 0 0 0 0.45 4 4 1 0 0 0 0 0.9362745 0.4952941 0.5284314 1 0 1 1 1 0 15
+  uix pblock=1
+end
+gameobject 29 "Mark"
+  guid "364aea7f234686730952866b10a15660"
+  active 1
+  parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 16 24 52 36 0.9019608 0.22352941 0.27450982 1 0.9078431 0.27011764 0.31803924 1 0.07058824 0.078431375 0.101960786 1 0 0.7937255 0.19670588 0.24156864 1 0.9558824 0.6462745 0.64549017 0.4 0 0 8 2 2 0 0 0 0.85 1.06 "icon:question" 36 0.07058824 0.078431375 0.101960786 1 14 0 0 1 0 0 0.4 0.12 1 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 0.9313726 0.4564706 0.4921569 1
+end
+gameobject 30 "Title"
+  guid "427497d07570911b016a2000a698b11a"
+  active 1
+  parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Are you sure?" 0.06666667 0.06666667 0.06666667 1 3.25 1 72 22 0 1 1 0.98 0.92 0.8 1 1 0 1 1 0.98 0.92 0.8 1 320 40 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 31 "Body"
+  guid "1671f903693a63b0613c941058c408c5"
+  active 1
+  parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Unsaved progress will be lost." 0.06666667 0.06666667 0.06666667 1 2 1 24 84 0 1 1 0.98 0.92 0.8 1 1 0 1 1 0.98 0.92 0.8 0 372 50 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 32 "Yes"
+  guid "b6eb8b7ff82cc30e66fbf1a668c7b826"
+  active 1
+  parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"Confirm Popup\", 0);
+}
+" "" 0
+  uibutton "Yes" 24 160 176 36 0.9019608 0.22352941 0.27450982 1 0.9078431 0.27011764 0.31803924 1 0.07058824 0.078431375 0.101960786 1 0 0.7937255 0.19670588 0.24156864 1 0.9558824 0.6462745 0.64549017 0.4 1 1 8 2 2 0 0 0 0.85 1.06 "" 0 0.07058824 0.078431375 0.101960786 1 14 0 0 1 0 0 0.4 0.12 1 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 0.9313726 0.4564706 0.4921569 1
+  comporder "UIButton" "ScriptComponent"
+end
+gameobject 33 "No"
+  guid "a756fa12103ea0023be913833335cd76"
+  active 1
+  parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function on_click() {
+  set_active_of(\"Confirm Popup\", 0);
+}
+" "" 0
+  uibutton "No" 220 160 176 36 0.9019608 0.22352941 0.27450982 1 0.9078431 0.27011764 0.31803924 1 0.07058824 0.078431375 0.101960786 1 0 0.7937255 0.19670588 0.24156864 1 0.9558824 0.6462745 0.64549017 0.4 1 1 8 2 2 0 0 0 0.85 1.06 "" 0 0.07058824 0.078431375 0.101960786 1 14 0 0 1 0 0 0.4 0.12 1 1 0 0 0 0.45 4 4 0 "" "" 0 "" 0 0 1 0.9313726 0.4564706 0.4921569 1
+  comporder "UIButton" "ScriptComponent"
+end

@@ -298,7 +298,7 @@ a small set of readers, and text files in `assets/ui/` that the engine embeds at
 and a new look is a few lines.
 
 **The numbers** (counted by `python3 scripts/gen_ui_catalogue.py` from those files, and checked against what the engine loads by the test
-`ui_library4`; see [ui_catalogue.md](ui_catalogue.md) for the rules): 77 components, 111 named styles, 54 themes, 371 icons (348 drawn from
+`ui_library4`; see [ui_catalogue.md](ui_catalogue.md) for the rules): 77 components, 111 named styles, 54 looks, 371 icons (348 drawn from
 shapes and 23 made by turning or mirroring another), 56 screens in 9 sections (34 described in data, 22 older ones still built by their C++
 function) with 88 layout variants. The style axes (14 shapes, 12 fills, 9 borders, 9 effects, 5 sizes, 4 densities, 17 state looks) can be mixed
 freely, which is 13,608 shape/fill/border/effect looks (272,160 with size and density): that is a computed product of the axes, not a count of
@@ -310,16 +310,26 @@ chamfered, bevelled, notched, slanted, tab, hexagon, trapezoid, circle...), fill
 light...), border (hairline to thick, double, glow), effect (soft, hard and long shadow, glow, neon, emboss, lift) and four state looks (hover,
 pressed, disabled, focus), plus a size (XS to XL) and a density (compact to spacious). `UIStyleVariant` (the "UI Style Variant" component, which
 already gave a widget a role) now also carries `style`, `styleSize` and `styleDensity`; the style is applied to buttons, panels, text fields,
-dropdowns, bars, toggles, sliders, tabs and layout groups, in the colours of the scene's theme, and is re-applied when the theme changes.
+dropdowns, bars, toggles, sliders, tabs and layout groups, in the colours of that widget's own look (Slate when it has none).
 Script: `ui_set_style("Play", "Neon Pill")`. Not offered because the renderer cannot draw them: stripe, noise and image fills, dashed borders.
 
-**Themes** (`ui_themes.okaydata`). 54: the twelve built-in looks of the UI Theme component plus 42 defined in data (light, dark, retro pixel,
-sci-fi, fantasy, military, cartoon, minimal, neon, wood, stone, metal, horror, kids, mobile, console, high contrast...). A theme bundles colours,
-the name of a font (only fonts we already ship: the built-in pixel font or DejaVu Sans; today every theme draws with the built-in font, because a font file path would have to exist in the player's project), corner radius, spacing, hover and animation speed, and sound names.
-`ui_set_theme("Neon")` (or `UIStyleLib::SetTheme(scene, "Neon")`) switches the whole scene at run time and keeps the pick in Prefs
-(`ui.theme`; `RestoreThemePreference` brings it back). A widget whose Style Variant has a `themeName` stays on that theme: the per-component
-override. Every theme is checked for readable text (contrast at least 4.5 on the panel, 3 on a button). Sounds: the names are stored and read with
-`ui_theme_sound("click")`; no sound files are shipped and nothing plays by itself yet.
+**Looks** (`ui_themes.okaydata`). There is **no global theme**: a look belongs to one screen or one widget, so a retro menu, a sci-fi HUD and a
+cartoon popup can live in the same scene (the example `ui_mix_styles.okayscene`). 54 looks: the twelve built-in ones of the UI Theme component plus 42
+defined in data (light, dark, retro pixel, sci-fi, fantasy, military, cartoon, minimal, neon, wood, stone, metal, horror, kids, mobile, console, high
+contrast...). A look bundles colours, the name of a font (only fonts we already ship; today every look draws with the built-in font, because a font file
+path would have to exist in the player's project), corner radius, spacing, hover and animation speed, and sound names.
+`UIStyleLib::ApplyLook(root, "Neon", "Glass", "l", "compact")` (script `ui_set_look("Pause Menu", "Neon")`) puts a look and an optional style on that
+object and everything under it, and stores the choice on it (UI Style Variant: `themeName` is the look, plus `style`, `styleSize`, `styleDensity`), so it
+is saved and nothing else changes. Screens from the library are built with their own look (`UIScreens::Build(scene, id, variant, look, style)`), the Gallery
+has a Look and Style picker on every screen card, GameObject > UI > Menus & Screens uses the pair picked there, and the Inspector of a Style Variant has
+Look, Apply to this screen, Apply to selection, Randomise, and Save/Load preset (a small `.okaylook` file in Assets/UI; an old `.okaytheme` file can also be
+loaded there and used as a look). Every look is checked for readable text (contrast at least 4.5 on the panel, 3 on a button). Sounds: the names are stored
+and read with `ui_look_sound("Neon", "click")`; no sound files are shipped and nothing plays by itself yet.
+
+**Removed in this slice (it was only ever on this branch, never released): the scene-wide theme switch.** No `SetTheme`, no theme picker, no `ui.theme` in
+Prefs. A script that still calls `ui_set_theme(...)` keeps running: it logs one warning line and does nothing. Old projects still load: the UI Theme
+component, `.okaytheme` files and `ui_theme_preset` / `ui_load_theme` are unchanged, and a scene that has a UI Theme keeps its look (the new library just
+never creates one).
 
 **Icons** (`ui_icons.okaydata`, `okay/UI/UIIcons.hpp`). Each icon is a list of simple shapes in a 24 x 24 box (circle, ring, ellipse, rectangle,
 rounded rectangle, line, polygon, polyline, arc, star, regular polygon; a leading `-` cuts a shape out). The picture for a size is made by
@@ -353,6 +363,6 @@ The previews are drawn from the real widgets of a temporary scene and from the s
 icon rasteriser from plain geometry (distance to a segment, even-odd polygon fill, supersampling), the data files from scratch. No other
 project's code, themes, icons or fonts were used or copied.
 
-**Tests.** `ui_library4` (data reader, 111 styles, 54 themes and theme switching with an override, 371 icons and their pixels, every screen at
+**Tests.** `ui_library4` (data reader, 111 styles, 54 looks and theme switching with an override, 371 icons and their pixels, every screen at
 all the sizes, the menu, the gallery search and the catalogue numbers), `ui_library4_example` (loads and plays both new example scenes: a theme
 click, and the whole Starter Pack flow), `ui_library4_shots` (the pictures), and the updated `menu_bar_model`.

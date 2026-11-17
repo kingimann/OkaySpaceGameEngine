@@ -6,17 +6,19 @@
 //            tint, gloss...), BORDER (hairline to thick, double, glow), EFFECT (soft, hard or long shadow, glow, neon, emboss, lift),
 //            STATE LOOKS (hover, pressed, disabled, focus), a SIZE (XS to XL) and a DENSITY (compact to spacious).
 //            ApplyStyle() sets the matching fields of the buttons, panels, text fields, dropdowns, bars and so on under an object.
-//   Theme  = a whole look for a screen: colours, a font we ship, corner radius, spacing, animation speed and sound names. SetTheme()
-//            switches the scene's theme at run time (script: ui_set_theme("Neon")), keeps the pick in Prefs ("ui.theme"), and leaves
-//            widgets that carry their own theme (a Style Variant with a theme name) on that theme: the per-component override.
+//   Look   = a whole look for ONE screen or ONE widget: colours, corner radius, spacing, animation speed and sound names (54 of them: the
+//            twelve built-in looks and 42 more). There is no global theme: ApplyLook() puts a look on the screen or widget you choose
+//            (script: ui_set_look("Pause Menu", "Neon")), so a retro menu, a sci-fi HUD and a cartoon popup can live in one scene. The
+//            choice is stored on the object (UI Style Variant: themeName = the look, style, styleSize, styleDensity) and saved with it.
 // Written for this engine from its own UI components; no other project's styles, themes or code were used.
 #include "okay/Scene/UITemplates.hpp"
 #include "okay/Components/UITheme.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
-#include "okay/Core/Prefs.hpp"
 #include "okay/UI/UILibData.hpp"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <string>
 #include <vector>
@@ -301,7 +303,7 @@ inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     return true;
 }
 
-/// The name of a sound a theme uses: kind is "hover", "click" or "open". Empty when the theme names none.
+/// The name of a sound a look uses: kind is "hover", "click" or "open". Empty when the look names none.
 inline std::string ThemeSound(const std::string& themeName, const std::string& kind) {
     const uilib::DataSection* s = FindTheme(themeName);
     if (!s) return std::string();
@@ -309,45 +311,71 @@ inline std::string ThemeSound(const std::string& themeName, const std::string& k
     return s->Str("sound" + k);
 }
 
-/// Re-apply the styles that objects carry (UIStyleVariant.style) and the per-component theme overrides after a theme change.
-inline void ReapplyStylesAndOverrides(Scene& scene, const UITheme* sceneTheme) {
-    for (const auto& up : scene.Objects()) {
-        GameObject* go = up.get();
-        auto* sv = go->GetComponent<UIStyleVariant>();
-        if (!sv) continue;
-        UITheme tmp;
-        const UITheme* use = sceneTheme;
-        if (!sv->themeName.empty() && FindTheme(sv->themeName)) {   // this object keeps its own theme
-            ApplyThemeData(tmp, sv->themeName);
-            tmp.ApplyTo(go);
-            use = &tmp;
-        }
-        if (!sv->style.empty()) ApplyStyle(go, SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), PaletteOf(use));
-    }
+/// The colours a widget's style draws from: its own look (UIStyleVariant.themeName), else the launcher's Slate palette. Never a scene-wide theme.
+inline Palette PaletteFor(const UIStyleVariant* sv) {
+    if (sv && !sv->themeName.empty() && FindTheme(sv->themeName)) { UITheme tmp; ApplyThemeData(tmp, sv->themeName); return PaletteOf(&tmp); }
+    return PaletteOf(nullptr);
 }
 
-/// Switch the whole scene to a registry theme at run time: finds or makes the scene's UITheme, fills it, restyles every widget, keeps
-/// the per-object overrides, and remembers the choice in Prefs ("ui.theme"). Returns false for an unknown name (nothing changes).
-inline bool SetTheme(Scene& scene, const std::string& name, bool remember = true) {
-    const uilib::DataSection* s = FindTheme(name);
-    if (!s) return false;
-    UITheme* th = UITheme::Find(&scene, std::string());
-    if (!th) {
-        GameObject* g = scene.CreateGameObject("UI Theme");
-        th = g->AddComponent<UITheme>();
-    }
-    ApplyThemeData(*th, s->name);
-    th->global = true;
-    th->ApplyToScene(scene);
-    ReapplyStylesAndOverrides(scene, th);
-    if (remember) Prefs::SetString("ui.theme", s->name);
+/// Put a look (one of the 54, by name; "" = keep the colours) and/or a named style on `root` and everything under it. The choice is stored on
+/// `root` (UI Style Variant) so it is saved and can be re-applied. Nothing outside `root` changes. false for an unknown look or style.
+inline bool ApplyLook(GameObject* root, const std::string& look, const std::string& style = std::string(), const std::string& size = std::string(),
+                      const std::string& density = std::string()) {
+    if (!root) return false;
+    const uilib::DataSection* ls = look.empty() ? nullptr : FindTheme(look);
+    if ((!look.empty() && !ls) || (!style.empty() && !FindStyle(style))) return false;
+    auto* sv = root->GetComponent<UIStyleVariant>();
+    if (!sv) sv = root->AddComponent<UIStyleVariant>();
+    if (ls) { sv->themeName = ls->name; UITheme tmp; ApplyThemeData(tmp, ls->name); tmp.ApplyTo(root); }
+    sv->style = style; sv->styleSize = size; sv->styleDensity = density;
+    if (!style.empty()) ApplyStyle(root, SpecOf(style, size.empty() ? "m" : size, density.empty() ? "cosy" : density), PaletteFor(sv));
     return true;
 }
-/// At start: use the theme the player picked last time, if any. Returns the name used, or "".
-inline std::string RestoreThemePreference(Scene& scene) {
-    const std::string n = Prefs::GetString("ui.theme", "");
-    if (n.empty() || !SetTheme(scene, n, false)) return std::string();
-    return n;
+/// Apply again what an object stores (after its look or style fields were edited).
+inline bool ReapplyLook(GameObject* root) {
+    auto* sv = root ? root->GetComponent<UIStyleVariant>() : nullptr;
+    if (!sv || (sv->themeName.empty() && sv->style.empty())) return false;
+    return ApplyLook(root, sv->themeName, sv->style, sv->styleSize, sv->styleDensity);
+}
+
+/// The topmost UI object of a screen: the ancestor just under the Canvas (or the object itself when it has no UI parent).
+inline GameObject* ScreenRootOf(GameObject* go) {
+    GameObject* cur = go;
+    while (cur && cur->transform && cur->transform->Parent() && cur->transform->Parent()->gameObject && !cur->transform->Parent()->gameObject->GetComponent<Canvas>())
+        cur = cur->transform->Parent()->gameObject;
+    return cur;
+}
+
+/// A look and style saved to a small text file (.okaylook), so a favourite combination can be shared between projects.
+struct LookPreset { std::string look, style, size, density; };
+inline std::string PresetToText(const LookPreset& p) {
+    return "okaylook 1\nlook=" + p.look + "\nstyle=" + p.style + "\nsize=" + p.size + "\ndensity=" + p.density + "\n";
+}
+inline bool PresetFromText(const std::string& text, LookPreset& out) {
+    const auto lines = uilib::Split(text, '\n');
+    if (lines.empty() || lines[0].rfind("okaylook", 0) != 0) return false;
+    LookPreset p; bool any = false;
+    for (const std::string& l : lines) {
+        const std::size_t eq = l.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = l.substr(0, eq), v = uilib::Trim(l.substr(eq + 1));
+        if (k == "look") { p.look = v; any = true; } else if (k == "style") { p.style = v; any = true; } else if (k == "size") p.size = v; else if (k == "density") p.density = v;
+    }
+    if (!any) return false;
+    out = p; return true;
+}
+inline bool SavePreset(const std::string& path, const LookPreset& p) {
+    std::ofstream f(path, std::ios::binary); if (!f) return false;
+    f << PresetToText(p); return (bool)f;
+}
+inline bool LoadPreset(const std::string& path, LookPreset& out) {
+    std::ifstream f(path, std::ios::binary); if (!f) return false;
+    std::stringstream ss; ss << f.rdbuf(); return PresetFromText(ss.str(), out);
+}
+/// An old .okaytheme file (UI Theme asset) used as a look for one screen or widget. false when the file cannot be read.
+inline bool ApplyThemeFileAsLook(GameObject* root, const std::string& path) {
+    UITheme tmp; if (!root || !LoadUIThemeAsset(tmp, path)) return false;
+    tmp.ApplyTo(root); return true;
 }
 
 }} // namespace okay::UIStyleLib

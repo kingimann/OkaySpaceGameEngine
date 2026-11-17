@@ -12,7 +12,7 @@ namespace okay { namespace UIGalleryIndex {
 
 enum Kind { kComponent = 1, kStyle = 2, kTheme = 4, kIcon = 8, kScreen = 16, kAll = 31 };
 inline const char* KindName(int k) {
-    switch (k) { case kComponent: return "Component"; case kStyle: return "Style"; case kTheme: return "Theme"; case kIcon: return "Icon"; case kScreen: return "Screen"; default: return "?"; }
+    switch (k) { case kComponent: return "Component"; case kStyle: return "Style"; case kTheme: return "Look"; case kIcon: return "Icon"; case kScreen: return "Screen"; default: return "?"; }
 }
 
 struct Entry {
@@ -35,7 +35,7 @@ inline std::vector<Entry> Build() {
         v.push_back(std::move(e));
     }
     for (const auto& t : UIStyleLib::Themes()) {
-        Entry e; e.kind = kTheme; e.id = t.name; e.name = t.name; e.category = t.mode; e.tags = t.tags; e.desc = (t.builtin ? "Built-in theme. " : "Theme from data. ") + std::string("Switch with ui_set_theme(\"") + t.name + "\").";
+        Entry e; e.kind = kTheme; e.id = t.name; e.name = t.name; e.category = t.mode; e.tags = t.tags; e.desc = (t.builtin ? "Built-in look. " : "Look from data. ") + std::string("Put it on one screen or widget with ui_set_look(\"Screen name\", \"") + t.name + "\").";
         v.push_back(std::move(e));
     }
     for (const uilib::IconDef& d : uilib::Icons().icons) {

@@ -25,14 +25,15 @@ char g_search[96] = "";
 int g_kind = 0;            // 0 all, then Screens, Components, Styles, Themes, Icons
 int g_category = 0;        // index into the categories of the chosen kind (0 = any)
 std::string g_tag;
-int g_theme = 0;           // 0 = the scene's own theme, else index + 1 into the theme list
+int g_theme = 0;           // the look for new screens: 0 = none (launcher colours), else index + 1 into the look list. There is no scene-wide theme.
+std::string g_styleName;   // the style for new screens ("" = none)
 int g_variant = 0;
 int g_selected = -1;       // index into the current result list
 std::string g_selectedId;
 std::string g_status;
 
 constexpr int kKinds[] = {G::kAll, G::kScreen, G::kComponent, G::kStyle, G::kTheme, G::kIcon};
-const char* kKindLabels[] = {"Everything", "Screens", "Components", "Styles", "Themes", "Icons"};
+const char* kKindLabels[] = {"Everything", "Screens", "Components", "Styles", "Looks", "Icons"};
 
 ImU32 Col(const Color& c, float mul = 1.0f) {
     auto b = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (unsigned)(i < 0 ? 0 : i > 255 ? 255 : i); };
@@ -104,16 +105,15 @@ void Collect(GameObject* g, std::vector<PItem>& out, float W, float H) {
     for (Transform* c : g->transform->Children()) if (c && c->gameObject) Collect(c->gameObject, out, W, H);
 }
 
-const Preview& PreviewOf(const std::string& id, int variant, int themeIdx, const std::vector<S::ThemeInfo>& themes) {
+const Preview& PreviewOf(const std::string& id, int variant, int themeIdx, const std::string& styleName, const std::vector<S::ThemeInfo>& themes) {
     static std::map<std::string, Preview> cache;
-    const std::string key = id + "|" + std::to_string(variant) + "|" + std::to_string(themeIdx);
+    const std::string key = id + "|" + std::to_string(variant) + "|" + std::to_string(themeIdx) + "|" + styleName;
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
     if (cache.size() > 200) cache.clear();
     Preview& pv = cache[key];
     Scene sc("preview");
-    if (GameObject* root = UIScreens::Build(sc, id, variant)) {
-        if (themeIdx > 0 && themeIdx <= (int)themes.size()) S::SetTheme(sc, themes[(std::size_t)themeIdx - 1].name, false);
+    if (GameObject* root = UIScreens::Build(sc, id, variant, themeIdx > 0 && themeIdx <= (int)themes.size() ? themes[(std::size_t)themeIdx - 1].name : std::string(), styleName)) {
         Collect(root, pv.items, 1280.0f, 720.0f);
         pv.ok = true;
     }
@@ -204,6 +204,11 @@ void Say(const std::string& msg) { g_status = msg; oked::ConsoleLog(msg); }
 } // namespace
 
 void OpenUIGalleryWindow() { g_open = true; }
+void CurrentScreenLook(std::string& look, std::string& style) {
+    static const std::vector<S::ThemeInfo> themes = S::Themes();
+    look = g_theme > 0 && g_theme <= (int)themes.size() ? themes[(std::size_t)g_theme - 1].name : std::string();
+    style = g_styleName;
+}
 void DrawStylePreviewWidget(const S::StyleSpec& spec, const S::Palette& palette, float width) { DrawStylePreview(spec, palette, width); }
 void SetUIGalleryAdder(std::function<bool(EditorState&, const std::string&)> adder) { g_adder = std::move(adder); }
 
@@ -216,7 +221,7 @@ void DrawUIGalleryWindow(EditorState& ed) {
 
     static const std::vector<S::ThemeInfo> themes = S::Themes();
     static const G::Counts counts = G::Count();
-    ImGui::TextDisabled("%d screens (%d layouts), %d components, %d styles, %d themes, %d icons. Search, pick, preview, add.",
+    ImGui::TextDisabled("%d screens (%d layouts), %d components, %d styles, %d looks, %d icons. Search, pick, preview, add.",
                         counts.screens, counts.screenVariants, counts.components, counts.styles, counts.themes, counts.icons);
 
     ImGui::SetNextItemWidth(260.0f);
@@ -237,17 +242,6 @@ void DrawUIGalleryWindow(EditorState& ed) {
             for (std::size_t i = 0; i < cats.size(); ++i) if (ImGui::Selectable(cats[i].c_str(), g_category == (int)i + 1)) g_category = (int)i + 1;
             ImGui::EndCombo();
         }
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(170.0f);
-    {
-        const std::string cur = g_theme == 0 ? "Theme: scene's own" : "Theme: " + themes[(std::size_t)g_theme - 1].name;
-        if (ImGui::BeginCombo("##theme", cur.c_str())) {
-            if (ImGui::Selectable("Scene's own theme", g_theme == 0)) g_theme = 0;
-            for (std::size_t i = 0; i < themes.size(); ++i) if (ImGui::Selectable(themes[i].name.c_str(), g_theme == (int)i + 1)) g_theme = (int)i + 1;
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The theme the previews use, and the theme screens are added with.");
     }
     if (!g_tag.empty()) { ImGui::SameLine(); if (ImGui::SmallButton(("tag: " + g_tag + "  x").c_str())) g_tag.clear(); }
 
@@ -295,11 +289,28 @@ void DrawUIGalleryWindow(EditorState& ed) {
     }
     ImGui::NewLine();
     const float w = ImGui::GetContentRegionAvail().x;
-    const S::Palette pal = S::PaletteOf(UITheme::Find(&ed.scene(), ""));
+    const S::Palette pal = S::PaletteOf(nullptr);   // no scene-wide theme: a style draws from its widget's own look, else the launcher colours
 
     if (sel->kind == G::kScreen) {
         const UIScreens::Def* d = UIScreens::Find(sel->id);
         int vcount = d ? UIScreens::VariantCount(*d) : 1;
+        {   // the Look and the Style of THIS screen: picked here, stored on the screen, never changed by anything else
+            ImGui::SetNextItemWidth(190.0f);
+            const std::string curLook = g_theme == 0 ? "(launcher colours)" : themes[(std::size_t)g_theme - 1].name;
+            if (ImGui::BeginCombo("Look", curLook.c_str())) {
+                if (ImGui::Selectable("(launcher colours)", g_theme == 0)) g_theme = 0;
+                for (std::size_t i = 0; i < themes.size(); ++i) if (ImGui::Selectable(themes[i].name.c_str(), g_theme == (int)i + 1)) g_theme = (int)i + 1;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The colours, corners and spacing of this screen. Each screen has its own; a menu from the menu uses this one too.");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(190.0f);
+            if (ImGui::BeginCombo("Style", g_styleName.empty() ? "(none)" : g_styleName.c_str())) {
+                if (ImGui::Selectable("(none)", g_styleName.empty())) g_styleName.clear();
+                for (const auto& st : S::Styles().styles) if (ImGui::Selectable(st.name.c_str(), st.name == g_styleName)) g_styleName = st.name;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The shape, fill, border and effect of this screen's buttons and panels.");
+        }
         if (vcount > 1 && d) {
             ImGui::SetNextItemWidth(200.0f);
             if (g_variant >= vcount) g_variant = 0;
@@ -308,20 +319,19 @@ void DrawUIGalleryWindow(EditorState& ed) {
                 ImGui::EndCombo();
             }
         } else g_variant = 0;
-        if (d && d->native.empty()) DrawPreview(PreviewOf(sel->id, g_variant, g_theme, themes), ImGui::GetCursorScreenPos(), std::min(w, 520.0f));
+        if (d && d->native.empty()) DrawPreview(PreviewOf(sel->id, g_variant, g_theme, g_styleName, themes), ImGui::GetCursorScreenPos(), std::min(w, 520.0f));
         else ImGui::TextDisabled("This older screen has no preview here; add it to see it in the Scene view.");
         if (ImGui::Button("Add to scene")) {
             ed.PushUndo();
-            GameObject* g = UIScreens::Build(ed.scene(), sel->id, g_variant);
+            GameObject* g = UIScreens::Build(ed.scene(), sel->id, g_variant, g_theme > 0 ? themes[(std::size_t)g_theme - 1].name : std::string(), g_styleName);
             if (g) {
-                if (g_theme > 0) S::SetTheme(ed.scene(), themes[(std::size_t)g_theme - 1].name);
                 ed.Select(g); ed.dirty = true; Say("Added screen: " + sel->name);
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Add the Starter Pack (whole game UI)")) {
             ed.PushUndo();
-            GameObject* g = UIScreens::BuildStarterPack(ed.scene(), g_theme > 0 ? themes[(std::size_t)g_theme - 1].name : std::string());
+            GameObject* g = UIScreens::BuildStarterPack(ed.scene(), g_theme > 0 ? themes[(std::size_t)g_theme - 1].name : std::string(), g_styleName);
             if (g) { ed.Select(g); ed.dirty = true; Say("Added the Starter Pack: press Play, then click Play, Settings, Pause..."); }
         }
     } else if (sel->kind == G::kComponent) {
@@ -339,10 +349,17 @@ void DrawUIGalleryWindow(EditorState& ed) {
         ImGui::BeginDisabled(!target);
         if (ImGui::Button("Apply to selected")) {
             ed.PushUndo();
-            const int n = S::ApplyStyle(target, sp, pal);
             auto* sv = target->GetComponent<UIStyleVariant>(); if (!sv) sv = target->AddComponent<UIStyleVariant>();
+            const int n = S::ApplyStyle(target, sp, S::PaletteFor(sv));
             sv->style = sel->name; sv->styleSize = sizes[size]; sv->styleDensity = denss[dens];
             ed.dirty = true; Say("Applied " + sel->name + " to " + std::to_string(n) + " widget(s) under " + target->name);
+        }
+        if (ImGui::Button("Apply to this screen")) {
+            ed.PushUndo();
+            GameObject* root = S::ScreenRootOf(target);
+            const std::string look = root->GetComponent<UIStyleVariant>() ? root->GetComponent<UIStyleVariant>()->themeName : std::string();
+            S::ApplyLook(root, look, sel->name, sizes[size], denss[dens]);
+            ed.dirty = true; Say("Applied " + sel->name + " to the screen " + root->name);
         }
         ImGui::EndDisabled();
         if (!target) { ImGui::SameLine(); ImGui::TextDisabled("Select a UI object first."); }
@@ -366,8 +383,15 @@ void DrawUIGalleryWindow(EditorState& ed) {
         ImGui::Dummy(ImVec2(tw, 150));
         ImGui::TextDisabled("Corner radius %.0f, border %.0f, padding %.0f, font %s, speed %.0f. Sounds: %s / %s / %s.", th.cornerRadius, th.borderWidth, th.padding,
                             th.fontPath.empty() ? "built-in pixel font" : "DejaVu Sans", th.transitionSpeed, S::ThemeSound(sel->name, "hover").c_str(), S::ThemeSound(sel->name, "click").c_str(), S::ThemeSound(sel->name, "open").c_str());
-        if (ImGui::Button("Apply to the whole scene")) { ed.PushUndo(); if (S::SetTheme(ed.scene(), sel->name)) { ed.dirty = true; Say("Theme: " + sel->name + " (saved as the player's choice)"); } }
-        ImGui::SameLine(); ImGui::TextDisabled("Script: ui_set_theme(\"%s\")", sel->name.c_str());
+        GameObject* target = ed.selected();
+        ImGui::BeginDisabled(!target);
+        if (ImGui::Button("Apply to this screen")) { ed.PushUndo(); GameObject* root = S::ScreenRootOf(target); auto* sv = root->GetComponent<UIStyleVariant>(); if (S::ApplyLook(root, sel->name, sv ? sv->style : std::string(), sv ? sv->styleSize : std::string(), sv ? sv->styleDensity : std::string())) { ed.dirty = true; Say("Look " + sel->name + " on the screen " + root->name); } }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply to selection")) { ed.PushUndo(); if (S::ApplyLook(target, sel->name)) { ed.dirty = true; Say("Look " + sel->name + " on " + target->name + " and its children"); } }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Use for new screens")) { for (std::size_t i = 0; i < themes.size(); ++i) if (themes[i].name == sel->name) g_theme = (int)i + 1; Say("New screens will use the look " + sel->name); }
+        ImGui::TextDisabled("Only what you pick changes. Script: ui_set_look(\"Pause Menu\", \"%s\")", sel->name.c_str());
     } else if (sel->kind == G::kIcon) {
         const ImVec2 o = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();

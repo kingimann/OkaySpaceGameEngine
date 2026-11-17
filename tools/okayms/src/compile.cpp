@@ -13,9 +13,9 @@ enum Tok {
     TEnd, TIdent, TNumber, TString,
     TLParen, TRParen, TLBrace, TRBrace, TSemi, TComma, TStar, TAmp,
     TPlus, TMinus, TSlash, TPercent, TAssign, TEq, TNe, TLt, TGt, TLe, TGe,
-    TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TColon,
+    TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TReturn,
-    TStruct, TUnsigned, TSigned, TLong, TShort, TDeclspec
+    TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec
 };
 
 struct Token {
@@ -26,11 +26,21 @@ struct Token {
 
 struct Type {
     int pointers = 0;
-    int base = 1;  // 0 void, 1 int, 2 char, 3 struct
+    // 0 void, 1 int, 2 char, 3 struct or union, 4 short
+    int base = 1;
     int array_len = -1;
     int struct_id = -1;
+    int func_id = -1;
+    bool is_unsigned = false;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
+    bool is_func() const { return func_id >= 0; }
+};
+
+struct FuncType {
+    Type ret{};
+    std::vector<Type> params;
+    bool vararg = false;
 };
 
 struct Field {
@@ -44,6 +54,7 @@ struct StructDef {
     std::vector<Field> fields;
     int size = 0;
     int align = 1;
+    bool is_union = false;
 };
 
 struct Global {
@@ -81,6 +92,11 @@ struct FuncDecl {
     bool imported = false;
     bool exported = false;
     bool defined = false;
+    bool vararg = false;
+    bool sret = false;
+    int func_id = -1;
+    int sret_off = 0;
+    int param_base = 0;
     Node body;
     std::vector<Local> locals;
     int nparams = 0;
@@ -412,6 +428,9 @@ Tok keyword(const std::string& text) {
     if (text == "default") return TDefault;
     if (text == "break") return TBreak;
     if (text == "struct") return TStruct;
+    if (text == "union") return TUnion;
+    if (text == "enum") return TEnum;
+    if (text == "typedef") return TTypedef;
     if (text == "return") return TReturn;
     if (text == "unsigned") return TUnsigned;
     if (text == "signed") return TSigned;
@@ -503,6 +522,18 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             }
             return false;
         };
+        if (c == '-' && i + 1 < text.size() && text[i + 1] == '>') {
+            tok.kind = TArrow;
+            i += 2;
+            tokens.push_back(tok);
+            continue;
+        }
+        if (c == '.' && i + 2 < text.size() && text[i + 1] == '.' && text[i + 2] == '.') {
+            tok.kind = TEllipsis;
+            i += 3;
+            tokens.push_back(tok);
+            continue;
+        }
         if (c == '=' && two('=', TEq)) continue;
         if (c == '!' && two('=', TNe)) continue;
         if (c == '<' && two('=', TLe)) continue;
@@ -549,6 +580,9 @@ struct Parser {
     std::vector<std::string> strings;
     std::vector<StructDef> structs;
     std::vector<Global> globals;
+    std::vector<FuncType> func_types;
+    std::map<std::string, Type> typedefs;
+    std::map<std::string, uint64_t> enum_values;
 
     const Token& cur() const { return tokens[at]; }
     bool is(Tok k) const { return cur().kind == k; }
@@ -577,6 +611,7 @@ struct Parser {
         }
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
+        if (type.base == 4) return 2;
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return structs[type.struct_id].size;
         if (type.base == 0) return 0;
@@ -590,6 +625,7 @@ struct Parser {
         }
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
+        if (type.base == 4) return 2;
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return std::max(1, structs[type.struct_id].align);
         return 4;
@@ -634,34 +670,214 @@ struct Parser {
         type->pointers = 0;
         type->array_len = -1;
         type->struct_id = -1;
-        if (is(TStruct)) {
+        type->func_id = -1;
+        type->is_unsigned = false;
+        if (is(TStruct) || is(TUnion)) {
+            const bool as_union = is(TUnion);
             next();
-            if (!is(TIdent)) {
+            std::string name;
+            if (is(TIdent)) {
+                name = cur().text;
+                next();
+            }
+            if (is(TLBrace)) {
+                int id = -1;
+                if (!parse_struct_body(as_union, name, &id)) return false;
+                type->base = 3;
+                type->struct_id = id;
+                return true;
+            }
+            if (name.empty()) {
                 error = "expected a struct name";
                 return false;
             }
-            const int id = find_struct(cur().text);
+            const int id = find_struct(name);
             if (id < 0) {
-                error = "unknown struct " + cur().text;
+                error = "unknown struct " + name;
                 return false;
             }
             type->base = 3;
             type->struct_id = id;
+            return true;
+        }
+        if (is(TEnum)) {
+            next();
+            if (is(TIdent) && tokens[at + 1].kind != TLBrace) {
+                next();
+                type->base = 1;
+                return true;
+            }
+            if (is(TIdent)) next();
+            if (!parse_enum_body()) return false;
+            type->base = 1;
+            return true;
+        }
+        if (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) {
+            *type = typedefs[cur().text];
             next();
             return true;
         }
+        bool unsign = false;
+        bool sign = false;
         while (is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TInt) || is(TVoid) || is(TChar)) {
             if (is(TVoid)) type->base = 0;
             else if (is(TChar)) type->base = 2;
-            else type->base = 1;
+            else if (is(TShort)) type->base = 4;
+            else if (is(TInt) || is(TLong)) {
+                if (type->base != 2 && type->base != 4) type->base = 1;
+            }
+            if (is(TUnsigned)) unsign = true;
+            if (is(TSigned)) sign = true;
             saw = true;
             next();
         }
+        type->is_unsigned = unsign && !sign;
         if (!saw) {
             error = "expected a type";
             return false;
         }
         return true;
+    }
+
+    bool parse_enum_body() {
+        if (!expect(TLBrace, "'{'")) return false;
+        uint64_t next_value = 0;
+        if (is(TRBrace)) return expect(TRBrace, "'}'");
+        while (!is(TEnd)) {
+            if (!is(TIdent)) {
+                error = "expected an enumerator";
+                return false;
+            }
+            const std::string name = cur().text;
+            next();
+            if (accept(TAssign)) {
+                if (!is(TNumber)) {
+                    error = "expected an enumerator value";
+                    return false;
+                }
+                next_value = cur().number;
+                next();
+            }
+            enum_values[name] = next_value;
+            ++next_value;
+            if (!accept(TComma)) break;
+            if (is(TRBrace)) break;
+        }
+        return expect(TRBrace, "'}'");
+    }
+
+    struct Declarator {
+        std::string name;
+        Type type{};
+        bool is_function = false;
+        bool vararg = false;
+        std::vector<Type> params;
+        std::vector<std::string> param_names;
+    };
+
+    bool parse_param_list(Declarator* out) {
+        if (is(TVoid) && at + 1 < tokens.size() && tokens[at + 1].kind == TRParen) {
+            next();
+            next();
+            return true;
+        }
+        if (is(TRParen)) {
+            next();
+            return true;
+        }
+        do {
+            if (accept(TEllipsis)) {
+                out->vararg = true;
+                break;
+            }
+            Type pt;
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&pt, &imp, &exp)) return false;
+            while (accept(TStar)) ++pt.pointers;
+            std::string pname;
+            if (is(TIdent)) {
+                pname = cur().text;
+                next();
+            }
+            if (accept(TLBrack)) {
+                if (!is(TNumber)) {
+                    error = "expected an array length";
+                    return false;
+                }
+                pt.array_len = static_cast<int>(cur().number);
+                next();
+                if (!expect(TRBrack, "']'")) return false;
+            }
+            out->params.push_back(pt);
+            out->param_names.push_back(pname);
+        } while (accept(TComma));
+        return expect(TRParen, "')'");
+    }
+
+    bool parse_declarator(Type base, Declarator* out) {
+        out->type = base;
+        if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
+            next();
+            int stars = 0;
+            while (accept(TStar)) ++stars;
+            if (!is(TIdent)) {
+                error = "expected a name";
+                return false;
+            }
+            out->name = cur().text;
+            next();
+            if (accept(TLBrack)) {
+                if (!is(TNumber)) {
+                    error = "expected an array length";
+                    return false;
+                }
+                out->type.array_len = static_cast<int>(cur().number);
+                next();
+                if (!expect(TRBrack, "']'")) return false;
+            }
+            if (!expect(TRParen, "')'")) return false;
+            if (!expect(TLParen, "'('")) return false;
+            if (!parse_param_list(out)) return false;
+            FuncType ft;
+            ft.ret = base;
+            ft.params = out->params;
+            ft.vararg = out->vararg;
+            out->type.pointers += stars;
+            out->type.func_id = static_cast<int>(func_types.size());
+            func_types.push_back(ft);
+            out->params.clear();
+            out->param_names.clear();
+            out->vararg = false;
+            return true;
+        }
+        while (accept(TStar)) ++out->type.pointers;
+        if (!is(TIdent)) {
+            error = "expected a name";
+            return false;
+        }
+        out->name = cur().text;
+        next();
+        if (accept(TLBrack)) {
+            if (!is(TNumber)) {
+                error = "expected an array length";
+                return false;
+            }
+            out->type.array_len = static_cast<int>(cur().number);
+            next();
+            if (!expect(TRBrack, "']'")) return false;
+        }
+        if (!is(TLParen)) return true;
+        next();
+        out->is_function = true;
+        return parse_param_list(out);
+    }
+
+    bool is_decl_start() const {
+        if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
+            is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec))
+            return true;
+        return is(TIdent) && typedefs.find(cur().text) != typedefs.end();
     }
 
     bool parse_expr(int min_prec, Node* out);
@@ -680,15 +896,11 @@ struct Parser {
         return -1;
     }
 
-    bool parse_struct_def() {
-        next();
-        if (!is(TIdent)) {
-            error = "expected a struct name";
-            return false;
-        }
+    bool parse_struct_body(bool as_union, std::string name, int* out_id) {
+        if (name.empty()) name = "__anon" + std::to_string(structs.size());
         StructDef def;
-        def.name = cur().text;
-        next();
+        def.name = name;
+        def.is_union = as_union;
         structs.push_back(def);
         const int self = static_cast<int>(structs.size()) - 1;
         if (!expect(TLBrace, "'{'")) return false;
@@ -721,7 +933,6 @@ struct Parser {
             def.fields.push_back(field);
         }
         if (!expect(TRBrace, "'}'")) return false;
-        if (!expect(TSemi, "';'")) return false;
         int offset = 0;
         int align = 1;
         for (Field& field : def.fields) {
@@ -729,51 +940,55 @@ struct Parser {
             int field_size = size_of(field.type);
             if (field_align < 1) field_align = 1;
             if (field_size < 1) field_size = 1;
-            offset = (offset + field_align - 1) & ~(field_align - 1);
-            field.offset = offset;
-            offset += field_size;
+            if (as_union) {
+                field.offset = 0;
+                if (field_size > offset) offset = field_size;
+            } else {
+                offset = (offset + field_align - 1) & ~(field_align - 1);
+                field.offset = offset;
+                offset += field_size;
+            }
             if (field_align > align) align = field_align;
         }
         def.align = align;
         def.size = (offset + align - 1) & ~(align - 1);
-        structs[static_cast<size_t>(self)] = std::move(def);
+        structs[static_cast<size_t>(self)] = def;
+        *out_id = self;
         return true;
+    }
+
+    void finish_signature(FuncDecl* fn) {
+        FuncType ft;
+        ft.ret = fn->ret;
+        ft.params = fn->params;
+        ft.vararg = fn->vararg;
+        fn->func_id = static_cast<int>(func_types.size());
+        func_types.push_back(ft);
+        fn->sret = fn->ret.base == 3 && fn->ret.pointers == 0 && !fits_register(fn->ret);
     }
 
     bool parse() {
         while (!is(TEnd)) {
-            if (is(TStruct) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TLBrace) {
-                if (!parse_struct_def()) return false;
-                continue;
-            }
+            const bool is_typedef = accept(TTypedef);
             bool imported = false;
             bool exported = false;
             Type type;
             if (!parse_type(&type, &imported, &exported)) return false;
-            while (accept(TStar)) ++type.pointers;
-            if (!is(TIdent)) {
-                error = "expected a name";
-                return false;
-            }
-            FuncDecl fn;
-            fn.name = cur().text;
-            fn.ret = type;
-            fn.imported = imported;
-            fn.exported = exported;
-            next();
-            if (accept(TLBrack)) {
-                if (!is(TNumber)) {
-                    error = "expected an array length";
-                    return false;
-                }
-                type.array_len = static_cast<int>(cur().number);
+            if (!is_typedef && is(TSemi)) {
                 next();
-                if (!expect(TRBrack, "']'")) return false;
+                continue;
             }
-            if (!is(TLParen)) {
+            Declarator decl;
+            if (!parse_declarator(type, &decl)) return false;
+            if (is_typedef) {
+                typedefs[decl.name] = decl.type;
+                if (!expect(TSemi, "';'")) return false;
+                continue;
+            }
+            if (!decl.is_function) {
                 Global global;
-                global.name = fn.name;
-                global.type = type;
+                global.name = decl.name;
+                global.type = decl.type;
                 if (accept(TAssign)) {
                     if (!is(TNumber)) {
                         error = "global initializer must be a number";
@@ -787,42 +1002,38 @@ struct Parser {
                 globals.push_back(global);
                 continue;
             }
-            next();
-            if (!(is(TVoid) && tokens[at + 1].kind == TRParen)) {
-                if (!is(TRParen)) {
-                    do {
-                        Type pt;
-                        bool imp = false;
-                        bool exp = false;
-                        if (!parse_type(&pt, &imp, &exp)) return false;
-                        while (accept(TStar)) ++pt.pointers;
-                        std::string pname;
-                        if (is(TIdent)) {
-                            pname = cur().text;
-                            next();
-                        }
-                        fn.params.push_back(pt);
-                        fn.param_names.push_back(pname);
-                    } while (accept(TComma));
-                }
-            } else {
-                next();
-            }
-            if (!expect(TRParen, "')'")) return false;
+            FuncDecl fn;
+            fn.name = decl.name;
+            fn.ret = decl.type;
+            fn.params = decl.params;
+            fn.param_names = decl.param_names;
+            fn.vararg = decl.vararg;
+            fn.imported = imported;
+            fn.exported = exported;
+            finish_signature(&fn);
             if (accept(TSemi)) {
                 fn.defined = false;
                 funcs.push_back(std::move(fn));
                 continue;
             }
             std::vector<Local> locals;
+            if (fn.sret) {
+                Local hidden;
+                hidden.name = "__sret";
+                hidden.type.pointers = 1;
+                hidden.type.base = 3;
+                hidden.type.struct_id = fn.ret.struct_id;
+                place_local(&locals, hidden);
+                fn.sret_off = locals.back().offset;
+            }
+            fn.param_base = static_cast<int>(locals.size());
             for (size_t p = 0; p < fn.param_names.size(); ++p) {
-                if (fn.param_names[p].empty()) continue;
                 Local local;
                 local.name = fn.param_names[p];
                 local.type = fn.params[p];
                 place_local(&locals, local);
             }
-            fn.nparams = static_cast<int>(locals.size());
+            fn.nparams = static_cast<int>(fn.params.size());
             if (!parse_block(&fn.body, &locals)) return false;
             fn.defined = true;
             fn.locals = std::move(locals);
@@ -982,30 +1193,32 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         }
         return true;
     }
-    if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TStruct)) {
+    if (is_decl_start()) {
+        const bool is_typedef = accept(TTypedef);
         Type type;
         bool imp = false;
         bool exp = false;
         if (!parse_type(&type, &imp, &exp)) return false;
-        while (accept(TStar)) ++type.pointers;
-        if (!is(TIdent)) {
-            error = "expected a local name";
+        if (!is_typedef && is(TSemi)) {
+            next();
+            out->kind = Node::Block;
+            return true;
+        }
+        Declarator decl;
+        if (!parse_declarator(type, &decl)) return false;
+        if (is_typedef) {
+            typedefs[decl.name] = decl.type;
+            return expect(TSemi, "';'");
+        }
+        if (decl.is_function) {
+            error = "a function cannot be nested";
             return false;
         }
         Local local;
-        local.name = cur().text;
-        local.type = type;
-        next();
-        if (accept(TLBrack)) {
-            if (!is(TNumber)) {
-                error = "expected an array length";
-                return false;
-            }
-            local.type.array_len = static_cast<int>(cur().number);
-            next();
-            if (!expect(TRBrack, "']'")) return false;
-        }
+        local.name = decl.name;
+        local.type = decl.type;
         place_local(locals, local);
+        out->kind = Node::Block;
         return expect(TSemi, "';'");
     }
     out->kind = Node::ExprStmt;
@@ -1028,10 +1241,25 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = 2;
         next();
     } else if (is(TIdent)) {
-        out->text = cur().text;
+        const std::string name = cur().text;
         next();
-        if (accept(TLParen)) {
+        if (name == "va_arg" && accept(TLParen)) {
+            Node ap;
+            if (!parse_expr(0, &ap)) return false;
+            if (!expect(TComma, "','")) return false;
+            Type ty;
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&ty, &imp, &exp)) return false;
+            while (accept(TStar)) ++ty.pointers;
+            if (!expect(TRParen, "')'")) return false;
             out->kind = Node::Call;
+            out->text = "va_arg";
+            out->type = ty;
+            out->kids.push_back(std::move(ap));
+        } else if (accept(TLParen)) {
+            out->kind = Node::Call;
+            out->text = name;
             if (!accept(TRParen)) {
                 do {
                     Node arg;
@@ -1040,8 +1268,13 @@ bool Parser::parse_unary(Node* out) {
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
             }
+        } else if (enum_values.find(name) != enum_values.end()) {
+            out->kind = Node::IntLit;
+            out->number = enum_values[name];
+            out->type.base = 1;
         } else {
             out->kind = Node::Name;
+            out->text = name;
         }
     } else if (is(TLParen)) {
         next();
@@ -1058,7 +1291,23 @@ bool Parser::parse_unary(Node* out) {
         error = "expected an expression";
         return false;
     }
-    while (is(TLBrack) || is(TDot)) {
+    while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen)) {
+        if (is(TLParen)) {
+            next();
+            Node call;
+            call.kind = Node::Call;
+            call.kids.push_back(std::move(*out));
+            if (!accept(TRParen)) {
+                do {
+                    Node arg;
+                    if (!parse_expr(0, &arg)) return false;
+                    call.kids.push_back(std::move(arg));
+                } while (accept(TComma));
+                if (!expect(TRParen, "')'")) return false;
+            }
+            *out = std::move(call);
+            continue;
+        }
         if (is(TLBrack)) {
             next();
             Node index;
@@ -1070,6 +1319,7 @@ bool Parser::parse_unary(Node* out) {
             wrapped.kids.push_back(std::move(index));
             *out = std::move(wrapped);
         } else {
+            const Tok op = cur().kind;
             next();
             if (!is(TIdent)) {
                 error = "expected a field name";
@@ -1077,6 +1327,7 @@ bool Parser::parse_unary(Node* out) {
             }
             Node wrapped;
             wrapped.kind = Node::Field;
+            wrapped.op = op;
             wrapped.text = cur().text;
             next();
             wrapped.kids.push_back(std::move(*out));
@@ -1151,6 +1402,11 @@ struct Gen {
     int frame = 0x20;
     const std::vector<StructDef>* structs = nullptr;
     const std::vector<Global>* globals = nullptr;
+    const std::vector<FuncType>* func_types = nullptr;
+    const FuncDecl* current = nullptr;
+    bool sret_dest_set = false;
+    int sret_dest_off = 0;
+    bool save_nv = false;
     std::vector<std::vector<size_t>> break_stack;
     Type last_type{};
 
@@ -1217,12 +1473,20 @@ struct Gen {
     bool fits_register(const Type& type) const;
     Global* find_global(const std::string& name);
     Type element_type(const Type& type) const;
-    void load_from_rax(int size);
+    void load_from_rax(int size, bool is_unsigned);
+    void promote(Type* type) const;
+    void load_typed(int32_t offset, const Type& type);
+    void store_mem(int size);
     void epilogue() {
         b(0x48);
         b(0x89);
         b(0xEC);
         b(0x5D);
+        if (save_nv) {
+            b(0x5F);
+            b(0x5E);
+            b(0x5B);
+        }
         b(0xC3);
     }
     size_t emit_jcc(uint8_t cc) {
@@ -1262,6 +1526,7 @@ int Gen::size_of(const Type& type) const {
     }
     if (type.pointers > 0) return 8;
     if (type.base == 2) return 1;
+    if (type.base == 4) return 2;
     if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
         type.struct_id < static_cast<int>(structs->size()))
         return (*structs)[type.struct_id].size;
@@ -1353,7 +1618,16 @@ bool Gen::gen_addr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Field) {
-        if (!gen_addr(node.kids[0])) return false;
+        if (node.op == TArrow) {
+            if (!gen_expr(node.kids[0])) return false;
+            if (last_type.pointers < 1) {
+                error = "arrow needs a pointer";
+                return false;
+            }
+            last_type = element_type(last_type);
+        } else if (!gen_addr(node.kids[0])) {
+            return false;
+        }
         if (last_type.base != 3 || structs == nullptr || last_type.struct_id < 0) {
             error = "field access on a non-struct";
             return false;
@@ -1383,18 +1657,65 @@ bool Gen::gen_addr(const Node& node) {
     return false;
 }
 
-void Gen::load_from_rax(int size) {
+void Gen::load_from_rax(int size, bool is_unsigned) {
     if (size >= 8) {
         b(0x48);
         b(0x8B);
         b(0x00);
     } else if (size == 1) {
         b(0x0F);
-        b(0xB6);
+        b(is_unsigned ? 0xB6 : 0xBE);
+        b(0x00);
+    } else if (size == 2) {
+        b(0x0F);
+        b(is_unsigned ? 0xB7 : 0xBF);
         b(0x00);
     } else {
         b(0x8B);
         b(0x00);
+    }
+}
+
+void Gen::load_typed(int32_t offset, const Type& type) {
+    const int size = size_of(type);
+    if (type.pointer() || size >= 8) load_slot(offset, true);
+    else if (size == 4) load_slot(offset, false);
+    else if (size == 2) {
+        b(0x0F);
+        b(type.is_unsigned ? 0xB7 : 0xBF);
+        b(0x85);
+        disp(offset);
+    } else {
+        b(0x0F);
+        b(type.is_unsigned ? 0xB6 : 0xBE);
+        b(0x85);
+        disp(offset);
+    }
+}
+
+void Gen::store_mem(int size) {
+    if (size >= 8) {
+        b(0x48);
+        b(0x89);
+        b(0x01);
+    } else if (size == 1) {
+        b(0x88);
+        b(0x01);
+    } else if (size == 2) {
+        b(0x66);
+        b(0x89);
+        b(0x01);
+    } else {
+        b(0x89);
+        b(0x01);
+    }
+}
+
+void Gen::promote(Type* type) const {
+    if (type->pointers > 0 || type->is_array() || type->base == 3) return;
+    if (size_of(*type) < 4) {
+        type->base = 1;
+        type->is_unsigned = false;
     }
 }
 
@@ -1430,18 +1751,45 @@ bool Gen::gen_expr(const Node& node) {
                 last_type.pointers += 1;
                 return true;
             }
-            load_slot(local->offset, local->type.pointer() || size_of(local->type) == 8);
+            load_typed(local->offset, local->type);
             last_type = local->type;
+            promote(&last_type);
             return true;
         }
         if (Global* global = find_global(node.text)) {
-            const bool wide = global->type.pointer() || size_of(global->type) == 8;
-            if (wide) b(0x48);
-            b(0x8B);
-            b(0x05);
+            const int size = size_of(global->type);
+            const bool uns = global->type.is_unsigned;
+            if (global->type.pointer() || size >= 8) {
+                b(0x48);
+                b(0x8B);
+                b(0x05);
+            } else if (size == 4) {
+                b(0x8B);
+                b(0x05);
+            } else if (size == 2) {
+                b(0x0F);
+                b(uns ? 0xB7 : 0xBF);
+                b(0x05);
+            } else {
+                b(0x0F);
+                b(uns ? 0xB6 : 0xBE);
+                b(0x05);
+            }
             relocs.push_back({0, static_cast<uint32_t>(text.size()), global->name, kRelAmd64Rel32});
             u32(0);
             last_type = global->type;
+            promote(&last_type);
+            return true;
+        }
+        if (FuncDecl* fn = find_func(node.text)) {
+            b(0x48);
+            b(0x8D);
+            b(0x05);
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
+            u32(0);
+            last_type = Type{};
+            last_type.pointers = 1;
+            last_type.func_id = fn->func_id;
             return true;
         }
         error = "unknown name " + node.text;
@@ -1450,7 +1798,9 @@ bool Gen::gen_expr(const Node& node) {
     if (node.kind == Node::Index || node.kind == Node::Field) {
         if (!gen_addr(node)) return false;
         const int size = std::max(1, size_of(last_type));
-        load_from_rax(size);
+        const bool uns = last_type.is_unsigned;
+        load_from_rax(size, uns);
+        promote(&last_type);
         return true;
     }
     if (node.kind == Node::Unary) {
@@ -1487,14 +1837,43 @@ bool Gen::gen_expr(const Node& node) {
         }
         if (node.op == TStar) {
             const Type elem = element_type(last_type);
-            load_from_rax(std::max(1, size_of(elem)));
+            load_from_rax(std::max(1, size_of(elem)), elem.is_unsigned);
             last_type = elem;
+            promote(&last_type);
             return true;
         }
         error = "bad unary operator";
         return false;
     }
     if (node.kind == Node::Assign) {
+        if (node.kids[0].kind == Node::Name) {
+            if (Local* local = find_local(node.kids[0].text)) {
+                const bool big = local->type.base == 3 && local->type.pointers == 0 && !fits_register(local->type);
+                if (big && node.kids[1].kind == Node::Call) {
+                    sret_dest_set = true;
+                    sret_dest_off = local->offset;
+                    if (!gen_expr(node.kids[1])) return false;
+                    last_type = local->type;
+                    return true;
+                }
+                if (big) {
+                    if (!gen_addr(node.kids[1])) return false;
+                    b(0x48);
+                    b(0x89);
+                    b(0xC6);
+                    b(0x48);
+                    b(0x8D);
+                    b(0xBD);
+                    disp(local->offset);
+                    b(0xB9);
+                    u32(static_cast<uint32_t>(size_of(local->type)));
+                    b(0xF3);
+                    b(0xA4);
+                    last_type = local->type;
+                    return true;
+                }
+            }
+        }
         if (!gen_expr(node.kids[1])) return false;
         const int slot = spill();
         if (!error.empty()) return false;
@@ -1508,76 +1887,214 @@ bool Gen::gen_expr(const Node& node) {
         b(0x85);
         disp(slot);
         --temp_depth;
-        if (size >= 8) {
-            b(0x48);
-            b(0x89);
-            b(0x01);
-        } else if (size == 1) {
-            b(0x88);
-            b(0x01);
-        } else {
-            b(0x89);
-            b(0x01);
-        }
+        store_mem(size);
+        last_type = Type{};
+        last_type.base = 1;
         return true;
     }
     if (node.kind == Node::Call) {
-        FuncDecl* fn = find_func(node.text);
-        if (!fn) {
-            error = "unknown function " + node.text;
-            return false;
+        if (node.text == "va_end") {
+            mov_eax_imm(0);
+            return true;
         }
-        if (static_cast<int>(node.kids.size()) != static_cast<int>(fn->params.size()) && !fn->params.empty()) {
-            // A declaration with zero params accepts the call's arguments only
-            // when the declaration also has zero. Checked below.
+        if (node.text == "va_start") {
+            if (current == nullptr || node.kids.size() != 2 || node.kids[1].kind != Node::Name) {
+                error = "va_start needs the last named parameter";
+                return false;
+            }
+            int index = -1;
+            for (int i = 0; i < current->nparams; ++i) {
+                if (current->param_names[static_cast<size_t>(i)] == node.kids[1].text) index = i;
+            }
+            if (index < 0) {
+                error = "va_start parameter was not found";
+                return false;
+            }
+            const int slot = index + (current->sret ? 1 : 0);
+            const int home = 16 + (slot + 1) * 8;
+            if (!gen_addr(node.kids[0])) return false;
+            b(0x48);
+            b(0x89);
+            b(0xC1);
+            b(0x48);
+            b(0x8D);
+            b(0x85);
+            disp(home);
+            b(0x48);
+            b(0x89);
+            b(0x01);
+            return true;
         }
-        if (node.kids.size() != fn->params.size()) {
-            error = "wrong number of arguments to " + node.text;
-            return false;
+        if (node.text == "va_arg") {
+            if (node.kids.size() != 1 || node.kids[0].kind != Node::Name) {
+                error = "va_arg list must be a name";
+                return false;
+            }
+            Local* ap = find_local(node.kids[0].text);
+            if (ap == nullptr) {
+                error = "va_arg list must be a local";
+                return false;
+            }
+            load_typed(ap->offset, ap->type);
+            const int size = std::max(1, size_of(node.type));
+            b(0x48);
+            b(0x89);
+            b(0xC1);
+            load_from_rax(size >= 8 ? 8 : size, node.type.is_unsigned || node.type.pointer());
+            const int slot = spill();
+            if (!error.empty()) return false;
+            b(0x48);
+            b(0x83);
+            b(0x85);
+            disp(ap->offset);
+            b(0x08);
+            load_slot(slot, true);
+            --temp_depth;
+            last_type = node.type;
+            promote(&last_type);
+            return true;
         }
+        const bool indirect = node.text.empty();
+        FuncDecl* fn = nullptr;
+        FuncType sig;
+        int callee_slot = 0;
         const int depth_before = temp_depth;
+        size_t arg0 = 0;
+        if (indirect) {
+            if (node.kids.empty() || !gen_expr(node.kids[0])) return false;
+            if (last_type.func_id < 0 || func_types == nullptr ||
+                static_cast<size_t>(last_type.func_id) >= func_types->size()) {
+                error = "call target is not a function";
+                return false;
+            }
+            sig = (*func_types)[static_cast<size_t>(last_type.func_id)];
+            callee_slot = spill();
+            if (!error.empty()) return false;
+            arg0 = 1;
+        } else {
+            fn = find_func(node.text);
+            if (!fn) {
+                error = "unknown function " + node.text;
+                return false;
+            }
+            sig.ret = fn->ret;
+            sig.params = fn->params;
+            sig.vararg = fn->vararg;
+        }
+        const size_t nargs = node.kids.size() - arg0;
+        if (!sig.vararg && nargs != sig.params.size()) {
+            error = "wrong number of arguments to " + (node.text.empty() ? std::string("function pointer") : node.text);
+            return false;
+        }
+        if (sig.vararg && nargs < sig.params.size()) {
+            error = "too few arguments to " + node.text;
+            return false;
+        }
+        const bool sret = sig.ret.base == 3 && sig.ret.pointers == 0 && !fits_register(sig.ret);
+        int hidden = 0;
+        if (sret) {
+            if (sret_dest_set) {
+                hidden = sret_dest_off;
+                sret_dest_set = false;
+            } else if (current != nullptr && current->sret) {
+                hidden = current->sret_off;
+            } else {
+                error = "large struct return has no destination";
+                return false;
+            }
+        }
         std::vector<int> saved;
-        for (size_t arg_i = 0; arg_i < node.kids.size(); ++arg_i) {
-            const Type param = fn->params[arg_i];
-            if (param.base == 3 && param.pointers == 0 && !fits_register(param)) {
-                if (!gen_addr(node.kids[arg_i])) return false;
-            } else if (param.base == 3 && param.pointers == 0) {
-                if (!gen_addr(node.kids[arg_i])) return false;
+        for (size_t arg_i = 0; arg_i < nargs; ++arg_i) {
+            const bool named = arg_i < sig.params.size();
+            const Type param = named ? sig.params[arg_i] : Type{};
+            if (named && param.base == 3 && param.pointers == 0 && !fits_register(param)) {
+                if (!gen_addr(node.kids[arg0 + arg_i])) return false;
+            } else if (named && param.base == 3 && param.pointers == 0) {
+                if (!gen_addr(node.kids[arg0 + arg_i])) return false;
                 b(0x48);
                 b(0x8B);
                 b(0x00);
-            } else if (!gen_expr(node.kids[arg_i])) {
+            } else if (!gen_expr(node.kids[arg0 + arg_i])) {
                 return false;
             }
             saved.push_back(spill());
             if (!error.empty()) return false;
         }
-        for (int i = static_cast<int>(saved.size()) - 1; i >= 4; --i) {
+        const int reg_base = sret ? 1 : 0;
+        for (int i = static_cast<int>(saved.size()) - 1; i >= 0; --i) {
+            const int reg = i + reg_base;
+            if (reg < 4) continue;
             b(0x48);
             b(0x8B);
             b(0x85);
-            disp(saved[i]);
+            disp(saved[static_cast<size_t>(i)]);
             b(0x48);
             b(0x89);
             b(0x84);
             b(0x24);
-            u32(static_cast<uint32_t>(32 + (i - 4) * 8));
+            u32(static_cast<uint32_t>(32 + (reg - 4) * 8));
         }
-        auto load_arg = [&](int index, uint8_t rex, uint8_t modrm) {
-            if (index >= static_cast<int>(saved.size()) || index >= 4) return;
-            b(rex);
-            b(0x8B);
-            b(modrm);
-            disp(saved[index]);
+        auto load_reg = [&](int reg, int spill_off) {
+            if (reg == 0) {
+                b(0x48);
+                b(0x8B);
+                b(0x8D);
+            } else if (reg == 1) {
+                b(0x48);
+                b(0x8B);
+                b(0x95);
+            } else if (reg == 2) {
+                b(0x4C);
+                b(0x8B);
+                b(0x85);
+            } else if (reg == 3) {
+                b(0x4C);
+                b(0x8B);
+                b(0x8D);
+            } else {
+                return;
+            }
+            disp(spill_off);
         };
-        // 64-bit loads: the spill stored the whole register, and the
-        // calling convention passes each argument in a 64-bit register.
-        if (saved.size() > 3) load_arg(3, 0x4C, 0x8D);
-        if (saved.size() > 2) load_arg(2, 0x4C, 0x85);
-        if (saved.size() > 1) load_arg(1, 0x48, 0x95);
-        if (saved.size() > 0) load_arg(0, 0x48, 0x8D);
+        if (sret) {
+            b(0x48);
+            b(0x8D);
+            b(0x8D);
+            disp(hidden);
+        }
+        for (int i = 0; i < static_cast<int>(saved.size()); ++i) load_reg(i + reg_base, saved[static_cast<size_t>(i)]);
+        if (sig.vararg) {
+            // The caller of a varargs function writes the register arguments
+            // into the 32-byte home area so the callee can walk them.
+            b(0x48);
+            b(0x89);
+            b(0x0C);
+            b(0x24);
+            b(0x48);
+            b(0x89);
+            b(0x54);
+            b(0x24);
+            b(0x08);
+            b(0x4C);
+            b(0x89);
+            b(0x44);
+            b(0x24);
+            b(0x10);
+            b(0x4C);
+            b(0x89);
+            b(0x4C);
+            b(0x24);
+            b(0x18);
+        }
         temp_depth = depth_before;
-        if (fn->imported) {
+        if (indirect) {
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(callee_slot);
+            b(0xFF);
+            b(0xD0);
+        } else if (fn->imported) {
             b(0xFF);
             b(0x15);
             relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + fn->name, kRelAmd64Rel32});
@@ -1586,6 +2103,15 @@ bool Gen::gen_expr(const Node& node) {
             b(0xE8);
             relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
             u32(0);
+        }
+        last_type = sig.ret;
+        if (sret) {
+            b(0x48);
+            b(0x8D);
+            b(0x85);
+            disp(hidden);
+        } else {
+            promote(&last_type);
         }
         return true;
     }
@@ -1653,13 +2179,26 @@ bool Gen::gen_expr(const Node& node) {
             b(0xC1);
             return true;
         }
+        if (node.op == TSlash || node.op == TPercent) {
+            b(0x91);
+            b(0x99);
+            b(0xF7);
+            b(0xF9);
+            if (node.op == TPercent) {
+                b(0x89);
+                b(0xD0);
+            }
+            last_type = left_type;
+            return true;
+        }
+        const bool unsign = left_type.is_unsigned || last_type.is_unsigned;
         uint8_t setcc = 0x94;
         if (node.op == TEq) setcc = 0x94;
         else if (node.op == TNe) setcc = 0x95;
-        else if (node.op == TLt) setcc = 0x9C;
-        else if (node.op == TGt) setcc = 0x9F;
-        else if (node.op == TLe) setcc = 0x9E;
-        else if (node.op == TGe) setcc = 0x9D;
+        else if (node.op == TLt) setcc = unsign ? 0x92 : 0x9C;
+        else if (node.op == TGt) setcc = unsign ? 0x97 : 0x9F;
+        else if (node.op == TLe) setcc = unsign ? 0x96 : 0x9E;
+        else if (node.op == TGe) setcc = unsign ? 0x93 : 0x9D;
         else {
             error = "operator is not supported";
             return false;
@@ -1679,6 +2218,39 @@ bool Gen::gen_stmt(const Node& node) {
         return true;
     }
     if (node.kind == Node::Return) {
+        if (current != nullptr && current->sret) {
+            if (node.kids.empty()) {
+                error = "missing return value";
+                return false;
+            }
+            if (node.kids[0].kind == Node::Call) {
+                sret_dest_set = true;
+                sret_dest_off = current->sret_off;
+                if (!gen_expr(node.kids[0])) return false;
+            } else {
+                if (!gen_addr(node.kids[0])) return false;
+                b(0x48);
+                b(0x89);
+                b(0xC3);
+                b(0x48);
+                b(0x89);
+                b(0xDE);
+                b(0x48);
+                b(0x8B);
+                b(0xBD);
+                disp(current->sret_off);
+                b(0xB9);
+                u32(static_cast<uint32_t>(size_of(current->ret)));
+                b(0xF3);
+                b(0xA4);
+            }
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(current->sret_off);
+            epilogue();
+            return true;
+        }
         if (!node.kids.empty() && !gen_expr(node.kids[0])) return false;
         epilogue();
         return true;
@@ -1823,10 +2395,12 @@ struct Sym {
 };
 
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
-                    const std::vector<Global>& globals, std::string* error, CompileOutput* out) {
+                    const std::vector<Global>& globals, const std::vector<FuncType>& func_types, std::string* error,
+                    CompileOutput* out) {
     Gen gen(funcs);
     gen.structs = &structs;
     gen.globals = &globals;
+    gen.func_types = &func_types;
     struct PlacedFn {
         std::string name;
         uint32_t start = 0;
@@ -1843,14 +2417,33 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         int frame = local_end + 64 + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
+        bool needs_nv = false;
+        for (const Local& local : fn.locals) {
+            if (local.type.base == 3 && local.type.pointers == 0 && !gen.fits_register(local.type)) needs_nv = true;
+        }
+        if (needs_nv) frame += 8;
+        gen.save_nv = needs_nv;
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        uint8_t cursor = 0;
+        auto mark = [&](uint8_t bytes) { cursor = static_cast<uint8_t>(cursor + bytes); return cursor; };
+        std::vector<UnwindPush> pushes;
+        if (needs_nv) {
+            gen.b(0x53);
+            pushes.push_back({3, mark(1)});
+            gen.b(0x56);
+            pushes.push_back({6, mark(1)});
+            gen.b(0x57);
+            pushes.push_back({7, mark(1)});
+        }
         gen.b(0x55);
+        pushes.push_back({5, mark(1)});
         gen.b(0x48);
         gen.b(0x89);
         gen.b(0xE5);
+        const uint8_t frame_at = mark(3);
         const bool large_alloc = frame > 127;
         if (large_alloc) {
             gen.b(0x48);
@@ -1863,26 +2456,70 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             gen.b(0xEC);
             gen.b(static_cast<uint8_t>(frame));
         }
-        for (int p = fn.nparams - 1; p >= 0 && p < 4; --p) {
-            const Type& param = fn.locals[p].type;
+        if (fn.sret) {
+            gen.b(0x48);
+            gen.b(0x89);
+            gen.b(0x8D);
+            gen.disp(fn.sret_off);
+        }
+        if (fn.vararg) {
+            gen.b(0x48);
+            gen.b(0x89);
+            gen.b(0x4D);
+            gen.b(0x10);
+            gen.b(0x48);
+            gen.b(0x89);
+            gen.b(0x55);
+            gen.b(0x18);
+            gen.b(0x4C);
+            gen.b(0x89);
+            gen.b(0x45);
+            gen.b(0x20);
+            gen.b(0x4C);
+            gen.b(0x89);
+            gen.b(0x4D);
+            gen.b(0x28);
+        }
+        gen.current = &fn;
+        for (int p = 0; p < fn.nparams; ++p) {
+            const int reg = p + (fn.sret ? 1 : 0);
+            if (reg >= 4) continue;
+            const Local& local = fn.locals[static_cast<size_t>(fn.param_base + p)];
+            const Type& param = local.type;
             const int param_size = gen.size_of(param);
             const bool big = param.base == 3 && param.pointers == 0 && !gen.fits_register(param);
             const bool wide = param.pointer() || param_size == 8;
             if (big) {
-                if (p == 0) { gen.b(0x48); gen.b(0x89); gen.b(0xCE); }
-                else if (p == 1) { gen.b(0x48); gen.b(0x89); gen.b(0xD6); }
-                else if (p == 2) { gen.b(0x4C); gen.b(0x89); gen.b(0xC6); }
-                else { gen.b(0x4C); gen.b(0x89); gen.b(0xCE); }
-                gen.b(0x48); gen.b(0x8D); gen.b(0xBD); gen.disp(fn.locals[p].offset);
+                if (reg == 0) { gen.b(0x48); gen.b(0x89); gen.b(0xCB); }
+                else if (reg == 1) { gen.b(0x48); gen.b(0x89); gen.b(0xD3); }
+                else if (reg == 2) { gen.b(0x4C); gen.b(0x89); gen.b(0xC3); }
+                else { gen.b(0x4C); gen.b(0x89); gen.b(0xCB); }
+                gen.b(0x48); gen.b(0x89); gen.b(0xDE);
+                gen.b(0x48); gen.b(0x8D); gen.b(0xBD); gen.disp(local.offset);
                 gen.b(0xB9); gen.u32(static_cast<uint32_t>(param_size));
                 gen.b(0xF3); gen.b(0xA4);
-            } else {
-                const uint8_t rex = p >= 2 ? (wide ? 0x4C : 0x44) : (wide ? 0x48 : 0);
-                const uint8_t modrm = p == 0 || p == 3 ? 0x8D : (p == 1 ? 0x95 : 0x85);
+            } else if (param_size == 1) {
+                const uint8_t rex = reg >= 2 ? 0x44 : 0;
+                const uint8_t modrm = reg == 0 || reg == 3 ? 0x8D : (reg == 1 ? 0x95 : 0x85);
+                if (rex) gen.b(rex);
+                gen.b(0x88);
+                gen.b(modrm);
+                gen.disp(local.offset);
+            } else if (param_size == 2) {
+                const uint8_t rex = reg >= 2 ? 0x44 : 0;
+                const uint8_t modrm = reg == 0 || reg == 3 ? 0x8D : (reg == 1 ? 0x95 : 0x85);
+                gen.b(0x66);
                 if (rex) gen.b(rex);
                 gen.b(0x89);
                 gen.b(modrm);
-                gen.disp(fn.locals[p].offset);
+                gen.disp(local.offset);
+            } else {
+                const uint8_t rex = reg >= 2 ? (wide ? 0x4C : 0x44) : (wide ? 0x48 : 0);
+                const uint8_t modrm = reg == 0 || reg == 3 ? 0x8D : (reg == 1 ? 0x95 : 0x85);
+                if (rex) gen.b(rex);
+                gen.b(0x89);
+                gen.b(modrm);
+                gen.disp(local.offset);
             }
         }
         if (!gen.gen_stmt(fn.body)) {
@@ -1893,12 +2530,12 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported});
         if (fn.exported) out->exports.push_back(fn.name);
         UnwindPrologue prolog;
-        prolog.size = large_alloc ? 11 : 8;
+        prolog.size = static_cast<uint8_t>(frame_at + (large_alloc ? 7 : 4));
         prolog.frame_register = 5;
-        prolog.frame_at = 4;
+        prolog.frame_at = frame_at;
         prolog.alloc = static_cast<uint32_t>(frame);
         prolog.alloc_at = prolog.size;
-        prolog.pushes.push_back({5, 1});
+        prolog.pushes = pushes;
         const auto unwind = encode_unwind(prolog);
         if (!unwind.ok()) {
             *error = unwind.error;
@@ -2070,11 +2707,11 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     std::string lex_error;
     const std::vector<Token> tokens = lex(expanded, &lex_error);
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
-    Parser parser{tokens, 0, {}, {}, {}, {}, {}};
+    Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}};
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     CompileOutput output;
     std::string error;
-    if (!emit_functions(parser.funcs, parser.structs, parser.globals, &error, &output))
+    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, &error, &output))
         return Result<CompileOutput>::fail(error);
     return Result<CompileOutput>::success(std::move(output));
 }

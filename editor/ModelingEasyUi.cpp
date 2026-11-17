@@ -14,6 +14,10 @@ struct UiState {
     float strength = 0.5f;
     float col[3] = {0.80f, 0.25f, 0.25f};
     std::vector<std::string> recent;
+    std::string strengthTool;   // the last tool that uses the "How much" slider (it is previewed while the slider moves)
+    okay::Mesh* previewTarget = nullptr;
+    StrengthPreview preview;
+    bool recentLoaded = false;
     std::string note;           // what the last tool said, in plain words
     float noteAge = 0;
 };
@@ -44,6 +48,13 @@ void RunTool(Host& h, const Tool& t) {
     else if (id == "bigger"){ if (h.setGizmo) h.setGizmo(2); Say(h, "Drag the boxes on the model to make it bigger."); }
     else if (id == "solid") { if (h.addSolid) h.addSolid(); Say(h, "The model is solid now."); }
     else if (id == "save.asset") { if (h.saveAsset) h.saveAsset(); }
+    else if (id == "select.part" || id == "select.similar") {
+        if (h.mesh && h.args && h.setPicks) {
+            const PickResult pr = RunPickTool(*h.mesh, id, h.args());
+            if (pr.ok) { h.setPicks(pr.faces, pr.corners); Say(h, std::string("Picked ") + std::to_string(pr.faces.empty() ? pr.corners.size() : pr.faces.size()) + (pr.faces.empty() ? " corners." : " faces.")); }
+            else Say(h, pr.message, 1);
+        }
+    }
     else if (h.meshOp && h.args) {
         ToolArgs a = h.args();
         a.strength = g_ui.strength; a.r = g_ui.col[0]; a.g = g_ui.col[1]; a.b = g_ui.col[2];
@@ -52,7 +63,8 @@ void RunTool(Host& h, const Tool& t) {
         if (!res.message.empty()) Say(h, res.message, res.ok ? 0 : 1);
         else if (res.ok) Say(h, std::string("Done: ") + t.name + ". Undo is at the top if you do not like it.");
     }
-    NoteRecent(g_ui.recent, id);
+    if (UsesStrength(id)) g_ui.strengthTool = id;
+    if (t.tab != Tab::Pick) { NoteRecent(g_ui.recent, id); if (h.saveRecent) h.saveRecent(g_ui.recent); }
 }
 
 // One big button with the plain name and a tooltip: tip, example, shortcut and, when greyed out, why.
@@ -82,6 +94,7 @@ void ToolGrid(Host& h, const std::vector<const Tool*>& tools, ImVec2 size) {
 
 void DrawEasyModeling(Host& h, bool& showAdvanced) {
     const ImVec2 big(150, 54);
+    if (!g_ui.recentLoaded) { g_ui.recentLoaded = true; if (h.loadRecent) g_ui.recent = h.loadRecent(); }
     g_ui.noteAge += ImGui::GetIO().DeltaTime;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
@@ -148,6 +161,12 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Stop picking parts and go back to the whole model.  Tab");
 
+        ImGui::SameLine();
+        for (const Tool* t : ToolsOnTab(Tab::Pick)) { if (ToolBtn(h, *t, ImVec2(0, 36), "_p")) RunTool(h, *t); ImGui::SameLine(); }
+        ImGui::NewLine();
+        { bool mir = h.mirror;
+          if (ImGui::Checkbox("Mirror my changes left to right##easy_mirror", &mir) && h.setMirror) h.setMirror(mir);
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("When you move or change a part on one side, the matching part on the other side changes too.\nTurn it off for a model that is not the same on both sides."); }
         const std::vector<std::string> qa = QuickActionsFor(h.state, g_ui.tab);   // O(1): reads a few numbers, six names at most
         if (!qa.empty()) {
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Quick:"); ImGui::SameLine();
@@ -200,8 +219,22 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
             if (tab == Tab::Reshape || tab == Tab::Details) {
                 ImGui::SetNextItemWidth(220);
                 ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 26.0f);   // a handle you can grab
-                ImGui::SliderFloat("How much##easy", &g_ui.strength, 0.1f, 1.0f, "%.2f");
+                const bool moved = ImGui::SliderFloat("How much##easy", &g_ui.strength, 0.1f, 1.0f, "%.2f");
                 ImGui::PopStyleVar();
+                {   // Live preview while the slider moves; the tool is applied once, when the slider is let go.
+                    const Tool* st = g_ui.strengthTool.empty() ? nullptr : FindTool(g_ui.strengthTool);
+                    if (moved && st && h.mesh && h.args && WhyNot(*st, h.state).empty()) {
+                        ToolArgs a = h.args(); a.strength = g_ui.strength; a.r = g_ui.col[0]; a.g = g_ui.col[1]; a.b = g_ui.col[2];
+                        if (g_ui.preview.active && g_ui.previewTarget != h.mesh) g_ui.preview.active = false;   // the model changed under us: drop the old copy
+                        g_ui.previewTarget = h.mesh;
+                        g_ui.preview.Update(*h.mesh, st->id, a);
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit() && g_ui.preview.active) {
+                        if (h.mesh && g_ui.previewTarget == h.mesh) g_ui.preview.End(*h.mesh); else g_ui.preview.active = false;
+                        if (st) RunTool(h, *st);
+                    }
+                    if (st) ImGui::SameLine(), ImGui::TextDisabled("Drag to try another amount of: %s", st->name);
+                }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Small = a little, big = a lot. Used by Squash, Smooth it, Round all edges and Round picked corners.");
             }
             if (tab == Tab::Colour) {

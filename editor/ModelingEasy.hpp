@@ -206,6 +206,25 @@ inline std::string RepeatId(const std::vector<std::string>& r) {
     for (const std::string& id : r) if (FindTool(id)) return id;
     return "";
 }
+/// A number for a tool id that survives adding tools later (FNV-1a, kept positive), for the settings file. 0 = empty slot.
+inline int StableCode(const std::string& id) {
+    unsigned h = 2166136261u;
+    for (char c : id) { h ^= (unsigned char)c; h *= 16777619u; }
+    return (int)((h & 0x3FFFFFFFu) | 1u);
+}
+inline std::vector<int> RecentToCodes(const std::vector<std::string>& r) {
+    std::vector<int> c(kRecentMax, 0);
+    for (std::size_t i = 0; i < r.size() && i < kRecentMax; ++i) c[i] = StableCode(r[i]);
+    return c;
+}
+inline std::vector<std::string> RecentFromCodes(const int* codes, std::size_t n) {
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < n && out.size() < kRecentMax; ++i) {
+        if (codes[i] == 0) continue;
+        for (const Tool& t : Tools()) if (StableCode(t.id) == codes[i] && std::find(out.begin(), out.end(), t.id) == out.end()) { out.push_back(t.id); break; }
+    }
+    return out;
+}
 inline std::string RecentToText(const std::vector<std::string>& r) {
     std::string s; for (const std::string& id : r) { if (!s.empty()) s += ','; s += id; } return s;
 }

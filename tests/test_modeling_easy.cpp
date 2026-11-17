@@ -102,6 +102,12 @@ int main() {
     CHECK(RecentFromText(RecentToText(r)) == r);
     CHECK(RecentFromText("nonsense,smooth,smooth,,mirror") == (std::vector<std::string>{"smooth", "mirror"}));   // unknown ids dropped
     CHECK(RepeatId({}).empty());
+    {   // Remembered between sessions: stable codes, unknown or empty slots dropped, every tool has its own code.
+        auto codes = RecentToCodes(r);
+        CHECK(codes.size() == kRecentMax && RecentFromCodes(codes.data(), codes.size()) == r);
+        int junk[4] = {0, 77, codes[1], 0}; CHECK(RecentFromCodes(junk, 4) == (std::vector<std::string>{r[1]}));
+        std::set<int> seen; for (const Tool& t : Tools()) CHECK(StableCode(t.id) > 0 && seen.insert(StableCode(t.id)).second);
+    }
 
     // Plain-words reports.
     CHECK(SizeLine(1, 2, 0.5f) == "1.0 wide, 2.0 tall, 0.5 deep");

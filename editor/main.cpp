@@ -28303,6 +28303,12 @@ static void DrawModelingSimple(EditorState& ed) {
         return tex;
     };
     h.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    g_meshSymX = g_view.modelingMirror;   // the simple view's one mirror switch (on by default) drives X symmetry in edit mode
+    h.mirror = g_view.modelingMirror;
+    h.setMirror = [](bool on) { g_view.modelingMirror = on; g_meshSymX = on; };
+    h.loadRecent = [] { return em::RecentFromCodes(g_view.modelingRecent, 4); };
+    h.saveRecent = [](const std::vector<std::string>& r) { const auto c = em::RecentToCodes(r); for (int i = 0; i < 4; ++i) g_view.modelingRecent[i] = c[(std::size_t)i]; };
+    h.setPicks = [&](const std::vector<int>& faces, const std::vector<int>& corners) { if (!faces.empty()) g_meshSelFaces = faces; if (!corners.empty()) g_meshSelVerts = corners; };
     oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
 }
 

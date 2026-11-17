@@ -7,6 +7,7 @@
 #include "okay/Render/Mesh.hpp"
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace oked::easymodel_ui {
 
@@ -23,6 +24,11 @@ struct Host {
     std::function<bool()> canUndo, canRedo;
     std::function<void*(const std::string& key, const std::function<okay::Mesh()>& build)> thumb;   // optional small picture
     std::function<void(const std::string&, int)> log;
+    std::function<std::vector<std::string>()> loadRecent;                             // the last tools used, from the settings
+    std::function<void(const std::vector<std::string>&)> saveRecent;                  // ... and back when they change
+    bool mirror = true;                                                               // mirror edits left to right (settings)
+    std::function<void(bool)> setMirror;
+    std::function<void(const std::vector<int>& faces, const std::vector<int>& corners)> setPicks;   // change what is picked
     int openTab = -1;                        // when 0..4: switch to that tab this frame (screenshots, tests)
 };
 

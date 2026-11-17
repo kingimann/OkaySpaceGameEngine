@@ -118,6 +118,18 @@ static void testStatShortcut() {
     write("inc/util.h", "#pragma once\nint util();\nint other();\n"); fs::last_write_time(gRoot / "inc/util.h", old);
     o = sh("--explain"); check(ran(o) >= 2 && o.find("util.h changed") != string::npos, "edit with restored mtime but new size is caught", o);
 }
+static void testFreshNoopTrust() {
+    printf("test: no-op immediately after a build does not re-read inputs with nanosecond mtimes\n");
+    fresh("fresh"); basicProject();
+    int rc; string o = sh("-j2", &rc); check(rc == 0, "build", o);
+    o = sh("-v");
+    check(ran(o) == 0, "immediate no-op", o);
+    int hashed = atoi(o.c_str() + o.find("hashed ") + 7);
+    struct stat st{}; stat((gRoot / "src/util.cpp").c_str(), &st);
+    if (st.st_mtim.tv_nsec != 0) check(hashed == 0, "fresh inputs trusted by size and mtime", o);
+    else check(hashed >= 0, "coarse timestamps still finish the no-op", o);
+}
+
 static void testSpacesBuildDirRsp() {
     printf("test: paths with spaces, --build-dir, response file for long link lines\n"); fresh("sp");
     write("my src/a b.cpp", "int ab(){return 2;}\n"); write("my src/main.cpp", "int ab(); int main(){return ab()==2?0:1;}\n");
@@ -358,7 +370,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
-    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
+    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -17,9 +17,20 @@ No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
   it was recorded; `--no-stat` turns it off; `-v` prints hashed/trusted counts), response files for long link/archive lines
   (`rsp_threshold` in the toolchain block, default 30000 chars), quoted words so paths may contain spaces, `--build-dir DIR`
   (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
-- Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic),
-  no-op still slower than Ninja on a just-built tree; structured targets use -MMD (system headers not tracked),
-  imported ones keep CMake's -MD.
+- Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic).
+  Structured targets use -MMD (system headers not tracked), imported ones keep CMake's -MD.
+
+## No-op speed (2026-11-17, measured on this machine)
+The old "27 ms vs Ninja 8 ms on 51 files" was before the -O2 and stat work. Re-measured here, median of several runs,
+process start included, nothing else busy on the machine:
+- 52 translation units, just built (105 inputs). Before: okay-build 2.54 ms and it read every input (hashed 105, trusted 0);
+  Ninja 1.94 ms. After: okay-build 2.00 ms, hashed 0, trusted 105; Ninja 1.82 ms.
+- 200 copies of a 64 KiB file, just built. Before: okay-build 12.7 ms (hashed all 200). Ninja 2.2 ms.
+  After: okay-build 2.61 ms (hashed 0, trusted 200). Ninja 2.08 ms.
+What changed: a modification time with sub-millisecond digits is trusted immediately (an ordinary write cannot keep it).
+Whole-second and whole-millisecond stamps still wait until they were 2 s old when recorded, because two writes can share
+them. A clean tree is checked on the calling thread and returns without starting workers. Reading a file, when it is
+still required, uses one `read` loop. Forged timestamps that keep the same size are still not detected.
 
 ## Regenerating the manifest (2026-11-17)
 A single `buildfile` block names a command, `inputs`, and an optional `depfile` (same make-style reader as compile

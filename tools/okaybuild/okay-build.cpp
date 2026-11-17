@@ -197,20 +197,32 @@ static uint64_t fnv(const char* p, size_t n, uint64_t h = 1469598103934665603ull
 static std::mutex gHashMu; static std::unordered_map<string, FileSig> gCache, gPrev; // this run / loaded from state
 static std::atomic<int> gHashed{0}, gTrusted{0};
 static bool gUseStat = true;
-// Shortcut: if size and mtime equal the recorded ones, and the file was already 2 s older than when it was recorded
-// (so a later same-timestamp edit is impossible), reuse the recorded hash and do not read the file.
+// Shortcut: same size and mtime as the record means the bytes did not change, so reuse the stored hash.
+// A stamp with sub-millisecond digits cannot survive an ordinary later write, so it is trusted at once.
+// A whole-second or whole-millisecond stamp might be shared by two writes (coarse clocks), so it is trusted
+// only once it was already 2 s old when it was recorded. Forged timestamps with the same size are not detected.
 static bool hashFile(const string& p, FileSig& out) {
     FileSig prev; bool havePrev = false;
     { std::lock_guard<std::mutex> l(gHashMu); auto it = gCache.find(p); if (it != gCache.end()) { out = it->second; return true; }
       auto pv = gPrev.find(p); if (pv != gPrev.end()) { prev = pv->second; havePrev = true; } }
-    struct stat st; if (::stat(p.c_str(), &st) != 0) return false; // one system call instead of two filesystem calls
+    struct stat st; if (::stat(p.c_str(), &st) != 0) return false;
     FileSig s; s.size = (long long)st.st_size; s.mtime = (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec;
-    if (gUseStat && havePrev && prev.size == s.size && prev.mtime == s.mtime && prev.mtime + 2000000000ll < prev.at) {
+    long long nsec = s.mtime % 1000000000ll;
+    bool fine = nsec % 1000000ll != 0;
+    bool settled = prev.mtime + 2000000000ll < prev.at;
+    if (gUseStat && havePrev && prev.size == s.size && prev.mtime == s.mtime && (fine || settled)) {
         s = prev; ++gTrusted;
     } else {
-        std::ifstream f(p, std::ios::binary); if (!f) return false;
+        int fd = ::open(p.c_str(), O_RDONLY);
+        if (fd < 0) return false;
         uint64_t h = 1469598103934665603ull; char buf[65536];
-        while (f.read(buf, sizeof buf) || f.gcount()) { h = fnv(buf, (size_t)f.gcount(), h); if (f.eof()) break; }
+        for (;;) {
+            ssize_t n = ::read(fd, buf, sizeof buf);
+            if (n < 0) { if (errno == EINTR) continue; ::close(fd); return false; }
+            if (n == 0) break;
+            h = fnv(buf, (size_t)n, h);
+        }
+        ::close(fd);
         s.hash = hex64(h); { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); s.at = (long long)ts.tv_sec * 1000000000ll + ts.tv_nsec; } ++gHashed;
     }
     out = s; std::lock_guard<std::mutex> l(gHashMu); gCache[p] = s; return true;
@@ -449,8 +461,10 @@ static bool dirty(const Action& a, string& why) {
     const Rec* rp; { std::lock_guard<std::mutex> l(gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } rp = &it->second; } // map nodes are stable
     const Rec& r = *rp;
     if (r.cmd != a.cmdHash) { why = "command line changed"; return true; }
-    std::set<string> have; for (auto& [p, h] : r.inputs) have.insert(p);
-    for (auto& i : a.inputs) if (!have.count(i)) { why = "new input " + i; return true; }
+    for (auto& i : a.inputs) {
+        bool known = false; for (auto& [p, h] : r.inputs) if (p == i) { known = true; break; }
+        if (!known) { why = "new input " + i; return true; }
+    }
     for (auto& [p, h] : r.inputs) {
         FileSig now; if (!hashFile(p, now)) { why = "input " + p + " is gone"; return true; }
         if (now.hash != h.hash) { why = "input " + p + " changed"; return true; }
@@ -642,6 +656,22 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
         int i = findPool(pools, n);
         if (i < 0) throw Fail("action '" + a.desc + "' uses unknown pool '" + n + "'");
         poolIdx[a.id] = i;
+    }
+    // A clean tree does not need worker threads: one pass of stat checks, then stop.
+    // A dry run still walks the pool so "would run" can spread from a step that would rebuild.
+    if (!o.dry) {
+        bool anyDirty = false; long long t0 = nowNs();
+        for (auto& a : g.acts) { string why; if (dirty(a, why)) { anyDirty = true; break; } }
+        gNsDirty += nowNs() - t0;
+        if (!anyDirty) {
+            upToDate = total;
+            if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
+            printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
+            if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+            if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command 0, depfile+hash 0; wall %lld\n", gNsDirty / 1000000, (nowNs() - tStart) / 1000000);
+            if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
+            return 0;
+        }
     }
     vector<int> pending(total); vector<char> wouldRun(total, 0); vector<int> ready;
     for (auto& a : g.acts) { pending[a.id] = (int)a.deps.size(); if (a.deps.empty()) ready.push_back(a.id); }

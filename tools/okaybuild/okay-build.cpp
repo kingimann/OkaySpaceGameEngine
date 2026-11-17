@@ -68,10 +68,10 @@ static std::wstring widePath(const string& p) {
     }
     return widen(s);
 }
-static int gHashMu = 0, gStateMu = 0;
+static int gHashMu = 0, gStateMu = 0, gPoolMu = 0;
 #define OK_LOCK(name, mu) int name = ((void)(mu), 0); (void)name
 #else
-static std::mutex gHashMu, gStateMu;
+static std::mutex gHashMu, gStateMu, gPoolMu;
 #define OK_LOCK(name, mu) std::lock_guard<std::mutex> name(mu)
 #endif
 
@@ -94,7 +94,12 @@ static bool applyPreset(Toolchain& c, const string& name) {
 }
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
-    string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
+    string dir, cmd, output, depfile, pool, salt; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
+    vector<std::pair<string, string>> partials; // importer outputs: written as FIRST, renamed to SECOND on success
+};
+// An importer maps a file pattern to a command line; one action per matching file (expanded when the graph is planned).
+struct ImporterDecl {
+    string name, pattern, output, cmd, depfile, pool; vector<string> inputs, settings; int line = 0;
 };
 struct Target {
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
@@ -118,7 +123,7 @@ struct DistDecl {
     vector<string> tools, examples;
 };
 struct Manifest {
-    Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
+    Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
     DistDecl dist;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
@@ -158,7 +163,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -170,11 +175,11 @@ static Manifest parseManifest(const string& file) {
         ++ln;
         if (!isCmdLine(line)) line = stripComment(line);
         auto t = tokens(line); if (t.empty()) continue;
-        if ((mode == ACTION || mode == BUILDFILE) && t[0] == "cmd") { // raw rest of line, kept exactly
+        if ((mode == ACTION || mode == BUILDFILE || mode == IMPORTER) && t[0] == "cmd") { // raw rest of line, kept exactly
             auto p = line.find('='); if (p == string::npos) throw err("expected: cmd = command");
             size_t b = line.find_first_not_of(" \t", p + 1); string cmd = b == string::npos ? "" : line.substr(b);
             while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
-            (mode == ACTION ? m.actions.back().cmd : m.buildCmd) = cmd; continue;
+            (mode == ACTION ? m.actions.back().cmd : mode == IMPORTER ? m.importers.back().cmd : m.buildCmd) = cmd; continue;
         }
         if (t[0] == "end") { if (mode == TOP) throw err("'end' outside a block"); mode = TOP; continue; }
         if (mode == TOP) {
@@ -196,6 +201,11 @@ static Manifest parseManifest(const string& file) {
                 if (t.size() != 1) throw err("expected: buildfile");
                 if (m.hasBuildfile) throw err("only one buildfile block is allowed");
                 m.hasBuildfile = true; m.buildLine = ln; mode = BUILDFILE; continue;
+            }
+            if (t[0] == "importer") {
+                if (t.size() != 2) throw err("expected: importer NAME");
+                for (auto& i : m.importers) if (i.name == t[1]) throw err("duplicate importer '" + t[1] + "'");
+                ImporterDecl d; d.name = t[1]; d.line = ln; m.importers.push_back(d); mode = IMPORTER; continue;
             }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
             if (t[0] == "dist") {
@@ -271,6 +281,15 @@ static Manifest parseManifest(const string& file) {
             else if (k == "memory") { if (v.size() != 1) throw err("memory takes one value"); x.memory = atoi(v[0].c_str()); if (x.memory < 0) throw err("memory must be 0 or more"); }
             else if (k == "inputs") add(x.inputs); else if (k == "after") add(x.after);
             else throw err("unknown action key '" + k + "'");
+        } else if (mode == IMPORTER) {
+            ImporterDecl& x = m.importers.back();
+            if (k == "pattern") { if (v.size() != 1) throw err("pattern takes one value"); x.pattern = v[0]; }
+            else if (k == "output") { if (v.size() != 1) throw err("output takes one value"); x.output = v[0]; }
+            else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); x.depfile = v[0]; }
+            else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
+            else if (k == "inputs") add(x.inputs);
+            else if (k == "settings") add(x.settings);
+            else throw err("unknown importer key '" + k + "'");
         } else if (mode == BUILDFILE) {
             if (k == "inputs") add(m.buildInputs);
             else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); m.buildDepfile = v[0]; }
@@ -329,6 +348,14 @@ static Manifest parseManifest(const string& file) {
     for (auto& a : m.actions) {
         if (a.cmd.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": action has no cmd");
         if (a.restat && a.output.empty() && a.outputs.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": restat action has no output");
+    }
+    for (auto& i : m.importers) {
+        string w = file + ":" + std::to_string(i.line) + ": importer '" + i.name + "' ";
+        if (i.pattern.empty()) throw Fail(w + "has no pattern");
+        if (i.output.empty()) throw Fail(w + "has no output");
+        if (i.cmd.empty()) throw Fail(w + "has no cmd");
+        if (i.output.find("{input}") == string::npos && i.output.find("{stem}") == string::npos && i.output.find("{name}") == string::npos)
+            throw Fail(w + "output must use {stem}, {name} or {input}, or every file would write the same output");
     }
     if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
     for (auto& t : m.targets) if (t.isTest && t.isLib) throw Fail(file + ":" + std::to_string(t.line) + ": test target '" + t.name + "' is a library");
@@ -429,7 +456,7 @@ static string hashArgv(const vector<string>& a) { uint64_t h = 14695981039346656
 // ---------------------------------------------------------------- graph
 struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
-    vector<int> deps, rdeps; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
+    vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
 struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
 static string gBuildDir = ".";
@@ -459,7 +486,76 @@ static bool msvcLinkerIsCl(const string& ld) {
     if (b.size() > 4 && b.compare(b.size() - 4, 4, ".exe") == 0) b.resize(b.size() - 4);
     return b == "cl";
 }
+// ---- importers: a file pattern -> one command per matching file
+static bool globMatch(const char* p, const char* s) { // '*' any run, '?' one character; no slashes inside a name
+    if (!*p) return !*s;
+    if (*p == '*') { for (const char* q = s;; ++q) { if (globMatch(p + 1, q)) return true; if (!*q) return false; } }
+    if (*s && (*p == '?' || *p == *s)) return globMatch(p + 1, s + 1);
+    return false;
+}
+struct ImportHit { string path, relDir; };
+static vector<ImportHit> importerFiles(const string& pattern) {
+    string base, namePat; bool deep = false;
+    size_t st = pattern.find("**");
+    if (st != string::npos) {
+        deep = true; base = pattern.substr(0, st); namePat = pattern.substr(st + 2);
+        while (!base.empty() && base.back() == '/') base.pop_back();
+        while (!namePat.empty() && namePat[0] == '/') namePat.erase(0, 1);
+        if (namePat.empty()) namePat = "*";
+    } else {
+        size_t sl = pattern.find_last_of('/');
+        base = sl == string::npos ? "" : pattern.substr(0, sl); namePat = sl == string::npos ? pattern : pattern.substr(sl + 1);
+    }
+    vector<ImportHit> hits; std::error_code ec;
+    fs::path root = base.empty() ? fs::path(".") : fs::path(base);
+    if (!fs::is_directory(root, ec)) return hits;
+    auto take = [&](const fs::path& f) {
+        if (!globMatch(namePat.c_str(), f.filename().string().c_str())) return;
+        string rel = fs::relative(f.parent_path(), root, ec).generic_string(); if (rel == ".") rel.clear();
+        string path = base.empty() ? f.filename().generic_string() : (base + "/" + (rel.empty() ? "" : rel + "/") + f.filename().generic_string());
+        hits.push_back({path, rel});
+    };
+    if (deep) { for (fs::recursive_directory_iterator it(root, ec), e; !ec && it != e; it.increment(ec)) if (it->is_regular_file(ec)) take(it->path()); }
+    else for (fs::directory_iterator it(root, ec), e; !ec && it != e; it.increment(ec)) if (it->is_regular_file(ec)) take(it->path());
+    std::sort(hits.begin(), hits.end(), [](const ImportHit& a, const ImportHit& b) { return a.path < b.path; });
+    return hits;
+}
+static string fillTemplate(string t, const std::vector<std::pair<string, string>>& kv) {
+    for (auto& [k, v] : kv) {
+        string key = "{" + k + "}";
+        if (v.empty() && k == "dir") { for (size_t p; (p = t.find(key + "/")) != string::npos;) t.erase(p, key.size() + 1); }
+        for (size_t p = 0; (p = t.find(key, p)) != string::npos; p += v.size()) t.replace(p, key.size(), v);
+    }
+    return t;
+}
+static vector<RawAction> expandImporters(const Manifest& m) {
+    vector<RawAction> out;
+    for (auto& im : m.importers) {
+        string settings = joined(im.settings);
+        for (auto& h : importerFiles(im.pattern)) {
+            fs::path in(h.path);
+            vector<std::pair<string, string>> kv = {{"input", h.path}, {"name", in.filename().string()}, {"stem", in.stem().string()},
+                {"ext", in.extension().string().empty() ? "" : in.extension().string().substr(1)}, {"dir", h.relDir}};
+            RawAction r; r.line = im.line; r.pool = im.pool; r.inputs = im.inputs; r.inputs.push_back(h.path);
+            r.output = fillTemplate(im.output, kv);
+            if (r.output == h.path) throw Fail("importer '" + im.name + "': output would overwrite its input " + h.path);
+            fs::path op(r.output);
+            string partial = (op.parent_path() / (op.stem().string() + ".partial" + op.extension().string())).generic_string();
+            if (!im.depfile.empty()) r.depfile = fillTemplate(im.depfile, kv);
+            vector<std::pair<string, string>> cv;
+            for (auto& x : kv) cv.push_back({x.first, x.first == "input" ? quote(x.second) : x.second});
+            cv.push_back({"output", quote(partial)}); cv.push_back({"depfile", quote(r.depfile)}); cv.push_back({"settings", settings});
+            r.cmd = fillTemplate(im.cmd, cv);
+            r.partials.push_back({partial, r.output});
+            r.salt = "importer " + im.name + "\nsettings " + settings;
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
 static Graph plan(const Manifest& m, const vector<string>& want) {
+    vector<RawAction> raws = m.actions; { auto more = expandImporters(m); raws.insert(raws.end(), more.begin(), more.end()); }
     std::map<string, const Target*> byName;
     for (auto& t : m.targets) byName[t.name] = &t;
     for (auto& t : m.targets) {
@@ -498,7 +594,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         std::reverse(po.begin(), po.end()); return po;
     };
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
-    for (auto& r : m.actions) {
+    for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
         for (auto& o : r.outputs) produced.insert(resolve(r.dir, o));
     }
@@ -566,8 +662,8 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     // raw actions (imported commands and generators): `cd DIR && CMD` through sh.
     // Every declared output is an edge source. `after` names the spelling used in the manifest.
     std::map<string, int> byOut, byRawName;
-    for (auto& r : m.actions) {
-        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat; a.memory = r.memory;
+    for (auto& r : raws) {
+        Action a; a.kind = "RUN"; a.partials = r.partials; a.salt = r.salt; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat; a.memory = r.memory;
         vector<string> outs;
         if (!r.output.empty()) outs.push_back(resolve(r.dir, r.output));
         for (auto& o : r.outputs) { string p = resolve(r.dir, o); if (std::find(outs.begin(), outs.end(), p) == outs.end()) outs.push_back(p); }
@@ -594,9 +690,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             if (it->second != a.id) a.deps.push_back(it->second);
         }
     }
-    for (size_t i = 0; i < m.actions.size(); ++i) {
-        Action& a = g.acts[g.acts.size() - m.actions.size() + i];
-        for (auto& x : m.actions[i].after) { auto it = byRawName.find(x); if (it == byRawName.end()) throw Fail("action '" + a.desc + "': 'after' names unknown action '" + x + "'"); a.deps.push_back(it->second); }
+    for (size_t i = 0; i < raws.size(); ++i) {
+        Action& a = g.acts[g.acts.size() - raws.size() + i];
+        for (auto& x : raws[i].after) { auto it = byRawName.find(x); if (it == byRawName.end()) throw Fail("action '" + a.desc + "': 'after' names unknown action '" + x + "'"); a.deps.push_back(it->second); }
     }
     // cycle check on the final graph (Kahn)
     { vector<int> indeg(g.acts.size()); vector<vector<int>> out(g.acts.size());
@@ -618,7 +714,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
     }
-    for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd); }
+    for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd + (a.salt.empty() ? "" : "\n" + a.salt)); }
     for (auto& a : g.acts) for (int d : a.deps) g.acts[d].rdeps.push_back(a.id);
     return g;
 }
@@ -646,7 +742,7 @@ static vector<string> parseDepfile(const string& path) {
 // ---------------------------------------------------------------- state
 struct Rec { string cmd; vector<std::pair<string_view, FileSig>> inputs, produced; };
 static std::deque<string> gPool;
-static string_view poolStr(const char* s, size_t n) { gPool.emplace_back(s, n); return gPool.back(); }
+static string_view poolStr(const char* s, size_t n) { OK_LOCK(l, gPoolMu); gPool.emplace_back(s, n); return gPool.back(); } // workers call this at the same time
 static uint64_t parseHex64(const char* s, size_t n) {
     uint64_t h = 0;
     for (size_t i = 0; i < n && i < 16; ++i) {
@@ -1398,6 +1494,14 @@ static void writeShowIncludesDepFile(const Action& a, const string& captured) {
     f << '\n';
 }
 static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string_view, FileSig>>& oldProduced) {
+    if (!a.partials.empty()) { // importer outputs: a finished file appears all at once, a failed one leaves nothing
+        std::error_code ec;
+        for (auto& [part, fin] : a.partials) {
+            if (ok) { fs::rename(part, fin, ec); if (ec) { ok = false; out += "okay-build: importer wrote no " + part + " (" + ec.message() + ")\n"; } }
+            if (!ok) { fs::remove(part, ec); fs::remove(fin, ec); }
+        }
+        if (!ok) for (auto& pth : a.outputs) { std::error_code e2; fs::remove(pth, e2); }
+    }
     if (ok) writeShowIncludesDepFile(a, out);
     if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
     long long ts = nowNs();

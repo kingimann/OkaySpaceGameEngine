@@ -1174,6 +1174,50 @@ static void testTestFilterTimeoutOutput() {
     check(secs < 15, "the timeout stopped it long before sleep(30) ended", std::to_string(secs));
 }
 
+static void testImporters() {
+    printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
+    write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
+    auto manifest = [&](const string& settings) {
+        write("build.okay", "importer text\n pattern = assets/*.txt\n output = out/{stem}.bin\n cmd = sh tools/conv.sh {input} {output} {settings}\n settings = " + settings + "\n inputs = tools/conv.sh\nend\n");
+    };
+    write("assets/a.txt", "AAA\n"); write("assets/b.txt", "BBB\n"); write("assets/c.txt", "CCC\n"); write("assets/skip.png", "x\n");
+    manifest("q1");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && ran(o) == 3, "first build imports the 3 .txt files only", o);
+    check(readFile(gRoot / "out/b.bin") == "q1|BBB\n", "importer output has settings and content", readFile(gRoot / "out/b.bin"));
+    check(!fs::exists(gRoot / "out/skip.bin") && !fs::exists(gRoot / "out/b.partial.bin"), "non-matching file ignored, no partial file left");
+    o = sh("--explain", &rc); check(rc == 0 && ran(o) == 0, "no-op imports nothing", o);
+    fs::remove(gRoot / "imports.log");
+    write("assets/b.txt", "BBB2\n"); o = sh("--explain", &rc);
+    check(ran(o) == 1 && o.find("assets/b.txt changed") != string::npos, "only the changed asset is rebuilt", o);
+    check(readFile(gRoot / "imports.log") == "assets/b.txt\n", "importer command ran for b only", readFile(gRoot / "imports.log"));
+    fs::remove(gRoot / "imports.log"); manifest("q2"); o = sh("--explain");
+    check(ran(o) == 3 && o.find("command line changed") != string::npos, "changed importer settings rebuild all", o);
+    check(readFile(gRoot / "out/a.bin") == "q2|AAA\n", "new settings applied");
+    fs::remove(gRoot / "imports.log"); fs::remove(gRoot / "out/a.bin"); o = sh("--explain");
+    check(ran(o) == 1 && o.find("out/a.bin is missing") != string::npos, "a deleted output rebuilds only it", o);
+    fs::remove(gRoot / "imports.log"); write("assets/d.txt", "DDD\n"); o = sh();
+    check(ran(o) == 1 && fs::exists(gRoot / "out/d.bin"), "a new asset is picked up", o);
+    write("tools/conv.sh", "echo \"$1\" >> imports.log\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n"); o = sh("--explain");
+    check(ran(o) == 4 && o.find("tools/conv.sh changed") != string::npos, "a changed importer tool rebuilds everything", o);
+    // a failing importer leaves nothing behind, and a later fix works
+    write("tools/conv.sh", "if grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
+    write("assets/c.txt", "FAIL\n"); o = sh("-j1", &rc);
+    check(rc == 1 && o.find("FAILED") != string::npos, "failing importer fails the build", o);
+    check(!fs::exists(gRoot / "out/c.bin") && !fs::exists(gRoot / "out/c.partial.bin"), "no half-written output after a failure");
+    write("assets/c.txt", "CCC3\n"); o = sh("", &rc);
+    check(rc == 0 && readFile(gRoot / "out/c.bin") == "q2|CCC3\n", "fixing the asset builds it", o);
+    // recursive pattern, {dir}, depfile-free; unknown keys and missing fields are errors
+    fresh("imp2"); write("tools/conv.sh", "cat \"$1\" > \"$2\"\n");
+    write("assets/x/y.dat", "Y\n"); write("assets/z.dat", "Z\n");
+    write("build.okay", "importer d\n pattern = assets/**/*.dat\n output = out/{dir}/{name}.o\n cmd = sh tools/conv.sh {input} {output}\nend\n");
+    o = sh("-j2", &rc); check(rc == 0 && readFile(gRoot / "out/x/y.dat.o") == "Y\n" && readFile(gRoot / "out/z.dat.o") == "Z\n", "** walks sub directories and {dir} keeps them", o);
+    o = sh("targets", &rc); check(o.find("out/x/y.dat.o") != string::npos || rc == 0, "targets lists without crashing", o);
+    write("build.okay", "importer d\n pattern = a/*.x\n cmd = true\nend\n");
+    o = sh("", &rc); check(rc == 2 && o.find("has no output") != string::npos, "importer without output is an error", o);
+    write("build.okay", "importer d\n pattern = a/*.x\n output = same.bin\n cmd = true\nend\n");
+    o = sh("", &rc); check(rc == 2 && o.find("every file would write the same output") != string::npos, "one output for every file is an error", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
@@ -1181,5 +1225,6 @@ int main(int argc, char** argv) {
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
     testRestoredObjectsStayTrusted();
+    testImporters();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

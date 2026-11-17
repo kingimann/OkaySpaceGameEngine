@@ -350,3 +350,23 @@ Timings, this machine (4 cores, `-j2`, Debug `-O0 -g0`, g++, one run each for th
 | same edit, `--no-cache` | 3 min 28 s | 4 min 01 s |
 | no-op, median of 15 | 12 ms | 34 ms |
 So with the compiler cache on, a miss costs one extra preprocess run per file (that is the 20% on the edit). The cache earns it back only on a hit: the same header edit as a comment only (same preprocessed text) took 7 s because all 52 compiles were hits. A cold build is compiler-bound in both tools, so the two cold numbers are close and one run each does not show a real difference. The first okay-build cold attempt (not counted) was disturbed by other work on the machine.
+
+## Importers (claude/okaybuild-3, written from general knowledge, no other tool's code)
+An `importer` block maps a file pattern to a command line, one action per matching file. It is a way to say "turn every `assets/*.png` into `out/*.tex` with this tool". The tool itself can be any program; okay-build links no engine code and the engine importers are untouched.
+```
+importer textures
+  pattern = assets/**/*.png        # one folder, or ** for sub folders; * and ? match inside a file name
+  output  = out/{dir}/{stem}.tex   # must use {stem}, {name} or {input}
+  cmd     = sh tools/conv.sh {input} {output} {settings}
+  settings = --quality 5           # part of the command key: changing it rebuilds every file
+  inputs  = tools/conv.sh          # extra files every output depends on (the tool, a shared table)
+  depfile = out/{stem}.d           # optional, make-style, like an action
+  pool    = none                   # optional
+end
+```
+Fillers: `{input}` the file, `{name}` its name, `{stem}` the name without extension, `{ext}` the extension without the dot, `{dir}` the folder under the pattern's base (empty at the top), `{output}`, `{depfile}`, `{settings}`.
+- Each file becomes an ordinary `RUN` step, so it is tracked, hashed, listed by `targets` and `graph`, and can be built by output name or waited on with a target's `needs`.
+- Only a changed asset rebuilds. A changed `settings`, `cmd` or `inputs` file rebuilds all. A deleted output rebuilds only itself. A new matching file is picked up on the next run. A removed source leaves its old output in place (nothing deletes outputs).
+- `{output}` in the command is really `out/{stem}.partial.tex`: the tool writes there and okay-build renames it to the real name only when the command succeeded. A failing importer leaves neither the partial nor the real output (an older good copy is removed too, so a later step cannot use it by mistake).
+How to try: `sh tools/okaybuild/build.sh /tmp/okb` runs the tests (`importer blocks ...` is the group). By hand: make `assets/a.txt`, `tools/conv.sh` containing `cat "$1" > "$2"`, the block above with `pattern = assets/*.txt`, `output = out/{stem}.bin`, `cmd = sh tools/conv.sh {input} {output}`, then `okay-build`, edit one file and run it again with `--explain`.
+Also fixed on this round: `poolStr` (the string pool the state records point into) was written from several worker threads without a lock, which could make a record lose an input on a parallel build (seen once as a flaky "new input" rebuild in the new test); it has its own lock now.

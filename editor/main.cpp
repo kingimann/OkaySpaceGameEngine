@@ -6001,16 +6001,41 @@ static void DrawPanelTabMenu() {
         g_focusQueue.push_back(d.window);
     };
     if (ImGui::BeginMenu("Add Tab")) {
-        const char* lastGroup = nullptr;
-        for (int i = 0; i < n; ++i) {
-            const DockPanelDef& d = defs[i];
-            if (&d == self) continue;
-            if (lastGroup && std::strcmp(lastGroup, d.group) != 0) ImGui::Separator();
-            lastGroup = d.group;
+        // One small submenu per group (Scene, Assets, Animation, ...) instead of one long flat list.
+        auto drawItem = [&](const DockPanelDef& d) {
             const bool here = dockedHere(d);
             if (ImGui::MenuItem(d.label, here ? "here" : (PanelOpen(d) ? "open" : nullptr))) addTab(d);
             if (ImGui::IsItemHovered() && PanelOpen(d) && !here)
                 ImGui::SetTooltip("Already open elsewhere: moves it into this tab group.");
+        };
+        // Small named categories (the two big groups were still ~18 items each).
+        auto category = [](const DockPanelDef& d) -> const char* {
+            static const struct { const char* cat; const char* labels; } k[] = {
+                {"Main",              "|Scene|Hierarchy|Inspector|Project|Console|Game|"},
+                {"Scripting",         "|Script Editor|Visual Script|Custom Actions|Variables|"},
+                {"Animation",         "|Animation|Animator|Timeline|"},
+                {"World & Gameplay",  "|Navigation|Dialogue|Behavior Tree|Items, Loot & Recipes|Weapons|Localization|Scene Manager|Lighting|Audio Mixer|"},
+                {"Modeling & UI",     "|Modeling|UV Editor|Sprite Editor|UI Editor|UI Theme|"},
+                {"Debug & Data",      "|Problems|History|Stats|Profiler|Crash Log|Net|Save Manager|Services|Asset Manager|"},
+            };
+            const std::string key = std::string("|") + d.label + "|";
+            for (const auto& e : k) if (std::strstr(e.labels, key.c_str())) return e.cat;
+            return "More";
+        };
+        std::vector<const char*> cats;
+        for (int i = 0; i < n; ++i) {
+            if (&defs[i] == self) continue;
+            const char* c = category(defs[i]);
+            bool seen = false;
+            for (const char* c2 : cats) if (std::strcmp(c2, c) == 0) { seen = true; break; }
+            if (!seen) cats.push_back(c);
+        }
+        for (const char* cat : cats) {
+            if (ImGui::BeginMenu(cat)) {
+                for (int i = 0; i < n; ++i)
+                    if (&defs[i] != self && std::strcmp(category(defs[i]), cat) == 0) drawItem(defs[i]);
+                ImGui::EndMenu();
+            }
         }
         ImGui::EndMenu();
     }

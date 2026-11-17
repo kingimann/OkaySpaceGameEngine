@@ -2374,14 +2374,18 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         RGBA tc{(std::uint8_t)(txc.r * 255), (std::uint8_t)(txc.g * 255), (std::uint8_t)(txc.b * 255), (std::uint8_t)(txc.a * 255)};
         if (!in->multiline) {
             std::string full = empty ? in->placeholder : in->DisplayText();
-            // Horizontal scroll: show the tail that fits so the caret stays visible.
-            // Horizontal scroll: drop leading characters until the tail fits.
-            std::string shown = full;
-            while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
+            // Horizontal scroll: drop leading characters until the text before the caret
+            // fits, so the caret stays visible; then drop trailing characters that don't fit.
+            const float avail = in->size.x - pad * 2;
+            const std::size_t caretAt = empty ? 0 : std::min(in->DisplayTextBeforeCaret().size(), full.size());
+            std::size_t start = 0;
+            while (start < caretAt && UITextW(full.substr(start, caretAt - start), px) > avail) ++start;
+            std::string shown = full.substr(start);
+            while (shown.size() > 1 && UITextW(shown, px) > avail) shown.pop_back();
             float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
             DrawUIText(p, shown, o.x + pad, ty, px, tc);
-            if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
-                int cx = (int)(o.x + pad + UITextW(shown, px));
+            if (in->focused && in->CaretVisible()) {        // blinking caret at the caret position
+                int cx = (int)(o.x + pad + UITextW(full.substr(start, caretAt - start), px));
                 p.SetDrawColor(255, 255, 255, 220);
                 p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
             }
@@ -2391,14 +2395,25 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             const float lineH = Font8x8::Height * px;
             float y = o.y + pad;
             std::string line;
-            float lastW = 0.0f, lastY = y;
+            // The caret's line and the text before it on that line.
+            const std::string before = empty ? std::string() : in->DisplayTextBeforeCaret();
+            const std::size_t nl = before.rfind('\n');
+            const int caretLine = (int)std::count(before.begin(), before.end(), '\n');
+            const std::size_t caretCol = nl == std::string::npos ? before.size() : before.size() - nl - 1;
+            int lineNo = 0;
+            float caretX = 0.0f, caretY = y;
             auto emit = [&]() {
                 std::string shown = line;
                 while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
                 if (y + lineH <= o.y + in->size.y + 1.0f)
                     DrawUIText(p, shown, o.x + pad, y, px, tc);
-                lastW = UITextW(shown, px);
-                lastY = y;
+                if (lineNo == caretLine) {   // the caret, measured from the first character drawn
+                    const std::size_t dropped = line.size() - shown.size();
+                    const std::size_t col = std::min(caretCol, line.size());
+                    caretX = col > dropped ? UITextW(line.substr(dropped, col - dropped), px) : 0.0f;
+                    caretY = y;
+                }
+                ++lineNo;
                 y += lineH;
             };
             for (char c : src) {
@@ -2407,9 +2422,9 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             }
             emit();
             if (in->focused && in->CaretVisible()) {
-                int cx = (int)(o.x + pad + lastW);
+                int cx = (int)(o.x + pad + caretX);
                 p.SetDrawColor(255, 255, 255, 220);
-                p.DrawLine(cx, (int)lastY, cx, (int)(lastY + lineH));
+                p.DrawLine(cx, (int)caretY, cx, (int)(caretY + lineH));
             }
         }
     }

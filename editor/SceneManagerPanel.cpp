@@ -6,6 +6,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "EditorCommon.hpp"
 #include "ConsolePanel.hpp"
+#include "SceneRenameOps.hpp"
 
 #include <unordered_set>
 #include "../shared/ProjectCreate.hpp"
@@ -456,6 +457,8 @@ void DrawSceneManager(EditorState& ed) {
         ImGui::SetNextItemWidth(260);
         bool go = ImGui::InputText("##rn", renameBuf, sizeof(renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         if (!renameErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1), "%s", renameErr.c_str());
+        if (ed.dirty && CanonFile(ed.path()) == CanonFile(renameFrom))
+            ImGui::TextDisabled("The file is renamed as last saved. Your unsaved changes stay unsaved.");
         if (ImGui::Button("Rename", ImVec2(120, 0)) || go) {
             std::string name = StripExt(renameBuf);
             std::string err;
@@ -466,19 +469,14 @@ void DrawSceneManager(EditorState& ed) {
                 renameErr = "A scene with that name already exists.";
             else if (CanonFile(dest.string()) == CanonFile(renameFrom)) ImGui::CloseCurrentPopup();
             else {
-                bool ok = false;
-                std::error_code ec;
-                if (CanonFile(ed.path()) == CanonFile(renameFrom)) {
-                    if (ed.Save(dest.string())) {
-                        fs::remove(renameFrom, ec);
-                        AddRecent(dest.string());
-                        ok = true;
-                    } else ConsoleLog("Rename failed: couldn't save the scene.", 2);
-                } else {
-                    fs::rename(renameFrom, dest, ec);
-                    ok = !ec;
-                    if (ec) ConsoleLog("Rename failed: " + ec.message(), 2);
-                }
+                // Rename moves the file on disk and never saves (#888 finding 141). The open scene's unsaved
+                // edits stay in memory under the new name, still unsaved, so Don't Save still works.
+                const bool isOpen = CanonFile(ed.path()) == CanonFile(renameFrom);
+                SceneRenameHooks hooks;
+                hooks.followOpenScene = [&ed](const std::string& p) { ed.FollowMovedFile(p); AddRecent(p); };
+                std::string moveErr;
+                const bool ok = RenameSceneFile(renameFrom, dest.string(), isOpen, hooks, moveErr);
+                if (!ok) ConsoleLog("Rename failed: " + moveErr, 2);
                 if (ok) {
                     ReplacePath(rows, renameFrom, dest.string());
                     s_forceScan = true;

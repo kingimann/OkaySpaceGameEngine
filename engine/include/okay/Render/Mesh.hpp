@@ -2584,9 +2584,57 @@ public:
             for (int id : src.polyFace) polyFace.push_back(id + hi);
         } else polyFace.clear();
         if (src.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), inner.cornerUVs.begin(), inner.cornerUVs.end()); else cornerUVs.clear();
+        AddSolidifyRim(src, base);
+        // A negative thickness puts the new shell outside: turn every face round so the solid still faces outward.
+        if (thickness < 0.0f) FlipWinding();
         normals.clear();
         name = "";
     }
+
+private:
+    /// Solidify's rim: close the gap between a surface and its offset copy (vertex i <-> i + base) with a wall of
+    /// quads along every open border, so a sheet becomes a closed slab. An edge is open when no other triangle uses it
+    /// in the opposite direction; vertices are matched by position so a UV seam (two vertices at one point) is not a
+    /// border. The wall keeps the border face's colour and slot, and is wound to face away from the sheet.
+    void AddSolidifyRim(const Mesh& src, int base) {
+        const int nTri = src.TriangleCount();
+        if (nTri <= 0) return;
+        std::map<std::tuple<float, float, float>, int> idOf;            // one id per distinct position
+        std::vector<int> canon(src.vertices.size());
+        for (std::size_t i = 0; i < src.vertices.size(); ++i) {
+            const Vec3& v = src.vertices[i];
+            canon[i] = idOf.emplace(std::make_tuple(v.x, v.y, v.z), (int)idOf.size()).first->second;
+        }
+        std::map<std::pair<int, int>, int> directed;                   // (from, to) position ids -> uses
+        for (int t = 0; t < nTri; ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = src.triangles[t * 3 + k], b = src.triangles[t * 3 + (k + 1) % 3];
+                if (a < 0 || b < 0 || a >= (int)canon.size() || b >= (int)canon.size()) continue;
+                ++directed[{canon[a], canon[b]}];
+            }
+        const bool fc = HasFaceColors(), sl = HasSlots(), cuv = HasCornerUVs();
+        const bool pf = !polyFace.empty() && polyFace.size() * 3 == triangles.size();
+        int nextPoly = 0; if (pf) for (int id : polyFace) nextPoly = std::max(nextPoly, id + 1);
+        for (int t = 0; t < nTri; ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = src.triangles[t * 3 + k], b = src.triangles[t * 3 + (k + 1) % 3];
+                if (a < 0 || b < 0 || a >= (int)canon.size() || b >= (int)canon.size() || canon[a] == canon[b]) continue;
+                if (directed.count({canon[b], canon[a]}) || directed[{canon[a], canon[b]}] != 1) continue;   // shared (or non-manifold) edge
+                // The face runs a -> b, so its neighbour across a border would run b -> a: the wall does too, then
+                // drops to the copy (a' = a + base, b' = b + base).
+                triangles.insert(triangles.end(), {b, a, a + base});
+                triangles.insert(triangles.end(), {b, a + base, b + base});
+                if (fc) { triColors.push_back(triColors[t]); triColors.push_back(triColors[t]); }
+                if (sl) { triSlot.push_back(triSlot[t]); triSlot.push_back(triSlot[t]); }
+                if (pf) { polyFace.push_back(nextPoly); polyFace.push_back(nextPoly); ++nextPoly; }
+                if (cuv) {
+                    const Vec2 ua = cornerUVs[t * 3 + k], ub = cornerUVs[t * 3 + (k + 1) % 3];
+                    cornerUVs.insert(cornerUVs.end(), {ub, ua, ua, ub, ua, ub});
+                }
+            }
+    }
+
+public:
 
     /// Extrude a 2D outline (XY, convex, counter-clockwise) into a 3D prism of
     /// the given depth along Z — custom signs, logos, blocky props. Builds a

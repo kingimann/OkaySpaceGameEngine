@@ -60,6 +60,9 @@ If `MAKEFLAGS` or `OKAY_JOBSERVER` contains `--jobserver-auth=fifo:PATH`, okay-b
 ## Report diff
 `okay-build report diff A B` reads two saved reports (history numbers or file paths) and prints steps that are only in one of them, and steps whose time changed.
 
+## Native manifest (no CMake)
+`okay-build native <repo>` reads the source tree, not a CMake build directory. It writes a `build.okay` with `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math`. Files that are only compiled for optional backends (Assimp, Steamworks, the Win32 platform file) are left out. Includes and the Linux defines (`OKAY_HAVE_SODIUM`, the platform SDL/own/X11 switches) are written into that manifest. The real `test_math` run is recorded below when it has been measured.
+
 ## Compact state (OKB1)
 The state file is now binary, version 1, magic `OKB1`. Paths are stored once. Hashes are 8-byte integers. The whole file is read in one shot (mapped, then copied into a pool the records point at). A file that still starts with `okaybuild-state 3` or `okaybuild-state 4` is read as the old text. A journal after a killed build is still text and is applied on top. The mtime+size shortcut is unchanged: a matching stamp is not hashed again. `--profile` prints plan time and state time apart.
 

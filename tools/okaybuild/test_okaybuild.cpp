@@ -750,6 +750,28 @@ static void testDistLayout() {
     check(got == expect, "layout matches the script's top exe, Tools DLL, version, assets and example", o);
 }
 
+static void testNativeManifest() {
+    printf("test: okay-build native writes a manifest from the source tree\n");
+    fresh("native");
+    write("engine/src/Crypto/A.cpp", "int crypto(){return 1;}\n");
+    write("engine/src/Platform/Platform.cpp", "int plat(){return 2;}\n");
+    write("engine/src/Platform/OwnWin32.cpp", "int win(){return 0;}\n");
+    write("engine/src/Render/ModelImportAssimp.cpp", "int nope(){return 0;}\n");
+    write("engine/src/Core/Core.cpp", "int core(){return 3;}\n");
+    write("engine/third_party/ufbx/ufbx.c", "int ufbx_add(){return 4;}\n");
+    write("engine/include/okay/Math/Math.hpp", "#pragma once\n");
+    write("tests/test_math.cpp", "extern \"C\" int ufbx_add(); int crypto(); int plat(); int core(); int main(){return crypto()+plat()+core()+ufbx_add()==10?0:1;}\n");
+    int rc; string o = sh("native . -o build.okay", &rc);
+    check(rc == 0 && o.find("test_math") != string::npos, "native writes a manifest", o);
+    string man = readFile(gRoot / "build.okay");
+    check(man.find("target okay_engine lib") != string::npos && man.find("target okay_crypto lib") != string::npos, "engine and crypto targets", man);
+    check(man.find("ModelImportAssimp") == string::npos && man.find("OwnWin32") == string::npos, "optional files are left out", man);
+    check(man.find("tests/test_math.cpp") != string::npos && man.find("ufbx.c") != string::npos, "test_math and ufbx are included", man);
+    o = sh("-j2 test_math", &rc);
+    check(rc == 0, "the generated manifest builds test_math", o);
+    check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
+}
+
 static void testBinaryState() {
     printf("test: compact binary state, with the old text format still accepted\n");
     fresh("bstate");
@@ -1027,6 +1049,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

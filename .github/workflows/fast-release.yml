@@ -31,6 +31,11 @@ on:
         description: "Optional: release exactly this version (x.y.z; must be new and newer than every release). Empty = work it out."
         type: string
         default: ""
+      gate:
+        description: "full = every job of main's CI run must be green and finished (rule 6, the default). release = only the jobs that build and test what ships (RELEASE_GATE_JOBS in scripts/fast_release.py) must be green; informational jobs still running are not waited for, but any job already red or cancelled still refuses."
+        type: choice
+        options: [full, release]
+        default: full
       allow_empty:
         description: "Release even though no new changelog entry exists (players then see 'Small fixes and improvements')"
         type: boolean
@@ -63,6 +68,7 @@ jobs:
       REPO: ${{ github.repository }}
       DRY_RUN: ${{ inputs.dry_run }}
       BUMP: ${{ inputs.bump }}
+      GATE: ${{ inputs.gate }}
       WANT_VERSION: ${{ inputs.version }}
       ALLOW_EMPTY: ${{ inputs.allow_empty }}
       ENABLED: ${{ vars.FAST_RELEASE_ENABLED }}
@@ -132,6 +138,11 @@ jobs:
             msg="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["message"])')"
             RID="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["run_id"])')"
             [ "$rc" -eq 0 ] && break
+            if [ "$GATE" = "release" ] && [ "$state" = "running" ]; then
+              gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
+              set +e; gd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json --gate release)"; grc=$?; set -e
+              if [ "$grc" -eq 0 ]; then echo "release gate passed while other CI jobs still run: $gd"; break; fi
+            fi
             case "$state" in
               red) fail "$msg" ;;
               missing) [ "$(date +%s)" -lt "$MISSING_LIMIT" ] || fail "$msg (waited 10 min for it to start)" ;;
@@ -150,10 +161,11 @@ jobs:
           # The run says "success", but a job that was allowed to fail would not show there: every job must be success or skipped.
           gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
           set +e
-          jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json)"; rc=$?
+          if [ "$GATE" = "release" ]; then jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json --gate release)"; rc=$?
+          else jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json)"; rc=$?; fi
           set -e
           echo "$jd"
-          [ "$rc" -eq 0 ] || fail "CI run $RID for this commit has jobs that did not pass: $(printf '%s' "$jd" | python3 -c 'import sys,json;print("; ".join(json.load(sys.stdin)["bad"]))')"
+          [ "$rc" -eq 0 ] || fail "CI run $RID for this commit has jobs that did not pass: $(printf '%s' "$jd" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("; ".join(d["bad"]+d.get("pending",[])))')"
           # After a long wait: main must still be this commit and the version still free (rule 12).
           git fetch -q origin main
           [ "$(git rev-parse origin/main)" = "$SHA" ] || fail "main moved while waiting for CI ($SHA is not its head any more). Dispatch again."
@@ -201,7 +213,7 @@ jobs:
             echo "| | |"; echo "|---|---|"
             echo "| Version | **v$VER** ($WHY; after v${LATEST:-none}) |"
             echo "| Commit | \`$SHA\` (the head of main) |"
-            echo "| CI gate | passed: [run]($CI_RUN_URL), $CI_JOBS jobs all success or skipped |"
+            echo "| CI gate | passed ($GATE gate): [run]($CI_RUN_URL), $CI_JOBS jobs listed |"
             echo "| Changelog entries | $(wc -l < release-notes/entries.txt) new |"
             echo
             echo "### Would run next"

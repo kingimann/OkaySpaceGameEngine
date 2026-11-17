@@ -1409,7 +1409,7 @@ then "Release Windows build") still works. Everything: `docs/fast_release.md`.
 **What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
 ("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
 new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
-(missing, still running, red). That is the safety check working, not a failure of the tool.
+(missing, red). If CI is still running the run now waits for it (log lines every 30 s) instead of failing. Optional input `gate`: `release` waits only for the jobs that build what ships. That is the safety check working, not a failure of the tool.
 
 **Steps (the first real release through it).**
 1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).

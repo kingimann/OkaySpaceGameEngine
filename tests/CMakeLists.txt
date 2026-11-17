@@ -347,6 +347,12 @@ add_executable(test_script_spawn test_script_spawn.cpp)
 target_link_libraries(test_script_spawn PRIVATE okay::engine)
 add_test(NAME script_spawn COMMAND test_script_spawn)
 
+# Script prefab paths stay inside the game (issue #888 finding 51): OkayScript spawn/spawn3/shoot_at/spawn_wave, the ActionList
+# spawn ops and the Visual Script Spawn node refuse absolute, drive-letter and ".." paths with a log line; relative ones still spawn.
+add_executable(test_script_spawn_path_guard test_script_spawn_path_guard.cpp)
+target_link_libraries(test_script_spawn_path_guard PRIVATE okay::engine)
+add_test(NAME script_spawn_path_guard COMMAND test_script_spawn_path_guard)
+
 add_executable(test_script_components test_script_components.cpp)
 target_link_libraries(test_script_components PRIVATE okay::engine)
 add_test(NAME script_components COMMAND test_script_components)

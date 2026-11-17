@@ -62,6 +62,8 @@
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
+#include "ModelingHighlight.hpp"            // button wrappers: outline matches of the tool search
+#include "ModelingToolIndex.hpp"            // the advanced Modeling window as data: pages by job, search, hints
 #include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
@@ -3341,10 +3343,24 @@ static void NoteRecentTool(const char* label) {
     g_recentTools.insert(g_recentTools.begin(), n);
     if (g_recentTools.size() > 6) g_recentTools.resize(6);
 }
+// Modeling window tool search (ModelingToolIndex.hpp): the words typed, the page on screen, and the hint of the button under the mouse.
+static std::string g_mdlFind, g_mdlHint;
+static int g_mdlCurPage = 0;
+static const ImGuiWindow* g_mdlRoot = nullptr;   // the Modeling window itself: ShapeOpButton / ToolButton also draw in the Inspector
+static void MdlMark(const char* label) {   // call right after a button: outline it when it matches the search, remember its hint
+    if (!g_mdlRoot || ImGui::GetCurrentWindowRead()->RootWindow != g_mdlRoot) return;
+    const std::string l = label;
+    if (!g_mdlFind.empty() && oked::modeltools::HighlightLabel(g_mdlCurPage, l, g_mdlFind)) {
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2), IM_COL32(255, 205, 60, 255), 4.0f, 0, 2.5f);
+    }
+    if (ImGui::IsItemHovered()) if (const auto* t = oked::modeltools::FindByLabel(g_mdlCurPage, l)) g_mdlHint = std::string(t->name) + ": " + t->hint;
+}
 static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
     ImGui::BeginDisabled(!ok);
     const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
+    MdlMark(label);
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
     if (hit && ok) NoteRecentTool(label);
     return hit && ok;
@@ -28290,9 +28306,14 @@ static void DrawModelingSimple(EditorState& ed) {
     oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
 }
 
+#define Button(...) MdlHlButton(__VA_ARGS__)          // inside DrawModeling every button is outlined when it matches the tool search
+#define SmallButton(...) MdlHlSmallButton(__VA_ARGS__)
+#define Checkbox(...) MdlHlCheckbox(__VA_ARGS__)
 void DrawModeling(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
+    g_mdlRoot = ImGui::GetCurrentWindowRead();
+    g_mdlMarkHook = MdlMark;
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
@@ -28319,10 +28340,12 @@ void DrawModeling(EditorState& ed) {
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
     ImGui::Dummy(ImVec2(0, 4));
-    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
-        const int i = kPageOrder[oi];
+    const char* lastJob = "";
+    for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
+        const int i = pi.legacy;
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
+        if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
@@ -28331,8 +28354,8 @@ void DrawModeling(EditorState& ed) {
         if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pg.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pg.desc);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -28341,8 +28364,31 @@ void DrawModeling(EditorState& ed) {
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    g_mdlCurPage = s_mdlPage;
+    {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
+        static char s_find[40] = "";
+        ImGui::SetNextItemWidth(-90);
+        if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
+        if (!g_mdlFind.empty()) {
+            const auto hits = oked::modeltools::Search(g_mdlFind, 8);
+            if (hits.empty()) ImGui::TextDisabled("No tool matches \"%s\".", g_mdlFind.c_str());
+            for (const auto& h : hits) {
+                const auto* pgi = oked::modeltools::FindPage(h.tool->page);
+                const bool usable = !kPages[h.tool->page].needsMesh || haveMesh;
+                std::string row = std::string(h.tool->name) + "   -   " + (pgi ? pgi->name : "") + " > " + h.tool->section;
+                ImGui::BeginDisabled(!usable);
+                if (ImGui::Selectable((row + "##hit" + h.tool->id).c_str(), s_mdlPage == h.tool->page)) s_mdlPage = h.tool->page;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
+            }
+        }
+    }
+    ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
-    ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
+    ImGui::SameLine(); ImGui::TextDisabled("  %s", g_mdlHint.empty() ? kPages[s_mdlPage].desc : g_mdlHint.c_str());   // the hint of the button the mouse was over
+    g_mdlHint.clear();
     ImGui::Separator();
     if (s_mdlPage == 7) {
         // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
@@ -30061,6 +30107,9 @@ void DrawModeling(EditorState& ed) {
     ImGui::EndChild();
     ImGui::End();
 }
+#undef Button
+#undef SmallButton
+#undef Checkbox
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);

@@ -3979,3 +3979,10 @@ add_executable(test_modeling_easy_ops test_modeling_easy_ops.cpp)
 target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
 add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
+
+# The advanced Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
+add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
+target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)

@@ -1,0 +1,38 @@
+okayscene 3
+name "Script file-path safety (SEC1)"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "5a1c0d2e7b3f4a6c8e9d0b1a2c3d4e5f"
+  active 1
+  parent -1
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.47058824 0.65882355 0.8392157 1 1 1 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Board"
+  guid "7c3e2f4a9d5b6c8e0a1f2d3c4e5f6a71"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  sprite 35 0.2901961 0.50980395 0.25882354 1 6 3 "" 0 0 1 1 0 0 0 0 0
+end
+gameobject 2 "Path Tester"
+  guid "6b2d1e3f8c4a5b7d9f0e1c2b3d4e5f60"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function start() {
+  print(\"Each line below is one file name a script tries to write. 'true' means it was allowed, 'false' means it was refused.\");
+  print(\"NUL (a Windows device)          ->\", save(\"k\", 1, \"NUL\"));
+  print(\"con.txt (a Windows device)      ->\", save(\"k\", 1, \"con.txt\"));
+  print(\"C:/x (a drive letter)           ->\", save(\"k\", 1, \"C:/x\"));
+  print(\"slot.okaysave:hidden (a stream) ->\", save(\"k\", 1, \"slot.okaysave:hidden\"));
+  print(\"../escape.okaysave (parent dir) ->\", save(\"k\", 1, \"../escape.okaysave\"));
+  print(\"/etc/evil.okaysave (absolute)   ->\", save(\"k\", 1, \"/etc/evil.okaysave\"));
+  print(\"slot_ok.okaysave (a normal name)->\", save(\"k\", 1, \"slot_ok.okaysave\"));
+}
+" "" 0
+end

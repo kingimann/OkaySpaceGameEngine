@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -630,6 +631,7 @@ struct SpawnPrefabNode : VsNode {
         spawned = 0;
         if (ctx.gameObject && ctx.gameObject->scene()) {
             const std::string file = VsBareAsset(path);
+            if (!ScriptAssetPathOk(file, "visual script Spawn Prefab")) return 0;
             GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), file);
             if (!g) {
                 gr.Error(this, ctx, "couldn't spawn '" + file + "': the prefab file is missing or invalid");

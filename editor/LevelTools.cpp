@@ -3,6 +3,7 @@
 #include "LevelTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "InspectorPanel.hpp"   // AssetPathPicker, HighlightAssetDrop
+#include "InspectorFieldsModel.hpp"   // the OkayUI rows of the terrain sections (stage 4)
 #include "okay/Components/Cable.hpp"
 #include "okay/Components/Decal.hpp"
 #include "okay/Components/Foliage.hpp"
@@ -515,17 +516,73 @@ void DrawLevelInspector(EditorState& ed, GameObject*, Component* comp, Component
 
 // ---- Terrain Inspector parts --------------------------------------------------------------------------------------
 
+namespace {
+// What the two sections' buttons do (shared by Dear ImGui's sections and the OkayUI rows).
+void AddFirstTerrainLayers(EditorState& ed, Terrain& t) {
+    TerrainLayer a; a.name = "Grass"; a.texture = t.texture; a.tint = t.texture.empty() ? t.grassColor : Color(1, 1, 1, 1); a.tiling = t.textureTiling;
+    TerrainLayer b; b.name = "Dirt"; b.tint = Color::FromBytes(130, 98, 66);
+    t.AddLayer(a); t.AddLayer(b);
+    s_layer = 1;
+    t.Apply(); ed.dirty = true;
+}
+void AddTerrainLayer(EditorState& ed, Terrain& t) {
+    TerrainLayer n; n.name = "Layer " + std::to_string(t.layers.size() + 1); n.tint = Color::FromBytes(150, 150, 150);
+    t.AddLayer(n); s_layer = (int)t.layers.size() - 1; t.Apply(); ed.dirty = true;
+}
+void SetLayerPaint(EditorState& ed) { if (s_layerPaint) { s_foliage = false; s_measure = false; TerrainSculptRef() = false; ed.view3D = true; } }
+Foliage* ScatterLayerFor(EditorState& ed, Terrain& t, bool create) {   // the Foliage layer of this prop under the terrain, made when missing
+    const std::string nm = std::string("Scatter ") + kProps[s_scatterProp];
+    for (Transform* ch : t.transform->Children())
+        if (ch && ch->gameObject && ch->gameObject->name == nm) if (auto* f = ch->gameObject->GetComponent<Foliage>()) return f;
+    if (!create) return nullptr;
+    GameObject* g = ed.scene().CreateGameObject(nm);
+    g->transform->SetParent(t.transform, false);
+    auto* f = g->AddComponent<Foliage>();
+    f->mesh = kProps[s_scatterProp];
+    return f;
+}
+void ScatterProps(EditorState& ed, Terrain& t) {
+    ed.PushUndo("Scatter Props");
+    Foliage* f = ScatterLayerFor(ed, t, true);
+    f->minScale = s_scatterMinScale; f->maxScale = s_scatterMaxScale; f->maxSlope = s_scatterSlope;
+    f->minHeight = s_scatterMinH; f->maxHeight = s_scatterMaxH;
+    const int n = f->ScatterOnTerrain(t, s_scatterCount, (unsigned)(ImGui::GetTime() * 1000.0) + 7u);
+    f->EnsureBuilt();
+    ConsoleLog("Scattered " + std::to_string(n) + " " + kProps[s_scatterProp] + "(s) into the layer '" + f->gameObject->name + "' (paint more with its brush)");
+    ed.dirty = true;
+}
+void ClearScattered(EditorState& ed) {
+    std::vector<GameObject*> kill;
+    for (const auto& o : ed.scene().Objects()) {
+        if (o->transient) continue;
+        if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());                        // older scenes: one object per copy
+        else if (o->name.rfind("Scatter ", 0) == 0 && o->GetComponent<Foliage>()) kill.push_back(o.get());
+    }
+    if (!kill.empty()) ed.PushUndo("Clear Scattered");
+    for (GameObject* k : kill) { ed.Deselect(k); ed.scene().Destroy(k); }
+    ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered layer(s) / prop(s)");
+    ed.dirty = true;
+}
+void AddFoliageLayerUnder(EditorState& ed, Terrain& t) {
+    ed.PushUndo("Add Foliage Layer");
+    GameObject* g = ed.scene().CreateGameObject("Foliage");
+    g->transform->SetParent(t.transform, false);
+    g->AddComponent<Foliage>();
+    ed.Select(g);
+    s_foliage = true; s_layerPaint = false; TerrainSculptRef() = false;
+    ed.dirty = true;
+}
+const int kSplatRes[] = {256, 512, 1024, 2048};
+const char* const kSplatResNames[] = {"256", "512", "1024", "2048"};
+const char* const kLayersTitle = "Texture layers (paint in the 3D view)";
+const char* const kScatterTitle = "Scatter props (trees, rocks, bushes)";
+} // namespace
+
 void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
-    ImGui::SeparatorText("Texture layers (paint in the 3D view)");
+    ImGui::SeparatorText(kLayersTitle);
     if (t.layers.empty()) {
         ImGui::TextDisabled("One ground texture today. Add layers to blend several (grass, dirt, rock...) with a brush.");
-        if (ImGui::Button("Add Layers##tl")) {
-            TerrainLayer a; a.name = "Grass"; a.texture = t.texture; a.tint = t.texture.empty() ? t.grassColor : Color(1, 1, 1, 1); a.tiling = t.textureTiling;
-            TerrainLayer b; b.name = "Dirt"; b.tint = Color::FromBytes(130, 98, 66);
-            t.AddLayer(a); t.AddLayer(b);
-            s_layer = 1;
-            t.Apply(); ed.dirty = true;
-        }
+        if (ImGui::Button("Add Layers##tl")) AddFirstTerrainLayers(ed, t);
         Tip("Starts two layers: the first covers the whole terrain, the second is ready to paint.");
         return;
     }
@@ -554,10 +611,7 @@ void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
     }
     if (removeAt >= 0) { t.RemoveLayer(removeAt); t.Apply(); ed.dirty = true; if (s_layer >= (int)t.layers.size()) s_layer = (int)t.layers.size() - 1; }
     if ((int)t.layers.size() < Terrain::kMaxLayers) {
-        if (ImGui::Button("Add Layer##tl")) {
-            TerrainLayer n; n.name = "Layer " + std::to_string(t.layers.size() + 1); n.tint = Color::FromBytes(150, 150, 150);
-            t.AddLayer(n); s_layer = (int)t.layers.size() - 1; t.Apply(); ed.dirty = true;
-        }
+        if (ImGui::Button("Add Layer##tl")) AddTerrainLayer(ed, t);
         ImGui::SameLine();
     }
     if (ImGui::Button("Fill With Selected##tl")) { t.FillLayer(s_layer); t.Apply(); ed.dirty = true; }
@@ -572,9 +626,7 @@ void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
     ImGui::SetNextItemWidth(100);
     if (ImGui::Combo("Detail (px)##tl", &ri, rn, 4)) { t.splatResolution = resv[ri]; t.MarkSplatDirty(); t.Apply(); ed.dirty = true; }
     Tip("Size of the ground picture the layers are blended into. Bigger is sharper and uses more memory.");
-    if (ImGui::Checkbox("Paint layers in the 3D view##tl", &s_layerPaint)) {
-        if (s_layerPaint) { s_foliage = false; s_measure = false; TerrainSculptRef() = false; ed.view3D = true; }
-    }
+    if (ImGui::Checkbox("Paint layers in the 3D view##tl", &s_layerPaint)) SetLayerPaint(ed);
     Tip("Drag on the terrain in the Scene view to paint the selected layer. Shift erases. Esc leaves the brush.");
     ImGui::SliderFloat("Radius##tl", &s_layerRadius, 0.5f, 60.0f, "%.1f");
     ImGui::SliderFloat("Strength##tl", &s_layerStrength, 0.05f, 4.0f, "%.2f");
@@ -583,60 +635,96 @@ void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
 }
 
 void DrawTerrainScatterUI(EditorState& ed, Terrain& t) {
-    ImGui::SeparatorText("Scatter props (trees, rocks, bushes)");
+    ImGui::SeparatorText(kScatterTitle);
     ImGui::SetNextItemWidth(170);
     ImGui::Combo("Prop##scat", &s_scatterProp, kProps, kPropCount);
     ImGui::SliderInt("Count##scat", &s_scatterCount, 1, 5000);
     ImGui::DragFloatRange2("Scale##scat", &s_scatterMinScale, &s_scatterMaxScale, 0.02f, 0.1f, 6.0f, "%.2f", "%.2f");
     ImGui::SliderFloat("Max Slope##scat", &s_scatterSlope, 0.0f, 89.0f, "%.0f deg");
     ImGui::DragFloatRange2("Height Band##scat", &s_scatterMinH, &s_scatterMaxH, 0.2f, -100.0f, 100.0f, "%.1f", "%.1f");
-    // The Foliage layer of this prop under the terrain, made when missing.
-    auto layerFor = [&](bool create) -> Foliage* {
-        const std::string nm = std::string("Scatter ") + kProps[s_scatterProp];
-        for (Transform* ch : t.transform->Children())
-            if (ch && ch->gameObject && ch->gameObject->name == nm) if (auto* f = ch->gameObject->GetComponent<Foliage>()) return f;
-        if (!create) return nullptr;
-        GameObject* g = ed.scene().CreateGameObject(nm);
-        g->transform->SetParent(t.transform, false);
-        auto* f = g->AddComponent<Foliage>();
-        f->mesh = kProps[s_scatterProp];
-        return f;
-    };
-    if (ImGui::Button("Scatter##scat")) {
-        ed.PushUndo("Scatter Props");
-        Foliage* f = layerFor(true);
-        f->minScale = s_scatterMinScale; f->maxScale = s_scatterMaxScale; f->maxSlope = s_scatterSlope;
-        f->minHeight = s_scatterMinH; f->maxHeight = s_scatterMaxH;
-        const int n = f->ScatterOnTerrain(t, s_scatterCount, (unsigned)(ImGui::GetTime() * 1000.0) + 7u);
-        f->EnsureBuilt();
-        ConsoleLog("Scattered " + std::to_string(n) + " " + kProps[s_scatterProp] + "(s) into the layer '" + f->gameObject->name + "' (paint more with its brush)");
-        ed.dirty = true;
-    }
+    if (ImGui::Button("Scatter##scat")) ScatterProps(ed, t);
     Tip("Plants random copies over the whole terrain into a Foliage layer (one object per prop, not one per copy).\nSelect that layer to paint, erase and rescale with the brush.");
     ImGui::SameLine();
-    if (ImGui::Button("Clear Scattered##scat")) {
-        std::vector<GameObject*> kill;
-        for (const auto& o : ed.scene().Objects()) {
-            if (o->transient) continue;
-            if (o->name.rfind("Scatter_", 0) == 0) kill.push_back(o.get());                        // older scenes: one object per copy
-            else if (o->name.rfind("Scatter ", 0) == 0 && o->GetComponent<Foliage>()) kill.push_back(o.get());
-        }
-        if (!kill.empty()) ed.PushUndo("Clear Scattered");
-        for (GameObject* k : kill) { ed.Deselect(k); ed.scene().Destroy(k); }
-        ConsoleLog("Cleared " + std::to_string(kill.size()) + " scattered layer(s) / prop(s)");
-        ed.dirty = true;
-    }
+    if (ImGui::Button("Clear Scattered##scat")) ClearScattered(ed);
     Tip("Remove the scattered Foliage layers (and props scattered by older versions).");
-    if (ImGui::Button("Add Foliage Layer##scat")) {
-        ed.PushUndo("Add Foliage Layer");
-        GameObject* g = ed.scene().CreateGameObject("Foliage");
-        g->transform->SetParent(t.transform, false);
-        g->AddComponent<Foliage>();
-        ed.Select(g);
-        s_foliage = true; s_layerPaint = false; TerrainSculptRef() = false;
-        ed.dirty = true;
-    }
+    if (ImGui::Button("Add Foliage Layer##scat")) AddFoliageLayerUnder(ed, t);
     Tip("A new Foliage layer under this terrain, selected with the brush on.");
+}
+
+// ---- The same sections as OkayUI field rows (stage 4) -------------------------------------------------------------------------------
+void AddTerrainToolRows(EditorState& ed, Terrain& t, okaypanels::InspFieldList& L, TerrainToolRows& st) {
+    (void)ed;
+    L.Group(kLayersTitle);
+    if (t.layers.empty()) {
+        L.Note("One ground texture today. Add layers to blend several (grass, dirt, rock...) with a brush.");
+        st.addLayers = L.Button("Add Layers##tl"); L.Tip("Starts two layers: the first covers the whole terrain, the second is ready to paint.");
+    } else {
+        s_layer = std::min(std::max(s_layer, 0), (int)t.layers.size() - 1);
+        st.layerCount = std::min((int)t.layers.size(), Terrain::kMaxLayers);
+        for (int i = 0; i < st.layerCount; ++i) {
+            TerrainLayer& ly = t.layers[(std::size_t)i];
+            int* row = st.layerRow[i];
+            row[0] = L.Radio("##paintlayer", &s_layer, i); L.Tip("Paint with this layer.");
+            L.SameLine(); row[1] = L.Text("##lname", &ly.name); L.Last().width = 110.0f;
+            st.tint[i][0] = ly.tint.r; st.tint[i][1] = ly.tint.g; st.tint[i][2] = ly.tint.b; st.tint[i][3] = 1.0f;
+            L.SameLine(); row[2] = L.Color("##ltint", st.tint[i], 3); L.Last().noInputs = true;
+            L.Tip("Tint. With a picture it multiplies it; without one this is the layer's colour.");
+            L.SameLine(); row[3] = L.Drag("##ltile", &ly.tiling, 1, 0.1f, 0.1f, 400.0f, "x%.1f"); L.Last().width = 70.0f;
+            L.Tip("How many times the picture repeats across the whole terrain.");
+            row[4] = -1;
+            if (t.layers.size() > 1) { L.SameLine(); row[4] = L.SmallButton("Remove"); }
+            row[5] = L.Text("Texture##ltex", &ly.texture); L.Last().pick = okaypanels::InspPickList; L.Last().pickKind = "image"; L.Last().dropKind = "image";
+        }
+        if ((int)t.layers.size() < Terrain::kMaxLayers) { st.addLayer = L.Button("Add Layer##tl"); L.SameLine(); }
+        st.fill = L.Button("Fill With Selected##tl"); L.Tip("Give the selected layer full weight everywhere.");
+        st.removeAll = L.Button("Remove All Layers##tl"); L.Tip("Back to the single Ground Texture and the auto-colours.");
+        st.detailIndex = 1;
+        for (int i = 0; i < 4; ++i) if (kSplatRes[i] == t.splatResolution) st.detailIndex = i;
+        st.detail = L.Combo("Detail (px)##tl", &st.detailIndex, kSplatResNames, 4); L.Last().width = 100.0f;
+        L.Tip("Size of the ground picture the layers are blended into. Bigger is sharper and uses more memory.");
+        st.paint = L.Check("Paint layers in the 3D view##tl", &s_layerPaint);
+        L.Tip("Drag on the terrain in the Scene view to paint the selected layer. Shift erases. Esc leaves the brush.");
+        L.Slider("Radius##tl", &s_layerRadius, 0.5f, 60.0f, "%.1f");
+        L.Slider("Strength##tl", &s_layerStrength, 0.05f, 4.0f, "%.2f");
+        L.Slider("Hardness##tl", &s_layerHardness, 0.0f, 1.0f, "%.2f");
+        L.Note("The layers replace the Ground Texture and the auto-colours above while any exist.");
+    }
+    L.Group(kScatterTitle);
+    L.Combo("Prop##scat", &s_scatterProp, kProps, kPropCount); L.Last().width = 170.0f;
+    L.SliderInt("Count##scat", &s_scatterCount, 1, 5000);
+    st.scale[0] = s_scatterMinScale; st.scale[1] = s_scatterMaxScale;
+    st.scaleRow = L.Range("Scale##scat", st.scale, 0.02f, 0.1f, 6.0f, "%.2f", "%.2f");
+    L.Slider("Max Slope##scat", &s_scatterSlope, 0.0f, 89.0f, "%.0f deg");
+    st.band[0] = s_scatterMinH; st.band[1] = s_scatterMaxH;
+    st.bandRow = L.Range("Height Band##scat", st.band, 0.2f, -100.0f, 100.0f, "%.1f", "%.1f");
+    st.scatter = L.Button("Scatter##scat");
+    L.Tip("Plants random copies over the whole terrain into a Foliage layer (one object per prop, not one per copy).\nSelect that layer to paint, erase and rescale with the brush.");
+    L.SameLine(); st.clear = L.Button("Clear Scattered##scat"); L.Tip("Remove the scattered Foliage layers (and props scattered by older versions).");
+    st.addFoliage = L.Button("Add Foliage Layer##scat"); L.Tip("A new Foliage layer under this terrain, selected with the brush on.");
+}
+
+void RunTerrainToolRows(EditorState& ed, Terrain& t, okaypanels::InspFieldList& L, TerrainToolRows& st) {
+    if (st.addLayers >= 0 && L[st.addLayers].clicked) AddFirstTerrainLayers(ed, t);
+    int removeAt = -1;
+    for (int i = 0; i < st.layerCount && i < (int)t.layers.size(); ++i) {
+        const int* row = st.layerRow[i];
+        TerrainLayer& ly = t.layers[(std::size_t)i];
+        if (L[row[1]].changed) ed.dirty = true;
+        if (L[row[2]].changed) { ly.tint = {st.tint[i][0], st.tint[i][1], st.tint[i][2], 1.0f}; t.MarkSplatDirty(); t.Apply(); ed.dirty = true; }
+        if (L[row[3]].changed || L[row[5]].changed) { t.MarkSplatDirty(); t.Apply(); ed.dirty = true; }
+        if (row[4] >= 0 && L[row[4]].clicked) removeAt = i;
+    }
+    if (removeAt >= 0) { t.RemoveLayer(removeAt); t.Apply(); ed.dirty = true; if (s_layer >= (int)t.layers.size()) s_layer = (int)t.layers.size() - 1; }
+    if (st.addLayer >= 0 && L[st.addLayer].clicked) AddTerrainLayer(ed, t);
+    if (st.fill >= 0 && L[st.fill].clicked) { t.FillLayer(s_layer); t.Apply(); ed.dirty = true; }
+    if (st.removeAll >= 0 && L[st.removeAll].clicked) { while (!t.layers.empty()) t.RemoveLayer(0); t.Apply(); ed.dirty = true; }
+    if (st.detail >= 0 && L[st.detail].changed) { t.splatResolution = kSplatRes[st.detailIndex]; t.MarkSplatDirty(); t.Apply(); ed.dirty = true; }
+    if (st.paint >= 0 && L[st.paint].changed) SetLayerPaint(ed);
+    if (L[st.scaleRow].changed) { s_scatterMinScale = st.scale[0]; s_scatterMaxScale = st.scale[1]; }
+    if (L[st.bandRow].changed) { s_scatterMinH = st.band[0]; s_scatterMaxH = st.band[1]; }
+    if (L[st.scatter].clicked) ScatterProps(ed, t);
+    if (L[st.clear].clicked) ClearScattered(ed);
+    if (L[st.addFoliage].clicked) AddFoliageLayerUnder(ed, t);
 }
 
 // ---- Add Component and GameObject menus ---------------------------------------------------------------------------------

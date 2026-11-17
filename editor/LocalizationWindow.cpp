@@ -990,16 +990,18 @@ bool LocKeyInput(EditorState& ed, const char* label, std::string& key) {
     return changed;
 }
 
+void LocalizedTextSwitch(EditorState& ed, LocalizedText& loc, std::string& literal, GameObject* go, bool on) {
+    ed.PushUndo();
+    if (on) loc.key = KeyForText(ed, literal, "ui." + Localization::KeyPart(go ? go->name : std::string("text")));
+    else loc.key.clear();
+    if (go) LocalizeObject(*go);
+    ed.dirty = true;
+}
+
 bool LocalizedTextField(EditorState& ed, const char* id, LocalizedText& loc, std::string& literal, GameObject* go) {
     ImGui::PushID(id);
     bool on = !loc.key.empty();
-    if (ImGui::Checkbox("Localized", &on)) {
-        ed.PushUndo();
-        if (on) loc.key = KeyForText(ed, literal, "ui." + Localization::KeyPart(go ? go->name : std::string("text")));
-        else loc.key.clear();
-        if (go) LocalizeObject(*go);
-        ed.dirty = true;
-    }
+    if (ImGui::Checkbox("Localized", &on)) LocalizedTextSwitch(ed, loc, literal, go, on);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Show a string-table key's text in the player's language instead of this literal text.\n"
                           "Turning it on uses the key whose text this is, or adds one (View > Editors & Tools > Localization).");

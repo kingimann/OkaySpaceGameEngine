@@ -38,6 +38,9 @@ bool LocalizationUndo(bool redo);
 // is localized (the caller then hides its literal text box).
 bool LocalizedTextField(okay::editor::EditorState& ed, const char* id, okay::LocalizedText& loc,
                         std::string& literal, okay::GameObject* go);
+// What LocalizedTextField's checkbox does when it is ticked (on) or cleared: an undo step, the key (reused or added) or none, the
+// object's text refreshed. For the Inspector's OkayUI rows, which draw the checkbox themselves.
+void LocalizedTextSwitch(okay::editor::EditorState& ed, okay::LocalizedText& loc, std::string& literal, okay::GameObject* go, bool on);
 // A string-table key field: the key, a picker listing the table's keys with their
 // text, and the default language's text under it.
 bool LocKeyInput(okay::editor::EditorState& ed, const char* label, std::string& key);

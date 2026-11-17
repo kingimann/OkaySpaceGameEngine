@@ -6396,13 +6396,13 @@ void HideOtherMenus(EditorState& ed, GameObject* fresh) {
 
 // One-click looks + copy / paste style, at the top of each UI component's inspector.
 std::string g_uiStyleClip;   // a serialized widget whose look Paste style applies
-void UIStyleBar(EditorState& ed, Component* c) {
+// The style presets of a widget (the names its style bar shows and what a click applies); null for a widget without a bar.
+static const std::vector<const char*>* UIStylePresets(Component* c, std::function<void(int)>& apply) {
     using namespace okay::UIStyles;
     const std::vector<const char*>* names = nullptr;
-    std::function<void(int)> apply;
     if (auto* b = dynamic_cast<UIButton*>(c))               { names = &ButtonPresets();   apply = [b](int i) { ApplyButton(b, i); }; }
     else if (auto* p = dynamic_cast<UIPanel*>(c))           { names = &PanelPresets();    apply = [p](int i) { ApplyPanel(p, i); }; }
-    else if (auto* t = dynamic_cast<TextRenderer*>(c))      { if (!t->screenSpace) return; names = &TextPresets(); apply = [t](int i) { ApplyText(t, i); }; }
+    else if (auto* t = dynamic_cast<TextRenderer*>(c))      { if (!t->screenSpace) return nullptr; names = &TextPresets(); apply = [t](int i) { ApplyText(t, i); }; }
     else if (auto* pb = dynamic_cast<UIProgressBar*>(c))    { names = &ProgressPresets(); apply = [pb](int i) { ApplyProgress(pb, i); }; }
     else if (auto* sl = dynamic_cast<UISlider*>(c))         { names = &SliderPresets();   apply = [sl](int i) { ApplySlider(sl, i); }; }
     else if (auto* tg = dynamic_cast<UIToggle*>(c))         { names = &TogglePresets();   apply = [tg](int i) { ApplyToggle(tg, i); }; }
@@ -6410,7 +6410,29 @@ void UIStyleBar(EditorState& ed, Component* c) {
     else if (auto* dd = dynamic_cast<UIDropdown*>(c))       { names = &DropdownPresets(); apply = [dd](int i) { ApplyDropdown(dd, i); }; }
     else if (auto* tb = dynamic_cast<UITabs*>(c))           { names = &TabsPresets();     apply = [tb](int i) { ApplyTabs(tb, i); }; }
     else if (auto* rp = dynamic_cast<UIRadialProgress*>(c)) { names = &RadialPresets();   apply = [rp](int i) { ApplyRadial(rp, i); }; }
-    if (!names || !c->gameObject) return;
+    return c->gameObject ? names : nullptr;
+}
+static void UIStyleCopy(Component* c) {
+    g_uiStyleClip = SceneSerializer::SerializeObject(*c->gameObject);
+    ConsoleLog("Copied the look of " + c->gameObject->name);
+}
+static void UIStylePaste(EditorState& ed, Component* c) {
+    okay::Scene tmp("styleclip");
+    if (GameObject* src = SceneSerializer::InstantiateFromText(tmp, g_uiStyleClip)) {
+        ed.PushUndo();
+        int n = 0;
+        std::vector<GameObject*> targets = ed.MultiSelection();
+        if (std::find(targets.begin(), targets.end(), c->gameObject) == targets.end()) targets.push_back(c->gameObject);
+        for (GameObject* g : targets) n += okay::UIStyles::CopyStyle(src, g);
+        ed.dirty = true;
+        ConsoleLog(n ? "Pasted the look onto " + std::to_string(targets.size()) + " widget(s)" : std::string("Nothing to paste: the copied widget is a different kind"));
+    }
+}
+
+void UIStyleBar(EditorState& ed, Component* c) {
+    std::function<void(int)> apply;
+    const std::vector<const char*>* names = UIStylePresets(c, apply);
+    if (!names) return;
     ImGui::PushID("##stylebar");
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Look");
@@ -6424,25 +6446,11 @@ void UIStyleBar(EditorState& ed, Component* c) {
         if (ImGui::SmallButton(n)) { ed.PushUndo(); apply(i); ed.dirty = true; }
         ImGui::PopID();
     }
-    if (ImGui::SmallButton("Copy style")) {
-        g_uiStyleClip = SceneSerializer::SerializeObject(*c->gameObject);
-        ConsoleLog("Copied the look of " + c->gameObject->name);
-    }
+    if (ImGui::SmallButton("Copy style")) UIStyleCopy(c);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy this widget's look (colours, corners, borders, shadows, font)");
     ImGui::SameLine();
     ImGui::BeginDisabled(g_uiStyleClip.empty());
-    if (ImGui::SmallButton("Paste style")) {
-        okay::Scene tmp("styleclip");
-        if (GameObject* src = SceneSerializer::InstantiateFromText(tmp, g_uiStyleClip)) {
-            ed.PushUndo();
-            int n = 0;
-            std::vector<GameObject*> targets = ed.MultiSelection();
-            if (std::find(targets.begin(), targets.end(), c->gameObject) == targets.end()) targets.push_back(c->gameObject);
-            for (GameObject* g : targets) n += okay::UIStyles::CopyStyle(src, g);
-            ed.dirty = true;
-            ConsoleLog(n ? "Pasted the look onto " + std::to_string(targets.size()) + " widget(s)" : std::string("Nothing to paste: the copied widget is a different kind"));
-        }
-    }
+    if (ImGui::SmallButton("Paste style")) UIStylePaste(ed, c);
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("Give this widget (and the rest of the selection) the copied look. Position, size and text stay.");
@@ -31267,11 +31275,77 @@ static bool DrawAudioSourceWithOkayUI(EditorState& ed, AudioSource* a, okay::Com
 
 // The Particle System without its gradient and curve editors: with a colour gradient, a size curve or a speed curve on, the Dear ImGui
 // body is drawn (those editors are not field rows yet).
+// The Particle System's ParticleGradientEditor and ParticleCurveEditor as rows (stage 4): the bar or the plot, then the selected stop's
+// colour and time (the selected key's time and value, Smooth) and the count, as the Dear ImGui editors draw them. The rows edit a copy;
+// the selection is kept per gradient / curve, as Dear ImGui keeps it in its state storage.
+static int& OverLifeSelection(const void* key) { static std::map<const void*, int> sel; return sel[key]; }
+struct GradientRows { float data[okay::ParticleGradient::kMaxStops * 5]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kColor = -1, kTime = -1; float col[4] = {}; float time = 0.0f; char note[32]; };
+static void AddGradientRows(okaypanels::InspFieldList& L, const okay::ParticleGradient& g, const char* id, GradientRows& gr) {
+    gr.count = std::min(g.count, okay::ParticleGradient::kMaxStops);
+    for (int i = 0; i < gr.count; ++i) {
+        const auto& st = g.stops[i];
+        float* d = gr.data + i * 5; d[0] = st.time; d[1] = st.color.r; d[2] = st.color.g; d[3] = st.color.b; d[4] = st.color.a;
+    }
+    gr.sel = std::min(OverLifeSelection(&g), gr.count - 1);
+    gr.k = L.Gradient(id, gr.data, &gr.count, okay::ParticleGradient::kMaxStops, &gr.sel);
+    if (gr.sel >= 0 && gr.sel < gr.count) {
+        gr.selAtBuild = gr.sel;
+        const float* d = gr.data + gr.sel * 5;
+        gr.col[0] = d[1]; gr.col[1] = d[2]; gr.col[2] = d[3]; gr.col[3] = d[4]; gr.time = d[0];
+        gr.kColor = L.Color("Stop Color", gr.col, 4);
+        gr.kTime = L.Slider("Stop Time", &gr.time, 0.0f, 1.0f);
+    }
+    std::snprintf(gr.note, sizeof gr.note, "%d / %d stops", g.count, okay::ParticleGradient::kMaxStops);
+    L.Note(gr.note, true);
+}
+static void RunGradientRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleGradient& g, GradientRows& gr) {
+    OverLifeSelection(&g) = gr.sel;
+    if (L[gr.k].activated) ed.PushUndo();
+    if (L[gr.k].changed) {
+        g.count = gr.count;
+        for (int i = 0; i < gr.count; ++i) { const float* d = gr.data + i * 5; g.stops[i].time = d[0]; g.stops[i].color = {d[1], d[2], d[3], d[4]}; }
+        ed.dirty = true;
+        return;
+    }
+    if (gr.selAtBuild < 0) return;
+    if ((gr.kColor >= 0 && L[gr.kColor].activated) || (gr.kTime >= 0 && L[gr.kTime].activated)) ed.PushUndo();
+    if (gr.kColor >= 0 && L[gr.kColor].changed) { g.stops[gr.selAtBuild].color = {gr.col[0], gr.col[1], gr.col[2], gr.col[3]}; ed.dirty = true; }
+    if (gr.kTime >= 0 && L[gr.kTime].changed) { g.stops[gr.selAtBuild].time = gr.time; ed.dirty = true; }
+}
+struct CurveRows { float data[okay::ParticleCurve::kMaxKeys * 2]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kKey = -1, kSmooth = -1; bool smooth = false; float kv[2] = {}; char note[32]; };
+static void AddCurveRows(okaypanels::InspFieldList& L, const okay::ParticleCurve& c, const char* id, CurveRows& cr) {
+    cr.count = std::min(c.count, okay::ParticleCurve::kMaxKeys);
+    for (int i = 0; i < cr.count; ++i) { cr.data[i * 2] = c.keys[i].time; cr.data[i * 2 + 1] = c.keys[i].value; }
+    cr.smooth = c.smooth;
+    cr.sel = std::min(OverLifeSelection(&c), cr.count - 1);
+    cr.k = L.Curve(id, cr.data, &cr.count, okay::ParticleCurve::kMaxKeys, &cr.smooth, &cr.sel);
+    if (cr.sel >= 0 && cr.sel < cr.count) {
+        cr.selAtBuild = cr.sel;
+        cr.kv[0] = cr.data[cr.sel * 2]; cr.kv[1] = cr.data[cr.sel * 2 + 1];
+        cr.kKey = L.Drag("Key (time, x)", cr.kv, 2, 0.01f, 0.0f, 100.0f);
+    }
+    cr.kSmooth = L.Check("Smooth", &cr.smooth);
+    std::snprintf(cr.note, sizeof cr.note, "%d / %d keys", c.count, okay::ParticleCurve::kMaxKeys);
+    L.SameLine(); L.Note(cr.note, true);
+}
+static void RunCurveRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleCurve& c, CurveRows& cr) {
+    OverLifeSelection(&c) = cr.sel;
+    if (L[cr.k].activated) ed.PushUndo();
+    if (L[cr.k].changed) {
+        c.count = cr.count;
+        for (int i = 0; i < cr.count; ++i) { c.keys[i].time = cr.data[i * 2]; c.keys[i].value = cr.data[i * 2 + 1]; }
+        ed.dirty = true;
+        return;
+    }
+    if (cr.kKey >= 0 && L[cr.kKey].activated) ed.PushUndo();
+    if (cr.kKey >= 0 && L[cr.kKey].changed && cr.selAtBuild >= 0) {
+        c.keys[cr.selAtBuild].time = Mathf::Clamp01(cr.kv[0]); c.keys[cr.selAtBuild].value = std::max(0.0f, cr.kv[1]); ed.dirty = true;
+    }
+    if (L[cr.kSmooth].changed) { c.smooth = cr.smooth; ed.dirty = true; }
+}
+
 static bool DrawParticleSystemWithOkayUI(EditorState& ed, ParticleSystem* ps, okay::Component*& toRemove) {
     using namespace okaypanels;
-    if ((ps->colorOverLife && ps->colorGradient.Active()) || (ps->sizeOverLife && ps->sizeCurve.Active()) ||
-        (ps->speedOverLife && ps->speedCurve.Active()))
-        return false;
     static const char* const kShapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
     static const char* const kRModes[] = {"Billboard", "Stretch"};
     static const char* const kCModes[] = {"Start -> End", "Gradient"};
@@ -31329,20 +31403,25 @@ static bool DrawParticleSystemWithOkayUI(EditorState& ed, ParticleSystem* ps, ok
     L.Section("Over Lifetime");
     L.Check("Fade Out##ps", &ps->fadeOverLife); L.TipLookup();
     L.Check("Color Over Life##ps", &ps->colorOverLife); L.TipLookup();
-    int cm = 0, kCm = -1, kEc = -1;
+    int cm = ps->colorGradient.Active() ? 1 : 0, kCm = -1, kEc = -1;
     float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
+    GradientRows grad;
+    CurveRows sizeCurve, speedCurve;
     if (ps->colorOverLife) {
         kCm = L.Combo("Color Mode##ps", &cm, kCModes, 2);
-        kEc = L.Color("End Color##ps", ec, 4); L.TipLookup();
+        if (ps->colorGradient.Active()) AddGradientRows(L, ps->colorGradient, "psgrad", grad);
+        else { kEc = L.Color("End Color##ps", ec, 4); L.TipLookup(); }
     }
     L.Check("Size Over Life##ps", &ps->sizeOverLife); L.TipLookup();
-    int sm = 0, kSm = -1;
+    int sm = ps->sizeCurve.Active() ? 1 : 0, kSm = -1;
     if (ps->sizeOverLife) {
         kSm = L.Combo("Size Mode##ps", &sm, kSModes, 2);
-        L.Drag("End Size##ps", &ps->endSize, 1, 0.01f, 0.0f, 1000.0f);
+        if (ps->sizeCurve.Active()) { L.Note("Size x start size over life"); AddCurveRows(L, ps->sizeCurve, "pssize", sizeCurve); }
+        else L.Drag("End Size##ps", &ps->endSize, 1, 0.01f, 0.0f, 1000.0f);
     }
     const int kSpeedLife = L.Check("Speed Over Life##ps", &ps->speedOverLife);
     L.Tip("Scale how fast particles move as they age (1 = unchanged).");
+    if (ps->speedOverLife && ps->speedCurve.Active()) { L.Note("Speed x over life"); AddCurveRows(L, ps->speedCurve, "psspeed", speedCurve); }
     L.Section("Forces");
     float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
     const int kGv = L.Drag("Gravity##ps", gv, 3, 0.05f); L.TipLookup();
@@ -31392,9 +31471,20 @@ static bool DrawParticleSystemWithOkayUI(EditorState& ed, ParticleSystem* ps, ok
     if (L[kSv].changed) ps->startVelocity = {sv[0], sv[1], sv[2]};
     if (L[kRm].changed) ps->renderMode = (ParticleSystem::RenderMode)rmi;
     if (kClearTex >= 0 && L[kClearTex].clicked) { ps->texture.clear(); ed.dirty = true; }
-    if (kCm >= 0 && L[kCm].changed && cm == 1) { ed.PushUndo(); ps->colorGradient.SetTwo(ps->startColor, ps->endColor); ed.dirty = true; }   // seed from the old fields
+    if (grad.k >= 0) RunGradientRows(ed, L, ps->colorGradient, grad);
+    if (sizeCurve.k >= 0) RunCurveRows(ed, L, ps->sizeCurve, sizeCurve);
+    if (speedCurve.k >= 0) RunCurveRows(ed, L, ps->speedCurve, speedCurve);
+    if (kCm >= 0 && L[kCm].changed) {   // seed the gradient from the old fields, or back to Start -> End
+        ed.PushUndo();
+        if (cm == 1) ps->colorGradient.SetTwo(ps->startColor, ps->endColor); else ps->colorGradient.Clear();
+        ed.dirty = true;
+    }
     if (kEc >= 0 && L[kEc].changed) ps->endColor = {ec[0], ec[1], ec[2], ec[3]};
-    if (kSm >= 0 && L[kSm].changed && sm == 1) { ed.PushUndo(); ps->sizeCurve.SetLinear(1.0f, ps->startSize > 1e-4f ? ps->endSize / ps->startSize : 0.0f); ed.dirty = true; }
+    if (kSm >= 0 && L[kSm].changed) {
+        ed.PushUndo();
+        if (sm == 1) ps->sizeCurve.SetLinear(1.0f, ps->startSize > 1e-4f ? ps->endSize / ps->startSize : 0.0f); else ps->sizeCurve.Clear();
+        ed.dirty = true;
+    }
     if (L[kSpeedLife].changed && ps->speedOverLife && !ps->speedCurve.Active()) ps->speedCurve.SetLinear(1.0f, 0.25f);
     if (L[kGv].changed) ps->gravity = {gv[0], gv[1], gv[2]};
     if (L[kSpace].changed) ps->simulationSpace = (ParticleSystem::SimulationSpace)spi;
@@ -31643,6 +31733,753 @@ static bool DrawAnimatorWithOkayUI(EditorState& ed, GameObject* go, Animator* an
     return true;
 }
 
+// ---- The Inspector's OkayUI parts, stage 4 (docs/own_ui_toolkit.md section 17) --------------------------------------------------------
+// Text and the UI components (Canvas, Image, Button, Slider, Toggle, Input Field, Layout Group), the Terrain, the Particle System's
+// gradient and curves, and (in NavigationWindow.cpp) the Nav Mesh Agent, written as the stage 2 and 3 builders are. The editor's helpers
+// those bodies use become rows: the style bar (UIStyleBar), the Localized switch (LocalizedTextField, while it is off: a localized field
+// keeps Dear ImGui's body, whose key picker is not a row), AnchorCombo (InspRowAnchor), AssetSlot (InspRowSlot), ShapeCombo (a combo),
+// UIRectFields and CornerMaskEditor (drag rows and check boxes).
+
+// UIStyleBar as rows: "Look" and the presets (each on the line when it fits, else on the next), Copy style, Paste style.
+struct StyleBarRows { int first = -1, count = 0, copy = -1, paste = -1; std::function<void(int)> apply; };
+static void AddStyleBarRows(okaypanels::InspFieldList& L, Component* c, StyleBarRows& sb) {
+    const std::vector<const char*>* names = UIStylePresets(c, sb.apply);
+    if (!names) return;
+    L.Note("Look"); L.Last().alignFrame = true;
+    sb.first = (int)L.rows.size(); sb.count = (int)names->size();
+    for (const char* n : *names) { L.SameLineOrWrap(); L.SmallButton(n); }
+    sb.copy = L.SmallButton("Copy style"); L.Tip("Copy this widget's look (colours, corners, borders, shadows, font)");
+    L.SameLine();
+    sb.paste = L.SmallButton("Paste style"); L.Last().disabled = g_uiStyleClip.empty();
+    L.Tip("Give this widget (and the rest of the selection) the copied look. Position, size and text stay.");
+    L.Spacing();
+}
+static void RunStyleBarRows(EditorState& ed, Component* c, okaypanels::InspFieldList& L, const StyleBarRows& sb) {
+    if (sb.first < 0) return;
+    for (int i = 0; i < sb.count; ++i) if (L[sb.first + i].clicked) { ed.PushUndo(); sb.apply(i); ed.dirty = true; }
+    if (L[sb.copy].clicked) UIStyleCopy(c);
+    if (L[sb.paste].clicked) UIStylePaste(ed, c);
+}
+static const char* const kLocalizedTip = "Show a string-table key's text in the player's language instead of this literal text.\n"
+                                         "Turning it on uses the key whose text this is, or adds one (View > Editors & Tools > Localization).";
+// AnchorCombo's pick: keep the widget where it is on screen (Shift: move it onto the anchor), as the Dear ImGui popup does.
+static void ApplyAnchorPick(EditorState& ed, okay::UIAnchor& anchor, int a, bool shift) {
+    GameObject* owner = nullptr;
+    if (GameObject* sel = ed.selected()) { okay::UIRect r = okay::GetUIRect(sel); if (r.valid && r.anchorPtr == &anchor) owner = sel; }
+    ed.PushUndo();
+    if (!owner || !ReanchorKeepRect(owner, (okay::UIAnchor)a, shift)) anchor = (okay::UIAnchor)a;
+    ed.dirty = true;
+}
+struct AnchorRow { int k = -1; int value = 0; };
+static void AddAnchorRow(okaypanels::InspFieldList& L, const char* label, okay::UIAnchor anchor, AnchorRow& ar) {
+    ar.value = (int)anchor; if (ar.value < 0 || ar.value > 11) ar.value = 0;
+    ar.k = L.Anchor(label, &ar.value);
+}
+static void RunAnchorRow(EditorState& ed, okaypanels::InspFieldList& L, okay::UIAnchor& anchor, const AnchorRow& ar) {
+    if (ar.k >= 0 && L[ar.k].changed) ApplyAnchorPick(ed, anchor, ar.value, L[ar.k].axes != 0);
+}
+// ShapeCombo as a row: every UIShape by name; picking a rounded shape with no radius seeds one (`radius` when given).
+struct ShapeRow { int k = -1; int value = 0; };
+static void AddShapeRow(okaypanels::InspFieldList& L, const char* label, UIShape shape, ShapeRow& sr) {
+    static std::vector<const char*> names;
+    if ((int)names.size() != kUIShapeCount) { names.clear(); for (int i = 0; i < kUIShapeCount; ++i) names.push_back(UIShapeName(i)); }
+    sr.value = (int)shape;
+    sr.k = L.Combo(label, &sr.value, names.data(), (int)names.size());
+}
+static void RunShapeRow(okaypanels::InspFieldList& L, UIShape& shape, const ShapeRow& sr, float* radius = nullptr, float defRadius = 12.0f) {
+    if (sr.k < 0 || !L[sr.k].changed) return;
+    shape = (UIShape)sr.value;
+    if (radius && *radius <= 0.0f && UIShapeUsesRadius(shape)) *radius = defRadius;
+}
+// UIRectFields as rows (the four margins of a stretched widget, else Pos and Size); the labels live in `lbl`.
+struct RectRowLabels { char px[80], py[80], sx[80], sy[80]; };
+static void AddUIRectRows(okaypanels::InspFieldList& L, const char* sfx, okay::UIAnchor anchor, okay::Vec2& position, okay::Vec2& size, RectRowLabels& lbl) {
+    if (okay::AnchorIsStretch(anchor)) {
+        const char *px, *py, *sx, *sy; AnchorFieldLabels(anchor, px, py, sx, sy);
+        std::snprintf(lbl.px, sizeof lbl.px, "%s##%s_px", px, sfx); L.Drag(lbl.px, &position.x, 1, 1.0f);
+        std::snprintf(lbl.py, sizeof lbl.py, "%s##%s_py", py, sfx); L.Drag(lbl.py, &position.y, 1, 1.0f);
+        std::snprintf(lbl.sx, sizeof lbl.sx, "%s##%s_sx", sx, sfx); L.Drag(lbl.sx, &size.x, 1, 1.0f);
+        std::snprintf(lbl.sy, sizeof lbl.sy, "%s##%s_sy", sy, sfx); L.Drag(lbl.sy, &size.y, 1, 1.0f);
+        L.Note("Margins from the canvas edges (px)");
+    } else {
+        std::snprintf(lbl.px, sizeof lbl.px, "Pos (px)##%s", sfx); L.Drag(lbl.px, &position.x, 2, 1.0f);
+        std::snprintf(lbl.sx, sizeof lbl.sx, "Size (px)##%s", sfx); L.Drag(lbl.sx, &size.x, 2, 1.0f, 0.0f, 8000.0f);
+    }
+}
+// The font slot: "Font" on a frame-tall line, then AssetSlot.
+static int AddFontSlotRows(okaypanels::InspFieldList& L, const char* id, std::string* path) {
+    L.Label("Font", 0, true);
+    L.SameLine();
+    return L.Slot(id, path, "Font", "font");
+}
+
+static bool DrawTextWithOkayUI(EditorState& ed, GameObject* go, TextRenderer* tr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!tr->loc.key.empty()) return false;   // localized: the key picker is Dear ImGui's
+    static const char* const kAligns[] = {"Left", "Center", "Right"};
+    static const char* const kVAligns[] = {"Top", "Middle", "Bottom"};
+    static const struct { const char* n; float r, g, b; } kTxtCols[] = {
+        {"White", 1, 1, 1}, {"Black", 0, 0, 0}, {"Gold", 1.0f, 0.84f, 0.30f},
+        {"Red", 0.95f, 0.30f, 0.28f}, {"Green", 0.35f, 0.85f, 0.42f}, {"Blue", 0.35f, 0.62f, 0.98f}};
+    InspFieldList L;
+    L.rows.reserve(72);
+    StyleBarRows sb;
+    if (tr->screenSpace) AddStyleBarRows(L, tr, sb);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##txtloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Text##txt", &tr->text); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
+    L.Color("Color##txt", &tr->color.r, 4); L.TipLookup();
+    int kSw[6];
+    for (int i = 0; i < 6; ++i) {
+        if (i) L.SameLine(4.0f);
+        kSw[i] = L.Swatch("##txtc", kTxtCols[i].r, kTxtCols[i].g, kTxtCols[i].b, 1.0f, 20.0f, 16.0f); L.Tip(kTxtCols[i].n);
+    }
+    L.Drag("Font Size##txt", &tr->pixelSize, 1, tr->screenSpace ? 0.1f : 0.005f, 0.001f, 100.0f);
+    L.Tip(tr->screenSpace ? "Window pixels per font pixel (screen UI: try 2-6)" : "World units per font pixel");
+    L.Check("Best Fit (auto-size to box)##txt", &tr->autoSize);
+    L.Tip("Auto-scale the text to fill its box \xE2\x80\x94 grows when there's room,\nshrinks to fit a long string. Overrides Font Size. (Not used with Wrap.)");
+    float mm[2] = {tr->autoSizeMin, tr->autoSizeMax};
+    int kFit = -1, kFitText = -1, kVa = -1;
+    if (tr->autoSize) kFit = L.Drag("Fit Min/Max##txt", mm, 2, 0.05f, 0.001f, 100.0f);
+    L.Check("Screen Space (UI)##txt", &tr->screenSpace); L.TipLookup();
+    AnchorRow anc;
+    int va = tr->alignBottom ? 2 : (tr->vcenter ? 1 : 0);
+    if (tr->screenSpace) {
+        L.Drag("Box Size##txt", &tr->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+        kFitText = L.SmallButton("Fit to Text##txt");
+        L.Drag("Offset##txt", &tr->screenPos.x, 2, 1.0f); L.TipLookup();
+        AddAnchorRow(L, "Anchor##txt", tr->anchor, anc);
+        L.Combo("Align##txt", &tr->align, kAligns, 3); L.TipLookup();
+        kVa = L.Combo("V-Align##txt", &va, kVAligns, 3);
+        L.Check("Background##txt", &tr->background); L.TipLookup();
+        if (tr->background) { L.Color("BG Color##txt", &tr->backgroundColor.r, 4); L.TipLookup(); }
+    }
+    L.Check("Shadow##txt", &tr->shadow); L.TipLookup();
+    if (tr->shadow) {
+        L.Color("Shadow Color##txt", &tr->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##txt", &tr->shadowOffset.x, 2, 0.1f); L.TipLookup();
+    }
+    L.Check("Outline##txt", &tr->outline); L.TipLookup();
+    if (tr->outline) { L.Color("Outline Color##txt", &tr->outlineColor.r, 4); L.TipLookup(); }
+    L.Check("Bold##txt", &tr->bold); L.TipLookup();
+    L.SameLine(); L.Check("Italic##txt", &tr->italic); L.TipLookup();
+    L.SameLine(); L.Check("UPPERCASE##txt", &tr->uppercase); L.TipLookup();
+    L.Check("Gradient##txt", &tr->gradient); L.TipLookup();
+    if (tr->gradient) { L.Color("Bottom Color##txt", &tr->colorBottom.r, 4); L.TipLookup(); }
+    L.DragInt("Visible Chars##txt", &tr->visibleChars, 0.5f, -1, 100000); L.Tip("-1 = show all. Lower to reveal only the first N characters.");
+    L.Drag("Type Speed##txt", &tr->typeSpeed, 1, 0.5f, 0.0f, 200.0f, "%.0f cps"); L.Tip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
+    if (tr->screenSpace) { L.SameLine(); L.Check("Wrap##txt", &tr->wrap); }
+    L.Check("Rich Text##txt", &tr->richText);
+    L.Tip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.\n[size=N] is a percent (25 to 400); a line is as tall as the biggest size on it.");
+    if (!tr->screenSpace) L.Note("World text: drawn at this object's place in flat (2D) scenes.");
+    L.Drag("Letter Spacing##txt", &tr->letterSpacing, 1, 0.1f, -4.0f, 32.0f); L.TipLookup();
+    L.Drag("Line Spacing##txt", &tr->lineSpacing, 1, 0.1f, -4.0f, 32.0f); L.TipLookup();
+    AddFontSlotRows(L, "txtfont", &tr->fontPath);
+    if (tr->fontPath.empty()) L.Note("Built-in 8x8 bitmap font.");
+    else if (okay::GetFont(tr->fontPath)) L.ColorText(RowCol(0.5f, 0.85f, 0.5f), "TTF font loaded.");
+    else L.ColorText(RowCol(0.9f, 0.5f, 0.4f), "Font not found / failed to load.");
+    const int kRemove = L.SmallButton("Remove##txt");
+    if (!DrawRowsOkayUI(tr, "##okayui_text", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, tr, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, tr->loc, tr->text, go, true);
+    for (int i = 0; i < 6; ++i) if (L[kSw[i]].clicked) { tr->color = {kTxtCols[i].r, kTxtCols[i].g, kTxtCols[i].b, tr->color.a}; ed.dirty = true; }
+    if (kFit >= 0 && L[kFit].changed) { tr->autoSizeMin = mm[0]; tr->autoSizeMax = mm[1]; }
+    if (kFitText >= 0 && L[kFitText].clicked) {
+        tr->size = {(float)tr->PixelWidth() * tr->pixelSize + 8.0f, (float)tr->PixelHeight() * tr->pixelSize + 8.0f};
+        ed.dirty = true;
+    }
+    RunAnchorRow(ed, L, tr->anchor, anc);
+    if (kVa >= 0 && L[kVa].changed) { tr->alignBottom = (va == 2); tr->vcenter = (va == 1); }
+    if (L[kRemove].clicked) toRemove = tr;
+    return true;
+}
+
+static bool DrawCanvasWithOkayUI(EditorState& ed, Canvas* cv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Constant Pixel Size", "Scale With Screen Size"};
+    static const char* const kMatches[] = {"Match Width or Height", "Expand (always fits)", "Shrink (always fills)"};
+    static const struct { const char* n; float w, h; } kRes[] = {{"1080p", 1920, 1080}, {"720p", 1280, 720}, {"1440p", 2560, 1440}, {"9:16", 1080, 1920}, {"phone", 720, 1280}};
+    InspFieldList L;
+    L.rows.reserve(48);
+    L.Check("Visible##cv", &cv->visible); L.Tip("Hide/show every widget under this canvas at once.");
+    L.SameLine(); L.Slider("Opacity##cv", &cv->opacity, 0.0f, 1.0f); L.Last().width = 150.0f;
+    L.Tip("Master fade for this canvas's UI (drive at runtime for fade in/out).");
+    L.Separator();
+    int m = (int)cv->scaleMode, sm = (int)cv->screenMatch;
+    const int kMode = L.Combo("UI Scale Mode##cv", &m, kModes, 2); L.TipLookup();
+    int kRes5[5] = {-1, -1, -1, -1, -1}, kMatch = -1, kMw = -1, kMm = -1, kMh = -1;
+    if (cv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize) {
+        L.Drag("Reference Res##cv", &cv->referenceResolution.x, 2, 1.0f, 1.0f, 8000.0f); L.TipLookup();
+        L.Note("Presets:");
+        for (int i = 0; i < 3; ++i) { L.SameLine(); kRes5[i] = L.SmallButton(kRes[i].n); }
+        L.Note("Portrait:");
+        for (int i = 3; i < 5; ++i) { L.SameLine(); kRes5[i] = L.SmallButton(kRes[i].n); }
+        kMatch = L.Combo("Screen Match##cv", &sm, kMatches, 3);
+        L.Tip("How the reference layout fits a screen of another shape.\nExpand: the whole layout always fits - a landscape menu stays\n  whole on a portrait phone (best for phones and tablets).\nShrink: the layout always covers the screen (edges may crop).\nMatch: blend width / height with the slider.");
+        if (cv->screenMatch == Canvas::ScreenMatch::MatchWidthOrHeight) {
+            L.Slider("Match W/H##cv", &cv->matchWidthOrHeight, 0.0f, 1.0f, cv->matchWidthOrHeight < 0.25f ? "Width" : cv->matchWidthOrHeight > 0.75f ? "Height" : "%.2f");
+            kMw = L.SmallButton("Width##cvm"); L.SameLine(); kMm = L.SmallButton("Match##cvm"); L.SameLine(); kMh = L.SmallButton("Height##cvm");
+        }
+    }
+    L.Drag("Scale Factor##cv", &cv->scaleFactor, 1, 0.01f, 0.05f, 10.0f, "%.2fx"); L.Tip("Extra UI zoom on top of the scale mode.");
+    L.DragInt("Sort Order##cv", &cv->sortOrder, 1.0f); L.Tip("Higher canvases draw on top of lower ones.");
+    L.Section("World Space (3D)");
+    L.Check("World Space##cv", &cv->worldSpace);
+    L.Tip("Render this canvas (and ALL its widgets) on a plane in the 3D world at this\nobject's position, instead of on the screen. Shows in the Game view / Play.");
+    if (cv->worldSpace) {
+        L.Drag("Design Res##cvw", &cv->designResolution.x, 2, 1.0f, 16.0f, 8000.0f); L.Tip("The canvas's own pixel space \xE2\x80\x94 author widgets against this size.");
+        L.Drag("Pixels / Unit##cvw", &cv->worldPixelsPerUnit, 1, 1.0f, 1.0f, 4000.0f, "%.0f"); L.Tip("Design pixels per world unit (larger = the panel is smaller in-world).");
+        L.Check("Billboard (face camera)##cvw", &cv->billboard); L.Tip("Keep the canvas turned toward the camera. Off = it uses this object's orientation.");
+        L.Note("Move/rotate this object to place the panel. Needs a main Camera.");
+    }
+    L.Section("Phones");
+    GameObject* cgo = cv->gameObject;
+    GameObject* safe = nullptr;
+    for (Transform* ch : cgo->transform->Children())
+        if (ch && ch->gameObject && ch->gameObject->GetComponent<UISafeArea>()) { safe = ch->gameObject; break; }
+    int kSafe = -1;
+    char line[200];
+    if (!safe) {
+        kSafe = L.Button("Add Safe Area##cv");
+        L.Tip("Put this canvas's widgets in a Safe Area container so they keep clear of a\nphone's notch, rounded corners and home bar. Fills the screen on a desktop.");
+    } else {
+        std::snprintf(line, sizeof line, "Safe Area: \"%s\" keeps its widgets clear of notches.", safe->name.c_str());
+        L.Note(line, true);
+    }
+    if (g_gameDevice <= 0) L.Note("Pick a phone in the Game view to preview it.");
+    char live[96];
+    std::snprintf(live, sizeof live, "Current scale: %.2fx  (canvas %.0f x %.0f)", cv->ScaleFactor(UICanvas::Width(), UICanvas::Height()), UICanvas::Width(), UICanvas::Height());
+    L.Note(live, true);
+    const int kRemove = L.SmallButton("Remove##cv");
+    if (!DrawRowsOkayUI(cv, "##okayui_canvas", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) cv->scaleMode = (Canvas::ScaleMode)m;
+    for (int i = 0; i < 5; ++i) if (kRes5[i] >= 0 && L[kRes5[i]].clicked) { cv->referenceResolution = {kRes[i].w, kRes[i].h}; ed.dirty = true; }
+    if (kMatch >= 0 && L[kMatch].changed) cv->screenMatch = (Canvas::ScreenMatch)sm;
+    if (kMw >= 0 && L[kMw].clicked) { cv->matchWidthOrHeight = 0.0f; ed.dirty = true; }
+    if (kMm >= 0 && L[kMm].clicked) { cv->matchWidthOrHeight = 0.5f; ed.dirty = true; }
+    if (kMh >= 0 && L[kMh].clicked) { cv->matchWidthOrHeight = 1.0f; ed.dirty = true; }
+    if (kSafe >= 0 && L[kSafe].clicked) {
+        ed.PushUndo();
+        GameObject* sa = ed.scene().CreateGameObject("Safe Area");
+        sa->AddComponent<UISafeArea>();
+        sa->transform->SetParent(cgo->transform, false);
+        std::vector<Transform*> kids(cgo->transform->Children().begin(), cgo->transform->Children().end());
+        for (Transform* k : kids)
+            if (k && k->gameObject && k->gameObject != sa && GetUIRect(k->gameObject).valid) k->SetParent(sa->transform, false);
+        ed.Select(sa); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = cv;
+    return true;
+}
+
+static bool DrawUIImageWithOkayUI(EditorState& ed, UIImage* im, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(48);
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uim", im->anchor, anc);
+    RectRowLabels rl;
+    AddUIRectRows(L, "uim", im->anchor, im->position, im->size, rl);
+    L.Label("Image", 0, true);
+    L.SameLine(-1.0f, 64.0f);   // ImGui::SameLine(80): 80 from the window edge, the 16-pixel window padding in
+    L.Slot("uimtex", &im->texture, "Image", "image");
+    const int kThumb = ThumbRow(L, im->texture);
+    int kNative = -1, tw = 0, th = 0;
+    char tip[96], dims[48];
+    if (!im->texture.empty()) {
+        if (SDL_Texture* t = GetThumb(im->texture)) {
+            SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            kNative = L.SmallButton("Set Native Size##uim");
+            std::snprintf(tip, sizeof tip, "Make the widget the picture's own size (%d x %d)", tw, th); L.Tip(tip);
+            std::snprintf(dims, sizeof dims, "%d x %d px", tw, th);
+            L.SameLine(); L.Note(dims, true);
+        } else L.ColorText(RowCol(1.0f, 0.6f, 0.45f), "Can't load this file.");
+    }
+    L.Color("Tint##uim", &im->color.r, 4); L.TipLookup();
+    if (im->texture.empty()) L.Note("No image: it draws as a coloured shape.");
+    L.Section("Texture");
+    L.Check("Flip X##uim", &im->flipX); L.SameLine(); L.TipLookup();
+    L.Check("Flip Y##uim", &im->flipY); L.Tip("Mirror the texture without a second asset.");
+    L.Check("Preserve Aspect##uim", &im->preserveAspect);
+    L.Tip("Fit the texture inside the box without stretching (letterboxed, centered). Ignored for nine-slice / fills.");
+    L.Check("Nine-slice##uim", &im->nineSlice); L.TipLookup();
+    if (im->nineSlice) {
+        L.Drag("Border (px)##uim", &im->border, 1, 0.5f, 0.0f, 512.0f); L.TipLookup();
+        L.Note("corners stay fixed; edges/center stretch to size");
+    }
+    L.Section("Shape & Frame");
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uim", im->shape, shp);
+    L.Tip("The image silhouette: circle for avatars, pill/tab for cards, arrows for nav, etc. Applies to the colored fill when no texture is set.");
+    int kAll = -1;
+    if (UIShapeUsesRadius(im->shape)) {
+        L.Drag("Corner Radius##uim", &im->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup();
+        if (im->cornerRadius > 0.0f) {   // CornerMaskEditor
+            static bool b[4];
+            static const int kBits[4] = {okay::UICornerTL, okay::UICornerTR, okay::UICornerBL, okay::UICornerBR};
+            for (int i = 0; i < 4; ++i) b[i] = (im->cornerMask & kBits[i]) != 0;
+            L.Note("Rounded corners");
+            const int c0 = L.Check("TL##uim_c1", &b[0]); L.SameLine(); L.Check("TR##uim_c2", &b[1]);
+            L.Check("BL##uim_c8", &b[2]); L.SameLine(); L.Check("BR##uim_c4", &b[3]);
+            L.SameLine(); kAll = L.SmallButton("All##uim_call");
+            L[c0].tag = 1;   // the first of the four (they follow in order, one row each)
+        }
+    }
+    L.Drag("Frame Width##uim", &im->borderWidth, 1, 0.1f, 0.0f, 24.0f); L.Tip("A matte/keyline frame drawn around the image rect.");
+    if (im->borderWidth > 0.0f) { L.Color("Frame Color##uim", &im->borderColor.r, 4); L.TipLookup(); }
+    L.Check("Drop Shadow##uim", &im->shadow); L.TipLookup();
+    if (im->shadow) {
+        L.Color("Shadow Color##uim", &im->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##uim", &im->shadowOffset.x, 2, 0.5f); L.TipLookup();
+        L.Drag("Shadow Blur##uim", &im->shadowSoftness, 1, 0.2f, 0.0f, 48.0f); L.TipLookup();
+    }
+    const int kRemove = L.SmallButton("Remove##uim");
+    if (!DrawRowsOkayUI(im, "##okayui_uiimage", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunAnchorRow(ed, L, im->anchor, anc);
+    ShowThumbInProject(L, kThumb);
+    if (kNative >= 0 && L[kNative].clicked) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
+    RunShapeRow(L, im->shape, shp, &im->cornerRadius);
+    for (std::size_t k = 0; k < L.rows.size(); ++k)
+        if (L.rows[k].tag == 1) {   // the corner boxes back into the mask
+            static const int kBits[4] = {okay::UICornerTL, okay::UICornerTR, okay::UICornerBL, okay::UICornerBR};
+            for (int i = 0; i < 4; ++i)
+                if (L.rows[k + (std::size_t)i].changed) { if (*L.rows[k + (std::size_t)i].b) im->cornerMask |= kBits[i]; else im->cornerMask &= ~kBits[i]; }
+        }
+    if (kAll >= 0 && L[kAll].clicked) { im->cornerMask = okay::UICornerAll; ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = im;
+    return true;
+}
+
+static bool DrawUIButtonWithOkayUI(EditorState& ed, GameObject* go, UIButton* btn, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!btn->loc.key.empty() && !UIButtonTextChild(go)) return false;   // a localized label: the key picker is Dear ImGui's
+    static const char* const kEases[] = {"Linear", "Smooth", "Ease Out", "Ease In"};
+    InspFieldList L;
+    L.rows.reserve(80);
+    StyleBarRows sb;
+    AddStyleBarRows(L, btn, sb);
+    GameObject* txtChild = UIButtonTextChild(go);
+    TextRenderer* childTr = txtChild ? txtChild->GetComponent<TextRenderer>() : nullptr;
+    int kEditText = -1, kLoc = -1, kSplit = -1;
+    bool locOn = false;
+    char line[200];
+    if (childTr) {
+        std::snprintf(line, sizeof line, "Text is the child object \"%s\".", txtChild->name.c_str());
+        L.Note(line, true);
+        kEditText = L.SmallButton("Edit Text##uib"); L.Tip("Select the child Text object to edit/style/position the label.");
+    } else {
+        kLoc = L.Check("Localized##uibloc", &locOn); L.Tip(kLocalizedTip);
+        L.Text("Label##uib", &btn->label);
+        L.SameLine();
+        kSplit = L.SmallButton("Text as Child##uib");
+        L.Tip("Split the label into its own child Text object so it can be styled and positioned independently.");
+    }
+    L.Drag("Pos (px)##uib", &btn->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##uib", &btn->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+    L.Color("Color##uib", &btn->color.r, 4); L.TipLookup();
+    L.Color("Hover##uib", &btn->hoverColor.r, 4); L.TipLookup();
+    L.Color("Pressed##uib", &btn->pressedColor.r, 4); L.TipLookup();
+    L.Color("Disabled##uib", &btn->disabledColor.r, 4); L.TipLookup();
+    L.Check("Interactable##uib", &btn->interactable); L.TipLookup();
+    L.SameLine(); L.Check("Focusable##uib", &btn->focusable); L.TipLookup();
+    L.Note("calls the script's on_click(); disabled buttons are greyed out");
+    L.Section("On Click (assign a function)");
+    const int kTarget = L.Text("Target Object##uibclk", &btn->clickTarget); L.TipLookup();
+    L.Last().dropKind = "objectname";
+    L.Last().tip = "Drag an object here from the Hierarchy (or type its name). Blank = this button's own object.";
+    GameObject* tobj = btn->clickTarget.empty() ? go : (go->scene() ? go->scene()->Find(btn->clickTarget) : nullptr);
+    const std::vector<std::string> fns = ScriptPublicFunctions(tobj), nativeFns = NativeUIActionNames(tobj);
+    const bool fnIsNative = std::find(nativeFns.begin(), nativeFns.end(), btn->clickFunction) != nativeFns.end();
+    std::vector<const char*> items{"(none)"}, heads{nullptr};
+    for (std::size_t i = 0; i < nativeFns.size(); ++i) { items.push_back(nativeFns[i].c_str()); heads.push_back(i == 0 ? "Native (gameplay)" : nullptr); }
+    for (std::size_t i = 0; i < fns.size(); ++i) { items.push_back(fns[i].c_str()); heads.push_back(i == 0 ? "Script" : nullptr); }
+    int fnIdx = btn->clickFunction.empty() ? 0 : -1;
+    for (std::size_t i = 1; i < items.size(); ++i) if (btn->clickFunction == items[i]) { fnIdx = (int)i; break; }
+    const std::string fnPreview = btn->clickFunction.empty() ? "(none)" : btn->clickFunction;
+    const int kFn = L.Combo("Function##uibclk", &fnIdx, items.data(), (int)items.size());
+    L.Last().heads = heads.data(); L.Last().preview = fnPreview.c_str();
+    if (fnIsNative) L.Drag("Amount##uibclkarg", &btn->clickArg, 1, 0.5f, -100000.0f, 100000.0f);
+    if (!tobj) L.Note("Target object not found \xE2\x80\x94 drag one from the Hierarchy.");
+    else if (fns.empty() && nativeFns.empty()) {
+        std::snprintf(line, sizeof line, "'%s' has no Script or native gameplay component to call.", tobj->name.c_str());
+        L.Note(line, true);
+    }
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uib", btn->anchor, anc);
+    L.Section("Style");
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uib", btn->shape, shp);
+    if (UIShapeUsesRadius(btn->shape)) { L.Drag("Corner Radius##uib", &btn->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    if (!childTr) {
+        L.Drag("Font Scale##uib", &btn->fontScale, 1, 0.05f, 0.5f, 16.0f); L.TipLookup();
+        AddFontSlotRows(L, "uibfont", &btn->fontPath);
+        if (!btn->fontPath.empty() && !okay::GetFont(btn->fontPath)) L.ColorText(RowCol(0.9f, 0.5f, 0.4f), "Font not found / failed to load.");
+    }
+    L.Check("Drop Shadow##uib", &btn->shadow); L.TipLookup();
+    if (btn->shadow) {
+        L.Color("Shadow Color##uib", &btn->shadowColor.r, 4); L.TipLookup();
+        L.Drag("Shadow Offset##uib", &btn->shadowOffset.x, 2, 0.5f); L.TipLookup();
+        L.Drag("Shadow Blur##uib", &btn->shadowSoftness, 1, 0.2f, 0.0f, 48.0f); L.TipLookup();
+    }
+    L.Drag("Border Width##uib", &btn->borderWidth, 1, 0.1f, 0.0f, 16.0f); L.TipLookup();
+    if (btn->borderWidth > 0.0f) { L.Color("Border Color##uib", &btn->borderColor.r, 4); L.TipLookup(); }
+    L.Drag("Hover Grow##uib", &btn->hoverScale, 1, 0.01f, 1.0f, 2.0f); L.Tip("Scale when hovered/focused (1 = none)");
+    if (!childTr) { L.Color("Hover Text##uib", &btn->hoverTextColor.r, 4); L.TipLookup(); }
+    L.Drag("Transition Speed##uib", &btn->transitionSpeed, 1, 0.2f, 0.0f, 30.0f); L.Tip("Smooth color fade on hover/press (0 = instant)");
+    int ez = btn->transitionEase; if (ez < 0 || ez > 3) ez = 0;
+    const int kEase = L.Combo("Ease##uib", &ez, kEases, 4); L.TipLookup();
+    L.Drag("Transition Time##uib", &btn->transitionDuration, 1, 0.01f, 0.0f, 3.0f); L.Tip("Seconds to reach the state color and scale. 0 uses Transition Speed.");
+    L.Check("Own Focus Color##uib", &btn->separateFocus); L.TipLookup();
+    if (btn->separateFocus) { L.Color("Focus Color##uib", &btn->focusColor.r, 4); L.TipLookup(); }
+    L.Drag("Press Offset##uib", &btn->pressOffset, 1, 0.1f, 0.0f, 16.0f); L.TipLookup();
+    L.Text("Icon##uib", &btn->icon); L.TipLookup();
+    L.Drag("Icon Size##uib", &btn->iconSize, 1, 0.5f, 0.0f, 256.0f); L.Tip("PNG/JPG drawn beside the label; 0 = none");
+    L.Check("Icon on Right##uib", &btn->iconRight); L.TipLookup();
+    L.Section("Behavior");
+    L.Check("Toggle Button##uib", &btn->toggleMode); L.Tip("Stays pressed; each click flips its on/off state");
+    if (btn->toggleMode) { L.SameLine(); L.Check("On##uib", &btn->isOn); }
+    L.Check("Hold to Repeat##uib", &btn->holdRepeat); L.Tip("Fires on_click() repeatedly while held (steppers)");
+    if (btn->holdRepeat) {
+        L.Drag("Repeat Delay##uib", &btn->repeatDelay, 1, 0.01f, 0.0f, 2.0f); L.TipLookup();
+        L.Drag("Repeat Rate##uib", &btn->repeatInterval, 1, 0.01f, 0.01f, 1.0f); L.TipLookup();
+    }
+    const int kRemove = L.SmallButton("Remove##uib");
+    if (!DrawRowsOkayUI(btn, "##okayui_uibutton", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, btn, L, sb);
+    if (kEditText >= 0 && L[kEditText].clicked) ed.Select(txtChild);
+    if (kLoc >= 0 && L[kLoc].changed && locOn) LocalizedTextSwitch(ed, btn->loc, btn->label, go, true);
+    if (kSplit >= 0 && L[kSplit].clicked) { ed.PushUndo(); ed.Select(MakeButtonTextChild(ed, go)); ed.dirty = true; }
+    if (L[kTarget].changed && L[kTarget].dropState && btn->clickTarget == go->name) btn->clickTarget.clear();   // a drop of the button itself: blank
+    if (L[kFn].changed) { if (fnIdx <= 0) btn->clickFunction.clear(); else btn->clickFunction = items[(std::size_t)fnIdx]; }
+    RunAnchorRow(ed, L, btn->anchor, anc);
+    RunShapeRow(L, btn->shape, shp);
+    if (L[kEase].changed) btn->transitionEase = ez;
+    if (L[kRemove].clicked) toRemove = btn;
+    return true;
+}
+
+static bool DrawUISliderWithOkayUI(EditorState& ed, UISlider* sl, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kHandles[] = {"From Round Knob", "Circle", "Rounded", "Square", "Pill", "Diamond"};
+    InspFieldList L;
+    L.rows.reserve(48);
+    StyleBarRows sb;
+    AddStyleBarRows(L, sl, sb);
+    L.Drag("Pos (px)##usl", &sl->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##usl", &sl->size.x, 2, 1.0f, 1.0f, 8000.0f); L.TipLookup();
+    L.Drag("Min##usl", &sl->minValue, 1, 0.1f); L.TipLookup();
+    L.Drag("Max##usl", &sl->maxValue, 1, 0.1f); L.TipLookup();
+    L.Slider("Value##usl", &sl->value, sl->minValue, sl->maxValue); L.TipLookup();
+    L.Color("Track##usl", &sl->background.r, 4); L.TipLookup();
+    L.Color("Fill##usl", &sl->fill.r, 4); L.TipLookup();
+    L.Color("Knob##usl", &sl->knob.r, 4); L.TipLookup();
+    L.Note("drag in the built game; calls script on_change()");
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##usl", sl->anchor, anc);
+    ShapeRow shp;
+    AddShapeRow(L, "Track Shape##usl", sl->trackShape, shp);
+    if (sl->trackShape == UIShape::Rounded) { L.Drag("Corner Radius##usl", &sl->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    L.Check("Round Knob##usl", &sl->roundKnob); L.TipLookup();
+    L.Drag("Knob Size##usl", &sl->knobSize, 1, 0.02f, 0.1f, 3.0f); L.TipLookup();
+    L.Check("Show Value##usl", &sl->showValue); L.TipLookup();
+    L.SameLine(); const int kWhole = L.Check("Whole Numbers##usl", &sl->wholeNumbers);
+    if (sl->showValue) { L.Color("Text Color##usl", &sl->textColor.r, 4); L.TipLookup(); }
+    L.Check("Interactable##usl", &sl->interactable); L.TipLookup();
+    L.SameLine(); L.Check("Vertical##usl", &sl->vertical); L.TipLookup();
+    L.Drag("Step##usl", &sl->step, 1, 0.01f, 0.0f, 1000.0f); L.Tip("Snap spacing from Min. 0 = continuous.");
+    L.Text("Value Format##usl", &sl->valueFormat); L.Tip("{v} is the number, for example \"{v}%\". Empty prints two decimals.");
+    L.Check("Fill Gradient##usl", &sl->fillGradient); L.TipLookup();
+    if (sl->fillGradient) { L.Color("Fill End##usl", &sl->fillEnd.r, 4); L.TipLookup(); }
+    int hi = 0;
+    if (sl->knobShape == (int)UIShape::Circle) hi = 1;
+    else if (sl->knobShape == (int)UIShape::Rounded) hi = 2;
+    else if (sl->knobShape == (int)UIShape::Rectangle) hi = 3;
+    else if (sl->knobShape == (int)UIShape::Pill) hi = 4;
+    else if (sl->knobShape == (int)UIShape::Diamond) hi = 5;
+    const int kHandle = L.Combo("Handle##usl", &hi, kHandles, 6);
+    const int kRemove = L.SmallButton("Remove##usl");
+    if (!DrawRowsOkayUI(sl, "##okayui_uislider", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, sl, L, sb);
+    RunAnchorRow(ed, L, sl->anchor, anc);
+    RunShapeRow(L, sl->trackShape, shp);
+    if (L[kWhole].changed && sl->wholeNumbers) sl->value = Mathf::Round(sl->value);
+    if (L[kHandle].changed) {
+        if (hi == 0) sl->knobShape = -1;
+        else if (hi == 1) { sl->knobShape = (int)UIShape::Circle; sl->roundKnob = true; }
+        else if (hi == 2) { sl->knobShape = (int)UIShape::Rounded; sl->roundKnob = false; }
+        else if (hi == 3) sl->knobShape = (int)UIShape::Rectangle;
+        else if (hi == 4) sl->knobShape = (int)UIShape::Pill;
+        else sl->knobShape = (int)UIShape::Diamond;
+    }
+    if (L[kRemove].clicked) toRemove = sl;
+    return true;
+}
+
+static bool DrawUIToggleWithOkayUI(EditorState& ed, GameObject* go, UIToggle* tg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!tg->loc.key.empty()) return false;
+    static const char* const kStyles[] = {"Checkbox", "Switch", "Radio"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    StyleBarRows sb;
+    AddStyleBarRows(L, tg, sb);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##utgloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Label##utg", &tg->label);
+    L.Check("On##utg", &tg->on); L.TipLookup();
+    L.Drag("Pos (px)##utg", &tg->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##utg", &tg->size.x, 2, 1.0f, 1.0f, 4000.0f); L.TipLookup();
+    L.Color("Box##utg", &tg->boxColor.r, 4); L.TipLookup();
+    L.Color("Check##utg", &tg->checkColor.r, 4); L.TipLookup();
+    L.Color("Label Color##utg", &tg->textColor.r, 4); L.TipLookup();
+    L.Note("click in the built game; calls script on_toggle()");
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##utg", tg->anchor, anc);
+    L.Drag("Corner Radius##utg", &tg->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup();
+    int st = (int)tg->style;
+    const int kStyle = L.Combo("Style##utg", &st, kStyles, 3); L.TipLookup();
+    if (tg->style == UIToggle::Style::Radio) {
+        L.Text("Group##utg", &tg->radioGroup);
+        L.Tip("Radio buttons with the same group name are one choice, wherever they are. Empty: the radio buttons under the same parent.");
+    }
+    if (tg->style == UIToggle::Style::Switch) { L.Color("Knob##utg", &tg->knobColor.r, 4); L.TipLookup(); }
+    L.Drag("Anim Speed##utg", &tg->animSpeed, 1, 0.2f, 0.0f, 40.0f); L.Tip("Knob glide / check fade speed (0 = snap).");
+    L.Check("Interactable##utg", &tg->interactable); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##utg");
+    if (!DrawRowsOkayUI(tg, "##okayui_uitoggle", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, tg, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, tg->loc, tg->label, go, true);
+    RunAnchorRow(ed, L, tg->anchor, anc);
+    if (L[kStyle].changed) tg->style = (UIToggle::Style)st;
+    if (L[kRemove].clicked) toRemove = tg;
+    return true;
+}
+
+static bool DrawUIInputFieldWithOkayUI(EditorState& ed, GameObject* go, UIInputField* in, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!in->loc.key.empty()) return false;
+    static const char* const kTypes[] = {"Standard", "Integer", "Decimal", "Password"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    StyleBarRows sb;
+    AddStyleBarRows(L, in, sb);
+    L.Text("Text##uif", &in->text); L.TipLookup();
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##uifloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Placeholder##uif", &in->placeholder);
+    L.Drag("Pos (px)##uif", &in->position.x, 2, 1.0f); L.TipLookup();
+    L.Drag("Size (px)##uif", &in->size.x, 2, 1.0f, 8.0f, 4000.0f); L.TipLookup();
+    L.Color("Color##uif", &in->color.r, 4); L.TipLookup();
+    L.DragInt("Max Length##uif", &in->maxLength, 1.0f, 1, 1024); L.TipLookup();
+    int ct = (int)in->contentType;
+    const int kType = L.Combo("Content Type##uif", &ct, kTypes, 4); L.TipLookup();
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##uif", in->anchor, anc);
+    ShapeRow shp;
+    AddShapeRow(L, "Shape##uif", in->shape, shp);
+    if (UIShapeUsesRadius(in->shape)) { L.Drag("Corner Radius##uif", &in->cornerRadius, 1, 0.2f, 0.0f, 64.0f); L.TipLookup(); }
+    L.Drag("Focus Ring##uif", &in->borderWidth, 1, 0.1f, 0.0f, 12.0f); L.TipLookup();
+    if (in->borderWidth > 0.0f) { L.Color("Ring Color##uif", &in->borderColor.r, 4); L.TipLookup(); }
+    L.Note("Click to focus + type at runtime; Enter calls on_submit().");
+    L.Check("Multiline##uif", &in->multiline); L.Tip("Enter inserts a newline instead of submitting.");
+    const int kRemove = L.SmallButton("Remove##uif");
+    if (!DrawRowsOkayUI(in, "##okayui_uiinput", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunStyleBarRows(ed, in, L, sb);
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, in->loc, in->placeholder, go, true);
+    if (L[kType].changed) in->contentType = (UIInputField::ContentType)ct;
+    RunAnchorRow(ed, L, in->anchor, anc);
+    RunShapeRow(L, in->shape, shp);
+    if (L[kRemove].clicked) toRemove = in;
+    return true;
+}
+
+static bool DrawUILayoutGroupWithOkayUI(EditorState& ed, UILayoutGroup* lg, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kDirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
+    static const char* const kJustify[] = {"Start", "Center", "End", "Space Between", "Space Around", "Space Evenly"};
+    static const char* const kAlign[] = {"Start", "Center", "End", "Stretch"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    int d = (int)lg->direction, j = (int)lg->justify, a = (int)lg->align;
+    const int kDir = L.Combo("Direction##lg", &d, kDirs, 5); L.TipLookup();
+    int kJ = -1, kA = -1;
+    if (lg->IsFlex()) {   // DrawLayoutGroupFlexFields
+        L.Drag("Box Size##lgf", &lg->boxSize.x, 2, 1.0f, 1.0f, 8000.0f);
+        kJ = L.Combo("Justify##lgf", &j, kJustify, 6); L.Tip("Where spare room along a line goes.");
+        kA = L.Combo("Align##lgf", &a, kAlign, 4); L.Tip("How children sit across a line. Stretch resizes children that have a UI Flex Item.");
+        L.Check("Wrap##lgf", &lg->wrap); L.Tip("Start a new line when the box is full.");
+        L.Note("Children with a UI Flex Item grow and shrink to fill the box.");
+    }
+    const bool isGrid = lg->direction == UILayoutGroup::Direction::Grid;
+    int kCols = -1;
+    if (isGrid) { kCols = L.DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32); L.TipLookup(); }
+    const int kOrig = L.Drag("Origin##lg", &lg->origin.x, 2, 1.0f); L.TipLookup();
+    const int kSp = L.Drag(isGrid ? "Column Gap##lg" : "Spacing##lg", &lg->spacing, 1, 0.5f, 0.0f, 400.0f);
+    int kRow = -1;
+    if (isGrid) kRow = L.Drag("Row Gap##lg", &lg->spacingY, 1, 0.5f, 0.0f, 400.0f);
+    const int kPad = L.Drag("Padding##lg", &lg->padding, 1, 0.5f, 0.0f, 400.0f); L.TipLookup();
+    AnchorRow anc;
+    AddAnchorRow(L, "Anchor##lg", lg->anchor, anc);
+    const int kArrange = L.SmallButton("Arrange Now##lg");
+    char content[48]; std::snprintf(content, sizeof content, "content: %.0f px", lg->ContentSize());
+    L.SameLine(); L.Note(content, true);
+    const int kRemove = L.SmallButton("Remove##lg");
+    if (!DrawRowsOkayUI(lg, "##okayui_layout", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    bool arrange = false;
+    if (L[kDir].changed) { lg->direction = (UILayoutGroup::Direction)d; arrange = true; }
+    if (kJ >= 0 && L[kJ].changed) lg->justify = (UILayoutGroup::Justify)j;
+    if (kA >= 0 && L[kA].changed) lg->align = (UILayoutGroup::Align)a;
+    if (kCols >= 0 && L[kCols].changed) { if (lg->columns < 1) lg->columns = 1; arrange = true; }
+    if (L[kOrig].changed || L[kSp].changed || (kRow >= 0 && L[kRow].changed) || L[kPad].changed) arrange = true;
+    RunAnchorRow(ed, L, lg->anchor, anc);
+    if (L[kArrange].clicked) { arrange = true; ed.dirty = true; }
+    if (arrange) lg->Arrange();
+    if (L[kRemove].clicked) toRemove = lg;
+    return true;
+}
+
+// The Terrain: its own rows, the sculpt brush, generation, erosion, heightmaps and the auto-colour layers, then the texture layers and
+// the scatter section (LevelTools.cpp AddTerrainToolRows).
+static int g_terrainTerraceSteps = 5;                       // the Terrain's Terrace bands (both versions)
+static float g_terrainNormRange[2] = {0.0f, 12.0f};         // its Normalize range (both versions)
+static bool DrawTerrainWithOkayUI(EditorState& ed, Terrain* tr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kBrushes[] = {"Raise / Lower", "Smooth", "Flatten", "Set Height", "Noise", "Erode"};
+    static const char* const kGens[] = {"Mountains", "Hills", "Plains", "Plateau", "Islands", "Ridged Mountains", "Canyons"};
+    InspFieldList L;
+    L.rows.reserve(120);
+    const int kCol = L.Color("Color##terr", &tr->color.r, 4); L.TipLookup();
+    int res = tr->resolution;
+    const int kRes = L.DragInt("Resolution##terr", &res, 1.0f, 4, 2048); L.Tip("Vertices per side. Large maps: raise Size and Resolution together.");
+    const int kSize = L.Drag("Size##terr", &tr->size, 1, 1.0f, 2.0f, 1000000.0f); L.Tip("World width/depth. Make it as large as you like (pair with Resolution for detail).");
+    L.Section("Texturing");
+    const int kTex = PathFieldRow(L, "Ground Texture##terr", &tr->texture); L.Tip("Tiled ground texture (grass/rock/dirt PNG). Empty = flat auto-colours only.");
+    int kTexClear = -1, kTiling = -1, kTri = -1, kNrmClear = -1, kBump = -1;
+    if (!tr->texture.empty()) {
+        L.SameLine(); kTexClear = L.SmallButton("Clear##terrtex");
+        kTiling = L.Drag("Tiling##terr", &tr->textureTiling, 1, 0.1f, 0.1f, 200.0f); L.TipLookup();
+        kTri = L.Check("Triplanar (no cliff smear)##terr", &tr->triplanarTex); L.TipLookup();
+    }
+    const int kNrm = PathFieldRow(L, "Normal Map##terr", &tr->normalMap); L.TipLookup();
+    if (!tr->normalMap.empty()) {
+        L.SameLine(); kNrmClear = L.SmallButton("Clear##terrnrm");
+        kBump = L.Slider("Bump##terr", &tr->normalStrength, 0.0f, 2.0f); L.TipLookup();
+    }
+    const int kAuto1 = L.Check("Auto-color layers##terr", &tr->autoColor);
+    L.Tip("Tint by elevation/slope (water/sand/grass/rock/snow). Tints the texture when one is set.");
+    L.Section("Sculpt brush (drag in the 3D view)");
+    L.Check("Sculpt##terr", &g_terrainSculpt);
+    L.SameLine(); L.Note("(Shift = lower/invert)");
+    L.Combo("Mode##terrbr", &g_terrainBrush, kBrushes, 6); L.Last().width = 160.0f;
+    L.Slider("Radius##terr", &g_terrainRadius, 0.5f, 30.0f);
+    L.Slider("Strength##terr", &g_terrainStrength, 0.1f, 20.0f);
+    L.Slider("Hardness##terr", &g_terrainHardness, 0.0f, 1.0f); L.Tip("Brush edge: 0 = soft, feathered falloff; 1 = hard, flat-topped.");
+    if (g_terrainBrush == 3) L.Drag("Target Height##terr", &g_terrainFlattenH, 1, 0.1f, -100.0f, 100.0f);
+    L.Section("Generate (procedural noise)");
+    L.Combo("Type##terrgen", &g_terrainGenType, kGens, 7); L.Last().width = 160.0f;
+    L.Slider("Amplitude##terrgen", &g_terrainGenAmp, 1.0f, 60.0f);
+    L.Slider("Frequency##terrgen", &g_terrainGenFreq, 0.5f, 12.0f);
+    L.SliderInt("Detail##terrgen", &g_terrainGenOct, 1, 8);
+    const int kGen = L.Button("Generate##terrgen");
+    L.SameLine(); const int kFlat = L.Button("Flatten##terr");
+    L.SameLine(); const int kSmooth = L.Button("Smooth All##terr");
+    L.Section("Erosion (geological realism)");
+    L.Note("Carve valleys & ridgelines into generated terrain.");
+    L.SliderInt("Rain drops##tero", &g_terrainErodeDroplets, 1000, 200000);
+    L.Slider("Erode strength##tero", &g_terrainErodeStrength, 0.05f, 1.0f);
+    const int kHyd = L.Button("Hydraulic Erode##tero");
+    L.SliderInt("Thermal passes##tero", &g_terrainThermalIters, 1, 100);
+    L.Slider("Talus angle##tero", &g_terrainThermalTalus, 0.2f, 6.0f); L.Tip("Slopes steeper than this (height step per cell) slump into scree.");
+    const int kTherm = L.Button("Thermal Erode##tero");
+    L.SliderInt("Terrace bands##tero", &g_terrainTerraceSteps, 2, 20);
+    L.SameLine(); const int kTerr = L.Button("Terrace##tero"); L.Tip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
+    L.Range("Range##ternorm", g_terrainNormRange, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
+    L.SameLine(); const int kNorm = L.Button("Normalize##ternorm");
+    L.Tip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
+    L.SameLine(); const int kInv = L.Button("Invert##terinv"); L.Tip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
+    L.Section("Heightmap (World Machine / Gaea / Photoshop)");
+    const int kImp = L.Button("Import PNG...##terhm");
+    L.SameLine(); const int kExp = L.Button("Export PNG...##terhm");
+    float hm[2] = {g_terrainHmLow, g_terrainHmHigh};
+    const int kHm = L.Range("Import Low/High##terhm", hm, 0.2f, -100.0f, 200.0f, "%.1f"); L.Tip("Black in the PNG maps to Low, white maps to High.");
+    L.Section("Layers (auto-color by height & slope)");
+    const int kAuto2 = L.Check("Auto Color##terr", &tr->autoColor); L.TipLookup();
+    float lc[5][4];
+    Color* layerCols[5] = {&tr->waterColor, &tr->sandColor, &tr->grassColor, &tr->rockColor, &tr->snowColor};
+    static const char* const kLayerNames[5] = {"Water##terr", "Sand##terr", "Grass##terr", "Rock##terr", "Snow##terr"};
+    int kLc[5] = {-1, -1, -1, -1, -1}, kWl = -1, kSl = -1, kRs = -1;
+    if (tr->autoColor) {
+        for (int i = 0; i < 5; ++i) {
+            lc[i][0] = layerCols[i]->r; lc[i][1] = layerCols[i]->g; lc[i][2] = layerCols[i]->b; lc[i][3] = 1.0f;
+            if (i == 1 || i == 2 || i == 4) L.SameLine();
+            kLc[i] = L.Color(kLayerNames[i], lc[i], 3); L.Last().noInputs = true;
+        }
+        kWl = L.Slider("Water Level##terr", &tr->waterLevel, -20.0f, 40.0f); L.TipLookup();
+        kSl = L.Slider("Snow Level##terr", &tr->snowLevel, 0.0f, 80.0f); L.TipLookup();
+        kRs = L.Slider("Rock Slope##terr", &tr->rockSlope, 0.1f, 1.0f); L.TipLookup();
+    }
+    oked::TerrainToolRows tools;
+    oked::AddTerrainToolRows(ed, *tr, L, tools);
+    const int kRemove = L.SmallButton("Remove##terr");
+    if (!DrawRowsOkayUI(tr, "##okayui_terrain", L)) return false;
+    bool apply = false;
+    for (int k : {kCol, kSize, kTex, kTiling, kTri, kNrm, kBump, kAuto1, kWl, kSl, kRs, kAuto2})
+        if (k >= 0 && L[k].changed) apply = true;
+    if (L[kRes].changed && res != tr->resolution) { if (res < 4) res = 4; tr->Resize(res); apply = true; }
+    if (kTexClear >= 0 && L[kTexClear].clicked) { tr->texture.clear(); apply = true; }
+    if (kNrmClear >= 0 && L[kNrmClear].clicked) { tr->normalMap.clear(); apply = true; }
+    for (int i = 0; i < 5; ++i) if (kLc[i] >= 0 && L[kLc[i]].changed) { *layerCols[i] = {lc[i][0], lc[i][1], lc[i][2], 1.0f}; apply = true; }
+    if (L[kGen].clicked) { tr->Generate(g_terrainGenType, g_terrainGenAmp, g_terrainGenFreq, g_terrainGenOct, (unsigned)(ImGui::GetTime() * 1000.0)); apply = true; }
+    if (L[kFlat].clicked) { tr->Flatten(0.0f); apply = true; }
+    if (L[kSmooth].clicked) { tr->Smooth(); apply = true; }
+    if (L[kHyd].clicked) {
+        tr->Erode(g_terrainErodeDroplets, g_terrainErodeStrength, (unsigned)(ImGui::GetTime() * 1000.0)); apply = true;
+        ConsoleLog("Hydraulic erosion: " + std::to_string(g_terrainErodeDroplets) + " drops");
+    }
+    if (L[kTherm].clicked) {
+        tr->ThermalErode(g_terrainThermalIters, g_terrainThermalTalus, 0.5f); apply = true;
+        ConsoleLog("Thermal erosion: " + std::to_string(g_terrainThermalIters) + " passes");
+    }
+    if (L[kTerr].clicked) { tr->Terrace(g_terrainTerraceSteps); apply = true; ConsoleLog("Terraced into " + std::to_string(g_terrainTerraceSteps) + " bands"); }
+    if (L[kNorm].clicked) {
+        tr->Normalize(g_terrainNormRange[0], g_terrainNormRange[1]); apply = true;
+        ConsoleLog("Normalized heights to [" + std::to_string(g_terrainNormRange[0]) + ", " + std::to_string(g_terrainNormRange[1]) + "]");
+    }
+    if (L[kInv].clicked) { tr->Invert(); apply = true; ConsoleLog("Inverted terrain (peaks <-> valleys)"); }
+    if (L[kImp].clicked) {
+        EditorState* edp = &ed; auto* trp = tr;
+        okay::filedialog::OpenOne("Import heightmap", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}), [edp, trp](const std::string& p) {
+            if (trp->ImportHeightmap(p, g_terrainHmLow, g_terrainHmHigh)) { trp->Apply(); edp->dirty = true; ConsoleLog("Imported heightmap"); }
+            else ConsoleLog("Failed to import heightmap");
+        });
+    }
+    if (L[kExp].clicked) {
+        auto* trp = tr;
+        okay::filedialog::SaveOne("Export heightmap", "heightmap.png", {}, [trp](const std::string& p) {
+            std::string path = p;
+            if (path.size() < 4 || path.substr(path.size() - 4) != ".png") path += ".png";
+            if (trp->ExportHeightmap(path)) ConsoleLog("Exported heightmap to " + path);
+            else ConsoleLog("Failed to export heightmap");
+        });
+    }
+    if (L[kHm].changed) { g_terrainHmLow = hm[0]; g_terrainHmHigh = hm[1]; }
+    if (apply) { tr->Apply(); ed.dirty = true; }
+    oked::RunTerrainToolRows(ed, *tr, L, tools);
+    if (L[kRemove].clicked) toRemove = tr;
+    return true;
+}
+
+// What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
+static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIBackend() && DrawRowsOkayUI(comp, id, L); }
+static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
@@ -32777,7 +33614,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = dynamic_cast<Terrain*>(curComp)) {
-        if (CompHeader("Terrain", tr, &toRemove)) {
+        if (CompHeader("Terrain", tr, &toRemove) && !(UseOkayUIBackend() && DrawTerrainWithOkayUI(ed, tr, toRemove))) {   // OkayUI's with the preview switch (section 17)
             float c[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##terr", c)) { tr->color = {c[0],c[1],c[2],c[3]}; tr->Apply(); ed.dirty = true; }
             oked::FieldTip("Color##terr");
@@ -32868,7 +33705,7 @@ void DrawInspector(EditorState& ed) {
                 tr->Apply(); ed.dirty = true;
                 ConsoleLog("Thermal erosion: " + std::to_string(g_terrainThermalIters) + " passes");
             }
-            static int s_terraceSteps = 5;
+            int& s_terraceSteps = g_terrainTerraceSteps;   // shared with the OkayUI rows
             ImGui::SliderInt("Terrace bands##tero", &s_terraceSteps, 2, 20);
             ImGui::SameLine();
             if (ImGui::Button("Terrace##tero")) {
@@ -32877,7 +33714,8 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
 
-            static float s_normLow = 0.0f, s_normHigh = 12.0f;
+            float& s_normLow = g_terrainNormRange[0];   // shared with the OkayUI rows
+            float& s_normHigh = g_terrainNormRange[1];
             ImGui::DragFloatRange2("Range##ternorm", &s_normLow, &s_normHigh, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
             ImGui::SameLine();
             if (ImGui::Button("Normalize##ternorm")) {
@@ -40653,7 +41491,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tr = dynamic_cast<TextRenderer*>(curComp)) {
-        if (CompHeader("Text", tr, &toRemove)) {
+        if (CompHeader("Text", tr, &toRemove) && !(UseOkayUIBackend() && DrawTextWithOkayUI(ed, go, tr, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, tr);
             const bool trLoc = LocalizedTextField(ed, "txtloc", tr->loc, tr->text, go);   // or a string-table key
             char buf[512];
@@ -40803,7 +41641,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cv = dynamic_cast<Canvas*>(curComp)) {
-        if (CompHeader("Canvas", cv, &toRemove)) {
+        if (CompHeader("Canvas", cv, &toRemove) && !(UseOkayUIBackend() && DrawCanvasWithOkayUI(ed, cv, toRemove))) {   // OkayUI's with the preview switch (section 17)
             if (ImGui::Checkbox("Visible##cv", &cv->visible)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide/show every widget under this canvas at once.");
             ImGui::SameLine();
@@ -41085,7 +41923,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* btn = dynamic_cast<UIButton*>(curComp)) {
-        if (CompHeader("UI Button", btn, &toRemove)) {
+        if (CompHeader("UI Button", btn, &toRemove) && !(UseOkayUIBackend() && DrawUIButtonWithOkayUI(ed, go, btn, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, btn);
             // The label lives on a child Text object. When one exists,
             // text is edited/styled THERE — don't show a duplicate text field on the
@@ -41342,7 +42180,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* in = dynamic_cast<UIInputField*>(curComp)) {
-        if (CompHeader("UI Input Field", in, &toRemove)) {
+        if (CompHeader("UI Input Field", in, &toRemove) && !(UseOkayUIBackend() && DrawUIInputFieldWithOkayUI(ed, go, in, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, in);
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
@@ -41811,7 +42649,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
-        if (CompHeader("UI Layout Group", lg, &toRemove)) {
+        if (CompHeader("UI Layout Group", lg, &toRemove) && !(UseOkayUIBackend() && DrawUILayoutGroupWithOkayUI(ed, lg, toRemove))) {   // OkayUI's with the preview switch (section 17)
             const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
             if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
@@ -42511,7 +43349,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* im = dynamic_cast<UIImage*>(curComp)) {
-        if (CompHeader("UI Image", im, &toRemove)) {
+        if (CompHeader("UI Image", im, &toRemove) && !(UseOkayUIBackend() && DrawUIImageWithOkayUI(ed, im, toRemove))) {   // OkayUI's with the preview switch (section 17)
             AnchorCombo("Anchor##uim", im->anchor, ed);
             UIRectFields("uim", im->anchor, im->position, im->size, ed);
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Image"); ImGui::SameLine(80);
@@ -42576,7 +43414,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sl = dynamic_cast<UISlider*>(curComp)) {
-        if (CompHeader("UI Slider", sl, &toRemove)) {
+        if (CompHeader("UI Slider", sl, &toRemove) && !(UseOkayUIBackend() && DrawUISliderWithOkayUI(ed, sl, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, sl);
             float pos[2] = {sl->position.x, sl->position.y};
             if (ImGui::DragFloat2("Pos (px)##usl", pos, 1.0f)) { sl->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -42734,7 +43572,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* tg = dynamic_cast<UIToggle*>(curComp)) {
-        if (CompHeader("UI Toggle", tg, &toRemove)) {
+        if (CompHeader("UI Toggle", tg, &toRemove) && !(UseOkayUIBackend() && DrawUIToggleWithOkayUI(ed, go, tg, toRemove))) {   // OkayUI's with the preview switch (section 17)
             UIStyleBar(ed, tg);
             const bool tgLoc = LocalizedTextField(ed, "utgloc", tg->loc, tg->label, go);   // or a string-table key
             char lb[128];

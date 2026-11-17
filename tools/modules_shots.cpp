@@ -1,4 +1,4 @@
-// Headless pictures of the module pages (docs/images/modular/): the New Project form's "Modules" part and
+// Headless pictures of the module pages (written to $OKAY_SHOT_DIR, else the temp folder; never committed): the New Project form's "Modules" part and
 // Edit > Project Settings > Modules, drawn with the REAL drawing code (editor/ModulesPanelUI.hpp) and the REAL module
 // list (the engine's ModuleRegistry, built from engine/modules/*/module.okaymodule). Dear ImGui draws into a software
 // SDL surface: no window, no editor, no GPU. The look is ImGui's default dark style and built-in font, NOT the editor's
@@ -22,6 +22,7 @@
 
 #include <cfloat>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <string>
 
@@ -59,7 +60,10 @@ static void Window(const char* title, const std::function<void()>& inside) {
 }
 
 int main(int argc, char** argv) {
-    g_outDir = argc > 1 ? argv[1] : ".";
+    if (argc > 1) g_outDir = argv[1];
+    else if (const char* d = std::getenv("OKAY_SHOT_DIR")) g_outDir = d;
+    else if (const char* t = std::getenv("TMPDIR")) g_outDir = t;
+    else g_outDir = "/tmp";
     SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
     g_surface = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ARGB8888);

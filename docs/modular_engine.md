@@ -166,5 +166,4 @@ player, which needs the per-module libraries (not built yet).
 
 `test_modules` (parser, registry, the real list), `test_health_contract`, `test_interact_contract`,
 `test_modules_model` (presets, ticking rules, project file). `python3 scripts/check_modules.py` is the dependency check.
-Pictures of the two pages (software render, not the real editor window): `docs/images/modular/`, made by
-`tools/modules_shots.cpp`.
+`tools/modules_shots.cpp` draws the two pages into a software surface for pictures; pictures are not kept in the repository (it writes to `$OKAY_SHOT_DIR`, else the system temp folder).

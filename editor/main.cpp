@@ -896,6 +896,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
+#include "ModulesPanelUI.hpp"      // engine modules: the New Project choice and Project Settings > Modules (docs/modular_engine.md)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
@@ -2061,6 +2062,7 @@ bool g_openAbout = false;
 std::string g_newProjectTemplate; // template title requested via --template
 std::string g_newProjectRoot;     // project folder requested via --new-project (launcher)
 std::string g_newProjectVersion;  // project.okayproj version from the launcher's More options ("" = 1.0.0)
+std::string g_newProjectModules;  // project.okayproj modules= from the New Project form ("" = every module)
 int g_newProjectGpu = -1;         // 1 GPU, 0 software, -1 leave the build default
 std::string g_openScenePath;      // scene to open at startup via --open (launcher)
 
@@ -19379,8 +19381,22 @@ struct NewProjectForm {
     std::string lastKey;
     okayproj::Plan plan;
     Uint32 planAt = 0;
+    std::string modules;          // the modules the new project uses ("" = every module); see ModulesModel.hpp
+    bool modulesTouched = false;  // the person picked a preset or ticked a box: a template change no longer changes it
+    int modulesTpl = -1;          // the template the modules were last matched to
+    std::string modulesNote;
 };
 static NewProjectForm g_npForm;
+
+// The preset that fits a template (the person can change it): 2D templates get the 2D set, survival and open-world
+// ones the survival set, other 3D ones the 3D action set, everything else keeps every module.
+static std::string ModulePresetForTemplate(const std::string& title) {
+    auto has = [&](const char* w) { return title.find(w) != std::string::npos; };
+    if (has("Survival") || has("Open World") || has("Sandbox")) return "survival";
+    if (has("2D") || has("Platformer") || has("Top-Down") || has("Top Down")) return "2d";
+    if (has("Shooter") || has("Third Person") || has("First Person") || has("3D")) return "3d_action";
+    return "full";
+}
 
 static const okayproj::Plan& NewProjectPlan(NewProjectForm& f, bool force = false) {
     const std::string key = std::string(f.name) + "\n" + f.loc;
@@ -19473,7 +19489,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::TextDisabled("TEMPLATE");
     // The list takes what is left of the window (the dialog never taller than the editor window, or it would
     // spill into an OS window of its own), at most 178 px and at least 72; the Create row below needs ~64.
-    const float listH = std::min(178.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f));
+    const float listH = std::min(150.0f, std::max(72.0f, ImGui::GetMainViewport()->Size.y - 24.0f - ImGui::GetCursorPosY() - 64.0f - 120.0f));
     ImGui::BeginChild("##nptpl", ImVec2(0, listH), ImGuiChildFlags_Borders);
     {
         const auto& all = okayproj::Templates();
@@ -19494,6 +19510,29 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         }
     }
     ImGui::EndChild();
+
+    // ---- Modules: what goes into the game. A preset ticks a set; the list below changes any of it. ----
+    if (f.modulesTpl != f.tpl) {   // a new template picks the fitting preset, until the person chooses
+        f.modulesTpl = f.tpl;
+        if (!f.modulesTouched) {
+            okaymod::Selection pick(okay::ModuleRegistry::Get());
+            pick.ApplyPreset(ModulePresetForTemplate(okayproj::Templates()[(std::size_t)f.tpl].title));
+            f.modules = pick.ToText();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("MODULES  (what goes into your game; a module that is off is left out of it)");
+    {
+        okaymod::Selection sel(okay::ModuleRegistry::Get(), f.modules);
+        bool changed = okaymod::DrawPresetButtons(sel);
+        ImGui::TextDisabled("%s", okaymod::SummaryText(sel, sel.Rows().size()).c_str());
+        if (ImGui::TreeNode("Choose modules one by one##npmods")) {
+            changed |= okaymod::DrawChecklist(sel, nullptr, f.modulesNote, 120.0f);
+            if (!f.modulesNote.empty()) ImGui::TextColored(amber, "%s", f.modulesNote.c_str());
+            ImGui::TreePop();
+        }
+        if (changed) { f.modules = sel.ToText(); f.modulesTouched = true; }
+    }
 
     ImGui::Dummy(ImVec2(0, 6));
     const bool can = plan.ok();
@@ -19529,6 +19568,7 @@ static void DrawNewProjectDialog(EditorState& ed) {
     if (create) {
         const std::string root = g_npForm.plan.root.string();
         const std::string tpl = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "creating the new project", [root, tpl] { g_newProjectRoot = root; g_newProjectTemplate = tpl; });
     }
@@ -19601,6 +19641,7 @@ void DrawProjectGate(EditorState& ed) {
     if (DrawNewProjectForm(g_npForm)) {
         g_newProjectRoot = g_npForm.plan.root.string();
         g_newProjectTemplate = okayproj::Templates()[(std::size_t)g_npForm.tpl].title;
+        g_newProjectModules = g_npForm.modules;
     }
     ImGui::SameLine();
     if (ImGui::Button("Quit", ImVec2(100, 32))) g_quitRequested = true;
@@ -19656,10 +19697,13 @@ void DrawNewProjectPopup(EditorState& ed) {
     const std::string folder = plan.folder;
     const std::string version = g_newProjectVersion;
     const int gpu = g_newProjectGpu;
+    const std::string modules = g_newProjectModules;
+    g_newProjectModules.clear();
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    auto writeFiles = [&folder, version, gpu, modules](const std::string& rt, std::string& err) {
         ProjectSettings settings;
+        settings.modules = modules;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
         if (!okayproj::WriteTextAtomic(ProjectSettingsFile(rt), StampedNewProjectText(WriteProjectSettings(settings, "")), &err)) return false;   // stamped with this version from the first moment
@@ -19875,6 +19919,25 @@ static void DrawTagsAndLayersSettings(EditorState& ed) {
     if (ImGui::SmallButton("Reset all layer names##ps")) { okay::Layers::ResetNames(); layerErr.clear(); SaveProjectSettings(); }
 }
 
+// Project Settings > Modules: which engine modules the project uses (project.okayproj modules=). Turning one off never
+// edits a scene; the components stay and the export drops them, listed here and in the build report.
+static std::string g_modulesNote;
+static void DrawModulesSettings(EditorState& ed) {
+    okaymod::Selection sel(okay::ModuleRegistry::Get(), g_project.modules);
+    ImGui::TextWrapped("The parts of the engine this game uses. A module that is off is left out of the exported game (smaller, "
+                       "fewer things to go wrong). Turning one on also turns on what it needs; a module that others need stays on.");
+    const auto usage = okaymod::UsageInScene(okay::ModuleRegistry::Get(), ed.scene());
+    bool changed = okaymod::DrawPresetButtons(sel);
+    ImGui::TextDisabled("%s", okaymod::SummaryText(sel, sel.Rows().size()).c_str());
+    changed |= okaymod::DrawChecklist(sel, &usage, g_modulesNote, 260.0f);
+    if (!g_modulesNote.empty()) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "%s", g_modulesNote.c_str());
+    for (auto& u : okaymod::UsedButOff(sel, usage))
+        ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f), "The open scene uses %d object(s) of a module that is off: %s. They stay in the scene and are left out of the exported game.",
+                           u.second, okay::ModuleRegistry::Get().Find(u.first) ? okay::ModuleRegistry::Get().Find(u.first)->manifest.title.c_str() : u.first.c_str());
+    if (changed) { g_project.modules = sel.ToText(); SaveProjectSettings(); }
+    if (g_project.modules.empty()) ImGui::TextDisabled("Every module is on (the saved file has no modules line, like a project from before modules).");
+}
+
 // Edit > Project Settings: project-wide defaults that builds inherit, plus
 // quick "apply to current scene" for physics/rendering.
 void DrawProjectSettings(EditorState& ed) {
@@ -19969,6 +20032,7 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Modules")) DrawModulesSettings(ed);
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
@@ -36089,6 +36153,32 @@ void DrawInspector(EditorState& ed) {
         if (ImGui::DragFloat((std::string("Current##cur") + id).c_str(), value, 0.5f, 0.0f, 1e9f, "%.1f"))
             ed.dirty = true;
     };
+    if (auto* c = dynamic_cast<HitZones*>(curComp)) {
+        if (CompHeader("Hit Zones", c, &toRemove)) {
+            ImGui::TextDisabled("A hit names a zone, or lands at a height; the zone scales the damage.");
+            for (size_t zi = 0; zi < c->zones.size(); ++zi) {
+                ImGui::PushID((int)zi);
+                char nm[48]; std::snprintf(nm, sizeof(nm), "%s", c->zones[zi].name.c_str());
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::InputText("##zn", nm, sizeof(nm))) { c->zones[zi].name = nm; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::DragFloat("x##zs", &c->zones[zi].scale, 0.05f, 0.0f, 100.0f, "x%.2f")) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) { c->zones.erase(c->zones.begin() + (long)zi); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("Add Zone##hz")) { c->zones.push_back({"zone", 1.0f}); ed.dirty = true; }
+            if (ImGui::DragFloat("Head From Height##hz", &c->headFromHeight, 0.05f, 0.0f, 50.0f, "%.2f m")) ed.dirty = true;
+            if (ImGui::DragFloat("Legs Up To Height##hz", &c->legsToHeight, 0.05f, 0.0f, 50.0f, "%.2f m")) ed.dirty = true;
+            if (ImGui::TreeNodeEx("Damage Type Scale##hz")) {
+                for (int ti = 0; ti < okay::kDamageTypeCount; ++ti) {
+                    std::string lbl = std::string(okay::DamageTypeName((okay::DamageType)ti)) + "##hzt" + std::to_string(ti);
+                    if (ImGui::DragFloat(lbl.c_str(), &c->typeScale[ti], 0.05f, 0.0f, 100.0f, "x%.2f")) ed.dirty = true;
+                }
+                ImGui::TreePop();
+            }
+        }
+    }
     if (auto* c = dynamic_cast<HealthStat*>(curComp)) {
         if (CompHeader("Stat: Health", c, &toRemove)) {
             statValue(&c->health, c->maxHealth, "sth");
@@ -41913,6 +42003,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<HitZones>(), "Hit Zones (head / body / legs damage)")) { go->AddComponent<HitZones>(); ed.dirty = true; }
             if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
@@ -49953,6 +50044,7 @@ int main(int argc, char** argv) {
         if (n == "BuildMode") return go->GetComponent<BuildMode>() != nullptr;
         if (n == "SequencePlayer") return go->GetComponent<SequencePlayer>() != nullptr;
         if (n == "HealthStat") return go->GetComponent<HealthStat>() != nullptr;
+        if (n == "HitZones") return go->GetComponent<HitZones>() != nullptr;
         return false;
     };
     okay::editor::vsed::VsAddComponentById = [](GameObject* go, const char* id) -> bool {
@@ -49981,6 +50073,7 @@ int main(int argc, char** argv) {
         if (n == "BuildMode") return add(go->AddComponent<BuildMode>());
         if (n == "SequencePlayer") return add(go->AddComponent<SequencePlayer>());
         if (n == "HealthStat") return add(go->AddComponent<HealthStat>());
+        if (n == "HitZones") return add(go->AddComponent<HitZones>());
         ConsoleLog(std::string("Can't add ") + id + " from here.", 1);
         return false;
     };

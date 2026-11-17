@@ -32,6 +32,13 @@ on:
 permissions:
   contents: write          # needed to attach assets to a Release
 
+# Only one release run at a time (CLAUDE.md rules 12 and 13): a second run for the same or another version waits for the first
+# to finish instead of racing it for the tag, the assets, versions.json and the "latest" mark. Never cancelled midway: a
+# half-published release is worse than a waiting one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   windows-exe:
     name: Cross-compile Windows exes (MinGW)
@@ -82,6 +89,26 @@ jobs:
           cp release-notes/CHANGELOG.txt dist/CHANGELOG.txt
           echo "NOTES_FILE=$PWD/release-notes/NOTES.txt" >> "$GITHUB_ENV"
           git diff --stat
+      # A version is released once (CLAUDE.md rule 12): running this again for a version that already has a GitHub release would
+      # rebuild the programs and change their checksums. Stop here, before anything is built, if v<version> already has a release.
+      # The version is read the same way build-windows-dist.sh reads it. If GitHub cannot be asked, this fails (it does not guess).
+      - name: Refuse a version that is already released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          if [ -z "$VER" ]; then echo "::error::could not read the version from CMakeLists.txt"; exit 1; fi
+          rc=0
+          out="$(gh release view "v$VER" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft 2>&1)" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error title=v$VER is already released::GitHub already has a release for v$VER ($out). Never re-run the release for a version that exists: it rebuilds the programs and changes their checksums. Bump the version in CMakeLists.txt instead."
+            exit 1
+          fi
+          if ! printf '%s' "$out" | grep -qi "release not found"; then
+            echo "::error title=Could not check for an existing release::gh said: $out"
+            exit 1
+          fi
+          echo "v$VER has no release yet: continuing."
 
       # Without keys the launcher can't tell the official game's signed build
       # from an edited one: its anti-cheat checks are only telemetry. A warning
@@ -361,7 +388,9 @@ jobs:
   finalize:
     name: Make the release visible (latest)
     needs: [windows-exe, linux-server]
-    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' }}
+    # Only when BOTH jobs succeeded: a failed or cancelled Linux server build leaves the release hidden (not "latest"), because the
+    # editor's Dedicated Server export downloads okay-server-linux-x64 from the latest release and it would be missing.
+    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

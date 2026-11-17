@@ -7,6 +7,10 @@ useless." This page lists each thing that is shipped (or finished and waiting fo
 in the release you run (`OkaySpace.exe`, `Tools\OkayEngine.exe`, `Tools\OkaySpacePlayer.exe`, the installer or the
 zip), and how to tell it worked. CLAUDE.md rule 4a keeps it current: every change adds its row here.
 
+**File > Examples is gone (owner request, 2026-11-17).** Where an entry below still says "File > Examples", open the same scene with
+**File > Open Scene...** instead: the example scenes still ship in the `examples` folder beside the program (for example
+`examples\input\...`, `examples\ui_library\...`). The older wording will be corrected as entries are touched.
+
 Honest status words used below:
 
 * **Verified here** means a command was run on the Linux machine that wrote this page, and the result was seen.
@@ -83,6 +87,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
@@ -92,6 +97,7 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
 
@@ -1387,6 +1393,39 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## fast1. Fast release: one dispatch, no version-bump PR
+
+**What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
+refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
+The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
+then "Release Windows build") still works. Everything: `docs/fast_release.md`.
+
+**Steps (the dry run, safe: builds and publishes nothing).**
+1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.
+   Or in a terminal: `gh workflow run fast-release.yml --ref main -f dry_run=true`.
+2. Open the run and read its summary page.
+
+**What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
+("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
+new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
+(missing, still running, red). That is the safety check working, not a failure of the tool.
+
+**Steps (the first real release through it).**
+1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
+2. Actions > Fast release > Run workflow, branch `main`, dry_run off.
+3. Wait for the three jobs: Plan, Build and publish (release.yml), Check the release. The last one prints a table; every row must say "ok".
+
+**What you should see.** A new GitHub release `v<version>` that is "latest", the launcher offering that version, and in the run summary the
+check table (release published, tag on the tested commit, three programs with a SHA-256 in versions.json that equals the one on GitHub).
+
+**To add a changelog entry (every PR).** Copy `dist/changelog.d/fast-release.txt`, change the text, run
+`python3 scripts/fast_release.py check-entries`.
+
+**Status.** Tested offline only: `python3 tests/scripts/test_fast_release.py` (ctest `fast_release_lint`) with fake GitHub data and a
+throw-away git repo; the workflows parse as YAML and every shell block passes `bash -n`. Not run on GitHub Actions. Unverified there:
+calling `release.yml` as a reusable workflow with `secrets: inherit`, `body_path` together with `generate_release_notes`, and GitHub's
+asset `digest` field. The first dry run and the first real release are the proof.
+
 ## File > Examples opens the examples (fix)
 
 1. Open the editor from the Windows release (also when it was started from a project folder).
@@ -1640,6 +1679,40 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## ci1. CI and release speed-up: how to tell it worked
+
+**This change has nothing to click in the editor, launcher or player.** It only changes how GitHub builds and tests
+(`.github/workflows/ci.yml`, `.github/workflows/release.yml`, the end of `tests/CMakeLists.txt`). The way to "try" it is
+to read the Actions page. **The speed-up is UNVERIFIED until a real CI run has happened.** The first run after this
+merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR run restores whatever `main` last saved.
+
+**Steps.**
+1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
+   about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
+2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
+   means the build was cold.
+4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
+   90 percent; the first run after a change is expected to be lower.
+5. Open "Test". The `ctest` line must show `-j4 --timeout 300` and the summary must say 100 percent passed, with the
+   same count (about 805 tests) as before. No test is skipped or loosened.
+6. After the merge, open the push-to-main run. Every job that builds C++ now has a last step "Save compiler cache (main
+   only)"; it runs only there. On a PR run that step shows as skipped.
+7. Repository Settings > Actions > Caches: the `ccache-*` entries should be one recent entry per job, not a long list of
+   old sha keys. Total under 10 GB.
+8. Release (`release.yml`): the first step of the "Cross-compile Windows exes" job is "Refuse a version that is already
+   released". On a version that already has a GitHub release it must fail in seconds with "already released". Two
+   release runs started together must queue (the second shows "Waiting"), not run at the same time. The "Make the release
+   visible (latest)" job runs only if the Linux server job succeeded.
+
+**What you should see.** A faster "Build & test (Ubuntu)" (target: well under an hour; the real number is unknown until
+measured) and the same tests passing. All other jobs still run on every PR and on main, with the same names.
+
+**Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
+CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
+passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+out.
 
 ## Five starter templates removed from New Project
 

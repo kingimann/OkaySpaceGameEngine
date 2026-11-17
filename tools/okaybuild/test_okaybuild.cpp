@@ -670,6 +670,75 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testJobserver() {
+    printf("test: a jobserver keeps nested okay-build runs inside -j\n");
+    auto tree = [&](const string& name) {
+        fresh(name);
+        write("slot.sh",
+              "#!/bin/sh\n"
+              "dir=\"$1\"\nout=\"$2\"\nmkdir -p \"$dir\"\n"
+              "exec 9>>\"$dir/lock\"\nflock 9\n"
+              "cur=$(cat \"$dir/count\" 2>/dev/null || echo 0)\ncur=$((cur+1))\necho \"$cur\" > \"$dir/count\"\n"
+              "max=$(cat \"$dir/max\" 2>/dev/null || echo 0)\n"
+              "if [ \"$cur\" -gt \"$max\" ]; then echo \"$cur\" > \"$dir/max\"; fi\n"
+              "flock -u 9\nsleep 0.3\n"
+              "exec 9>>\"$dir/lock\"\nflock 9\n"
+              "cur=$(cat \"$dir/count\")\necho $((cur-1)) > \"$dir/count\"\nflock -u 9\n"
+              "echo ok > \"$out\"\n");
+        fs::permissions(gRoot / "slot.sh", fs::perms::owner_all);
+        string slot = (gRoot / "slots").string();
+        string child;
+        for (int i = 0; i < 4; ++i) {
+            string o = "c" + std::to_string(i) + ".out";
+            child += "action\n  cmd = ./slot.sh '" + slot + "' " + o + "\n  output = " + o + "\nend\n";
+        }
+        write("child.okay", child);
+        string tool = gTool;
+        if (tool.size() >= 2 && tool.front() == '\'' && tool.back() == '\'') tool = tool.substr(1, tool.size() - 2);
+        write("parent.okay",
+              "action\n  cmd = '" + tool + "' -f child.okay -j8\n  output = one.done\nend\n"
+              "action\n  cmd = '" + tool + "' -f child.okay -j8 && echo ok > two.done\n  output = two.done\nend\n"
+              "action\n  cmd = echo ok > one.done\n  output = one.done\nend\n");
+    };
+    // The first child action must produce one.done. Fix: both children echo their own output.
+    auto tree2 = [&](const string& name) {
+        fresh(name);
+        write("slot.sh",
+              "#!/bin/sh\n"
+              "dir=\"$1\"\nout=\"$2\"\nmkdir -p \"$dir\"\n"
+              "exec 9>>\"$dir/lock\"\nflock 9\n"
+              "cur=$(cat \"$dir/count\" 2>/dev/null || echo 0)\ncur=$((cur+1))\necho \"$cur\" > \"$dir/count\"\n"
+              "max=$(cat \"$dir/max\" 2>/dev/null || echo 0)\n"
+              "if [ \"$cur\" -gt \"$max\" ]; then echo \"$cur\" > \"$dir/max\"; fi\n"
+              "flock -u 9\nsleep 0.3\n"
+              "exec 9>>\"$dir/lock\"\nflock 9\n"
+              "cur=$(cat \"$dir/count\")\necho $((cur-1)) > \"$dir/count\"\nflock -u 9\n"
+              "echo ok > \"$out\"\n");
+        fs::permissions(gRoot / "slot.sh", fs::perms::owner_all);
+        string slot = (gRoot / "slots").string();
+        string child;
+        for (int i = 0; i < 4; ++i) {
+            string o = "c" + std::to_string(i) + ".out";
+            child += "action\n  cmd = ./slot.sh '" + slot + "' " + o + "\n  output = " + o + "\nend\n";
+        }
+        write("child.okay", child);
+        string tool = gTool;
+        if (tool.size() >= 2 && tool.front() == '\'' && tool.back() == '\'') tool = tool.substr(1, tool.size() - 2);
+        write("parent.okay",
+              "action\n  cmd = mkdir -p one && cp child.okay slot.sh one/ && cd one && '" + tool + "' -f child.okay -j8 && echo ok > ../one.done\n  output = one.done\nend\n"
+              "action\n  cmd = mkdir -p two && cp child.okay slot.sh two/ && cd two && '" + tool + "' -f child.okay -j8 && echo ok > ../two.done\n  output = two.done\nend\n");
+    };
+    tree2("js");
+    int rc; string o = sh("-f parent.okay -j2 --jobserver", &rc);
+    int mx = 0; { std::ifstream f(gRoot / "slots/max"); f >> mx; }
+    check(rc == 0 && mx > 0 && mx <= 2, "nested builds share a pool of 2", o + "\nmax=" + std::to_string(mx));
+    tree2("noj");
+    o = sh("-f parent.okay -j2", &rc);
+    int mx2 = 0; { std::ifstream f(gRoot / "slots/max"); f >> mx2; }
+    check(rc == 0 && mx2 >= 4, "without a jobserver the children overlap", o + "\nmax=" + std::to_string(mx2));
+    (void)tree;
+}
+
 static void testMsvcFlags() {
     printf("test: MSVC flag spelling, /showIncludes deps, response files\n");
     fresh("msvc");
@@ -742,6 +811,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

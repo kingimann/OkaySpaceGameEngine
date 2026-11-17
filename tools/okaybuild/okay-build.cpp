@@ -702,6 +702,7 @@ struct Live {
     string out, cacheKey, cacheTag;
     bool stream = false;
     long long started = 0, began = 0;
+    int jobKind = 0;
 };
 static string winQuote(const string& s) {
     bool need = s.empty();
@@ -882,6 +883,92 @@ static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
 static std::atomic<int> gCacheHit{0}, gCacheMiss{0};
 static bool gUseCache = true;
 static int gMemLimit = 0;
+static bool gWantJobserver = false, gJobOn = false;
+static int gJsR = -1, gJsW = -1;
+static std::atomic<int> gImplicit{1};
+#ifdef _WIN32
+static HANDLE gJsSem = nullptr;
+#endif
+struct JsToken { int kind = 0; }; // 0 not in use, 1 implicit slot, 2 a pipe or semaphore token, -1 cancelled, -2 none free
+static JsToken tryTakeJob() {
+    JsToken t;
+    if (!gJobOn) return t;
+    if (gCancel.load()) { t.kind = -1; return t; }
+    int prev = gImplicit.fetch_sub(1);
+    if (prev > 0) { t.kind = 1; return t; }
+    gImplicit.fetch_add(1);
+#ifdef _WIN32
+    if (gJsSem && WaitForSingleObject(gJsSem, 0) == WAIT_OBJECT_0) { t.kind = 2; return t; }
+#else
+    if (gJsR >= 0) {
+        pollfd pf{}; pf.fd = gJsR; pf.events = POLLIN;
+        if (poll(&pf, 1, 0) > 0) {
+            char b = 0; ssize_t n = read(gJsR, &b, 1);
+            if (n == 1) { t.kind = 2; return t; }
+        }
+    }
+#endif
+    t.kind = -2; return t;
+}
+static void giveJob(JsToken t) {
+    if (t.kind == 1) gImplicit.fetch_add(1);
+    else if (t.kind == 2) {
+#ifdef _WIN32
+        if (gJsSem) ReleaseSemaphore(gJsSem, 1, nullptr);
+#else
+        char b = '+';
+        while (gJsW >= 0 && write(gJsW, &b, 1) < 0 && errno == EINTR) {}
+#endif
+    }
+}
+static bool parseJobAuth(const string& spec) {
+    if (spec.rfind("sem:", 0) == 0) {
+#ifdef _WIN32
+        gJsSem = OpenSemaphoreW(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, widen(spec.substr(4)).c_str());
+        return gJsSem != nullptr;
+#else
+        return false;
+#endif
+    }
+    auto c = spec.find(','); if (c == string::npos || c == 0) return false;
+    gJsR = atoi(spec.c_str()); gJsW = atoi(spec.c_str() + c + 1);
+    return gJsR >= 0 && gJsW >= 0;
+}
+static void adoptJobserver() {
+    if (gJobOn) return;
+    const char* own = getenv("OKAY_JOBSERVER");
+    if (own && parseJobAuth(own)) { gJobOn = true; return; }
+    const char* mf = getenv("MAKEFLAGS"); if (!mf) return;
+    string s = mf;
+    auto p = s.find("--jobserver-auth="); if (p == string::npos) p = s.find("--jobserver-fds=");
+    if (p == string::npos) return;
+    auto eq = s.find('=', p); if (eq == string::npos) return;
+    string spec = s.substr(eq + 1);
+    auto sp = spec.find_first_of(" \t"); if (sp != string::npos) spec = spec.substr(0, sp);
+    if (parseJobAuth(spec)) gJobOn = true;
+}
+static void ensureJobserver(int jobs) {
+    if (gJobOn || !gWantJobserver) return;
+    if (jobs < 1) jobs = 1;
+#ifdef _WIN32
+    string name = "Local\\okaybuild-" + std::to_string(GetCurrentProcessId());
+    gJsSem = CreateSemaphoreW(nullptr, jobs > 1 ? jobs - 1 : 0, jobs, widen(name).c_str());
+    if (!gJsSem) return;
+    string spec = "sem:" + name;
+    SetEnvironmentVariableA("OKAY_JOBSERVER", spec.c_str());
+#else
+    int fd[2]; if (pipe(fd) != 0) return;
+    for (int i = 0; i + 1 < jobs; ++i) { char b = '+'; if (write(fd[1], &b, 1) != 1) break; }
+    gJsR = fd[0]; gJsW = fd[1];
+    string spec = std::to_string(gJsR) + "," + std::to_string(gJsW);
+    setenv("OKAY_JOBSERVER", spec.c_str(), 1);
+    const char* old = getenv("MAKEFLAGS");
+    string flags = old ? string(old) : string();
+    flags += " --jobserver-auth=" + spec;
+    setenv("MAKEFLAGS", flags.c_str(), 1);
+#endif
+    gJobOn = true;
+}
 static void rejectOversized(const Graph& g) {
     if (gMemLimit <= 0) return;
     for (auto& a : g.acts) if (a.memory > gMemLimit)
@@ -1305,6 +1392,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     if (jobs > total && total > 0) jobs = total;
     if (jobs < 1) jobs = 1;
     if (jobs > 64) jobs = 64; // WaitForMultipleObjects accepts at most 64 handles
+    ensureJobserver(jobs);
     int memUsed = 0;
     auto blocked = [&](int id) {
         int p = poolIdx[id]; if (p >= 0 && pools[p].used >= pools[p].depth) return true;
@@ -1357,7 +1445,11 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 }
                 bool stream = poolIdx[id] >= 0 && pools[poolIdx[id]].name == "console";
                 Live L; L.id = id; L.cacheKey = cacheKey; L.cacheTag = tag; L.began = tStep;
-                if (!spawnLive(line, a.dir, stream, L, err)) { done(id, false, err, false); continue; }
+                JsToken tok = tryTakeJob();
+                if (tok.kind == -2) { ready.push_back(id); break; }
+                if (tok.kind < 0) { gCancel.store(1); done(id, false, "okay-build: cancelled\n", false); continue; }
+                if (!spawnLive(line, a.dir, stream, L, err)) { giveJob(tok); done(id, false, err, false); continue; }
+                L.jobKind = tok.kind;
                 if (poolIdx[id] >= 0) ++pools[poolIdx[id]].used;
                 memUsed += a.memory;
                 live.push_back(L);
@@ -1368,6 +1460,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
             live.clear(); break;
         }
         if (live.empty()) {
+            if (gJobOn && !ready.empty() && !stop && !gCancel.load()) { Sleep(20); continue; }
             if (!ready.empty() && !stop) { anyFail = true; stop = true; fprintf(stderr, "okay-build: steps are waiting on a pool but none is free\n"); }
             break;
         }
@@ -1383,6 +1476,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         DWORD code = 1; GetExitCodeProcess(L.proc, &code);
         CloseHandle(L.proc); if (L.pipe) CloseHandle(L.pipe);
         gNsSpawn += nowNs() - L.started;
+        giveJob(JsToken{L.jobKind});
         const Action& a = g.acts[L.id];
         bool ok = code == 0; string out = L.out;
         if (ok && !L.cacheKey.empty()) storeCache(a, L.cacheKey);
@@ -1445,6 +1539,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     if (jobs > total && total > 0) jobs = total;
     if (jobs < 1) jobs = 1;
+    ensureJobserver(jobs);
     int memUsed = 0;
     auto blocked = [&](int id) {
         int p = poolIdx[id]; if (p >= 0 && pools[p].used >= pools[p].depth) return true;
@@ -1501,7 +1596,17 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                             else { tag = "miss"; ++gCacheMiss; std::lock_guard<std::mutex> pl(mu); printf("        cache miss\n"); fflush(stdout); }
                         }
                         long long ts = nowNs();
-                        if (ok && !cached) { int rc = runCmd(argv, out, stream); ok = rc == 0; }
+                        if (ok && !cached) {
+                            JsToken tok;
+                            for (;;) {
+                                tok = tryTakeJob();
+                                if (tok.kind != -2) break;
+                                if (gCancel.load()) { tok.kind = -1; break; }
+                                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                            }
+                            if (tok.kind < 0) ok = false;
+                            else { int rc = runCmd(argv, out, stream); ok = rc == 0; giveJob(tok); }
+                        }
                         gNsSpawn += nowNs() - ts;
                         if (ok && !cached && !cacheKey.empty()) storeCache(a, cacheKey);
                         commitStep(a, out, ok, oldProduced);
@@ -1967,6 +2072,7 @@ int main(int argc, char** argv) {
 #else
     signal(SIGINT, onInt);
 #endif
+    adoptJobserver();
     Opts o; string cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
@@ -1983,6 +2089,7 @@ int main(int argc, char** argv) {
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;
+            else if (a == "--jobserver") gWantJobserver = true;
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];

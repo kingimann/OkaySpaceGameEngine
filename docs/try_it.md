@@ -1266,6 +1266,13 @@ OkaySpace.exe
 - **Versions** (sidebar): This version, the update channel (switch it to Long-term support and back), the installed versions
   and the versions you can install. Scroll with the wheel as usual.
 
+- **Notifications over Friends**: open the bell while Friends is showing. Expect the panel on top; the Friends page under it is
+  drawn by Dear ImGui while the panel is open (it used to paint over the panel).
+- **Pictures**: put a `cover.png` next to a game's `.okayscene` in the `community` folder and press Refresh: the Community card
+  shows the cover with rounded corners, as the Dear ImGui page does. Friends with a profile picture show it round (needs a
+  signed-in account whose friends have pictures; the demo data has none).
+- **Speed with and without the drawing cache**: add `set OKAY_UI_TIMING=1`, and once `set OKAY_UI_NO_DRAW_CACHE=1`, to compare.
+
 Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui versions: the two should look the same
 (same positions, sizes, icons and tooltip place; only edge shading and single text pixels differ). The Dear ImGui Downloads rows
 now show their buttons in full (they used to be cut off at the bottom). Clicking a chip or button right after moving onto it

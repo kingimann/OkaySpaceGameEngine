@@ -16,7 +16,8 @@
 static int gOk = 0;
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
-    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c"};
+    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
+                           "lib/alloc.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {

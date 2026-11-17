@@ -35,6 +35,7 @@
 // head); below 0 they follow the foot weight.
 // A transition can start its target part-way in (`offset`, normalized).
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ModelAnimator.hpp"
@@ -491,6 +492,7 @@ public:
     }
 
     void Update(float dt) override {
+        OKAY_PROFILE("Anim.Graph");
         AnimBackend* ma = Anim();
         if (!ma || states.empty()) return;
         if (layer == 0) ma->SetStateMachine(this);

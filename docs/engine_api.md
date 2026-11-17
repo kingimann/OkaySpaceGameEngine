@@ -353,6 +353,28 @@ Grey bars shown while something is still loading.
 | `GetComponent<UISkeleton>().SetLoading(on)` | `UISkeleton.SetLoading/1` | step | on (Bool), Target (Object) | - | True shows the loading bars. False clears them. |
 | `GetComponent<UISkeleton>().IsLoading()` | `UISkeleton.IsLoading/0` | value | Target (Object) | Result (Bool) | True while the loading bars are showing. |
 
+## UIRangeSlider
+
+A track with two handles that pick a low and a high value. on_change fires when either moves.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRangeSlider>().SetRange(low, high)` | `UIRangeSlider.SetRange/2` | step | low (Number), high (Number), Target (Object) | - | Move both handles. The values are snapped to the step and held inside the track. |
+| `GetComponent<UIRangeSlider>().SetLow(value)` | `UIRangeSlider.SetLow/1` | step | value (Number), Target (Object) | - | Move the left handle. It stops at the right handle. |
+| `GetComponent<UIRangeSlider>().SetHigh(value)` | `UIRangeSlider.SetHigh/1` | step | value (Number), Target (Object) | - | Move the right handle. It stops at the left handle. |
+| `GetComponent<UIRangeSlider>().Low()` | `UIRangeSlider.Low/0` | value | Target (Object) | Result (Number) | The value of the left handle. |
+| `GetComponent<UIRangeSlider>().High()` | `UIRangeSlider.High/0` | value | Target (Object) | Result (Number) | The value of the right handle. |
+
+## UIInputValidator
+
+Rules for the UI Input Field on the same object. on_valid and on_invalid fire when the answer changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIInputValidator>().Check()` | `UIInputValidator.Check/0` | step | Target (Object) | Result (Bool) | Check the field now and answer true when the text is acceptable. Use it before you accept a form. |
+| `GetComponent<UIInputValidator>().IsValid()` | `UIInputValidator.IsValid/0` | value | Target (Object) | Result (Bool) | True when the text passed at the last check. |
+| `GetComponent<UIInputValidator>().Error()` | `UIInputValidator.Error/0` | value | Target (Object) | Result (Text) | The sentence that says what is wrong, or an empty string. |
+
 ## UIBottomSheet
 
 A panel that slides up from the bottom. on_change fires when it opens or closes.

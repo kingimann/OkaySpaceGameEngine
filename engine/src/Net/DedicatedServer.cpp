@@ -1,4 +1,5 @@
 #include "okay/Net/DedicatedServer.hpp"
+#include "okay/Net/CheatSim.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatBackend.hpp"   // shared/: the ac_reports request (#270)
@@ -150,6 +151,11 @@ const char* DedicatedServerUsage() {
         "  --report-kicks         file anti-cheat kicks of signed-in players for admin review\n"
         "  --fixed-tick           run the network on a fixed tick at --tick (clients send once a tick)\n"
         "  --authoritative        the server moves players from their inputs (no scene edit)\n"
+        "  --no-ban-file          with the anti-cheat on, don't keep okay_bans.txt (bans last until restart)\n"
+        "  --no-audit-log         with the anti-cheat on, don't write okay_anticheat_audit.log\n"
+        "  --cheat-sim            run the cheat simulator on this machine (a rogue client against a\n"
+        "                         local server), print what the anti-cheat caught, and exit\n"
+        "  --cheat-sim-only LIST  just these cheats: speed,teleport,garbage,servervar,flood,hitclaim,macro,ban\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -206,6 +212,8 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
         else if (k == "report_kicks") out.reportKicks = truthy(v);
         else if (k == "fixed_tick") out.fixedTick = truthy(v);
         else if (k == "authoritative") out.authoritative = truthy(v);
+        else if (k == "ban_file") out.noBanFile = (v == "off" || v == "none" || v == "0" || v == "false");
+        else if (k == "audit_log") out.noAuditLog = (v == "off" || v == "none" || v == "0" || v == "false");
         else if (k == "host_key") {
             std::string why;
             if (!LoadHostKey(v, out.hostKeySeed, why)) return bad("host_key: " + why);
@@ -251,6 +259,10 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
 
     // Environment first (container hosts set these), then flags override.
     int iv = 0; float fv = 0.0f;
+    if (std::string e = EnvStr("OKAY_CHEAT_SIM"); !e.empty() && e != "0" && e != "off" && e != "false") {   // "1" = every cheat; or a list: speed,flood
+        out.cheatSim = true;
+        if (e != "1" && e != "on" && e != "true" && e != "all") out.cheatSimOnly = e;
+    }
     if (std::string e = EnvStr("OKAY_SERVER_PORT"); !e.empty()) {
         if (!ParseInt(e, 1, 65535, iv)) return fail("OKAY_SERVER_PORT must be 1-65535");
         out.port = (std::uint16_t)iv;
@@ -337,6 +349,15 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
             out.fixedTick = true;
         } else if (a == "--authoritative") {
             out.authoritative = true;
+        } else if (a == "--no-ban-file") {
+            out.noBanFile = true;
+        } else if (a == "--no-audit-log") {
+            out.noAuditLog = true;
+        } else if (a == "--cheat-sim") {
+            out.cheatSim = true;
+        } else if (a == "--cheat-sim-only") {
+            if (!value(v) || v.empty()) return fail("--cheat-sim-only needs a list, e.g. speed,flood");
+            out.cheatSim = true; out.cheatSimOnly = v;
         } else if (a == "--host-key") {
             if (!value(v) || v.empty()) return fail("--host-key needs a file");
             std::string why;
@@ -526,6 +547,14 @@ std::size_t AsyncTokenCheck::Pending() const {
 void RequestDedicatedServerStop() { g_stop = true; }
 
 int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
+    if (opts.cheatSim) {   // not a server run: a self-test of the anti-cheat (nothing leaves this machine)
+        CheatSimOptions so;
+        so.only = opts.cheatSimOnly;
+        if (opts.anticheatFile.size() && opts.anticheat.enabled) so.rules = opts.anticheat.ToText();   // your own rules, if you gave a file
+        so.out = stdout;
+        const CheatSimReport r = RunCheatSim(so);
+        return r.Ok() ? 0 : 1;
+    }
     g_stop = false;
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
@@ -569,6 +598,13 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         std::fprintf(stderr, "[server] the anti-cheat rules set a ticketKey but no ticketAudience (this server's id in tickets); not starting\n");
         return 2;
     }
+    // The anti-cheat on: bans and an audit log are on too, in the server's folder, unless the rules name
+    // other files or they are switched off. (Nothing here leaves the machine.)
+    if (net->anticheat.settings.enabled) {
+        AntiCheatSettings& as = net->anticheat.settings;
+        if (as.banFile.empty() && !opts.noBanFile) as.banFile = "okay_bans.txt";
+        if (as.auditLog.empty() && !opts.noAuditLog) as.auditLog = "okay_anticheat_audit.log";
+    }
     if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
     if (opts.fixedTick) net->netTickRate = opts.tickRate;
     if (opts.authoritative) net->authoritativeMovement = true;
@@ -610,6 +646,11 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     if (!opts.anticheatFile.empty())
         std::printf("[server] anti-cheat %s from %s\n", net->anticheat.settings.enabled ? "on" : "OFF (enabled false)",
                     opts.anticheatFile.c_str());
+    if (net->anticheat.settings.enabled) {
+        const AntiCheatSettings& as = net->anticheat.settings;
+        std::printf("[server] anti-cheat bans: %s \xC2\xB7 audit log: %s\n", as.banFile.empty() ? "kept until restart" : as.banFile.c_str(),
+                    as.auditLog.empty() ? "off" : as.auditLog.c_str());
+    }
     if (kickReporter)
         std::printf("[server] anti-cheat kicks of signed-in players are reported for admin review as %s (nothing is banned automatically)\n",
                     Account::Username().c_str());

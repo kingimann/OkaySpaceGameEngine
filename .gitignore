@@ -58,3 +58,12 @@ release-out/
 /saves/
 /creations/
 *.okayscene.bak
+
+# Built programs are never committed (the release workflow and scripts/build-windows-dist.sh build them; branch_lint.py "binaries" enforces it).
+# dist/ keeps only its text files (CHANGELOG.txt, VERSION.txt, steam_appid.txt, character_preview.png).
+dist/*.exe
+dist/*.dll
+dist/*.so
+dist/*.dylib
+dist/*.zip
+build-win-dist/

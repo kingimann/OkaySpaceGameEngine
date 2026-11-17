@@ -9,6 +9,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Components/PlayerPerf.hpp"
 #include <cmath>
 #include <vector>
 
@@ -31,8 +32,8 @@ inline Extents Measure(GameObject* go) {
     Extents e;
     if (!go) return e;
     Collider3D* col = nullptr;
-    for (Collider3D* c : go->GetComponents<Collider3D>()) {
-        if (c && !c->isTrigger) { col = c; break; }
+    for (const auto& comp : go->Components()) {   // the first solid collider, found without building a list
+        if (auto* c = dynamic_cast<Collider3D*>(comp.get()); c && !c->isTrigger) { col = c; break; }
     }
     if (!col) {
         // A character with no collider still needs a body-sized footprint so it
@@ -165,6 +166,17 @@ inline void EaseOutOfSolids(GameObject* go, float dt, SeparationMemory& mem, con
     const Vec3 half = TestHalf(ext.half);
     const Vec3 center = pos + ext.centerOff + Vec3{0.0f, 0.03f, 0.0f};
     const float feet = pos.y + ext.centerOff.y - ext.half.y;
+    if (!OldPlayerPath()) {
+        // Nothing solid within reach of the padded body box: both overlap counts below would be 0 and this
+        // function would answer "clear". Say so from the bounds of the scene's colliders and stop here; the six
+        // queries below (two overlaps, four rays) only run with a solid close by.
+        const Vec3 ax = rot * Vec3{1, 0, 0}, ay = rot * Vec3{0, 1, 0}, az = rot * Vec3{0, 0, 1};
+        const float hx = half.x + 0.35f + 0.05f, hy = half.y + 0.05f, hz = half.z + 0.35f + 0.05f;
+        const Vec3 e{std::fabs(ax.x) * hx + std::fabs(ay.x) * hy + std::fabs(az.x) * hz,
+                     std::fabs(ax.y) * hx + std::fabs(ay.y) * hy + std::fabs(az.y) * hz,
+                     std::fabs(ax.z) * hx + std::fabs(ay.z) * hy + std::fabs(az.z) * hz};
+        if (!AnySolidNear(scene, go, center - e, center + e)) { mem.have = false; mem.dir = Vec3::Zero; return; }
+    }
     const int here = SolidOverlaps(scene, go, center, half, rot, feet);
     auto clearance = [&](const Vec3& dir, float halfAlong) {
         Physics3D::IgnoreHierarchy own(go);

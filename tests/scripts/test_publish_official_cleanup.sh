@@ -3,6 +3,7 @@
 # PATH; nothing leaves the machine). Rolling back with FORCE=1 to an older
 # version must not delete that version in the "keep the newest $KEEP" clean-up:
 # it is the live one once VERSION.txt points at it.
+export OKAY_DEFAULT_ACCOUNT_URL=https://abcdefghij.supabase.co   # (an override; without it the scripts read config/public-account.json)
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 command -v python3 >/dev/null || { echo "SKIP: python3 not found"; exit 0; }

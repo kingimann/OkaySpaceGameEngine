@@ -75,6 +75,14 @@ public:
     /// outside, and a local test or LAN tool may start many peers at once.
     static constexpr float kHellosPerSecond = 10.0f;
     static constexpr std::size_t kMaxHelloTrackers = 65536;   ///< addresses rate-tracked at once
+    /// Hellos per second from ALL addresses the table above has no room for (a flood of forged sources fills it;
+    /// without this, nobody new could say hello until it drained). Twice that as a burst.
+    static constexpr float kUntrackedHellosPerSecond = 2000.0f;
+    /// Forwarded bytes per second one IP address may send in total, across all its peers and sessions (a LAN party or a
+    /// shared NAT with many players fits; 64 peers at the per-peer cap each would be 64 MB/s), and one session in total.
+    /// Twice that as a burst. Loopback is exempt from the per-address cap.
+    static constexpr float kAddressBytesPerSecond = 8.0f * 1024.0f * 1024.0f;
+    static constexpr float kSessionBytesPerSecond = 16.0f * 1024.0f * 1024.0f;
 
     RelayServer();
     /// Accept version-1 and -2 hellos, which carry no cookie (on by default:
@@ -148,6 +156,7 @@ private:
         double        inRefilled = 0.0;
     };
     struct HelloBucket { float tokens = 0.0f; double refilled = 0.0; };
+    using FlowBucket = HelloBucket;   // the same token bucket, counting forwarded bytes
     using Cookie = std::array<std::uint8_t, kRelayCookieBytes>;
     struct Session {
         std::uint32_t hostSlot = 0;     // 0 while no host is registered
@@ -155,6 +164,7 @@ private:
         std::uint64_t hostKey = 0;      // set when a version-2 host claims the code: protected
         std::uint32_t lastHostSlot = 0; // the slot a returning host gets back
         std::uint32_t opener = 0;       // the IP address that opened it (kMaxSessionsPerAddress)
+        FlowBucket    flow;             // what the whole session may still forward (kSessionBytesPerSecond)
     };
     using PeerMap = std::unordered_map<Endpoint, Peer, EndpointHash>;
 
@@ -167,6 +177,8 @@ private:
     bool  WithinRate(Peer& peer, std::size_t len);
     bool  WithinInbound(Peer& peer, std::size_t len);
     bool  HelloAllowed(std::uint32_t address);
+    bool  SpendFlow(FlowBucket& b, float bytesPerSecond, std::size_t len);
+    bool  WithinAddress(std::uint32_t address, std::size_t len);
     void  PruneHelloRate();
     Cookie MakeCookie(const Endpoint& from, std::uint64_t minute) const;
     bool  CookieValid(const Endpoint& from, const Cookie& c) const;
@@ -185,6 +197,9 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> m_perAddress;   // IP -> registered peers
     std::unordered_map<std::uint32_t, std::uint32_t> m_sessionsPerAddress;   // IP -> sessions it opened
     std::unordered_map<std::uint32_t, HelloBucket>   m_helloRate;    // IP -> hellos it may still send
+    std::unordered_map<std::uint32_t, FlowBucket>    m_addressFlow;  // IP -> bytes it may still forward (while it holds a peer)
+    HelloBucket m_untrackedHellos{2.0f * kUntrackedHellosPerSecond, 0.0};   // shared by addresses the table has no room for
+    double m_helloFullPruneAt = 0.0;   // when the table is full, prune at most this often (not once per hello)
     std::string m_cookieSecret;   // random per process: cookies don't outlive a restart
     bool m_legacyHello = true;
     double m_now = 0.0;   // seconds of Poll() time, for the rate caps

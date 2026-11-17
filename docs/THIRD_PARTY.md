@@ -82,3 +82,10 @@ installer and the release archives carry that file, as the OFL requires the noti
 If you add a library, add it to this page with its licence and how it is obtained.
 
 Code provenance: [provenance_audit.md](provenance_audit.md) lists what may have been copied or ported from other projects (rule 19a), how serious each case is, and what to rewrite first. Scan tool: `scripts/provenance_scan.py`.
+
+## UI library slice 4: nothing added
+
+The 371 UI icons (`assets/ui/ui_icons.okaydata`) are drawn by our own code from simple shapes; no icon font, image or outside artwork was used.
+The themes use only fonts already shipped (the built-in pixel font and DejaVu Sans, see above). The styles, themes and screens are our own data.
+No library or SDK was added.
+

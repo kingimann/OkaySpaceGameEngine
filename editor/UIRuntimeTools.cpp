@@ -1,6 +1,8 @@
 #include "UIRuntimeTools.hpp"
 #include "ConsolePanel.hpp"
 #include "ExampleScenes.hpp"
+#include "UIGalleryWindow.hpp"
+#include "okay/Scene/UIStyleLib.hpp"
 #include "imgui.h"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Components/UIOwnerData.hpp"
@@ -315,6 +317,70 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
             if (ImGui::InputText("Theme Name##uisv", nb, sizeof nb)) { sv->themeName = nb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave empty to use the scene's first UI Theme.");
             Hint("Applied when the theme is applied. Change the look and every role follows.");
+            // ---- Style (slice 4): a named look from the style library, with size, density, a live preview, a theme choice and Randomise.
+            ImGui::Separator();
+            namespace S = UIStyleLib;
+            static char filter[48] = "";
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##stylefilter", "Search the 111 styles (name or family)...", filter, sizeof filter);
+            const std::string curStyle = sv->style.empty() ? std::string("(none)") : sv->style;
+            auto matches = [&](const uilib::DataSection& st) {
+                if (!filter[0]) return true;
+                std::string hay = st.name + " " + st.Str("family") + " " + st.Str("shape") + " " + st.Str("fill") + " " + st.Str("effect");
+                std::string f = filter;
+                for (char& c : hay) c = (char)std::tolower((unsigned char)c);
+                for (char& c : f) c = (char)std::tolower((unsigned char)c);
+                return hay.find(f) != std::string::npos;
+            };
+            auto applyNow = [&]() {
+                UITheme* th = UITheme::Find(&ed.scene(), sv->themeName);
+                S::ApplyStyle(sv->gameObject, S::SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), S::PaletteOf(th));
+            };
+            if (ImGui::BeginCombo("Style##uisv", curStyle.c_str())) {
+                if (ImGui::Selectable("(none)", sv->style.empty())) { ed.PushUndo(); sv->style.clear(); ed.dirty = true; }
+                for (const auto& st : S::Styles().styles) {
+                    if (!matches(st)) continue;
+                    if (ImGui::Selectable((st.name + "   " + st.Str("family")).c_str(), st.name == sv->style)) { ed.PushUndo(); sv->style = st.name; applyNow(); ed.dirty = true; }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A named look: shape, fill, border, effect and the hover, pressed, disabled and focus looks. Applied to this widget and its children.");
+            static const char* sizes[] = {"xs", "s", "m", "l", "xl"}; static const char* denss[] = {"compact", "cosy", "comfortable", "spacious"};
+            int si = 2, di = 1;
+            for (int i = 0; i < 5; ++i) if (sv->styleSize == sizes[i]) si = i;
+            for (int i = 0; i < 4; ++i) if (sv->styleDensity == denss[i]) di = i;
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::Combo("Size##uisv", &si, sizes, 5)) { ed.PushUndo(); sv->styleSize = sizes[si]; if (!sv->style.empty()) applyNow(); ed.dirty = true; }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(130.0f);
+            if (ImGui::Combo("Density##uisv", &di, denss, 4)) { ed.PushUndo(); sv->styleDensity = denss[di]; if (!sv->style.empty()) applyNow(); ed.dirty = true; }
+            if (!sv->style.empty()) {
+                const S::StyleSpec sp = S::SpecOf(sv->style, sizes[si], denss[di]);
+                editor::DrawStylePreviewWidget(sp, S::PaletteOf(UITheme::Find(&ed.scene(), sv->themeName)), ImGui::GetContentRegionAvail().x);
+            }
+            // The theme this widget keeps when the scene's theme changes (the per-component override).
+            {
+                const std::string curTheme = sv->themeName.empty() ? std::string("(follows the scene)") : sv->themeName;
+                if (ImGui::BeginCombo("Own theme##uisv", curTheme.c_str())) {
+                    if (ImGui::Selectable("(follows the scene)", sv->themeName.empty())) { ed.PushUndo(); sv->themeName.clear(); ed.dirty = true; }
+                    for (const auto& t : S::Themes()) if (ImGui::Selectable(t.name.c_str(), t.name == sv->themeName)) {
+                        ed.PushUndo(); sv->themeName = t.name;
+                        UITheme tmp; S::ApplyThemeData(tmp, t.name); tmp.ApplyTo(sv->gameObject);
+                        if (!sv->style.empty()) applyNow();
+                        ed.dirty = true;
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a theme and this widget stays on it when you switch the scene's theme.");
+            }
+            if (ImGui::Button("Randomise within the theme##uisv")) {
+                static unsigned seed = 1;
+                ed.PushUndo();
+                sv->style = S::RandomiseStyle(sv->gameObject, ++seed, S::PaletteOf(UITheme::Find(&ed.scene(), sv->themeName)));
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Try a random style from the library, in the colours of the theme. Press again for another.");
+            ImGui::SameLine();
+            if (ImGui::Button("Browse styles...##uisv")) editor::OpenUIGalleryWindow();
         }
         return true;
     }

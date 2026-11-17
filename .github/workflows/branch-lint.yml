@@ -68,6 +68,13 @@ jobs:
             echo "::warning title=Feature map::docs/FEATURE_MAP.md is out of date. Run: python3 scripts/gen_feature_map.py (rule 5). If main changed the map after you branched, merge main first."
           fi
 
+      - name: "UI catalogue regenerated (warning)"
+        if: always()
+        run: |
+          if ! python3 scripts/gen_ui_catalogue.py --check; then
+            echo "::warning title=UI catalogue::docs/ui_catalogue.md is out of date. Run: python3 scripts/gen_ui_catalogue.py"
+          fi
+
       - name: "Bug-class patterns (warning)"
         if: always()
         run: python3 scripts/bug_patterns.py --base origin/main --head HEAD --github | tee bug_patterns.txt

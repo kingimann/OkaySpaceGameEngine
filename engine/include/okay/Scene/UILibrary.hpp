@@ -13,6 +13,9 @@
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIAppParts.hpp"
 #include "okay/Components/UIColorPicker.hpp"
+#include "okay/Scene/UIScreens.hpp"
+#include "okay/Scene/UIStyleLib.hpp"
+#include "okay/UI/UIIcons.hpp"
 #include <string>
 
 namespace okay { namespace UILibrary {
@@ -473,6 +476,80 @@ inline GameObject* BuildSlice3(Scene& scene) {
         w->background = Color::FromBytes(20, 24, 34, 255);
     }
     return root;
+}
+
+/// Slice 4: the scale of choice. One page with a theme switcher (click a theme: the whole page restyles, and the choice is kept), a strip of
+/// buttons in twelve named styles from the style library, and a sheet of forty of the vector icons. Written from the style, theme and icon
+/// registries (okay/Scene/UIStyleLib.hpp, UIIcons.hpp); no other project's looks or artwork.
+inline GameObject* BuildSlice4(Scene& scene) {
+    EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
+    GameObject* canvas = EnsureCanvas(scene);
+    if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+    GameObject* root = Group(scene, canvas, "UI Library 4");
+    Panel(scene, root, "Backdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
+    scene.Find("Backdrop")->GetComponent<UIPanel>()->borderWidth = 0.0f;
+    Text(scene, root, "Title", "UI Library 4", UIAnchor::TopLeft, {32, 12}, {600, 40}, 30.0f, slate::Text(), 0, true);
+    detail2::Note(scene, root, "Subtitle",
+         "Press Play, then click a theme on the left: every part on this page changes look. The buttons in the middle use named styles. "
+         "The grid on the right is vector icons, drawn by our own code.", {34, 50}, 1180, 40);
+
+    // Themes: one button each; the action lists a theme by name.
+    GameObject* themes = gx::Card(scene, root, "ThemeCard", "Themes (click one)", {24, 100}, {300, 596});
+    static const char* kThemes[] = {"Dark", "Light", "Neon", "Retro Pixel", "Candy", "Forest", "Paper", "Cyber Pink", "Wood Plank",
+                                    "Space Station", "Terminal Green", "Comic", "Ocean", "Sunset", "Stone Keep", "Mobile Clean"};
+    for (int i = 0; i < 16; ++i) {
+        GameObject* b = gx::Btn(scene, themes, (std::string("Theme") + std::to_string(i + 1)).c_str(), kThemes[i], {20.0f + (i % 2) * 130.0f, 52.0f + (i / 2) * 44.0f}, {122, 36}, 1);
+        UIScreens::detail3::Script(b, std::string("theme:") + kThemes[i], "on_click");
+    }
+    Text(scene, themes, "ThemeNote", "Script: ui_set_theme(\"Neon\")", UIAnchor::TopLeft, {20, 410}, {260, 20}, 13.0f, slate::Dim());
+    detail2::Note(scene, themes, "ThemeNote2", "Your pick is saved (Prefs key ui.theme) and comes back next time. A widget with its own theme name keeps it.", {20, 436}, 260, 70);
+
+    // Styles: twelve buttons, each a different named style, re-applied under every theme.
+    GameObject* styles = gx::Card(scene, root, "StyleCard", "Styles (same button, 12 looks)", {340, 100}, {470, 330});
+    static const char* kStyles[] = {"Flat Pill", "Neon Pill", "Glass", "Pixel", "Chamfer", "Bevel", "Brutal", "Game Button", "Bubble", "Cartoon", "Frosted", "Hex"};
+    for (int i = 0; i < 12; ++i) {
+        GameObject* b = gx::Btn(scene, styles, (std::string("Style") + std::to_string(i + 1)).c_str(), kStyles[i], {20.0f + (i % 3) * 148.0f, 56.0f + (i / 3) * 62.0f}, {136, 46}, 0);
+        auto* sv = b->GetComponent<UIStyleVariant>();
+        if (!sv) sv = b->AddComponent<UIStyleVariant>();
+        sv->variant = 0; sv->style = kStyles[i];
+        UIStyleLib::ApplyStyle(b, UIStyleLib::SpecOf(kStyles[i]), UIStyleLib::PaletteOf(nullptr));
+    }
+    detail2::Note(scene, styles, "StyleNote", "A style is a mix of shape, fill, border, effect and four state looks (hover, pressed, disabled, focus). Hover and press the buttons.", {20, 306 - 40}, 430, 50);
+
+    // Sizes and densities of one style.
+    GameObject* sizes = gx::Card(scene, root, "SizeCard", "Sizes XS to XL", {340, 444}, {470, 252});
+    static const char* kSizes[] = {"xs", "s", "m", "l", "xl"};
+    float x = 20;
+    for (int i = 0; i < 5; ++i) {
+        GameObject* b = gx::Btn(scene, sizes, (std::string("Size") + std::to_string(i + 1)).c_str(), kSizes[i], {x, 70}, {80, 36}, 1);
+        auto* sv = b->GetComponent<UIStyleVariant>(); sv->style = "Flat Pill"; sv->styleSize = kSizes[i];
+        UIStyleLib::ApplyStyle(b, UIStyleLib::SpecOf("Flat Pill", kSizes[i]), UIStyleLib::PaletteOf(nullptr));
+        x += 86.0f;
+    }
+    detail2::Note(scene, sizes, "SizeNote", "Five sizes (XS to XL) and four densities (compact, cosy, comfortable, spacious) for any style.", {20, 150}, 430, 50);
+
+    // Icons: a sheet of forty.
+    GameObject* icons = gx::Card(scene, root, "IconCard", "Icons (371 to choose from)", {826, 100}, {430, 596});
+    static const char* kIcons[] = {"heart", "star", "coin", "sword", "shield", "potion", "key", "map", "bag", "chat",
+                                   "mail", "lock", "play", "pause", "gear", "home", "user", "flag", "clock", "bell",
+                                   "trophy", "gem", "crown", "skull", "bomb", "fire", "lightning", "sun", "moon", "cloud",
+                                   "tree", "fish", "car", "rocket", "gamepad", "camera", "music", "globe", "search", "check"};
+    for (int i = 0; i < 40; ++i) {
+        GameObject* g = Child(scene, icons, (std::string("Icon") + std::to_string(i + 1)).c_str());
+        auto* im = g->AddComponent<UIImage>();
+        im->anchor = UIAnchor::TopLeft; im->position = {24.0f + (i % 8) * 49.0f, 56.0f + (i / 8) * 49.0f}; im->size = {36, 36};
+        im->texture = std::string("icon:") + kIcons[i]; im->color = slate::Text();
+    }
+    detail2::Note(scene, icons, "IconNote", "Use one on any Image (texture icon:heart) or Button (icon icon:play). Pick from all 371 in GameObject > UI > Browse All UI...", {20, 470}, 390, 60);
+    return root;
+}
+
+/// The Starter Pack as an example scene: a main menu, settings, game HUD, pause menu and game over screen already joined together.
+inline GameObject* BuildStarterExample(Scene& scene) {
+    EnsureSceneCamera(scene, true);
+    GameObject* canvas = EnsureCanvas(scene);
+    if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+    return UIScreens::BuildStarterPack(scene, "Midnight Blue");
 }
 
 }} // namespace okay::UILibrary

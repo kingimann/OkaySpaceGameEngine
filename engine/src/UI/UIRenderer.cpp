@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIIconDraw.hpp"   // "icon:name" pictures: our own vector icons
 #include "okay/UI/UIWidgetsMoreDraw.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/UI/UIFrameTransform.hpp"
@@ -674,6 +675,9 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 // The pictures an inline [icon=name] draws (okay/UI/RichText.hpp): a path to an image, else an item from the item
 // database (its own icon when it has one, else a tile in its rarity or a hash colour with its first letter).
 void DrawRichIcon(Painter& r, const std::string& name, float x, float y, float cell, RGBA tint) {
+    if (const std::string vname = uilib::IconNameOf(name); !vname.empty()) {   // [icon=icon:heart]: one of our vector icons
+        if (DrawVectorIcon(r, vname, (int)x, (int)y, (int)cell, tint)) return;
+    }
     const bool isPath = name.find('.') != std::string::npos || name.find('/') != std::string::npos;
     const std::string id = isPath ? std::string() : okay::ItemDatabase::Get().Resolve(name);
     std::string path = isPath ? name : okay::ItemIconOf("", id).path;
@@ -1286,6 +1290,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             Rect sh{r.x + (int)im->shadowOffset.x, r.y + (int)im->shadowOffset.y, r.w, r.h};
             FillUIShadow(p, sh, im->shape, im->cornerRadius,
                          im->shadowColor, im->shadowSoftness, op, im->cornerMask);
+        }
+        if (const std::string vname = uilib::IconNameOf(im->texture); !vname.empty()) {   // a vector icon: drawn square, centred, tinted
+            const int side = std::min(r.w, r.h);
+            auto b8 = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (std::uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); };
+            DrawVectorIcon(p, vname, r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, RGBA{b8(im->color.r), b8(im->color.g), b8(im->color.b), b8(im->color.a * op)});
+            continue;
         }
         Tex tex = p.LoadTexture(im->texture);
         if (tex) {
@@ -2204,10 +2214,14 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         float shift = btn->PressShift() * bk;
         float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * bk : 0.0f;
         if (isz > 0.0f) {
-            Tex itex = p.LoadTexture(btn->icon);
+            const std::string vname = uilib::IconNameOf(btn->icon);
+            Tex itex = vname.empty() ? p.LoadTexture(btn->icon) : nullptr;
             float ix = btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
             Rect ir{(int)ix, (int)(o.y + (bsz.y - isz) * 0.5f + shift), (int)isz, (int)isz};
-            if (itex) { p.SetTextureColorMod(itex, 255, 255, 255); p.SetTextureAlphaMod(itex, 255);
+            if (!vname.empty()) {   // a vector icon in the label colour
+                auto b8 = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (std::uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); };
+                DrawVectorIcon(p, vname, ir.x, ir.y, ir.w, RGBA{b8(btn->textColor.r), b8(btn->textColor.g), b8(btn->textColor.b), b8(btn->textColor.a * op)});
+            } else if (itex) { p.SetTextureColorMod(itex, 255, 255, 255); p.SetTextureAlphaMod(itex, 255);
                         p.Copy(itex, nullptr, &ir); }
             else p.MissingTexture(btn->icon, ir);
         }

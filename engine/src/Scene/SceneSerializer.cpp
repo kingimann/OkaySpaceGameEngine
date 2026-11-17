@@ -3677,6 +3677,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k("variant", sv->variant);
         if (!sv->themeName.empty()) k.str("vtheme", sv->themeName);
+        if (!sv->style.empty()) k.str("vstyle", sv->style);
+        if (!sv->styleSize.empty()) k.str("vsize", sv->styleSize);
+        if (!sv->styleDensity.empty()) k.str("vdens", sv->styleDensity);
         out << "\n";
     }
     for (auto* dn : go->GetComponents<UIDamageNumbers>()) {
@@ -6806,6 +6809,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     KvIn k(in);
                     k.i("variant", sv->variant);
                     k.str("vtheme", sv->themeName);
+                    k.str("vstyle", sv->style); k.str("vsize", sv->styleSize); k.str("vdens", sv->styleDensity);
                 } else if (field == "uidamage") {
                     auto* dn = go->AddComponent<UIDamageNumbers>();
                     KvIn k(in);

@@ -1,5 +1,6 @@
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Scene/UIStyleLib.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -5037,6 +5038,35 @@ struct OkayScriptVM::Impl {
             th->ApplyPreset(p);
             th->Apply();
             UIGallery::StyleGalleryExtras(*s, th);   // the UI Gallery's slots, insets and Glass blobs follow too
+            return Value{1.0f};
+        };
+        // ui_set_theme("Neon City"): switch the whole UI to a theme from the theme library (54 of them) at run time. The pick is kept in
+        // Prefs ("ui.theme"). Widgets that carry their own theme name (UI Style Variant) stay on it. Returns 1, or 0 for an unknown name.
+        b["ui_set_theme"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (a.empty() || !s) return Value{0.0f};
+            return Value{UIStyleLib::SetTheme(*s, a[0].AsString()) ? 1.0f : 0.0f};
+        };
+        // ui_theme_sound("click") is the sound name the current theme uses for hover, click or open ("" when it names none).
+        b["ui_theme_sound"] = [sceneOf](std::vector<Value>& a) -> Value {
+            Scene* s = sceneOf();
+            UITheme* th = s ? UITheme::Find(s, std::string()) : nullptr;
+            if (!th || a.empty()) return Value{std::string()};
+            return Value{UIStyleLib::ThemeSound(th->themeName, a[0].AsString())};
+        };
+        // ui_set_style("Play", "Neon Pill") gives a widget a named look from the style library now; optional 3rd and 4th arguments are the
+        // size (xs..xl) and the density (compact..spacious).
+        b["ui_set_style"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            GameObject* g = (s && a.size() >= 2) ? s->Find(a[0].AsString()) : nullptr;
+            if (!g || !UIStyleLib::FindStyle(a[1].AsString())) return Value{0.0f};
+            auto* sv = g->GetComponent<UIStyleVariant>();
+            if (!sv) sv = g->AddComponent<UIStyleVariant>();
+            sv->style = a[1].AsString();
+            if (a.size() >= 3) sv->styleSize = a[2].AsString();
+            if (a.size() >= 4) sv->styleDensity = a[3].AsString();
+            UITheme* th = UITheme::Find(s, sv->themeName);
+            UIStyleLib::ApplyStyle(g, UIStyleLib::SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), UIStyleLib::PaletteOf(th));
             return Value{1.0f};
         };
         // ui_set_rich("Label", true): read [color=...] [b] [i] [size=N] tags in that text (screen or world text).

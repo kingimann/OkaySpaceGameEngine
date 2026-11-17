@@ -9,6 +9,7 @@ and what is missing. The library is built in slices; each slice adds the missing
 | 1 | Essentials and layout: range slider, input validation, aspect-ratio box | built (this page) |
 | 2 | Game HUD parts and data-driven glue: radial menu, kill feed, ammo counter, interaction prompt, objective tracker, compass, item tooltip card, ability icon; two-way binding, conditional visibility, array to list, rich text links and icons, focus hints, hot reload | built (see "Slice 2" below) |
 | 3 | App parts: menu bar, toolbar, tree view, sortable data table, wizard, form group; colour picker upgrade (hue / saturation square, value and alpha sliders) | built (see "Slice 3" below) |
+| 4 | The scale of choice, as data: a style system, 54 themes, 371 vector icons, 56 ready-made screens with a Starter Pack, a searchable UI Gallery, and a simpler GameObject > UI menu | built (see "Slice 4" below; numbers in [ui_catalogue.md](ui_catalogue.md)) |
 
 ## How to try slice 1
 
@@ -289,3 +290,69 @@ menu, toolbar, tree, table, a wizard through all three steps, the colour square)
 - **Layout:** the parts use fixed pixel boxes like the other app widgets; the example scene is laid out for 1280 x 720 and scaled by the canvas.
 - Nothing in this slice was run on Windows or in a real window. The editor files were syntax-checked with `g++ -fsyntax-only` (the whole `main.cpp` too); the editor was not linked or run.
 
+## Slice 4: the scale of choice
+
+Owner request: "keep expanding the UI library, the UI should have thousands of UI and options to choose from", then "GameObject > UI: clean
+that up" and "massively improve the prebuilt screens and UI, organise them better into sections". The answer is data, not thousands of classes:
+a small set of readers, and text files in `assets/ui/` that the engine embeds at build time (`engine/CMakeLists.txt`), so every program has them
+and a new look is a few lines.
+
+**The numbers** (counted by `python3 scripts/gen_ui_catalogue.py` from those files, and checked against what the engine loads by the test
+`ui_library4`; see [ui_catalogue.md](ui_catalogue.md) for the rules): 77 components, 111 named styles, 54 themes, 371 icons (348 drawn from
+shapes and 23 made by turning or mirroring another), 56 screens in 9 sections (34 described in data, 22 older ones still built by their C++
+function) with 88 layout variants. The style axes (14 shapes, 12 fills, 9 borders, 9 effects, 5 sizes, 4 densities, 17 state looks) can be mixed
+freely, which is 13,608 shape/fill/border/effect looks (272,160 with size and density): that is a computed product of the axes, not a count of
+hand-made styles. A "variant" means a distinct selectable look or layout; renamed copies are not counted (a test checks that no two styles are
+the same mix).
+
+**Styles** (`ui_styles.okaydata`, `okay/Scene/UIStyleLib.hpp`). A style is a name for a mix of shape (square, rounded, pill, squircle,
+chamfered, bevelled, notched, slanted, tab, hexagon, trapezoid, circle...), fill (solid, gradient, glass, ghost, tint, inset, gloss, dark,
+light...), border (hairline to thick, double, glow), effect (soft, hard and long shadow, glow, neon, emboss, lift) and four state looks (hover,
+pressed, disabled, focus), plus a size (XS to XL) and a density (compact to spacious). `UIStyleVariant` (the "UI Style Variant" component, which
+already gave a widget a role) now also carries `style`, `styleSize` and `styleDensity`; the style is applied to buttons, panels, text fields,
+dropdowns, bars, toggles, sliders, tabs and layout groups, in the colours of the scene's theme, and is re-applied when the theme changes.
+Script: `ui_set_style("Play", "Neon Pill")`. Not offered because the renderer cannot draw them: stripe, noise and image fills, dashed borders.
+
+**Themes** (`ui_themes.okaydata`). 54: the twelve built-in looks of the UI Theme component plus 42 defined in data (light, dark, retro pixel,
+sci-fi, fantasy, military, cartoon, minimal, neon, wood, stone, metal, horror, kids, mobile, console, high contrast...). A theme bundles colours,
+a font (only fonts we already ship: the built-in pixel font or DejaVu Sans), corner radius, spacing, hover and animation speed, and sound names.
+`ui_set_theme("Neon")` (or `UIStyleLib::SetTheme(scene, "Neon")`) switches the whole scene at run time and keeps the pick in Prefs
+(`ui.theme`; `RestoreThemePreference` brings it back). A widget whose Style Variant has a `themeName` stays on that theme: the per-component
+override. Every theme is checked for readable text (contrast at least 4.5 on the panel, 3 on a button). Sounds: the names are stored and read with
+`ui_theme_sound("click")`; no sound files are shipped and nothing plays by itself yet.
+
+**Icons** (`ui_icons.okaydata`, `okay/UI/UIIcons.hpp`). Each icon is a list of simple shapes in a 24 x 24 box (circle, ring, ellipse, rectangle,
+rounded rectangle, line, polygon, polyline, arc, star, regular polygon; a leading `-` cuts a shape out). The picture for a size is made by
+sampling each pixel 4 x 4 against the shapes, so the same icon at the same size always gives the same pixels, on every machine (tests), and
+looks crisp at any size. Use one as `icon:heart` in an Image's texture or a Button's icon, or `[icon=icon:heart]` in rich text. All icons were
+drawn for this engine; no outside artwork or font was used.
+
+**Screens** (`ui_screens.okaydata`, `okay/Scene/UIScreens.hpp`). A screen is a few lines of a short layout language (panel, text, button, bar,
+slider, toggle, dropdown, input, tabs, icon, `rep` for repeated items) and one builder turns it into real objects under the Canvas. Buttons carry
+their actions as data (`act="swap:main_menu>settings"`, `quit`, `scene:Level1`, `theme:Neon`, `volume`...), which become a small script on the
+button, so a screen works with nothing written by hand. Tabs switch their pages with no script. Variants move the card (Centered, Left side,
+Right side) or add a dimmed backdrop. **Starter Pack** builds Main Menu, Settings, HUD, Pause and Game Over already joined (Play opens the HUD,
+Pause opens the pause menu, Give up opens Game Over...). The old fixed-size Main Menu, Pause Menu, Settings, Game Over, Confirm Dialog and
+Shop were replaced by data screens (the old functions stay in `UITemplates` and are still used by the older screens and by the tests).
+Every data screen is tested to build, to stay on screen and inside its card at 1280 x 720, 1024 x 768, 2560 x 1080, 1920 x 1080 and (when it says
+it fits) 720 x 1280 and 1080 x 1920, to save and load back to the same text, to have a script on every button that has an action, and to have no
+two buttons or fields overlapping.
+
+**GameObject > UI** (`editor/UIMenuModel.hpp`, `editor/main.cpp`). Eight groups with plain names (Basics, Input, Layout, Game, Menus & Screens,
+Data & Lists, Windows & Pop-ups, Ready-made Pieces) and a last entry **Browse All UI...**; every item has a one-sentence tip, the common ones
+come first, and a Canvas is made automatically when a widget needs it. The menu is data, tested in `menu_bar_model` (no duplicates, a tip on
+every item, 8 groups) and `ui_library4` (every screen of the registry is in the menu once, every item of the old menu still has a home). See
+[editor_menus.md](editor_menus.md) for before and after.
+
+**UI Gallery** (`editor/UIGalleryWindow.cpp`; the list and the search rules are in `okay/Scene/UIGalleryIndex.hpp` and are tested). One window
+for every component, style, theme, icon and screen: search, filter by kind, category, tag and theme, preview, and add with one click (a screen
+in a chosen layout and theme, the Starter Pack, a style on the selected object, a theme on the scene, an icon on the selected Image or Button).
+The previews are drawn from the real widgets of a temporary scene and from the style data; they are close pictures, not the renderer's pixels.
+
+**What each new file was written from.** The style, theme and screen readers from the usual ideas of design tokens and declarative layout, the
+icon rasteriser from plain geometry (distance to a segment, even-odd polygon fill, supersampling), the data files from scratch. No other
+project's code, themes, icons or fonts were used or copied.
+
+**Tests.** `ui_library4` (data reader, 111 styles, 54 themes and theme switching with an override, 371 icons and their pixels, every screen at
+all the sizes, the menu, the gallery search and the catalogue numbers), `ui_library4_example` (loads and plays both new example scenes: a theme
+click, and the whole Starter Pack flow), `ui_library4_shots` (the pictures), and the updated `menu_bar_model`.

@@ -133,3 +133,11 @@ advanced mode (hue / saturation square, value and alpha sliders, extending `UICo
 they were: `UIContextMenu`, `UITabs`, `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UIListView`, `UISearchBar`, `UIDateTimePicker`,
 `UIInputValidator` (the form group uses it). See [ui_library.md](ui_library.md) (slice 3 section) for how to try each and what is not done.
 
+## Slice 4 (the scale of choice)
+
+Slice 4 adds no new component classes. It adds data and readers on top of the existing ones: styles and themes for every widget that has a look
+(`UIStyleVariant` gained `style`, `styleSize`, `styleDensity`), vector icons for `UIImage`, `UIButton` and rich text, screens built from data, a
+searchable gallery and a simpler GameObject > UI menu. The numbers are in [ui_catalogue.md](ui_catalogue.md); the design is in
+[ui_library.md](ui_library.md). Still not done: stripe, noise and image fills and dashed borders (the renderer cannot draw them), playing the
+theme sound names, gamepad focus for the new data screens, and running the editor menu and Gallery in a real window.
+

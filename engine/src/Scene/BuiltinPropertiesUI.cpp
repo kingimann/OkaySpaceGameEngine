@@ -545,7 +545,10 @@ void RegisterUIStyleVariant() {
     PropertyBuilder<UIStyleVariant> b("UIStyleVariant", "uivariant", "UI");
     b.AddInt("variant", &UIStyleVariant::variant).Range(0, UITheme::kVariantCount - 1, 1)
         .Tooltip("0 Default, 1 Primary, 2 Secondary, 3 Danger, 4 Ghost, 5 Outline, 6 Pill")
-     .AddString("themeName", &UIStyleVariant::themeName).Tooltip("Theme to take colours from (empty = the scene's first theme)");
+     .AddString("themeName", &UIStyleVariant::themeName).Tooltip("Theme to take colours from (empty = the scene's first theme). A name from the theme list keeps this widget on that theme when the scene's theme changes.")
+     .AddString("style", &UIStyleVariant::style).Tooltip("A named look from the style library: Glass, Neon Pill, Pixel, Chamfer... Empty = none")
+     .AddString("styleSize", &UIStyleVariant::styleSize).Tooltip("xs, s, m, l or xl (empty = m)")
+     .AddString("styleDensity", &UIStyleVariant::styleDensity).Tooltip("compact, cosy, comfortable or spacious (empty = cosy)");
     b.Commit();
 }
 

@@ -362,3 +362,34 @@ in `MenuFlag`.
   go under the Canvas, or inside the selected UI panel, not under the clicked row.
 * The OkayUI port covers the Console, Crash Log and Audio Mixer panels only; no menu bar or Hierarchy code has an OkayUI twin, so nothing
   had to be kept in sync.
+
+## GameObject > UI, simplified (2026-11-17)
+
+Owner request: "GameObject > UI: clean that up, make it more simple so the user understands", then "massively improve the prebuilt screens and
+UI, organise them better into sections". The menu is now data (`editor/UIMenuModel.hpp`), drawn by `DrawUIWidgetItems` in `editor/main.cpp`.
+
+**Before and after.** Before: 25 entries at the top of the menu (9 submenus: Basic, Controls, HUD, Layout & Overlays, Game HUD, Data, App,
+Kit (launcher look), Prebuilt Screens; 7 loose items: Window, Radio Buttons, Damage Numbers, Nameplate, Nameplate (in the world), Inventory,
+Dialogue; then 9 more under a line: Canvas, Event System, World Label, three inventories, UI Document, Save Selected as UI, 3D UI), about 131
+leaf items, four labels listed twice ("UI Notify", "Notification", "Card", "Health Bar" in two places with different meanings), no tips on most
+items, and jargon (Raw Image, Masked Panel, Flex Box). After: 8 groups and **Browse All UI...** (9 entries), 150 leaf items (the 56 ready-made
+screens are listed by section), no label or id twice, a one-sentence tip on every entry (a test checks), the common items first, and plain names.
+Nothing was removed: `LegacyItems()` in `UIMenuModel.hpp` maps every old item to its new id and both tests check it.
+
+**How it was checked that nothing became unreachable.** `menu_bar_model` checks that every old item has an id in the new menu, that every id is
+run by the editor sources (`id == "ui.xxx"`, so no dead click), that ids and labels are unique and every entry has a tip. `ui_library4` builds the
+menu from the real screen registry and checks that every screen is in it exactly once and that every component that names a menu id points at a real
+item. Anything else is found with the Gallery search (every component, style, theme, icon and screen is listed there).
+
+**The menu now:** Basics (Text, Button, Image, Panel, Tiled or Scrolling Picture, Divider) / Input (Text Field, Text Field with Checks, Slider,
+Range Slider, Toggle, Switch, Radio Buttons, Dropdown, Number Stepper, Star Rating, Color Picker, Key Binding Field, Search Box, Date and Time, File
+Picker, Form) / Layout (Row, Column or Grid; Scroll Area; Tabs; Accordion; Flexible Box; Fixed Shape Box; Cropped Panel; Safe Area; Draggable Item;
+Drop Target; Canvas and Event System, marked advanced) / Game (Health Bar / Progress Bar, Hotbar / Slot Grid, Minimap, Crosshair, Ammo Counter,
+Compass, Objective Tracker, Interaction Prompt, Kill Feed, Damage Numbers, Name and Health Plate, Name Plate over a Character, World Label,
+Ability Icon, Item Card, Radial Menu, Round Progress, three inventories, 3D UI > 4, Touch Controls > 3) / Menus & Screens (Starter Pack, then one
+submenu per section: Menus, In-Game HUD, Inventory & Items, Dialogue & Quests, Multiplayer & Social, Popups & Notifications, Forms & Accounts,
+Mobile & Touch, Loading) / Data & Lists (List, Table, Tree, List From an Array, Slider Linked to a Variable, Show Only If..., Hot Reload Watcher,
+Page Numbers, Breadcrumbs, Loading Placeholder, Menu Bar, Toolbar, UI From a Text File) / Windows & Pop-ups (Dialog, Toast Messages, Notification,
+Tooltip, Right-click Menu, Window, Wizard, Bottom Sheet, Spinner) / Ready-made Pieces (Card, Heading, List Row, Badge, Avatar, four coloured
+buttons, Save Selected as Reusable UI) / Browse All UI...
+

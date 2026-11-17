@@ -11,6 +11,7 @@
 // eases with 1-exp(-smoothing*dt); each frame the animated pose turns toward
 // that direction and `weight` blends the turn. smoothing 0 stays instant.
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -61,6 +62,7 @@ public:
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.IK");
         // Last frame's write comes off first, so weight 0 is exactly the animated
         // pose on this frame (a still bone keeps the pose IK took over from).
         m_restore.Restore();

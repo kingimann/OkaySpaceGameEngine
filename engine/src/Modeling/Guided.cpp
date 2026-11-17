@@ -1,4 +1,6 @@
 #include "okay/Modeling/Guided.hpp"
+#include <chrono>
+#include "okay/Modeling/PolyOps.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -7,6 +9,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace okay::modeling::guided {
 
@@ -14,6 +19,14 @@ namespace okay::modeling::guided {
 // Shape helpers
 // =====================================================================================================
 namespace shapes {
+
+static thread_local float g_detail = 1.0f;
+int Detail() { return (int)std::lround(g_detail); }
+float DetailF() { return g_detail; }
+int Scale(int base, int minimum) {
+    const float mult = 0.5f * std::exp2(std::min(std::max(g_detail, 0.0f), 3.0f));   // 0.5, 1, 2, 4 at the whole levels
+    return std::max(minimum, (int)std::lround((float)base * mult));
+}
 
 static bool RightHanded(const Vec3& a, const Vec3& b, const Vec3& c) { return Vec3::Dot(Vec3::Cross(a, b), c) >= 0.0f; }
 
@@ -31,8 +44,7 @@ void Paint(PolyMesh& m, int material, const Color& color) {
     for (PolyFace& f : m.faces) { f.material = material; f.hasColor = true; f.color = color; }
 }
 
-// Flip faces whose normal points toward `centre` (only right for convex shapes).
-static void OrientOutward(PolyMesh& m, const Vec3& centre) {
+void OrientOutward(PolyMesh& m, const Vec3& centre) {
     for (int i = 0; i < (int)m.faces.size(); ++i) {
         PolyFace& f = m.faces[i];
         Vec3 c{0, 0, 0};
@@ -47,7 +59,7 @@ static void OrientOutward(PolyMesh& m, const Vec3& centre) {
 
 // A closed solid: `profile` (counter-clockwise in the a,b plane) pushed along `nrm` from -depth/2 to +depth/2.
 // Positions are o + a*pa + b*pb + nrm*c.
-static PolyMesh Extrude(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& prof, float depth) {
+PolyMesh ExtrudeAxes(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& prof, float depth) {
     PolyMesh m;
     const int n = (int)prof.size();
     if (n < 3) return m;
@@ -74,25 +86,37 @@ PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile) {
     // Profile corners are in 0..1 of (x across the frame, y up): map them to the frame's box.
     std::vector<Vec2> p;
     for (const Vec2& q : profile) p.push_back({(q.x - 0.5f) * f.sx, q.y * f.sy});
-    return Extrude(f.origin, f.t, f.u, f.n, p, f.sz);
+    return ExtrudeAxes(f.origin, f.t, f.u, f.n, p, f.sz);
 }
 
 PolyMesh Box(const Frame& f) {
-    return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
+    if (g_detail < 1.5f) return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
+    // High: the four long edges are chamfered; Ultra: rounded with three steps per corner.
+    const float c = std::min(0.03f, 0.3f * std::min(f.sx, f.sy));
+    const float ux = c / f.sx, uy = c / f.sy;
+    const int k = g_detail < 2.5f ? 1 : 3;
+    const float cxs[4] = {1 - ux, 1 - ux, ux, ux}, cys[4] = {uy, 1 - uy, 1 - uy, uy};
+    std::vector<Vec2> p;
+    for (int corner = 0; corner < 4; ++corner)
+        for (int i = 0; i <= k; ++i) {
+            const float a = (-90.0f + 90.0f * (float)corner + 90.0f * (float)i / (float)k) * 3.14159265f / 180.0f;
+            p.push_back({cxs[corner] + std::cos(a) * ux, cys[corner] + std::sin(a) * uy});
+        }
+    return ExtrudeProfile(f, p);
 }
 
 PolyMesh Prism(const Frame& f, int sides) {
-    sides = std::max(3, sides);
+    sides = Scale(sides, 3);
     std::vector<Vec2> p;
     for (int i = 0; i < sides; ++i) {
         const float a = 6.2831853f * (float)i / (float)sides;
         p.push_back({std::cos(a) * 0.5f * f.sz, std::sin(a) * 0.5f * f.sx});   // (n, t) plane
     }
-    return Extrude(f.origin + f.u * (0.5f * f.sy), f.n, f.t, f.u, p, f.sy);
+    return ExtrudeAxes(f.origin + f.u * (0.5f * f.sy), f.n, f.t, f.u, p, f.sy);
 }
 
 PolyMesh Pyramid(const Frame& f, int sides) {
-    sides = std::max(3, sides);
+    sides = sides > 4 ? Scale(sides, 4) : std::max(3, sides);
     PolyMesh m;
     for (int i = 0; i < sides; ++i) {
         const float a = 6.2831853f * (float)i / (float)sides;
@@ -108,8 +132,8 @@ PolyMesh Pyramid(const Frame& f, int sides) {
 }
 
 PolyMesh Ball(const Frame& f, int rings, int sectors) {
-    rings = std::max(2, rings);
-    sectors = std::max(3, sectors);
+    rings = Scale(rings, 2);
+    sectors = Scale(sectors, 4);
     PolyMesh m;
     const Vec3 c = f.origin + f.u * (0.5f * f.sy);
     m.verts.push_back(c + f.u * (0.5f * f.sy));   // top
@@ -368,7 +392,22 @@ bool Recipe::Parse(const std::string& text, Recipe& out, std::string* error) {
 // Registry
 // =====================================================================================================
 Registry& Registry::Instance() { static Registry r; return r; }
-void Registry::Register(const Template& t) {
+const char* const kDetailParam = "detail";
+int TriangleCount(const PolyMesh& m) {
+    int n = 0;
+    for (const PolyFace& f : m.faces) n += std::max(0, (int)f.verts.size() - 2);
+    return n;
+}
+void Registry::Register(const Template& in) {
+    ClearCache();   // a changed template must not be answered from builds of the old one
+    Template t = in;
+    bool has = false;
+    for (const ParamDef& p : t.params) if (p.id == kDetailParam) has = true;
+    if (!has) {   // every template gets the shared Detail setting (Medium = the original shapes)
+        ParamDef p; p.id = kDetailParam; p.label = "Detail"; p.group = "Detail"; p.kind = ParamDef::Kind::Float; p.def = 1; p.min = 0; p.max = 3;
+        p.tip = "0 to 3 (0 to 100 percent): Low is blocky low poly, Medium rounded, High smooth with fine detail parts, Ultra subdivided and finest.";
+        t.params.push_back(p);
+    }
     for (Template& e : templates_) if (e.id == t.id) { e = t; return; }
     templates_.push_back(t);
 }
@@ -425,14 +464,107 @@ Recipe DefaultRecipe(const Template& t, const std::string& startId) {
     return Normalize(t, r);
 }
 
+namespace {
+thread_local GenStats g_stats;
+static thread_local std::map<std::string, std::vector<GeneratedPart>> g_cache;
+static thread_local long g_cacheFaces = 0;
+}
+
+namespace { std::vector<GeneratedPart> GenerateUncached(const Recipe& in, std::string* error); }
+
 std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
+    // Cached by the recipe's text: Create, the analysis of a model, a regenerate and the validity check all ask for the same
+    // parts, and building them (at Ultra, with subdivision) is the expensive step. A copy of the cached parts is returned.
+    const std::string key = in.Serialize();
+    auto it = g_cache.find(key);
+    if (it != g_cache.end()) { ++g_stats.hits; return it->second; }
+    ++g_stats.misses;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::string err;
+    std::vector<GeneratedPart> out = GenerateUncached(in, &err);
+    g_stats.lastBuildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (error && !err.empty()) *error = err;
+    if (err.empty() && !out.empty()) {
+        long faces = 0;
+        for (const GeneratedPart& p : out) faces += (long)p.mesh.faces.size();
+        if (g_cacheFaces + faces > 1500000) ClearCache();
+        g_cacheFaces += faces;
+        g_cache[key] = out;
+    }
+    return out;
+}
+
+namespace {
+std::vector<GeneratedPart> GenerateUncached(const Recipe& in, std::string* error) {
     std::vector<GeneratedPart> out;
     RegisterBuiltinTemplates();
     const Template* t = Registry::Instance().Find(in.templateId);
     if (!t || !t->generate) { if (error) *error = "unknown template '" + in.templateId + "'"; return out; }
     const Recipe r = Normalize(*t, in);
     std::vector<GeneratedPart> all;
+    const float saved = shapes::g_detail;
+    const float dv = (float)r.Param(kDetailParam, 1);
+    shapes::g_detail = std::min(std::max(dv == dv ? dv : 1.0f, 0.0f), 3.0f);
     t->generate(r, all);
+    // Ultra: every part is subdivided (Catmull-Clark) one or two times, within a face budget per part, for a truly smooth high-poly surface.
+    if (shapes::g_detail >= 2.5f) {
+        const int levels = shapes::g_detail >= 2.95f ? 2 : 1;
+        // Instancing: parts of the same shape (four wheels, a row of pickets) are subdivided once and the result is moved to
+        // each place, instead of being subdivided again every time.
+        std::map<std::string, std::pair<PolyMesh, Vec3>> shapesDone;   // key -> subdivided mesh and the corner it was built at
+        for (GeneratedPart& p : all) {
+            int lv = levels;
+            long faces = (long)p.mesh.faces.size();
+            while (lv > 0 && faces * (long)(1 << (2 * lv)) > 2500) --lv;
+            if (lv <= 0 || p.mesh.faces.empty()) continue;
+            if (std::find(t->noSubdivisionSlots.begin(), t->noSubdivisionSlots.end(), p.slot) != t->noSubdivisionSlots.end()) continue;
+            Vec3 lo{1e30f, 1e30f, 1e30f};
+            for (const Vec3& v : p.mesh.verts) lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
+            std::string key = std::to_string(lv) + ":";
+            for (const Vec3& v : p.mesh.verts) { key += std::to_string(std::llround((double)(v.x - lo.x) * 2e3)) + "," + std::to_string(std::llround((double)(v.y - lo.y) * 2e3)) + "," + std::to_string(std::llround((double)(v.z - lo.z) * 2e3)) + ";"; }
+            for (const PolyFace& f : p.mesh.faces) {
+                key += '|';
+                for (int vi : f.verts) key += std::to_string(vi) + ",";
+                key += std::to_string(f.material) + (f.hasColor ? "c" + std::to_string(f.color.r) + "," + std::to_string(f.color.g) + "," + std::to_string(f.color.b) : std::string());
+            }
+            auto it = shapesDone.find(key);
+            if (it != shapesDone.end()) {
+                p.mesh = it->second.first;
+                const Vec3 shift = lo - it->second.second;
+                for (Vec3& v : p.mesh.verts) v = v + shift;
+                ++g_stats.instanced;
+            } else {
+                Vec3 hi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p.mesh.verts) hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)};
+                p.mesh = CatmullClark(p.mesh, lv);
+                // Subdividing pulls a part in (a box becomes a rounded, smaller box). Parts that touched at the lower levels (windows on a
+                // bus body, a bumper on a car) would come apart, so the result is stretched back to the box the part had: the surface
+                // stays rounded, the extent and the contact points stay where the design put them. It only ever grows a part.
+                Vec3 nlo{1e30f, 1e30f, 1e30f}, nhi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p.mesh.verts) {
+                    nlo = {std::min(nlo.x, v.x), std::min(nlo.y, v.y), std::min(nlo.z, v.z)};
+                    nhi = {std::max(nhi.x, v.x), std::max(nhi.y, v.y), std::max(nhi.z, v.z)};
+                }
+                // A hair inside the old box (two thousandths of the size, at least half a millimetre) so that parts that only touched
+                // at the lower levels do not end up sharing corner positions.
+                auto fit = [](float olo, float ohi, float nlo2, float nhi2, float& scale, float& shift) {
+                    const float oe = ohi - olo, ne = nhi2 - nlo2;
+                    const float want = oe - std::max(0.0005f, 0.002f * oe);
+                    scale = (ne > 1e-6f && want > ne) ? want / ne : 1.0f;
+                    const float oc = 0.5f * (olo + ohi), nc = 0.5f * (nlo2 + nhi2);
+                    shift = oc - nc * scale;   // the centre stays where it was
+                };
+                float sx, tx, sy, ty, sz, tz;
+                fit(lo.x, hi.x, nlo.x, nhi.x, sx, tx);
+                fit(lo.y, hi.y, nlo.y, nhi.y, sy, ty);
+                fit(lo.z, hi.z, nlo.z, nhi.z, sz, tz);
+                if (sx != 1.0f || sy != 1.0f || sz != 1.0f)
+                    for (Vec3& v : p.mesh.verts) v = {v.x * sx + tx, v.y * sy + ty, v.z * sz + tz};
+                shapesDone[key] = {p.mesh, lo};
+            }
+        }
+    }
+    shapes::g_detail = saved;
     for (GeneratedPart& p : all) {
         if (r.detached.count(p.id) || p.mesh.faces.empty()) continue;
         AutoUV(p.mesh);
@@ -443,6 +575,7 @@ std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
     }
     return out;
 }
+} // namespace
 
 PolyMesh Assemble(const std::vector<GeneratedPart>& parts) {
     PolyMesh m;
@@ -450,7 +583,13 @@ PolyMesh Assemble(const std::vector<GeneratedPart>& parts) {
     return m;
 }
 
-PolyMesh Create(const Recipe& r, std::string* error) { return Assemble(Generate(r, error)); }
+PolyMesh Create(const Recipe& r, std::string* error) {
+    // The parts are cached by Generate: the same recipe again (a panel redraw, a triangle count, an undo back to a known state)
+    // is a copy, not a rebuild. Parts of the same shape inside one build are instanced (see GenerateUncached).
+    return Assemble(Generate(r, error));
+}
+const GenStats& Stats() { return g_stats; }
+void ClearCache() { g_cache.clear(); g_cacheFaces = 0; }
 
 bool DetachPart(Recipe& r, const std::string& partId) {
     for (const GeneratedPart& p : Generate(r))
@@ -464,30 +603,48 @@ bool DetachPart(Recipe& r, const std::string& partId) {
 namespace {
 
 using Key3 = std::array<long long, 3>;
+struct Key3Hash { std::size_t operator()(const std::array<long long, 3>& k) const { std::uint64_t h = (std::uint64_t)k[0] * 73856093ull; h ^= (std::uint64_t)k[1] * 19349663ull + 0x9e3779b9ull + (h << 6); h ^= (std::uint64_t)k[2] * 83492791ull + 0x9e3779b9ull + (h >> 2); return (std::size_t)h; } };
 Key3 QPos(const Vec3& v) {
     return {std::llround((double)v.x * 1e4), std::llround((double)v.y * 1e4), std::llround((double)v.z * 1e4)};
 }
 
-// Corner positions rotated so the smallest comes first; `rot` receives how far it was rotated.
-std::vector<Key3> FaceSig(const PolyMesh& m, const PolyFace& f, int* rot) {
+// Corner positions rotated so the smallest comes first; `rot` receives how far it was rotated. A corner at the same position as
+// the one before it is left out (a quad collapsed to a triangle at a pole is the same surface as the triangle it turns into when the
+// mesh is triangulated and read back); `corners` receives the original corner number of every kept position.
+std::vector<Key3> FaceSig(const PolyMesh& m, const PolyFace& f, int* rot, std::vector<int>* corners = nullptr) {
     std::vector<Key3> k;
-    for (int v : f.verts) k.push_back(QPos(m.verts[v]));
+    std::vector<int> idx;
+    const int n = (int)f.verts.size();
+    k.reserve(n); idx.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        const Key3 q = QPos(m.verts[f.verts[i]]);
+        if (!k.empty() && k.back() == q) continue;
+        k.push_back(q); idx.push_back(i);
+    }
+    while (k.size() > 1 && k.front() == k.back()) { k.pop_back(); idx.pop_back(); }
     int best = 0;
     for (int i = 1; i < (int)k.size(); ++i) if (k[i] < k[best]) best = i;
     std::rotate(k.begin(), k.begin() + best, k.end());
+    std::rotate(idx.begin(), idx.begin() + best, idx.end());
     if (rot) *rot = best;
+    if (corners) *corners = std::move(idx);
     return k;
 }
+std::uint64_t HashSig(const std::vector<Key3>& k) {
+    std::uint64_t h = 1469598103934665603ull;
+    for (const Key3& q : k) for (long long c : q) { h ^= (std::uint64_t)c + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); h *= 1099511628211ull; }
+    return h;
+}
 
-bool SameAttrs(const PolyMesh& a, const PolyFace& fa, int ra, const PolyMesh& b, const PolyFace& fb, int rb) {
-    (void)a; (void)b;
-    const int n = (int)fa.verts.size();
-    if (fa.uvs.size() == (size_t)n && fb.uvs.size() == (size_t)n)
-        for (int i = 0; i < n; ++i) {
-            const Vec2& u = fa.uvs[(ra + i) % n];
-            const Vec2& w = fb.uvs[(rb + i) % n];
+bool SameAttrs(const PolyFace& fa, const std::vector<int>& ca, const PolyFace& fb, const std::vector<int>& cb) {
+    const int n = (int)std::min(ca.size(), cb.size());
+    for (int i = 0; i < n; ++i) {
+        if ((size_t)ca[i] < fa.uvs.size() && (size_t)cb[i] < fb.uvs.size() && fa.uvs.size() == fa.verts.size() && fb.uvs.size() == fb.verts.size()) {
+            const Vec2& u = fa.uvs[ca[i]];
+            const Vec2& w = fb.uvs[cb[i]];
             if (std::fabs(u.x - w.x) > 1e-4f || std::fabs(u.y - w.y) > 1e-4f) return false;
         }
+    }
     if (fa.hasColor && fb.hasColor &&
         (std::fabs(fa.color.r - fb.color.r) > 1e-4f || std::fabs(fa.color.g - fb.color.g) > 1e-4f ||
          std::fabs(fa.color.b - fb.color.b) > 1e-4f || std::fabs(fa.color.a - fb.color.a) > 1e-4f)) return false;
@@ -558,31 +715,33 @@ Detail AnalyzeImpl(const PolyMesh& cur, const Recipe& stored) {
     const int np = (int)d.baseline.size();
     const int nf = (int)cur.faces.size();
 
-    // Match faces by position signature.
-    std::map<std::vector<Key3>, std::vector<std::pair<int, int>>> sigs;   // sig -> (part, face)
+    // Match faces by position signature (hashed; a hit is confirmed against the real corners).
+    std::unordered_map<std::uint64_t, std::vector<std::pair<int, int>>> sigs;   // sig hash -> (part, face)
     std::vector<int> baseCount(np, 0);
+    std::vector<int> partBase(np + 1, 0);
+    for (int p = 0; p < np; ++p) partBase[p + 1] = partBase[p] + (int)d.baseline[p].mesh.faces.size();
+    sigs.reserve((size_t)partBase[np] * 2 + 1);
     for (int p = 0; p < np; ++p) {
         const PolyMesh& pm = d.baseline[p].mesh;
         baseCount[p] = (int)pm.faces.size();
-        for (int f = 0; f < (int)pm.faces.size(); ++f) sigs[FaceSig(pm, pm.faces[f], nullptr)].push_back({p, f});
+        for (int f = 0; f < (int)pm.faces.size(); ++f) sigs[HashSig(FaceSig(pm, pm.faces[f], nullptr))].push_back({p, f});
     }
     std::vector<int> faceMatch(nf, -1);       // part index
     std::vector<char> pristine(nf, 0);
     std::vector<int> matched(np, 0), pristineCount(np, 0);
-    std::map<std::pair<int, int>, bool> used;
+    std::vector<char> used((size_t)partBase[np], 0);
+    std::vector<int> ca, cb;
     for (int f = 0; f < nf; ++f) {
-        int rc = 0;
-        const std::vector<Key3> sig = FaceSig(cur, cur.faces[f], &rc);
-        auto it = sigs.find(sig);
+        const std::vector<Key3> sig = FaceSig(cur, cur.faces[f], nullptr, &ca);
+        auto it = sigs.find(HashSig(sig));
         if (it == sigs.end()) continue;
         for (const auto& pf : it->second) {
-            if (used[pf]) continue;
-            used[pf] = true;
-            faceMatch[f] = pf.first;
+            if (used[partBase[pf.first] + pf.second]) continue;
             const PolyMesh& pm = d.baseline[pf.first].mesh;
-            int rb = 0;
-            FaceSig(pm, pm.faces[pf.second], &rb);
-            pristine[f] = SameAttrs(cur, cur.faces[f], rc, pm, pm.faces[pf.second], rb) ? 1 : 0;
+            if (FaceSig(pm, pm.faces[pf.second], nullptr, &cb) != sig) continue;
+            used[partBase[pf.first] + pf.second] = 1;
+            faceMatch[f] = pf.first;
+            pristine[f] = SameAttrs(cur.faces[f], ca, pm.faces[pf.second], cb) ? 1 : 0;
             ++matched[pf.first];
             if (pristine[f]) ++pristineCount[pf.first];
             break;
@@ -591,7 +750,8 @@ Detail AnalyzeImpl(const PolyMesh& cur, const Recipe& stored) {
 
     // Pieces: faces that share a corner position are one piece.
     DSU dsu(std::max(nf, 1));
-    std::map<Key3, int> firstFace;
+    std::unordered_map<Key3, int, Key3Hash> firstFace;
+    firstFace.reserve((size_t)nf * 2 + 1);
     for (int f = 0; f < nf; ++f)
         for (int v : cur.faces[f].verts) {
             auto r = firstFace.emplace(QPos(cur.verts[v]), f);
@@ -638,42 +798,61 @@ Detail AnalyzeImpl(const PolyMesh& cur, const Recipe& stored) {
         for (int c : compsOf[p]) d.compParts[c].insert(p);
     }
 
-    // Moved whole parts: a piece with no matched face that has the same rigid shape as a part with none left.
-    std::map<std::string, std::vector<int>> deletedByKey;
-    for (int p = 0; p < np; ++p)
-        if (A.parts[p].state == PartState::Deleted) {
-            const PolyMesh& pm = d.baseline[p].mesh;
-            DSU bd((int)pm.faces.size());
-            std::map<Key3, int> ff;
-            for (int f = 0; f < (int)pm.faces.size(); ++f)
-                for (int v : pm.faces[f].verts) { auto r = ff.emplace(QPos(pm.verts[v]), f); if (!r.second) bd.Union(f, r.first->second); }
-            std::set<int> roots;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) roots.insert(bd.Find(f));
-            if (roots.size() != 1) continue;   // several shells: reported Deleted
-            std::vector<int> all;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) all.push_back(f);
-            deletedByKey[ShapeKey(pm, all)].push_back(p);
-        }
+    // Moved whole parts: pieces with no matched face that have the same rigid shape as a part with none left. A part made
+    // of one shell may have been turned as well; a part of several shells (a window: frame, bars, glass) is recognised
+    // when all its shells were moved by the same offset.
+    struct Shell { std::string key; Vec3 centre; };
+    std::vector<std::string> compKey(d.comps);
+    std::vector<Vec3> compCentre(d.comps);
+    std::vector<char> free(d.comps, 0);
     for (int c = 0; c < d.comps; ++c) {
         bool anyMatch = false;
         for (int f : d.compFaces[c]) if (faceMatch[f] >= 0) anyMatch = true;
         if (anyMatch) continue;
-        auto it = deletedByKey.find(ShapeKey(cur, d.compFaces[c]));
-        if (it == deletedByKey.end() || it->second.empty()) continue;
-        const Vec3 cc = Centroid(cur, d.compFaces[c]);
-        int best = -1; float bd = 1e30f;
-        for (size_t k = 0; k < it->second.size(); ++k) {
-            std::vector<int> all;
-            const PolyMesh& pm = d.baseline[it->second[k]].mesh;
-            for (int f = 0; f < (int)pm.faces.size(); ++f) all.push_back(f);
-            const float dist = (Centroid(pm, all) - cc).Magnitude();
-            if (dist < bd) { bd = dist; best = (int)k; }
+        free[c] = 1;
+        compKey[c] = ShapeKey(cur, d.compFaces[c]);
+        compCentre[c] = Centroid(cur, d.compFaces[c]);
+    }
+    for (int p = 0; p < np; ++p) {
+        if (A.parts[p].state != PartState::Deleted) continue;
+        const PolyMesh& pm = d.baseline[p].mesh;
+        DSU bd((int)pm.faces.size());
+        std::map<Key3, int> ff;
+        for (int f = 0; f < (int)pm.faces.size(); ++f)
+            for (int v : pm.faces[f].verts) { auto r = ff.emplace(QPos(pm.verts[v]), f); if (!r.second) bd.Union(f, r.first->second); }
+        std::map<int, std::vector<int>> groups;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) groups[bd.Find(f)].push_back(f);
+        std::vector<Shell> shells;
+        for (const auto& g : groups) shells.push_back({ShapeKey(pm, g.second), Centroid(pm, g.second)});
+        std::vector<int> claim;
+        if (shells.size() == 1) {
+            int best = -1; float bdist = 1e30f;
+            for (int c = 0; c < d.comps; ++c)
+                if (free[c] && compKey[c] == shells[0].key) {
+                    const float dist = (compCentre[c] - shells[0].centre).Magnitude();
+                    if (dist < bdist) { bdist = dist; best = c; }
+                }
+            if (best >= 0) claim.push_back(best);
+        } else {
+            for (int c0 = 0; c0 < d.comps && claim.empty(); ++c0) {
+                if (!free[c0] || compKey[c0] != shells[0].key) continue;
+                const Vec3 off = compCentre[c0] - shells[0].centre;
+                std::vector<int> got = {c0};
+                for (size_t k = 1; k < shells.size(); ++k) {
+                    int found = -1;
+                    for (int c = 0; c < d.comps && found < 0; ++c)
+                        if (free[c] && compKey[c] == shells[k].key && std::find(got.begin(), got.end(), c) == got.end() &&
+                            (compCentre[c] - shells[k].centre - off).Magnitude() < 0.01f) found = c;
+                    if (found < 0) break;
+                    got.push_back(found);
+                }
+                if (got.size() == shells.size()) claim = got;
+            }
         }
-        const int p = it->second[best];
-        it->second.erase(it->second.begin() + best);
+        if (claim.empty()) continue;
+        for (int c : claim) { free[c] = 0; d.compParts[c].insert(p); }
         A.parts[p].state = PartState::Edited;
-        A.parts[p].why = "it was moved or turned (its shape is unchanged)";
-        d.compParts[c].insert(p);
+        A.parts[p].why = "it was moved (its shape is unchanged)";
     }
 
     A.faceOwner.assign(nf, "");
@@ -786,7 +965,11 @@ RegenResult Regenerate(const PolyMesh& current, const Recipe& stored, const Reci
         for (int& v : nf.verts) v = mapVert(v);
         out.faces.push_back(std::move(nf));
     }
-    for (int v = 0; v < (int)current.verts.size(); ++v) if (!usedByAny[v]) mapVert(v);   // loose vertices are the user's too
+    // Loose vertices are the user's too, except the copies a smooth-shading pass leaves behind: a vertex no face uses that sits exactly
+    // on one a face does use is such a copy (the polygon was rebuilt from the other one), not something the user made.
+    std::unordered_set<Key3, Key3Hash> usedPos;
+    for (int v = 0; v < (int)current.verts.size(); ++v) if (usedByAny[v]) usedPos.insert(QPos(current.verts[v]));
+    for (int v = 0; v < (int)current.verts.size(); ++v) if (!usedByAny[v] && !usedPos.count(QPos(current.verts[v]))) mapVert(v);
     for (const auto& s : current.seams) {
         auto a = remap.find(s.first), b = remap.find(s.second);
         if (a != remap.end() && b != remap.end()) out.SetSeam(a->second, b->second, true);
@@ -804,6 +987,116 @@ RegenResult Regenerate(const PolyMesh& current, const Recipe& stored, const Reci
     R.message = "Rebuilt " + std::to_string(R.regenerated) + " part(s); kept " + std::to_string(R.kept) + " edited part(s), " +
                 std::to_string(R.customFaces) + " of your own faces untouched" + (R.discarded ? ", discarded your edits on " + std::to_string(R.discarded) + " part(s)" : "") + ".";
     return R;
+}
+
+bool IsUntouched(const Analysis& a) {
+    return a.ok && a.customFaces == 0 && a.Count(PartState::Edited) == 0 && a.Count(PartState::Deleted) == 0;
+}
+
+Analysis UntouchedAnalysis(const Recipe& r) {
+    // What Analyze() says about a mesh that is exactly Assemble(Generate(r)): every part intact, no faces of the user's own.
+    Analysis a;
+    std::string err;
+    const std::vector<GeneratedPart> parts = Generate(r, &err);
+    if (!err.empty()) { a.error = err; return a; }
+    for (const GeneratedPart& p : parts) {
+        PartInfo pi; pi.id = p.id; pi.slot = p.slot;
+        a.parts.push_back(pi);
+        a.faceOwner.insert(a.faceOwner.end(), p.mesh.faces.size(), p.id);
+    }
+    a.ok = true;
+    return a;
+}
+
+RegenResult RegenerateUntouched(const Recipe& stored, const Recipe& next) {
+    // Same answer as Regenerate() for a model nobody touched (see IsUntouched), without reading the mesh back and matching its
+    // faces to the old design: every part is simply built again. This is what keeps a slider release cheap on a big model.
+    RegenResult R;
+    R.recipe = stored;
+    RegisterBuiltinTemplates();
+    const Template* t = Registry::Instance().Find(stored.templateId);
+    if (!t || stored.templateVersion != t->version) { R.message = "this model cannot be rebuilt by this editor"; return R; }
+    Recipe nx = Normalize(*t, next);
+    nx.templateVersion = t->version;
+    nx.detached = stored.detached;
+    std::string err;
+    const std::vector<GeneratedPart> fresh = Generate(nx, &err);
+    if (!err.empty()) { R.message = err; return R; }
+    R.mesh = Assemble(fresh);
+    R.regenerated = (int)fresh.size();
+    R.recipe = nx;
+    R.ok = true;
+    R.message = "Rebuilt " + std::to_string(R.regenerated) + " part(s); kept 0 edited part(s), 0 of your own faces untouched.";
+    return R;
+}
+
+// =====================================================================================================
+// Validation and variation
+// =====================================================================================================
+ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVolume) {
+    ValidationReport rep;
+    rep.parts = (int)parts.size();
+    std::vector<Vec3> lo(parts.size()), hi(parts.size());
+    for (size_t i = 0; i < parts.size(); ++i) {
+        const PolyMesh& m = parts[i].mesh;
+        bool finite = true;
+        lo[i] = {1e30f, 1e30f, 1e30f}; hi[i] = {-1e30f, -1e30f, -1e30f};
+        for (const Vec3& v : m.verts) {
+            if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) { finite = false; continue; }
+            lo[i] = {std::min(lo[i].x, v.x), std::min(lo[i].y, v.y), std::min(lo[i].z, v.z)};
+            hi[i] = {std::max(hi[i].x, v.x), std::max(hi[i].y, v.y), std::max(hi[i].z, v.z)};
+        }
+        if (!finite) { ++rep.nonFinite; rep.problems.push_back(parts[i].id + ": a position is not a number"); continue; }
+        const PolyMesh::Report r = m.Check();
+        if (r.badIndices) { ++rep.badIndices; rep.problems.push_back(parts[i].id + ": a face uses a missing vertex"); }
+        if (r.degenerateFaces) { rep.degenerate += r.degenerateFaces; rep.problems.push_back(parts[i].id + ": " + std::to_string(r.degenerateFaces) + " degenerate faces"); }
+        if (!r.Closed()) { ++rep.openParts; rep.problems.push_back(parts[i].id + ": not watertight (" + std::to_string(r.boundaryEdges) + " open edges, " + std::to_string(r.nonManifoldEdges) + " non-manifold)"); }
+        if (checkVolume) {
+            double vol = 0;
+            for (int f = 0; f < (int)m.faces.size(); ++f) {
+                const std::vector<int> tri = m.TriangulateFace(f);
+                for (size_t k = 0; k + 2 < tri.size(); k += 3) {
+                    const Vec3& a = m.verts[m.faces[f].verts[tri[k]]];
+                    const Vec3& b = m.verts[m.faces[f].verts[tri[k + 1]]];
+                    const Vec3& c = m.verts[m.faces[f].verts[tri[k + 2]]];
+                    vol += (double)Vec3::Dot(a, Vec3::Cross(b, c)) / 6.0;
+                }
+            }
+            if (!(vol > 0)) { ++rep.invertedParts; rep.problems.push_back(parts[i].id + ": faces point inward (volume " + std::to_string(vol) + ")"); }
+        }
+    }
+    // connected groups: parts whose boxes touch (a small margin) are one group
+    DSU dsu(std::max((int)parts.size(), 1));
+    const float mg = 0.03f;
+    for (size_t i = 0; i < parts.size(); ++i)
+        for (size_t j = i + 1; j < parts.size(); ++j)
+            if (lo[i].x <= hi[j].x + mg && lo[j].x <= hi[i].x + mg && lo[i].y <= hi[j].y + mg && lo[j].y <= hi[i].y + mg && lo[i].z <= hi[j].z + mg && lo[j].z <= hi[i].z + mg)
+                dsu.Union((int)i, (int)j);
+    std::set<int> roots;
+    for (size_t i = 0; i < parts.size(); ++i) roots.insert(dsu.Find((int)i));
+    rep.components = (int)roots.size();
+    return rep;
+}
+
+Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength) {
+    Recipe r = Normalize(t, base);
+    uint32_t s = seed * 2654435761u + 977u;
+    auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (float)((s >> 8) & 0xffff) / 65535.0f; };
+    for (const ParamDef& p : t.params) {
+        if (p.id == kDetailParam || p.id == "length" && t.usesPath) continue;   // the detail level and a path's length are the user's
+        if (p.id == "seed") { r.params[p.id] = (double)(seed % 1000); continue; }
+        if (p.kind == ParamDef::Kind::Bool || p.kind == ParamDef::Kind::Choice) continue;   // structure stays with the style
+        const double span = (p.max - p.min) * strength;
+        double v = r.Param(p.id, p.def) + ((double)rnd() * 2.0 - 1.0) * span;
+        r.params[p.id] = std::min(std::max(v, p.min), p.max);
+    }
+    for (const SlotDef& sd : t.slots) {
+        if (sd.designs.size() < 2 || rnd() > 0.35f) continue;
+        const std::string pick = sd.designs[(size_t)(rnd() * (float)sd.designs.size()) % sd.designs.size()].id;
+        r.slotDesign[sd.id] = pick;
+    }
+    if (t.constrain) t.constrain(r);
+    return Normalize(t, r);
 }
 
 // =====================================================================================================
@@ -908,6 +1201,8 @@ std::vector<UserPart> LoadUserParts(const std::string& dir) {
 // =====================================================================================================
 // History
 // =====================================================================================================
+PolyMesh StateMesh(const GuidedState& st) { return st.fromRecipe ? Create(st.recipe) : st.mesh; }
+
 void GuidedHistory::Push(const GuidedState& before) {
     undo_.push_back(before);
     if (undo_.size() > 64) undo_.erase(undo_.begin());

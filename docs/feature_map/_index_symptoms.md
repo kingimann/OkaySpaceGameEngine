@@ -243,7 +243,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a script edit does not reload | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
-| a script reads files outside the game folder (should be refused) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
+| a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | a script UI window and a scene HUD overlap | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
 | a scroll list shows items outside its box | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
@@ -649,6 +649,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | leaderboard empty | [16.9](16-networking.md#169-match-results-stats-and-leaderboards) Match results, stats and leaderboards |
 | legs bend backwards | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | letters show as boxes | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
+| lines marked CAUGHT or MISSED in a log | [39.13](39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) Cheat simulator and hardening audit |
 | Load screen is empty | [35.1](20-35-planned.md#351-save-slots) Save slots |
 | loading a scene crashes or loses things | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | loading screen on every area change | [27.4](20-35-planned.md#274-streaming) Streaming |
@@ -821,6 +822,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | reports have nowhere to go | [48.4](43-proposals.md#484-collection-backend-and-dashboards) Collection backend and dashboards |
 | reports never appear for admins | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | requests for console releases | [56.4](43-proposals.md#564-console-platforms) Console platforms |
+| Result: 8 of 8 cheats caught | [39.13](39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) Cheat simulator and hardening audit |
 | rigging did nothing | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | rooms feel too big or small | [44.3](43-proposals.md#443-measuring-and-level-metrics) Measuring and level metrics |
 | rotation flips near straight up or down | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
@@ -1201,7 +1203,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | unlocked on Steam but not in the launcher | [49.3](43-proposals.md#493-achievements-sync) Achievements sync |
 | unused keys pile up | [1.16](01-core-scene.md#116-localization-tools) Localization tools |
 | unused" list shows things that are used | [20.1](20-35-planned.md#201-asset-browser) Asset browser |
-| update downloaded from a tampered server would be accepted | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
+| update downloaded from a tampered server is refused | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
+| update signature check: OFF" in About | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | updating a pack overwrites my edits | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | using the software renderer briefly | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |

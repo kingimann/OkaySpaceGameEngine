@@ -136,7 +136,7 @@ from the report first; the server that receives it still sees the network addres
 
 Nothing in chat, and no key in a file. **Two steps**, both in the browser, in this order:
 
-1. **Run the table's SQL once.** Open the Supabase project (the one in `CMakeLists.txt`, `OKAY_DEFAULT_ACCOUNT_URL`), **SQL editor**, paste
+1. **Run the table's SQL once.** Open the Supabase project (the one in `config/public-account.json`), **SQL editor**, paste
    the whole of [`docs/sql/crash_reports.sql`](sql/crash_reports.sql) and run it. It is safe to run again (it also brings an older copy of the table
    up to date). Until it has run, the launcher keeps every report and the Crash reports page says "The server has no crash_reports table yet".
 2. **Switch the GitHub job on.** GitHub repository > **Settings > Secrets and variables > Actions > Variables > New repository variable**, name

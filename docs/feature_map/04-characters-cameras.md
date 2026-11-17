@@ -37,11 +37,12 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.2.5 Vault, mantle, ledge grab - `Components/Traversal` - TraverseKind, TraverseProbe, TraverseJob; canVault, canMantle, canLedgeGrab default off; vault() and mantle() still probe
   - 4.2.6 Swimming - `Components/FirstPersonController`, `Components/ThirdPersonController` - waist-deep water (read from a Water probe) switches to swim speeds
   - 4.2.7 Collision for transform-only players - `Physics/PlayerCollision` - a sphere pushed out of solid geometry when there is no Rigidbody3D
+  - 4.2.8 Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) - `Components/PlayerPerf`, `Components/PlayerDebug`, `Components/StepUp`, the two controllers - ground read from the contact normal (not the other object's pivot), the slope limit on box, mesh and heightmap ground, held still on a slope it may stand on, slide along walls, stay on the treads going down, a jump off a moving platform keeps its speed, a floor that vanishes under a sleeping player, remote avatars run no wall or camera code; `OKAY_OLD_PLAYER=1` brings the old path back; Slope Limit and Step Offset saved and in the Inspector; `docs/player_audit.md`
 - **Code:** `Components/Stance`, `Components/StanceControl`, `Components/StepUp`, `Components/ControllerFeel`, `Components/Traversal`, `Components/DodgeAction`, `Components/DiveAction`, `Physics/PlayerCollision`
 - **API:** `StanceControl`, `StanceTimes`, `GroundLatch`, `TraverseKind`; scripts `crouch()`, `prone()`, `stand()`, `set_stance(0|1|2)`, `SetStance`, `dodge(dir)`, `dive()`, `vault()`, `mantle()`
 - **Editor:** Player Controller panel sections (Crouch / prone, Slide, Dodge, Vault and mantle, Stance changes on the Animator)
 - **Docs:** `docs/making_a_game.md` (Crouch and prone), `docs/animation.md` (Actions: dive, roll, vault)
-- **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`
+- **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`, `player_deep`, `player_course`
 - **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
 - **Open:** old map: verify prone on first and third person; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
 - **Related:** 4.1, 5.12, 5.6, 5.9, 6.2
@@ -134,14 +135,14 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Parts:**
   - 4.7.1 First-person eye feel - `Components/FirstPersonController`, `Components/ControllerFeel` - bob (up and down only), landing dip, FOV kick, zoom, lean camera roll, eye height by stance; bob and landing dip off under Reduce Motion
   - 4.7.2 Own body and head hiding - `Components/FirstPersonHand`, `Components/Character` - FirstPersonHand flags the viewmodel (shirt, legs, hand copy), head and neck active but unflagged, eye kept clear of body parts
-  - 4.7.3 First Person Hands component - `Components/FirstPersonHands` - Show When Empty, hold mode (one hand, other hand, both), per-hand position, rotation, scale, size, colour, sleeve; shared bob, sway, punch and hand field of view; Others View
+  - 4.7.3 First Person Hands component - `Components/FirstPersonHands` - Preset (Normal, Both arms, Right hand only, Minimal, Old look) and a Use normal first-person arms button, left click swing, Show When Empty, hold mode (one hand, other hand, both), shirt-coloured forearm, per-hand position, rotation, scale, size, colour, sleeve; shared bob, sway, punch and hand field of view; Others View
   - 4.7.4 Hands window and preview - `editor/FpHandsWindow.*`, `Components/FpHandsPreview` - Open Preview renders the owner's camera and a front view of a throwaway character in Edit and Play
   - 4.7.5 Punch and run behaviour - `Components/Character` - punch swings the arm forward; a run eases the hand copy off the corner
 - **Code:** `Components/FirstPersonHand`, `Components/FirstPersonHands`, `Components/FpHandsPreview`, `Components/FirstPersonController`, `Components/Crosshair`, `editor/FpHandsWindow.*`
 - **API:** `FirstPersonHands`, `FpHandsSnap`, `Character::ApplyOwnerVisibility`, `Character::SetViewmodelBlend`, `Character::SetHeldHiddenFromOwner`
 - **Editor:** First Person Hands component panel (Open Preview), "First Person Hands" window
 - **Docs:** `docs/animation.md` (Holding objects: first-person hands and view switch), `docs/making_a_game.md`
-- **Tests:** `fp_hand`, `fp_punch`, `view_ground`, `run_feel`, `reduce_motion_bob`
+- **Tests:** `fp_hand`, `fp_hand_normal`, `fp_punch`, `view_ground`, `run_feel`, `reduce_motion_bob`
 - **Status:** Works - fp_hand is the largest test in the area (about 1,000 lines); view switch and hands described in docs
 - **Open:** old map: Blocky Character arms in first person; the hand is one block with no finger bones, finger joints are never posed (per docs); none of the first-person pose is sent over the network (per docs)
 - **Related:** 4.1, 4.9, 5.9, 16.8

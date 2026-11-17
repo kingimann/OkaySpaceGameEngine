@@ -1,0 +1,91 @@
+okayguided 1
+template human 1
+param armAngle 10
+param armLength 0.40000000000000002
+param bodyType 0
+param detail 1
+param elbowBend 15
+param headSize 0.23000000000000001
+param height 1.75
+param legLength 0.46999999999999997
+param limbThickness 0.044999999999999998
+param neckLength 0.059999999999999998
+param shoulderWidth 0.46000000000000002
+param stance 5
+param style 0
+param torsoDepth 0.23999999999999999
+slot arm round
+slot backpack none
+slot belt none
+slot brows soft
+slot cape none
+slot ears normal
+slot eyes round
+slot face none
+slot fitting fine
+slot foot sneaker
+slot glasses none
+slot hair short
+slot hand block
+slot hat none
+slot head round
+slot leg round
+slot mouth smile
+slot neck round
+slot nose straight
+slot pants trousers
+slot pelvis box
+slot scarf none
+slot shirt tshirt
+slot shoulder none
+slot torso box
+color arm 0.870000005 0.680000007 0.550000012 1
+color backpack 0.449999988 0.300000012 0.180000007 1
+color belt 0.449999988 0.300000012 0.180000007 1
+color brows 0.319999993 0.200000003 0.119999997 1
+color cape 0.75 0.150000006 0.150000006 1
+color ears 0.870000005 0.680000007 0.550000012 1
+color eyes 0.100000001 0.100000001 0.109999999 1
+color face 0.100000001 0.100000001 0.109999999 1
+color fitting 0.5 0.519999981 0.550000012 1
+color foot 0.870000005 0.680000007 0.550000012 1
+color glasses 0.100000001 0.100000001 0.109999999 1
+color hair 0.319999993 0.200000003 0.119999997 1
+color hand 0.870000005 0.680000007 0.550000012 1
+color hat 0.75 0.150000006 0.150000006 1
+color head 0.870000005 0.680000007 0.550000012 1
+color leg 0.870000005 0.680000007 0.550000012 1
+color mouth 0.699999988 0.300000012 0.300000012 1
+color neck 0.870000005 0.680000007 0.550000012 1
+color nose 0.870000005 0.680000007 0.550000012 1
+color pants 0.5 0.519999981 0.550000012 1
+color pelvis 0.870000005 0.680000007 0.550000012 1
+color scarf 0.75 0.150000006 0.150000006 1
+color shirt 0.200000003 0.349999994 0.699999988 1
+color shoulder 0.620000005 0.649999976 0.699999988 1
+color torso 0.870000005 0.680000007 0.550000012 1
+material arm 0
+material backpack 7
+material belt 8
+material brows 12
+material cape 9
+material ears 15
+material eyes 11
+material face 1
+material fitting 17
+material foot 0
+material glasses 6
+material hair 2
+material hand 0
+material hat 5
+material head 0
+material leg 0
+material mouth 14
+material neck 0
+material nose 13
+material pants 4
+material pelvis 0
+material scarf 16
+material shirt 3
+material shoulder 10
+material torso 0

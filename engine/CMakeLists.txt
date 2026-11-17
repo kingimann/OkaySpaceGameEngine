@@ -82,6 +82,8 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
     src/Net/CheatDetect.cpp
+    src/Net/AntiCheatLog.cpp
+    src/Net/CheatSim.cpp
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
@@ -279,6 +281,12 @@ add_library(okay_engine
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
     src/Modeling/EditTransform.cpp
+    src/Modeling/Measure.cpp
+    src/Modeling/SelectOps.cpp
+    src/Modeling/ScreenSelect.cpp
+    src/Modeling/MeshLibrary.cpp
+    src/Modeling/Curve.cpp
+    src/Modeling/Remesh.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp
@@ -286,6 +294,13 @@ add_library(okay_engine
     src/Modeling/UVUnwrap.cpp
     src/Modeling/Guided.cpp
     src/Modeling/GuidedFence.cpp
+    src/Modeling/GuidedArchitecture.cpp
+    src/Modeling/GuidedVehicles.cpp
+    src/Modeling/GuidedCharacters.cpp
+    src/Modeling/GuidedEnvironment.cpp
+    src/Modeling/GuidedProps.cpp
+    src/Modeling/GuidedHuman.cpp
+    src/Modeling/GuidedRig.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp

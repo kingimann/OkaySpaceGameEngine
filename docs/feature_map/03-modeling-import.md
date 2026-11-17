@@ -96,14 +96,26 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.5.3 Mesh asset load, save, hash - `Modeling/MeshAsset` - LoadMeshAsset (fallback to the scene folder in exported games), SaveMeshAsset, GeometryHash
   - 3.5.4 Link and write-back - `editor/EditorState.*`, `editor/main.cpp` - Save as Mesh Asset, shared files, SaveEditedMeshAssets on Ctrl+S, Build Game copies the file to Data
   - 3.5.5 Saved forms of a mesh - `Render/Mesh` - primitive by name, file by path, hand-edited verbatim (`meshgeo` in the scene), `.obj`-backed edits kept in the scene
+  - 3.5.7 Material slots - `Render/Mesh`, `Modeling/PolyMesh` - per-triangle slot and a colour per slot (Mesh::AssignSlot/ApplySlotColors), saved in the scene (`meshslots`, `slotcolors`) and `.okaymesh` (`slot N r g b a`); Edit Mesh > Paint > Material Slots
+  - 3.5.9 Spin, extrude along path, array along curve - `Modeling/PolyOps`, `Modeling/Modifiers` - SpinEdges, ExtrudeAlongPath, the Array Along Curve modifier (SamplePath); Edit Mesh buttons and the modifier stack
+  - 3.5.10 Measure and snap - `Modeling/Measure` - MeasureMesh / MeasureSelection readouts, SnapToGeometry (vertex, edge, face) used by the G move; Edit Mesh > Snapping and measuring
+  - 3.5.11 Material library and palettes - `Modeling/MaterialLibrary` - ready slot colours; Edit Mesh > Material Slots
+  - 3.5.12 Slot pictures - `Components/MeshRenderer`, `Render/SoftwareRenderer` - slotTextures drawn per triangle slot (software renderer only), `slottex` scene record
+  - 3.5.13 Faster modeling - `Modeling/SelectOps`, `editor/main.cpp` - GrowFaces / ShrinkFaces / SelectSimilar / SelectByNormal / SelectByArea, BakeTransform, recipes (MakeWindowHole, RoundEdges, MakeTable); one command list behind the quick toolbar, right-click menu, Ctrl+K palette, Shift+R, undo history
+  - 3.5.14 Hide, drag-select, symmetry, arrange - `Render/Mesh` (HideTriangles / RevealHidden / IsolateTriangles), `Modeling/ScreenSelect`, `Modeling/Arrange`, `Modeling/EditTransform` (mirror Y / Z), `Modeling/Measure` (RayMeshHit), `Modeling/SelectOps` (LooseParts); H / Alt+H / slash, B / C / L, Shift+D, E, I, join / separate / align / distribute / origin, add at cursor
+  - 3.5.15 Vertex colours, creases, shrinkwrap, mesh library - `Render/Mesh` (vertexColors, PaintVertices, creases), `Modeling/SelectOps` (Shrinkwrap), `Modeling/PolyOps` (creased Catmull-Clark), `Modeling/MeshLibrary`, the four renderers' vertex colour paths; Edit Mesh > Paint, Ctrl+K crease / shrinkwrap / reduce, Import > Mesh library
+  - 3.5.16 Per-slot GPU drawing - `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer`, `Render/Mesh` (GroupBySlot) - one draw range per material slot with its own picture; never run on a GPU
+  - 3.5.17 Reference images, Bezier curves, bevel weights - `Modeling/Reference`, `Modeling/Curve`, `Modeling/Modifiers` (useBevelWeights), `Render/Mesh` (bevelWeights) - blueprint planes saved in the scene (`refimage`), pipe / ribbon / swept profile from a curve, weighted Bevel modifier, pink creased and green weighted edges in Edit Mesh
+  - 3.5.18 Quad Remesh - `Modeling/Remesh` - TrisToQuads, QuadRemesh (simplify, pair, split, relax, snap); Edit Mesh > Quads target, Ctrl+K "Quad Remesh"
+  - 3.5.8 Repair Mesh - `Render/Mesh` - Mesh::Repair: merge doubles, drop collapsed triangles, cap holes, orient outward; Edit Mesh > Repair Mesh
   - 3.5.6 OBJ export and import helpers - `Render/Mesh` - SaveOBJ, LoadOBJ (UVs, vn normals), RecenterToOrigin, ScaleToFit, NormalizeImportScale
 - **Code:** `Render/Mesh`, `Modeling/MeshAsset`, `Modeling/PolyMesh`, `editor/EditorState.*`
 - **API:** `Mesh::Cube/Sphere/...`, `Mesh::FromName`, `LoadMeshAsset`, `SaveMeshAsset`, `GeometryHash`, `MeshRenderer::meshPath`; Inspector "Mesh File" field
 - **Editor:** GameObject > 3D Object menu (every primitive); Modeling > Import tab and Edit Mesh > Save as Mesh Asset; Mesh Renderer inspector
 - **Docs:** `docs/modeling.md`
-- **Tests:** `mesh3d`, `mesh_asset`, `mesh_variant_hash`, `meshedit`, `polymesh`, `obj_import`
-- **Status:** Partial - primitives and file round-trips are tested; per-face materials are not built and the inside-out claim below is unconfirmed
-- **Open:** M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone, Tube, Torus, TorusKnot and Capsule can be inside out (possible bug, unverified: mesh3d checks normals "regardless of winding")
+- **Tests:** `mesh3d`, `mesh_asset`, `mesh_variant_hash`, `meshedit`, `polymesh`, `obj_import`, `modeling_more`, `modeling_more_scene`, `modeling_fuzz`, `modifiers`
+- **Status:** Partial - primitives and file round-trips are tested; material slots (a colour per slot) are built; per-slot textures and renderer submeshes are not; the inside-out claim below is unconfirmed
+- **Open:** M5b: slots carry a colour only, not a texture or shader, and are drawn through per-face colours, not separate renderer submeshes; some triangle-level Mesh tools drop slot membership; old map says Sphere, Cylinder, Cone, Tube, Torus, TorusKnot and Capsule can be inside out (possible bug, unverified: mesh3d checks normals "regardless of winding")
 - **Related:** 3.1, 3.6, 2.1, 2.2, 1.5
 - **Words:** mesh, primitive, okaymesh, Mesh File, meshPath, OBJ, wedge, gear, icosphere, quad, polygon mesh, mesh asset
 - **Seen as:** a primitive is dark or inside out; an edited mesh reverts after reopening the scene; the exported game cannot find the mesh file; every object using the shared file changes at once
@@ -235,20 +247,23 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
 - **Ask me like:** "add a Boulder variant to Rock"; "refit the collider after an edit"
 
 ### 3.11 Guided creation (templates, parts, safe regeneration)
-- **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). Phase 1 ships the fence (7 styles); other categories show an honest empty state.
+- **What:** A Guided page in the Modeling window: pick a category and a starting design, get an ordinary editable mesh generated from a small recipe, change its settings, swap designs per kind of part or per part, keep editing by hand. Rebuilding never overwrites hand edits silently (keep / discard / convert). The fence and the architecture templates (wall, stairs, door, window, roof, building) exist; other categories show an honest empty state. Click-to-draw path and a collider option are on the page.
 - **Parts:**
   - 3.11.1 Recipe, registry and generation - `Modeling/Guided` - Recipe (text `okayguided 1`), Template and Registry, deterministic Generate, parts with stable ids
   - 3.11.2 Analysis and regeneration - `Modeling/Guided` - Analyze (intact / edited / removed parts, custom faces), Regenerate with Keep / Discard decisions, DetachPart, ConvertToRegular
   - 3.11.3 Fence template - `Modeling/GuidedFence` - 7 start designs, posts, caps, rails, pickets, bars, chain link, gate, path and ground slope, user parts as designs
   - 3.11.4 User parts and templates - `Modeling/Guided` - MakeUserPart / FitUserPart (`.okaypart`), UserTemplate (`.okaytemplate`), folder loaders
+  - 3.11.6 Architecture templates - `Modeling/GuidedArchitecture` - Wall (path, openings), Stairs (straight, L, U, spiral), Door, Window, Roof, Building composed of swappable parts
+  - 3.11.7 Vehicle templates and Detail level - `Modeling/GuidedVehicles`, `Modeling/Guided` - Car, Truck, Bus, Motorcycle, Trailer with swappable wheels, lights, bumpers, mirrors, spoilers, exhausts; the shared Detail setting (Low to Ultra) and TriangleCount
+  - 3.11.8 Character templates - `Modeling/GuidedCharacters` - Human (9), Robot (6), Creature (11 on five body plans) with swappable head, hair, clothes, hands, feet, accessories and proportion sliders
   - 3.11.5 Guided page - `editor/GuidedPanel`, `editor/main.cpp` - categories, design browser with thumbnails, settings, parts list, decision window, undo and redo of guided steps
 - **Code:** `Modeling/Guided`, `Modeling/GuidedFence`, `editor/GuidedPanel`, `editor/main.cpp` (DrawModeling page 7)
 - **API:** `guided::Recipe`, `Template`, `Registry`, `Generate`, `Create`, `Analyze`, `Regenerate`, `DetachPart`, `ConvertToRegular`, `MakeUserPart`, `GuidedHistory`
 - **Editor:** Modeling window > Guided
 - **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg)
-- **Tests:** `guided_modeling`
+- **Tests:** `guided_modeling`, `guided_architecture`, `guided_vehicles`, `guided_characters`, `guided_detail`
 - **Status:** Partial - the engine side (generation, rules, files) is tested headlessly; the editor page compiles but has not been opened in a real window or on Windows
-- **Open:** only the fence exists (no walls, stairs, doors, windows, roofs, vehicles, characters, environment, props); the path is typed numbers; no collider is added; material slots are stored but only colours are drawn (M5b)
+- **Open:** Architecture, vehicles, characters and the fence exist (with a shared Detail level); environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)
 - **Related:** 3.1, 3.5, 3.9
 - **Words:** guided, procedural, template, fence, parts, recipe, regenerate, picket, wrought iron, chain link, gate, user part, convert to regular mesh
 - **Seen as:** the Guided page asks what to do with parts you edited; a model made here still edits like any mesh; a fence changed height but one post did not

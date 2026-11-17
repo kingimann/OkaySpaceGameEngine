@@ -19,11 +19,12 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.1.5 Unowned world objects - `Net/AntiCheat` - objects nobody owns belong to the server; "Players can claim it" opts in; refusals there are logged once and don't count as violations
   - 39.1.6 Kick filing - `Net/DedicatedServer` - `KickReporter` files `ac_reports` rows, nothing is banned automatically (16.5.4)
   - 39.1.7 Easy setup - `editor/AntiCheatSetup.hpp`, `editor/AntiCheatSetupUi.cpp` - three presets (Casual co-op, Competitive, Economy game), one-click Add Anti-Cheat (Add Component and the Network Manager), spawn list filled from the project's networked prefabs, and the Anti-cheat checklist (Inspector and Build Settings) with safe fix buttons
-- **Code:** `Net/AntiCheat`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
-- **API:** `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
+  - 39.1.8 Bans, audit log and packet ceiling - `Net/AntiCheatLog`, `Net/NetworkManager` - `banFile` (a ban request or `banAfterKicks` kicks writes a ban; refused at the join, survives a restart, hand-editable), `auditLog` (local, players as a salted one-way tag), `maxPacketsPerSecond` (every packet type from a joined client counts); a dedicated server with the anti-cheat on keeps `okay_bans.txt` and `okay_anticheat_audit.log`
+- **Code:** `Net/AntiCheat`, `Net/AntiCheatLog`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
+- **API:** `BanList`, `AuditLog`, `.okayac` keys `banFile`, `auditLog`, `banAfterKicks`, `banHours`, `banOnRequest`, `maxPacketsPerSecond`, flags `--no-ban-file`, `--no-audit-log`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
 - **Editor:** Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one click); Network Manager > Add Anti-Cheat; File > Build Settings > Anti-cheat checklist; File > Build Settings > Server page
-- **Docs:** `docs/anticheat_quickstart.md`, `docs/anticheat.md` (P1, Network hardening, Gameplay validation, Exporting), `docs/launcher-multiplayer.md`
-- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`, `anticheat_setup` (presets, checklist, export round trip)
+- **Docs:** `docs/anticheat_quickstart.md`, `docs/anticheat.md` (P1, Network hardening, Bans and the audit log, Gameplay validation, Exporting), `docs/anticheat_hardening_status.md` (audit table), `docs/launcher-multiplayer.md`
+- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`, `anticheat_setup` (presets, checklist, export round trip), `anticheat_hard` (ban list, audit log, packet ceiling, identity binding, hostile-field fuzz)
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
 - **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; the easy-setup windows (presets, checklist) have unit tests but have not been run in the real editor; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
 - **Related:** 16.6, 16.11, 39.2, 39.12
@@ -166,6 +167,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.8.4 Caps and rate limits - `Net/RelayServer` - 4,096 peers, 2,048 sessions, 32 peers per session, 64 peers and 16 sessions per address, 1,000 packets and 1 MB per second per peer, hellos 10 per second per address, random slots
   - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; now the default, `=on` re-allows them
   - 39.8.6 Welcome nonce - `Net/RelayProtocol` - a version-4 game puts a random nonce in its hellos and ignores any welcome that doesn't echo it, so a forged welcome can't pair, redirect or end a session; an older relay needs `allowUnverifiedRelay`
+  - 39.8.7 Flow caps and hello-table protection (SEC1) - `Net/RelayServer` - 8 MiB/s forwarded per IP address and 16 MiB/s per session (two-second burst; loopback exempt from the address cap), and a hello table that is pruned exactly and falls back to one shared allowance (2,000/s) when forged sources fill it, so new players can still join
 - **Code:** `Net/RelayServer`, `Net/RelayProtocol`, `relay/main.cpp`
 - **API:** `RelayServer::SetLegacyHello`, `kMaxPeers`, `kPacketsPerSecond`, `RelayRefused`, flag `--legacy-hello`
 - **Editor:** none
@@ -251,14 +253,33 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.12.9 Evidence on kick reports - `Net/DedicatedServer`, `shared/AntiCheatBackend.hpp`, `docs/sql/anticheat.sql` - `KickReporter` attaches the kick's bundle (re-written without account / address unless `includeIdentifiers`, 16 KiB cap, must be a JSON object) to the `server_kick` report for a kick or a ban request; `ac_reports.evidence jsonb` (size check, kept only from `ac_report_servers` accounts, frozen on review, admins read only)
   - 39.12.10 Admin views: linked accounts, ban with devices, evidence - `shared/AntiCheatAdminTools.hpp`, `launcher/main.cpp` - Admin > Anti-cheat: "Linked accounts" (`ac_linked_accounts`), the Ban dialog's "every machine this account used" (`ac_ban_with_devices`, shows how many bans it made), "Evidence" on a server-kick report; requests and row parsing are plain functions
   - 39.12.11 Editor inspector - `Net/DetectInspector.hpp`, `editor/main.cpp` - Anti-Cheat Config > Detection engine: master switch, Observe mode (kickAt, banAt, shadowAt, rateLimitAt to 0; restores on untick), about 30 grouped numbers with tooltips from the docs, and a text box of every `detect.*` line (Apply text checks all of it)
+  - 39.12.12 Bot / macro heuristic - `Net/CheatDetect`, `Net/NetworkManager` - `input_regularity`: one button pressed 20 times at a steady gap (spread under 4%), timed on the player's own input tick; Fire and Alt Fire off by default (auto-fire is regular on purpose); `detect.regularity*` keys
 - **Code:** `Net/CheatDetect`, `Net/AntiCheat`, `Net/NetworkManager`, `Net/DedicatedServer`, `Net/DetectInspector`, `Scene/SceneSerializer`, `shared/AntiCheatBackend.hpp`, `shared/AntiCheatAdminTools.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `editor/main.cpp`
 - **API:** `DetectSettings`, `CheatDetector`, `AntiCheatSettings::detect`, `AntiCheat::detector`, `onDetectResponse`, `EvidenceBundle`, `BundleOptions`, `NetworkManager::AntiCheatKick`, `KickReporter::includeIdentifiers`, `okayac::backend::FileServerKick` (evidence), `LinkedAccounts`, `BanWithDevices`, `okay::detectui`, `.okayac` keys `detect.*` (`detect.enabled`, `detect.maxSpeed`, `detect.weapon`, `detect.ability`, `detect.economy`, `detect.kickAt`, `detect.weight.<detector>` ...)
 - **Editor:** Anti-Cheat Config > Detection engine (switch, Observe mode, grouped numbers with tooltips, a text box of the `detect.*` lines); a rules file replaces the inline settings when it loads. Launcher: Admin > Anti-cheat (linked accounts, ban with devices, evidence)
 - **Docs:** `docs/anticheat.md` (Detection engine)
-- **Tests:** `cheat_detect`, `anticheat_sim`, `anticheat_wiring`, `anticheat_sql` (needs a local Postgres)
+- **Tests:** `cheat_detect`, `anticheat_sim`, `anticheat_wiring`, `anticheat_hard` (input regularity), `anticheat_sql` (needs a local Postgres)
 - **Status:** Works - every detector has a unit test and a simulated cheat; in the harness all 880 cheating runs are flagged and none of 410 honest runs (high ping, loss, lag spikes, respawns, skilled shooters, traders) are; not run against real networks or a shipped game
 - **Open:** thresholds are tuned on a network model and loopback, not on real players (use observe mode first); the headshot flag, economy grants, item acquisition and cooldown uses must be reported by game code (`OnShot`, `OnGrant`, `OnItemAcquire`, `OnAbility`); the editor inspector covers about 30 of the numbers and a text box for the rest (no per-weapon / per-weight widgets); a bundle is only attached to kick reports from `--report-kicks` (not to player reports); the launcher's linked-accounts and ban-with-devices screens were compile-checked, not run against a live backend; a cheat that stays inside the tolerances, or only reads data (wall-hack, radar), is invisible
 - **Related:** 39.1, 39.5, 39.6, 16.6
 - **Words:** observe mode, linked accounts, ban with devices, evidence column, detection engine, risk score, evidence bundle, suspicion, behavioural anti-cheat, speed hack, fly hack, no-clip, aimbot, rapid fire, teleport hack, wall hack, duplication, false positive, shadow restrict, ban request, detect.enabled
 - **Seen as:** a player kicked with a risk score and evidence in the kick report; "speed window", "teleport", "through wall" evidence in the log; honest players with bad ping flagged when the thresholds are too tight
 - **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"
+
+### 39.13 Cheat simulator and hardening audit
+- **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/anticheat_hardening_status.md`.
+- **Parts:**
+  - 39.13.1 The simulator - `Net/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets
+  - 39.13.2 Where to run it - `Net/DedicatedServer`, `player/main.cpp` - `OkaySpacePlayer.exe --server --cheat-sim [--log FILE]`, `--cheat-sim-only LIST`, env `OKAY_CHEAT_SIM`; needs no game, window or scene; exit code 0 when everything was caught
+  - 39.13.3 Status table - `docs/anticheat_hardening_status.md` - every audit item and topic with its status and proof
+- **Code:** `Net/CheatSim`, `Net/DedicatedServer`, `player/main.cpp`
+- **API:** `okay::RunCheatSim`, `CheatSimOptions`, `CheatSimReport`, flags `--cheat-sim`, `--cheat-sim-only`, env `OKAY_CHEAT_SIM`
+- **Editor:** none
+- **Docs:** `docs/anticheat.md` (The cheat simulator), `docs/anticheat_hardening_status.md`, `docs/try_it.md`
+- **Tests:** `anticheat_hard` (runs all eight steps and checks the files)
+- **Status:** Partial - works headless on Linux over loopback; never run on Windows or a real network
+- **Open:** the `macro` step feeds the detector directly (a real macro needs a player pawn); the packets are not encrypted, so the encryption path is not exercised; the thresholds of the new checks are tuned only on the simulator
+- **Related:** 39.1, 39.12, 16.5
+- **Words:** cheat simulator, rogue client, self-test, --cheat-sim, OKAY_CHEAT_SIM, ban list, audit log, hardening audit, try it
+- **Seen as:** lines marked CAUGHT or MISSED in a log; `Result: 8 of 8 cheats caught`
+- **Ask me like:** "how do I see the anti-cheat catch a cheater?", "which hardening items are done?"

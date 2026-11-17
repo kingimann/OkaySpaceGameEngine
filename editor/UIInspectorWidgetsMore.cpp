@@ -88,6 +88,18 @@ void BuildUIBottomSheet(GameObject* g) {
     w->title = "Filters";
 }
 
+void BuildUIRangeSlider(GameObject* g) {
+    auto* w = g->AddComponent<UIRangeSlider>();
+    w->size = {300, 30};
+}
+void BuildUIAspectRatio(GameObject* g) {
+    g->AddComponent<UIAspectRatio>();   // a container: put widgets under it and they keep this shape
+}
+void BuildUIInputValidation(GameObject* g) {
+    if (!g->GetComponent<UIInputField>()) g->AddComponent<UIInputField>();   // it checks the field on the same object
+    g->AddComponent<UIInputValidator>();
+}
+
 void DrawMoreUIComponentInspector(Component* comp, EditorState& ed, Component** toRemove,
                                   const UIInspectorHooks& hooks) {
     if (auto* w = dynamic_cast<UISearchBar*>(comp)) {
@@ -210,6 +222,66 @@ void DrawMoreUIComponentInspector(Component* comp, EditorState& ed, Component** 
         if (ImGui::Checkbox("A gamepad can move here##sheet", &w->focusable)) ed.dirty = true;
         EditColor("Sheet##sheet", w->background, ed);
         ImGui::TextDisabled("The handle opens and closes it. on_change runs when it opens or closes. Confirm on a gamepad does the same.");
+        return;
+    }
+    if (auto* w = dynamic_cast<UIRangeSlider*>(comp)) {
+        if (!hooks.header("UI Range Slider", w, toRemove, true)) return;
+        hooks.anchorCombo("Anchor##range", w->anchor, ed);
+        float sz[2] = {w->size.x, w->size.y};
+        if (ImGui::DragFloat2("Width and height##range", sz, 1.0f, 1.0f, 4000.0f)) { w->size = {sz[0], sz[1]}; ed.dirty = true; }
+        if (ImGui::DragFloat("Lowest value##range", &w->minValue, 0.1f)) ed.dirty = true;
+        if (ImGui::DragFloat("Highest value##range", &w->maxValue, 0.1f)) ed.dirty = true;
+        if (ImGui::DragFloat("Left handle##range", &w->low, 0.1f, w->minValue, w->maxValue)) { const float v = w->low; w->SetLow(v); ed.dirty = true; }
+        if (ImGui::DragFloat("Right handle##range", &w->high, 0.1f, w->minValue, w->maxValue)) { const float v = w->high; w->SetHigh(v); ed.dirty = true; }
+        if (ImGui::DragFloat("Step##range", &w->step, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = smooth. Otherwise the handles snap to multiples of this.");
+        if (ImGui::DragFloat("Smallest gap##range", &w->minGap, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+        if (ImGui::Checkbox("Whole numbers##range", &w->wholeNumbers)) ed.dirty = true;
+        if (ImGui::Checkbox("Show the two numbers##range", &w->showValue)) ed.dirty = true;
+        EditText("Number text##range", w->valueFormat, ed, "{lo} and {hi} are replaced. Empty shows \"{lo} - {hi}\".");
+        if (ImGui::Checkbox("The player can use this##range", &w->interactable)) ed.dirty = true;
+        if (ImGui::Checkbox("A gamepad can move here##range", &w->focusable)) ed.dirty = true;
+        EditColor("Between the handles##range", w->fill, ed);
+        EditColor("Track##range", w->background, ed);
+        EditColor("Handles##range", w->knob, ed);
+        ImGui::TextDisabled("Drag the handle nearest the click. on_change runs when either moves. Left and right move the picked handle; Confirm swaps handles.");
+        return;
+    }
+    if (auto* w = dynamic_cast<UIAspectRatio*>(comp)) {
+        if (!hooks.header("UI Aspect Ratio", w, toRemove, true)) return;
+        if (ImGui::DragFloat("Width / height##aspect", &w->ratio, 0.01f, 0.05f, 20.0f)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("16:9 is 1.78, 4:3 is 1.33, a square is 1.");
+        static const char* kModes[] = {"Fit inside", "Fill (cover)", "Width controls height", "Height controls width"};
+        int m = (int)w->mode;
+        if (ImGui::Combo("How it sizes##aspect", &m, kModes, 4)) { w->mode = (UIAspectRatio::Mode)m; ed.dirty = true; }
+        if (ImGui::SliderFloat("Left to right##aspect", &w->alignX, 0.0f, 1.0f)) ed.dirty = true;
+        if (ImGui::SliderFloat("Top to bottom##aspect", &w->alignY, 0.0f, 1.0f)) ed.dirty = true;
+        if (ImGui::DragFloat("Padding##aspect", &w->padding, 0.5f, 0.0f, 1000.0f)) ed.dirty = true;
+        ImGui::TextDisabled("Put widgets under this object. They are laid out inside a box of this shape, centred in the space it has.");
+        return;
+    }
+    if (auto* w = dynamic_cast<UIInputValidator*>(comp)) {
+        if (!hooks.header("UI Input Validator", w, toRemove, true)) return;
+        static const char* kKinds[] = {"Anything", "Email", "Whole number", "Number", "Letters", "Letters and digits"};
+        int k = (int)w->kind;
+        if (ImGui::Combo("Must be##valid", &k, kKinds, 6)) { w->kind = (UIInputValidator::Kind)k; ed.dirty = true; }
+        if (ImGui::Checkbox("Required##valid", &w->required)) ed.dirty = true;
+        if (ImGui::DragInt("Fewest characters##valid", &w->minLength, 0.1f, 0, 1000)) ed.dirty = true;
+        if (ImGui::DragInt("Most characters (0 = any)##valid", &w->maxLength, 0.1f, 0, 1000)) ed.dirty = true;
+        if (ImGui::Checkbox("Check the number range##valid", &w->useRange)) ed.dirty = true;
+        if (w->useRange) {
+            if (ImGui::DragFloat("Lowest number##valid", &w->minNumber, 0.1f)) ed.dirty = true;
+            if (ImGui::DragFloat("Highest number##valid", &w->maxNumber, 0.1f)) ed.dirty = true;
+        }
+        EditText("Must equal this field##valid", w->mustMatch, ed, "The name of another object with a UI Input Field (a repeat-password box).");
+        EditText("Your own message##valid", w->message, ed, "Empty shows a built-in sentence.");
+        if (ImGui::Checkbox("Quiet until the player types##valid", &w->quietUntilTouched)) ed.dirty = true;
+        if (ImGui::Checkbox("Show the message##valid", &w->showMessage)) ed.dirty = true;
+        if (ImGui::Checkbox("Green ring when fine##valid", &w->showOk)) ed.dirty = true;
+        EditColor("Error colour##valid", w->errorColor, ed);
+        if (!w->gameObject || !w->gameObject->GetComponent<UIInputField>())
+            ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a UI Input Field to check.");
+        ImGui::TextDisabled("The object's script gets on_valid and on_invalid when the answer changes.");
         return;
     }
 }

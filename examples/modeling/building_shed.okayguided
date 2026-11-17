@@ -1,0 +1,45 @@
+okayguided 1
+template building 1
+param depth 3
+param detail 1
+param doorHeight 2.1000000000000001
+param doorOpen 0
+param doorWidth 0.90000000000000002
+param floorHeight 2.7999999999999998
+param floors 1
+param foundation 0.29999999999999999
+param overhang 0.40000000000000002
+param ridgeAlong 0
+param roofPitch 12
+param roofThickness 0.20000000000000001
+param sillHeight 0.90000000000000002
+param wallThickness 0.25
+param width 4
+param windowHeight 1.3
+param windowWidth 1
+param windowsFront 1
+param windowsSide 0
+slot door ledged
+slot floor slab
+slot foundation slab
+slot roof shed
+slot tiles fine
+slot trim edge
+slot wall plain
+slot window single
+color door 0.550000012 0.379999995 0.219999999 1
+color floor 0.550000012 0.379999995 0.219999999 1
+color foundation 0.600000024 0.600000024 0.579999983 1
+color roof 0.550000012 0.219999999 0.159999996 1
+color tiles 0.300000012 0.319999993 0.360000014 1
+color trim 0.300000012 0.319999993 0.360000014 1
+color wall 0.550000012 0.379999995 0.219999999 1
+color window 0.939999998 0.939999998 0.920000017 1
+material door 2
+material floor 6
+material foundation 5
+material roof 3
+material tiles 6
+material trim 4
+material wall 0
+material window 1

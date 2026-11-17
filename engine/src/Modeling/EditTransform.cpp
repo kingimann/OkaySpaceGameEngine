@@ -1,3 +1,5 @@
+#include <map>
+#include <tuple>
 #include "okay/Modeling/EditTransform.hpp"
 #include "okay/Math/Quat.hpp"
 
@@ -137,17 +139,17 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
     std::vector<char> isSel(n, 0);
     for (int v : selected) if (v >= 0 && v < n) isSel[v] = 1;
     std::unordered_map<int, std::size_t> slot;   // vertex -> index in m_verts
-    auto add = [&](int v, float w, bool mirrored) {
+    auto add = [&](int v, float w, int mirrored) {
         auto it = slot.find(v);
         if (it != slot.end()) {   // already moved: keep the strongest pull
             if (w > m_weight[it->second]) { m_weight[it->second] = w; m_mirror[it->second] = mirrored; }
             return;
         }
         slot[v] = m_verts.size();
-        m_verts.push_back(v); m_orig.push_back(mesh.vertices[v]); m_weight.push_back(w); m_mirror.push_back(mirrored);
+        m_verts.push_back(v); m_orig.push_back(mesh.vertices[v]); m_weight.push_back(w); m_mirror.push_back((char)mirrored);
     };
     std::vector<Vec3> anchors;
-    for (int v = 0; v < n; ++v) if (isSel[v]) { add(v, 1.0f, false); anchors.push_back(mesh.vertices[v]); }
+    for (int v = 0; v < n; ++v) if (isSel[v]) { add(v, 1.0f, 0); anchors.push_back(mesh.vertices[v]); }
 
     // Soft selection: every other vertex within the radius, smoothstep falloff
     // by distance to the nearest selected vertex (as Move Soft does).
@@ -159,18 +161,32 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
             const float d = std::sqrt(best);
             if (d >= opt.softRadius) continue;
             const float t = 1.0f - d / opt.softRadius;
-            add(v, t * t * (3.0f - 2.0f * t), false);
+            add(v, t * t * (3.0f - 2.0f * t), 0);
         }
     }
-    // X symmetry: each moved vertex's partner at (-x, y, z) gets the mirrored
-    // transform. A vertex on the plane is its own partner and is left as is.
-    if (opt.mirrorX) {
+    // Symmetry: each moved vertex's partner across the enabled planes (and across combinations of them) gets the
+    // reflected transform. A vertex on a plane is its own partner for that plane and is left as is.
+    const int axes = (opt.mirrorX ? 1 : 0) | (opt.mirrorY ? 2 : 0) | (opt.mirrorZ ? 4 : 0);
+    if (axes) {
+        auto qk = [](const Vec3& p) { return std::make_tuple((long)std::lround(p.x * 1e4f), (long)std::lround(p.y * 1e4f), (long)std::lround(p.z * 1e4f)); };
+        std::map<std::tuple<long, long, long>, std::vector<int>> where;
+        for (int w = 0; w < n; ++w) where[qk(mesh.vertices[w])].push_back(w);
         const std::size_t count = m_verts.size();
         for (std::size_t i = 0; i < count; ++i) {
-            const Vec3 want{-m_orig[i].x, m_orig[i].y, m_orig[i].z};
-            if (std::fabs(m_orig[i].x) < 1e-5f) continue;
-            for (int w = 0; w < n; ++w)
-                if (w != m_verts[i] && (mesh.vertices[w] - want).SqrMagnitude() < 1e-8f && !isSel[w]) add(w, m_weight[i], true);
+            for (int mask = 1; mask <= 7; ++mask) {
+                if ((mask & axes) != mask) continue;
+                const Vec3& o = m_orig[i];
+                bool onPlane = false;
+                if ((mask & 1) && std::fabs(o.x) < 1e-5f) onPlane = true;
+                if ((mask & 2) && std::fabs(o.y) < 1e-5f) onPlane = true;
+                if ((mask & 4) && std::fabs(o.z) < 1e-5f) onPlane = true;
+                if (onPlane) continue;
+                const Vec3 want{(mask & 1) ? -o.x : o.x, (mask & 2) ? -o.y : o.y, (mask & 4) ? -o.z : o.z};
+                auto it = where.find(qk(want));
+                if (it == where.end()) continue;
+                for (int w : it->second)
+                    if (w != m_verts[i] && (mesh.vertices[w] - want).SqrMagnitude() < 1e-8f && !isSel[w]) add(w, m_weight[i], mask);
+            }
         }
     }
 
@@ -184,13 +200,16 @@ void EditTransformSession::Begin(Mesh& mesh, EditXform kind, const std::vector<i
 void EditTransformSession::Apply(Mesh& mesh, const Mat4& world) {
     if (!m_active) return;
     const Mat4 local = m_toLocal * world * m_toWorld;   // the same move, in the mesh's own space
-    const Mat4 S = Mat4::Scale(Vec3{-1, 1, 1});
-    const Mat4 mirrored = S * local * S;              // the same move reflected across local x = 0
+    Mat4 mirrored[8];                                  // the same move reflected across each combination of local planes
+    for (int mask = 1; mask <= 7; ++mask) {
+        const Mat4 S = Mat4::Scale(Vec3{(mask & 1) ? -1.0f : 1.0f, (mask & 2) ? -1.0f : 1.0f, (mask & 4) ? -1.0f : 1.0f});
+        mirrored[mask] = S * local * S;
+    }
     for (std::size_t i = 0; i < m_verts.size(); ++i) {
         const int v = m_verts[i];
         if (v < 0 || v >= (int)mesh.vertices.size()) continue;
         const Vec3 o = m_orig[i];
-        const Vec3 moved = (m_mirror[i] ? mirrored : local).MultiplyPoint(o);
+        const Vec3 moved = (m_mirror[i] ? mirrored[(int)m_mirror[i] & 7] : local).MultiplyPoint(o);
         mesh.vertices[v] = o + (moved - o) * m_weight[i];
     }
     mesh.name = "";

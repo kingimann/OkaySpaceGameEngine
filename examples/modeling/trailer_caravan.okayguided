@@ -1,0 +1,29 @@
+okayguided 1
+template trailer 1
+param axles 1
+param cargoHeight 2
+param deckHeight 0.90000000000000002
+param detail 1
+param length 5.5
+param tongueLength 1.2
+param wheelRadius 0.40000000000000002
+param wheelWidth 0.25
+param width 2.2999999999999998
+slot cargo caravan
+slot deck plank
+slot hitch bar
+slot leg post
+slot taillight box
+slot wheel rim
+color cargo 0.920000017 0.920000017 0.899999976 1
+color deck 0.5 0.519999981 0.550000012 1
+color hitch 0.100000001 0.100000001 0.109999999 1
+color leg 0.5 0.519999981 0.550000012 1
+color taillight 0.800000012 0.0500000007 0.0500000007 1
+color wheel 0.100000001 0.100000001 0.109999999 1
+material cargo 1
+material deck 0
+material hitch 2
+material leg 3
+material taillight 5
+material wheel 4

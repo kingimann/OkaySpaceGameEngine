@@ -70,6 +70,14 @@ struct DedicatedServerOptions {
     /// their inputs (NetworkManager::authoritativeMovement). Off: the scene's
     /// own setting is left as it is.
     bool authoritative = false;
+    /// --no-ban-file / --no-audit-log (config: ban_file = off, audit_log = off): with the anti-cheat on, the
+    /// server keeps a ban list ("okay_bans.txt") and an audit log ("okay_anticheat_audit.log") in its folder
+    /// unless the rules name other files. These turn the defaults off.
+    bool noBanFile = false, noAuditLog = false;
+    /// --cheat-sim / OKAY_CHEAT_SIM: don't serve; run the cheat simulator (okay/Net/CheatSim.hpp) on this
+    /// machine, print what the anti-cheat caught, and exit (0 = everything caught, 1 = something missed).
+    bool cheatSim = false;
+    std::string cheatSimOnly;        ///< --cheat-sim-only speed,flood: run just these (see CheatSimOptions::only)
 };
 
 /// What --report-kicks files: an ac_reports "player" row from the server's

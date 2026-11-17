@@ -887,6 +887,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# The Inspector lock and other editor object references (editor/ObjectRef.hpp): held by GUID, so undo / redo / delete / a new
+# scene never make them point at another object that reused a freed address; a lock on a gone object shows nothing.
+add_executable(test_inspector_lock test_inspector_lock.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_inspector_lock PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_inspector_lock PRIVATE okay::engine)
+add_test(NAME inspector_lock COMMAND test_inspector_lock)
+
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
 add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)

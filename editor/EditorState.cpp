@@ -377,23 +377,24 @@ GameObject* EditorState::CreateCamera(const std::string& name) {
 void EditorState::AdoptCamera(Camera* cam) {
     if (!cam) return;
     // Drop the placeholder "Main Camera" if it's still exactly as the editor made it.
-    if (autoCamera && autoCamera != cam->gameObject) {
-        bool alive = false;
-        for (const auto& up : m_scene.Objects()) if (up.get() == autoCamera) { alive = true; break; }
+    // autoCamera is held by GUID: after an undo / reload rebuilt the scene, another object may sit at the placeholder's
+    // old address, and it must never be taken for the placeholder (and deleted).
+    if (autoCamera.IsSet() && !autoCamera.Is(cam->gameObject)) {
+        GameObject* ac = autoCamera.Get(m_scene);
         // Untouched = only Transform + Camera, no children or parent, and still at
         // the spot EnsureSceneCamera put it ((0,2,10) in 3D, (0,0,10) in 2D).
         auto untouched = [&]() {
-            Transform* t = autoCamera->transform;
-            if (!t || autoCamera->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
+            Transform* t = ac->transform;
+            if (!t || ac->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
             const Vec3 p = t->localPosition;
             return (p - Vec3{0, 2, 10}).Magnitude() < 1e-3f || (p - Vec3{0, 0, 10}).Magnitude() < 1e-3f;
         };
-        if (alive && untouched()) {
-            if (m_selected == autoCamera) m_selected = nullptr;
-            m_scene.Destroy(autoCamera);
+        if (ac && untouched()) {
+            if (m_selected == ac) m_selected = nullptr;
+            m_scene.Destroy(ac);
             m_scene.FlushDestroyed();
         }
-        autoCamera = nullptr;
+        autoCamera.Clear();
     }
     for (const auto& up : m_scene.Objects())
         if (up)
@@ -1480,7 +1481,7 @@ bool EditorState::OpenPrefab(const std::string& pathIn, std::string* error) {
     m_levels.push_back(std::move(lv));
     m_ses = PrefabSession{path, guid, {}, PrefabDiskPrint(path), false};
     m_scene.SetName(StemOf(path));
-    autoCamera = nullptr;
+    autoCamera.Clear();
     m_pending = Pending{};
     m_known = SceneSerializer::Serialize(m_scene);
     m_savedPrint = Fingerprint(m_known);
@@ -1579,7 +1580,7 @@ bool EditorState::ClosePrefab(bool save, std::string* error) {
     for (const std::string& p : saved) if (std::find(m_ses.saved.begin(), m_ses.saved.end(), p) == m_ses.saved.end()) m_ses.saved.push_back(p);   // the levels further out still owe an update
     cameraPos = lv.cameraPos; cameraZoom = lv.cameraZoom; view3D = lv.view3D;
     camYaw = lv.camYaw; camPitch = lv.camPitch; camDist = lv.camDist; camTarget = lv.camTarget;
-    autoCamera = nullptr;
+    autoCamera.Clear();
     SelectByRef(lv.sel);
     m_prefabNote.clear();
     if (!saved.empty()) RefreshInstancesOf(saved, &m_prefabNote);

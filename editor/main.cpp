@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -3248,7 +3249,15 @@ float g_scatterMinH = -100.0f, g_scatterMaxH = 100.0f; // local height band to f
 // in the 3D viewport — select vertices/faces, move them, extrude/inset/subdivide, sculpt.
 bool  g_meshEdit = false;             // edit mode active
 GameObject* g_meshEditObj = nullptr;  // the object being edited
-std::string g_meshEditObjName;        // its name, to find it again after undo rebuilds the scene
+std::string g_meshEditObjName;        // its name (kept for older callers)
+std::string g_meshEditObjGuid;        // its GUID: undo rebuilds every object (new addresses, same GUIDs), so the object is
+                                      // found again by GUID, and an object that took its old address is never edited instead
+// True when `g` is still in the scene AND is the object with `guid` (not another one that reused a freed address).
+static bool LiveAs(const Scene& sc, const GameObject* g, const std::string& guid) {
+    if (!g) return false;
+    for (const auto& up : sc.Objects()) if (up.get() == g) return !g->IsDestroyed() && g->Guid() == guid;
+    return false;
+}
 int   g_meshSelMode = 0;              // 0 = Vertex, 1 = Face, 2 = Edge
 std::vector<int> g_meshSelVerts;      // selected vertex indices
 std::vector<int> g_meshSelFaces;      // selected triangle (face) indices
@@ -3303,6 +3312,7 @@ std::vector<okay::modeling::KnifePoint> g_knifePts;
 std::vector<Vec3> g_knifePos;                  // the knife points (object space), for drawing
 okay::modeling::EditTransformSession g_meModal;
 GameObject* g_meModalObj = nullptr;   // the object whose mesh the session is moving
+std::string g_meModalObjGuid;         // its GUID (see LiveAs)
 ImVec2 g_meModalMouse0{0, 0}, g_meModalPrevMouse{0, 0};
 okay::modeling::Ray g_meModalRay0{};
 
@@ -4007,21 +4017,18 @@ static void RunModelCmd(const ModelCmd& c) {
 // Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
 static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
     if (g_meModal.Active() && g_meModalObj) {   // never leave a transform half done
-        bool alive = false;   // (an undo may have rebuilt the scene under it)
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meModalObj) { alive = true; break; }
+        const bool alive = LiveAs(ed.scene(), g_meModalObj, g_meModalObjGuid);   // (an undo may have rebuilt the scene under it)
         if (auto* mr = alive ? g_meModalObj->GetComponent<MeshRenderer>() : nullptr) g_meModal.Cancel(mr->mesh);
         else g_meModal.Confirm();
         g_meModalObj = nullptr;
     }
     if (on && !g_meshEdit) { g_meshSymX = (g_symDefaultMask & 1) != 0; g_meshSymY = (g_symDefaultMask & 2) != 0; g_meshSymZ = (g_symDefaultMask & 4) != 0; }   // "symmetry by default"
     if (g_ptool != PolyTool::None) {   // a bevel / slide / knife half done: put it back
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
+        const bool alive = LiveAs(ed.scene(), g_meshEditObj, g_meshEditObjGuid);
         if (alive) EndPolyTool(false); else g_ptool = PolyTool::None;
     }
     if (g_meshEdit && g_meshEditObj) {   // finishing an edit session: one scene undo step for it
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
+        const bool alive = LiveAs(ed.scene(), g_meshEditObj, g_meshEditObjGuid);
         if (alive) MeshUndoCommit(ed);
         // Back to the drawable form: split at the UV seams (vertex numbers kept).
         if (auto* emr = alive ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr)
@@ -4037,7 +4044,7 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         // UVs move onto the triangle corners first, so UV seams survive the weld.
         mr->mesh.CaptureCornerUVs();
         mr->mesh.WeldVertices();
-        g_meshEdit = true; g_meshEditObj = go; g_meshEditObjName = go->name;
+        g_meshEdit = true; g_meshEditObj = go; g_meshEditObjName = go->name; g_meshEditObjGuid = go->Guid();
         g_meshSculpt = false; ed.dirty = true;
     } else {
         g_meshEdit = false; g_meshEditObj = nullptr;
@@ -4050,6 +4057,7 @@ bool  g_colliderEdit = false;         // collider edit mode active
 int   g_colliderDragAxis = -1;        // 0=X 1=Y 2=Z, -1 = none held
 int   g_colliderDragSign = 1;         // which face (+1 or -1 along the axis)
 GameObject* g_uiDragTarget = nullptr; // UI widget being dragged in the viewport
+std::string g_uiDragTargetGuid;       // its GUID (see LiveAs)
 bool  g_uiHandled = false;  // a UI widget consumed this frame's click/drag
 bool  g_axisGizmoHot = false; // the mouse is on a tip of the view-axis gizmo (a click there snaps the view, it must not also pick)
 
@@ -20206,16 +20214,16 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
 }
 
 static char g_hierFilter[96] = "";
-static GameObject* g_hierRename = nullptr;   // object being renamed inline
+static ObjectRef g_hierRename;   // object being renamed inline (by GUID: undo rebuilds objects and can reuse addresses)
 static bool        g_hierRenameOpen = false; // request to open the rename popup (once)
 static char g_hierRenameBuf[128] = "";
-static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
+static ObjectRef g_prefabSaveTarget; // object being saved as a prefab (by GUID, as above)
 static char g_prefabNameBuf[128] = "";
 static bool g_hierSort   = false;            // sort siblings A->Z
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
 static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
-static GameObject* g_hierPressedMulti = nullptr; // pressed (not yet released) on a row that is part of a multi-selection
-static GameObject* g_hierDropOpen = nullptr; // a row that just took a dropped object opens (next frame)
+static ObjectRef g_hierPressedMulti; // pressed (not yet released) on a row that is part of a multi-selection
+static ObjectRef g_hierDropOpen; // a row that just took a dropped object opens (next frame)
 static bool g_hierDropOpenSeen = false;
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
 static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
@@ -20543,7 +20551,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
         }
     }
     else if (id == "h.rename") {
-        g_hierRename = node; g_hierRenameOpen = true;
+        g_hierRename.Set(node); g_hierRenameOpen = true;
         std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
         g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
@@ -20622,7 +20630,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
     else if (id == "h.copyname") ImGui::SetClipboardText(node->name.c_str());
     else if (id == "h.copypath") ImGui::SetClipboardText(HierPath(node).c_str());
     else if (id == "h.saveprefab") {
-        g_prefabSaveTarget = node;
+        g_prefabSaveTarget.Set(node);
         std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
         g_prefabNameBuf[sizeof(g_prefabNameBuf) - 1] = '\0';
     }
@@ -20854,7 +20862,7 @@ void DrawHierarchy(EditorState& ed) {
             // Left/Right arrow expand/collapse request from last frame's key press.
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
-            if (node == g_hierDropOpen && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
+            if (g_hierDropOpen.Is(node) && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
             // Dim inactive objects; grey the whole row (and its subtree label).
             // Isolation dims everything outside the isolated subtree the same way.
             bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
@@ -20931,14 +20939,14 @@ void DrawHierarchy(EditorState& ed) {
                 } else if (ImGui::GetIO().KeyShift && ed.selected()) {
                     rangeClick = node;   // range select, resolved after the draw pass
                 } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
-                else if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) g_hierPressedMulti = node;   // may turn into a drag of the whole selection: decide on release
+                else if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) g_hierPressedMulti.Set(node);   // may turn into a drag of the whole selection: decide on release
                 else ed.Select(node);                                       // single select
             }
             // A plain click on one of several selected rows (no drag) selects just that row, on release.
-            if (g_hierPressedMulti == node && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (g_hierPressedMulti.Is(node) && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
                 const ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 4.0f);   // zero unless it went past the drag threshold
                 if (ImGui::IsItemHovered() && moved.x == 0.0f && moved.y == 0.0f) ed.Select(node);
-                g_hierPressedMulti = nullptr;
+                g_hierPressedMulti.Clear();
             }
             // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
             // it as a sibling (above/below), or onto the middle to RE-PARENT it.
@@ -21009,7 +21017,7 @@ void DrawHierarchy(EditorState& ed) {
                             };
                         }
                         oked::ApplyDrop(ed.scene(), group, node, where, hooks);
-                        if (where == oked::DropWhere::Inside) { g_hierDropOpen = node; g_hierDropOpenSeen = false; }   // open it next frame to show where they went
+                        if (where == oked::DropWhere::Inside) { g_hierDropOpen.Set(node); g_hierDropOpenSeen = false; }   // open it next frame to show where they went
                         ed.dirty = true;
                     }
                 }
@@ -21053,7 +21061,7 @@ void DrawHierarchy(EditorState& ed) {
                             // Anywhere else: a new object. Middle of the row = its child, near an edge = beside it.
                             if (ty >= 0.30f && ty <= 0.70f) {
                                 made->transform->SetParent(node->transform, false);
-                                g_hierDropOpen = node; g_hierDropOpenSeen = false;
+                                g_hierDropOpen.Set(node); g_hierDropOpenSeen = false;
                             } else oked::ApplyDrop(ed.scene(), {made}, node, ty < 0.30f ? oked::DropWhere::Before : oked::DropWhere::After);
                             ed.Select(made);
                         }
@@ -21063,7 +21071,7 @@ void DrawHierarchy(EditorState& ed) {
             }
             // Double-click a row to rename it inline (not on the eye/lock toggles).
             if (ImGui::IsItemHovered() && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                g_hierRename = node; g_hierRenameOpen = true;
+                g_hierRename.Set(node); g_hierRenameOpen = true;
                 std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
                 g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
             }
@@ -21100,7 +21108,7 @@ void DrawHierarchy(EditorState& ed) {
         drawNode(go);
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
-    if (g_hierDropOpenSeen) { g_hierDropOpen = nullptr; g_hierDropOpenSeen = false; }
+    if (g_hierDropOpenSeen) { g_hierDropOpen.Clear(); g_hierDropOpenSeen = false; }
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     else if (deletePending) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
     if (deleteKidsPending) {
@@ -21123,7 +21131,7 @@ void DrawHierarchy(EditorState& ed) {
         } else ed.Select(rangeClick);
     }
     // Up/Down arrows walk the visible rows.
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename.IsSet() &&
         !ImGui::GetIO().WantTextInput && !visRows.empty() && ed.selected()) {
         int cur = -1;
         for (int i = 0; i < (int)visRows.size(); ++i)
@@ -21143,7 +21151,7 @@ void DrawHierarchy(EditorState& ed) {
         }
     }
     // Ctrl+A: select every visible object.
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename.IsSet() &&
         !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl &&
         ImGui::IsKeyPressed(ImGuiKey_A, false) && !visRows.empty()) {
         ed.Select(visRows[0]);
@@ -21193,21 +21201,19 @@ void DrawHierarchy(EditorState& ed) {
     }
 
     // F2 renames the selected object (the context menu has advertised this all along).
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename.IsSet() &&
         ImGui::IsKeyPressed(ImGuiKey_F2, false) && ed.selected()) {
-        g_hierRename = ed.selected(); g_hierRenameOpen = true;
+        g_hierRename.Set(ed.selected()); g_hierRenameOpen = true;
         std::strncpy(g_hierRenameBuf, ed.selected()->name.c_str(), sizeof(g_hierRenameBuf) - 1);
         g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
 
     // Inline rename modal (double-click a row or context-menu Rename).
-    if (g_hierRename) {
-        // Confirm the target still exists in the scene.
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_hierRename) { alive = true; break; }
-        if (!alive) g_hierRename = nullptr;
-    }
-    if (g_hierRename) {
+    // Look the target up by GUID every frame: if it is gone (deleted, undone) the rename is dropped, and an object that
+    // took its memory after a rebuild is never renamed in its place.
+    GameObject* renameGo = g_hierRename.Get(ed.scene());
+    if (!renameGo) g_hierRename.Clear();
+    if (renameGo) {
         // OpenPopup must be called once (on request) — calling it every frame
         // resets the popup's active-id each frame, so OK/Cancel never register.
         if (g_hierRenameOpen) { ImGui::OpenPopup("Rename Object"); g_hierRenameOpen = false; }
@@ -21217,23 +21223,20 @@ void DrawHierarchy(EditorState& ed) {
             bool enter = ImGui::InputText("Name", g_hierRenameBuf, sizeof(g_hierRenameBuf),
                                           ImGuiInputTextFlags_EnterReturnsTrue);
             if (enter || ImGui::Button("OK", ImVec2(110, 0))) {
-                if (g_hierRenameBuf[0]) { g_hierRename->name = g_hierRenameBuf; ed.dirty = true; }
-                g_hierRename = nullptr; ImGui::CloseCurrentPopup();
+                if (g_hierRenameBuf[0]) { renameGo->name = g_hierRenameBuf; ed.dirty = true; }
+                g_hierRename.Clear(); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_hierRename = nullptr; ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_hierRename.Clear(); ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
     }
 
     // Save-as-Prefab modal: writes a .okayprefab into the project's Assets so it
     // can be dragged back in / instantiated anywhere.
-    if (g_prefabSaveTarget) {
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_prefabSaveTarget) { alive = true; break; }
-        if (!alive) g_prefabSaveTarget = nullptr;
-    }
-    if (g_prefabSaveTarget) {
+    GameObject* prefabGo = g_prefabSaveTarget.Get(ed.scene());   // by GUID, as the rename above
+    if (!prefabGo) g_prefabSaveTarget.Clear();
+    if (prefabGo) {
         if (!ImGui::IsPopupOpen("Save As Prefab")) ImGui::OpenPopup("Save As Prefab");   // open once
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -21249,14 +21252,14 @@ void DrawHierarchy(EditorState& ed) {
                 if (g_prefabNameBuf[0]) {
                     fs::create_directories(dir, ec);
                     fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
-                    if (oked::SaveAsPrefabFile(*g_prefabSaveTarget, out.string()))
+                    if (oked::SaveAsPrefabFile(*prefabGo, out.string()))
                         ConsoleLog("Saved prefab " + out.string());
                     else ConsoleLog("Prefab save failed");
                 }
-                g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup();
+                g_prefabSaveTarget.Clear(); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget.Clear(); ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
     }
@@ -30005,18 +30008,23 @@ void DrawInspector(EditorState& ed) {
 
     // Lock (pin) the inspector to the current object so it stays put while you
     // click around the scene/hierarchy — inspector lock.
-    static bool s_locked = false;
-    static GameObject* s_pinned = nullptr;
-    if (ImGui::Checkbox("Lock Inspector", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while you select others");
+    // The pin is held by GUID (ObjectRef.hpp), not by pointer: undo / redo rebuild every object and a new one can
+    // take the old one's address, which used to make a locked Inspector show the wrong object.
+    static InspectorLock s_lock;
+    {
+        bool lockBox = s_lock.locked;
+        if (ImGui::Checkbox("Lock Inspector", &lockBox)) { if (lockBox) s_lock.Lock(ed.selected()); else s_lock.Unlock(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep showing this object while you select others");
+    }
+    const bool s_locked = s_lock.locked;
 
     // A file picked in the Project panel (and no object picked since) shows here, with its import settings.
     {
         static std::string s_seenAsset;
-        static GameObject* s_seenObj = nullptr;
+        static ObjectRef s_seenObj;   // by GUID: a rebuilt scene can reuse an old object's address
         static bool s_assetMode = false;
         if (g_projectSelected != s_seenAsset) { s_seenAsset = g_projectSelected; s_assetMode = !s_seenAsset.empty(); }
-        if (ed.selected() != s_seenObj) { s_seenObj = ed.selected(); s_assetMode = false; }
+        if (ed.selected() ? !s_seenObj.Is(ed.selected()) : s_seenObj.IsSet()) { s_seenObj.Set(ed.selected()); s_assetMode = false; }
         std::error_code aec;
         if (s_assetMode && !s_locked && g_pb && std::filesystem::is_regular_file(std::filesystem::path(s_seenAsset), aec)) {
             const std::filesystem::path ap(s_seenAsset);
@@ -30036,11 +30044,18 @@ void DrawInspector(EditorState& ed) {
             return;
         }
     }
-    GameObject* go = ed.selected();
-    if (s_locked && s_pinned) {
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == s_pinned) { alive = true; break; }
-        if (alive) go = s_pinned; else { s_locked = false; s_pinned = nullptr; }
+    // Locked: the pinned object, looked up by GUID every frame. If it is gone (deleted, or its creation was undone)
+    // the lock stays on and nothing is shown; a later undo / redo that brings it back shows it again.
+    const InspectorLock::View view = s_lock.Resolve(ed.scene(), ed.selected());
+    GameObject* go = view.object;
+    if (view.lockedMissing) {
+        EmptyState("\xE2\x97\x88", "Locked object is gone",
+                   "The object this Inspector is locked to no longer exists (deleted or undone). "
+                   "Undo can bring it back, or unlock to follow the selection.");
+        if (ImGui::Button("Unlock Inspector")) s_lock.Unlock();
+        ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
+        ImGui::End();
+        return;
     }
     if (!go) {
         EmptyState("\xE2\x97\x88", "Nothing selected",
@@ -43484,7 +43499,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     float dx = io.MousePos.x - h[i].x, dy = io.MousePos.y - h[i].y;
                     if (dx * dx + dy * dy <= 13.0f * 13.0f) {   // generous grab zone
                         ed.PushUndo();                     // checkpoint before a resize
-                        g_uiDragTarget = ed.selected();
+                        g_uiDragTarget = ed.selected(); g_uiDragTargetGuid = g_uiDragTarget ? g_uiDragTarget->Guid() : std::string();
                         g_uiResizeHandle = i;
                         g_uiDragRawValid = false; g_uiResizeRawValid = false;   // fresh drag: reseed accumulators
                         g_uiHandled = true;
@@ -43561,7 +43576,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     ed.Select(hit);
                 }
                 ed.PushUndo();                             // checkpoint before a move
-                g_uiDragTarget = hit;
+                g_uiDragTarget = hit; g_uiDragTargetGuid = hit ? hit->Guid() : std::string();
                 g_uiResizeHandle = -1;
                 g_uiDragRawValid = false; g_uiResizeRawValid = false;   // fresh drag: reseed accumulators
                 g_uiHandled = true;
@@ -45631,7 +45646,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
-                g_meModalObj = meo;
+                g_meModalObj = meo; g_meModalObjGuid = meo ? meo->Guid() : std::string();
                 g_meModalMouse0 = g_meModalPrevMouse = io.MousePos;
                 g_meModalRay0 = mouseRay(io.MousePos);
             };
@@ -50932,12 +50947,13 @@ int main(int argc, char** argv) {
                 for (const auto& up : ed.scene().Objects()) if (up.get() == g) return true;
                 return false;
             };
-            if (g_meshEditObj && !alive(g_meshEditObj)) {
-                // Undo / redo rebuild the scene and re-select the same object: stay in
-                // edit mode on its new copy (dropping selected indices it no longer has).
-                GameObject* again = ed.selected();
+            if (g_meshEditObj && !LiveAs(ed.scene(), g_meshEditObj, g_meshEditObjGuid)) {
+                // Undo / redo rebuild the scene (new objects, same GUIDs): stay in edit mode on the
+                // object's new copy, found by GUID (dropping selected indices it no longer has). An
+                // object that merely reused the old address is not it.
+                GameObject* again = ed.scene().FindByGuid(g_meshEditObjGuid);
                 MeshRenderer* amr = again ? again->GetComponent<MeshRenderer>() : nullptr;
-                if (amr && again->name == g_meshEditObjName) {
+                if (amr) {
                     g_meshEditObj = again;
                     const int nv = (int)amr->mesh.vertices.size(), nf = amr->mesh.TriangleCount();
                     g_meshSelVerts.erase(std::remove_if(g_meshSelVerts.begin(), g_meshSelVerts.end(), [&](int v) { return v < 0 || v >= nv; }), g_meshSelVerts.end());
@@ -50949,8 +50965,8 @@ int main(int argc, char** argv) {
                     g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 }
             }
-            if (g_meModalObj && !alive(g_meModalObj)) { g_meModal.Confirm(); g_meModalObj = nullptr; }   // its mesh is gone
-            if (g_uiDragTarget && !alive(g_uiDragTarget)) g_uiDragTarget = nullptr;
+            if (g_meModalObj && !LiveAs(ed.scene(), g_meModalObj, g_meModalObjGuid)) { g_meModal.Confirm(); g_meModalObj = nullptr; }   // its mesh is gone
+            if (g_uiDragTarget && !LiveAs(ed.scene(), g_uiDragTarget, g_uiDragTargetGuid)) g_uiDragTarget = nullptr;
             // The SELECTION can dangle too: in Play a script may destroy(...) the
             // selected object, after which the Inspector would dereference its freed
             // components (e.g. editing a Text component in Play crashed). Drop it.
@@ -51566,7 +51582,7 @@ int main(int argc, char** argv) {
                     ConsoleLog("'" + ensured->gameObject->name + "' lost its Camera component, so it was put back "
                                "(every scene needs a camera to render; add another camera before removing this one).", 1);
                 } else if (made) {
-                    ed.autoCamera = ensured ? ensured->gameObject : nullptr;
+                    ed.autoCamera.Set(ensured ? ensured->gameObject : nullptr);
                     ed.dirty = true;
                     ConsoleLog("This scene had no camera, so a Main Camera was added (every scene needs one to render).", 1);
                 }

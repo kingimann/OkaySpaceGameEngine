@@ -51,11 +51,13 @@ struct FuncDecl {
     std::string name;
     Type ret{};
     std::vector<Type> params;
+    std::vector<std::string> param_names;
     bool imported = false;
     bool exported = false;
     bool defined = false;
     Node body;
     std::vector<Local> locals;
+    int nparams = 0;
     int max_args = 0;
 };
 
@@ -506,8 +508,13 @@ struct Parser {
                         bool exp = false;
                         if (!parse_type(&pt, &imp, &exp)) return false;
                         while (accept(TStar)) ++pt.pointers;
-                        if (is(TIdent)) next();
+                        std::string pname;
+                        if (is(TIdent)) {
+                            pname = cur().text;
+                            next();
+                        }
                         fn.params.push_back(pt);
+                        fn.param_names.push_back(pname);
                     } while (accept(TComma));
                 }
             } else {
@@ -520,6 +527,15 @@ struct Parser {
                 continue;
             }
             std::vector<Local> locals;
+            for (size_t p = 0; p < fn.param_names.size(); ++p) {
+                if (fn.param_names[p].empty()) continue;
+                Local local;
+                local.name = fn.param_names[p];
+                local.type = fn.params[p];
+                local.offset = -8 * (static_cast<int>(locals.size()) + 1);
+                locals.push_back(local);
+            }
+            fn.nparams = static_cast<int>(locals.size());
             if (!parse_block(&fn.body, &locals)) return false;
             fn.defined = true;
             fn.locals = std::move(locals);
@@ -906,15 +922,17 @@ bool Gen::gen_expr(const Node& node) {
         }
         auto load_arg = [&](int index, uint8_t rex, uint8_t modrm) {
             if (index >= static_cast<int>(saved.size()) || index >= 4) return;
-            if (rex) b(rex);
+            b(rex);
             b(0x8B);
             b(modrm);
             disp(saved[index]);
         };
-        if (saved.size() > 3) load_arg(3, 0x44, 0x8D);
-        if (saved.size() > 2) load_arg(2, 0x44, 0x85);
-        if (saved.size() > 1) load_arg(1, 0x00, 0x95);
-        if (saved.size() > 0) load_arg(0, 0x00, 0x8D);
+        // 64-bit loads: the spill stored the whole register, and the
+        // calling convention passes each argument in a 64-bit register.
+        if (saved.size() > 3) load_arg(3, 0x4C, 0x8D);
+        if (saved.size() > 2) load_arg(2, 0x4C, 0x85);
+        if (saved.size() > 1) load_arg(1, 0x48, 0x95);
+        if (saved.size() > 0) load_arg(0, 0x48, 0x8D);
         temp_depth = depth_before;
         if (fn->imported) {
             b(0xFF);
@@ -1086,6 +1104,15 @@ bool emit_functions(std::vector<FuncDecl>& funcs, std::string* error, CompileOut
         gen.b(0x83);
         gen.b(0xEC);
         gen.b(static_cast<uint8_t>(frame));
+        for (int p = 0; p < fn.nparams && p < 4; ++p) {
+            const bool wide = fn.locals[p].type.pointer();
+            const uint8_t rex = p >= 2 ? (wide ? 0x4C : 0x44) : (wide ? 0x48 : 0);
+            const uint8_t modrm = p == 0 || p == 3 ? 0x8D : (p == 1 ? 0x95 : 0x85);
+            if (rex) gen.b(rex);
+            gen.b(0x89);
+            gen.b(modrm);
+            gen.disp(fn.locals[p].offset);
+        }
         if (!gen.gen_stmt(fn.body)) {
             *error = gen.error.empty() ? "codegen failed" : gen.error;
             return false;

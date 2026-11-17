@@ -43,6 +43,11 @@ struct LinkOptions {
     // IMAGE_DLLCHARACTERISTICS_NX_COMPAT. Dynamic base is left off until
     // a base-relocation table is written.
     uint16_t dll_characteristics = 0x0100;
+    bool dll = false;
+    // Names of defined symbols to put in the export table. The DLL's
+    // file name (for example "math.dll") is image_name.
+    std::vector<std::string> exports;
+    std::string image_name;
 };
 
 Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects,

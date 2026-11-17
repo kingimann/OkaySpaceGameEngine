@@ -73,6 +73,11 @@ int main(int argc, char** argv) {
         }
         std::string body = arg;
         while (!body.empty() && (body[0] == '/' || body[0] == '-')) body.erase(body.begin());
+        if (lower_copy(body) == "dll") {
+            options.dll = true;
+            if (options.image_base == 0x140000000ULL) options.image_base = 0x180000000ULL;
+            continue;
+        }
         const size_t colon = body.find(':');
         if (colon == std::string::npos) {
             fail("flag needs a value: " + arg);
@@ -99,6 +104,10 @@ int main(int argc, char** argv) {
             }
         } else if (key == "libpath") {
             libpaths.push_back(value);
+        } else if (key == "export") {
+            options.exports.push_back(value);
+            options.dll = true;
+            if (options.image_base == 0x140000000ULL) options.image_base = 0x180000000ULL;
         } else {
             fail("unknown flag: " + arg);
             return 1;
@@ -155,6 +164,10 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (options.image_name.empty()) {
+        const size_t slash = out_path.find_last_of('/');
+        options.image_name = slash == std::string::npos ? out_path : out_path.substr(slash + 1);
+    }
     const auto image = okayms::link_with_libraries(std::move(objects), libraries, options);
     if (!image.ok()) {
         fail(image.error);

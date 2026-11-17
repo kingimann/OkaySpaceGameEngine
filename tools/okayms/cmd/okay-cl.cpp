@@ -61,6 +61,7 @@ std::string replace_ext(std::string path, const char* ext) {
 
 int main(int argc, char** argv) {
     bool compile_only = false;
+    bool make_dll = false;
     std::string object_out;
     std::string exe_out;
     okayms::CompileInput common;
@@ -134,6 +135,12 @@ int main(int argc, char** argv) {
                 compile_only = true;
                 continue;
             }
+            if (low == "ld") {
+                make_dll = true;
+                link.dll = true;
+                if (link.image_base == 0x140000000ULL) link.image_base = 0x180000000ULL;
+                continue;
+            }
             std::string key;
             if (low.compare(0, 9, "subsystem") == 0) key = "subsystem";
             else if (low.compare(0, 7, "libpath") == 0) key = "libpath";
@@ -173,6 +180,7 @@ int main(int argc, char** argv) {
     }
 
     std::vector<okayms::ObjectFile> objects;
+    std::vector<std::string> exports;
     for (const std::string& source : sources) {
         std::string error;
         okayms::CompileInput input = common;
@@ -201,6 +209,7 @@ int main(int argc, char** argv) {
             object_out.clear();
         } else {
             objects.push_back(compiled.value.object);
+            exports.insert(exports.end(), compiled.value.exports.begin(), compiled.value.exports.end());
         }
     }
     if (compile_only) return 0;
@@ -266,7 +275,13 @@ int main(int argc, char** argv) {
         fail("no object to link");
         return 1;
     }
-    if (exe_out.empty()) exe_out = sources.empty() ? "a.exe" : replace_ext(sources[0], ".exe");
+    if (exe_out.empty()) exe_out = sources.empty() ? (make_dll ? "a.dll" : "a.exe") : replace_ext(sources[0], make_dll ? ".dll" : ".exe");
+    if (make_dll) {
+        link.dll = true;
+        link.exports = exports;
+        const size_t slash = exe_out.find_last_of('/');
+        link.image_name = slash == std::string::npos ? exe_out : exe_out.substr(slash + 1);
+    }
     const auto image = okayms::link_with_libraries(std::move(objects), libraries, link);
     if (!image.ok()) {
         fail(image.error);

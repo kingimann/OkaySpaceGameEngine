@@ -4,6 +4,8 @@ Internal note for issue #992. Not a user guide. This tree stays off by default: 
 
 `tools/okayms/` is our own Windows toolchain. Issue #987 (`tools/okaycc/`) is the other compiler. The two trees share no source files.
 
+The code now does stages 1 to 10 in a small form: COFF, a PE32+ linker, `kernel32.dll` imports, `.lib` archives, the relocations named below, `.pdata`/`.xdata`, `okay-link`, `okay-cl`, a DLL export table, import libraries, and a few programs Wine has run. That is not a C compiler in the full sense and not an optimiser. `/O2` is still not implemented.
+
 Every line is written here, from the documents below. No other toolchain's code is copied. No third-party libraries. No cryptography. Build with `tools/okayms/build.sh`.
 
 ## Stages

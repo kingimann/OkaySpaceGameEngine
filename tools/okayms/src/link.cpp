@@ -107,6 +107,16 @@ struct ImportGroup {
     std::vector<ImportSlot> slots;
 };
 
+struct ExportLayout {
+    uint32_t functions_at = 0;
+    uint32_t names_at = 0;
+    uint32_t ordinals_at = 0;
+    uint32_t dll_name_at = 0;
+    std::vector<uint32_t> name_at;
+    std::vector<std::string> names;
+    std::string dll_name;
+};
+
 }  // namespace
 
 namespace {
@@ -270,8 +280,10 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         }
     }
     std::vector<ImportGroup> import_groups;
+    ExportLayout exp;
     int text_section = -1;
     int idata_section = -1;
+    int edata_section = -1;
     uint32_t import_iat_begin = 0;
     uint32_t import_iat_size = 0;
     std::string error;
@@ -364,6 +376,31 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         idata.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite;
         outs.push_back(std::move(idata));
         idata_section = static_cast<int>(outs.size()) - 1;
+    }
+    if (!options.exports.empty()) {
+        exp.names = options.exports;
+        exp.dll_name = options.image_name.empty() ? std::string("output.dll") : options.image_name;
+        uint32_t cursor = 40;
+        exp.functions_at = cursor;
+        cursor += static_cast<uint32_t>(exp.names.size()) * 4u;
+        exp.names_at = cursor;
+        cursor += static_cast<uint32_t>(exp.names.size()) * 4u;
+        exp.ordinals_at = cursor;
+        cursor += static_cast<uint32_t>(exp.names.size()) * 2u;
+        for (const std::string& name : exp.names) {
+            exp.name_at.push_back(cursor);
+            cursor += static_cast<uint32_t>(name.size()) + 1u;
+        }
+        exp.dll_name_at = cursor;
+        cursor += static_cast<uint32_t>(exp.dll_name.size()) + 1u;
+        OutSection edata;
+        edata.name = ".edata";
+        edata.bytes.assign(cursor, 0);
+        edata.virtual_size = cursor;
+        edata.any_data = true;
+        edata.characteristics = kScnCntInitData | kScnMemRead;
+        outs.push_back(std::move(edata));
+        edata_section = static_cast<int>(outs.size()) - 1;
     }
     if (outs.empty()) return Result<std::vector<uint8_t>>::fail("image has no sections");
 
@@ -491,6 +528,33 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 at_thunk.offset = slot.thunk_at;
                 globals[slot.name] = at_thunk;
             }
+        }
+    }
+    if (edata_section >= 0) {
+        OutSection& edata = outs[static_cast<size_t>(edata_section)];
+        auto write32 = [&](uint32_t at, uint32_t value) { write_u32(edata.bytes.data() + at, value); };
+        auto write16 = [&](uint32_t at, uint16_t value) {
+            edata.bytes[at] = static_cast<uint8_t>(value);
+            edata.bytes[at + 1] = static_cast<uint8_t>(value >> 8);
+        };
+        write32(16, 1);
+        write32(20, static_cast<uint32_t>(exp.names.size()));
+        write32(24, static_cast<uint32_t>(exp.names.size()));
+        write32(28, edata.rva + exp.functions_at);
+        write32(32, edata.rva + exp.names_at);
+        write32(36, edata.rva + exp.ordinals_at);
+        write32(12, edata.rva + exp.dll_name_at);
+        std::memcpy(edata.bytes.data() + exp.dll_name_at, exp.dll_name.data(), exp.dll_name.size());
+        for (size_t i = 0; i < exp.names.size(); ++i) {
+            const auto found = globals.find(exp.names[i]);
+            if (found == globals.end() || !found->second.defined || found->second.absolute) {
+                return Result<std::vector<uint8_t>>::fail("export is not defined: " + exp.names[i]);
+            }
+            const uint32_t rva = outs[found->second.out_section].rva + found->second.offset;
+            write32(exp.functions_at + static_cast<uint32_t>(i) * 4u, rva);
+            write32(exp.names_at + static_cast<uint32_t>(i) * 4u, edata.rva + exp.name_at[i]);
+            write16(exp.ordinals_at + static_cast<uint32_t>(i) * 2u, static_cast<uint16_t>(i));
+            std::memcpy(edata.bytes.data() + exp.name_at[i], exp.names[i].data(), exp.names[i].size());
         }
     }
 
@@ -655,7 +719,8 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     put16(0x44, kMachineAmd64);
     put16(0x46, static_cast<uint16_t>(outs.size()));
     put32(0x54, 240);
-    put16(0x56, static_cast<uint16_t>(kFileRelocsStripped | kFileExecutable | kFileLargeAddress));
+    put16(0x56, static_cast<uint16_t>(kFileRelocsStripped | kFileExecutable | kFileLargeAddress |
+                                      (options.dll ? 0x2000 : 0)));
     put16(0x58, 0x20B);
     image[0x5B] = 1;
     put32(0x5C, size_of_code);
@@ -690,6 +755,10 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             put32(0xC8 + 24, out.rva);
             put32(0xC8 + 28, out.virtual_size);
         }
+    }
+    if (edata_section >= 0) {
+        put32(0xC8, outs[static_cast<size_t>(edata_section)].rva);
+        put32(0xC8 + 4, 40);
     }
 
     size_t section_at = 0x148;

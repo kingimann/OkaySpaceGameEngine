@@ -500,15 +500,28 @@ inline void BuildId(char* out, std::size_t cap, const char* stamp) {
 }
 
 inline void InstallPlatform(const char* buildStamp) {
-    wchar_t exeW[MAX_PATH] = L"";
-    GetModuleFileNameW(nullptr, exeW, MAX_PATH);
+    // The program's full path. A MAX_PATH (260) buffer cut the path of a program installed in a
+    // deep folder, so the reports went to a folder that does not exist. This runs at start-up,
+    // not in the crash, so it may grow a buffer until the whole path fits.
+    std::wstring exeW(512, L'\0');
+    for (;;) {
+        const DWORD got = GetModuleFileNameW(nullptr, exeW.data(), (DWORD)exeW.size());
+        if (got == 0) { exeW.clear(); break; }
+        if (got < exeW.size()) { exeW.resize(got); break; }
+        if (exeW.size() >= 32768) { exeW.clear(); break; }   // the longest path Windows has
+        exeW.assign(exeW.size() * 2, L'\0');
+    }
     // UTF-8 for the report's "Exe:" line; UTF-16 for the files (the ANSI code page cannot hold every user name).
-    WideCharToMultiByte(CP_UTF8, 0, exeW, -1, g_cfg.exe, (int)sizeof(g_cfg.exe), nullptr, nullptr);
+    g_cfg.exe[0] = '\0';
+    WideCharToMultiByte(CP_UTF8, 0, exeW.c_str(), -1, g_cfg.exe, (int)sizeof(g_cfg.exe), nullptr, nullptr);
     g_cfg.exe[sizeof(g_cfg.exe) - 1] = '\0';
-    std::size_t n = 0;
-    for (; exeW[n] && n + 1 < sizeof(g_cfg.dirW) / sizeof(wchar_t); ++n) g_cfg.dirW[n] = exeW[n];
+    // The folder with its trailing separator. A folder too long for the fixed crash-time buffer
+    // is left empty (reports go to the current folder) rather than cut into a wrong folder.
+    std::size_t n = exeW.size();
+    while (n > 0 && exeW[n - 1] != L'\\' && exeW[n - 1] != L'/') --n;
+    if (n + 1 > sizeof(g_cfg.dirW) / sizeof(wchar_t)) n = 0;
+    for (std::size_t i = 0; i < n; ++i) g_cfg.dirW[i] = exeW[i];
     g_cfg.dirW[n] = L'\0';
-    while (n > 0 && g_cfg.dirW[n - 1] != L'\\' && g_cfg.dirW[n - 1] != L'/') g_cfg.dirW[--n] = L'\0';   // keep the folder and its trailing separator
     if (const wchar_t* dev = _wgetenv(L"OKAY_CRASH_DIR"); dev && *dev) {
         const DWORD a = GetFileAttributesW(dev);
         if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) {

@@ -260,6 +260,7 @@ int main() {
             CHECK(c.res.autoScrollToggle.y > c.res.warnToggle.y);                    // moved down a line
             CHECK(c.res.autoScrollToggle.y < c.res.clearOnPlayToggle.y);             // and the next row still comes after it
             CHECK(c.res.firstRow.y > c.res.saveButton.y + c.res.saveButton.h);       // the log starts below every control
+            Check("console_narrow", c.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
             // At the usual width everything still fits on its own rows.
             CRig wide; wide.Fill(); wide.Frames(3);
             CHECK(wide.res.autoScrollToggle.y == wide.res.warnToggle.y);

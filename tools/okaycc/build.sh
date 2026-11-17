@@ -13,7 +13,7 @@ fi
 mkdir -p build
 
 objs=()
-for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp src/ir.cpp src/codegen.cpp src/elf.cpp src/link.cpp; do
+for src in src/diag.cpp src/token.cpp src/lexer.cpp src/files.cpp src/preproc.cpp src/parser.cpp src/ir.cpp src/codegen.cpp src/elf.cpp src/link.cpp src/coff.cpp; do
   obj="build/$(basename "${src%.cpp}").o"
   "$CXX" "${FLAGS[@]}" -c "$src" -o "$obj"
   objs+=("$obj")
@@ -32,6 +32,7 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_link tests/test_link.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_libc tests/test_libc.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_var tests/test_var.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_coff tests/test_coff.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
@@ -44,4 +45,5 @@ done
 ./build/test_link
 ./build/test_libc
 ./build/test_var
+./build/test_coff
 tests/test_plan.sh

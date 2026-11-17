@@ -971,15 +971,15 @@ Same data and actions as the Dear ImGui versions:
 
 ### 8.4 Differences from the Dear ImGui versions (blunt)
 
-Section 8.6 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the frame of
-mouse latency). What is left:
+Sections 8.6 and 8.7 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the
+frame of mouse latency, anti-aliased edges, the search field's hover tint, the scrollbar thumb length, the sort list and the
+right-click menu). What is left:
 
-- **All three.** Edges: OkayUI draws shapes without Dear ImGui's anti-aliased fringe, so rounded corners, circles and the
-  hexagon outlines differ by a pixel of shading. Text is the same font at the same whole-pixel sizes, but it is rasterised by our
-  own TrueType code, so single glyph pixels differ in shade. No hover cursor change outside OkayUI's own cursor state.
-- **Achievements.** The sort list that opens under the combo and the right-click menu are OkayUI's popups (their own look);
-  the search field shows no hover tint.
-- **Notifications.** The scrollbar thumb is OkayUI's (same place and width, slightly different length).
+- **All three.** Text is the same font at the same whole-pixel sizes, but it is rasterised by our own TrueType code, so single
+  glyph pixels differ in shade; text at sizes the atlas does not bake (the 0.74x "POINTS" labels, the NEW pill) is scaled from
+  the nearest bake. No hover cursor change outside OkayUI's own cursor state.
+- **Achievements.** The right-click menu is about 30 px narrower than Dear ImGui's (it fits its widest entry plus the padding;
+  Dear ImGui's is wider for a reason not found). The showcased tile's right edge differs by a pixel where the list is clipped.
 - **Not done:** the other launcher pages (Settings, Friends, Servers and the rest); Windows was not built or run.
 
 ### 8.5 Speed
@@ -1080,3 +1080,89 @@ launcher's line icons (stroked paths) and the faux-bold titles. The speed fixes 
 from a table, an inline `floor` in the text path, re-wrapping a notification only when it changes, cheaper row outlines) won
 back part of it. The owner's rule needs "faster": Achievements is; Downloads and Notifications are now level, not faster.
 Headless (`okayui_launcher_pages`) figures are printed by the test and vary too much on this machine to quote.
+
+### 8.7 Anti-aliased edges, and a clear speed lead
+
+The owner's rule is "we only switch when it's faster and up to par". After 8.6 the pages looked almost the same but Downloads and
+Notifications were only level on speed, and OkayUI drew shapes without the soft one-pixel edge Dear ImGui gives them.
+
+**Anti-aliased edges** (`Theme::antiAliased`, off by default, turned on by the launcher pages). Written for OkayUI from the
+general idea of edge fringes, no other project's code: a shape is drawn with its edge pulled in by half a pixel at full colour,
+plus a ring one pixel wide whose outer rim, half a pixel outside the true edge, has alpha 0, so the rasteriser fades the edge.
+Strokes get a fringe on both sides of a core `thickness - 1` wide (a stroke under one pixel has no core and fades by its
+thickness). Covered: filled and stroked convex polygons (one colour or one per point), lines, polylines and paths, circles and
+rings, rounded rectangles and their outlines, triangles; plain axis-aligned rectangles, and horizontal or vertical lines whose
+sides fall on pixel edges, stay plain bars (the fringe would add nothing). Circles and rounded corners take their normals from
+the unit-circle and corner tables; rounded corners on this path use as few steps as keep within 0.3 px of the arc (radius 6:
+3 steps, 12: 4).
+
+**Why the speed needed more than the fringe.** The renderer's work (SDL's geometry queue) grows with the number of triangle
+indices, and the fringe doubled them (Achievements 8,682 to 21,084 indices a frame). So, with anti-aliasing on:
+
+- The launcher atlas also holds, below the glyphs (which stay where they were), a disc and a one-pixel ring for every whole
+  radius 2 to 48, with the same one-pixel edge ramp. A filled circle with enough segments is one textured quad (6 indices
+  instead of about 280); a filled rounded rectangle is four corner quads and up to three bands (42 indices; a side off the
+  pixel grid gets its own one-pixel fade quad, up to 66); a one-pixel rounded outline on whole pixels is four ring corners
+  and four bars (48 indices instead of about 190). The Downloads rows now draw their outline this way.
+- `DrawList::Cached(key, origin, draw, user)` (new): a drawing made once and copied after that, moved by whole pixels (the
+  same pixels up to a colour level of float rounding). The Achievements medals and the Notifications line icons use it. A
+  fixed store (128 shapes, 32,768 vertices), emptied when full, on a look or anti-aliasing change and on `ResetState`.
+- `EndFrame` hands SDL only the vertices each draw call uses: SDL's cost grows with the vertex count it is handed as well (a
+  small SDL program on the same setup: 19,000 extra vertices cost about 28 us per call), and every span used to get the whole
+  batch.
+- Smaller things: ASCII decoded and looked up inline in the text loops and the fallback-font check skipped for ASCII text; a
+  stroke's segment normals worked out once with `std::sqrt`; the host code keeps the Downloads and Notifications models between
+  frames (strings reused), works out where today and yesterday begin once a minute instead of a `localtime` per row, and the
+  Downloads "12.0 MB / 48.0 MB" text is formatted again only when the numbers change.
+
+**The other differences closed:** text fields and combo boxes tint under the mouse and while typing (the Slate theme's
+`FrameBgHovered` and `FrameBgActive`); a child scrollbar with the Dear ImGui look moves its thumb along a track inset at both
+ends and draws it at full length (Dear ImGui's thumb length); popups and combo lists the Dear ImGui way (`Theme::imguiPopups`,
+on for the pages): 14 x 12 padding, 8 px corners, a hairline edge, sized to the widest item, Selectables one text line tall and
+8 px apart with the highlight reaching the padding, the combo's current item marked and its arrow button lit while open. Also:
+with `ascentRoundsUp` a text position is cut down to whole pixels (Dear ImGui's placement; it was rounded), which also makes the
+faux-bold notification titles draw as the launcher's do.
+
+**Pixel difference** (as in 8.6: real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, the same demo data on both
+backends; "clearly different" is the share of pixels where a channel differs by more than 32):
+
+| Screen | Before (8.6): mean | Before: clearly different | After: mean | After: clearly different |
+|---|---:|---:|---:|---:|
+| Downloads | 0.10 | 0.02% | 0.09 | 0.00% |
+| Notifications (over Friends) | 0.89 | 0.85% | 0.24 | 0.02% |
+| Achievements (mouse on a tile, tooltip showing) | 0.56 | 0.70% | 0.31 | 0.15% |
+| Achievements (mouse away) | 0.55 | 0.74% | 0.29 | 0.13% |
+| Sort list open (its area) | 8.08 | 8.40% | 1.20 | 0.16% |
+| Right-click menu open (its area) | 7.76 | 3.82% | 3.55 | 4.37% (the menu is narrower) |
+
+The "before" rows were measured again on this branch's starting point and match 8.6 exactly.
+
+**Speed** (`OKAY_UI_TIMING=1`, same setup, each screen 4 times per backend in alternation, each figure the median of the medians
+of 300 frames; two separate sessions of 4 rounds on a shared, busy machine, so the absolute numbers move between sessions; the
+lead is measured within a session; anti-aliasing on). The timing line now also prints each backend's index count.
+
+| Screen | Before (8.6): build + render, Dear ImGui vs OkayUI | Session 1: Dear ImGui vs OkayUI | Session 2 | Faster? |
+|---|---|---|---|---|
+| Downloads | 125 vs 124 us (tie) | 122 vs 100 us (18% less) | 140 vs 122 us (13% less) | met |
+| Notifications | 265 vs 262 us (tie) | 272 vs 228 us (16% less) | 319 vs 280 us (12% less) | met |
+| Achievements | 239 vs 219 us (8% less) | 230 vs 198 us (14% less) | 278 vs 240 us (14% less) | met |
+
+Build alone (session 2): Downloads 49 vs 36 us, Notifications 98 vs 72 us, Achievements 106 vs 83 us. OkayUI's own render work
+(session 2): 16, 49 and 80 us. Indices per frame in the launcher: Downloads 2,418 (the Dear ImGui page about 3,840),
+Notifications 7,179 (about 11,600), Achievements 14,148 (about 19,500).
+
+Instruction counts (callgrind, `okayui_launcher_pages` with `OKAYUI_BENCH_ONLY=1`, the page build over 330 frames), from the
+first anti-aliased version to now: Downloads 63.7M to 38.0M, Notifications 86.0M to 49.4M, Achievements 145.4M to 72.4M.
+Indices per frame headless: Downloads 4,566 before anti-aliasing, 8,502 with the plain fringe, 3,606 now; Notifications 6,462,
+12,738, 7,200; Achievements 8,682, 21,084, 12,360.
+
+**Tests:** `okayui_drawlist` checks anti-aliasing by area (a red shape on black: the sum of red is its area) for rounded
+rectangles on and off the pixel grid, discs, a hexagon, a disc larger than any bake, lines, a half-pixel line, outlines of 1 and
+2 px, a ring, polygons (one colour and per point, which draw the same), that plain rectangles and pixel-edge lines are unchanged,
+that a translucent rounded rectangle never blends twice, and the index counts; and `Cached` (copies match drawing again within
+a level, one run per key and fraction of a pixel, a drawing that changes the clip is not kept, junk ignored). The six
+launcher-page goldens were updated after looking at each (smooth edges, a pixel of text placement, the panel colour). No other
+golden changed (anti-aliasing and the popup look are off by default), so the editor-panel goldens on other branches are not
+affected by this step. In the real launcher with `xdotool`: Remove on a download, A to Z in the sort list, Copy id in the
+right-click menu (its toast), typing "owl" in the search, the Unread chip and a click on a notification (the panel closed and
+Friends opened) all worked. Not run on Windows or on a real GPU.

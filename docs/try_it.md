@@ -1262,7 +1262,17 @@ Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui
 now show their buttons in full (they used to be cut off at the bottom). Clicking a chip or button right after moving onto it
 works on the first click. Add `set OKAY_UI_TIMING=1` to see, after
 300 frames on one of these screens, a toast (and a stdout line) with the median CPU time per frame of that screen on the backend
-that drew it. Run in a real window only on Linux under Xvfb so far; not run on Windows.
+that drew it, and how many triangle indices each backend drew. Run in a real window only on Linux under Xvfb so far; not run
+on Windows.
+
+What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.7), same steps as above:
+- **Smooth edges**: the medals, the level ring, the round dots, the chips and the rounded rows have soft one-pixel edges,
+  as on the Dear ImGui pages (before, they were stair-stepped).
+- **Achievements**: the search field brightens a little under the mouse and while typing. Open the sort list ("Newest first"):
+  it is a rounded box right under the combo with the current choice highlighted, as the Dear ImGui one. Right-click a tile:
+  the menu is a rounded box with a hairline edge; the entry under the mouse is highlighted.
+- **Speed**: with `set OKAY_UI_TIMING=1`, compare the "build + render" figure of each screen with and without
+  `set OKAY_UI_BACKEND=okayui`: OkayUI's should be lower (on Linux it was 12% to 18% lower).
 
 **New in the change "own UI 3": the Stats window (and what else is new).**
 It is developer-only on purpose (owner rule: no own replacement is on until declared ready), so a normal run still shows

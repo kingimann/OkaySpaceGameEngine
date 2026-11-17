@@ -297,25 +297,10 @@ eight Create categories.
 These are screenshots of the **real editor** built from this branch on Linux (`okay-editor`, engine at `-O1`, `editor/main.cpp` at `-O0` to fit
 in memory, no `NDEBUG`, so Dear ImGui's asserts were live), started with `--dev` (skips the launcher gate) from a project made with
 `--new-project ... --template "Third Person"`, in a virtual display (Xvfb, 1600x900) with the software renderer, the mouse driven by `xdotool`.
-They are not from Windows. Cropped to the editor window. The folder is `docs/images/editor_menus/`.
+They are not from Windows. Cropped to the editor window. The folder is a picture folder (pictures are no longer stored in the repository).
 
 | Screenshot | What it shows |
 |---|---|
-| [file.png](images/editor_menus/file.png) | File: the groups and the right-aligned keys |
-| [file_examples.png](images/editor_menus/file_examples.png) | File > Examples: the one merged submenu (the tooltip is the UI Gallery's; "Node Playground" is greyed because no playground scenes sit next to this build) |
-| [file_play_save_greyed.png](images/editor_menus/file_play_save_greyed.png) | File while the game runs (a project from the "3D Scene" template): Save Scene and Save Scene As greyed, the reason on hover |
-| [edit_undo_named.png](images/editor_menus/edit_undo_named.png) | Edit after Create Child: "Undo Create Hemisphere", Paste greyed (nothing copied) |
-| [gameobject.png](images/editor_menus/gameobject.png) | GameObject: Create Empty / Child / Parent, then the eight categories |
-| [gameobject_audio_source_created.png](images/editor_menus/gameobject_audio_source_created.png) | After GameObject > Audio > Audio Source: the object is in the Hierarchy and selected, its component in the Inspector |
-| [view.png](images/editor_menus/view.png) | View: nine entries |
-| [help.png](images/editor_menus/help.png) | Help |
-| [hierarchy_row_menu.png](images/editor_menus/hierarchy_row_menu.png) | Hierarchy right-click on the Player (it has children) |
-| [hierarchy_create_child.png](images/editor_menus/hierarchy_create_child.png) | Create Child > 3D Object (the list is shifted up to fit the screen) |
-| [hierarchy_create_child_result.png](images/editor_menus/hierarchy_create_child_result.png) | The click on "Hemisphere": it is now a child of the Player (Player (2)); Edit > Undo took it away again |
-| [hierarchy_three_selected.png](images/editor_menus/hierarchy_three_selected.png) | Three crates selected: "Duplicate 3 Objects", "Delete 3 Objects", "Group 3 Objects", Cut greyed |
-| [hierarchy_same_type_reason.png](images/editor_menus/hierarchy_same_type_reason.png) | Select > Same Type (Light), greyed: "No other Light in the scene." |
-| [hierarchy_add_component.png](images/editor_menus/hierarchy_add_component.png) | Add Component... on the Ground: the Inspector's own browser opened |
-| [hierarchy_empty_space.png](images/editor_menus/hierarchy_empty_space.png) | Right-click on the empty space |
 
 What was clicked in that run, and seen to work: every top menu opened; File > Examples; Create Audio Source; Create Child > 3D Object >
 Hemisphere (a child of the Player) and then Edit > Undo; Edit > Cut then Edit > Paste; the row menu's Delete; the row menu with three selected;

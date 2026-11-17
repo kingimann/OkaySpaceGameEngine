@@ -48,7 +48,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |

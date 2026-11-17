@@ -16,7 +16,7 @@ model is an ordinary mesh, parts have names, and rebuilding never overwrites you
 **Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
 every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
 building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
-Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+Pictures in a picture folder (pictures are no longer stored in the repository) and `building_part_swap_before_after.png` are headless renders of the
 generated meshes, not editor screenshots.
 
 **Try it.**

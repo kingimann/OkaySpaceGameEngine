@@ -341,9 +341,6 @@ measurement in [visual_script_category_audit.md](visual_script_category_audit.md
 Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
 the font and window frame differ from the editor):
 
-* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
-* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
-* [The Events section folded away](images/vs_palette_folded_section.png)
 
 Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
 names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
@@ -563,7 +560,7 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 (`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
-**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+**Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -611,7 +608,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |
@@ -672,7 +669,7 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
@@ -763,7 +760,6 @@ ones grey, contacts red, joints orange.
 
 **Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
 
-* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
 
 **Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
 ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
@@ -850,7 +846,7 @@ stairs down hop, a jump from the platform loses its speed, and every frame costs
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): a picture folder (pictures are no longer stored in the repository) (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
@@ -902,7 +898,7 @@ feel with a real pad, whether the preset numbers feel right (they were chosen by
 **What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
-`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
+a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
 front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
 
 **How to try it (Windows release).**
@@ -929,7 +925,7 @@ modeling; no code, models or assets from other projects. Design: `docs/guided_mo
 
 **Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
 600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+nothing here ran on Windows. Pictures in a picture folder (pictures are no longer stored in the repository) are headless software renders of the generated
 meshes (our own small rasteriser), not screenshots of the editor.
 
 **Try it (the example scene).**
@@ -992,7 +988,7 @@ to one of them (it is in the Modeling window; the exact tab is unverified), or o
 
 
 **More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
-(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. a picture folder (pictures are no longer stored in the repository) is a
 headless software render of it.
 1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
    Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
@@ -1036,7 +1032,7 @@ headless software render of it.
 4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
 5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
 
-**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+**Picture.** a picture folder (pictures are no longer stored in the repository) is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
@@ -1056,7 +1052,7 @@ model is an ordinary mesh, parts have names, and rebuilding never overwrites you
 **Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
 every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
 building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
-Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+Pictures in a picture folder (pictures are no longer stored in the repository) and `building_part_swap_before_after.png` are headless renders of the
 generated meshes, not editor screenshots.
 
 **Try it.**
@@ -1088,8 +1084,8 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 **Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
-(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
+(a picture folder (pictures are no longer stored in the repository), `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: a picture folder (pictures are no longer stored in the repository) and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 
@@ -1125,7 +1121,7 @@ The editor's Detail slider, Variation and check, and Remove/Add back controls co
 
 **Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
-was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+was never opened in a real window; nothing ran on Windows. Pictures (a picture folder (pictures are no longer stored in the repository) sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
 Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 
@@ -1156,7 +1152,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
 
-**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: a picture folder (pictures are no longer stored in the repository) (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
 
 **Try it.**
 
@@ -1172,7 +1168,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
 
-**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: a picture folder (pictures are no longer stored in the repository) (headless render).
 
 **Try it.**
 
@@ -1236,7 +1232,7 @@ a few centimetres off the back (a design choice); `guided_pictures` renders were
 **Steps.** Open the Modeling window and follow these.
 
 More new steps (same branch):
-- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: a picture folder (pictures are no longer stored in the repository)). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
 - **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
 - **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
 - **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
@@ -1247,7 +1243,7 @@ More new steps (same branch):
 
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 
-**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture a picture folder (pictures are no longer stored in the repository) is a headless software render.
 
 ## 16. Main menu bar (cleaned up)
 
@@ -1276,7 +1272,7 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
    Settings is in File) or moved (Check for Updates to Help).
 
-Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
 was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
 
@@ -1299,7 +1295,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 
@@ -1434,6 +1430,46 @@ asset `digest` field. The first dry run and the first real release are the proof
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
 
+## Bug fixes: particle fade, Scene Manager rename, Exit after a dialog, text box editing (#888: 140, 141, 142, 131)
+
+**140. Particle "Fade Out" now lasts the whole lifetime.** Before, a plain Particle System faded out in a fraction of a
+second (faster at higher frame rates), because the fade was multiplied again on every frame.
+
+1. Windows editor: **GameObject > Effects > Particle System**. In the Inspector set **Lifetime** to 4 and leave
+   **Fade Out** on and **Color Over Life** off. Press **Play**.
+2. You should see each particle fade smoothly over its full 4 seconds (half visible at 2 s). It looks the same with
+   VSync on or off.
+
+**141. Scene Manager > Rename no longer saves your unsaved edits or deletes the saved file.**
+
+1. Windows editor: save a scene (for example `MyLevel`). Change something without saving; the title says unsaved.
+2. **View > Panels > Scene Manager**, click **Rename** on that scene. The dialog now says "The file is renamed as last
+   saved. Your unsaved changes stay unsaved." Enter `MyLevel2` and click **Rename**.
+3. You should see: the title still says unsaved, your change is still in the scene, and `MyLevel2.okayscene` on disk
+   holds the last *saved* version (open it from the Project panel in another way, or press **File > Open** and choose
+   **Don't Save** to see it). Nothing was written until you press Save.
+
+**142. File > Exit and the window's close button keep working after a quit arrives while another dialog is open.**
+
+1. Windows editor: change the scene without saving. Open another scene (Project panel or **File > Open**) so the
+   "Save changes?" dialog is up.
+2. While it is up, click the window's close button (X). Then press **Cancel** in "Save changes?".
+3. You should see the "Unsaved Changes" quit prompt appear as soon as the first dialog closes. Press **Cancel**.
+4. Now **File > Exit**: the "Unsaved Changes" prompt appears again (before the fix, Exit and the X did nothing for the
+   rest of the session).
+
+**131. In-game text boxes: hold Backspace/Delete, the Delete key, and a movable caret.**
+
+1. Windows editor: **GameObject > UI > Input Field**, press **Play**, click the box and type `hello world`.
+2. Press **Left** five times, type `X`: you get `hello Xworld`, and the caret is drawn where you are typing.
+3. **Delete** removes the character after the caret, **Backspace** the one before it. **Home** / **End** jump to the
+   start / end. Holding Backspace or Delete keeps deleting (after a short pause, like a normal text box); holding Left
+   or Right keeps moving.
+
+Test: `ctest -R fix_140_141_142_131` (runs each repro headless: fade at 30, 60 and 144 fps; rename with a real
+EditorState and files on disk; the quit prompt's state machine; the input field with a real Input feed).
+Not verified on Windows; the editor GUI steps above were not run here (the editor files were only syntax-checked).
+
 ## hygiene1. Repository hygiene: one account config file, no built programs in git
 
 What changes for you:
@@ -1485,35 +1521,6 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
-
-## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
-
-All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
-
-1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
-   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
-   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
-2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
-   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
-   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
-3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
-   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
-   UV **tile** field.
-4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
-   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
-5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
-   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
-   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
-   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
-   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
-   the same reader but was not tried by hand.)
-6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
-   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
-   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
-
-What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
-`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
-Mesh (it creates a second object).
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 

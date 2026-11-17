@@ -37,6 +37,11 @@ then this file gets updated. Keep this file short and true.
     with the exact switch, a sample file to use, and how to tell it is on (the startup stack line or a log line). If
     a feature cannot be tried yet, the PR says so at the top and says what is missing, and builds that way in; a
     feature nobody can reach is not done.
+4b. **No screenshots in the repository.** (Owner rule, 2026-11-17: "Remove any screenshots on GitHub, clean up the GitHub,
+    organize files better".) Pictures are never committed: `docs/images/` was deleted and is git-ignored, and `branch_lint.py`
+    refuses a picture under `docs/` or at the repo root. Make pictures outside the repo (`OKAY_SHOT_DIR` or a temp folder), show
+    them to the owner in chat, and describe them in words in docs. Only pictures that a test compares against stay
+    (`tests/`, `okayui/tests/`, `assets/`, `examples/`). Keep `docs/README.md` (the index) in step when a guide is added.
 5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
    (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
 

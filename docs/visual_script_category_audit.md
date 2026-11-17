@@ -3777,8 +3777,8 @@ regenerate `editor/VisualScriptNodeDocs.inc` and `docs/visual_scripting_nodes.md
 
 - The real editor window: no editor was opened here. The sidebar (section headings, folding, colours) and the topic list were
   drawn headlessly with the real panel code, ImGui's software renderer and its default font, and looked at
-  ([docs/images/vs_palette_topics.png](images/vs_palette_topics.png), [search](images/vs_palette_search_weather.png),
-  [folded section](images/vs_palette_folded_section.png)); how it feels in the editor window (font, scrolling) is not known.
+  (a picture folder (pictures are no longer stored in the repository), search,
+  folded section); how it feels in the editor window (font, scrolling) is not known.
 - Windows. The data headers and the tests compile on Linux with g++; CI compiles the editor.
 - Whether the topic names read well to a beginner. They are plain words and each has a one-sentence description, but only the
   owner's eyes decide that.

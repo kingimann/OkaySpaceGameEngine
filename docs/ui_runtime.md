@@ -119,7 +119,6 @@ How to try it (world text): add a Text, turn its **Screen Space** off so it is d
 `Hello [color=#ffcc33]gold[/color] [size=150]big[/size] [b]bold[/b]`. The Scene view and Play show the gold word, the
 bigger word sitting on the same line, and the bold one; turn Rich Text off and the tags show as written.
 
-![Rich world text as the player draws it: bold, red, italic and gold runs, a small word and a 150% word that makes its line taller instead of covering the line above](images/ui_text/after_world_text.png)
 
 (A headless render of what `ui2d::DrawWorldText` draws, made by test `ui_text_shots`; the sign in `examples/ui_text` is the same
 kind of text. Test `world_text_rich` run with `OKAY_SHOT_DIR=<folder>` paints a smaller picture of the same kind into that

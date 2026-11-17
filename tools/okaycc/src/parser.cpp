@@ -29,6 +29,7 @@ struct Param {
     std::string name;
     std::unique_ptr<Type> type;
     int bits = -1;
+    std::string mangled;
     Param();
     Param(Param&&) noexcept;
     ~Param();
@@ -54,8 +55,9 @@ struct Expr {
 };
 
 struct Type {
-    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union, Float, Double } kind =
-        Kind::Int;
+    enum class Kind {
+        Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union, Float, Double, Bool, Reference
+    } kind = Kind::Int;
     std::string tag;
     bool unsign = false;
     std::unique_ptr<Type> inner;
@@ -75,6 +77,8 @@ struct Decl {
     bool function = false;
     bool isExtern = false;
     bool isStatic = false;
+    std::string asmName;
+    std::string methodTag;
     int line = 1;
     int col = 1;
     std::string file;
@@ -150,6 +154,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
         Param c;
         c.name = p.name;
         c.bits = p.bits;
+        c.mangled = p.mangled;
         if (p.type) c.type = cloneType(*p.type);
         n->params.push_back(std::move(c));
     }
@@ -187,6 +192,8 @@ std::string typeStr(const Type& t) {
     case Type::Kind::Long: return "long";
     case Type::Kind::Float: return "float";
     case Type::Kind::Double: return "double";
+    case Type::Kind::Bool: return "bool";
+    case Type::Kind::Reference: return "(ref " + typeStr(*t.inner) + ")";
     case Type::Kind::Pointer: return "(ptr " + typeStr(*t.inner) + ")";
     case Type::Kind::Array: {
         std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
@@ -211,6 +218,48 @@ std::string typeStr(const Type& t) {
     }
     return "?";
 }
+
+std::string mangleType(const Type& t) {
+    switch (t.kind) {
+    case Type::Kind::Void: return "v";
+    case Type::Kind::Bool: return "b";
+    case Type::Kind::Char: return t.unsign ? "h" : "c";
+    case Type::Kind::Short: return t.unsign ? "t" : "s";
+    case Type::Kind::Int: return t.unsign ? "j" : "i";
+    case Type::Kind::Long: return t.unsign ? "m" : "l";
+    case Type::Kind::Float: return "f";
+    case Type::Kind::Double: return "d";
+    case Type::Kind::Pointer: return t.inner ? "P" + mangleType(*t.inner) : "Pv";
+    case Type::Kind::Reference: return t.inner ? "R" + mangleType(*t.inner) : "Rv";
+    default: return "i";
+    }
+}
+
+std::string mangleNested(const std::string& qualified) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < qualified.size()) {
+        std::size_t j = qualified.find("::", i);
+        std::string part = qualified.substr(i, j == std::string::npos ? std::string::npos : j - i);
+        out += std::to_string(part.size());
+        out += part;
+        if (j == std::string::npos) break;
+        i = j + 2;
+    }
+    return out;
+}
+
+std::string mangleFunc(const std::string& qualified, const Type& fn) {
+    std::string params;
+    if (fn.params.empty()) params = "v";
+    else {
+        for (const Param& p : fn.params)
+            params += p.type ? mangleType(*p.type) : "i";
+    }
+    return "_ZN" + mangleNested(qualified) + "E" + params;
+}
+
+std::string mangleData(const std::string& qualified) { return "_ZN" + mangleNested(qualified) + "E"; }
 
 std::string exprStr(const Expr& e) {
     auto kid = [&](std::size_t i) { return i < e.kids.size() && e.kids[i] ? exprStr(*e.kids[i]) : "(int 0)"; };
@@ -401,7 +450,7 @@ std::string printTu(const Tu& tu) {
 }
 
 struct Mod {
-    enum class Kind { Ptr, Arr, Func } kind = Kind::Ptr;
+    enum class Kind { Ptr, Arr, Func, Ref } kind = Kind::Ptr;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
     bool variadic = false;
@@ -427,7 +476,8 @@ public:
         if (tscopes_.empty()) tscopes_.emplace_back();
         while (!atEnd()) {
             std::size_t before = i_;
-            if (isUnsupported()) {
+            if (isKw("namespace")) parseNamespace(tu);
+            else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
             } else if (!isTypeKw(cur())) {
@@ -439,6 +489,7 @@ public:
             if (stop_) break;
             if (i_ == before) advance();
         }
+        flushExtras(tu);
         return tu;
     }
 
@@ -453,6 +504,8 @@ private:
     std::map<std::string, std::int64_t> enums_;
     bool enumDef_ = false;
     std::vector<std::map<std::string, std::unique_ptr<Type>>> tscopes_;
+    std::vector<std::string> ns_;
+    std::vector<std::unique_ptr<Decl>> extras_;
 
     const Type* findTypedef(const std::string& name) const {
         for (int i = static_cast<int>(tscopes_.size()) - 1; i >= 0; --i) {
@@ -485,6 +538,10 @@ private:
         return false;
     }
     bool isP(const char* s) const { return !atEnd() && isP(cur(), s); }
+    bool nextIs(const char* s) const {
+        if (i_ + 1 >= toks_.size()) return false;
+        return isP(toks_[i_ + 1], s);
+    }
     bool isKwTok(const Token& t, const char* s) const {
         return (t.kind == Tok::Keyword || t.kind == Tok::Ident) && t.text == s;
     }
@@ -494,7 +551,7 @@ private:
             isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
             isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
-            isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
+            isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
             isKwTok(t, "typedef"))
             return true;
         return t.kind == Tok::Ident && findTypedef(t.text) != nullptr;
@@ -502,7 +559,8 @@ private:
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") &&
-               !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto");
+               !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto") &&
+               !isKw("new") && !isKw("delete");
     }
     bool eatP(const char* s) {
         if (!isP(s)) return false;
@@ -587,6 +645,11 @@ private:
     std::unique_ptr<Type> parseBase() {
         if (isKw("struct") || isKw("union")) return parseStructType();
         if (isKw("enum")) return parseEnum();
+        if (eatKw("bool")) {
+            auto t = ty(Type::Kind::Bool);
+            t->unsign = true;
+            return t;
+        }
         int longs = 0;
         int shorts = 0;
         bool sawInt = false;
@@ -704,6 +767,16 @@ private:
         if (!atEnd() && cur().kind == Tok::Ident) {
             tag = cur().text;
             advance();
+            while (eatP("::")) {
+                if (atEnd() || cur().kind != Tok::Ident) {
+                    err("expected a struct name");
+                    break;
+                }
+                tag += "::";
+                tag += cur().text;
+                advance();
+            }
+            if (tag.find("::") == std::string::npos) tag = qualify(tag);
         }
         if (!eatP("{")) {
             if (tag.empty()) {
@@ -733,9 +806,44 @@ private:
             }
             auto base = parseBase();
             Parsed d = parseDeclarator(true);
+            auto fieldType = apply(std::move(base), d.mods);
+            if (fieldType && fieldType->kind == Type::Kind::Function && !tag.empty() && !isUnion) {
+                Param field;
+                field.name = d.name;
+                field.mangled = mangleFunc(tag + "::" + d.name, *fieldType);
+                field.type = cloneType(*fieldType);
+                t->params.push_back(std::move(field));
+                if (isP("{")) {
+                    auto decl = std::make_unique<Decl>();
+                    decl->name = t->params.back().mangled;
+                    decl->function = true;
+                    decl->methodTag = tag;
+                    decl->line = d.line;
+                    decl->col = d.col;
+                    decl->file = d.file;
+                    auto ft = cloneType(*fieldType);
+                    Param self;
+                    self.name = "this";
+                    auto inner = ty(Type::Kind::Struct);
+                    inner->tag = tag;
+                    auto ptr = ty(Type::Kind::Pointer);
+                    ptr->inner = std::move(inner);
+                    self.type = std::move(ptr);
+                    std::vector<Param> withThis;
+                    withThis.push_back(std::move(self));
+                    for (Param& p : ft->params) withThis.push_back(std::move(p));
+                    ft->params = std::move(withThis);
+                    decl->type = std::move(ft);
+                    decl->body = parseCompound();
+                    extras_.push_back(std::move(decl));
+                } else {
+                    expectP(";", ";");
+                }
+                continue;
+            }
             Param field;
             field.name = d.name;
-            field.type = apply(std::move(base), d.mods);
+            field.type = std::move(fieldType);
             if (eatP(":")) {
                 auto w = parseAssign();
                 if (!w || w->kind != Expr::Kind::Int) err("bitfield width is not a constant");
@@ -761,19 +869,23 @@ private:
     Parsed parseDeclarator(bool needName) {
         Guard nest(*this);
         if (!nest) return Parsed();
-        int stars = 0;
+        std::vector<Mod::Kind> prefix;
         while (!atEnd()) {
             if (eatKw("const") || eatKw("volatile")) continue;
             if (eatP("*")) {
-                ++stars;
+                prefix.push_back(Mod::Kind::Ptr);
+                continue;
+            }
+            if (eatP("&")) {
+                prefix.push_back(Mod::Kind::Ref);
                 continue;
             }
             break;
         }
         Parsed d = parseDirect(needName);
-        for (int n = 0; n < stars; ++n) {
+        for (int n = static_cast<int>(prefix.size()) - 1; n >= 0; --n) {
             Mod m;
-            m.kind = Mod::Kind::Ptr;
+            m.kind = prefix[static_cast<std::size_t>(n)];
             d.mods.push_back(std::move(m));
         }
         return d;
@@ -790,6 +902,15 @@ private:
             d.col = cur().column;
             d.file = cur().file;
             advance();
+            while (eatP("::")) {
+                if (atEnd() || cur().kind != Tok::Ident) {
+                    err("expected a name");
+                    break;
+                }
+                d.name += "::";
+                d.name += cur().text;
+                advance();
+            }
         } else if (needName) {
             err("expected a name");
             d.line = atEnd() ? 1 : cur().line;
@@ -880,6 +1001,9 @@ private:
             if (m.kind == Mod::Kind::Ptr) {
                 t->kind = Type::Kind::Pointer;
                 t->inner = std::move(base);
+            } else if (m.kind == Mod::Kind::Ref) {
+                t->kind = Type::Kind::Reference;
+                t->inner = std::move(base);
             } else if (m.kind == Mod::Kind::Arr) {
                 t->kind = Type::Kind::Array;
                 t->inner = std::move(base);
@@ -905,7 +1029,57 @@ private:
         decl->type = std::move(type);
         decl->init = std::move(init);
         decl->function = decl->type && decl->type->kind == Type::Kind::Function;
+        decl->name = qualify(decl->name);
+        if (decl->name.find("::") != std::string::npos && decl->type) {
+            if (decl->function) decl->asmName = mangleFunc(decl->name, *decl->type);
+            else decl->asmName = mangleData(decl->name);
+        }
         return decl;
+    }
+
+    std::string qualify(const std::string& name) const {
+        if (name.empty() || ns_.empty() || name.find("::") != std::string::npos) return name;
+        std::string q;
+        for (const std::string& part : ns_) {
+            if (!q.empty()) q += "::";
+            q += part;
+        }
+        q += "::";
+        q += name;
+        return q;
+    }
+
+    void flushExtras(Tu& tu) {
+        for (auto& d : extras_) tu.decls.push_back(std::move(d));
+        extras_.clear();
+    }
+
+    void parseNamespace(Tu& tu) {
+        advance();
+        if (atEnd() || cur().kind != Tok::Ident) {
+            err("expected a namespace name");
+            return;
+        }
+        ns_.push_back(cur().text);
+        advance();
+        expectP("{", "{");
+        while (!atEnd() && !isP("}")) {
+            std::size_t before = i_;
+            if (isKw("namespace")) parseNamespace(tu);
+            else if (isUnsupported()) {
+                err("'" + cur().text + "' is not in this subset");
+                syncSemi();
+            } else if (!isTypeKw(cur())) {
+                err("expected a declaration");
+                syncSemi();
+            } else {
+                parseExternal(tu);
+            }
+            if (stop_) break;
+            if (i_ == before) advance();
+        }
+        if (isP("}")) advance();
+        if (!ns_.empty()) ns_.pop_back();
     }
 
     void parseExternal(Tu& tu) {
@@ -917,16 +1091,19 @@ private:
         auto base = parseBase();
         if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
             advance();
+            flushExtras(tu);
             return;
         }
         if (enumDef_ && isP(";")) {
             enumDef_ = false;
             advance();
+            flushExtras(tu);
             return;
         }
         enumDef_ = false;
         if (atEnd()) {
             err("expected a declarator");
+            flushExtras(tu);
             return;
         }
         auto keep = [&](Parsed& d, std::unique_ptr<Type> type, std::unique_ptr<Expr> init) {
@@ -945,6 +1122,7 @@ private:
             decl->isStatic = st;
             decl->body = parseCompound();
             tu.decls.push_back(std::move(decl));
+            flushExtras(tu);
             return;
         }
         std::unique_ptr<Expr> init;
@@ -958,6 +1136,7 @@ private:
             keep(d2, std::move(t2), std::move(init2));
         }
         expectP(";", ";");
+        flushExtras(tu);
     }
 
     std::unique_ptr<Stmt> declStmt(std::unique_ptr<Decl> d) {
@@ -1386,6 +1565,48 @@ private:
             e->kids.push_back(parseUnary());
             return e;
         }
+        if (isKw("new")) {
+            Token at = cur();
+            advance();
+            auto tyName = parseTypeName();
+            auto call = ex(Expr::Kind::Call, at);
+            auto name = std::make_unique<Expr>();
+            name->kind = Expr::Kind::Name;
+            name->text = "malloc";
+            name->line = at.line;
+            name->col = at.column;
+            auto sz = ex(Expr::Kind::Unary, at);
+            sz->text = "sizeof";
+            sz->ty = tyName ? cloneType(*tyName) : ty(Type::Kind::Int);
+            call->kids.push_back(std::move(name));
+            call->kids.push_back(std::move(sz));
+            auto e = ex(Expr::Kind::Cast, at);
+            auto ptr = ty(Type::Kind::Pointer);
+            ptr->inner = std::move(tyName);
+            e->ty = std::move(ptr);
+            e->kids.push_back(std::move(call));
+            return e;
+        }
+        if (isKw("delete")) {
+            Token at = cur();
+            advance();
+            auto arg = parseCast();
+            auto call = ex(Expr::Kind::Call, at);
+            auto name = std::make_unique<Expr>();
+            name->kind = Expr::Kind::Name;
+            name->text = "free";
+            name->line = at.line;
+            name->col = at.column;
+            auto cast = ex(Expr::Kind::Cast, at);
+            auto ch = ty(Type::Kind::Char);
+            auto ptr = ty(Type::Kind::Pointer);
+            ptr->inner = std::move(ch);
+            cast->ty = std::move(ptr);
+            cast->kids.push_back(std::move(arg));
+            call->kids.push_back(std::move(name));
+            call->kids.push_back(std::move(cast));
+            return call;
+        }
         if (isP("&") || isP("*") || isP("+") || isP("-") || isP("~") || isP("!")) {
             Token op = cur();
             advance();
@@ -1459,9 +1680,15 @@ private:
             err("expected an expression");
             return zeroAt();
         }
+        if (isKw("nullptr")) {
+            auto e = ex(Expr::Kind::Int, cur());
+            e->ival = 0;
+            advance();
+            return e;
+        }
         if (cur().kind == Tok::Ident) {
             auto it = enums_.find(cur().text);
-            if (it != enums_.end()) {
+            if (it != enums_.end() && !nextIs("::")) {
                 auto e = ex(Expr::Kind::Int, cur());
                 e->ival = static_cast<std::uint64_t>(it->second);
                 advance();
@@ -1469,6 +1696,15 @@ private:
             }
             auto e = leafName(cur());
             advance();
+            while (eatP("::")) {
+                if (atEnd() || cur().kind != Tok::Ident) {
+                    err("expected a name");
+                    break;
+                }
+                e->text += "::";
+                e->text += cur().text;
+                advance();
+            }
             return e;
         }
         if (cur().kind == Tok::Int) {
@@ -1525,7 +1761,7 @@ private:
 
 bool isIntish(const Type& t) {
     return t.kind == Type::Kind::Char || t.kind == Type::Kind::Short || t.kind == Type::Kind::Int ||
-           t.kind == Type::Kind::Long;
+           t.kind == Type::Kind::Long || t.kind == Type::Kind::Bool;
 }
 bool isFp(const Type& t) { return t.kind == Type::Kind::Float || t.kind == Type::Kind::Double; }
 int fpWidthOf(const Type* t) {
@@ -1552,7 +1788,7 @@ bool isVoidPtr(const Type& t) {
 }
 bool sameType(const Type& a, const Type& b) {
     if (a.kind != b.kind || a.unsign != b.unsign) return false;
-    if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array) {
+    if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array || a.kind == Type::Kind::Reference) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
     if (a.kind == Type::Kind::Function) {
@@ -1612,6 +1848,8 @@ private:
     int loops_ = 0;
     int switches_ = 0;
     const Type* ret_ = nullptr;
+    const Type* method_ = nullptr;
+    std::string inNs_;
 
     void err(int line, int col, const std::string& msg) {
         diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
@@ -1652,7 +1890,7 @@ private:
         sc.emplace(name, std::move(s));
     }
 
-    ET lookup(const std::string& name, int line, int col) {
+    ET lookup(const std::string& name, int line, int col, bool quiet = false) {
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[static_cast<std::size_t>(i)].find(name);
             if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
@@ -1660,6 +1898,12 @@ private:
             e.type = cloneType(*it->second.type);
             e.line = line;
             e.col = col;
+            if (e.type->kind == Type::Kind::Reference && e.type->inner) {
+                e.type = cloneType(*e.type->inner);
+                e.lvalue = true;
+                e.mod = true;
+                return e;
+            }
             if (e.type->kind == Type::Kind::Function) {
                 e.lvalue = false;
                 e.mod = false;
@@ -1675,7 +1919,7 @@ private:
             }
             return e;
         }
-        err(line, col, "undeclared identifier '" + name + "'");
+        if (!quiet) err(line, col, "undeclared identifier '" + name + "'");
         return bad(line, col);
     }
 
@@ -1761,8 +2005,50 @@ private:
             r.lvalue = true;
             return r;
         }
-        case Expr::Kind::Name:
+        case Expr::Kind::Name: {
+            if (method_) {
+                const Type* st = canonOf(method_);
+                if (st) {
+                    for (const Param& f : st->params) {
+                        if (f.name != e.text || !f.mangled.empty()) continue;
+                        if (!f.type || f.type->kind == Type::Kind::Function) continue;
+                        auto obj = std::make_unique<Expr>();
+                        obj->kind = Expr::Kind::Name;
+                        obj->text = "this";
+                        obj->line = e.line;
+                        obj->col = e.col;
+                        auto field = std::make_unique<Expr>();
+                        field->kind = Expr::Kind::Name;
+                        field->text = e.text;
+                        field->line = e.line;
+                        field->col = e.col;
+                        e.kind = Expr::Kind::Member;
+                        e.text = "->";
+                        e.kids.clear();
+                        e.kids.push_back(std::move(obj));
+                        e.kids.push_back(std::move(field));
+                        return checkExprBody(e);
+                    }
+                }
+            }
+            ET hit = lookup(e.text, e.line, e.col, true);
+            if (!hit.bad) return hit;
+            if (e.text.find("::") == std::string::npos) {
+                std::string scope = inNs_;
+                while (!scope.empty()) {
+                    std::string q = scope + "::" + e.text;
+                    ET ns = lookup(q, e.line, e.col, true);
+                    if (!ns.bad) {
+                        e.text = q;
+                        return ns;
+                    }
+                    std::size_t cut = scope.rfind("::");
+                    if (cut == std::string::npos) break;
+                    scope = scope.substr(0, cut);
+                }
+            }
             return lookup(e.text, e.line, e.col);
+        }
         case Expr::Kind::Unary: {
             if (!need(0)) return bad(e.line, e.col);
             if (e.text == "sizeof") {
@@ -2036,6 +2322,41 @@ private:
 
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
+        if (e.kids[0]->kind == Expr::Kind::Member && e.kids[0]->kids.size() >= 2 && e.kids[0]->kids[0] &&
+            e.kids[0]->kids[1]) {
+            Expr& mem = *e.kids[0];
+            ET obj = mem.text == "->" ? decay(checkExpr(*mem.kids[0])) : checkExpr(*mem.kids[0]);
+            const Type* st = obj.type.get();
+            if (mem.text == "->" && st && isPtr(*st) && st->inner) st = st->inner.get();
+            st = canonOf(st);
+            if (st) {
+                for (const Param& f : st->params) {
+                    if (f.name != mem.kids[1]->text || f.mangled.empty()) continue;
+                    auto callee = std::make_unique<Expr>();
+                    callee->kind = Expr::Kind::Name;
+                    callee->text = f.mangled;
+                    callee->line = e.line;
+                    callee->col = e.col;
+                    std::unique_ptr<Expr> selfArg;
+                    if (mem.text == "->") {
+                        selfArg = std::move(mem.kids[0]);
+                    } else {
+                        selfArg = std::make_unique<Expr>();
+                        selfArg->kind = Expr::Kind::Unary;
+                        selfArg->text = "&";
+                        selfArg->line = mem.line;
+                        selfArg->col = mem.col;
+                        selfArg->kids.push_back(std::move(mem.kids[0]));
+                    }
+                    std::vector<std::unique_ptr<Expr>> kids;
+                    kids.push_back(std::move(callee));
+                    kids.push_back(std::move(selfArg));
+                    for (std::size_t i = 1; i < e.kids.size(); ++i) kids.push_back(std::move(e.kids[i]));
+                    e.kids = std::move(kids);
+                    break;
+                }
+            }
+        }
         ET callee = decay(checkExpr(*e.kids[0]));
         if (callee.bad || !callee.type) return bad(e.line, e.col);
         if (!isPtr(*callee.type) || !callee.type->inner || callee.type->inner->kind != Type::Kind::Function) {
@@ -2076,6 +2397,18 @@ private:
 
     void checkVar(Decl& d) {
         if (!d.type) return;
+        if (d.type->kind == Type::Kind::Reference) {
+            if (!d.init || !d.type->inner) {
+                err(d.line, d.col, "a reference must be initialized");
+            } else {
+                ET src = checkExpr(*d.init);
+                if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
+                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type))
+                    err(d.line, d.col, "cannot bind this reference");
+            }
+            add(d.name, cloneType(*d.type), false, d.line, d.col);
+            return;
+        }
         if (d.type->kind == Type::Kind::Void ||
             (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind == Type::Kind::Void)) {
             err(d.line, d.col, "variable has type void");
@@ -2100,7 +2433,19 @@ private:
         if (!d.body) return;
         scopes_.emplace_back();
         const Type* saved = ret_;
+        const Type* savedMethod = method_;
+        std::string savedNs = inNs_;
         ret_ = d.type->inner.get();
+        method_ = nullptr;
+        inNs_.clear();
+        {
+            std::size_t cut = d.name.rfind("::");
+            if (cut != std::string::npos) inNs_ = d.name.substr(0, cut);
+        }
+        if (!d.methodTag.empty()) {
+            auto it = canonStructs().find(d.methodTag);
+            if (it != canonStructs().end()) method_ = it->second.get();
+        }
         for (const Param& p : d.type->params) {
             if (p.name.empty() || !p.type) continue;
             add(p.name, cloneType(*p.type), false, d.line, d.col);
@@ -2112,6 +2457,8 @@ private:
             checkStmt(*d.body);
         }
         ret_ = saved;
+        method_ = savedMethod;
+        inNs_ = savedNs;
         scopes_.pop_back();
     }
 
@@ -2211,6 +2558,8 @@ public:
     explicit Lowerer(Diagnostics& diags) : diags_(diags) {}
 
     Module run(Tu& tu) {
+        for (const auto& kv : canonStructs())
+            if (kv.second) layoutOf(kv.second.get());
         for (auto& d : tu.decls)
             if (d && d->function) noteFunc(*d);
         for (auto& d : tu.decls)
@@ -2265,6 +2614,7 @@ private:
         bool mem = false;
         bool zext = false;
         bool func = false;
+        bool ref = false;
         int fpw = 0;
         std::string gname;
         int width = 8;
@@ -2329,7 +2679,9 @@ private:
         case Type::Kind::Float: return 4;
         case Type::Kind::Double:
         case Type::Kind::Long:
-        case Type::Kind::Pointer: return 8;
+        case Type::Kind::Pointer:
+        case Type::Kind::Reference: return 8;
+        case Type::Kind::Bool: return 1;
         case Type::Kind::Array: return alignOf(t->inner.get());
         case Type::Kind::Struct:
         case Type::Kind::Union: {
@@ -2347,13 +2699,15 @@ private:
     static int sizeOf(const Type* t) {
         if (!t) return 4;
         switch (t->kind) {
-        case Type::Kind::Char: return 1;
+        case Type::Kind::Char:
+        case Type::Kind::Bool: return 1;
         case Type::Kind::Short: return 2;
         case Type::Kind::Int:
         case Type::Kind::Float: return 4;
         case Type::Kind::Double:
         case Type::Kind::Long:
-        case Type::Kind::Pointer: return 8;
+        case Type::Kind::Pointer:
+        case Type::Kind::Reference: return 8;
         case Type::Kind::Array: {
             int n = 0;
             if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
@@ -2415,6 +2769,7 @@ private:
         int off = 0;
         int bitCursor = -1;
         for (const Param& p : t->params) {
+            if (!p.mangled.empty() || (p.type && p.type->kind == Type::Kind::Function)) continue;
             FieldOff f;
             f.name = p.name;
             if (p.bits >= 0) {
@@ -2487,8 +2842,13 @@ private:
         s.step = valueStep(t);
         s.inner = innerOf(t);
         s.objSize = sizeOf(t);
-        s.zext = t->unsign;
+        s.zext = t->unsign || t->kind == Type::Kind::Bool;
         s.fpw = fpWidthOf(t);
+        if (t->kind == Type::Kind::Reference && t->inner) {
+            describe(s, t->inner.get());
+            s.ref = true;
+            return;
+        }
         if (t->kind == Type::Kind::Array && t->inner) s.zext = t->inner->unsign;
         if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
             s.agg = true;
@@ -2496,6 +2856,10 @@ private:
         } else if (t->kind == Type::Kind::Pointer && t->inner &&
                    (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
             s.fields = layoutOf(t->inner.get());
+            if (s.fields.empty() && !t->inner->tag.empty()) {
+                auto it = structLayouts().find(t->inner->tag);
+                if (it != structLayouts().end()) s.fields = it->second;
+            }
         }
     }
 
@@ -2673,7 +3037,7 @@ private:
         Sym s;
         s.func = true;
         s.global = true;
-        s.gname = d.name;
+        s.gname = d.asmName.empty() ? d.name : d.asmName;
         s.width = 8;
         globals_[d.name] = s;
     }
@@ -2736,7 +3100,7 @@ private:
         if (d.isExtern) {
             Sym s;
             s.global = true;
-            s.gname = d.name;
+            s.gname = d.asmName.empty() ? d.name : d.asmName;
             describe(s, d.type.get());
             globals_[d.name] = s;
             return;
@@ -2744,10 +3108,10 @@ private:
         inferBound(d);
         Sym s;
         s.global = true;
-        s.gname = d.name;
+        s.gname = d.asmName.empty() ? d.name : d.asmName;
         describe(s, d.type.get());
         Global g;
-        g.name = d.name;
+        g.name = s.gname;
         bool brace = d.init && d.init->kind == Expr::Kind::Brace;
         bool strArr = d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array;
         if ((s.array || s.agg) && (brace || strArr)) {
@@ -2794,6 +3158,23 @@ private:
             in.func = s->gname;
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
+        }
+        if (s->ref) {
+            int dst = fresh();
+            Inst ld;
+            ld.op = Inst::Op::Load;
+            ld.dst = dst;
+            ld.a = Operand::vreg(s->reg);
+            ld.extra = s->width > 0 ? s->width : 8;
+            ld.uns = s->zext;
+            emit(ld);
+            Val v;
+            v.op = Operand::vreg(dst);
+            v.step = s->step;
+            v.inner = s->inner;
+            v.fields = s->fields;
+            v.fpw = s->fpw;
+            return v;
         }
         if (s->mem) {
             Val v = loadMem(s->reg, s->width, s->zext);
@@ -2862,6 +3243,12 @@ private:
             Sym* s = find(e.text);
             if (!s) {
                 err(e.line, e.col, "not lowered: " + e.text);
+                return a;
+            }
+            if (s->ref) {
+                a.op = Operand::vreg(s->reg);
+                a.width = s->width > 0 ? s->width : 8;
+                a.ok = true;
                 return a;
             }
             if (s->mem) {
@@ -3304,6 +3691,12 @@ private:
                     err(e.line, e.col, "not lowered: " + e.kids[0]->text);
                     return {};
                 }
+                if (s->ref) {
+                    Val v;
+                    v.op = Operand::vreg(s->reg);
+                    v.step = s->width;
+                    return v;
+                }
                 if (s->agg) {
                     Val base = readName(e.kids[0]->text, e.line, e.col);
                     base.step = s->width > 0 ? s->width : 8;
@@ -3565,6 +3958,10 @@ private:
     }
 
     void storeNamed(Sym& s, Operand val) {
+        if (s.ref) {
+            storeBits(Operand::vreg(s.reg), val, s.width > 0 ? s.width : 8);
+            return;
+        }
         if (s.global) {
             Inst in;
             in.op = Inst::Op::GStore;
@@ -3645,6 +4042,11 @@ private:
             if (s->array) {
                 err(e.line, e.col, "not lowered");
                 return {};
+            }
+            if (s->ref) {
+                Operand val = narrow(rhs.op, s->width, s->zext);
+                storeBits(Operand::vreg(s->reg), val, s->width > 0 ? s->width : 8);
+                return Val{val, 0, 0};
             }
             if (s->agg) {
                 int sz = s->objSize > 0 ? s->objSize : s->width;
@@ -3809,7 +4211,7 @@ private:
             Sym* s = find(e.kids[0]->text);
             if (!s || s->func) {
                 direct = true;
-                fname = e.kids[0]->text;
+                fname = s && !s->gname.empty() ? s->gname : e.kids[0]->text;
             }
         }
         if (direct && (fname == "__va_start" || fname == "__va_arg" || fname == "__va_argp")) return lowerVa(e, fname);
@@ -4127,6 +4529,14 @@ private:
             }
             return;
         }
+        if (s.ref && d.init) {
+            int slot = fresh();
+            s.reg = slot;
+            if (!d.name.empty()) scopes_.back()[d.name] = s;
+            Addr a = lowerAddr(*d.init);
+            emitMov(slot, a.op);
+            return;
+        }
         int slot = fresh();
         s.reg = slot;
         if (!d.name.empty() && addr_.count(d.name)) s.mem = true;
@@ -4223,7 +4633,12 @@ private:
         scanExpr(s.expr.get());
         scanExpr(s.expr2.get());
         scanExpr(s.expr3.get());
-        if (s.decl) scanExpr(s.decl->init.get());
+        if (s.decl) {
+            scanExpr(s.decl->init.get());
+            if (s.decl->type && s.decl->type->kind == Type::Kind::Reference && s.decl->init &&
+                s.decl->init->kind == Expr::Kind::Name)
+                addr_.insert(s.decl->init->text);
+        }
         for (const auto& st : s.stmts)
             if (st) scanStmt(*st);
         if (s.thenS) scanStmt(*s.thenS);
@@ -4288,7 +4703,7 @@ private:
 
     void lowerFunc(Decl& d) {
         fn_ = Function();
-        fn_.name = d.name;
+        fn_.name = d.asmName.empty() ? d.name : d.asmName;
         fn_.localSym = d.isStatic;
         fn_.params = d.type ? static_cast<int>(d.type->params.size()) : 0;
         nextReg_ = 0;

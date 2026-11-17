@@ -172,6 +172,102 @@ int main() {
             ++gOk;
         }
     }
+    {
+        const char* src =
+            "namespace N {\n"
+            "  int x;\n"
+            "  int add(int a) { return a + x; }\n"
+            "}\n"
+            "int main() { N::x = 3; return N::add(4); }\n";
+        std::string as;
+        int got = runExit(src, &as);
+        if (got != 7 || as.find("_ZN1N3addEi") == std::string::npos || as.find("_ZN1N1xE") == std::string::npos) {
+            std::fprintf(stderr, "FAIL namespace exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "int main() {\n"
+            "  int x;\n"
+            "  x = 1;\n"
+            "  int &r = x;\n"
+            "  r = 4;\n"
+            "  return x;\n"
+            "}\n";
+        int got = runExit(src, nullptr);
+        if (got != 4) {
+            std::fprintf(stderr, "FAIL reference exit %d\n", got);
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "struct S {\n"
+            "  int x;\n"
+            "  int get() { return x; }\n"
+            "  int add(int a) { return x + a; }\n"
+            "};\n"
+            "int main() {\n"
+            "  struct S s;\n"
+            "  s.x = 10;\n"
+            "  if (s.get() != 10) return 1;\n"
+            "  if (s.add(7) != 17) return 2;\n"
+            "  return 0;\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        if (got != 0 || as.find("_ZN1S3getEv") == std::string::npos || as.find("_ZN1S3addEi") == std::string::npos) {
+            std::fprintf(stderr, "FAIL method exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "int main() {\n"
+            "  bool b;\n"
+            "  int *p;\n"
+            "  b = 1;\n"
+            "  p = nullptr;\n"
+            "  if (!b) return 1;\n"
+            "  if (p) return 2;\n"
+            "  return 0;\n"
+            "}\n";
+        int got = runExit(src, nullptr);
+        if (got != 0) {
+            std::fprintf(stderr, "FAIL bool exit %d\n", got);
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "char *malloc(int n);\n"
+            "void free(char *p);\n"
+            "int main() {\n"
+            "  int *p;\n"
+            "  int v;\n"
+            "  p = new int;\n"
+            "  *p = 5;\n"
+            "  v = *p;\n"
+            "  delete p;\n"
+            "  return v;\n"
+            "}\n";
+        int got = runExit(src, nullptr);
+        if (got != 5) {
+            std::fprintf(stderr, "FAIL new exit %d\n", got);
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
 
     DIR* dir = opendir("tests/progs");
     if (!dir) {

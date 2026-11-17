@@ -453,7 +453,7 @@ void foldFunction(Function& f) {
     for (Block& b : f.blocks) {
         std::map<int, std::int64_t> known;
         for (Inst& in : b.code) {
-            rewrite(in.a, known);
+            if (in.op != Inst::Op::Lea) rewrite(in.a, known);
             rewrite(in.b, known);
             for (Operand& arg : in.args) rewrite(arg, known);
             for (Operand& word : in.stack) rewrite(word, known);

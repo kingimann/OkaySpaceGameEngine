@@ -151,7 +151,8 @@ inline std::vector<Entry> FileMenu(const State& s) {
     m.push_back(Item("file.new3d", "New 3D Scene", "", "Start an empty 3D scene: a perspective camera, a ground and a cube."));
     m.push_back(Item("file.open", "Open Scene...", key::Open));
     m.push_back(OnlyIf(SlotMenu("file.recent", "Open Recent"), s.recentCount > 0, "No recent scenes yet: scenes you open or save are listed here."));
-    m.push_back(SlotMenu("file.examples", "Examples", "Ready-made scenes to open and try: the UI Gallery and the visual script node playgrounds."));
+    // File > Examples was removed on the owner's request (2026-11-16). The example scenes still ship in the "examples" folder
+    // beside the program: open them with File > Open Scene.
     m.push_back(Sep());
     {
         Entry save = Item("file.save", "Save Scene", key::Save,

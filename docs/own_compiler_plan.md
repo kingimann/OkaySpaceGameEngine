@@ -10,7 +10,10 @@ have something of our own to build toward. It does not replace them.
 
 ## Status of this branch
 
-No compiler stage is implemented yet. This commit is the plan only.
+- Lexer: implemented in `tools/okaycc/` (`okay-cc --lex`). Tested: identifiers, keywords,
+  integer and floating constants, character and string literals, punctuators, comments,
+  line splices, and header names.
+- Preprocessor, parser, type checker, and every later stage: not started.
 
 ## Rules for the code
 

@@ -536,7 +536,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
     case BodyText: {
         StyleBar(L, kTextLooks, 6);
         L.Check("Localized##txtloc", &v.txLoc);
-        L.Text("Text##txt", &v.txText); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
+        L.Text("##txtbody", &v.txText); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
         L.Color("Color##txt", v.txColor, 4); L.TipLookup();
         for (int i = 0; i < 6; ++i) { if (i) L.SameLine(4.0f); L.Swatch("##txtc", kTxtCols[i][0], kTxtCols[i][1], kTxtCols[i][2], 1.0f, 20.0f, 16.0f); L.Tip(kTxtColNames[i]); }
         L.Drag("Font Size##txt", &v.txSize, 1, 0.1f, 0.001f, 100.0f);
@@ -594,7 +594,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Drag("Pos (px)##uib", v.btPos, 2, 1.0f); L.Drag("Size (px)##uib", v.btSize, 2, 1.0f, 1.0f, 4000.0f);
         L.Color("Color##uib", v.btColor, 4); L.Color("Hover##uib", v.btHover, 4); L.Color("Pressed##uib", v.btPressed, 4); L.Color("Disabled##uib", v.btDisabled, 4);
         L.Check("Interactable##uib", &v.btInter); L.SameLine(); L.Check("Focusable##uib", &v.btFocus);
-        L.Note("calls the script's on_click(); disabled buttons are greyed out");
+        L.Note("calls the script's on_click(); disabled buttons are greyed out", false, true);
         L.Section("On Click (assign a function)");
         L.Text("Target Object##uibclk", &v.btTarget); L.Last().dropKind = "objectname";
         L.Combo("Function##uibclk", &v.btFn, kBtnFns, 5); L.Last().heads = kBtnFnHeads;
@@ -774,7 +774,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.SliderInt("Terrace bands##tero", &v.teTerrace, 2, 20); L.SameLineOrWrap(); L.Button("Terrace##tero");
         L.Range("Range##ternorm", v.teNorm, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
         L.SameLineOrWrap(); L.Button("Normalize##ternorm"); L.SameLineOrWrap(); L.Button("Invert##terinv");
-        L.Section("Heightmap (World Machine / Gaea / Photoshop)");
+        L.Section("Heightmap (PNG import / export)");
         L.Button("Import PNG...##terhm"); L.SameLine(); L.Button("Export PNG...##terhm");
         L.Range("Import Low/High##terhm", v.teHm, 0.2f, -100.0f, 200.0f, "%.1f");
         L.Section("Layers (auto-color by height & slope)");
@@ -803,7 +803,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Slider("Radius##tl", &v.teLRadius, 0.5f, 60.0f, "%.1f");
         L.Slider("Strength##tl", &v.teLStrength, 0.05f, 4.0f, "%.2f");
         L.Slider("Hardness##tl", &v.teLHard, 0.0f, 1.0f, "%.2f");
-        L.Note("The layers replace the Ground Texture and the auto-colours above while any exist.");
+        L.Note("The layers replace the Ground Texture and the auto-colours above while any exist.", false, true);
         L.Group("Scatter props (trees, rocks, bushes)");
         L.Combo("Prop##scat", &v.teProp, kProps, 9); L.Last().width = 170.0f;
         L.SliderInt("Count##scat", &v.teCount, 1, 5000);

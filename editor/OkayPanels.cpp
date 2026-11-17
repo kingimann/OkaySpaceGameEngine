@@ -32,6 +32,8 @@ struct MetricsFromImGui {
         m.innerSpacing = OkayUI::Vec2{st.ItemInnerSpacing.x, st.ItemInnerSpacing.y};
         m.itemWidth = ImGui::CalcItemWidth();
         m.indentSpacing = st.IndentSpacing;
+        m.sepTextPadding = OkayUI::Vec2{st.SeparatorTextPadding.x, st.SeparatorTextPadding.y};
+        m.sepTextBorder = st.SeparatorTextBorderSize;
         okayuiscreens::SetEditorMetrics(m);
     }
     ~MetricsFromImGui() { okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{}); }

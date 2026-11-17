@@ -302,7 +302,7 @@ int main() {
             CHECK(imv.cCount == 4 && okv.cCount == 4 && std::fabs(imv.cKeys[7] - okv.cKeys[7]) < 0.05f);
         }
         if (b == inspbody::BodyTerrain) {   // stage 4: a Generate click in both (the radio rows lie below this canvas; okayui_inspector tries them)
-            const UI::Rect gb = rowOf("Generate##terrgen");
+            const UI::Rect gb = rowOf("Generate");
             clickBoth(gb.x + gb.w * 0.5f, gb.y + gb.h * 0.5f);
             CHECK(imv.clicked.size() == 1 && okv.clicked.size() == 1 && okv.clicked[0] == "Generate");
         }

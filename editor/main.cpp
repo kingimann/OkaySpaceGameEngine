@@ -31278,15 +31278,17 @@ static bool DrawAudioSourceWithOkayUI(EditorState& ed, AudioSource* a, okay::Com
 // The Particle System's ParticleGradientEditor and ParticleCurveEditor as rows (stage 4): the bar or the plot, then the selected stop's
 // colour and time (the selected key's time and value, Smooth) and the count, as the Dear ImGui editors draw them. The rows edit a copy;
 // the selection is kept per gradient / curve, as Dear ImGui keeps it in its state storage.
-static int& OverLifeSelection(const void* key) { static std::map<const void*, int> sel; return sel[key]; }
-struct GradientRows { float data[okay::ParticleGradient::kMaxStops * 5]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kColor = -1, kTime = -1; float col[4] = {}; float time = 0.0f; char note[32]; };
-static void AddGradientRows(okaypanels::InspFieldList& L, const okay::ParticleGradient& g, const char* id, GradientRows& gr) {
+// keyed by the object's guid and the editor's id (an undo rebuilds the component at a new address; Dear ImGui keeps its by id too)
+static int& OverLifeSelection(const std::string& key) { static std::map<std::string, int> sel; return sel[key]; }
+struct GradientRows { std::string key; float data[okay::ParticleGradient::kMaxStops * 5]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kColor = -1, kTime = -1; float col[4] = {}; float time = 0.0f; char note[32]; };
+static void AddGradientRows(okaypanels::InspFieldList& L, const okay::ParticleGradient& g, const char* id, GradientRows& gr, const std::string& owner) {
+    gr.key = owner + id;
     gr.count = std::min(g.count, okay::ParticleGradient::kMaxStops);
     for (int i = 0; i < gr.count; ++i) {
         const auto& st = g.stops[i];
         float* d = gr.data + i * 5; d[0] = st.time; d[1] = st.color.r; d[2] = st.color.g; d[3] = st.color.b; d[4] = st.color.a;
     }
-    gr.sel = std::min(OverLifeSelection(&g), gr.count - 1);
+    gr.sel = std::min(OverLifeSelection(gr.key), gr.count - 1);
     gr.k = L.Gradient(id, gr.data, &gr.count, okay::ParticleGradient::kMaxStops, &gr.sel);
     if (gr.sel >= 0 && gr.sel < gr.count) {
         gr.selAtBuild = gr.sel;
@@ -31299,7 +31301,7 @@ static void AddGradientRows(okaypanels::InspFieldList& L, const okay::ParticleGr
     L.Note(gr.note, true);
 }
 static void RunGradientRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleGradient& g, GradientRows& gr) {
-    OverLifeSelection(&g) = gr.sel;
+    OverLifeSelection(gr.key) = gr.sel;
     if (L[gr.k].activated) ed.PushUndo();
     if (L[gr.k].changed) {
         g.count = gr.count;
@@ -31312,12 +31314,13 @@ static void RunGradientRows(EditorState& ed, okaypanels::InspFieldList& L, okay:
     if (gr.kColor >= 0 && L[gr.kColor].changed) { g.stops[gr.selAtBuild].color = {gr.col[0], gr.col[1], gr.col[2], gr.col[3]}; ed.dirty = true; }
     if (gr.kTime >= 0 && L[gr.kTime].changed) { g.stops[gr.selAtBuild].time = gr.time; ed.dirty = true; }
 }
-struct CurveRows { float data[okay::ParticleCurve::kMaxKeys * 2]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kKey = -1, kSmooth = -1; bool smooth = false; float kv[2] = {}; char note[32]; };
-static void AddCurveRows(okaypanels::InspFieldList& L, const okay::ParticleCurve& c, const char* id, CurveRows& cr) {
+struct CurveRows { std::string key; float data[okay::ParticleCurve::kMaxKeys * 2]; int count = 0, sel = 0, selAtBuild = -1, k = -1, kKey = -1, kSmooth = -1; bool smooth = false; float kv[2] = {}; char note[32]; };
+static void AddCurveRows(okaypanels::InspFieldList& L, const okay::ParticleCurve& c, const char* id, CurveRows& cr, const std::string& owner) {
+    cr.key = owner + id;
     cr.count = std::min(c.count, okay::ParticleCurve::kMaxKeys);
     for (int i = 0; i < cr.count; ++i) { cr.data[i * 2] = c.keys[i].time; cr.data[i * 2 + 1] = c.keys[i].value; }
     cr.smooth = c.smooth;
-    cr.sel = std::min(OverLifeSelection(&c), cr.count - 1);
+    cr.sel = std::min(OverLifeSelection(cr.key), cr.count - 1);
     cr.k = L.Curve(id, cr.data, &cr.count, okay::ParticleCurve::kMaxKeys, &cr.smooth, &cr.sel);
     if (cr.sel >= 0 && cr.sel < cr.count) {
         cr.selAtBuild = cr.sel;
@@ -31329,7 +31332,7 @@ static void AddCurveRows(okaypanels::InspFieldList& L, const okay::ParticleCurve
     L.SameLine(); L.Note(cr.note, true);
 }
 static void RunCurveRows(EditorState& ed, okaypanels::InspFieldList& L, okay::ParticleCurve& c, CurveRows& cr) {
-    OverLifeSelection(&c) = cr.sel;
+    OverLifeSelection(cr.key) = cr.sel;
     if (L[cr.k].activated) ed.PushUndo();
     if (L[cr.k].changed) {
         c.count = cr.count;
@@ -31409,19 +31412,19 @@ static bool DrawParticleSystemWithOkayUI(EditorState& ed, ParticleSystem* ps, ok
     CurveRows sizeCurve, speedCurve;
     if (ps->colorOverLife) {
         kCm = L.Combo("Color Mode##ps", &cm, kCModes, 2);
-        if (ps->colorGradient.Active()) AddGradientRows(L, ps->colorGradient, "psgrad", grad);
+        if (ps->colorGradient.Active()) AddGradientRows(L, ps->colorGradient, "psgrad", grad, ps->gameObject ? ps->gameObject->Guid() : std::string());
         else { kEc = L.Color("End Color##ps", ec, 4); L.TipLookup(); }
     }
     L.Check("Size Over Life##ps", &ps->sizeOverLife); L.TipLookup();
     int sm = ps->sizeCurve.Active() ? 1 : 0, kSm = -1;
     if (ps->sizeOverLife) {
         kSm = L.Combo("Size Mode##ps", &sm, kSModes, 2);
-        if (ps->sizeCurve.Active()) { L.Note("Size x start size over life"); AddCurveRows(L, ps->sizeCurve, "pssize", sizeCurve); }
+        if (ps->sizeCurve.Active()) { L.Note("Size x start size over life"); AddCurveRows(L, ps->sizeCurve, "pssize", sizeCurve, ps->gameObject ? ps->gameObject->Guid() : std::string()); }
         else L.Drag("End Size##ps", &ps->endSize, 1, 0.01f, 0.0f, 1000.0f);
     }
     const int kSpeedLife = L.Check("Speed Over Life##ps", &ps->speedOverLife);
     L.Tip("Scale how fast particles move as they age (1 = unchanged).");
-    if (ps->speedOverLife && ps->speedCurve.Active()) { L.Note("Speed x over life"); AddCurveRows(L, ps->speedCurve, "psspeed", speedCurve); }
+    if (ps->speedOverLife && ps->speedCurve.Active()) { L.Note("Speed x over life"); AddCurveRows(L, ps->speedCurve, "psspeed", speedCurve, ps->gameObject ? ps->gameObject->Guid() : std::string()); }
     L.Section("Forces");
     float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
     const int kGv = L.Drag("Gravity##ps", gv, 3, 0.05f); L.TipLookup();
@@ -31827,7 +31830,7 @@ static bool DrawTextWithOkayUI(EditorState& ed, GameObject* go, TextRenderer* tr
     if (tr->screenSpace) AddStyleBarRows(L, tr, sb);
     bool locOn = false;
     const int kLoc = L.Check("Localized##txtloc", &locOn); L.Tip(kLocalizedTip);
-    L.Text("Text##txt", &tr->text); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
+    L.Text("##txtbody", &tr->text); L.Last().wrap = true; L.Last().width = -1.0f; L.Last().texH = 3.0f;
     L.Color("Color##txt", &tr->color.r, 4); L.TipLookup();
     int kSw[6];
     for (int i = 0; i < 6; ++i) {
@@ -32085,7 +32088,7 @@ static bool DrawUIButtonWithOkayUI(EditorState& ed, GameObject* go, UIButton* bt
     L.Color("Disabled##uib", &btn->disabledColor.r, 4); L.TipLookup();
     L.Check("Interactable##uib", &btn->interactable); L.TipLookup();
     L.SameLine(); L.Check("Focusable##uib", &btn->focusable); L.TipLookup();
-    L.Note("calls the script's on_click(); disabled buttons are greyed out");
+    L.Note("calls the script's on_click(); disabled buttons are greyed out", false, true);
     L.Section("On Click (assign a function)");
     const int kTarget = L.Text("Target Object##uibclk", &btn->clickTarget); L.TipLookup();
     L.Last().dropKind = "objectname";
@@ -32105,7 +32108,7 @@ static bool DrawUIButtonWithOkayUI(EditorState& ed, GameObject* go, UIButton* bt
     if (!tobj) L.Note("Target object not found \xE2\x80\x94 drag one from the Hierarchy.");
     else if (fns.empty() && nativeFns.empty()) {
         std::snprintf(line, sizeof line, "'%s' has no Script or native gameplay component to call.", tobj->name.c_str());
-        L.Note(line, true);
+        L.Note(line, true, true);
     }
     AnchorRow anc;
     AddAnchorRow(L, "Anchor##uib", btn->anchor, anc);
@@ -32405,7 +32408,7 @@ static bool DrawTerrainWithOkayUI(EditorState& ed, Terrain* tr, okay::Component*
     L.SameLineOrWrap(); const int kNorm = L.Button("Normalize##ternorm");
     L.Tip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
     L.SameLineOrWrap(); const int kInv = L.Button("Invert##terinv"); L.Tip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
-    L.Section("Heightmap (World Machine / Gaea / Photoshop)");
+    L.Section("Heightmap (PNG import / export)");
     const int kImp = L.Button("Import PNG...##terhm");
     L.SameLine(); const int kExp = L.Button("Export PNG...##terhm");
     float hm[2] = {g_terrainHmLow, g_terrainHmHigh};
@@ -33864,7 +33867,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
 
-            SectionHeader("Heightmap (World Machine / Gaea / Photoshop)");
+            SectionHeader("Heightmap (PNG import / export)");   // the longer title ran out of the docked Inspector
             if (ImGui::Button("Import PNG...##terhm")) {
                 EditorState* edp = &ed; auto* trp = tr;
                 okay::filedialog::OpenOne("Import heightmap", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}), [edp, trp](const std::string& p) {
@@ -41594,7 +41597,7 @@ void DrawInspector(EditorState& ed) {
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
             // Multi-line box so '\n' / Enter make several lines.
-            if (!trLoc && ImGui::InputTextMultiline("Text##txt", buf, sizeof(buf),
+            if (!trLoc && ImGui::InputTextMultiline("##txtbody", buf, sizeof(buf),   // no label: the box is the region wide, "Text" showed as a cut "T" past it
                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.0f))) { tr->text = buf; ed.dirty = true; }
             float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
@@ -42069,7 +42072,9 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##uib", &btn->focusable)) ed.dirty = true;
             oked::FieldTip("Focusable##uib");
+            ImGui::PushTextWrapPos(0.0f);   // wrapped: the line ran out of the docked Inspector (seen in the stage 4 pictures)
             ImGui::TextDisabled("calls the script's on_click(); disabled buttons are greyed out");
+            ImGui::PopTextWrapPos();
 
             SectionHeader("On Click (assign a function)");
             { static char tgt[64]; static UIButton* tbound = nullptr;
@@ -42115,8 +42120,11 @@ void DrawInspector(EditorState& ed) {
                   if (ImGui::DragFloat("Amount##uibclkarg", &btn->clickArg, 0.5f, -100000.0f, 100000.0f))
                       ed.dirty = true;
               if (!tobj) ImGui::TextDisabled("Target object not found — drag one from the Hierarchy.");
-              else if (fns.empty() && nativeFns.empty())
+              else if (fns.empty() && nativeFns.empty()) {
+                  ImGui::PushTextWrapPos(0.0f);
                   ImGui::TextDisabled("'%s' has no Script or native gameplay component to call.", tobj->name.c_str());
+                  ImGui::PopTextWrapPos();
+              }
             }
 
             AnchorCombo("Anchor##uib", btn->anchor, ed);

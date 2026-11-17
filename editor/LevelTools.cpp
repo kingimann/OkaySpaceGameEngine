@@ -581,7 +581,9 @@ const char* const kScatterTitle = "Scatter props (trees, rocks, bushes)";
 void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
     ImGui::SeparatorText(kLayersTitle);
     if (t.layers.empty()) {
+        ImGui::PushTextWrapPos(0.0f);   // wrapped: it ran out of the docked Inspector (seen in the stage 4 pictures)
         ImGui::TextDisabled("One ground texture today. Add layers to blend several (grass, dirt, rock...) with a brush.");
+        ImGui::PopTextWrapPos();
         if (ImGui::Button("Add Layers##tl")) AddFirstTerrainLayers(ed, t);
         Tip("Starts two layers: the first covers the whole terrain, the second is ready to paint.");
         return;
@@ -631,7 +633,9 @@ void DrawTerrainLayersUI(EditorState& ed, Terrain& t) {
     ImGui::SliderFloat("Radius##tl", &s_layerRadius, 0.5f, 60.0f, "%.1f");
     ImGui::SliderFloat("Strength##tl", &s_layerStrength, 0.05f, 4.0f, "%.2f");
     ImGui::SliderFloat("Hardness##tl", &s_layerHardness, 0.0f, 1.0f, "%.2f");
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("The layers replace the Ground Texture and the auto-colours above while any exist.");
+    ImGui::PopTextWrapPos();
 }
 
 void DrawTerrainScatterUI(EditorState& ed, Terrain& t) {
@@ -656,7 +660,7 @@ void AddTerrainToolRows(EditorState& ed, Terrain& t, okaypanels::InspFieldList& 
     (void)ed;
     L.Group(kLayersTitle);
     if (t.layers.empty()) {
-        L.Note("One ground texture today. Add layers to blend several (grass, dirt, rock...) with a brush.");
+        L.Note("One ground texture today. Add layers to blend several (grass, dirt, rock...) with a brush.", false, true);
         st.addLayers = L.Button("Add Layers##tl"); L.Tip("Starts two layers: the first covers the whole terrain, the second is ready to paint.");
     } else {
         s_layer = std::min(std::max(s_layer, 0), (int)t.layers.size() - 1);
@@ -687,7 +691,7 @@ void AddTerrainToolRows(EditorState& ed, Terrain& t, okaypanels::InspFieldList& 
         L.Slider("Radius##tl", &s_layerRadius, 0.5f, 60.0f, "%.1f");
         L.Slider("Strength##tl", &s_layerStrength, 0.05f, 4.0f, "%.2f");
         L.Slider("Hardness##tl", &s_layerHardness, 0.0f, 1.0f, "%.2f");
-        L.Note("The layers replace the Ground Texture and the auto-colours above while any exist.");
+        L.Note("The layers replace the Ground Texture and the auto-colours above while any exist.", false, true);
     }
     L.Group(kScatterTitle);
     L.Combo("Prop##scat", &s_scatterProp, kProps, kPropCount); L.Last().width = 170.0f;

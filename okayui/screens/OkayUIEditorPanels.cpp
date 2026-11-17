@@ -31,6 +31,8 @@ void SetEditorMetrics(const EditorMetrics& in) {
     g_metrics.innerSpacing = pick(in.innerSpacing, d.innerSpacing);
     g_metrics.itemWidth = ok(in.itemWidth, 100000.0f) ? in.itemWidth : 0.0f;
     g_metrics.indentSpacing = ok(in.indentSpacing, 200.0f) ? in.indentSpacing : d.indentSpacing;
+    g_metrics.sepTextPadding = pick(in.sepTextPadding, d.sepTextPadding);
+    g_metrics.sepTextBorder = ok(in.sepTextBorder, 20.0f) ? in.sepTextBorder : d.sepTextBorder;
 }
 const EditorMetrics& GetEditorMetrics() { return g_metrics; }
 
@@ -2776,17 +2778,19 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 }
                 break;
             }
-            case InspRowGroup: {   // Dear ImGui's SeparatorText: a short rule, the title 20 pixels in, a rule to the right edge; 3 thick,
-                                   // the row the text and 3 pixels above and below tall
+            case InspRowGroup: {   // Dear ImGui's SeparatorText: a short rule, the title SeparatorTextPadding.x in, a rule to the right edge;
+                                   // the rules SeparatorTextBorderSize thick, the row the text and the padding's y above and below tall (the
+                                   // host's style: 22 / 8 / 1 in the editor, 20 / 3 / 3 by default)
                 const UI::Vec2 q = UI::GetCursorScreenPos();
-                const float rh = fs + 6.0f, tx = regionX + 20.0f, tw = UI::CalcTextWidth(r.Text());
+                const float py = g_metrics.sepTextPadding.y, bt = g_metrics.sepTextBorder;
+                const float rh = fs + 2.0f * py, tx = regionX + g_metrics.sepTextPadding.x, tw = UI::CalcTextWidth(r.Text());
                 UI::Dummy(w, rh);
                 const UI::DrawList& dl = UI::GetWindowDrawList();
                 const UI::Color32 sc = UI::GetColorU32(UI::Col_Separator);
-                const float ly = q.y + rh * 0.5f - 1.5f;
-                dl.AddRectFilled(UI::Vec2{regionX, ly}, UI::Vec2{tx - g_metrics.itemSpacing.x, ly + 3.0f}, sc, 0.0f);
-                dl.AddRectFilled(UI::Vec2{tx + tw + g_metrics.itemSpacing.x, ly}, UI::Vec2{regionX + w, ly + 3.0f}, sc, 0.0f);
-                dl.AddText(UI::Vec2{tx, q.y + 3.0f}, UI::GetColorU32(UI::Col_Text), r.Text());
+                const float ly = std::floor(q.y + rh * 0.5f - bt * 0.5f);
+                dl.AddRectFilled(UI::Vec2{regionX, ly}, UI::Vec2{tx - g_metrics.itemSpacing.x, ly + bt}, sc, 0.0f);
+                dl.AddRectFilled(UI::Vec2{tx + tw + g_metrics.itemSpacing.x, ly}, UI::Vec2{regionX + w, ly + bt}, sc, 0.0f);
+                dl.AddText(UI::Vec2{tx, q.y + py}, UI::GetColorU32(UI::Col_Text), r.Text());
                 break;
             }
             case InspRowNote:
@@ -2930,7 +2934,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 // the list is as wide as its widest line, as Dear ImGui's grows to its content: the rename note is wider than a narrow
                 // box (seen in the real editor: the note ran out of the list over the Inspector)
                 const bool renameNote = !presets && list.hooks.renameLayer && list.hooks.layerName;
-                const float listW = renameNote ? std::max(frameW, UI::CalcTextWidth("Right-click a layer to rename it") + 34.0f) : frameW;
+                float listW = renameNote ? std::max(frameW, UI::CalcTextWidth("Right-click a layer to rename it") + 34.0f) : frameW;
+                if (presets) {   // as wide as the preset buttons' line (the second one ran out of the list in the real editor)
+                    float pw = 0.0f;
+                    for (int q = 0; q < r.presetCount; ++q) pw += UI::CalcTextWidth(r.presetNames[q]) + 2.0f * g_metrics.framePadding.x + (q ? g_metrics.itemSpacing.x : 0.0f);
+                    listW = std::max(listW, pw + 20.0f);
+                }
                 UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
                 UI::SetNextItemWidth(WithLabel(frameW, r.label));
                 if (UI::BeginCombo(r.label, preview.c_str())) {
@@ -3058,7 +3067,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 int sel = r.sel ? *r.sel : 0;
                 if (sel >= cnt) sel = cnt - 1;
                 const UI::Vec2 p0 = UI::GetCursorScreenPos();
-                const float gw = std::max(60.0f, UI::GetContentRegionAvail().x), barH = 18.0f, mkH = 9.0f;
+                const float gw = std::max(60.0f, regionX + w - p0.x), barH = 18.0f, mkH = 9.0f;
                 const UI::Vec2 p1{p0.x + gw, p0.y + barH};
                 const UI::DrawList& dl = UI::GetWindowDrawList();
                 for (int cx = 0; (float)cx * 6.0f < gw; ++cx)
@@ -3112,7 +3121,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 int sel = r.sel ? *r.sel : 0;
                 if (sel >= cnt) sel = cnt - 1;
                 const UI::Vec2 p0 = UI::GetCursorScreenPos();
-                const float gw = std::max(60.0f, UI::GetContentRegionAvail().x), gh = 64.0f;
+                const float gw = std::max(60.0f, regionX + w - p0.x), gh = 64.0f;
                 const UI::Vec2 p1{p0.x + gw, p0.y + gh};
                 static unsigned s_dragId = 0;
                 static float s_top = 1.0f;
@@ -3211,8 +3220,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                                 UI::CloseCurrentPopup();
                             }
                         };
-                        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{g_metrics.itemSpacing.x, 4.0f});
-                        for (int row = 0; row < 3; ++row) {
+                        for (int row = 0; row < 3; ++row) {   // the rows the Inspector's item spacing apart, as Dear ImGui's popup has them
                             for (int col = 0; col < 3; ++col) { if (col) UI::SameLine(4.0f); cellButton(row * 3 + col, cell, cell); }
                             UI::SameLine(10.0f);
                             if (row == 1) cellButton(9, cell * 1.4f, cell); else UI::Dummy(cell * 1.4f, cell);
@@ -3220,7 +3228,6 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                         cellButton(10, cell, cell * 1.4f); UI::SameLine(4.0f);
                         cellButton(11, cell * 1.4f, cell * 1.4f);
                         UI::SameLine(); UI::TextDisabled("Stretch vertical / Fill");
-                        UI::PopStyleVar();
                         const UI::Vec2 pe = UI::GetCursorScreenPos();
                         setPopup(UI::Rect{pp.x - 10.0f, pp.y - 8.0f, std::max(popW, UI::CalcTextWidth("ANCHOR  (Shift+click: also move it there)")) + 20.0f, pe.y - pp.y + 16.0f});
                         UI::EndPopup();

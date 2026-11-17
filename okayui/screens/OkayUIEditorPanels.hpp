@@ -29,6 +29,8 @@ struct EditorMetrics {
     OkayUI::Vec2 innerSpacing{8.0f, 6.0f};
     float itemWidth = 0.0f;
     float indentSpacing = 22.0f;   ///< a fold-out's rows are this far in (Dear ImGui's IndentSpacing)
+    OkayUI::Vec2 sepTextPadding{20.0f, 3.0f};   ///< a group title's text in from the left, and above and below it (SeparatorTextPadding)
+    float sepTextBorder = 3.0f;    ///< its rules' thickness (SeparatorTextBorderSize); the editor's style is 22 / 8 and 1
 };
 /// Set the metrics the panels below use until the next call (`EditorMetrics{}` puts the defaults back). Non-finite or negative
 /// values fall back to the defaults one by one.

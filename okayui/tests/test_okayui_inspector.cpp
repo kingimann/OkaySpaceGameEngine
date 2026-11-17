@@ -927,7 +927,7 @@ int main() {
         const float right = 16.0f + 428.0f + 0.5f;
         for (const char* n : inspbody::kTextLooks) { const UI::Rect b = r.R(n); CHECK(b.w > 0.0f && b.x + b.w <= right); }
         CHECK(std::fabs(CY(r.R("Title")) - CY(r.R("Look"))) < 3.0f);                                // the first preset on the "Look" line
-        const UI::Rect tx = r.R("Text##txt");
+        const UI::Rect tx = r.R("##txtbody");
         CHECK(tx.w > 400.0f && tx.x + tx.w <= right && tx.h > 50.0f);                            // three text lines, the region wide
         const UI::Rect an = r.R("Anchor##txt");
         r.Click(an.x + 60.0f, CY(an));

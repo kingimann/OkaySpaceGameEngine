@@ -76,7 +76,8 @@ struct Decl {
 };
 
 struct Stmt {
-    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl } kind = Kind::Empty;
+    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl, Switch, Case } kind =
+        Kind::Empty;
     int line = 1;
     int col = 1;
     std::string file;
@@ -353,6 +354,19 @@ void printStmt(Pr& p, int ind, const Stmt& st) {
     case Stmt::Kind::Decl:
         if (st.decl) printDecl(p, ind, *st.decl);
         break;
+    case Stmt::Kind::Switch:
+        p.line(ind, "(switch");
+        if (st.expr) p.line(ind + 1, exprStr(*st.expr));
+        for (const auto& c : st.stmts)
+            if (c) printStmt(p, ind + 1, *c);
+        p.line(ind, ")");
+        break;
+    case Stmt::Kind::Case:
+        if (st.expr) p.line(ind, "(case " + exprStr(*st.expr));
+        else p.line(ind, "(default");
+        if (st.body) printStmt(p, ind + 1, *st.body);
+        p.line(ind, ")");
+        break;
     }
 }
 
@@ -457,7 +471,7 @@ private:
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") &&
-               !isKw("return") && !isKw("break") && !isKw("continue");
+               !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch");
     }
     bool eatP(const char* s) {
         if (!isP(s)) return false;
@@ -896,6 +910,7 @@ private:
         if (isKw("while")) return parseWhile();
         if (isKw("for")) return parseFor();
         if (isKw("return")) return parseReturn();
+        if (isKw("switch")) return parseSwitch();
         if (eatKw("break")) {
             auto s = std::make_unique<Stmt>();
             s->kind = Stmt::Kind::Break;
@@ -985,6 +1000,46 @@ private:
         if (!isP(")")) s->expr2 = parseExpr();
         expectP(")", ")");
         s->body = parseStmt();
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseSwitch() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Switch;
+        s->line = cur().line;
+        s->col = cur().column;
+        s->file = cur().file;
+        advance();
+        expectP("(", "(");
+        s->expr = parseExpr();
+        expectP(")", ")");
+        expectP("{", "{");
+        while (!atEnd() && !isP("}")) {
+            auto c = std::make_unique<Stmt>();
+            c->kind = Stmt::Kind::Case;
+            c->line = cur().line;
+            c->col = cur().column;
+            c->file = cur().file;
+            if (eatKw("case")) {
+                c->expr = parseExpr();
+                expectP(":", ":");
+            } else if (eatKw("default")) {
+                expectP(":", ":");
+            } else {
+                err("expected 'case' or 'default'");
+                break;
+            }
+            auto body = std::make_unique<Stmt>();
+            body->kind = Stmt::Kind::Block;
+            body->line = c->line;
+            body->col = c->col;
+            body->file = c->file;
+            while (!atEnd() && !isKw("case") && !isKw("default") && !isP("}"))
+                body->stmts.push_back(parseStmt());
+            c->body = std::move(body);
+            s->stmts.push_back(std::move(c));
+        }
+        expectP("}", "}");
         return s;
     }
 
@@ -1319,6 +1374,7 @@ private:
     std::string file_;
     std::vector<std::map<std::string, Sym>> scopes_;
     int loops_ = 0;
+    int switches_ = 0;
     const Type* ret_ = nullptr;
 
     void err(int line, int col, const std::string& msg) {
@@ -1837,13 +1893,35 @@ private:
             scopes_.pop_back();
             break;
         case Stmt::Kind::Break:
-            if (loops_ == 0) err(s.line, s.col, "break is not inside a loop");
+            if (loops_ == 0 && switches_ == 0) err(s.line, s.col, "break is not inside a loop or switch");
             break;
+        case Stmt::Kind::Switch: {
+            if (!s.expr) break;
+            ET c = decay(checkExpr(*s.expr));
+            if (!c.bad && (!c.type || !isIntish(*c.type))) err(s.line, s.col, "switch value is not an integer");
+            ++switches_;
+            bool sawDef = false;
+            for (auto& cs : s.stmts) {
+                if (!cs || cs->kind != Stmt::Kind::Case) continue;
+                if (!cs->expr) {
+                    if (sawDef) err(cs->line, cs->col, "more than one default");
+                    sawDef = true;
+                } else {
+                    ET v = checkExpr(*cs->expr);
+                    if (!v.bad && (!v.type || !isIntish(*v.type))) err(cs->line, cs->col, "case value is not an integer");
+                }
+                if (cs->body) checkStmt(*cs->body);
+            }
+            --switches_;
+            break;
+        }
         case Stmt::Kind::Continue:
             if (loops_ == 0) err(s.line, s.col, "continue is not inside a loop");
             break;
         case Stmt::Kind::Decl:
             if (s.decl) checkVar(*s.decl);
+            break;
+        case Stmt::Kind::Case:
             break;
         }
     }
@@ -1906,6 +1984,7 @@ private:
     struct Loop {
         std::string cont;
         std::string brk;
+        bool sw = false;
     };
 
     Diagnostics& diags_;
@@ -1917,6 +1996,7 @@ private:
     int whileN_ = 0;
     int ifN_ = 0;
     int forN_ = 0;
+    int switchN_ = 0;
     int tmpN_ = 0;
     int strN_ = 0;
     int retWidth_ = 8;
@@ -2994,12 +3074,25 @@ private:
             lowerFor(s);
             break;
         case Stmt::Kind::Break:
-            if (loops_.empty()) err(s.line, s.col, "break is not inside a loop");
+            if (loops_.empty()) err(s.line, s.col, "break is not inside a loop or switch");
             else emitJmp(loops_.back().brk);
             break;
-        case Stmt::Kind::Continue:
-            if (loops_.empty()) err(s.line, s.col, "continue is not inside a loop");
-            else emitJmp(loops_.back().cont);
+        case Stmt::Kind::Continue: {
+            int at = -1;
+            for (int i = static_cast<int>(loops_.size()) - 1; i >= 0; --i) {
+                if (!loops_[static_cast<std::size_t>(i)].sw) {
+                    at = i;
+                    break;
+                }
+            }
+            if (at < 0) err(s.line, s.col, "continue is not inside a loop");
+            else emitJmp(loops_[static_cast<std::size_t>(at)].cont);
+            break;
+        }
+        case Stmt::Kind::Switch:
+            lowerSwitch(s);
+            break;
+        case Stmt::Kind::Case:
             break;
         case Stmt::Kind::Decl:
             if (s.decl) lowerLocal(*s.decl);
@@ -3124,6 +3217,60 @@ private:
         if (s.elseS) scanStmt(*s.elseS);
         if (s.body) scanStmt(*s.body);
         if (s.init) scanStmt(*s.init);
+    }
+
+    void lowerSwitch(Stmt& s) {
+        int id = switchN_++;
+        std::string endL = "sw" + std::to_string(id) + "_end";
+        std::string defL = "sw" + std::to_string(id) + "_def";
+        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
+        struct Arm {
+            std::string label;
+            bool def = false;
+            std::int64_t value = 0;
+            Stmt* body = nullptr;
+        };
+        std::vector<Arm> arms;
+        bool sawDef = false;
+        int n = 0;
+        for (auto& cs : s.stmts) {
+            if (!cs) continue;
+            Arm arm;
+            arm.label = "sw" + std::to_string(id) + "_" + std::to_string(n++);
+            arm.body = cs->body.get();
+            if (!cs->expr) {
+                if (sawDef) err(cs->line, cs->col, "more than one default");
+                sawDef = true;
+                arm.def = true;
+                arm.label = defL;
+            } else {
+                Val v = lowerExpr(*cs->expr);
+                if (v.op.kind != Operand::Kind::Imm) {
+                    err(cs->line, cs->col, "case value is not a constant");
+                    v.op = Operand::number(0);
+                }
+                arm.value = v.op.imm;
+            }
+            arms.push_back(arm);
+        }
+        for (std::size_t i = 0; i < arms.size(); ++i) {
+            if (arms[i].def) continue;
+            int cmp = fresh();
+            emitBin(Inst::Op::Ceq, cmp, Operand::vreg(cond), Operand::number(arms[i].value));
+            std::string next = "sw" + std::to_string(id) + "_t" + std::to_string(i);
+            emitBr(cmp, arms[i].label, next);
+            startBlock(next);
+        }
+        emitJmp(sawDef ? defL : endL);
+        loops_.push_back(Loop{"", endL, true});
+        for (std::size_t i = 0; i < arms.size(); ++i) {
+            startBlock(arms[i].label);
+            if (arms[i].body) lowerStmt(*arms[i].body);
+            if (i + 1 < arms.size()) emitJmp(arms[i + 1].label);
+            else emitJmp(endL);
+        }
+        loops_.pop_back();
+        startBlock(endL);
     }
 
     void lowerFunc(Decl& d) {

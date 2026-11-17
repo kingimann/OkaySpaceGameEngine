@@ -992,7 +992,7 @@ static int waitChild(pid_t pid) {
         struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 20000000; nanosleep(&ts, nullptr);
     }
 }
-static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
+static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
     auto child = [&]() {
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
@@ -1008,6 +1008,7 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     if (pid == 0) { setpgid(0, 0); dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
     setpgid(pid, pid);
     close(fd[1]); fcntl(fd[0], F_SETFL, O_NONBLOCK);
+    long long startedAt = timeoutNs ? nowNs() : 0;
     for (;;) {
         pollfd pf{}; pf.fd = fd[0]; pf.events = POLLIN; poll(&pf, 1, 20);
         for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
@@ -1015,6 +1016,11 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
         if (r == pid) { close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; }
         if (r < 0 && errno != EINTR) { close(fd[0]); return 128; }
         if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); return 130; }
+        if (timeoutNs && nowNs() - startedAt > timeoutNs) {
+            kill(-pid, SIGKILL); kill(pid, SIGKILL); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+            for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
+            close(fd[0]); return 124;
+        }
     }
 }
 static int captureStdout(const vector<string>& argv, string& out, string& err) {
@@ -2067,6 +2073,7 @@ static int numberBefore(const string& s, const string& word) {
     if (i == end) return -1;
     return atoi(s.c_str() + i);
 }
+static long long gTestTimeoutSec = 0;
 static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code, const vector<string>& outs) {
     vector<int> order(tests.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
@@ -2082,7 +2089,14 @@ static int printTestReport(const vector<std::pair<string, string>>& tests, const
         if (checks >= 0) extra += " checks " + std::to_string(checks);
         if (bad >= 0) extra += " failed " + std::to_string(bad);
         if (code[i] == 0) { printf("PASS %s%s\n", tests[i].first.c_str(), extra.c_str()); rep << "PASS\t" << tests[i].first << "\t0\t" << checks << "\t" << bad << "\n"; }
-        else { printf("FAIL %s exit %d%s\n", tests[i].first.c_str(), code[i], extra.c_str()); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\t" << checks << "\t" << bad << "\n"; ++failed; }
+        else { printf("FAIL %s exit %d%s\n", tests[i].first.c_str(), code[i], extra.c_str()); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\t" << checks << "\t" << bad << "\n"; ++failed;
+            if (code[i] == 124) printf("  timed out after %lld s\n", gTestTimeoutSec);
+            if (i < (int)outs.size() && !outs[i].empty()) { // the last 40 lines of what the test printed
+                vector<string> ls; size_t pos = 0;
+                while (pos < outs[i].size()) { size_t e = outs[i].find('\n', pos); if (e == string::npos) e = outs[i].size(); ls.push_back(outs[i].substr(pos, e - pos)); pos = e + 1; }
+                for (size_t k = ls.size() > 40 ? ls.size() - 40 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
+            }
+        }
     }
     printf("%zu tests, %d failed\n", tests.size(), failed);
     return failed ? 1 : 0;
@@ -2095,18 +2109,19 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
 #ifdef _WIN32
     if (jobs > 64) jobs = 64;
     vector<int> left; for (int i = (int)tests.size() - 1; i >= 0; --i) left.push_back(i);
-    struct Slot { Live proc; int index; };
+    struct Slot { Live proc; int index; long long start; };
     vector<Slot> live;
     while (!left.empty() || !live.empty()) {
         while ((int)live.size() < jobs && !left.empty()) {
             int index = left.back(); left.pop_back();
             string err; Live L;
             if (!spawnLive(winJoin({tests[index].second}), "", false, L, err)) { code[index] = 127; continue; }
-            live.push_back(Slot{L, index});
+            live.push_back(Slot{L, index, nowNs()});
         }
         if (live.empty()) break;
         HANDLE hs[64]; int n = (int)live.size();
         for (int i = 0; i < n; ++i) { drainLive(live[i].proc); hs[i] = live[i].proc.proc; }
+        if (gTestTimeoutSec > 0) for (int i = 0; i < n; ++i) if (nowNs() - live[i].start > gTestTimeoutSec * 1000000000ll) { TerminateProcess(live[i].proc.proc, 124); }
         DWORD w = WaitForMultipleObjects((DWORD)n, hs, FALSE, 20);
         for (int i = 0; i < n; ++i) drainLive(live[i].proc);
         if (w < WAIT_OBJECT_0 || w >= WAIT_OBJECT_0 + (DWORD)n) continue;
@@ -2124,7 +2139,7 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
     for (int t = 0; t < jobs; ++t) th.emplace_back([&] {
         for (;;) {
             int i = next++; if (i >= (int)tests.size()) return;
-            string out; code[i] = runCmd({tests[i].second}, out, false); outs[i] = out;
+            string out; code[i] = runCmd({tests[i].second}, out, false, gTestTimeoutSec * 1000000000ll); outs[i] = out;
         }
     });
     for (auto& t : th) t.join();
@@ -2210,10 +2225,18 @@ static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
     }
     return 0;
 }
-static int cmdTest(Manifest& m, const Opts& o) {
+static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
     vector<string> names;
     for (auto& t : m.targets) if (t.isTest) names.push_back(t.name);
     if (names.empty()) for (auto& t : m.targets) if (!t.isLib && t.name.compare(0, 4, "test") == 0) names.push_back(t.name);
+    if (!only.empty()) { // okay-build test NAME...: run just those, any exe target will do
+        names.clear();
+        for (auto& n : only) {
+            bool ok = false; for (auto& t : m.targets) if (t.name == n && !t.isLib) ok = true;
+            if (!ok) throw Fail("no test program named '" + n + "'");
+            names.push_back(n);
+        }
+    }
     if (names.empty()) throw Fail("no tests; set 'test = on' on an exe, or start its name with 'test'");
     int rc = build(m, names, o);
     if (rc != 0) return rc;
@@ -2790,6 +2813,7 @@ int main(int argc, char** argv) {
                 gCacheMax = n;
             }
             else if (a == "--jobserver") gWantJobserver = true;
+            else if (a == "--timeout" && i + 1 < argc) { gTestTimeoutSec = atoll(argv[++i]); if (gTestTimeoutSec < 1) throw Fail("--timeout wants a number of seconds"); }
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
@@ -2806,7 +2830,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--timeout SECONDS] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -2841,7 +2865,7 @@ int main(int argc, char** argv) {
         }
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);
-        if (cmd == "test") return cmdTest(m, o);
+        if (cmd == "test") return cmdTest(m, o, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

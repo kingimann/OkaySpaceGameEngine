@@ -1137,11 +1137,38 @@ static void testReportCacheAndJson() {
     check(rc == 0 && o.find("{\"steps\": 1") != string::npos && o.find("\"hits\": 1") != string::npos && o.find("\"kind\": \"CC\"") != string::npos && o.find("\"cache\": \"hit\"") != string::npos, "report json carries steps, hits and per-step cache state", o);
 }
 
+static void testTestFilterTimeoutOutput() {
+    printf("test: okay-build test can pick programs, shows a failing test's output, and enforces --timeout\n");
+    fresh("tfilter");
+    write("ok.cpp", "int main(){return 0;}\n");
+    write("bad.cpp", "#include <cstdio>\nint main(){puts(\"expected 4 got 5\"); return 3;}\n");
+    write("hang.cpp", "#include <unistd.h>\nint main(){sleep(30); return 0;}\n");
+    write("app.cpp", "int main(){return 0;}\n");
+    write("build.okay",
+          "target test_ok exe\n sources = ok.cpp\n test = on\nend\n"
+          "target test_bad exe\n sources = bad.cpp\n test = on\nend\n"
+          "target test_hang exe\n sources = hang.cpp\n test = on\nend\n"
+          "target app exe\n sources = app.cpp\nend\n");
+    int rc; string o = sh("test test_ok -j2", &rc);
+    check(rc == 0 && o.find("PASS test_ok") != string::npos && o.find("1 tests, 0 failed") != string::npos && o.find("test_bad") == string::npos, "only the named test runs", o);
+    o = sh("test app -j2", &rc);
+    check(rc == 0 && o.find("PASS app") != string::npos, "any exe can be named", o);
+    o = sh("test nosuch", &rc);
+    check(rc == 2 && o.find("no test program named 'nosuch'") != string::npos, "an unknown name is an error", o);
+    o = sh("test test_bad", &rc);
+    check(rc == 1 && o.find("FAIL test_bad exit 3") != string::npos && o.find("| expected 4 got 5") != string::npos, "a failing test shows what it printed", o);
+    auto t0 = std::chrono::steady_clock::now();
+    o = sh("test test_hang --timeout 1", &rc);
+    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    check(rc == 1 && o.find("FAIL test_hang exit 124") != string::npos && o.find("timed out after 1 s") != string::npos, "a hanging test is killed and reported", o);
+    check(secs < 15, "the timeout stopped it long before sleep(30) ended", std::to_string(secs));
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

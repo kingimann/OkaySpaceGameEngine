@@ -53,6 +53,9 @@ A hit copies the stored object and its depfile back and does not compile. A miss
 ## Diagnostics
 Each step that runs records its kind, its description, how long it took, and whether the compiler cache hit, missed, or was not involved. The build writes that to `.okaybuild/report`. `okay-build report` prints the step count, the cache hit rate, the slowest steps (up to ten), and the summed time. `--profile` still prints the older plan/dirty/command/wall line. The report is the per-step view.
 
+## Testing
+`okay-build test` builds every exe marked `test = on` (a library cannot be a test) and then runs those programs. If none are marked, it runs exe targets whose names start with `test`. Anything else is left alone. The runs use `-j`, the same limit as the build. On Windows the wait is `WaitForMultipleObjects`, so the tool still does not use `<thread>`. The command prints `PASS` or `FAIL name exit N`, then `N tests, M failed`, and writes the same facts to `.okaybuild/test-report`. Exit status is 1 when a test fails.
+
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
 - Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`

@@ -429,6 +429,32 @@ static void testConfigsAndToolchains() {
     }
 }
 
+static void testOwnTests() {
+    printf("test: okay-build test discovers executables and runs them in parallel\n");
+    fresh("trun");
+    write("ok.cpp", "int main(){return 0;}\n");
+    write("bad.cpp", "int main(){return 3;}\n");
+    write("app.cpp", "int main(){return 0;}\n");
+    write("s1.cpp", "#include <time.h>\nint main(){struct timespec t{0,300000000}; nanosleep(&t,0); return 0;}\n");
+    write("s2.cpp", "#include <time.h>\nint main(){struct timespec t{0,300000000}; nanosleep(&t,0); return 0;}\n");
+    write("build.okay",
+          "target test_ok exe\n sources = ok.cpp\n test = on\nend\n"
+          "target test_bad exe\n sources = bad.cpp\n test = on\nend\n"
+          "target test_s1 exe\n sources = s1.cpp\n test = on\nend\n"
+          "target test_s2 exe\n sources = s2.cpp\n test = on\nend\n"
+          "target app exe\n sources = app.cpp\nend\n");
+    int rc; string o = sh("test -j2", &rc);
+    check(rc == 1, "a failing test makes the command exit 1", o);
+    check(o.find("PASS") != string::npos && o.find("test_ok") != string::npos, "a passing test is named", o);
+    check(o.find("FAIL") != string::npos && o.find("test_bad") != string::npos && o.find("exit 3") != string::npos, "a failing test reports exit 3", o);
+    check(o.find("4 tests, 1 failed") != string::npos, "the summary counts four tests and one failure", o);
+    check(o.find("CC app.cpp") == string::npos && o.find("PASS app") == string::npos, "the ordinary exe is not a test", o);
+    auto t0 = std::chrono::steady_clock::now();
+    o = sh("test -j2", &rc);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    check(rc == 1 && ms < 550, "the two 300 ms tests overlap", o + "\nms=" + std::to_string(ms));
+}
+
 static void testReport() {
     printf("test: okay-build report times steps, cache rate, and slowest steps\n");
     fresh("rep");
@@ -594,6 +620,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

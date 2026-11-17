@@ -83,7 +83,7 @@ struct RawAction {
     string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int line = 0;
 };
 struct Target {
-    string name; bool isLib = false; int line = 0; string pool;
+    string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs;
 };
 struct ConfigBlock {
@@ -271,6 +271,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "libs") add(x.libs); else if (k == "deps") add(x.deps);
             else if (k == "needs") add(x.needs);
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
+            else if (k == "test") x.isTest = oneFlag(v, "test");
             else throw err("unknown target key '" + k + "'");
         }
     }
@@ -280,6 +281,7 @@ static Manifest parseManifest(const string& file) {
         if (a.restat && a.output.empty() && a.outputs.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": restat action has no output");
     }
     if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
+    for (auto& t : m.targets) if (t.isTest && t.isLib) throw Fail(file + ":" + std::to_string(t.line) + ": test target '" + t.name + "' is a library");
     return m;
 }
 
@@ -1391,6 +1393,83 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
 #endif
 }
 
+static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code) {
+    vector<int> order(tests.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return tests[a].first < tests[b].first; });
+    int failed = 0;
+    fs::create_directories(under(".okaybuild"));
+    std::ofstream rep(under(".okaybuild/test-report"), std::ios::trunc);
+    rep << "okaybuild-test 1\n";
+    for (int i : order) {
+        if (code[i] == 0) { printf("PASS %s\n", tests[i].first.c_str()); rep << "PASS\t" << tests[i].first << "\t0\n"; }
+        else { printf("FAIL %s exit %d\n", tests[i].first.c_str(), code[i]); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\n"; ++failed; }
+    }
+    printf("%zu tests, %d failed\n", tests.size(), failed);
+    return failed ? 1 : 0;
+}
+static int executeTests(const vector<std::pair<string, string>>& tests, int jobs) {
+    if (tests.empty()) return 0;
+    if (jobs < 1) jobs = 1;
+    vector<int> code(tests.size(), 1);
+#ifdef _WIN32
+    if (jobs > 64) jobs = 64;
+    vector<int> left; for (int i = (int)tests.size() - 1; i >= 0; --i) left.push_back(i);
+    struct Slot { Live proc; int index; };
+    vector<Slot> live;
+    while (!left.empty() || !live.empty()) {
+        while ((int)live.size() < jobs && !left.empty()) {
+            int index = left.back(); left.pop_back();
+            string err; Live L;
+            if (!spawnLive(winJoin({tests[index].second}), "", false, L, err)) { code[index] = 127; continue; }
+            live.push_back(Slot{L, index});
+        }
+        if (live.empty()) break;
+        HANDLE hs[64]; int n = (int)live.size();
+        for (int i = 0; i < n; ++i) { drainLive(live[i].proc); hs[i] = live[i].proc.proc; }
+        DWORD w = WaitForMultipleObjects((DWORD)n, hs, FALSE, 20);
+        for (int i = 0; i < n; ++i) drainLive(live[i].proc);
+        if (w < WAIT_OBJECT_0 || w >= WAIT_OBJECT_0 + (DWORD)n) continue;
+        int idx = (int)(w - WAIT_OBJECT_0);
+        DWORD c = 1; GetExitCodeProcess(live[idx].proc.proc, &c);
+        CloseHandle(live[idx].proc.proc); if (live[idx].proc.pipe) CloseHandle(live[idx].proc.pipe);
+        code[live[idx].index] = (int)c;
+        live.erase(live.begin() + idx);
+    }
+#else
+    if (jobs > (int)tests.size()) jobs = (int)tests.size();
+    std::atomic<int> next{0};
+    vector<std::thread> th;
+    for (int t = 0; t < jobs; ++t) th.emplace_back([&] {
+        for (;;) {
+            int i = next++; if (i >= (int)tests.size()) return;
+            string out; code[i] = runCmd({tests[i].second}, out, false);
+        }
+    });
+    for (auto& t : th) t.join();
+#endif
+    return printTestReport(tests, code);
+}
+static int cmdTest(Manifest& m, const Opts& o) {
+    vector<string> names;
+    for (auto& t : m.targets) if (t.isTest) names.push_back(t.name);
+    if (names.empty()) for (auto& t : m.targets) if (!t.isLib && t.name.compare(0, 4, "test") == 0) names.push_back(t.name);
+    if (names.empty()) throw Fail("no tests; set 'test = on' on an exe, or start its name with 'test'");
+    int rc = build(m, names, o);
+    if (rc != 0) return rc;
+    vector<std::pair<string, string>> runs;
+    for (auto& n : names) runs.push_back({n, under(m.outdir + "/" + n + m.tc.exe)});
+    int jobs = o.jobs;
+    if (jobs <= 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info; GetSystemInfo(&info); jobs = (int)info.dwNumberOfProcessors;
+#else
+        jobs = (int)std::max(1u, std::thread::hardware_concurrency());
+#endif
+    }
+    return executeTests(runs, jobs);
+}
+
 static void listTargets(const Graph& g) {
     for (auto& tf : g.targetFinal) printf("%s\t%s\n", tf.first.c_str(), g.acts[tf.second].kind == "AR" ? "lib" : "exe");
     for (auto& a : g.acts) if (a.kind == "RUN") {
@@ -1773,9 +1852,9 @@ int main(int argc, char** argv) {
             }
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -1797,6 +1876,7 @@ int main(int argc, char** argv) {
         if (!configFileSet) configFile = "config.okay";
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "report") return showReport();
+        if (cmd == "test") return cmdTest(m, o);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

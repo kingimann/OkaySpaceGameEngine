@@ -414,6 +414,8 @@ struct Parsed {
     std::vector<Mod> mods;
 };
 
+std::map<std::string, std::unique_ptr<Type>>& canonStructs();
+
 class Parser {
 public:
     Parser(std::vector<Token> toks, Diagnostics& diags) : toks_(std::move(toks)), diags_(diags) {}
@@ -715,6 +717,7 @@ private:
                 diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column, "redefined struct '" + tag + "'");
             } else {
                 structs_[tag] = cloneType(*t);
+                canonStructs()[tag] = cloneType(*t);
             }
         }
         return t;
@@ -1481,6 +1484,18 @@ int fpWidthOf(const Type* t) {
     if (t->kind == Type::Kind::Double) return 8;
     return 0;
 }
+
+std::map<std::string, std::unique_ptr<Type>>& canonStructs() {
+    static std::map<std::string, std::unique_ptr<Type>> m;
+    return m;
+}
+
+const Type* canonOf(const Type* st) {
+    if (!st || st->tag.empty()) return st;
+    auto it = canonStructs().find(st->tag);
+    if (it == canonStructs().end() || !it->second || it->second->params.empty()) return st;
+    return it->second.get();
+}
 bool isPtr(const Type& t) { return t.kind == Type::Kind::Pointer; }
 bool isVoidPtr(const Type& t) {
     return isPtr(t) && t.inner && t.inner->kind == Type::Kind::Void;
@@ -1848,6 +1863,7 @@ private:
                 err(e.line, e.col, "operand of '.' is not a struct");
                 return bad(e.line, e.col);
             }
+            st = canonOf(st);
             const std::string& fname = e.kids[1]->text;
             for (const Param& f : st->params) {
                 if (f.name != fname || !f.type) continue;
@@ -2363,7 +2379,7 @@ private:
             out.push_back(std::move(f));
             off += f.width;
         }
-        if (!t->tag.empty()) structLayouts()[t->tag] = out;
+        if (!t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
         return out;
     }
 

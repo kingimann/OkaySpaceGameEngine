@@ -121,8 +121,8 @@ int main(int argc, char** argv) {
     okaycc::Diagnostics diags;
     std::string name = path.empty() ? "<stdin>" : path;
     if (elf || obj) {
-        std::vector<unsigned char> bin = obj ? okaycc::compileToObject(src, diags, name)
-                                             : okaycc::compileToElf(src, diags, name);
+        std::vector<unsigned char> bin = obj ? okaycc::compileToObject(src, diags, name, includes)
+                                             : okaycc::compileToElf(src, diags, name, includes);
         if (diags.ok()) {
             std::ofstream out(elfOut, std::ios::binary);
             if (!out) {

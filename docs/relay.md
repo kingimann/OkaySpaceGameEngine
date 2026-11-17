@@ -129,6 +129,13 @@ The relay is on the internet, so it doesn't trust its peers:
   that as a burst. A host's caps are multiplied by its client count. Each peer
   also receives at most 4 MiB per second from its whole session, so a host's
   clients can't add up to a flood.
+- **Totals are capped too (SEC1):** all the peers of one IP address together may
+  forward 8 MiB per second, and all the peers of one session together 16 MiB per
+  second (two seconds' worth as a burst; loopback is exempt from the address
+  cap). A flood of forged hellos can fill the per-address hello table; it is then
+  pruned (a row whose allowance is full again is simply forgotten) and addresses
+  without a row share one allowance of 2000 hellos a second, so new players can
+  still join. See [security.md](security.md#1-relay-isolation).
 - **Versions.** Hellos and welcomes carry the relay protocol version (4 now).
   The relay refuses a version older than it supports with
   `RelayRefused{version}`. Version 4 only adds the nonce: a version-3 game

@@ -3,8 +3,10 @@
 The **Modeling** window is OkaySpace's built-in mesh editor — enough of
 Blender to block out levels and props without leaving the engine. Everything
 operates on the selected object's Mesh Renderer, every destructive op is
-undoable (Ctrl+Z), and edited geometry is saved with the scene (including
-its texture coordinates).
+undoable (Ctrl+Z; each button is exactly one step, and in Edit Mesh it is a
+mesh-edit step), and edited geometry is saved with the scene (including
+its texture coordinates). A typed value that is not a number (`nan`, `inf`)
+is ignored by the operation instead of wiping the mesh.
 
 ## Add library
 
@@ -47,9 +49,10 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   **Subdiv + Smooth** (rounds without shrinking), **Smooth** (subdivide +
   spherify), **Relax** (Laplacian smoothing — evens out lumpy sculpts and
   imports without adding triangles; drag the slider for strength).
-- **Loop Cut X/Y/Z** inserts N evenly-spaced edge loops across the mesh on
-  an axis (Blender's Ctrl+R) — add editable divisions to a wall/box/cylinder
-  before pushing or pulling them.
+- **Slice X/Y/Z** cuts the whole mesh with N evenly spaced planes across an
+  axis — add editable divisions to a wall/box/cylinder before pushing or
+  pulling them. (It used to be called "Loop Cut X/Y/Z"; the real loop cut,
+  through a ring of quads, is **Ctrl+R** / **Loop Cut** in Edit Mesh.)
 - **Fill Holes** caps every open boundary (e.g. after Delete Faces) so the
   mesh is watertight again. **Bridge** connects exactly two open boundaries
   with a wall — delete two facing faces on a Combined mesh and bridge them
@@ -57,7 +60,9 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   hand-made / rocky look. **Shear X/Z** slants the mesh with height
   (leaning towers, italic props).
 - **Symmetrize X/Y/Z** makes the mesh perfectly symmetric: the positive
-  half (about the pivot) is kept and mirrored over the other side.
+  half (about the pivot) is kept and mirrored over the other side
+  (`Mesh::Symmetrize`, which uses the same `Mesh::Mirror` as **Mirror X/Y/Z**
+  and the Mirror modifier).
   **Snap Grid** quantizes every vertex to a step — crisp low-poly look,
   modular kit alignment.
 - **Shade Smooth / Flat** switches between blended lighting (organic
@@ -68,10 +73,19 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   a cylinder gets a smooth barrel with hard cap rims in one click. The
   angle is saved with the scene and restored on load.
 - **Weld** duplicates, **Recenter** the pivot, **Ground** the pivot to the
-  base, **Fit 1u** to scale into a unit cube. **Export OBJ** writes the mesh
-  (with UVs) to `Assets/<name>.obj`.
+  base, **Fit 1u** to scale into a unit cube. These (and Subdivide,
+  Subdiv + Smooth, Smooth) are the same buttons, through the same code, as
+  in the Mesh Renderer inspector. On a primitive or ready-made prop (Cube,
+  Tree, Barrel ...) the result is saved with the scene like any other edit.
+- **Export OBJ** writes the mesh to `Assets/<name>.obj`, never on top of an
+  existing file (the next free name is `<name>_2.obj`, ...). It keeps UVs,
+  normals (smooth or flat shading), quads and n-gons, vertex colours (as
+  `v x y z r g b`) and face colours (one material per colour in
+  `<name>.mtl`), with full float precision. Importing the file back gives
+  the same mesh.
 - Symmetry / deform: **Mirror X/Y/Z**, **Spherify**, **Twist Y**,
-  **Solidify** (give a surface thickness), **Taper Y**, **Bend X**.
+  **Solidify** (give a surface thickness; an open sheet gets side walls along
+  every open border, so a Plane becomes a closed slab), **Taper Y**, **Bend X**.
   **Mirror** never makes overlapping geometry:
   - **A mesh crossing the mirror plane** is cut there first, keeping the + side, so a centred cube stays one closed cube.
   - **A closed half model** loses the faces lying on the plane before the copy is added, so no faces are left back to back inside the model.
@@ -124,7 +138,7 @@ is rebuilt. Nothing is lost until you press **Apply**.
 | **Mirror** | Reflects across the object's own X/Y/Z planes. A mesh crossing a plane is cut there first (the + side is kept), so the halves never overlap. | axes, Merge (weld the seam) |
 | **Array** | Copies side by side. | count, offset, Relative (offset times the mesh size; 1.1 = 10% gap) |
 | **Subdivision Surface** | Catmull-Clark on the real polygons: quads stay quads, n-gons become n quads, open borders keep their outline. | levels (0–4), Smooth shading |
-| **Solidify** | Gives a surface a thickness. | thickness |
+| **Solidify** | Gives a surface a thickness, with side walls along every open border (a closed result). A negative thickness grows outward. | thickness |
 | **Bevel** | Rounds every edge whose faces meet sharper than the angle. | width, segments, angle |
 | **Boolean** | Union / Subtract / Intersect with another mesh object (by name), using its *modified* mesh. Moving or editing the cutter updates the result. **Show cutter** hides or shows the cutter object. | object, operation, voxel size |
 | **Decimate** | Merges vertices within cells of the given size. | cell size |
@@ -198,7 +212,8 @@ With something selected, press **G** (move), **R** (rotate) or **S** (scale) wit
 ### Undo in edit mode
 
 While you're in edit mode, **Ctrl+Z** / **Ctrl+Y** (and Edit > Undo / Redo) step through your mesh edits one operation at a time.
-A move, an extrude or a sculpt or paint stroke is each one step.
+A move, an extrude or a sculpt or paint stroke is each one step, and so is every Modeling window or Mesh Renderer inspector button
+(Twist, Shear, Solidify, Mirror, Recenter, Ground, Fit 1u, UV Box ...): one Ctrl+Z takes back that button only.
 When you leave edit mode, the whole session becomes a single scene undo step. Undoing that step later puts the mesh back the way it was before you entered.
 
 ### Polygon stats

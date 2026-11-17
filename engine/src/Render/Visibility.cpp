@@ -16,6 +16,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace okay {
 namespace visibility {
@@ -105,36 +106,33 @@ const Mesh* ChooseLod(GameObject* go, MeshRenderer* mr, const Vec3& eye, float f
         r = 0.5f;
     }
     const float dist = (c - eye).Magnitude();
-    optimize::LodGroup g;
-    g.size = std::max(r * 2.0f, 0.01f);
-    g.hysteresis = group->hysteresis;
-    g.fadeMode = optimize::LodFadeMode::None;
     const int n = std::min((int)group->levels.size(), LODGroup::kMaxLevels);
-    g.levels.resize((std::size_t)n);
-    optimize::LodView view{(float)std::max(viewH, 1), fovY > 1.0f ? fovY : 60.0f};
+    optimize::LodSelection sel;
     if (group->useScreenSize) {
+        optimize::LodGroup g;
+        g.size = std::max(r * 2.0f, 0.01f);
+        g.hysteresis = group->hysteresis;
+        g.fadeMode = optimize::LodFadeMode::None;
+        g.levels.resize((std::size_t)n);
+        optimize::LodView view{(float)std::max(viewH, 1), fovY > 1.0f ? fovY : 60.0f};
         for (int i = 0; i < n; ++i)
             g.levels[(std::size_t)i].screenHeight = i + 1 < n ? group->levels[(std::size_t)i].screenSize : 0.0f;
         g.cullScreenHeight = std::max(0.0f, group->cullScreen);
+        // Thresholds must fall, or SelectLod rejects the group.
+        for (int i = 1; i + 1 < n; ++i)
+            if (!(g.levels[(std::size_t)i].screenHeight < g.levels[(std::size_t)i - 1].screenHeight))
+                g.levels[(std::size_t)i].screenHeight = g.levels[(std::size_t)i - 1].screenHeight * 0.5f;
+        if (n >= 2 && g.cullScreenHeight >= g.levels[(std::size_t)(n - 2)].screenHeight)
+            g.cullScreenHeight = g.levels[(std::size_t)(n - 2)].screenHeight * 0.5f;
+        if (!g.Valid()) return &src;
+        sel = optimize::SelectLod(g, dist, view, 1.0f, group->lodState);
     } else {
-        for (int i = 0; i < n; ++i) {
-            const float d = std::max(group->levels[(std::size_t)i].distance, 0.05f);
-            g.levels[(std::size_t)i].screenHeight = i + 1 < n
-                ? std::clamp(optimize::LodScreenHeightFor(g.size, d, view.fovYDeg), 0.001f, 0.999f)
-                : 0.0f;
-        }
-        g.cullScreenHeight = group->cullDistance > 0.05f
-            ? std::clamp(optimize::LodScreenHeightFor(g.size, group->cullDistance, view.fovYDeg), 0.0f, 0.5f)
-            : 0.0f;
+        // Distance mode compares the camera distance with the typed distances directly, whatever the
+        // object's size (issue #888, finding 77: a screen-height conversion clamped short distances away).
+        std::vector<float> d((std::size_t)n);
+        for (int i = 0; i < n; ++i) d[(std::size_t)i] = group->levels[(std::size_t)i].distance;
+        sel = optimize::SelectLodByDistance(d, group->cullDistance, group->hysteresis, dist, group->lodState);
     }
-    // Thresholds must fall, or SelectLod rejects the group.
-    for (int i = 1; i + 1 < n; ++i)
-        if (!(g.levels[(std::size_t)i].screenHeight < g.levels[(std::size_t)i - 1].screenHeight))
-            g.levels[(std::size_t)i].screenHeight = g.levels[(std::size_t)i - 1].screenHeight * 0.5f;
-    if (n >= 2 && g.cullScreenHeight >= g.levels[(std::size_t)(n - 2)].screenHeight)
-        g.cullScreenHeight = g.levels[(std::size_t)(n - 2)].screenHeight * 0.5f;
-    if (!g.Valid()) return &src;
-    const optimize::LodSelection sel = optimize::SelectLod(g, dist, view, 1.0f, group->lodState);
     group->lodState = sel.state;
     if (sel.culled) { culled = true; group->activeLevel = -1; return nullptr; }
     lodOut = sel.level;

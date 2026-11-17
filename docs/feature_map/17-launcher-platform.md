@@ -216,23 +216,23 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "unlock a Steam achievement when the boss dies", "log in with PlayFab at game start"
 
 ### 17.11 Security plan SEC1
-- **What:** A four-item security plan from the old map: relay isolation, script file-path safety, updater signing and a reactions privacy fix. Three are done on main; updater signing is not found in the code. The cross-cutting security page is area 39.
+- **What:** A four-item security plan: relay isolation, script file-path safety, updater signing and a reactions privacy fix. All four are in the repository; the SQL is a file for the owner to run, and the update signature check stays OFF until the owner adds a key. Details and owner steps: `docs/security.md`. The cross-cutting security page is area 39.
 - **Parts:**
-  - 17.11.1 Relay session isolation - `Net/RelayServer` - done in #254 and hardened since (see 39.8)
-  - 17.11.2 Script file paths - `Core/SaveData` - `Save::IsSafeRelative` refuses absolute paths and `..` for save, prefs, data, build and scene calls; test `script_paths`
-  - 17.11.3 Reactions privacy - `docs/sql/social.sql` - `can_see_reaction_target` limits who can read or add a reaction (read in the SQL)
-  - 17.11.4 Updater signing - `launcher/main.cpp` (L136-326) - not implemented: the updater requires and checks SHA-256 from `versions.json` but that index is unsigned (trusts HTTPS plus the bucket)
-- **Code:** `Core/SaveData`, `docs/sql/social.sql`, `Net/RelayServer`
-- **API:** `Save::IsSafeRelative`, `ShellSafeUrl`
-- **Editor:** none
-- **Docs:** `docs/relay.md`, `docs/anticheat.md`
-- **Tests:** `script_paths`, `relay_security`
-- **Status:** Partial - items 1 to 3 are in main (commit "Security: relay session isolation, script file paths, reactions privacy", #254); item 4 not found
-- **Open:** sign the launcher, editor and player downloads (ed25519 as the anti-cheat manifest does) and verify before swapping; the SEC1 plan text is not in the repo, so item wording is from the old map
+  - 17.11.1 Relay session isolation - `Net/RelayServer` - isolation from #254, plus (SEC1) a per-address and a per-session forwarding cap and a hello table that a forged-source flood can no longer lock (see 39.8)
+  - 17.11.2 Script file paths - `Core/PathSafety`, `Core/ScriptPaths`, `Core/SaveData` - one validator (`okay::pathsafety::Check`: relative only, no `..`, drive, stream, device name, trailing dot or space, control character, over-long) plus a symlink-escape check; used by `Save::IsSafeRelative`, `ScriptPathOk` (OkayScript, action lists, visual-script nodes incl. Save/Load Creation and spawn nodes); tests `path_safety`, `script_paths`; example `examples/security_paths`
+  - 17.11.3 Reactions privacy - `docs/sql/social.sql`, `docs/sql/reactions_privacy.sql` - row-level security from social.sql; the migration adds block rules, a length limit, no UPDATE, cleanup on message delete, a counts RPC with no user ids and no anon access to the visibility check; tests `reactions_sql` (local Postgres) and `reactions_sql_static`. The owner runs the file in the Supabase SQL editor (not applied)
+  - 17.11.4 Updater signing - `shared/UpdateSignature`, `shared/UpdateGuard`, `launcher/VersionsManager`, `scripts/sign-release.sh`, `scripts/sign_index.py` - `versions.json` is signed with ed25519 and every file's SHA-256 is inside it; a replayed older signed list is refused (`okay_update_floor.txt`); the start-up line and Settings > About say `update signature check: ON/OFF (no key configured)`; the release workflow signs when the secret `OKAY_UPDATE_SIGNING_SEED` exists (skipped otherwise); tests `update_security`, `update_signature`, `sign_release_script`
+- **Code:** `Core/PathSafety`, `Core/ScriptPaths`, `Core/SaveData`, `docs/sql/reactions_privacy.sql`, `Net/RelayServer`, `shared/UpdateGuard`
+- **API:** `okay::pathsafety::Check`, `okay::pathsafety::StaysInside`, `ScriptPathOk`, `Save::IsSafeRelative`, `okayupdate::SignatureStatus`, `okayupdate::ReplayProblem`
+- **Editor:** Help > About (update signature line), launcher Settings > About
+- **Docs:** `docs/security.md`, `docs/updater.md`, `docs/relay.md`, `docs/anticheat.md`
+- **Tests:** `path_safety`, `script_paths`, `relay_security`, `update_security`, `update_signature`, `sign_release_script`, `reactions_sql`, `reactions_sql_static`
+- **Status:** Partial - built and tested on Linux; nothing ran on Windows or against the real Supabase; the update signature check is OFF until the owner sets `OKAY_UPDATE_SIGNING_SEED` and `OKAY_UPDATE_TRUSTED_KEYS`, and the reactions SQL is not applied
+- **Open:** owner steps (key pair, two GitHub entries, run the SQL); a signed timestamp against a "freeze"; per-packet authentication on relay data frames; move the app to `reaction_counts` and then limit the raw reactions SELECT
 - **Related:** 39.8, 39.9, 39.11, 17.1
-- **Words:** SEC1, security plan, updater signing, relay isolation, script paths, reactions privacy
-- **Seen as:** a script reads files outside the game folder (should be refused); update downloaded from a tampered server would be accepted
-- **Ask me like:** "sign the launcher updates", "what is left of the security plan?"
+- **Words:** SEC1, security plan, updater signing, relay isolation, script paths, reactions privacy, update signature check, replay, rollback
+- **Seen as:** a script reads or writes files outside the game folder (should be refused with a Console line); update downloaded from a tampered server is refused; "update signature check: OFF" in About
+- **Ask me like:** "turn on update signing", "what is left of the security plan?"
 
 ### 17.12 Create page: projects, templates and Git
 - **What:** The launcher's Create page: list the projects on disk, make a new one from a template, open it in the editor, delete or remove one safely, and put a project on GitHub.

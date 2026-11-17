@@ -45,6 +45,59 @@ int main() {
     CHECK(!Save::IsSafeRelative("C:x"));
     CHECK(!Save::IsSafeRelative(std::string("ok\0../x", 7)));
 
+    // ---- SEC1: Windows-only dangers are refused on every system (the game may run on Windows) ----
+    for (const char* bad : {"NUL", "con.txt", "dir/aux", "COM1", "x.", "x ", "a:b", "file.txt:hidden", "C:/x", "a|b", "what?"})
+        CHECK(!Save::IsSafeRelative(bad));
+    CHECK(!Save::IsSafeRelative(std::string(300, 'a')));
+    CHECK(!Run(R"(var r = save("k", 1, "NUL");)", "r").AsBool());
+    CHECK(!Run(R"(var r = save("k", 1, "slot.okaysave:stream");)", "r").AsBool());
+    CHECK(!Run(R"(var r = data_save("aux.okaydata");)", "r").AsBool());
+    CHECK(!Run(R"(var r = prefs_save("com1");)", "r").AsBool());
+    CHECK(!Run(R"(var r = build_save("nul");)", "r").AsBool());
+    CHECK(!Run(R"(var r = build_load("C:evil");)", "r").AsBool());
+    CHECK(!Run(R"(var r = spawn("/etc/passwd", 0, 0);)", "r").AsBool());
+    CHECK(!Run(R"(var r = spawn3("../../x.okayprefab", 0, 0, 0);)", "r").AsBool());
+    // A visual-script Save Creation node takes its own name: it must not write outside the game folder.
+    {
+        Scene scene("VSP"); scene.physicsEnabled = false;
+        GameObject* go = scene.CreateGameObject("G");
+        auto* vsc = go->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(vsc->LoadFromText("node 0 OnStart\nnode 1 SaveCreation ../../vs_evil\nnode 2 SaveCreation nul\nexec 0 0 1\nexec 1 0 2\nentry OnStart 0\n", &err));
+        scene.Start();
+        for (int i = 0; i < 3; ++i) scene.Update(0.016f);
+        CHECK(!fs::exists(root / "vs_evil.okaycreation"));
+    }
+    // A link inside the game folder that points out of it is refused for reads and writes.
+    {
+        std::error_code lec;
+        fs::create_directories(root / "outside_dir");
+        fs::create_directory_symlink(root / "outside_dir", root / "game" / "linkdir", lec);
+        if (!lec) {
+            CHECK(!Run(R"(var r = save("k", 1, "linkdir/x.okaysave");)", "r").AsBool());
+            CHECK(!fs::exists(root / "outside_dir" / "x.okaysave"));
+            CHECK(!Run(R"(var r = prefs_save("linkdir/p.okayprefs");)", "r").AsBool());
+            CHECK(!fs::exists(root / "outside_dir" / "p.okayprefs"));
+            fs::remove(root / "game" / "linkdir", lec);
+        }
+    }
+
+    // ---- reading a prefab by absolute path: inside the game, save or temp folder only ----
+    {
+        const std::string inTemp = (root / "game" / "p.okayprefab").generic_string();
+        CHECK(ScriptAssetPathOk(inTemp, "t"));
+        CHECK(ScriptAssetPathOk("p.okayprefab", "t"));
+        CHECK(!ScriptAssetPathOk("/etc/passwd", "t"));
+        CHECK(!ScriptAssetPathOk("/proc/self/environ", "t"));
+        CHECK(!ScriptAssetPathOk((root / "game" / ".." / ".." / "etc" / "passwd").generic_string(), "t"));
+        CHECK(!ScriptAssetPathOk("//server/share/p.okayprefab", "t"));
+        CHECK(!ScriptAssetPathOk("\\\\?\\C:\\x", "t"));
+        CHECK(!ScriptAssetPathOk(inTemp + ":stream", "t"));
+        CHECK(!ScriptAssetPathOk((root / "game" / "NUL").generic_string(), "t"));
+        CHECK(!ScriptAssetPathOk("C:/Windows/x.okayprefab", "t"));       // a drive path means nothing on this system
+        CHECK(!ScriptAssetPathOk("../x.okayprefab", "t"));
+    }
+
     // ---- prefs_save / prefs_load ----
     CHECK(!Run(R"(var r = prefs_save("../x");)", "r").AsBool());
     CHECK(!fs::exists(root / "x"));

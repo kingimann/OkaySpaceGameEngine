@@ -19477,7 +19477,7 @@ int main(int argc, char** argv) {
         navSection("MENU");
         tabRow(0);
         tabRow(1, LibraryGameCount(scenes), navSoft);     // built + web games (not editor projects)
-        if (navRow("##navmp", "Multiplayer", kIcoGlobe, tab == 14 && !g_pfOpen, g_party.Valid() ? (int)g_party.members.size() : 0, navSoft)) { tab = 14; ClosePublicProfile(); }
+        // The Multiplayer and Tips sidebar entries were removed on the owner's request (2026-11-17); their pages (tab 14 and 13) stay in the code.
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
@@ -19496,7 +19496,6 @@ int main(int argc, char** argv) {
         SyncNewsHistory();
         const bool newsUnseen = !g_newsHistory.empty() && g_newsHistory[0].ver != g_newsSeen;
         if (navRow("##navnews", "What's New", kIcoSpark, tab == 12 && !g_pfOpen, newsUnseen ? -1 : 0, navAccent)) { tab = 12; ClosePublicProfile(); }
-        if (navRow("##navtips", "Tips", kIcoBulb, tab == 13 && !g_pfOpen, 0, 0)) { tab = 13; ClosePublicProfile(); }
         if (navSignedIn && g_myRank >= 1) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }

@@ -1436,6 +1436,7 @@ struct Gen {
     bool sret_dest_set = false;
     int sret_dest_off = 0;
     bool save_nv = false;
+    bool optimize = false;
     std::vector<std::vector<size_t>> break_stack;
     Type last_type{};
 
@@ -2292,6 +2293,11 @@ bool Gen::gen_stmt(const Node& node) {
     }
     if (node.kind == Node::ExprStmt) return gen_expr(node.kids[0]);
     if (node.kind == Node::If) {
+        if (optimize && node.kids[0].kind == Node::IntLit) {
+            if (node.kids[0].number != 0) return gen_stmt(node.kids[1]);
+            if (node.kids.size() == 3) return gen_stmt(node.kids[2]);
+            return true;
+        }
         if (!gen_expr(node.kids[0])) return false;
         b(0x85);
         b(0xC0);
@@ -2430,12 +2436,13 @@ struct Sym {
 };
 
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
-                    const std::vector<Global>& globals, const std::vector<FuncType>& func_types, std::string* error,
-                    CompileOutput* out) {
+                    const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
+                    std::string* error, CompileOutput* out) {
     Gen gen(funcs);
     gen.structs = &structs;
     gen.globals = &globals;
     gen.func_types = &func_types;
+    gen.optimize = optimize;
     struct PlacedFn {
         std::string name;
         uint32_t start = 0;
@@ -2746,7 +2753,8 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     CompileOutput output;
     std::string error;
-    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, &error, &output))
+    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, &error,
+                        &output))
         return Result<CompileOutput>::fail(error);
     return Result<CompileOutput>::success(std::move(output));
 }

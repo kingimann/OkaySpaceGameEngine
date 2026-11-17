@@ -135,6 +135,11 @@ int main(int argc, char** argv) {
                 compile_only = true;
                 continue;
             }
+            if (low == "o1") {
+                common.optimize = true;
+                continue;
+            }
+            if (low == "o2") continue;
             if (low == "ld") {
                 make_dll = true;
                 link.dll = true;

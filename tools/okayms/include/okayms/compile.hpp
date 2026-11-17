@@ -18,6 +18,8 @@ struct CompileInput {
     std::vector<std::string> include_paths;
     // Each entry is "NAME" or "NAME=value". NAME alone means 1.
     std::vector<std::string> defines;
+    // /O1. Drops an if whose condition is a constant. /O2 does not set this.
+    bool optimize = false;
 };
 
 struct CompileOutput {

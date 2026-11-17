@@ -670,6 +670,22 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testBinaryState() {
+    printf("test: compact binary state, with the old text format still accepted\n");
+    fresh("bstate");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "build before reading state", o);
+    string st = readFile(gRoot / ".okaybuild/state");
+    check(st.size() >= 4 && st.compare(0, 4, "OKB1") == 0, "state file is the binary OKB1 format");
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) == 0, "binary state keeps the next build a no-op", o);
+    { std::ofstream f(gRoot / ".okaybuild/state", std::ios::trunc); f << "okaybuild-state 4\n"; }
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) > 0, "a text state file is still accepted", o);
+}
+
 static void testHistoryAndChecks() {
     printf("test: report history keeps builds, and test output yields check counts\n");
     fresh("hist");
@@ -909,6 +925,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

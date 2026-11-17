@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <deque>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -38,12 +39,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <poll.h>
 #include <csignal>
 #endif
 
 namespace fs = std::filesystem;
 using std::string;
+using std::string_view;
 using std::vector;
 
 #ifdef _WIN32
@@ -311,7 +314,7 @@ static Manifest parseManifest(const string& file) {
 }
 
 // ---------------------------------------------------------------- hashing + stat shortcut
-struct FileSig { string hash; long long size = 0, mtime = 0, at = 0; };
+struct FileSig { uint64_t hash = 0; long long size = 0, mtime = 0, at = 0; };
 static string hex64(uint64_t h) { char b[17]; snprintf(b, sizeof b, "%016llx", (unsigned long long)h); return b; }
 static uint64_t fnv(const char* p, size_t n, uint64_t h = 1469598103934665603ull) {
     for (size_t i = 0; i < n; ++i) { h ^= (unsigned char)p[i]; h *= 1099511628211ull; }
@@ -376,10 +379,11 @@ static bool hashContents(const string& p, uint64_t& h) {
 // A stamp with sub-millisecond digits cannot survive an ordinary later write, so it is trusted at once.
 // A whole-second or whole-millisecond stamp might be shared by two writes (coarse clocks), so it is trusted
 // only once it was already 2 s old when it was recorded. Forged timestamps with the same size are not detected.
-static bool hashFile(const string& p, FileSig& out) {
+static bool hashFile(string_view pv, FileSig& out) {
+    string p(pv);
     FileSig prev; bool havePrev = false;
     { OK_LOCK(l, gHashMu); auto it = gCache.find(p); if (it != gCache.end()) { out = it->second; return true; }
-      auto pv = gPrev.find(p); if (pv != gPrev.end()) { prev = pv->second; havePrev = true; } }
+      auto it2 = gPrev.find(p); if (it2 != gPrev.end()) { prev = it2->second; havePrev = true; } }
     FileSig s; if (!stampOf(p, s.size, s.mtime)) return false;
     long long nsec = s.mtime % 1000000000ll;
     bool fine = nsec % 1000000ll != 0;
@@ -388,7 +392,7 @@ static bool hashFile(const string& p, FileSig& out) {
         s = prev; ++gTrusted;
     } else {
         uint64_t h = 0; if (!hashContents(p, h)) return false;
-        s.hash = hex64(h); s.at = clockNs(); ++gHashed;
+        s.hash = h; s.at = clockNs(); ++gHashed;
     }
     out = s; OK_LOCK(l, gHashMu); gCache[p] = s; return true;
 }
@@ -614,7 +618,32 @@ static vector<string> parseDepfile(const string& path) {
 }
 
 // ---------------------------------------------------------------- state
-struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs, produced; };
+struct Rec { string cmd; vector<std::pair<string_view, FileSig>> inputs, produced; };
+static std::deque<string> gPool;
+static string_view poolStr(const char* s, size_t n) { gPool.emplace_back(s, n); return gPool.back(); }
+static uint64_t parseHex64(const char* s, size_t n) {
+    uint64_t h = 0;
+    for (size_t i = 0; i < n && i < 16; ++i) {
+        unsigned char c = (unsigned char)s[i];
+        int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (d < 0) break;
+        h = (h << 4) | (uint64_t)d;
+    }
+    return h;
+}
+static void putU32(string& o, uint32_t v) { o.push_back(char(v & 255)); o.push_back(char((v >> 8) & 255)); o.push_back(char((v >> 16) & 255)); o.push_back(char((v >> 24) & 255)); }
+static void putU64(string& o, uint64_t v) { for (int i = 0; i < 8; ++i) o.push_back(char((v >> (8 * i)) & 255)); }
+static bool rdU32(const char*& p, const char* e, uint32_t& v) {
+    if (e - p < 4) return false;
+    v = (uint32_t)(unsigned char)p[0] | ((uint32_t)(unsigned char)p[1] << 8) | ((uint32_t)(unsigned char)p[2] << 16) | ((uint32_t)(unsigned char)p[3] << 24);
+    p += 4; return true;
+}
+static bool rdU64(const char*& p, const char* e, uint64_t& v) {
+    if (e - p < 8) return false;
+    v = 0; for (int i = 0; i < 8; ++i) v |= (uint64_t)(unsigned char)p[i] << (8 * i);
+    p += 8; return true;
+}
+static bool rdI64(const char*& p, const char* e, long long& v) { uint64_t u; if (!rdU64(p, e, u)) return false; v = (long long)u; return true; }
 static std::map<string, Rec> gState;
 static std::atomic<int> gCancel{0};
 #ifdef _WIN32
@@ -629,26 +658,119 @@ static void ingestStateLine(const string& l, Rec*& cur) {
     for (const char* q = p; q < e && n < 6; ++q) if (*q == '\t') fld[n++] = q + 1;
     auto len = [&](int i) { return (size_t)((i + 1 < n ? fld[i + 1] - 1 : e) - fld[i]); };
     if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}, {}});
-    else if (n == 6 && (l[0] == 'I' || l[0] == 'P') && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
-                                               string path(fld[1], len(1)); (l[0] == 'I' ? cur->inputs : cur->produced).push_back({path, s}); if (l[0] == 'I') gPrev[path] = s; }
+    else if (n == 6 && (l[0] == 'I' || l[0] == 'P') && cur) {
+        FileSig s; s.hash = parseHex64(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
+        string_view path = poolStr(fld[1], len(1));
+        (l[0] == 'I' ? cur->inputs : cur->produced).push_back({path, s});
+        if (l[0] == 'I') gPrev.emplace(string(path), s);
+    }
+}
+static bool loadTextState(const char* data, size_t n) {
+    if (n < 17 || memcmp(data, "okaybuild-state ", 17) != 0) return false;
+    string all(data, n); std::istringstream in(all); string l; Rec* cur = nullptr;
+    if (!std::getline(in, l) || (l != "okaybuild-state 3" && l != "okaybuild-state 4")) return false;
+    while (std::getline(in, l)) ingestStateLine(l, cur);
+    return true;
+}
+// OKB1: little-endian path table, then records of command hash text and file signatures.
+// A file that is not OKB1 is tried as the older text format. A truncated OKB1 is ignored.
+static bool loadBinaryState(const char* data, size_t n) {
+    if (n < 16 || memcmp(data, "OKB1", 4) != 0) return false;
+    const char* p = data + 4; const char* e = data + n;
+    uint32_t ver = 0, pc = 0, rc = 0;
+    if (!rdU32(p, e, ver) || ver != 1 || !rdU32(p, e, pc) || !rdU32(p, e, rc)) return true;
+    if (pc > n || rc > n) return true;
+    vector<string_view> paths; paths.reserve(pc);
+    for (uint32_t i = 0; i < pc; ++i) {
+        uint32_t len = 0; if (!rdU32(p, e, len) || p + len > e) return true;
+        paths.push_back(poolStr(p, len)); p += len;
+    }
+    gPrev.reserve(pc);
+    for (uint32_t i = 0; i < rc; ++i) {
+        uint32_t outId = 0, cmdLen = 0, nIn = 0, nProd = 0;
+        if (!rdU32(p, e, outId) || outId >= pc || !rdU32(p, e, cmdLen) || p + cmdLen > e) return true;
+        string cmd(p, cmdLen); p += cmdLen;
+        if (!rdU32(p, e, nIn) || !rdU32(p, e, nProd)) return true;
+        Rec rec; rec.cmd = std::move(cmd);
+        auto one = [&](vector<std::pair<string_view, FileSig>>& dst, bool input) {
+            uint32_t id = 0; FileSig s;
+            if (!rdU32(p, e, id) || id >= pc || !rdU64(p, e, s.hash) || !rdI64(p, e, s.size) || !rdI64(p, e, s.mtime) || !rdI64(p, e, s.at)) return false;
+            dst.push_back({paths[id], s});
+            if (input) gPrev.emplace(string(paths[id]), s);
+            return true;
+        };
+        for (uint32_t k = 0; k < nIn; ++k) if (!one(rec.inputs, true)) return true;
+        for (uint32_t k = 0; k < nProd; ++k) if (!one(rec.produced, false)) return true;
+        gState[string(paths[outId])] = std::move(rec);
+    }
+    return true;
+}
+static bool mapWhole(const string& path, string& storage, const char*& data, size_t& n) {
+    data = nullptr; n = 0;
+#ifdef _WIN32
+    HANDLE f = CreateFileW(widePath(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER sz; if (!GetFileSizeEx(f, &sz) || sz.QuadPart < 0) { CloseHandle(f); return false; }
+    HANDLE map = CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!map) {
+        storage.resize((size_t)sz.QuadPart);
+        DWORD got = 0; BOOL ok = sz.QuadPart == 0 || ReadFile(f, storage.data(), (DWORD)storage.size(), &got, nullptr);
+        CloseHandle(f);
+        if (!ok) return false;
+        data = storage.data(); n = storage.size(); return true;
+    }
+    void* view = MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(map); CloseHandle(f);
+    if (!view) return false;
+    storage.assign((const char*)view, (size_t)sz.QuadPart);
+    UnmapViewOfFile(view);
+    data = storage.data(); n = storage.size(); return true;
+#else
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    struct stat st; if (fstat(fd, &st) != 0 || st.st_size < 0) { ::close(fd); return false; }
+    n = (size_t)st.st_size;
+    if (n == 0) { ::close(fd); data = ""; return true; }
+    void* view = mmap(nullptr, n, PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd);
+    if (view == MAP_FAILED) return false;
+    storage.assign((const char*)view, n);
+    munmap(view, n);
+    data = storage.data(); return true;
+#endif
 }
 static void loadState() {
-    gPrev.reserve(4096); string l; Rec* cur = nullptr;
-    std::ifstream f(statePath(), std::ios::binary);
-    if (std::getline(f, l) && (l == "okaybuild-state 3" || l == "okaybuild-state 4"))
-        while (std::getline(f, l)) ingestStateLine(l, cur);
-    // A killed build leaves finished steps here. They are folded in on the next start.
-    std::ifstream j(journalPath(), std::ios::binary); cur = nullptr;
+    gPrev.reserve(8192);
+    const char* data = nullptr; size_t n = 0; string storage;
+    if (mapWhole(statePath(), storage, data, n) && n > 0) {
+        if (!loadBinaryState(data, n)) loadTextState(data, n);
+    }
+    std::ifstream j(journalPath(), std::ios::binary); string l; Rec* cur = nullptr;
     while (std::getline(j, l)) ingestStateLine(l, cur);
 }
 static void saveState() {
-    fs::create_directories(under(".okaybuild")); string tmp = statePath() + ".tmp";
-    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-state 4\n";
-      for (auto& [o, r] : gState) {
-          f << "O\t" << o << "\t" << r.cmd << "\n";
-          for (auto& [p, s] : r.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
-          for (auto& [p, s] : r.produced) f << "P\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
-      } }
+    fs::create_directories(under(".okaybuild"));
+    std::unordered_map<string, uint32_t> id;
+    vector<string_view> paths;
+    auto add = [&](string_view s) -> uint32_t {
+        string key(s); auto it = id.find(key);
+        if (it != id.end()) return it->second;
+        uint32_t n = (uint32_t)paths.size(); paths.push_back(s); id.emplace(std::move(key), n); return n;
+    };
+    for (auto& [o, r] : gState) { add(o); for (auto& [p, s] : r.inputs) add(p); for (auto& [p, s] : r.produced) add(p); }
+    string out; out.append("OKB1", 4);
+    putU32(out, 1); putU32(out, (uint32_t)paths.size()); putU32(out, (uint32_t)gState.size());
+    for (auto sv : paths) { putU32(out, (uint32_t)sv.size()); out.append(sv.data(), sv.size()); }
+    for (auto& [o, r] : gState) {
+        putU32(out, add(o)); putU32(out, (uint32_t)r.cmd.size()); out.append(r.cmd);
+        putU32(out, (uint32_t)r.inputs.size()); putU32(out, (uint32_t)r.produced.size());
+        auto dump = [&](const vector<std::pair<string_view, FileSig>>& v) {
+            for (auto& [p, s] : v) { putU32(out, add(p)); putU64(out, s.hash); putU64(out, (uint64_t)s.size); putU64(out, (uint64_t)s.mtime); putU64(out, (uint64_t)s.at); }
+        };
+        dump(r.inputs); dump(r.produced);
+    }
+    string tmp = statePath() + ".tmp";
+    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << out; }
     fs::rename(tmp, statePath());
     std::error_code ec; fs::remove(journalPath(), ec);
 }
@@ -658,8 +780,8 @@ static void appendJournal(const string& output) {
     fs::create_directories(under(".okaybuild"));
     std::ofstream f(journalPath(), std::ios::app);
     f << "O\t" << output << "\t" << it->second.cmd << "\n";
-    for (auto& [p, s] : it->second.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
-    for (auto& [p, s] : it->second.produced) f << "P\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
+    for (auto& [p, s] : it->second.inputs) f << "I\t" << p << "\t" << hex64(s.hash) << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
+    for (auto& [p, s] : it->second.produced) f << "P\t" << p << "\t" << hex64(s.hash) << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
 }
 
 static bool fileMissing(const string& p) {
@@ -686,14 +808,14 @@ static void restoreMtime(const string& p, long long mtime) {
     utimensat(AT_FDCWD, p.c_str(), ts, 0);
 #endif
 }
-static void noteOutputs(const Action& a, Rec& rec, const vector<std::pair<string, FileSig>>& oldProduced, string& out, bool& ok) {
+static void noteOutputs(const Action& a, Rec& rec, const vector<std::pair<string_view, FileSig>>& oldProduced, string& out, bool& ok) {
     for (auto& o : a.outputs) {
         forgetHash(o); FileSig now;
         if (!hashFile(o, now)) { ok = false; out += "okay-build: output missing after the command: " + o + "\n"; return; }
         bool same = false; FileSig prev{};
         for (auto& [p, s] : oldProduced) if (p == o) { prev = s; same = s.hash == now.hash; break; }
         if (a.restat && same) { restoreMtime(o, prev.mtime); now = prev; forgetHash(o); }
-        rec.produced.push_back({o, now});
+        rec.produced.push_back({poolStr(o.data(), o.size()), now});
     }
 }
 static bool dirty(const Action& a, string& why) {
@@ -707,8 +829,8 @@ static bool dirty(const Action& a, string& why) {
         if (!known) { why = "new input " + i; return true; }
     }
     for (auto& [p, h] : r.inputs) {
-        FileSig now; if (!hashFile(p, now)) { why = "input " + p + " is gone"; return true; }
-        if (now.hash != h.hash) { why = "input " + p + " changed"; return true; }
+        FileSig now; if (!hashFile(p, now)) { why = "input " + string(p) + " is gone"; return true; }
+        if (now.hash != h.hash) { why = "input " + string(p) + " changed"; return true; }
     }
     return false;
 }
@@ -1030,7 +1152,7 @@ static string resolveTool(const string& bin) {
 static string compilerIdentity(const string& bin) {
     string path = resolveTool(bin); FileSig sig;
     if (!hashFile(path, sig)) return "missing\n" + bin;
-    return path + "\n" + sig.hash;
+    return path + "\n" + hex64(sig.hash);
 }
 static vector<string> preprocessArgv(const Action& a) {
     vector<string> p; if (a.argv.empty()) return p;
@@ -1171,14 +1293,14 @@ static void writeShowIncludesDepFile(const Action& a, const string& captured) {
     for (auto& h : hdrs) { f << ' '; for (char c : h) { if (c == ' ' || c == '\\' || c == '#') f << '\\'; f << c; } }
     f << '\n';
 }
-static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string, FileSig>>& oldProduced) {
+static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string_view, FileSig>>& oldProduced) {
     if (ok) writeShowIncludesDepFile(a, out);
     if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
     long long ts = nowNs();
     Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
     if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
     for (auto& pth : a.outputs) forgetHash(pth);
-    for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, sig}); }
+    for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({poolStr(pth.data(), pth.size()), sig}); }
     if (ok) noteOutputs(a, rec, oldProduced, out, ok);
     if (ok) { OK_LOCK(l, gStateMu); gState[a.output] = rec; }
     else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
@@ -1480,8 +1602,9 @@ static string commandLineFor(const Action& a, string& err) {
     return line;
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g); loadState();
-    long long tPlan = nowNs() - tStart;
+    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
+    long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
     bool anyFail = false, stop = false;
     vector<PoolUse> pools = {{"link", 1, 0}, {"console", 1, 0}};
@@ -1503,7 +1626,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
             upToDate = total;
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
-            if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+            if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
             if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command 0, depfile+hash 0; wall %lld\n", gNsDirty / 1000000, (nowNs() - tStart) / 1000000);
             if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
             return 0;
@@ -1559,7 +1682,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                     if (cr < 0) { noteStep(a.kind, a.desc, nowNs() - tStep, "fail"); done(id, false, out, false); continue; }
                     if (cr == 1) {
                         ++gCacheHit; tag = "hit"; printf("        cache hit\n"); fflush(stdout);
-                        bool ok = true; vector<std::pair<string, FileSig>> old;
+                        bool ok = true; vector<std::pair<string_view, FileSig>> old;
                         if (a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) old = it->second.produced; }
                         commitStep(a, out, ok, old);
                         noteStep(a.kind, a.desc, nowNs() - tStep, tag);
@@ -1604,7 +1727,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         const Action& a = g.acts[L.id];
         bool ok = code == 0; string out = L.out;
         if (ok && !L.cacheKey.empty()) storeCache(a, L.cacheKey);
-        vector<std::pair<string, FileSig>> oldProduced;
+        vector<std::pair<string_view, FileSig>> oldProduced;
         if (ok && a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
         commitStep(a, out, ok, oldProduced);
         noteStep(a.kind, a.desc, nowNs() - (L.began ? L.began : L.started), L.cacheTag.empty() ? "-" : L.cacheTag);
@@ -1616,7 +1739,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
-    if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+    if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
@@ -1626,8 +1749,9 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
 #ifdef _WIN32
     return buildOnWindows(m, want, o);
 #else
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g); loadState();
-    long long tPlan = nowNs() - tStart;
+    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
+    long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
     bool anyFail = false, stop = false;
     vector<PoolUse> pools = {{"link", 1, 0}, {"console", 1, 0}};
@@ -1651,7 +1775,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
             upToDate = total;
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
-            if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+            if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
             if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command 0, depfile+hash 0; wall %lld\n", gNsDirty / 1000000, (nowNs() - tStart) / 1000000);
             if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
             return 0;
@@ -1691,7 +1815,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
             if (poolIdx[id] >= 0) { ++pools[poolIdx[id]].used; stream = pools[poolIdx[id]].name == "console"; }
             memUsed += g.acts[id].memory;
             const Action& a = g.acts[id]; lk.unlock();
-            string why, out; bool d = false, ok = true; vector<std::pair<string, FileSig>> oldProduced;
+            string why, out; bool d = false, ok = true; vector<std::pair<string_view, FileSig>> oldProduced;
             try {
                 if (a.restat && !a.output.empty()) { std::lock_guard<std::mutex> sl(gStateMu); auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
                 long long t0 = nowNs(); d = dirty(a, why); gNsDirty += nowNs() - t0;
@@ -1752,7 +1876,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
-    if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
+    if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
@@ -1945,7 +2069,7 @@ static vector<std::pair<string, string>> buildfileSigs(const Manifest& m) {
         }
     }
     vector<std::pair<string, string>> sigs;
-    for (auto& p : paths) { forgetHash(p); FileSig s; sigs.push_back({p, hashFile(p, s) ? s.hash : string("-")}); }
+    for (auto& p : paths) { forgetHash(p); FileSig s; sigs.push_back({p, hashFile(p, s) ? hex64(s.hash) : string("-")}); }
     std::sort(sigs.begin(), sigs.end());
     return sigs;
 }

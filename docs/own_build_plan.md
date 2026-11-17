@@ -45,6 +45,9 @@ Typed options are one line, the same shape in the manifest and in `config.okay`:
 
 `okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
 
+## Compact state (OKB1)
+The state file is now binary, version 1, magic `OKB1`. Paths are stored once. Hashes are 8-byte integers. The whole file is read in one shot (mapped, then copied into a pool the records point at). A file that still starts with `okaybuild-state 3` or `okaybuild-state 4` is read as the old text. A journal after a killed build is still text and is applied on top. The mtime+size shortcut is unchanged: a matching stamp is not hashed again. `--profile` prints plan time and state time apart.
+
 ## Benchmarks on the 339-step test_math tree (2026-11-17, this machine)
 Fresh shallow clone of `grok/okaybuild-1`, Ninja Debug `-O0 -g0`, tests on, player/editor/launcher/sandbox/assimp off, sodium on. `ninja` reported `[339/339]`. Import: 335 compiles, 3 archives, 1 link. `-j2`. Not Windows.
 

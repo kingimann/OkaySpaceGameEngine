@@ -1516,6 +1516,46 @@ asset `digest` field. The first dry run and the first real release are the proof
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
 
+## Bug fixes: particle fade, Scene Manager rename, Exit after a dialog, text box editing (#888: 140, 141, 142, 131)
+
+**140. Particle "Fade Out" now lasts the whole lifetime.** Before, a plain Particle System faded out in a fraction of a
+second (faster at higher frame rates), because the fade was multiplied again on every frame.
+
+1. Windows editor: **GameObject > Effects > Particle System**. In the Inspector set **Lifetime** to 4 and leave
+   **Fade Out** on and **Color Over Life** off. Press **Play**.
+2. You should see each particle fade smoothly over its full 4 seconds (half visible at 2 s). It looks the same with
+   VSync on or off.
+
+**141. Scene Manager > Rename no longer saves your unsaved edits or deletes the saved file.**
+
+1. Windows editor: save a scene (for example `MyLevel`). Change something without saving; the title says unsaved.
+2. **View > Panels > Scene Manager**, click **Rename** on that scene. The dialog now says "The file is renamed as last
+   saved. Your unsaved changes stay unsaved." Enter `MyLevel2` and click **Rename**.
+3. You should see: the title still says unsaved, your change is still in the scene, and `MyLevel2.okayscene` on disk
+   holds the last *saved* version (open it from the Project panel in another way, or press **File > Open** and choose
+   **Don't Save** to see it). Nothing was written until you press Save.
+
+**142. File > Exit and the window's close button keep working after a quit arrives while another dialog is open.**
+
+1. Windows editor: change the scene without saving. Open another scene (Project panel or **File > Open**) so the
+   "Save changes?" dialog is up.
+2. While it is up, click the window's close button (X). Then press **Cancel** in "Save changes?".
+3. You should see the "Unsaved Changes" quit prompt appear as soon as the first dialog closes. Press **Cancel**.
+4. Now **File > Exit**: the "Unsaved Changes" prompt appears again (before the fix, Exit and the X did nothing for the
+   rest of the session).
+
+**131. In-game text boxes: hold Backspace/Delete, the Delete key, and a movable caret.**
+
+1. Windows editor: **GameObject > UI > Input Field**, press **Play**, click the box and type `hello world`.
+2. Press **Left** five times, type `X`: you get `hello Xworld`, and the caret is drawn where you are typing.
+3. **Delete** removes the character after the caret, **Backspace** the one before it. **Home** / **End** jump to the
+   start / end. Holding Backspace or Delete keeps deleting (after a short pause, like a normal text box); holding Left
+   or Right keeps moving.
+
+Test: `ctest -R fix_140_141_142_131` (runs each repro headless: fade at 30, 60 and 144 fps; rename with a real
+EditorState and files on disk; the quit prompt's state machine; the input field with a real Input feed).
+Not verified on Windows; the editor GUI steps above were not run here (the editor files were only syntax-checked).
+
 ## hygiene1. Repository hygiene: one account config file, no built programs in git
 
 What changes for you:
@@ -1596,35 +1636,6 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
-
-## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
-
-All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
-
-1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
-   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
-   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
-2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
-   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
-   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
-3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
-   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
-   UV **tile** field.
-4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
-   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
-5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
-   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
-   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
-   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
-   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
-   the same reader but was not tried by hand.)
-6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
-   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
-   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
-
-What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
-`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
-Mesh (it creates a second object).
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 

@@ -12,6 +12,7 @@
 #include <SDL.h>
 #endif
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Audio/WavDecoder.hpp"     // okay::wav::OwnWavEnabled / ReaderLogLine (the start-up lines; also in a build without SDL)
 #include "VoiceClipLoadSdl.hpp"   // voice clips: our own decoder by default, SDL_LoadWAV with OKAY_OWN_WAV=0
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "LauncherThreads.hpp"   // threads, mutexes and atomics: our own (CoreThreads), in place of SDL's

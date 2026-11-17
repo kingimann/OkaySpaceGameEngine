@@ -86,7 +86,13 @@ public:
     void SetScale(float sx, float sy) override { SDL_RenderSetScale(m_r, sx, sy); }
 
     Tex LoadTexture(const std::string& path) override {
-        return m_cache ? LoadSDLTexture(m_r, path, m_baseDir, *m_cache) : nullptr;
+        SDL_Texture* t = m_cache ? LoadSDLTexture(m_r, path, m_baseDir, *m_cache) : nullptr;
+        if (t && m_filterSet) SDL_SetTextureScaleMode(t, m_linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        return t;
+    }
+    void SetImageFilter(bool linear) override { m_linear = linear; m_filterSet = true; }
+    void SetTextureFilter(Tex t, bool linear) override {
+        if (t) SDL_SetTextureScaleMode((SDL_Texture*)t, linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
     }
     Tex FontAtlas(TtfFont* font) override { return SDLFontAtlas(m_r, font); }
     void QueryTexture(Tex t, int* w, int* h) override { SDL_QueryTexture((SDL_Texture*)t, nullptr, nullptr, w, h); }
@@ -132,6 +138,7 @@ private:
     SDL_Renderer* m_r;
     std::unordered_map<std::string, SDL_Texture*>* m_cache;
     std::string m_baseDir;
+    bool m_linear = false, m_filterSet = false;
 };
 
 inline const Rect& FromSDL(const SDL_Rect& r) { return *(const Rect*)&r; }

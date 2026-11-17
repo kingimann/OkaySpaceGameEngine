@@ -256,11 +256,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.11.4 Batch painter - `UI/UIBatcher` - one vertex buffer and atlas, few draw calls (target: 500 widgets under 1 ms and 20 calls)
   - 12.11.5 Drawing helpers - `UI/UIRenderer` - FillUIShape, rings, shadows, TTF text, minimap raster helpers shared with inventory and loading overlays
   - 12.11.6 Golden scenes - `tests/ui_golden_scenes.hpp` - scenes drawn and compared with `tests/golden/ui/*.png`
+  - 12.11.7 Crisp at any size - `UI/UIRenderer`, `UI/UIBatcher`, `UI/UIFontPolicy` - circles, rings, triangles, thick lines, round pictures and the crosshair ring are rasterised on the device pixel grid with analytic coverage; pictures sample linearly (nearest in the pixel-art look) through `Painter::SetImageFilter`; baked glyph sizes step by about 6% above 32 px so the cache stays bounded; "UI filtering": Smooth by default, Pixel-art with the scene UI font "pixel", `OKAY_UI_FILTER=pixel|smooth` overrides (`docs/game_ui.md` "Crisp at any size", try it `docs/try_it.md` crisp1)
 - **Code:** `UI/UIRenderer`, `UI/UIPainter`, `UI/UIPainterSDL`, `UI/UIBatcher`, `UI/UIShape`, `tests/ui_golden_scenes.hpp`, `editor/UIPreviewPainter.*`
 - **API:** `okay::ui2d::RenderSceneUI`, `ui2d::Painter`, `ui2d::SDLPainter`, `ui2d::BatchPainter::Flush`, `UIRenderOptions`
 - **Editor:** Game view and Scene UI preview draw through it (via `UIPreviewPainter`)
-- **Docs:** -
-- **Tests:** `ui_renderer_golden`, `ui_render_bench`, `ui_renderer_options`, `ui_layering`, `ui_layer_table`, `uishape`
+- **Docs:** `docs/game_ui.md` (Crisp at any size)
+- **Tests:** `ui_renderer_golden`, `ui_render_bench`, `ui_renderer_options`, `ui_layering`, `ui_layer_table`, `uishape`, `ui_crisp`
 - **Status:** Works - UI plan P0 (shared layer table, renderer moved out of the player, batching) is on main per ROADMAP #361; benchmark and golden tests exist
 - **Open:** the player (`player/main.cpp`) still draws other overlays itself (inventory, crafting, F1 panel); no GPU blur; `UIPainterSDL` is header-only so only SDL hosts link it
 - **Related:** 12.10, 12.2, 2.9, 40.3

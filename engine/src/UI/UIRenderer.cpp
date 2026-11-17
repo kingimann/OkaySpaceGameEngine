@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <limits>
 #include <unordered_map>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,8 @@ public:
         m_in.Geometry(t, m_verts.data(), nv, idx, ni);
     }
     void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    void SetImageFilter(bool linear) override { m_in.SetImageFilter(linear); }
+    void SetTextureFilter(Tex t, bool linear) override { m_in.SetTextureFilter(t, linear); }
     Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
 
 private:
@@ -437,7 +440,7 @@ void FillUIShadow(Painter& ren, const Rect& r, UIShape shape, float radius,
 
 
 // --- Small raster helpers for the minimap (filled circle / ring / triangle). ----
-void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
+static void MMFillCircleHard(Painter& r, int cx, int cy, int rad, RGBA col) {
     if (rad < 1) rad = 1;
     r.SetDrawColor(col.r, col.g, col.b, col.a);
     for (int dy = -rad; dy <= rad; ++dy) {
@@ -445,7 +448,7 @@ void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
         r.DrawLine(cx - dx, cy + dy, cx + dx, cy + dy);
     }
 }
-void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
+static void MMDrawRingHard(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
     if (rad < 1) rad = 1;
     if (width < 1) width = 1;
     r.SetDrawColor(col.r, col.g, col.b, col.a);
@@ -458,7 +461,7 @@ void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
         prevx = x; prevy = y;
     }
 }
-void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
+static void MMFillTriangleHard(Painter& r, Point a, Point b, Point c, RGBA col) {
     r.SetDrawColor(col.r, col.g, col.b, col.a);
     int minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
     auto edgeX = [](Point p, Point q, int y, float& x) -> bool {
@@ -478,21 +481,164 @@ void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
         }
     }
 }
-// A line segment with thickness, drawn as a filled quad (for minimap roads/walls).
+
+// --- Resolution-independent fills for the small shapes (filled circle / ring / triangle /
+// thick line / convex polygon: minimap, joystick, check marks). They are described in logical
+// pixels but rasterised on the DEVICE pixel grid (logical size x the canvas scale), with
+// analytic coverage, so a magnified canvas shows a smooth edge instead of logical-pixel blocks.
+namespace {
+struct CovRun { int x, w; std::uint8_t a; };
+inline bool SameRuns(const std::vector<CovRun>& a, const std::vector<CovRun>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].x != b[i].x || a[i].w != b[i].w || a[i].a != b[i].a) return false;
+    return true;
+}
+float EdgeCov(float d) { const float c = 0.5f - d; return c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c); }
+
+// Fill the logical bounds [lx0,lx1]x[ly0,ly1] with `col` scaled by cov(devX, devY) (pixel centre,
+// device pixels, 0..1). Runs of the same alpha become one rect; identical rows are merged.
+template <class Cov>
+void FillCoverage(Painter& r, float lx0, float ly0, float lx1, float ly1, RGBA col, Cov cov) {
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    if (!(lx1 > lx0) || !(ly1 > ly0) || col.a == 0) return;
+    float fx0 = lx0 * S - 1.0f, fy0 = ly0 * S - 1.0f, fx1 = lx1 * S + 1.0f, fy1 = ly1 * S + 1.0f;
+    if (r.IsClipEnabled()) {
+        Rect c; r.GetClipRect(&c);
+        fx0 = std::max(fx0, (float)c.x * S); fy0 = std::max(fy0, (float)c.y * S);
+        fx1 = std::min(fx1, (float)(c.x + c.w) * S); fy1 = std::min(fy1, (float)(c.y + c.h) * S);
+    }
+    constexpr float kLim = 16384.0f;
+    fx0 = std::max(fx0, -kLim); fy0 = std::max(fy0, -kLim); fx1 = std::min(fx1, kLim); fy1 = std::min(fy1, kLim);
+    const int X0 = (int)std::floor(fx0), Y0 = (int)std::floor(fy0), X1 = (int)std::ceil(fx1), Y1 = (int)std::ceil(fy1);
+    if (X1 <= X0 || Y1 <= Y0) return;
+    const bool unit = std::fabs(S - 1.0f) < 1e-4f;
+    auto flush = [&](const std::vector<CovRun>& runs, int y, int h) {
+        for (const CovRun& u : runs) {
+            if (u.a == 0) continue;
+            r.SetDrawColor(col.r, col.g, col.b, u.a);
+            if (unit) { Rect q{u.x, y, u.w, h}; r.FillRect(&q); }
+            else {
+                // A hundredth of a device pixel of bias keeps a software renderer that truncates float
+                // rects from losing a whole pixel to rounding error (x / S * S can land just below x).
+                FRect q{((float)u.x + 0.01f) / S, ((float)y + 0.01f) / S, ((float)u.w + 0.01f) / S, ((float)h + 0.01f) / S};
+                r.FillRectF(&q);
+            }
+        }
+    };
+    std::vector<CovRun> prev, cur;
+    int prevY = Y0, prevH = 0;
+    for (int y = Y0; y < Y1; ++y) {
+        cur.clear();
+        for (int x = X0; x < X1; ++x) {
+            const float cv = cov((float)x + 0.5f, (float)y + 0.5f);
+            const int al = (int)(cv * (float)col.a + 0.5f);
+            const std::uint8_t a8 = (std::uint8_t)(al < 0 ? 0 : (al > 255 ? 255 : al));
+            if (!cur.empty() && cur.back().a == a8 && cur.back().x + cur.back().w == x) ++cur.back().w;
+            else cur.push_back(CovRun{x, 1, a8});
+        }
+        if (prevH > 0 && SameRuns(prev, cur)) { ++prevH; continue; }
+        if (prevH > 0) flush(prev, prevY, prevH);
+        prev.swap(cur); prevY = y; prevH = 1;
+    }
+    if (prevH > 0) flush(prev, prevY, prevH);
+}
+
+// Convex polygon coverage (vertices in device pixels): the product-free "1 - sum of what each edge
+// cuts off" estimate, exact for straight edges and for thin strips.
+struct ConvexCov {
+    std::vector<float> ax, ay, nx, ny;   // edge start and outward unit normal
+    explicit ConvexCov(const std::vector<std::pair<float, float>>& v) {
+        float area2 = 0.0f;
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i]; const auto& q = v[(i + 1) % v.size()];
+            area2 += p.first * q.second - q.first * p.second;
+        }
+        const float sgn = area2 >= 0.0f ? 1.0f : -1.0f;   // outward normal side for either winding
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i]; const auto& q = v[(i + 1) % v.size()];
+            const float ex = q.first - p.first, ey = q.second - p.second;
+            const float len = std::sqrt(ex * ex + ey * ey);
+            if (len < 1e-5f) continue;
+            ax.push_back(p.first); ay.push_back(p.second);
+            nx.push_back(sgn * ey / len); ny.push_back(-sgn * ex / len);
+        }
+    }
+    float operator()(float x, float y) const {
+        float cut = 0.0f;
+        for (std::size_t i = 0; i < ax.size(); ++i) {
+            const float d = (x - ax[i]) * nx[i] + (y - ay[i]) * ny[i];
+            cut += 1.0f - EdgeCov(d);
+            if (cut >= 1.0f) return 0.0f;
+        }
+        return 1.0f - cut;
+    }
+};
+
+void FillConvexSmooth(Painter& r, const std::vector<std::pair<float, float>>& logical, RGBA col) {
+    if (logical.size() < 3) return;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    std::vector<std::pair<float, float>> dev;
+    float minx = logical[0].first, maxx = minx, miny = logical[0].second, maxy = miny;
+    for (const auto& q : logical) {
+        dev.push_back({q.first * S, q.second * S});
+        minx = std::min(minx, q.first); maxx = std::max(maxx, q.first);
+        miny = std::min(miny, q.second); maxy = std::max(maxy, q.second);
+    }
+    FillCoverage(r, minx, miny, maxx, maxy, col, ConvexCov(dev));
+}
+} // namespace
+
+void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
+    if (!g_uiSmoothEdges) { MMFillCircleHard(r, cx, cy, rad, col); return; }
+    if (rad < 1) rad = 1;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float mx = ((float)cx + 0.5f) * S, my = ((float)cy + 0.5f) * S, R = ((float)rad + 0.5f) * S;
+    FillCoverage(r, (float)cx + 0.5f - (float)rad - 0.5f, (float)cy + 0.5f - (float)rad - 0.5f,
+                 (float)cx + 0.5f + (float)rad + 0.5f, (float)cy + 0.5f + (float)rad + 0.5f, col,
+                 [=](float x, float y) { return EdgeCov(std::sqrt((x - mx) * (x - mx) + (y - my) * (y - my)) - R); });
+}
+void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
+    if (!g_uiSmoothEdges) { MMDrawRingHard(r, cx, cy, rad, width, col); return; }
+    if (rad < 1) rad = 1;
+    if (width < 1) width = 1;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float mx = ((float)cx + 0.5f) * S, my = ((float)cy + 0.5f) * S;
+    const float mid = ((float)rad + 0.5f) * S, half = (float)width * 0.5f * S;
+    const float ext = (float)rad + 0.5f + (float)width * 0.5f;
+    FillCoverage(r, (float)cx + 0.5f - ext, (float)cy + 0.5f - ext, (float)cx + 0.5f + ext, (float)cy + 0.5f + ext, col,
+                 [=](float x, float y) {
+                     const float d = std::fabs(std::sqrt((x - mx) * (x - mx) + (y - my) * (y - my)) - mid) - half;
+                     return EdgeCov(d);
+                 });
+}
+void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
+    if (!g_uiSmoothEdges) { MMFillTriangleHard(r, a, b, c, col); return; }
+    FillConvexSmooth(r, {{(float)a.x, (float)a.y}, {(float)b.x, (float)b.y}, {(float)c.x, (float)c.y}}, col);
+}
+// A line segment with thickness (butt ends), for minimap roads/walls and check marks.
 void MMThickLine(Painter& r, float x0, float y0, float x1, float y1, float width, RGBA col) {
     float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx*dx + dy*dy);
     if (len < 1e-3f) return;
     float nx = -dy / len * width * 0.5f, ny = dx / len * width * 0.5f;
-    Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
+    if (!g_uiSmoothEdges) {
+        Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
               c{(int)(x1-nx),(int)(y1-ny)}, d{(int)(x0-nx),(int)(y0-ny)};
-    MMFillTriangle(r, a, b, c, col); MMFillTriangle(r, a, c, d, col);
+        MMFillTriangleHard(r, a, b, c, col); MMFillTriangleHard(r, a, c, d, col);
+        return;
+    }
+    FillConvexSmooth(r, {{x0 + nx, y0 + ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}, {x0 - nx, y0 - ny}}, col);
 }
-// Fill a simple (convex) polygon by fanning triangles from the first vertex.
+// Fill a simple (convex) polygon: one coverage pass, so no seams between fan triangles.
 void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
-    for (std::size_t i = 1; i + 1 < pts.size(); ++i)
-        MMFillTriangle(r, pts[0], pts[i], pts[i+1], col);
+    if (!g_uiSmoothEdges) {
+        for (std::size_t i = 1; i + 1 < pts.size(); ++i) MMFillTriangleHard(r, pts[0], pts[i], pts[i+1], col);
+        return;
+    }
+    std::vector<std::pair<float, float>> v;
+    for (const Point& q : pts) v.push_back({(float)q.x, (float)q.y});
+    FillConvexSmooth(r, v, col);
 }
-
 
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
@@ -1046,6 +1192,8 @@ public:
         m_in.Geometry(t, m_verts.data(), nv, idx, ni);
     }
     void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    void SetImageFilter(bool linear) override { m_in.SetImageFilter(linear); }
+    void SetTextureFilter(Tex t, bool linear) override { m_in.SetTextureFilter(t, linear); }
     Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
 
 private:
@@ -1188,7 +1336,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         p.SetScale(sc, sc);
         w = (int)std::lround(uiFullW / sc); h = (int)std::lround(uiFullH / sc);
     };
-    g_uiSmoothEdges = scene.uiFont != "pixel";
+    g_uiSmoothEdges = UISmoothFilteringFor(scene.uiFont);   // smooth edges + linear images, unless pixel-art
+    p.SetImageFilter(g_uiSmoothEdges);
     g_uiDeviceScale = 1.0f;
     auto uiMouse = [&]() { Vec2 m = Input::MousePosition(); return Vec2{m.x / uiScaleCur, m.y / uiScaleCur}; };
     for (const UIItem& _it : cache.items) {
@@ -1342,14 +1491,26 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                                      im->shape == UIShape::Circle || im->shape == UIShape::Pill;
                 if (rounded && dst.w > 2 && dst.h > 2) {
                     std::vector<FPoint> pts;
+                    std::vector<FPoint> nrm;   // outward direction at each point (for the soft edge)
+                    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+                    // Enough segments that a curve stays within a tenth of a device pixel of the true
+                    // shape at any zoom (the old fixed 48 / 9 per corner showed facets when magnified).
+                    auto arcSteps = [&](float radLogical) {
+                        const float rd = std::max(1.0f, radLogical * S);
+                        const float step = 2.0f * std::acos(std::max(0.0f, 1.0f - 0.1f / rd));
+                        return std::clamp((int)std::ceil(1.5707963f / std::max(step, 0.01f)), 4, 64);
+                    };
                     const float x0 = (float)dst.x, y0 = (float)dst.y, ww = (float)dst.w, hh = (float)dst.h;
                     if (im->shape == UIShape::Circle) {
-                        for (int k = 0; k < 48; ++k) {
-                            const float a = k / 48.0f * 6.2831853f;
+                        const int n = g_uiSmoothEdges ? 4 * arcSteps(std::max(ww, hh) * 0.5f) : 48;
+                        for (int k = 0; k < n; ++k) {
+                            const float a = k / (float)n * 6.2831853f;
                             pts.push_back({x0 + ww * 0.5f + std::cos(a) * ww * 0.5f, y0 + hh * 0.5f + std::sin(a) * hh * 0.5f});
+                            nrm.push_back({std::cos(a), std::sin(a)});
                         }
                     } else {
                         float rad = im->shape == UIShape::Pill ? std::min(ww, hh) * 0.5f : std::min(im->cornerRadius, std::min(ww, hh) * 0.5f);
+                        const int steps = g_uiSmoothEdges ? arcSteps(rad) : 8;
                         const float cx[4] = {x0 + ww - rad, x0 + ww - rad, x0 + rad, x0 + rad};
                         const float cy[4] = {y0 + rad, y0 + hh - rad, y0 + hh - rad, y0 + rad};
                         const int bits[4] = {UICornerTR, UICornerBR, UICornerBL, UICornerTL};
@@ -1357,24 +1518,38 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                             const float r0 = (im->cornerMask & bits[c]) ? rad : 0.0f;
                             const float ccx = r0 > 0 ? cx[c] : (c == 0 || c == 1 ? x0 + ww : x0);
                             const float ccy = r0 > 0 ? cy[c] : (c == 1 || c == 2 ? y0 + hh : y0);
-                            for (int k = 0; k <= 8; ++k) {
-                                const float a = (-90.0f + c * 90.0f + k * 11.25f) * 0.01745329f;
+                            for (int k = 0; k <= steps; ++k) {
+                                const float a = (-90.0f + c * 90.0f + k * (90.0f / (float)steps)) * 0.01745329f;
                                 pts.push_back({ccx + std::cos(a) * r0, ccy + std::sin(a) * r0});
+                                nrm.push_back({std::cos(a), std::sin(a)});
                             }
                         }
                     }
                     const RGBA vc{255, 255, 255, 255};
                     std::vector<Vertex> vx;
-                    vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
-                    for (const auto& q : pts) {
-                        float u = (q.x - x0) / ww, v = (q.y - y0) / hh;
+                    auto uvOf = [&](float qx, float qy) {
+                        float u = (qx - x0) / ww, v = (qy - y0) / hh;
                         if (im->flipX) u = 1.0f - u;
                         if (im->flipY) v = 1.0f - v;
-                        vx.push_back({q, vc, {u, v}});
-                    }
+                        return FPoint{u, v};
+                    };
+                    vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
+                    for (const auto& q : pts) vx.push_back({q, vc, uvOf(q.x, q.y)});
                     std::vector<int> ix;
                     const int n = (int)pts.size();
                     for (int k = 0; k < n; ++k) { ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                    if (g_uiSmoothEdges) {   // a one-device-pixel soft edge: the picture fades out instead of stair-stepping
+                        const RGBA vz{255, 255, 255, 0};
+                        for (int k = 0; k < n; ++k) {
+                            const float qx = pts[k].x + nrm[k].x / S, qy = pts[k].y + nrm[k].y / S;
+                            vx.push_back({{qx, qy}, vz, uvOf(qx, qy)});
+                        }
+                        for (int k = 0; k < n; ++k) {
+                            const int k1 = (k + 1) % n;
+                            ix.push_back(1 + k); ix.push_back(1 + n + k); ix.push_back(1 + k1);
+                            ix.push_back(1 + k1); ix.push_back(1 + n + k); ix.push_back(1 + n + k1);
+                        }
+                    }
                     p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
                 } else {
                     p.CopyEx(tex, nullptr, &dst, 0.0, nullptr, flip);
@@ -1829,6 +2004,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             p.SetDrawColor((std::uint8_t)(mm->routeColor.r*255), (std::uint8_t)(mm->routeColor.g*255),
                                    (std::uint8_t)(mm->routeColor.b*255), (std::uint8_t)(mm->routeColor.a*255*op));
             int rw = (int)mm->routeWidth; if (rw < 1) rw = 1;
+            if (g_uiSmoothEdges) {
+                MMThickLine(p, (float)cx, (float)cy, o.x + rmx, o.y + rmy, (float)rw,
+                            RGBA{(std::uint8_t)(mm->routeColor.r*255), (std::uint8_t)(mm->routeColor.g*255),
+                                 (std::uint8_t)(mm->routeColor.b*255), (std::uint8_t)(mm->routeColor.a*255*op)});
+                return;
+            }
             for (int t = -(rw/2); t <= rw/2; ++t)
                 p.DrawLine(cx, cy+t, (int)(o.x+rmx), (int)(o.y+rmy)+t);
         };
@@ -1939,6 +2120,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             int segs = 48; float rr = cr->circleRadius, ct = cr->circleThickness < 1 ? 1 : cr->circleThickness;
             p.SetDrawColor((std::uint8_t)(cr->circleColor.r*255), (std::uint8_t)(cr->circleColor.g*255),
                                    (std::uint8_t)(cr->circleColor.b*255), (std::uint8_t)(cr->circleColor.a*255*op));
+            if (g_uiSmoothEdges) {   // one anti-aliased ring at the device resolution
+                RGBA cc{(std::uint8_t)(cr->circleColor.r*255), (std::uint8_t)(cr->circleColor.g*255),
+                        (std::uint8_t)(cr->circleColor.b*255), (std::uint8_t)(cr->circleColor.a*255*op)};
+                MMDrawRing(p, (int)cx, (int)cy, (int)(rr + ct * 0.5f), (int)ct, cc);
+                ct = 0;
+            }
             for (float t = 0; t < ct; t += 1.0f) {
                 float ring = rr + t;
                 for (int i = 0; i < segs; ++i) {

@@ -1371,4 +1371,266 @@ bool DrawAddComponentButtonImGui(const PanelViewHooks& hooks) {
     return hit;
 }
 
+
+// ---- Inspector, stage 2: field rows ------------------------------------------------------------------------------------------------
+
+namespace {
+// The editor's SectionHeader (editor/main.cpp): Spacing, the accent tick, the heading face in its light colour, a rule.
+void SectionHeaderImGui(const char* label, const PanelViewHooks& hooks) {
+    ImGui::Spacing();
+    if (hooks.headingFont) ImGui::PushFont(hooks.headingFont);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h), hooks.accent, 1.5f);
+    ImGui::Indent(9.0f);
+    ImGui::TextColored(ImVec4(0.90f, 0.92f, 0.97f, 1.0f), "%s", label);
+    ImGui::Unindent(9.0f);
+    if (hooks.headingFont) ImGui::PopFont();
+    ImGui::Separator();
+}
+ImVec4 FromU32(std::uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c | 0xff000000u); }
+} // namespace
+
+void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
+    int skip = 0;
+    for (std::size_t k = 0; k < list.rows.size(); ++k) {
+        InspRow& r = list.rows[k];
+        if (skip > 0) {
+            if (r.kind == InspRowTree) ++skip;
+            else if (r.kind == InspRowTreeEnd) --skip;
+            continue;
+        }
+        if (r.sameLine) {
+            bool fits = true;
+            if (r.sameLineWrap) {   // the editor's SameLineOrWrap
+                const std::size_t vl = InspVisibleLen(r.label);
+                const float tw = ImGui::CalcTextSize(r.label, r.label + vl).x;
+                const ImGuiStyle& st = ImGui::GetStyle();
+                float nextW = tw + st.FramePadding.x * 2.0f;
+                if (r.kind == InspRowCheck) nextW = ImGui::GetFrameHeight() + (vl ? st.ItemInnerSpacing.x + tw : 0.0f);
+                else if (r.kind == InspRowLabel || r.kind == InspRowNote) nextW = tw;
+                const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                fits = right - (ImGui::GetItemRectMax().x + (r.sameLineGap >= 0.0f ? r.sameLineGap : st.ItemSpacing.x)) >= nextW;
+            }
+            if (fits) {
+                if (r.sameLineAt >= 0.0f) ImGui::SameLine(ImGui::GetWindowContentRegionMin().x + r.sameLineAt);   // from the region's left
+                else ImGui::SameLine(0.0f, r.sameLineGap);
+            }
+        }
+        if (r.disabled) ImGui::BeginDisabled();
+        const bool pushId = r.kind != InspRowTree && r.kind != InspRowTreeEnd;   // TreeNode and TreePop keep their own id
+        if (pushId) ImGui::PushID((int)k);
+        if (r.width > 0.0f) ImGui::SetNextItemWidth(r.width);
+        else if (r.width < 0.0f) ImGui::SetNextItemWidth(r.width);
+        bool hoverTip = true;
+        switch (r.kind) {
+        case InspRowDrag: {
+            const int n = r.n < 1 ? 1 : r.n > 4 ? 4 : r.n;
+            float* v = r.F();
+            const char* fmt = r.fmt ? r.fmt : "%.3f";
+            if (r.axisBars || r.axisTags || r.mixedAxes) {   // the editor's DragVec3Axis, or the generic card's FloatRow
+                static const char* const kTags[4] = {"X", "Y", "Z", "W"};
+                const ImGuiStyle& st = ImGui::GetStyle();
+                ImGui::PushID(r.label);
+                ImGui::PushMultiItemsWidths(n, ImGui::CalcItemWidth());
+                for (int i = 0; i < n; ++i) {
+                    ImGui::PushID(i);
+                    if (i > 0) ImGui::SameLine(0, st.ItemInnerSpacing.x);
+                    const bool mx = (r.mixedAxes >> i) & 1u;
+                    char tagged[24];
+                    const char* f = fmt;
+                    if (r.axisTags) { std::snprintf(tagged, sizeof tagged, mx ? "%s -" : "%s %s", kTags[i], fmt); f = tagged; }
+                    else if (mx) f = "-";
+                    else if (r.axisBars)
+                        f = InspAxisFormat(fmt, v[i], ImGui::CalcItemWidth() - st.FramePadding.x * 2.0f - 4.0f, [](const char* t) { return ImGui::CalcTextSize(t).x; });
+                    if (ImGui::DragFloat("##c", &v[i], r.speed, r.lo, r.hi, f)) { r.changed = true; r.axes |= 1u << i; }
+                    if (ImGui::IsItemActivated()) r.activated = true;
+                    if (r.axisBars && i < 3) {
+                        const ImVec2 mn = ImGui::GetItemRectMin(), mx2 = ImGui::GetItemRectMax();
+                        ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x + 3.0f, mx2.y), kInspAxisCol[i], 2.0f);
+                    }
+                    ImGui::PopID();
+                    ImGui::PopItemWidth();
+                }
+                const std::size_t vl = InspVisibleLen(r.label);
+                if (vl) { ImGui::SameLine(0, st.ItemInnerSpacing.x); ImGui::TextUnformatted(r.label, r.label + vl); }
+                ImGui::PopID();
+            } else {
+                bool ch = false;
+                const char* f = r.mixed ? "-" : fmt;
+                if (n == 1) ch = ImGui::DragFloat(r.label, v, r.speed, r.lo, r.hi, f);
+                else ch = ImGui::DragScalarN(r.label, ImGuiDataType_Float, v, n, r.speed, &r.lo, &r.hi, f);
+                if (ch) r.changed = true;
+                if (ImGui::IsItemActivated()) r.activated = true;
+            }
+            break;
+        }
+        case InspRowSlider:
+            if (ImGui::SliderFloat(r.label, r.F(), r.lo, r.hi, r.fmt ? r.fmt : "%.3f", r.logarithmic ? ImGuiSliderFlags_Logarithmic : 0)) r.changed = true;
+            if (ImGui::IsItemActivated()) r.activated = true;
+            break;
+        case InspRowDragInt:
+            if (ImGui::DragInt(r.label, r.I(), r.speed, (int)r.lo, (int)r.hi, r.mixed ? "-" : (r.fmt ? r.fmt : "%d"))) r.changed = true;
+            if (ImGui::IsItemActivated()) r.activated = true;
+            break;
+        case InspRowSliderInt:
+            if (ImGui::SliderInt(r.label, r.I(), (int)r.lo, (int)r.hi, r.fmt ? r.fmt : "%d")) r.changed = true;
+            if (ImGui::IsItemActivated()) r.activated = true;
+            break;
+        case InspRowCheck:
+            if (r.mixed) ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+            if (ImGui::Checkbox(r.label, r.B())) r.changed = true;
+            if (r.mixed) ImGui::PopItemFlag();
+            break;
+        case InspRowCombo: {
+            int* cur = r.I();
+            const char* preview = r.mixed ? "Mixed" : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
+            if (ImGui::BeginCombo(r.label, preview)) {
+                for (int q = 0; q < r.count; ++q)
+                    if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
+                ImGui::EndCombo();
+            }
+            break;
+        }
+        case InspRowColor: {
+            float* c = r.F();
+            const float before[4] = {c[0], c[1], c[2], r.n == 4 ? c[3] : 1.0f};
+            const bool ch = r.n == 4 ? ImGui::ColorEdit4(r.label, c) : ImGui::ColorEdit3(r.label, c);
+            if (ch) { r.changed = true; for (int q = 0; q < (r.n == 4 ? 4 : 3); ++q) if (c[q] != before[q]) r.axes |= 1u << q; }
+            break;
+        }
+        case InspRowText: {
+            char buf[512];
+            std::snprintf(buf, sizeof buf, "%s", r.mixed ? "" : r.S()->c_str());
+            bool ed;
+            if (r.wrap) ed = ImGui::InputTextMultiline(r.label, buf, sizeof buf, ImVec2(ImGui::CalcItemWidth(), ImGui::GetTextLineHeight() * 4.0f));
+            else ed = (r.hint || r.mixed) ? ImGui::InputTextWithHint(r.label, r.mixed ? "Mixed" : r.hint, buf, sizeof buf)
+                                          : ImGui::InputText(r.label, buf, sizeof buf);
+            if (ed) { *r.S() = buf; r.changed = true; }
+            if (ImGui::IsItemActivated()) r.activated = true;
+            if (r.pick != InspPickNone) {   // the editor's AssetPathPicker arrow
+                const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                const float x1 = std::min(mx.x, mn.x + ImGui::CalcItemWidth());   // the field's right end, not the label's
+                const bool over = ImGui::IsItemHovered() && ImGui::IsMouseHoveringRect(ImVec2(x1 - 22.0f, mn.y), ImVec2(x1, mx.y), false);
+                const float cx = x1 - 12.0f, cy = (mn.y + mx.y) * 0.5f;
+                ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(cx - 4.0f, cy - 2.0f), ImVec2(cx + 4.0f, cy - 2.0f), ImVec2(cx, cy + 3.0f),
+                                                              ImGui::GetColorU32(over ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+            }
+            break;
+        }
+        case InspRowSection: SectionHeaderImGui(r.Text(), hooks); break;
+        case InspRowGroup: ImGui::SeparatorText(r.Text()); break;
+        case InspRowNote:
+            if (r.wrap) ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", r.Text());
+            if (r.wrap) ImGui::PopTextWrapPos();
+            break;
+        case InspRowColorText:
+        case InspRowLabel:
+            if (r.alignFrame) ImGui::AlignTextToFramePadding();
+            if (r.kind == InspRowColorText || r.color) ImGui::TextColored(FromU32(r.color), "%s", r.Text());
+            else if (r.wrap) ImGui::TextWrapped("%s", r.Text());
+            else ImGui::TextUnformatted(r.Text());
+            break;
+        case InspRowSmallButton:
+            if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
+            if (ImGui::SmallButton(r.label)) r.clicked = true;
+            if (r.color) ImGui::PopStyleColor();
+            break;
+        case InspRowButton: {
+            if (r.on) {
+                const ImVec4 a = Unpack(hooks.accent);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(a.x, a.y, a.z, 0.90f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(a.x, a.y, a.z, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(a.x, a.y, a.z, 0.80f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+            }
+            if (ImGui::Button(r.label, ImVec2(r.width, 0.0f))) r.clicked = true;
+            if (r.on) ImGui::PopStyleColor(4);
+            break;
+        }
+        case InspRowSwatch:
+            if (ImGui::ColorButton(r.label, ImVec4(r.fv[0], r.fv[1], r.fv[2], r.fv[3]), 0, ImVec2(r.texW, r.texH))) r.clicked = true;
+            break;
+        case InspRowAsset: {   // the editor's AssetField
+            std::string* v = r.S();
+            const float fh = ImGui::GetFrameHeight();
+            const bool hasValue = !r.mixed && !v->empty();
+            float w = ImGui::CalcItemWidth();
+            if (hasValue) w -= fh + 2.0f;
+            std::string shown = r.mixed ? "Mixed" : v->empty() ? std::string("None") : *v;
+            if (hasValue && r.s && !r.sv.empty()) shown = r.sv;   // the host's name for the value (an object's name)
+            else if (hasValue) { const std::size_t sl = shown.find_last_of("/\\"); if (sl != std::string::npos) shown = shown.substr(sl + 1); }
+            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+            if (!hasValue) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::Button((shown + "###asset").c_str(), ImVec2(std::max(40.0f, w), fh));
+            if (!hasValue) ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+            hoverTip = false;
+            if (hasValue) {
+                ImGui::SameLine(0, 2.0f);
+                if (ImGui::Button("##clear", ImVec2(fh, fh))) { v->clear(); r.changed = true; }
+                const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                const ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+                const float rr = fh * 0.17f;
+                const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(c.x - rr, c.y - rr), ImVec2(c.x + rr, c.y + rr), col, 1.5f);
+                ImGui::GetWindowDrawList()->AddLine(ImVec2(c.x - rr, c.y + rr), ImVec2(c.x + rr, c.y - rr), col, 1.5f);
+            }
+            const std::size_t vl = InspVisibleLen(r.label);
+            if (vl) { ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x); ImGui::TextUnformatted(r.label, r.label + vl); }
+            break;
+        }
+        case InspRowImage:
+            if (r.texture) ImGui::Image((ImTextureID)r.texture, ImVec2(r.texW, r.texH));
+            else ImGui::Dummy(ImVec2(r.texW, r.texH));
+            hoverTip = false;
+            break;
+        case InspRowMask: {
+            int* bits = r.I();
+            std::vector<std::string> names, vals; std::vector<void*> thumbs;
+            if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
+            names.resize(32);
+            const std::string preview = InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
+            if (ImGui::BeginCombo(r.label, preview.c_str())) {
+                if (ImGui::Selectable("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
+                if (ImGui::Selectable("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
+                ImGui::Separator();
+                for (int i = 0; i < 32; ++i) {
+                    bool on = (*bits & (1 << i)) != 0;
+                    ImGui::PushID(i);
+                    if (ImGui::Checkbox(names[(std::size_t)i].c_str(), &on)) { if (on) *bits |= (1 << i); else *bits &= ~(1 << i); r.changed = true; }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
+        case InspRowTree: {
+            if (r.on) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+            const bool open = ImGui::TreeNode(r.label);
+            *r.B() = open;
+            if (!open) skip = 1;
+            break;
+        }
+        case InspRowTreeEnd: ImGui::TreePop(); break;
+        case InspRowSpacing: ImGui::Spacing(); break;
+        }
+        if (hoverTip && (r.tip || r.tipLookup) && ImGui::IsItemHovered()) {
+            if (r.tip && *r.tip) ImGui::SetTooltip("%s", r.tip);
+            else if (r.tipLookup && list.hooks.tipFor) {
+                const std::string t = list.hooks.tipFor(r.label);
+                if (!t.empty()) ImGui::SetTooltip("%s", t.c_str());
+            }
+        }
+        if (r.overridden) {   // the editor's PrefabFieldMark bar
+            const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            const float x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x - 5.0f;
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), kInspPrefabMark, 1.5f);
+        }
+        if (pushId) ImGui::PopID();
+        if (r.disabled) ImGui::EndDisabled();
+    }
+}
+
 } // namespace oked

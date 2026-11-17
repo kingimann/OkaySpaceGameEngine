@@ -6,6 +6,7 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "InspectorStackOkayUI.hpp"
+#include "InspectorBodiesFixtures.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -60,6 +61,55 @@ struct IRig {
     void Enter() { sim.Press(Key_Enter); Frame(); }
     const Bitmap& Draw() { return sim.Draw(30, 33, 41); }
     inspfix::Obj& O() { return scene.Shown(); }
+};
+
+// Stage 2 (docs/own_ui_toolkit.md section 15): one component body as field rows, drawn the width of a docked Inspector with the
+// Inspector's spacing and value column; each frame builds the rows from the values (as the editor's builders do) and draws them.
+struct BRig {
+    Sim sim;
+    inspbody::Values v;
+    inspbody::Body body;
+    P::InspFieldList L;
+    S::FieldListResult res;
+    BRig(inspbody::Body b, float w = 460.0f, float h = 1100.0f) : sim(w, h), body(b) {
+        Reset(); UI::UseLauncherLook(true); UI::Style().caretBlink = false;
+    }
+    ~BRig() { UI::UseLauncherLook(false); }
+    void Frame() {
+        sim.Frame([&] {
+            const inspfix::InspectorMetrics im;
+            S::EditorMetrics em;
+            em.itemSpacing = UI::Vec2{im.itemX, im.itemY}; em.framePadding = UI::Vec2{im.frameX, im.frameY}; em.innerSpacing = UI::Vec2{im.innerX, im.innerY};
+            em.itemWidth = inspfix::InspectorItemWidth(sim.W - 32.0f);
+            S::SetEditorMetrics(em);
+            UI::PushTextScale(S::kEditorTextScale);
+            L = inspbody::Rows(body, v);
+            res = S::DrawFieldList(L, "Body##okayui", 16.0f, 12.0f, sim.W - 32.0f, sim.H - 24.0f);
+            UI::PopTextScale();
+            S::SetEditorMetrics(S::EditorMetrics{});
+        });
+        inspbody::Apply(body, v, L);
+    }
+    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
+    void Click(float x, float y) { sim.Move(x, y); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); Frame(); }
+    template <class R> void Click(const R& r) { Click(CX(r), CY(r)); }
+    void RightClick(float x, float y) { sim.Move(x, y); Frame(); sim.rdown = true; Frame(); sim.rdown = false; Frame(); }
+    void Drag(float x, float y, float dx, int steps = 4) {
+        sim.Move(x, y); Frame(); sim.Down(); Frame();
+        for (int i = 1; i <= steps; ++i) { sim.Move(x + dx * (float)i / (float)steps, y); Frame(); }
+        sim.Up(); Frame(); Frame();
+    }
+    /// The row whose label starts with `label` (its visible part or its whole text), -1 when none.
+    int Row(const char* label) const {
+        for (std::size_t k = 0; k < L.rows.size(); ++k)   // the whole label, or its visible part
+            if (std::strcmp(L.rows[k].label, label) == 0 || std::string(L.rows[k].label, P::InspVisibleLen(L.rows[k].label)) == label || L.rows[k].sv == label) return (int)k;
+        for (std::size_t k = 0; k < L.rows.size(); ++k)   // else the first that starts with it
+            if (std::strncmp(L.rows[k].label, label, std::strlen(label)) == 0) return (int)k;
+        return -1;
+    }
+    UI::Rect R(const char* label) const { const int k = Row(label); return k >= 0 && k < (int)res.rows.size() ? res.rows[(std::size_t)k] : UI::Rect{}; }
+    bool Clicked(const char* label) const { for (const std::string& c : v.clicked) if (c == label) return true; return false; }
+    const Bitmap& Draw() { return sim.Draw(30, 33, 41); }
 };
 
 int main() {
@@ -398,6 +448,222 @@ int main() {
         CHECK(r.scene.addComponentOpened == 1);
     }
 
+
+    // ================= stage 2: component bodies as field rows (section 15) =================
+    {   // the Spot light: its picture, a drag, a check box that hides rows, a list pick, small buttons, tooltips asked only on hover
+        BRig r(inspbody::BodyLight);
+        r.Frames(3);
+        Check("inspector_light", r.Draw());
+        CHECK(r.res.rows.size() == r.L.rows.size());
+        CHECK(r.v.tipAsked == 0);                                          // nothing hovered: no tooltip looked up
+        const UI::Rect in = r.R("Intensity");
+        CHECK(in.w > 200.0f && in.h > 30.0f);
+        r.Drag(in.x + 40.0f, CY(in), 20.0f);                                // 20 pixels past the 3-pixel threshold at 0.02 a pixel
+        CHECK(std::fabs(r.v.intensity - (1.2f + 20.0f * 0.02f)) < 0.005f);   // the whole 20 pixels count once past the threshold
+        r.sim.Move(in.x + in.w - 10.0f, CY(in)); r.Frames(2);              // over its label: the registry's tooltip is asked for
+        CHECK(r.v.tipAsked > 0);
+        const UI::Rect cs = r.R("Cast Shadows");
+        CHECK(r.Row("Strength##lightsh") >= 0);
+        r.Click(cs.x + 11.0f, CY(cs));
+        CHECK(!r.v.castShadows && r.Row("Strength##lightsh") < 0);         // the shadow rows go with it
+        const UI::Rect ty = r.R("Type##light");
+        r.Click(ty.x + 30.0f, CY(ty));
+        CHECK(r.res.listRows.size() == 4 && r.res.popup.w > 0.0f);
+        r.Click(r.res.listRows[1]);                                         // Point
+        CHECK(r.v.lightType == 1 && r.Row("Spot Angle") < 0 && r.Row("Range##light") >= 0);
+        const UI::Rect torch = r.R("Torch");
+        CHECK(torch.y == r.R("Candle").y && torch.x > r.R("Candle").x);      // on one line, 4 pixels apart
+        CHECK(std::fabs(torch.x - (r.R("Candle").x + r.R("Candle").w + 4.0f)) < 1.0f);
+        r.Click(torch);
+        CHECK(r.Clicked("Torch"));
+    }
+    {   // the camera: its picture; the logarithmic Zoom; a swatch; a disabled button; the layer mask; Depth beside Main
+        BRig r(inspbody::BodyCamera, 460.0f, 1500.0f);
+        r.Frames(3);
+        Check("inspector_camera", r.Draw());
+        const UI::Rect zm = r.R("Zoom");
+        const float frameW = inspfix::InspectorItemWidth(428.0f);
+        r.Click(zm.x + frameW * 0.5f, CY(zm));                              // the middle of a log scale from 0.25 to 8 is 1.41
+        CHECK(std::fabs(r.v.zoom - 1.414f) < 0.08f);
+        r.Click(r.R("1x##zoomreset"));
+        CHECK(r.Clicked("1x"));
+        r.Click(r.R("##bgp3"));
+        CHECK(r.Clicked(""));                                               // a swatch has no visible label
+        r.v.clicked.clear();
+        r.Click(r.R("Test Shake"));
+        CHECK(r.v.clicked.empty());                                         // greyed out: no click
+        const UI::Rect mainBox = r.R("Main"), depth = r.R("Depth");
+        CHECK(std::fabs(mainBox.y - depth.y) < 1.0f && depth.x > mainBox.x + mainBox.w);
+        const UI::Rect ly = r.R("Layers");
+        r.Click(ly.x + 30.0f, CY(ly));
+        CHECK(r.res.popup.w > 0.0f && r.res.listRows.size() == 32);
+        CHECK(r.res.listRows[3].w > 0.0f);
+        r.Click(r.res.listRows[3].x + 11.0f, CY(r.res.listRows[3]));        // untick layer 3
+        CHECK(r.v.cullingMask == ~(1 << 3));
+    }
+    {   // the Box Collider: the coloured cells, Layer beside Trigger, the Physics Material fold-out, typing a tag, the accent toggle
+        BRig r(inspbody::BodyBoxCollider);
+        r.Frames(3);
+        Check("inspector_boxcollider", r.Draw());
+        const UI::Rect tr = r.R("Trigger"), ly = r.R("Layer");
+        CHECK(std::fabs(tr.y - ly.y) < 1.0f);
+        const UI::Rect fr = r.R("Friction##pmbc3"), size = r.R("Size##bc3");
+        CHECK(fr.w > 0.0f && fr.x > size.x + 20.0f);                        // inside the fold-out: indented
+        r.Click(r.R("Physics Material"));
+        CHECK(r.R("Friction##pmbc3").w == 0.0f && r.R("Own Bounciness").w == 0.0f);   // folded: not drawn
+        CHECK(r.R("Only Tag").y < fr.y);                                    // and the rows under it moved up
+        r.Click(r.R("Physics Material"));
+        CHECK(r.R("Friction##pmbc3").w > 0.0f);
+        const UI::Rect tag = r.R("Only Tag");
+        r.Click(tag.x + 40.0f, CY(tag));
+        r.sim.Press(Key_SelectAll); r.Frame();
+        r.sim.Type("Enemy"); r.Frame(); r.Frame();
+        CHECK(r.v.onlyTag == "Enemy");
+        r.sim.Press(Key_Escape); r.Frame();
+        r.v.editCollider = true; r.Frames(2);
+        CHECK(r.Row("Drag the colored dots") >= 0);
+    }
+    {   // the script's variables: names on the left, values from the name column on, the overridden one in colour with its "o"
+        BRig r(inspbody::BodyScript);
+        r.Frames(3);
+        Check("inspector_script", r.Draw());
+        const UI::Rect sp = r.R("speed"), val = r.res.rows[(std::size_t)r.Row("speed") + 1];
+        CHECK(std::fabs(val.x - (16.0f + 200.0f)) < 1.0f && std::fabs(val.y - sp.y) < 10.0f);
+        CHECK(std::fabs((val.x + val.w) - (16.0f + 428.0f - 28.0f)) < 1.5f);   // the region less 28
+        r.Click(r.R("o"));
+        CHECK(r.Clicked("o"));
+    }
+    {   // the rest of the Mesh Renderer: the path picker (its arrow, the menu, the project's files), the procedural grid, typing a path
+        BRig r(inspbody::BodyMeshRest);
+        r.Frames(3);
+        Check("inspector_meshrest", r.Draw());
+        const UI::Rect tex = r.R("##meshtex");
+        CHECK(std::fabs(tex.w - 210.0f) < 1.0f);
+        r.Click(tex.x + tex.w - 10.0f, CY(tex));                            // the arrow at its right end
+        CHECK(r.res.popup.w > 0.0f);
+        const UI::Rect menu = r.res.popup;
+        r.Click(menu.x + 40.0f, menu.y + 12.0f + 13.0f);                    // "Choose from project..."
+        r.Frames(2);
+        CHECK(r.v.choicesAsked == 1 && r.res.listRows.size() == 5);        // the files asked for once, when it opened
+        r.Frames(3);
+        CHECK(r.v.choicesAsked == 1);
+        r.Click(r.res.listRows[1]);                                         // wood.png
+        CHECK(r.v.texture == "Assets/wood.png");
+        r.Click(r.R("Procedural"));
+        r.Frames(2);
+        CHECK(r.res.popup.w > 0.0f);
+        r.Click(r.res.popup.x + 16.0f + 30.0f, r.res.popup.y + 12.0f + 30.0f);   // the first thumbnail (a named button without a thumbnail)
+        CHECK(r.v.texture == "proc:brick");
+        const UI::Rect mf = r.R("Mesh File");
+        r.Click(mf.x + 40.0f, CY(mf));
+        r.sim.Type("Assets/hook.obj"); r.Frame(); r.Frame();
+        CHECK(r.v.meshFile == "Assets/hook.obj");
+        r.sim.Press(Key_Escape); r.Frame();
+    }
+    {   // a component drawn from the property registry: titles, a file field with its picker and clear button, a part that differs
+        BRig r(inspbody::BodyGeneric);
+        r.Frames(3);
+        Check("inspector_generic", r.Draw());
+        const UI::Rect clip = r.R("Clip");
+        r.Click(clip.x + 40.0f, CY(clip));
+        r.Frames(2);
+        CHECK(r.res.listRows.size() == 5);
+        r.Click(r.res.listRows[4]);                                         // Audio/jump.wav
+        CHECK(r.v.clip == "Assets/Audio/jump.wav");
+        const float fh = clip.h;
+        r.Click(clip.x + inspfix::InspectorItemWidth(428.0f) - fh * 0.5f, CY(clip));   // the clear button at the end of the field
+        CHECK(r.v.clip.empty());
+        const UI::Rect fo = r.R("Follow");
+        r.Click(fo.x + 40.0f, CY(fo));
+        r.Frames(2);
+        r.Click(r.res.listRows[2]);
+        CHECK(r.v.follow == "g-3");
+        // the second axis differs on the selected objects ("Y -"): a drag on the first changes only that part
+        const UI::Rect po = r.R("Position##pos3");
+        r.Drag(po.x + 20.0f, CY(po), 12.0f);
+        CHECK(r.v.pos3[0] != 0.0f && r.v.pos3[1] == 1.0f);
+        CHECK(r.L[r.Row("Position##pos3")].axes == 0u || r.v.pos3[0] != 0.0f);
+    }
+    {   // a field changed from the prefab: the blue bar, and its right-click menu (asked only while open) reverting it
+        BRig r(inspbody::BodyRigidbody);
+        r.Frames(2);
+        // mark Mass as overridden from now on (the editor's host does it from the prefab's differences)
+        auto frame = [&] {
+            r.sim.Frame([&] {
+                const inspfix::InspectorMetrics im;
+                S::EditorMetrics em;
+                em.itemSpacing = UI::Vec2{im.itemX, im.itemY}; em.framePadding = UI::Vec2{im.frameX, im.frameY}; em.innerSpacing = UI::Vec2{im.innerX, im.innerY};
+                em.itemWidth = inspfix::InspectorItemWidth(r.sim.W - 32.0f);
+                S::SetEditorMetrics(em);
+                UI::PushTextScale(S::kEditorTextScale);
+                r.L = inspbody::Rows(r.body, r.v);
+                r.L[r.Row("Mass")].overridden = true;
+                r.res = S::DrawFieldList(r.L, "Body##okayui", 16.0f, 12.0f, r.sim.W - 32.0f, r.sim.H - 24.0f);
+                UI::PopTextScale();
+                S::SetEditorMetrics(S::EditorMetrics{});
+            });
+        };
+        for (int i = 0; i < 3; ++i) frame();
+        const UI::Rect ms = r.R("Mass");
+        const Bitmap& pic = r.Draw();
+        const int bx = 16 - 4, by = (int)CY(ms);
+        const unsigned px = PixelAt(pic, bx, by);
+        CHECK(((px >> 8) & 0xffu) > 200 && (px >> 24) < 140);               // the blue bar left of the region
+        CHECK(r.v.prefabMenuAsked == 0);
+        r.sim.Move(CX(ms), CY(ms)); frame(); r.sim.rdown = true; frame(); r.sim.rdown = false; frame(); frame();
+        CHECK(r.v.prefabMenuAsked > 0 && r.res.popup.w > 0.0f);
+        // the menu: a heading, the difference, a rule, Revert Property, Apply Property to Prefab
+        const UI::Rect pop = r.res.popup;
+        bool reverted = false;
+        for (float yy = pop.y + 20.0f; yy < pop.y + pop.h && !reverted; yy += 6.0f) {
+            r.sim.Move(pop.x + 40.0f, yy); frame(); r.sim.Down(); frame(); r.sim.Up(); frame();
+            if (r.L.prefabChosen == P::kInspPrefabRevert) reverted = true;
+            else if (!r.L.prefabChosen.empty()) break;
+            if (r.res.popup.w <= 0.0f) { r.sim.Move(CX(ms), CY(ms)); frame(); r.sim.rdown = true; frame(); r.sim.rdown = false; frame(); frame(); }
+        }
+        CHECK(reverted);
+    }
+    {   // where a combo's list opens (Dear ImGui's combo placement): under the box when it fits; above it when there is no room under it;
+        // toward the left (its right edge on the box's) when a wide list has no room to the right
+        auto place = [](float bx, float by, float listW, UI::Rect& box, UI::Rect& pop) {
+            Sim sim(300.0f, 400.0f);
+            Reset();
+            static const char* const items[] = {"One", "Two", "Three", "Four", "Five", "Six"};
+            int cur = 0;
+            auto f = [&] {
+                sim.Frame([&] {
+                    UI::BareNextWindow();
+                    if (UI::Begin("combo##place", 0.0f, 0.0f, 300.0f, 400.0f)) {
+                        UI::SetCursorScreenPos(UI::Vec2{bx, by});
+                        UI::SetNextItemWidth(100.0f);
+                        UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
+                        UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{0.0f, 0.0f});
+                        const bool open = UI::BeginCombo("##c", items[cur]);
+                        box = UI::GetItemRect();
+                        if (open) {
+                            const UI::Vec2 p = UI::GetCursorScreenPos();
+                            pop = UI::Rect{p.x, p.y, 1.0f, 1.0f};
+                            for (int i = 0; i < 6; ++i) if (UI::Selectable(items[i], i == cur)) cur = i;
+                            UI::EndCombo();
+                        }
+                        UI::PopStyleVar(2);
+                    }
+                    UI::End();
+                });
+            };
+            f(); f();
+            sim.Move(box.x + 20.0f, box.y + 8.0f); f(); sim.Down(); f(); sim.Up(); f(); f(); f();
+        };
+        UI::Rect box, pop;
+        place(10.0f, 10.0f, 100.0f, box, pop);
+        CHECK(pop.x == box.x && pop.y >= box.y + box.h - 0.5f);              // under it, toward the right
+        place(10.0f, 300.0f, 100.0f, box, pop);
+        CHECK(pop.x == box.x && pop.y < box.y);                              // no room under it: above it
+        place(190.0f, 10.0f, 200.0f, box, pop);
+        CHECK(std::fabs(pop.x - (box.x + 100.0f - 200.0f)) < 0.5f && pop.y >= box.y + box.h - 0.5f);   // toward the left
+        place(190.0f, 300.0f, 200.0f, box, pop);
+        CHECK(std::fabs(pop.x - (box.x + 100.0f - 200.0f)) < 0.5f && pop.y < box.y);                     // above, toward the left
+    }
     // ================= toolkit pieces this needed =================
     {
         // a popup opened from a row of an open popup keeps that popup open while it is used (OkayUI's EndPopup)

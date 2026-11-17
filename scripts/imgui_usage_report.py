@@ -69,6 +69,8 @@ PORTED = [
     ("Inspector Transform's vector rows", "editor/EditorPanelViews.cpp", "InspVec3Im"),
     ("Inspector Mesh Renderer (shading fields)", "editor/EditorPanelViews.cpp", "DrawMeshRendererBodyImGui"),
     ("Inspector Add Component button", "editor/EditorPanelViews.cpp", "DrawAddComponentButtonImGui"),
+    ("Inspector stage 2: component bodies as field rows (the editor's own bodies are still the default)", "editor/EditorPanelViews.cpp", "DrawFieldListBodyImGui"),
+    ("Inspector stage 2: the section heading", "editor/EditorPanelViews.cpp", "SectionHeaderImGui"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

@@ -1709,14 +1709,17 @@ arriving in a frame Dear ImGui does not see it under Xvfb at about 20 FPS). Not 
 - Text edges (OkayUI's baked Roboto against Dear ImGui's), and the Add Component label sits 2 pixels higher.
 - **Where a list opens.** In the docked Inspector Dear ImGui opens the Shader, Layer and "..." lists to the left of the box (over the
   Scene view); OkayUI opens them under the box, kept on the screen. The "..." menu is right-aligned to the screen edge in OkayUI.
+  (Stage 2, section 15.2: this is Dear ImGui's 1600-pixel monitor rectangle under Xvfb; OkayUI's combo lists now follow Dear ImGui's
+  placement order.)
 - The text widths differ by under a pixel ("Static" + "Lock"), so at a width right on the edge one version may wrap Static and Lock
   and the other not.
 - Tooltips and the hover cursor are OkayUI's; the colour picker that opens from a swatch is OkayUI's picker, not Dear ImGui's.
 - **Per-field prefab marks and the registry's field tooltips** (`FieldTip`: the blue bar and the Revert / Apply Property menu on a field
   changed from its prefab) are not drawn on the OkayUI Transform and Mesh Renderer fields. The component bar does show "changed from the
-  prefab" and its Revert / Apply Component rows.
+  prefab" and its Revert / Apply Component rows. (Done in stage 2, section 15.2.)
 - The Mesh Renderer below Primitive (the mesh file, the texture and map fields with their pickers, drop targets and thumbnails, the mesh
   tools, the material preset) and every other component's body stay Dear ImGui; stage 2 is the asset fields (shared by many components).
+  (Stage 2, section 15, ports these and six more bodies, and the generic card.)
 
 ### 14.8 Not verified
 
@@ -1735,3 +1738,238 @@ same Dear ImGui drop target on its placeholder, not tried), the Tag and Layer re
 
 As with the Hierarchy, the totals grew because the model bodies (222 calls) sit next to the editor's own `DrawInspector`, which stays the
 default.
+
+## 15. The Inspector, stage 2: component bodies as field rows (the rest of the Mesh Renderer, Light, Camera, Rigidbody 3D, the 3D colliders, Script, and every component drawn from the property registry)
+
+Stage 1 ported the parts every object has (section 14). Stage 2 ports the bodies of the most used components, behind the same
+developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`); Dear ImGui stays the default and the fallback for any frame OkayUI cannot
+draw a part (a Dear ImGui popup or window covers it). Written from the editor's own component code (`editor/main.cpp` DrawInspector,
+`editor/InspectorPanel.cpp` PropertyField, AssetField, AssetPathPicker, PrefabFieldMark), Dear ImGui's documented widget behaviour as the
+editor uses it, and measurements of both pictures; no code from any other project.
+
+### 15.1 One model for every body: field rows
+
+A component body is written with a small set of Dear ImGui widgets. `shared/InspectorFieldsModel.hpp` describes a body as a list of rows
+of those kinds (`InspFieldList`, `InspRow`): drag fields (1 to 4 cells; the Transform's coloured cells; the generic card's "X 1.000"
+cells), sliders (also logarithmic), int drags and sliders, check boxes, combos, colour fields, text fields (with a hint; with the
+editor's path picker arrow), the editor's section heading, the generic card's group title, grey notes, coloured text, labels, small
+buttons, buttons (the accent toggle), colour swatches, file and object fields (a button with the name, a clear button, a picker), a
+thumbnail, a layer mask (a list with Everything, Nothing and a box per layer), a fold-out (Dear ImGui's TreeNode) and spacing. A row can
+sit on the previous row's line (`SameLine`, a gap, an x from the region's left, or `SameLineOrWrap`: only when it fits), be greyed out,
+have a fixed or "region less N" width, show "-" / "Mixed" for values that differ on the selected objects, carry a tooltip or ask the
+registry for one (`tipLookup`), and be marked as changed from the prefab.
+
+The host builds the rows every frame with pointers to the values (`InspFieldList::Drag`, `Check`, `Combo` ... one call per Dear ImGui
+widget), the version edits them in place and marks the row (`changed`, `clicked`, `activated`, `axes`), and the host then does what the
+Dear ImGui code does after that widget. What a version needs only now and then is asked through `InspFieldHooks`: a field's registry
+tooltip (only while it is hovered), an overridden field's prefab menu (only while it is open), and what a picker lists (project files of
+a kind, the scene's objects, the 32 layer names, the procedural textures with their thumbnails; asked once when the picker opens).
+
+Both versions draw the same rows: `DrawFieldListBodyImGui` (`editor/EditorPanelViews.cpp`, for the comparison test) and
+`okayuiscreens::DrawFieldList` (`okayui/screens/OkayUIEditorPanels.cpp`). The editor glue is `oked::DrawFieldListOkayUI`
+(`editor/OkayPanels.cpp`): one `HostSection` per body inside the Inspector's Dear ImGui window (as in stage 1), and a Dear ImGui drop
+target over each row that takes a file from the Project panel or an object from the Hierarchy (the drag is Dear ImGui's, the rows are
+OkayUI's; the outline shows while a file is dragged, red when the row does not take it).
+
+### 15.2 What is ported
+
+| Component | How | What the body has |
+|---|---|---|
+| Mesh Renderer (the rest, below Primitive) | `DrawMeshRendererRestWithOkayUI` | Mesh File and Load; the texture path (the picker arrow: Choose from project / Clear; a drop from the Project panel), Browse... (the file dialog), Procedural (a grid of the procedural textures with their thumbnails), Clear, the thumbnail (right-click: Show in Project), Tiling, Offset, Filter, UV Scroll, Triplanar; Normal Map (Clear, thumbnail, Bump Strength), Reflectivity, Metallic, Specular Map, Occlusion Map (and Occlusion), Metal / Rough, Emissive Map; the counts, Subdivide, Subdiv+Smooth, Smooth, Weld, Recenter, Ground, Fit 1u, Remove; Material preset (path, Save, Load); Add Physics |
+| Mesh Renderer (the shading, stage 1) | `DrawMeshRendererWithOkayUI` | now with the fields' registry tooltips and prefab marks |
+| Transform (stage 1) | `DrawTransformWithOkayUI` | now with Position, Rotation and Scale's tooltips and prefab marks |
+| Light | `DrawLightWithOkayUI` | Type, Use Temperature (Kelvin, its swatch, the five presets in their colours) or Color, Intensity; Ambient and Ambient Tint; Range and Falloff (point, spot, area); Spot Angle and Softness; Cast Shadows, the renderer note, the sun-shadow warning, Strength, Bias; Flicker (Amount, Speed, the three presets, the note); the aiming note; Remove |
+| Camera | `DrawCameraWithOkayUI` | Projection (its width), Size, Physical Camera (Focal Length, Sensor Height, the sensor presets, Effective FOV) or Field of View (the presets, FOV Axis); Clear Flags, Background and its five swatches; Near, Far; Zoom (logarithmic) and 1x, Dutch Angle, Lens Shift, Pixel Perfect and Pixels Per Unit; Camera Shake (Amount, Angle, Frequency, Recovery, Test Shake greyed out outside Play); Viewport Rect; the Culling Mask list; Main and Depth on one line; Render Target; Add overlay camera; Remove |
+| Rigidbody 3D | `DrawRigidbody3DWithOkayUI` | Body Type, Gravity Scale, Mass, Drag, Bounciness, Friction, Max Fall Speed, Freeze position X Y Z on one line, Freeze Rotation, Angular Drag, Allow Sleep, Continuous Collision, Rolling Resistance, Use Child Colliders, the parent note, Remove |
+| Box, Sphere, Capsule and Mesh Collider 3D | `Draw*Collider3DWithOkayUI` (shared rows: `AddColliderRows`) | Size / Radius / Height / Axis, Offset (the coloured cells); Trigger and Layer on one line; the Physics Material fold-out (Own Friction, Friction, Friction Mix, Own Bounciness, Bounciness, Bounce Mix); Only Tag and Only Layers for a trigger; Fit to mesh and Auto Fit; the Box's Edit Collider toggle and its note; the Mesh Collider's notes, status, fallback Size and Offset, Rebuild; Remove |
+| Script | `DrawScriptWithOkayUI` | Open in Script Editor; the public variables from the script (live from the open editor buffer): headers, the name on the left (coloured when it differs from the script's default) with its tooltip, the value from the name column on (a check box, three cells for a vector, a slider for a [Range], a number, a text, an object slot that takes an object dragged from the Hierarchy), and "o" to revert to the default. The script's path is the bar's title, as in Dear ImGui (the body has no path field there either) |
+| Every component drawn from the property registry (the generic card) | `DrawFallbackOkayUI` (`editor/InspectorPanel.cpp`) | one row per shown property: Bool, Int, Float, String (multi-line too), Vec2/3/4 and Quat (the "X 1.000" cells, each part "-" when it differs on the selected objects), Color, Enum, AssetPath (file field, picker, clear, drop), ObjectRef (object field, picker of the scene's objects, a drop from the Hierarchy); read-only rows greyed out; group titles; "Editing N selected objects"; edits go to every selected object as in Dear ImGui (`WriteField`, `WriteFieldAxes`). In this build that is every registered component without a hand-written body: Cylinder Collider 3D, Debris Emitter, Network Object, Network Transform, Sync Var, Touch Button, Touch DPad, Virtual Joystick, and any component a plugin registers |
+
+The other hand-written bodies (about 95 components: Particle System, Audio Source, Sprite Renderer, Terrain, Joint 3D, the 2D physics,
+the character controllers, UI ...) are still Dear ImGui; each is now a list of `InspFieldList` calls next to its Dear ImGui code (the
+seven above show the pattern), not new toolkit work.
+
+**Prefab marks and tooltips (stage 1 leftovers).** Every row with a label asks `FieldTooltip` for the registry's text while it is hovered,
+as `FieldTip` does. A row whose property differs from the prefab (`PrefabFieldOverridden`, only looked up for a changed component) gets
+the editor's blue bar 5 pixels left of the region, and a right-click opens its menu: "Overridden from X", the differences, Revert
+Property, Apply Property to Prefab (`RunPrefabFieldMenu` queues them like `PrefabFieldMark`). The same is on the Transform's three rows
+and the Mesh Renderer's shading fields that call `FieldTip` in Dear ImGui. The body windows reach 6 pixels past the region so the bar is
+not clipped.
+
+**Where lists open (stage 1 leftover).** The runs under Xvfb show why Dear ImGui's lists and the "..." menu opened to the left of the
+Inspector: Dear ImGui keeps a popup inside its monitor rectangle, and there that rectangle is 1600 pixels wide (the Culling Mask list and,
+in stage 1, the "..." menu both end at x = 1597 = 1600 - 3, wherever they open, on a 1920-pixel screen). On a real screen Dear ImGui puts a
+combo's list under its box toward the right when it fits, else above the box, else under it toward the left (its right edge on the box's),
+else above toward the left. OkayUI's combo lists now try the same four places (`beginPopupBody`, a combo's slot keeps its box), and only
+when none fits are they pushed inside the window as before. So in the docked Inspector both should open a list under its box on Windows;
+under Xvfb they still differ for the reason above. Not checked on Windows.
+
+### 15.3 Gaps closed (OkayUI and its host; tested in `okayui_inspector` and `okayui_host`)
+
+- **A logarithmic slider** (`SliderFlags_Logarithmic`, the Camera's Zoom): the grab on log(v / min) / log(max / min), Ctrl+click still types.
+- **A format with no number in it is shown as it is** ("-" for a value that differs on the selected objects, as Dear ImGui shows it); it
+  used to fall back to "%.3f".
+- **A combo's list placement** as above.
+- **A fast double click at a low frame rate** (two clicks between two frames, or a second click in the frame after the first was shown):
+  the host's input collector now counts presses and shows each one as an up-then-down edge (`okayuihost::InputCollector`). Before, two
+  clicks 80 ms apart at about 18 frames a second merged into one long press, so a double click on a number did not start typing in 4 of
+  5 tries in the real editor; after the fix 4 of 4 did.
+- In the field rows (`DrawFieldList`): Dear ImGui's DragInt (a framed cell, the step kept while dragging), its SeparatorText (a 3-pixel
+  rule each side of the title), the section heading (the 22-pixel face, its own line height), AlignTextToFramePadding for the script
+  variables' names (OkayUI's is a no-op), its TreeNode arrow (70% of a line, the frame padding in), the colour swatch, a one-line text
+  field that lets the keyboard go on Enter as Dear ImGui's does (Ctrl+Z after typing a script variable went to the field), a fold-out
+  that stays open across an undo that rebuilds the component.
+
+### 15.4 Found and fixed in the Dear ImGui editor while porting
+
+- **Every path field opened every path field's menu.** `AssetPathPicker` used one id for all fields, so a click on the Mesh Renderer's
+  texture arrow showed "Choose from project... / Clear" six times (once per path field), and the picker six search boxes. Each field now
+  has its own id. Seen in the real editor (`<scratchpad>/shots/oi2/side-51-pathmenu.png`, `side-52-picker.png`).
+- **The path picker's arrow sat on the label's last letters** for a labelled path field (the item rectangle includes the label); it now
+  sits at the field's right end, in both versions (seen in the comparison pictures).
+- **Text that ran out of the docked Inspector** (430 pixels): the Mesh Renderer's Procedural and Clear buttons now wrap to the next line
+  when they do not fit (`SameLineOrWrap`), and the Mesh Collider's notes and the Rigidbody's parent note wrap. Both versions.
+
+### 15.5 Tests
+
+- `okayui_inspector` (177 checks, 10 golden images; 58 new checks and 6 new pictures: `inspector_light`, `_camera`, `_boxcollider`,
+  `_script`, `_meshrest`, `_generic`), with the bodies from `okayui/tests/InspectorBodiesFixtures.hpp` (stand-ins for the values and
+  the rows the editor's builders make): a drag on Intensity (20 pixels at 0.02), its registry tooltip asked only while hovered, Cast
+  Shadows hiding its two rows, the Type list (Point hides the spot rows), the presets on one line 4 pixels apart and their clicks; the
+  Zoom slider's logarithmic middle (1.41), 1x, a swatch, a greyed-out button that takes no click, Main and Depth on one line, the layer
+  mask list and a box in it; the coloured cells, Trigger and Layer on one line, the fold-out (folded: its rows not drawn and the rows
+  under it moved up), typing a tag; the script's name column and "region less 28" width, its "o"; the path picker (the arrow, the menu,
+  the files asked for once, a pick), the procedural grid, typing a mesh path; the generic card's file field (picker, pick, clear), the
+  object field's picker, a drag on one part of a vector whose other part differs; a prefab-overridden field's bar and its menu (asked
+  only while open) reverting it; where a combo's list opens in the four cases. The 4 stage-1 pictures were re-made: one column of pixels
+  at the Mesh Renderer's left edge (the frames' antialiased edge, no longer clipped).
+- `okayui_inspector_imgui` (29 checks): the seven bodies in both versions with the same input (a check box and a preset button in the
+  light, the fold-out in the collider, the freeze boxes in the rigidbody), the speed and pixel tables below;
+  `OKAY_UI_PROFILE=body:<light|camera|rigidbody|boxcollider|script|meshrest|generic>:<imgui|okayui>` runs one side for callgrind.
+- `okayui_host`: two clicks between two frames give two edges; a second click in the next frame too; a held press stays down.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector"`: see 15.9.
+
+### 15.6 Speed
+
+Per frame, the body alone (the rows built from the values on both sides, the same code). Instructions: callgrind, 200 frames after a
+warm-up. Wall time: the median of 150 frames, three runs (load 2.9 to 3.0), the range shown.
+
+| Body | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render |
+|---|---:|---:|---:|---:|---:|---:|
+| Light | 263,700 | 197,100 (25% fewer) | 118 to 123 us | 53 to 60 us | 52.4 to 53.2 ms | 10.6 to 10.8 ms |
+| Camera | 344,100 | 236,800 (31% fewer) | 143 to 176 us | 69 to 87 us | 54.5 to 61.1 ms | 12.8 to 14.0 ms |
+| Rigidbody 3D | | | 101 to 106 us | 37 to 43 us | 51.3 to 52.1 ms | 7.4 to 7.7 ms |
+| Box Collider 3D | | | 102 to 125 us | 39 to 51 us | 48.0 to 53.5 ms | 5.8 to 6.3 ms |
+| Script | | | 96 to 114 us | 32 to 40 us | 46.7 to 52.8 ms | 4.5 to 5.2 ms |
+| Mesh Renderer (the rest) | | | 115 to 140 us | 62 to 73 us | 53.6 to 60.6 ms | 12.0 to 12.7 ms |
+| Generic card (an Audio Source's kinds of row) | 146,200 | 100,400 (31% fewer) | 113 to 141 us | 42 to 52 us | 48.5 to 58.7 ms | 6.2 to 7.5 ms |
+| Stage 1's sample object (for comparison) | 463,400 | 325,100 (30% fewer) | 166 to 175 us | 113 to 117 us | | |
+
+Stage 1's sample is unchanged by stage 2 (463,300 and 324,600 instructions before). "build + render" uses the CPU rasteriser.
+
+### 15.7 Pixels
+
+Both versions on a 560-pixel-wide canvas, the same rasteriser; "clearly different": a channel more than 48 apart (the gate is 12%).
+
+| Picture | Average difference | Clearly different |
+|---|---:|---:|
+| Light | 1.83 | 1.58% |
+| Camera | 2.06 | 1.69% |
+| Rigidbody 3D | 1.90 | 1.44% |
+| Box Collider 3D | 0.97 | 0.77% |
+| Script | 0.45 | 0.37% |
+| Mesh Renderer (the rest) | 2.08 | 1.64% |
+| Generic card | 0.68 | 0.56% |
+| Stage 1: sample, two selected, camera | 2.22, 2.50, 1.07 | 1.90%, 2.21%, 0.91% |
+
+What the first comparison found and was changed: the section heading 5 pixels short (OkayUI's text line stayed the body face's height),
+the generic card's group title (OkayUI's SeparatorText is taller and has no left rule), the rule under a heading 6 pixels too wide, the
+fold-out arrow too big and too far left, the swatches too round, Dear ImGui's DragInt drawn as OkayUI's unframed one, "-" shown as a
+number.
+
+### 15.8 In the real editor
+
+Built (Linux, `-O1`, assertions on; `main.cpp` peaked at 5.5 GB) and run under Xvfb at 1920 x 1200, two editors side by side (Dear ImGui,
+and `OKAY_DEV=1 OKAY_UI_BACKEND=okayui`), on the physics playground with three objects added (a capsule collider, a mesh collider, a
+script with variables; `<scratchpad>/oi2-logs/drive/extra.okayscene`), driven by the same clicks (xdotool). Three builds were run, each
+after fixing what the one before showed. Pictures in `<scratchpad>/shots/oi2/`: `old/` (first build), `run2/`, `run3/` (the final
+code), and `ok-8*-crop.png` (the final relink); `side-*` are the two Inspectors next to each other, `steps-*` a sequence. Done and
+looked at:
+
+- **Sun (Light)** (`old/side-01-sun.png`): a 40-pixel drag on Intensity (1.1 to 1.9 in both), Ctrl+Z (1.1 in both); Use Temperature
+  (Kelvin, its swatch, the five coloured presets in both); Bulb (2700 K, an orange swatch), Ctrl+Z (6500 K), Ctrl+Z (Color again) —
+  `old/steps-light1.png`, `old/steps-light2.png`.
+- **Main Camera**: the whole body scrolled through (`old/side-11-camera-down.png`, `run2/side-10-camera-end.png`); the Culling Mask list
+  (`old/side-13-layers.png`; where Dear ImGui's opens: 15.2); a double click on Near / Far, a typed number, Enter, Ctrl+Z, four times
+  (`run2/steps-far-typing.png`: before the input fix OkayUI started typing on 1 of 5 double clicks, after it on 4 of 4; the Ctrl+Z that
+  "did not take" there in both versions was xdotool's chord arriving within one frame: with the key held 0.3 s it undid 4 of 4 in both,
+  `run2/steps-far-typing2.png`).
+- **2 Ball (Sphere Collider 3D, Rigidbody 3D)**: a drag on Mass (1.0 to 1.9 in both), Freeze X, Ctrl+Z twice (back in both,
+  `run2/steps-rb.png`); the Physics Material fold-out, Own Friction (0.5), a drag on Friction (0.68 in both), Ctrl+Z
+  (`run2/steps-physmat.png`; the fold-out closed after the undo in OkayUI, fixed: `run3/steps-physmat-undo.png`).
+- **1 Tower crate 1 (Box Collider 3D)**: Edit Collider on (the accent, the note) and off, in both (`run2/steps-editcol.png`).
+- **T Capsule, T MeshCol, T Script, 9 Debris emitter**: their bodies (`old/side-31-capsule.png`, `old/side-32-meshcol.png`,
+  `run2/side-40-script.png`, `old/side-34-debris.png`: the Debris Emitter is the generic card, row for row the same as Dear ImGui's).
+- **T Script**: "o" reverts speed to 5 in both; a click on jump's slider (0.835 in Dear ImGui, 0.832 in OkayUI); typing Knight into
+  title, Enter, Ctrl+Z (`run2/steps-script.png`: OkayUI's field kept the keyboard and the Ctrl+Z went to it; fixed:
+  `run3/steps-script-text.png`, Hero again in both).
+- **7 Hook (the Mesh Renderer's texture)**: the arrow's menu and the picker (`run2/side-51-pathmenu.png`, `run2/side-52-picker.png`: Dear
+  ImGui's showed six copies, 15.4; after the fix one each: `run3/side-51-pathmenu.png`, `run3/side-52-picker.png`), stone.png picked in
+  both (the path, the 40-pixel thumbnail, Tiling, Offset, Filter, UV Scroll and Triplanar appear), Ctrl+Z (gone again in both)
+  — `run3/steps-tex.png`.
+- **A prefab instance** (T Capsule, Save as Prefab): a drag on Position Y gives "position.y: 1 -> 1.9" and the blue bar left of the
+  Position row in both (`run3/side-76-posy.png`); a right-click on Position opens the same menu in both (`run3/side-77-propmenu.png`);
+  Revert Property puts 1.0 back and the bar goes, in both (`run3/side-78-reverted.png`). OkayUI also showed the row's tooltip over its own
+  open menu: fixed (`ok-85-crop.png`). The Capsule's Radius gets no bar in either version: its record's fields have no names in the
+  prefab's differences ("arg0: 0.5 -> 1.4", `run3/side-74-top.png`), so no label matches.
+
+What the pictures showed and was fixed in this step (each seen in a screenshot first): the script variables' names 8 pixels above their
+values and the values 16 pixels right of Dear ImGui's (SameLine's offset counts from the window's left); the Procedural and Clear
+buttons cut by the window edge (both versions); the Mesh Collider's and the Rigidbody's notes cut (both); the six copies of the path menu
+and picker (Dear ImGui); the path tooltip shown over its own open menu, and a field's tooltip over its prefab menu (OkayUI); the larger
+thumbnail on hover drawn blank and off the screen (OkayUI; now the path only, 15.10); a double click that did not start typing (15.3);
+Ctrl+Z after typing a text variable going to the field (15.3); the Physics Material fold-out closing after an undo (15.3).
+
+### 15.9 Tests run at the end
+
+`ctest -R "okayui|ui_backend|hierarchy|inspector"`: 41 of 41 pass (34 in a Release tree, every OkayUI suite with its golden images and
+the comparisons; 7 that need the engine — `okayui`, `ui_backend`, `inspector_model`, `scene_hierarchy_search`, `deep_hierarchy`,
+`hierarchy_context_model`, `hierarchy_row_model` — in the editor's `-O1` tree). `editor/main.cpp` compiled in the editor build with
+`OKAY_HAVE_OKAYUI` and passes the syntax-only check without it; `OkayPanels.cpp` and `InspectorPanel.cpp` were checked both ways.
+`python3 scripts/gen_feature_map.py --check` is up to date. The final comparison run gave the speed and pixel numbers above again
+(within the ranges; the Light's instructions 263,700 against 197,100).
+
+### 15.10 What still differs (blunt)
+
+- Text edges, as in every port; a slider's grab lands a fraction of a pixel apart for the same click (0.835 against 0.832).
+- **The thumbnail's larger picture on hover** is not shown in OkayUI (only the path and the hint): OkayUI cannot draw a texture above the
+  windows yet (textured quads go to the main batch, under the overlay).
+- **The Culling Mask list** has no "Right-click a layer to rename it" note and no rename (Dear ImGui's has both); Everything and Nothing stay
+  at its top while the boxes scroll (Dear ImGui scrolls the whole list).
+- **Where lists open under Xvfb** (15.2).
+- The procedural grid's buttons without a thumbnail are OkayUI buttons with the name; Dear ImGui's are the same idea.
+- The path field's text runs under its arrow in both versions (as before).
+- A body's rows are built from the values at the start of the frame: a row that appears because of an edit (Kelvin after Use Temperature)
+  shows one frame later than in Dear ImGui (one frame, not visible at 60 frames a second).
+- About 95 hand-written component bodies are still Dear ImGui (15.2).
+- The usage report counts only functions: the bodies above sit inside `DrawInspector`, so the "call sites in ported functions" figure
+  (3.4% to 3.8%: the field-row body and the heading) does not count them.
+
+### 15.11 Not verified
+
+Windows (not built or run), other UI scales and the Compact density in the real editor, a prefab instance's field marks and Revert /
+Apply Property in the real editor (tested headless only), dropping a file from the Project panel or an object from the Hierarchy onto an
+OkayUI row (written, not tried), the Browse... file dialog, the Procedural grid with real thumbnails (headless without thumbnails only),
+the Camera's physical mode, Pixel Perfect and Add overlay camera, the Mesh Collider's fallback rows, a script's object slot, multi-select
+editing through the generic card in the real editor.
+
+### 15.12 Coverage (usage report)
+
+| What | Before (stage 1) | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,585 of 27,842 (99.1%) | 27,733 of 28,003 (99.0%) |
+| Types, flags and enums available | 11,957 of 12,316 (97.1%) | 12,022 of 12,379 (97.1%) |
+| Call sites in ported functions | 935 (3.4%) | 1,066 (3.8%) |
+
+The totals grew because the field-row Dear ImGui body (`DrawFieldListBodyImGui`) sits next to the editor's own bodies, which stay the
+default; the seven component bodies ported here are inside `DrawInspector` and are not counted (15.10).

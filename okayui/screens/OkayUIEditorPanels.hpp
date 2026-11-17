@@ -28,6 +28,7 @@ struct EditorMetrics {
     OkayUI::Vec2 framePadding{12.0f, 8.0f};
     OkayUI::Vec2 innerSpacing{8.0f, 6.0f};
     float itemWidth = 0.0f;
+    float indentSpacing = 22.0f;   ///< a fold-out's rows are this far in (Dear ImGui's IndentSpacing)
 };
 /// Set the metrics the panels below use until the next call (`EditorMetrics{}` puts the defaults back). Non-finite or negative
 /// values fall back to the defaults one by one.
@@ -215,6 +216,7 @@ struct TransformResult {
     OkayUI::Rect header, pos[3], rot[3], scale[3], resetPos, resetRot, resetScale, uniform;
     OkayUI::Rect posLabel, rotLabel, scaleLabel;     // the rows' labels (a drag from one goes onto the visual script)
     OkayUI::Rect menuCopy, menuPaste;                // the header's right-click menu (zero otherwise)
+    OkayUI::Rect fieldMenu;                          // stage 2: a field's open prefab menu (zero otherwise)
     float contentHeight = 0.0f;
 };
 /// The Transform: its header, Position, Rotation and Scale (three drag cells each, with the axis colours), the resets and Uniform.
@@ -225,7 +227,7 @@ struct MeshRendererResult {
     OkayUI::Rect color, wireframe, shader, rim, outline, castShadows, receiveShadows, groundShadow, groundShadowY, shadowStrength,
         emissive, specular, primitive;
     std::vector<OkayUI::Rect> listRows;              // the rows of the open list (Shader or Primitive)
-    OkayUI::Rect popup;
+    OkayUI::Rect popup;                              // the open list, or a field's prefab menu
     float contentHeight = 0.0f;
 };
 /// The Mesh Renderer's shading fields, from the stats line to the Primitive list (the rest of the component is the host's).
@@ -238,5 +240,17 @@ struct AddComponentResult {
 };
 /// The Add Component button (the accent colour packed as 0xAABBGGRR).
 AddComponentResult DrawAddComponentButton(std::uint32_t accent, float x, float y, float w, float h);
+
+// ---- Inspector, stage 2 (docs/own_ui_toolkit.md section 15) ---------------------------------------------------------------------
+
+struct FieldListResult {
+    std::vector<OkayUI::Rect> rows;                  // where each row was drawn (zero size: not drawn, inside a closed fold-out)
+    std::vector<OkayUI::Rect> listRows;              // the open list's or picker's rows (combo, mask, picker; zero size out of view)
+    OkayUI::Rect popup;                              // the open list, picker or menu
+    float contentHeight = 0.0f;
+};
+/// A component body as field rows (shared/InspectorFieldsModel.hpp): the values are edited in place and the rows marked; tooltips,
+/// prefab marks and pickers ask the list's hooks. `id` names the OkayUI window (one per body drawn).
+FieldListResult DrawFieldList(okaypanels::InspFieldList& list, const char* id, float x, float y, float w, float h);
 
 } // namespace okayuiscreens

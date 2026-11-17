@@ -64,6 +64,11 @@ bool DrawCompHeaderOkayUI(const char* windowId, const okaypanels::CompHeaderMode
 /// `pressedOn` (the Transform): the left button went down on 1 the header, 2 Position's label, 3 Rotation's, 4 Scale's (0 nothing).
 bool DrawTransformOkayUI(okaypanels::TransformModel& model, okaypanels::TransformIntent& intent, int* pressedOn);
 bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel& model, okaypanels::MeshRendererIntent& intent);
+/// Stage 2 (docs/own_ui_toolkit.md section 15): a component body as field rows, an OkayUI section inside the Inspector window. `id`
+/// names the section (unique within the current ImGui id scope). A file dragged from the Project panel is offered to the rows that
+/// take one (dropKind): their outline shows while it is dragged, and a drop fills the row's *s and marks it changed. False: not
+/// drawn this frame (the caller draws the Dear ImGui body).
+bool DrawFieldListOkayUI(const char* id, okaypanels::InspFieldList& list);
 /// `clicked`: the button was clicked (the host opens its Add Component browser).
 bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked);
 /// A hosted OkayUI field has the keyboard (the Inspector's undo watcher keeps its step open while one is typed in).

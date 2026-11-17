@@ -130,7 +130,8 @@ int   g_editedFrameId = 0; unsigned long long g_editedFrame = 0;   // the item e
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
 struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false;   // w <= 0: the default width; modal: a click outside does not close it
-                   unsigned long long touched = 0; };   // the last frame it was asked for (a closed slot not asked for longest is reused)
+                   unsigned long long touched = 0;   // the last frame it was asked for (a closed slot not asked for longest is reused)
+                   bool combo = false; float boxTop = 0, boxRight = 0; };   // a combo's list: placed around its box as Dear ImGui places one
 PopupSlot g_popups[32];
 extern unsigned long long g_frameCount;
 // Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
@@ -4476,9 +4477,19 @@ static bool beginPopupBody(int id) {
     const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
+    // A combo's list goes where Dear ImGui's documented combo placement puts it: under the box toward the right; if that does not fit
+    // in the display, above the box toward the right; then under it toward the left (its right edge on the box's right edge); then
+    // above it toward the left. Only when none fits is it pushed inside like any popup.
+    bool placed = false;
+    if (p->combo && g_dispW > 0.0f && g_dispH > 0.0f) {
+        const float ph = *hSlot + padY * 2.0f;
+        const float cand[4][2] = {{p->x, p->y}, {p->x, p->boxTop - ph}, {p->boxRight - w, p->y}, {p->boxRight - w, p->boxTop - ph}};
+        for (const auto& c : cand)
+            if (c[0] >= 0.0f && c[1] >= 0.0f && c[0] + w <= g_dispW && c[1] + ph <= g_dispH) { px = c[0]; py = c[1]; placed = true; break; }
+    }
     // Kept inside the display (Input::displayW/H), as Dear ImGui keeps a popup inside its viewport: moved left and up as needed.
-    if (g_dispW > 0.0f && px + w > g_dispW) px = std::max(0.0f, g_dispW - w);
-    if (g_dispH > 0.0f && py + *hSlot + padY * 2.0f > g_dispH) py = std::max(0.0f, g_dispH - (*hSlot + padY * 2.0f));
+    if (!placed && g_dispW > 0.0f && px + w > g_dispW) px = std::max(0.0f, g_dispW - w);
+    if (!placed && g_dispH > 0.0f && py + *hSlot + padY * 2.0f > g_dispH) py = std::max(0.0f, g_dispH - (*hSlot + padY * 2.0f));
     // Frame (overlay so it sits above everything). Height is last frame's content.
     registerOverlay(px, py, w, *hSlot + padY * 2.0f, true);
     g_toOverlay = true;
@@ -4594,7 +4605,10 @@ bool BeginCombo(const char* label, const char* preview) {
         if (g_released) {
             if (insideBox && ps) {
                 if (g_comboCloseId == id) ps->open = false;
-                else if (!ps->open) { ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id; }   // a pushed PopupWidth wider than the box widens the list (Dear ImGui fits it to its content)
+                else if (!ps->open) {
+                    ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id;
+                    ps->combo = true; ps->boxTop = y; ps->boxRight = x + boxW;
+                }   // a pushed PopupWidth wider than the box widens the list (Dear ImGui fits it to its content)
             }
             g_comboCloseId = 0; g_active = 0;
         }
@@ -6106,7 +6120,7 @@ const char* safeFloatFormat(const char* f, bool isInt) {
         if (!ok) return dflt;
         ++conv;
     }
-    return conv == 1 ? f : dflt;
+    return conv <= 1 ? f : dflt;   // no number in it ("-", a mixed value): shown as it is, as Dear ImGui shows such a format
 }
 void formatValue(char* out, std::size_t n, const char* fmt, double v, bool isInt) {
     const char* f = safeFloatFormat(fmt, isInt);
@@ -6172,7 +6186,9 @@ bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, f
 }
 // A framed slider box at (x, y): the frame, a grab block (at least 16 pixels, or one step of an integer range), the formatted value in
 // the middle; Ctrl+click types a number. True when *v changed.
-bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, bool isInt, double minV, double maxV, const char* format) {
+bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, bool isInt, double minV, double maxV, const char* format,
+                  bool logScale = false) {
+    if (logScale && !(minV > 0.0 && maxV > minV)) logScale = false;   // a logarithmic scale needs a range of positive numbers
     const bool inside = hit(x, y, ctrlW, h);
     bool changed = false;
     double typed = 0.0;
@@ -6187,14 +6203,15 @@ bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, boo
         g_lastId = id; if (inside) g_hot = id;
         auto fromMouse = [&] {
             const float t = track > grab ? clamp01((g_in.mouseX - x - pad - grab * 0.5f) / (track - grab)) : 0.0f;
-            double nv = minV + (double)t * range;
+            double nv = logScale ? minV * std::pow(maxV / minV, (double)t) : minV + (double)t * range;
             if (isInt) nv = std::floor(nv + 0.5);
             if (nv != *v) { *v = nv; changed = true; }
         };
         if (g_active == id) { if (!g_in.mouseDown) g_active = 0; else fromMouse(); }
         else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; fromMouse(); }
         frameField(x, y, ctrlW, h, inside, g_active == id);
-        const float t = (float)std::min(1.0, std::max(0.0, (*v - minV) / range));
+        const float t = logScale ? (float)std::min(1.0, std::max(0.0, std::log(std::max(*v, minV) / minV) / std::log(maxV / minV)))
+                                 : (float)std::min(1.0, std::max(0.0, (*v - minV) / range));
         const float gx = x + pad + t * (track - grab);
         rrect(gx, y + pad, grab, h - 2.0f * pad, std::max(0.0f, rnd() - pad), g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
         char buf[64]; formatValue(buf, sizeof buf, format, *v, isInt);
@@ -6203,7 +6220,7 @@ bool fmtSliderBox(int id, float x, float y, float ctrlW, float h, double* v, boo
     return changed;
 }
 // A framed slider with its label after it.
-bool fmtSlider(const char* label, double* v, bool isInt, double minV, double maxV, const char* format) {
+bool fmtSlider(const char* label, double* v, bool isInt, double minV, double maxV, const char* format, bool logScale = false) {
     if (!g_lay.active || !v || !(maxV > minV)) return false;
     const VisLabel vis(label);
     const int id = hashLabel(label);
@@ -6212,7 +6229,7 @@ bool fmtSlider(const char* label, double* v, bool isInt, double minV, double max
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
-    const bool changed = fmtSliderBox(id, x, y, ctrlW, h, v, isInt, minV, maxV, format);
+    const bool changed = fmtSliderBox(id, x, y, ctrlW, h, v, isInt, minV, maxV, format, logScale);
     if (lw > 0.0f) drawText(x + ctrlW + lgap, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
     return changed;
 }
@@ -6254,10 +6271,11 @@ bool SliderInt(const char* label, int* v, int minV, int maxV, const char* format
 }
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* format) { return noteEdit(fmtSliderCells(label, v, 2, minV, maxV, format)); }
 bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* format) { return noteEdit(fmtSliderCells(label, v, 3, minV, maxV, format)); }
-bool SliderFloat(const char* label, float* v, float minV, float maxV, const char* format) {
+bool SliderFloat(const char* label, float* v, float minV, float maxV, const char* format) { return SliderFloat(label, v, minV, maxV, format, 0u); }
+bool SliderFloat(const char* label, float* v, float minV, float maxV, const char* format, unsigned flags) {
     if (!v) return false;
     double d = (double)*v;
-    if (!fmtSlider(label, &d, false, (double)minV, (double)maxV, format)) return false;
+    if (!fmtSlider(label, &d, false, (double)minV, (double)maxV, format, (flags & SliderFlags_Logarithmic) != 0)) return false;
     const float nv = (float)std::min((double)maxV, std::max((double)minV, d));
     if (nv == *v) return false;
     *v = nv; return noteEdit(true);

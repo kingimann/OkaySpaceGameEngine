@@ -13,6 +13,7 @@
 // Written from the Inspector's own behaviour (editor/main.cpp DrawInspector, CompHeader, DragVec3Axis); no code from any other
 // project.
 #include "HierarchyPanelModel.hpp"   // HierCol, HierIcon, PanelMenuEntry
+#include "InspectorFieldsModel.hpp"  // stage 2: a component body as field rows (InspFieldList)
 
 #include <algorithm>
 #include <cmath>
@@ -201,6 +202,8 @@ struct TransformModel {
     bool uniform = false;                ///< the axes are linked: dragging one scales all three by the same ratio
     int selectedCount = 1;               ///< more than one: "(editing N selected objects)", and edits go to all of them
     bool pasteValid = false;             ///< "Paste Transform Values" is offered
+    const InspFieldHooks* hooks = nullptr;   ///< stage 2: the fields' tooltips and prefab marks (null: none)
+    bool posOverridden = false, rotOverridden = false, scaleOverridden = false;   ///< changed from the prefab (a blue bar, right-click menu)
 };
 
 struct TransformIntent {
@@ -209,6 +212,7 @@ struct TransformIntent {
     bool resetPos = false, resetRot = false, resetScale = false;
     bool toggleUniform = false, toggleOpen = false;
     bool copy = false, paste = false;
+    std::string prefabField, prefabChosen;   ///< a prefab menu row chosen on a field (kInspPrefabRevert / kInspPrefabApply)
     bool Any() const {
         return posChanged || rotChanged || scaleChanged || activated || resetPos || resetRot || resetScale || toggleUniform || toggleOpen ||
                copy || paste;
@@ -288,12 +292,16 @@ struct MeshRendererModel {
     MeshRendererValues* v = nullptr;     ///< edited in place
     int verts = 0, tris = 0;             ///< the stats line (none when there are no vertices)
     bool uvs = false;
+    const InspFieldHooks* hooks = nullptr;   ///< stage 2: the fields' tooltips and prefab marks (null: none)
+    /// stage 2: is the field with this label changed from the prefab? Null: none is (asked per field only for a changed component).
+    std::function<bool(const char* label)> overridden;
 };
 
 struct MeshRendererIntent {
     bool changed = false;                ///< some value changed (the host writes them all back)
     bool shaderChanged = false;          ///< the old Unlit flag follows the shader
     bool primitiveChanged = false;       ///< a new mesh from the list (the mesh file is forgotten)
+    std::string prefabField, prefabChosen;   ///< a prefab menu row chosen on a field
 };
 
 /// The stats line: "117 verts  •  192 tris  •  UVs" ("" when there are no vertices).

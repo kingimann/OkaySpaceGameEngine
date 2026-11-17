@@ -5,6 +5,7 @@
 #include "OkayUIEditorPanels.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -29,6 +30,7 @@ void SetEditorMetrics(const EditorMetrics& in) {
     g_metrics.framePadding = pick(in.framePadding, d.framePadding);
     g_metrics.innerSpacing = pick(in.innerSpacing, d.innerSpacing);
     g_metrics.itemWidth = ok(in.itemWidth, 100000.0f) ? in.itemWidth : 0.0f;
+    g_metrics.indentSpacing = ok(in.indentSpacing, 200.0f) ? in.indentSpacing : d.indentSpacing;
 }
 const EditorMetrics& GetEditorMetrics() { return g_metrics; }
 
@@ -1740,6 +1742,10 @@ bool InspVec3Row(const char* label, float v[3], float speed, const char* fmt, bo
     return changed;
 }
 
+// stage 2 (below): a field's registry tooltip and its prefab mark and menu
+void FieldExtras(const char* label, const UI::Rect& row, float regionX, bool overridden, bool tipLookup, const InspFieldHooks* hooks,
+                 std::string& field, std::string& chosen, UI::Rect* popup);
+
 } // namespace
 
 // ---- the object header card ------------------------------------------------------------------------------------------------------
@@ -2139,6 +2145,13 @@ TransformResult DrawTransform(TransformModel& m, float bleed, float x, float y, 
             }
             if (m.isCamera) { UI::EndDisabled(); UI::TextDisabled("(camera scale is locked)"); }
             in.activated = act;
+            {   // stage 2: each row's tooltip and prefab mark, on its label as the editor's FieldTip after DragVec3Axis
+                UI::Rect pop;
+                FieldExtras("Position", res.posLabel, x, m.posOverridden, true, m.hooks, in.prefabField, in.prefabChosen, &pop);
+                FieldExtras("Rotation", res.rotLabel, x, m.rotOverridden, true, m.hooks, in.prefabField, in.prefabChosen, &pop);
+                FieldExtras("Scale", res.scaleLabel, x, m.scaleOverridden, true, m.hooks, in.prefabField, in.prefabChosen, &pop);
+                res.fieldMenu = pop;
+            }
             // the quick resets
             if (InspSmallButton("Reset Pos")) in.resetPos = true;
             UI::Rect last = res.resetPos = UI::GetItemRect();
@@ -2170,15 +2183,25 @@ MeshRendererResult DrawMeshRenderer(MeshRendererModel& m, float x, float y, floa
     MeshRendererResult res;
     MeshRendererIntent& in = res.intent;
     UI::BareNextWindow();
-    if (UI::Begin("MeshRenderer##okayui", x, y, w, h) && m.v) {
+    // stage 2: the window reaches 6 pixels past the region on both sides, where a field's prefab bar is drawn
+    if (UI::Begin("MeshRenderer##okayui", x - 6.0f, y, w + 12.0f, h) && m.v) {
         EditorRows rows_;
         FieldColors fields_;
         UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        UI::Indent(6.0f);
         const float top = UI::GetCursorScreenPos().y;
         const float itemW = g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : DefaultItemWidth(w);
         MeshRendererValues& v = *m.v;
         bool& ch = in.changed;
         auto tip = [](const char* t) { if (UI::IsItemHovered()) UI::SetTooltip("%s", t); };
+        // stage 2: the field's registry tooltip and prefab mark, after the fields the editor calls FieldTip on
+        auto extras = [&](const char* label, const UI::Rect* rect = nullptr) {
+            if (!m.hooks && !m.overridden) return;
+            const UI::Rect r = rect ? *rect : UI::GetItemRect();
+            UI::Rect pop;
+            FieldExtras(label, r, x, m.overridden && m.overridden(label), true, m.hooks, in.prefabField, in.prefabChosen, &pop);
+            if (pop.w > 0.0f) res.popup = pop;
+        };
         auto slider = [&](const char* label, float* f, float lo, float hi, UI::Rect* rect = nullptr) {
             UI::SetNextItemWidth(WithLabel(itemW, label));
             if (UI::SliderFloat(label, f, lo, hi, "%.3f")) ch = true;
@@ -2227,21 +2250,33 @@ MeshRendererResult DrawMeshRenderer(MeshRendererModel& m, float x, float y, floa
         if (v.shader == MeshShaderToon) {
             UI::SetNextItemWidth(WithLabel(itemW, "Cel Bands##mesh"));
             if (UI::SliderInt("Cel Bands##mesh", &v.toonBands, 2, 6, "%d")) ch = true;
+            extras("Cel Bands##mesh");
         }
         if (v.shader == MeshShaderGradient) {
-            if (InspColorEdit("Gradient Top##mesh", v.gradientTop, 3)) ch = true;
-            if (InspColorEdit("Gradient Bottom##mesh", v.gradientBottom, 3)) ch = true;
+            UI::Rect cr;
+            if (InspColorEdit("Gradient Top##mesh", v.gradientTop, 3, &cr)) ch = true;
+            extras("Gradient Top##mesh", &cr);
+            if (InspColorEdit("Gradient Bottom##mesh", v.gradientBottom, 3, &cr)) ch = true;
+            extras("Gradient Bottom##mesh", &cr);
         }
         if (v.shader == MeshShaderFresnel) UI::TextDisabled(kMeshFresnelNote);
         slider("Rim##mesh", &v.rimStrength, 0.0f, 2.0f, &res.rim);
+        extras("Rim##mesh");
         if (v.rimStrength > 0.0f) {
             slider("Rim Power##mesh", &v.rimPower, 1.0f, 8.0f);
-            if (InspColorEdit("Rim Color##mesh", v.rimColor, 3)) ch = true;
+            extras("Rim Power##mesh");
+            UI::Rect cr;
+            if (InspColorEdit("Rim Color##mesh", v.rimColor, 3, &cr)) ch = true;
+            extras("Rim Color##mesh", &cr);
         }
         box("Outline##mesh", &v.outline, &res.outline);
+        extras("Outline##mesh");
         if (v.outline) {
             drag("Outline Width##mesh", &v.outlineWidth, 0.002f, 0.0f, 1.0f);
-            if (InspColorEdit("Outline Color##mesh", v.outlineColor, 3)) ch = true;
+            extras("Outline Width##mesh");
+            UI::Rect cr;
+            if (InspColorEdit("Outline Color##mesh", v.outlineColor, 3, &cr)) ch = true;
+            extras("Outline Color##mesh", &cr);
         }
         box("Cast Shadows##mesh", &v.castShadows, &res.castShadows);
         tip(kMeshCastTip);
@@ -2252,11 +2287,14 @@ MeshRendererResult DrawMeshRenderer(MeshRendererModel& m, float x, float y, floa
         tip(kMeshGroundTip);
         if (v.groundShadow) {
             drag("Shadow Ground Y##mesh", &v.groundShadowY, 0.05f, -1000.0f, 1000.0f, &res.groundShadowY);
+            extras("Shadow Ground Y##mesh");
             slider("Shadow Strength##mesh", &v.groundShadowStrength, 0.0f, 1.0f, &res.shadowStrength);
+            extras("Shadow Strength##mesh");
         }
         if (InspColorEdit("Emissive##mesh", v.emissive, 3, &res.emissive)) ch = true;
         slider("Specular##mesh", &v.specular, 0.0f, 1.0f, &res.specular);
-        if (v.specular > 0.0f) slider("Shininess##mesh", &v.shininess, 1.0f, 128.0f);
+        extras("Specular##mesh");
+        if (v.specular > 0.0f) { slider("Shininess##mesh", &v.shininess, 1.0f, 128.0f); extras("Shininess##mesh"); }
         if (combo("Primitive", &v.primitive, kMeshPrimitiveNames, kMeshPrimitiveCount, &res.primitive)) { ch = true; in.primitiveChanged = true; }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();
@@ -2284,6 +2322,637 @@ AddComponentResult DrawAddComponentButton(std::uint32_t accent, float x, float y
         res.button = UI::GetItemRect();
         UI::PopStyleColor(4);
         res.contentHeight = ContentHeight(top);
+    }
+    UI::End();
+    return res;
+}
+
+
+// ---- Inspector, stage 2: a component body as field rows (docs/own_ui_toolkit.md section 15) ---------------------------------------
+// Written from what the editor's component bodies draw with Dear ImGui (editor/main.cpp DrawInspector: SectionHeader, the drag,
+// slider, combo, colour and text fields with their labels after them, the small buttons, AssetField, TexFieldThumb, TreeNode; editor/
+// InspectorPanel.cpp PropertyField, PrefabFieldMark) and Dear ImGui's documented widget behaviour, measured on the comparison pictures.
+
+namespace {
+
+// The value column, or the row's own width.
+float RowFrameW(const InspRow& r, float itemW, float regionW) {
+    if (r.width > 0.0f) return r.width;
+    if (r.width < 0.0f) return std::max(1.0f, regionW - (r.sameLineAt >= 0.0f ? r.sameLineAt : 0.0f) + r.width);
+    return itemW;
+}
+
+std::string Visible(const char* label) { return std::string(label ? label : "", InspVisibleLen(label)); }
+
+// A body's window reaches this far past its region on both sides: the prefab bar of a changed field sits 5 pixels left of the region.
+constexpr float kMarkBleed = 6.0f;
+
+// n drag cells sharing the value column (Dear ImGui's DragFloat2..4 and the editor's DragVec3Axis): each cell a whole number of pixels,
+// the last taking the rest; with axisBars the axis colour down each cell's left edge and fewer decimals in a narrow cell; a part that
+// differs on the selected objects shows "-". The label after them.
+bool DragCells(InspRow& r, float frameW, UI::Rect* rowRect) {
+    const int n = std::clamp((int)r.n, 1, 4);
+    const float inner = g_metrics.innerSpacing.x;
+    float widths[4];
+    InspCellWidths(frameW, n, inner, widths);
+    const char* fmt = r.fmt ? r.fmt : "%.3f";
+    float* v = r.F();
+    bool changed = false;
+    UI::PushID(r.label);
+    for (int i = 0; i < n; ++i) {
+        if (i > 0) UI::SameLine(inner);
+        UI::PushID(i);
+        const bool mx = (r.mixedAxes >> i) & 1u || (n == 1 && r.mixed);
+        const char* f = fmt;
+        char tagged[24];
+        static const char* const kTags[4] = {"X", "Y", "Z", "W"};
+        if (r.axisTags) { std::snprintf(tagged, sizeof tagged, mx ? "%s -" : "%s %s", kTags[i], fmt); f = tagged; }
+        else if (mx) f = "-";
+        else if (r.axisBars) f = InspAxisFormat(fmt, v[i], widths[i] - g_metrics.framePadding.x * 2.0f - 4.0f, [](const char* t) { return UI::CalcTextWidth(t); });
+        UI::SetNextItemWidth(widths[i]);
+        if (UI::DragFloat("##c", &v[i], r.speed, r.lo, r.hi, f)) { changed = true; r.axes |= 1u << i; }
+        if (UI::IsItemActivated()) r.activated = true;
+        if (i == 0 && rowRect) *rowRect = UI::GetItemRect();
+        if (r.axisBars && i < 3) {
+            const UI::Rect c = UI::GetItemRect();
+            UI::GetWindowDrawList().AddRectFilled(UI::Vec2{c.x, c.y}, UI::Vec2{c.x + 3.0f, c.y + c.h}, kInspAxisCol[i], 2.0f);
+        }
+        UI::PopID();
+    }
+    UI::PopID();
+    const std::string vis = Visible(r.label);
+    if (!vis.empty()) { UI::SameLine(inner); UI::Text(vis.c_str()); }
+    if (rowRect) {   // from the first cell to the label: the row as one item (Dear ImGui's DragFloatN is one)
+        const UI::Vec2 mx = UI::GetItemRectMax();
+        rowRect->w = std::max(rowRect->w, mx.x - rowRect->x);
+    }
+    return changed;
+}
+
+// A scrolling window of fixed-height rows inside a popup: `shown` rows at a time, the wheel moves it, `first` kept per popup.
+template <class Row>
+void ScrollRows(const char* key, int count, int shown, float rowH, int startAt, Row row) {
+    struct Slot { unsigned id = 0; int first = 0; int frame = -10; };
+    static Slot slots[4];
+    const unsigned id = UI::GetID(key);
+    const int frame = UI::GetFrameCount();
+    Slot* sl = nullptr;
+    for (Slot& s : slots) if (s.id == id) sl = &s;
+    if (!sl) { sl = &slots[0]; for (Slot& s : slots) if (s.frame < sl->frame) sl = &s; *sl = Slot(); sl->id = id; }
+    const int maxFirst = std::max(0, count - shown);
+    if (sl->frame < frame - 1) sl->first = std::clamp(startAt, 0, maxFirst);
+    sl->frame = frame;
+    const UI::Vec2 p0 = UI::GetCursorScreenPos();
+    const float listW = UI::GetContentRegionAvail().x;
+    const float wheel = UI::GetFrameInput().wheel;
+    if (count > shown && wheel != 0.0f && UI::IsMouseHoveringRect(p0, UI::Vec2{p0.x + listW, p0.y + rowH * (float)shown}))
+        sl->first = std::clamp(sl->first - (int)std::lround(wheel * 3.0f), 0, maxFirst);
+    for (int k = sl->first; k < sl->first + shown && k < count; ++k) row(k);
+    if (count > shown) {
+        const float h = rowH * (float)std::min(shown, count), x = p0.x + listW + 2.0f;
+        const float gh = std::max(16.0f, h * (float)shown / (float)count), gy = p0.y + (h - gh) * (float)sl->first / (float)std::max(1, maxFirst);
+        UI::GetWindowDrawList().AddRectFilled(UI::Vec2{x, gy}, UI::Vec2{x + 4.0f, gy + gh}, UI::RGBA(255, 255, 255, 61), 2.0f);
+    }
+}
+
+// What an open picker lists, fetched from the host once when it opens (a project's files are walked once, not every frame).
+struct PickCache {
+    unsigned id = 0;
+    int frame = -10;
+    std::vector<std::string> values, names;
+    std::vector<void*> thumbs;
+    char filter[96] = {};
+};
+PickCache& Picks() { static PickCache c; return c; }
+
+// After a field whose row is `row`: the registry's tooltip while it is hovered (tipLookup), and for a field changed from the prefab the
+// editor's PrefabFieldMark: a 3-pixel blue bar 5 pixels left of the region, and on a right-click the menu (Overridden from, the
+// differences, Revert Property, Apply Property to Prefab) asked of the hooks while it is open. A chosen row goes to field / chosen.
+void FieldExtras(const char* label, const UI::Rect& row, float regionX, bool overridden, bool tipLookup, const InspFieldHooks* hooks,
+                 std::string& field, std::string& chosen, UI::Rect* popup) {
+    const bool over = row.w > 0.0f && UI::IsMouseHoveringRect(UI::Vec2{row.x, row.y}, UI::Vec2{row.x + row.w, row.y + row.h});
+    UI::PushID(label);
+    // no tooltip while the field's own menu is open (Dear ImGui shows none over an open popup; seen in the real editor)
+    if (tipLookup && over && hooks && hooks->tipFor && !UI::IsPopupOpen("##prefabprop")) {
+        const std::string t = hooks->tipFor(label);
+        if (!t.empty()) UI::SetTooltip("%s", t.c_str());
+    }
+    if (!overridden) { UI::PopID(); return; }
+    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{regionX - 5.0f, row.y}, UI::Vec2{regionX - 2.0f, row.y + row.h}, kInspPrefabMark, 1.5f);
+    if (over && UI::IsMouseClicked(1)) UI::OpenPopup("##prefabprop");
+    if (UI::IsPopupOpen("##prefabprop")) {
+        std::vector<PanelMenuEntry> entries;
+        if (hooks && hooks->prefabMenu) hooks->prefabMenu(label, entries);
+        MenuLook look_(PanelMenuWidth(entries));
+        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+        UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+        if (UI::BeginPopup("##prefabprop")) {
+            std::string pick;
+            std::vector<std::string> ids; std::vector<UI::Rect> mrows;
+            const UI::Vec2 mp = UI::GetCursorScreenPos();
+            DrawPanelMenu(entries, pick, &ids, &mrows);
+            const UI::Vec2 me = UI::GetCursorScreenPos();
+            if (popup) *popup = UI::Rect{mp.x - 16.0f, mp.y - 12.0f, PanelMenuWidth(entries) + 32.0f, me.y - mp.y + 24.0f};
+            if (!pick.empty()) { field = label; chosen = pick; }
+            UI::EndPopup();
+        }
+        UI::PopStyleVar(2);
+    }
+    UI::PopID();
+}
+
+// The small cross of a clear button in a frame-tall square (the editor's ClearButton).
+void DrawCross(const UI::Rect& b) {
+    const float cx = b.x + b.w * 0.5f, cy = b.y + b.h * 0.5f, r = b.h * 0.17f;
+    const UI::Color32 col = UI::GetColorU32(UI::Col_Text);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    dl.AddLine(UI::Vec2{cx - r, cy - r}, UI::Vec2{cx + r, cy + r}, col, 1.5f);
+    dl.AddLine(UI::Vec2{cx - r, cy + r}, UI::Vec2{cx + r, cy - r}, col, 1.5f);
+}
+
+} // namespace
+
+FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, float y, float w, float h) {
+    FieldListResult res;
+    res.rows.assign(list.rows.size(), UI::Rect{});
+    UI::BareNextWindow();
+    // the window reaches kMarkBleed past the region on both sides, where a field's prefab bar is drawn; the content starts that far in
+    if (UI::Begin(id, x - kMarkBleed, y, w + 2.0f * kMarkBleed, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        UI::Indent(kMarkBleed);
+        const float top = UI::GetCursorScreenPos().y;
+        const float regionX = UI::GetCursorScreenPos().x;
+        const float itemW0 = g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : DefaultItemWidth(w);
+        const float fs = UI::GetFontSize(), fh = UI::GetFrameHeight();
+        int indent = 0;             // fold-outs we are inside of
+        int skipDepth = 0;          // > 0: inside a closed fold-out (its rows are not drawn)
+        static std::vector<std::pair<unsigned, bool>> s_trees;   // fold-out open states
+        auto treeOpen = [&](unsigned tid, bool def) -> bool& {
+            for (auto& t : s_trees) if (t.first == tid) return t.second;
+            s_trees.emplace_back(tid, def);
+            return s_trees.back().second;
+        };
+        auto setPopup = [&](const UI::Rect& r) { if (r.w > 0.0f) res.popup = r; };
+        for (std::size_t k = 0; k < list.rows.size(); ++k) {
+            InspRow& r = list.rows[k];
+            if (skipDepth > 0) {
+                if (r.kind == InspRowTree) ++skipDepth;
+                else if (r.kind == InspRowTreeEnd) --skipDepth;
+                continue;
+            }
+            const float itemW = std::max(1.0f, itemW0 - (float)indent * g_metrics.indentSpacing);
+            if (r.sameLine) {
+                const float gap = r.sameLineGap >= 0.0f ? r.sameLineGap : g_metrics.itemSpacing.x;
+                bool fits = true;
+                if (r.sameLineWrap) {   // the editor's SameLineOrWrap: only when this row's item fits before the region's right edge
+                    const std::string vis = Visible(r.label);
+                    const float tw = UI::CalcTextWidth(vis.c_str());
+                    float nextW = tw + 2.0f * g_metrics.framePadding.x;                        // a button
+                    if (r.kind == InspRowCheck) nextW = fh + (vis.empty() ? 0.0f : g_metrics.innerSpacing.x + tw);
+                    else if (r.kind == InspRowLabel || r.kind == InspRowNote) nextW = tw;
+                    const UI::Rect pr = UI::GetItemRect();
+                    fits = regionX + w - (pr.x + pr.w + gap) >= nextW;
+                }
+                if (fits) {
+                    if (r.sameLineAt >= 0.0f) {
+                        const UI::Rect pr = UI::GetItemRect();
+                        UI::SameLine(std::max(0.0f, regionX + r.sameLineAt - (pr.x + pr.w)));
+                    } else UI::SameLine(gap);
+                }
+            }
+            if (r.disabled) UI::BeginDisabled(true);
+            // A fold-out's state is kept by its label alone (as Dear ImGui keeps the editor's, whose id does not depend on the component):
+            // rows coming and going above it, and an undo that rebuilds the component, keep it open.
+            unsigned treeKey = 0u;
+            if (r.kind == InspRowTree) { treeKey = 2166136261u; for (const char* q = r.label; *q; ++q) treeKey = (treeKey ^ (unsigned char)*q) * 16777619u; }
+            UI::PushID((int)k);
+            const float frameW = RowFrameW(r, itemW, w);
+            bool hoverTip = true;   // the row's tooltip on hover (an asset field and an image show their own)
+            UI::Rect whole{};       // a row made of several items (cells, a colour field, a file field): all of it
+            switch (r.kind) {
+            case InspRowDrag:
+                if (DragCells(r, frameW, &whole)) r.changed = true;
+                break;
+            case InspRowSlider:
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                if (UI::SliderFloat(r.label, r.F(), r.lo, r.hi, r.fmt ? r.fmt : "%.3f", r.logarithmic ? UI::SliderFlags_Logarithmic : 0u)) r.changed = true;
+                if (UI::IsItemActivated()) r.activated = true;
+                break;
+            case InspRowDragInt: {   // Dear ImGui's DragInt: a framed drag cell with the number in its middle; the part of a step the
+                                     // pointer moved is kept while it is held, so a slow drag adds up
+                static unsigned s_intId = 0;
+                static float s_intVal = 0.0f;
+                const unsigned iid = UI::GetID(r.label);
+                float fv = s_intId == iid ? s_intVal : (float)*r.I();
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                if (UI::DragFloat(r.label, &fv, r.speed, r.lo, r.hi, r.mixed ? "-" : "%.0f")) {
+                    const int nv = (int)std::lround(fv);
+                    if (nv != *r.I()) { *r.I() = nv; r.changed = true; }
+                }
+                if (UI::IsItemActive()) { s_intId = iid; s_intVal = fv; }
+                else if (s_intId == iid) s_intId = 0;
+                if (UI::IsItemActivated()) r.activated = true;
+                break;
+            }
+            case InspRowSliderInt:
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                if (UI::SliderInt(r.label, r.I(), (int)r.lo, (int)r.hi, r.fmt ? r.fmt : "%d")) r.changed = true;
+                if (UI::IsItemActivated()) r.activated = true;
+                break;
+            case InspRowCheck: {
+                if (UI::Checkbox(r.label, r.B())) r.changed = true;
+                if (r.mixed && !*r.B()) {   // Dear ImGui's mixed value: a bar across the box
+                    const UI::Rect c = UI::GetItemRect();
+                    const float pad = std::max(1.0f, std::floor(fh / 3.6f));
+                    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{c.x + pad, c.y + (fh - pad) * 0.5f}, UI::Vec2{c.x + fh - pad, c.y + (fh + pad) * 0.5f}, kAccentLit, 0.0f);
+                }
+                break;
+            }
+            case InspRowCombo: {
+                MenuLook look_(0.0f);
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, frameW);
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                int* cur = r.I();
+                const int c = *cur >= 0 && *cur < r.count ? *cur : -1;
+                const float bx = UI::GetCursorScreenPos().x;
+                int picked = -1;
+                const char* preview = r.mixed ? "Mixed" : (c >= 0 && r.items ? r.items[c] : "");
+                const bool open = UI::BeginCombo(r.label, preview);
+                const UI::Rect box = UI::GetItemRect();
+                if (open) {
+                    res.listRows.assign((std::size_t)r.count, UI::Rect{});
+                    const UI::Vec2 lp = UI::GetCursorScreenPos();
+                    ListWindow(r.label, r.count, c, [&](int q) {
+                        UI::PushID(q);
+                        if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
+                        res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        UI::PopID();
+                    });
+                    setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, (fs + g_metrics.itemSpacing.y) * (float)std::min(r.count, kListRows) + 16.0f});
+                    UI::EndCombo();
+                }
+                UI::PopStyleVar();
+                (void)bx; (void)box;
+                if (picked >= 0 && (picked != *cur || r.mixed)) { *cur = picked; r.changed = true; }
+                break;
+            }
+            case InspRowColor: {
+                const int n = r.n == 4 ? 4 : 3;
+                float* c = r.F();
+                float before[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+                const float keep = g_metrics.itemWidth;
+                g_metrics.itemWidth = frameW;
+                if (InspColorEdit(r.label, c, n, &whole)) {
+                    r.changed = true;
+                    for (int q = 0; q < n; ++q) if (c[q] != before[q]) r.axes |= 1u << q;
+                }
+                g_metrics.itemWidth = keep;
+                break;
+            }
+            case InspRowText: {
+                char buf[512];
+                std::snprintf(buf, sizeof buf, "%s", r.mixed ? "" : r.S()->c_str());
+                UI::SetNextItemWidth(WithLabel(frameW, r.label, 8.0f));
+                bool edited;
+                if (r.wrap) edited = UI::InputTextMultiline(r.label, buf, (int)sizeof buf, UI::Vec2{frameW, fs * 4.0f});   // a multi-line property
+                else edited = (r.hint || r.mixed) ? UI::InputTextWithHint(r.label, r.mixed ? "Mixed" : r.hint, buf, (int)sizeof buf)
+                                                  : UI::InputText(r.label, buf, (int)sizeof buf);
+                if (edited) { *r.S() = buf; r.changed = true; }
+                if (UI::IsItemActivated()) r.activated = true;
+                // Dear ImGui's one-line text field lets the keyboard go on Enter (the editor's shortcuts, Ctrl+Z among them, work again
+                // at once); OkayUI's keeps it, so the row gives it up (seen in the real editor: Ctrl+Z after typing a script's text
+                // variable went to the field)
+                if (!r.wrap && UI::IsItemFocused() && UI::IsKeyPressed(UI::KeyId_Enter, false)) UI::SetKeyboardFocusId(0);
+                if (r.pick != InspPickNone) {   // the editor's AssetPathPicker: a small arrow at the right end, and a menu
+                    const UI::Rect b = UI::GetItemRect();
+                    const float bx1 = b.x + frameW;   // at the field's right end (the editor's arrow once sat on the label's last letters)
+                    const bool boxHot = UI::IsMouseHoveringRect(UI::Vec2{b.x, b.y}, UI::Vec2{bx1, b.y + b.h});
+                    const bool over = boxHot && UI::IsMouseHoveringRect(UI::Vec2{bx1 - 22.0f, b.y}, UI::Vec2{bx1, b.y + b.h});
+                    const float cx = bx1 - 12.0f, cy = b.y + b.h * 0.5f;
+                    UI::GetWindowDrawList().AddTriangleFilled(UI::Vec2{cx - 4.0f, cy - 2.0f}, UI::Vec2{cx + 4.0f, cy - 2.0f}, UI::Vec2{cx, cy + 3.0f},
+                                                              UI::GetColorU32(over ? UI::Col_Text : UI::Col_TextDisabled));
+                    if (over && !UI::IsPopupOpen("##pathmenu")) UI::SetTooltip("Choose a file from the project (or right-click)");
+                    if (boxHot && (UI::IsMouseClicked(1) || (over && UI::IsMouseClicked(0)))) { UI::SetKeyboardFocusId(0); UI::OpenPopup("##pathmenu"); }
+                    if (UI::IsPopupOpen("##pathmenu")) {
+                        MenuLook look_(MenuWidth({"Choose from project...", "Clear"}));
+                        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+                        UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+                        if (UI::BeginPopup("##pathmenu")) {
+                            const UI::Vec2 mp = UI::GetCursorScreenPos();
+                            bool choose = false;
+                            if (MenuRow("Choose from project...")) choose = true;
+                            if (r.S()->empty()) UI::BeginDisabled(true);
+                            if (MenuRow("Clear")) { r.S()->clear(); r.changed = true; }
+                            if (r.S()->empty()) UI::EndDisabled();
+                            const UI::Vec2 me = UI::GetCursorScreenPos();
+                            setPopup(UI::Rect{mp.x - 16.0f, mp.y - 12.0f, MenuWidth({"Choose from project...", "Clear"}) + 32.0f, me.y - mp.y + 24.0f});
+                            UI::EndPopup();
+                            if (choose) { UI::OpenPopup("##pick"); Picks().id = 0; }
+                        }
+                        UI::PopStyleVar(2);
+                    }
+                }
+                break;
+            }
+            case InspRowSection: {   // the editor's SectionHeader: Spacing, the accent tick, the heading face (22 pixels), a rule
+                UI::Dummy(1.0f, 0.0f);
+                UI::PushTextScale(22.0f / 18.0f);
+                UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());   // the heading's line is the heading face tall
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                const float th = UI::GetFontSize();
+                UI::GetWindowDrawList().AddRectFilled(UI::Vec2{p.x, p.y + 1.0f}, UI::Vec2{p.x + 3.0f, p.y + th}, kAccent, 1.5f);
+                UI::Indent(9.0f);
+                UI::TextColored(230, 235, 247, r.Text());
+                UI::Unindent(9.0f);
+                UI::PopStyleVar();
+                UI::PopTextScale();
+                {   // Dear ImGui's Separator: one pixel across the region, then the item spacing
+                    const UI::Vec2 q = UI::GetCursorScreenPos();
+                    UI::Dummy(w, 1.0f);
+                    UI::GetWindowDrawList().AddLine(UI::Vec2{regionX, q.y + 0.5f}, UI::Vec2{regionX + w, q.y + 0.5f}, UI::GetColorU32(UI::Col_Separator), 1.0f);
+                }
+                break;
+            }
+            case InspRowGroup: {   // Dear ImGui's SeparatorText: a short rule, the title 20 pixels in, a rule to the right edge; 3 thick,
+                                   // the row the text and 3 pixels above and below tall
+                const UI::Vec2 q = UI::GetCursorScreenPos();
+                const float rh = fs + 6.0f, tx = regionX + 20.0f, tw = UI::CalcTextWidth(r.Text());
+                UI::Dummy(w, rh);
+                const UI::DrawList& dl = UI::GetWindowDrawList();
+                const UI::Color32 sc = UI::GetColorU32(UI::Col_Separator);
+                const float ly = q.y + rh * 0.5f - 1.5f;
+                dl.AddRectFilled(UI::Vec2{regionX, ly}, UI::Vec2{tx - g_metrics.itemSpacing.x, ly + 3.0f}, sc, 0.0f);
+                dl.AddRectFilled(UI::Vec2{tx + tw + g_metrics.itemSpacing.x, ly}, UI::Vec2{regionX + w, ly + 3.0f}, sc, 0.0f);
+                dl.AddText(UI::Vec2{tx, q.y + 3.0f}, UI::GetColorU32(UI::Col_Text), r.Text());
+                break;
+            }
+            case InspRowNote:
+                if (r.wrap) UI::PushTextWrapPos(0.0f);
+                UI::TextDisabled(r.Text());
+                if (r.wrap) UI::PopTextWrapPos();
+                break;
+            case InspRowColorText:
+            case InspRowLabel: {
+                if (r.alignFrame && !r.wrap) {   // Dear ImGui's AlignTextToFramePadding: a frame-tall line, the text where a frame's text sits
+                    const std::uint32_t c = r.color ? (r.color | 0xff000000u) : UI::GetColorU32(UI::Col_Text);
+                    UI::Dummy(UI::CalcTextWidth(r.Text()), fh);
+                    const UI::Rect b = UI::GetItemRect();
+                    UI::GetWindowDrawList().AddText(UI::Vec2{b.x, b.y + g_metrics.framePadding.y}, c, r.Text());
+                    break;
+                }
+                if (r.wrap) UI::PushTextWrapPos(0.0f);
+                if (r.kind == InspRowColorText || r.color) {
+                    const std::uint32_t c = r.color;
+                    UI::TextColored((unsigned char)(c & 0xff), (unsigned char)((c >> 8) & 0xff), (unsigned char)((c >> 16) & 0xff), r.Text());
+                } else if (r.wrap) UI::TextWrapped(r.Text());
+                else UI::Text(r.Text());
+                if (r.wrap) UI::PopTextWrapPos();
+                break;
+            }
+            case InspRowSmallButton:
+                if (r.color) UI::PushStyleColor(UI::Col_Text, r.color | 0xff000000u);
+                if (InspSmallButton(r.label)) r.clicked = true;
+                if (r.color) UI::PopStyleColor();
+                break;
+            case InspRowButton: {
+                if (r.on) {
+                    UI::PushStyleColor(UI::Col_Button, UI::ColorMulAlpha(kAccent, 0.90f));
+                    UI::PushStyleColor(UI::Col_ButtonHovered, kAccent);
+                    UI::PushStyleColor(UI::Col_ButtonActive, UI::ColorMulAlpha(kAccent, 0.80f));
+                    UI::PushStyleColor(UI::Col_Text, UI::RGBA(255, 255, 255));
+                }
+                const std::string vis = Visible(r.label);
+                const float bw = r.width != 0.0f ? frameW : UI::CalcTextWidth(vis.c_str()) + 2.0f * g_metrics.framePadding.x;
+                if (UI::Button(r.label, UI::Vec2{bw, fh})) r.clicked = true;
+                if (r.on) UI::PopStyleColor(4);
+                break;
+            }
+            case InspRowSwatch: {   // Dear ImGui's ColorButton: the colour in a rounded frame
+                const float sw = r.texW > 0.0f ? r.texW : fh, sh = r.texH > 0.0f ? r.texH : fh;
+                if (UI::InvisibleButton(r.label, sw, sh)) r.clicked = true;
+                const UI::Rect b = UI::GetItemRect();
+                const UI::Color32 col = UI::RGBA(ColorByte(r.fv[0]), ColorByte(r.fv[1]), ColorByte(r.fv[2]), ColorByte(r.fv[3]));
+                UI::GetWindowDrawList().AddRectFilled(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h}, col, std::min(3.0f, sh * 0.5f));
+                break;
+            }
+            case InspRowAsset: {   // the editor's AssetField: the name on a button (a click opens the picker), a clear button, the label
+                std::string* v = r.S();
+                const bool hasValue = !r.mixed && !v->empty();
+                const float bw = std::max(40.0f, frameW - (hasValue ? fh + 2.0f : 0.0f));
+                std::string shown = r.mixed ? "Mixed" : v->empty() ? std::string("None") : *v;
+                if (!r.mixed && !v->empty()) {
+                    if (r.s && !r.sv.empty()) shown = r.sv;   // the host's name for the value (an object field: the object's name)
+                    else {
+                        const std::size_t sl = shown.find_last_of("/\\");
+                        if (sl != std::string::npos) shown = shown.substr(sl + 1);
+                    }
+                }
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                const bool hit = UI::InvisibleButton("##asset", bw, fh);
+                const UI::Rect b = UI::GetItemRect();
+                whole = b;
+                const bool hov = UI::IsItemHovered(), held = UI::IsItemActive();
+                UI::GetWindowDrawList().AddRectFilled(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h},
+                                                      UI::GetColorU32(held ? UI::Col_ButtonActive : hov ? UI::Col_ButtonHovered : UI::Col_Button), 6.0f);
+                UI::PushClipRect(b.x, b.y, std::max(1.0f, b.w - g_metrics.framePadding.x), b.h);
+                UI::GetWindowDrawList().AddText(UI::Vec2{p.x + g_metrics.framePadding.x, p.y + (fh - fs) * 0.5f},
+                                                UI::GetColorU32(hasValue ? UI::Col_Text : UI::Col_TextDisabled), shown.c_str());
+                UI::PopClipRect();
+                if (hov) UI::SetTooltip("%s\nDrop a file from the Project panel here, or click to pick one.",
+                                        hasValue ? v->c_str() : (r.tip && *r.tip ? r.tip : "No file"));
+                hoverTip = false;
+                if (hit) { UI::OpenPopup("##pick"); Picks().id = 0; }
+                if (hasValue) {
+                    UI::SameLine(2.0f);
+                    if (UI::Button("##clear", UI::Vec2{fh, fh})) { v->clear(); r.changed = true; }
+                    DrawCross(UI::GetItemRect());
+                    if (UI::IsItemHovered()) UI::SetTooltip("Clear");
+                }
+                const std::string vis = Visible(r.label);
+                if (!vis.empty()) { UI::SameLine(g_metrics.innerSpacing.x); UI::Text(vis.c_str()); }
+                whole.w = std::max(whole.w, UI::GetItemRectMax().x - whole.x);
+                break;
+            }
+            case InspRowImage: {   // the editor's TexFieldThumb
+                if (r.texture) UI::Image(static_cast<SDL_Texture*>(r.texture), r.texW, r.texH);
+                else UI::Dummy(r.texW, r.texH);
+                const UI::Rect b = UI::GetItemRect();
+                // On hover: the path and the hint. Dear ImGui's tooltip also shows the picture 180 pixels wide; OkayUI cannot draw a texture
+                // over other windows yet (textured quads always go to the main batch, under the overlay), so the tooltip is text only.
+                if (UI::IsItemHovered() && r.texture) UI::SetTooltip("%s  (right-click to find in Project)", r.Text());
+                hoverTip = false;
+                if (UI::IsMouseClicked(1) && UI::IsMouseHoveringRect(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h})) UI::OpenPopup("##thumbctx");
+                if (UI::IsPopupOpen("##thumbctx")) {
+                    MenuLook look_(MenuWidth({"Show in Project"}));
+                    UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+                    UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+                    if (UI::BeginPopup("##thumbctx")) {
+                        if (MenuRow("Show in Project")) r.clicked = true;
+                        const UI::Rect mr = UI::GetItemRect();
+                        setPopup(UI::Rect{mr.x - 16.0f, mr.y - 12.0f, mr.w + 32.0f, mr.h + 24.0f});
+                        UI::EndPopup();
+                    }
+                    UI::PopStyleVar(2);
+                }
+                break;
+            }
+            case InspRowMask: {   // the Camera's Culling Mask: Everything, Nothing, then a check box per layer
+                int* bits = r.I();
+                std::vector<std::string> names;
+                auto fetch = [&] {   // the layer names, asked of the host only when they are shown
+                    if (!names.empty()) return;
+                    std::vector<std::string> vals; std::vector<void*> thumbs;
+                    if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
+                    names.resize(32);
+                };
+                if (*bits != ~0 && *bits != 0) fetch();
+                const std::string preview = InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
+                MenuLook look_(0.0f);
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, frameW);
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                if (UI::BeginCombo(r.label, preview.c_str())) {
+                    fetch();
+                    const UI::Vec2 lp = UI::GetCursorScreenPos();
+                    if (ListRow("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
+                    if (ListRow("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
+                    Divider();
+                    const float rowH = fh + g_metrics.itemSpacing.y;
+                    // as many check box rows as fit in Dear ImGui's list height (eight text rows) after Everything, Nothing and the rule
+                    const int shown = std::max(4, (int)std::floor(((float)kListRows - 2.0f) * (fs + g_metrics.itemSpacing.y) / rowH));
+                    res.listRows.assign(32, UI::Rect{});
+                    ScrollRows("##maskrows", 32, shown, rowH, 0, [&](int i) {
+                        bool on = (*bits & (1 << i)) != 0;
+                        UI::PushID(i);
+                        if (UI::Checkbox(names[(std::size_t)i].c_str(), &on)) {
+                            if (on) *bits |= (1 << i); else *bits &= ~(1 << i);
+                            r.changed = true;
+                        }
+                        res.listRows[(std::size_t)i] = UI::GetItemRect();
+                        UI::PopID();
+                    });
+                    const UI::Vec2 le = UI::GetCursorScreenPos();
+                    setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, le.y - lp.y + 8.0f});
+                    UI::EndCombo();
+                }
+                UI::PopStyleVar();
+                break;
+            }
+            case InspRowTree: {   // Dear ImGui's TreeNode: an arrow and the label, one text line tall; the rows inside indented
+                bool& open = treeOpen(treeKey, r.on);
+                const std::string vis = Visible(r.label);
+                const float tw = fs + g_metrics.framePadding.x * 2.0f + UI::CalcTextWidth(vis.c_str());
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                if (UI::InvisibleButton("##tree", std::max(tw, UI::GetContentRegionAvail().x), fs)) open = !open;
+                const bool hov = UI::IsItemHovered();
+                if (hov) {
+                    const UI::Rect b = UI::GetItemRect();
+                    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h}, kHeaderHovered, 0.0f);
+                }
+                // Dear ImGui's tree arrow: 70% of a text line, its box the frame padding in
+                InspArrow(UI::GetWindowDrawList(), p.x + g_metrics.framePadding.x + 0.15f * fs, p.y, 0.7f * fs, open, UI::GetColorU32(UI::Col_Text));
+                UI::GetWindowDrawList().AddText(UI::Vec2{p.x + fs + g_metrics.framePadding.x * 2.0f, p.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
+                *r.B() = open;
+                if (open) { UI::Indent(g_metrics.indentSpacing); ++indent; }
+                else skipDepth = 1;
+                break;
+            }
+            case InspRowTreeEnd:
+                if (indent > 0) { UI::Unindent(g_metrics.indentSpacing); --indent; }
+                break;
+            case InspRowSpacing:
+                UI::Dummy(1.0f, 0.0f);
+                break;
+            }
+            const UI::Rect rr = whole.w > 0.0f ? whole : UI::GetItemRect();
+            res.rows[k] = rr;
+            if (r.dropState) {   // a file from the Project panel is being dragged: the editor's DropOutline round the field
+                const float fx1 = r.kind == InspRowAsset || r.kind == InspRowText ? rr.x + frameW : rr.x + rr.w;
+                const bool over = UI::IsMouseHoveringRect(UI::Vec2{rr.x, rr.y}, UI::Vec2{fx1, rr.y + rr.h});
+                const UI::Color32 col = r.dropState == 1 ? UI::ColorMulAlpha(kAccent, over ? 1.0f : 0.7f) : UI::RGBA(220, 90, 80, over ? 255 : 150);
+                UI::GetWindowDrawList().AddRect(UI::Vec2{rr.x, rr.y}, UI::Vec2{fx1, rr.y + rr.h}, col, 3.0f, over ? 2.5f : 1.5f);
+            }
+            // the tooltip: the row's own, else the registry's (asked only now); the prefab mark and its menu
+            if (hoverTip && r.tip && *r.tip && UI::IsItemHovered()) UI::SetTooltip("%s", r.tip);
+            if ((hoverTip && r.tipLookup && !(r.tip && *r.tip)) || r.overridden) {
+                UI::Rect pop;
+                FieldExtras(r.label, rr, regionX, r.overridden, hoverTip && r.tipLookup && !(r.tip && *r.tip), &list.hooks, list.prefabField, list.prefabChosen, &pop);
+                setPopup(pop);
+            }
+            // a picker opened from this row (an asset field, or a small button that picks): a list with a search field, or thumbnails
+            if (r.pick != InspPickNone && r.kind == InspRowSmallButton && r.clicked) { UI::OpenPopup("##pick"); Picks().id = 0; }
+            if (r.pick != InspPickNone && UI::IsPopupOpen("##pick")) {
+                PickCache& pc = Picks();
+                const unsigned pid = UI::GetID("##pick");
+                bool fresh = false;   // the picker opened this frame: its search field takes the keyboard, as Dear ImGui's does
+                if (pc.id != pid || pc.frame < UI::GetFrameCount() - 1) {
+                    pc = PickCache(); pc.id = pid; fresh = true;
+                    if (list.hooks.choices) list.hooks.choices(r, pc.values, pc.names, pc.thumbs);
+                    pc.names.resize(pc.values.size()); pc.thumbs.resize(pc.values.size(), nullptr);
+                }
+                pc.frame = UI::GetFrameCount();
+                const bool grid = r.pick == InspPickGrid;
+                const float cell = 48.0f + 2.0f * g_metrics.framePadding.x;
+                const float popW = grid ? 4.0f * cell + 3.0f * g_metrics.itemSpacing.x : 360.0f;
+                MenuLook look_(0.0f);
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, popW + 32.0f);
+                UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+                if (UI::BeginPopup("##pick")) {
+                    const UI::Vec2 pp = UI::GetCursorScreenPos();
+                    std::string* target = r.S();
+                    if (grid) {
+                        for (std::size_t q = 0; q < pc.values.size(); ++q) {
+                            if (q % 4 != 0) UI::SameLine();
+                            UI::PushID((int)q);
+                            bool hit;
+                            if (pc.thumbs[q]) hit = UI::ImageButton("##pt", static_cast<SDL_Texture*>(pc.thumbs[q]), 48.0f, 48.0f);
+                            else hit = UI::Button(pc.names[q].c_str(), UI::Vec2{54.0f, 54.0f});
+                            if (UI::IsItemHovered()) UI::SetTooltip("%s", pc.values[q].c_str());
+                            if (hit) { *target = pc.values[q]; r.changed = true; UI::CloseCurrentPopup(); }
+                            UI::PopID();
+                        }
+                    } else {
+                        if (fresh) UI::SetKeyboardFocusHere();
+                        UI::SetNextItemWidth(popW);
+                        UI::InputTextWithHint("##find", "Search files...", pc.filter, (int)sizeof pc.filter);
+                        if (ListRow("None", target->empty())) { target->clear(); r.changed = true; }
+                        Divider();
+                        std::string needle(pc.filter);
+                        for (char& ch : needle) ch = (char)std::tolower((unsigned char)ch);
+                        std::vector<int> hits;
+                        for (std::size_t q = 0; q < pc.values.size() && hits.size() < 400; ++q) {
+                            if (!needle.empty()) {
+                                std::string low = pc.names[q];
+                                for (char& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                                if (low.find(needle) == std::string::npos) continue;
+                            }
+                            hits.push_back((int)q);
+                        }
+                        const float rowH = fs + g_metrics.itemSpacing.y;
+                        const int shown = std::max(1, (int)std::floor(260.0f / rowH));
+                        res.listRows.assign(hits.size(), UI::Rect{});
+                        ScrollRows("##pickrows", (int)hits.size(), shown, rowH, 0, [&](int q) {
+                            const int at = hits[(std::size_t)q];
+                            UI::PushID(at);
+                            if (ListRow(pc.names[(std::size_t)at].c_str(), pc.values[(std::size_t)at] == *target)) { *target = pc.values[(std::size_t)at]; r.changed = true; }
+                            res.listRows[(std::size_t)q] = UI::GetItemRect();
+                            UI::PopID();
+                        });
+                        if (hits.empty()) UI::TextDisabled(pc.values.empty() ? "Open a project to pick files." : "No matching files in this project.");
+                    }
+                    const UI::Vec2 pe = UI::GetCursorScreenPos();
+                    setPopup(UI::Rect{pp.x - 16.0f, pp.y - 12.0f, popW + 32.0f, pe.y - pp.y + 24.0f});
+                    UI::EndPopup();
+                }
+                UI::PopStyleVar(2);
+            }
+            UI::PopID();
+            if (r.disabled) UI::EndDisabled();
+        }
+        while (indent-- > 0) UI::Unindent(g_metrics.indentSpacing);
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
     }
     UI::End();
     return res;

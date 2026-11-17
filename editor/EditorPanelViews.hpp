@@ -59,4 +59,9 @@ okaypanels::TransformIntent DrawTransformBodyImGui(okaypanels::TransformModel& m
 okaypanels::MeshRendererIntent DrawMeshRendererBodyImGui(okaypanels::MeshRendererModel& m, const PanelViewHooks& hooks);
 bool DrawAddComponentButtonImGui(const PanelViewHooks& hooks);
 
+/// The Inspector, stage 2 (docs/own_ui_toolkit.md section 15): a component body as field rows (shared/InspectorFieldsModel.hpp), drawn
+/// with the same Dear ImGui widgets the editor's component code uses. The editor still draws its own bodies; this is the same rows
+/// written against the model, which the comparison test runs against the OkayUI port.
+void DrawFieldListBodyImGui(okaypanels::InspFieldList& list, const PanelViewHooks& hooks);
+
 } // namespace oked

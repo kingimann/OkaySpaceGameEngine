@@ -39,8 +39,8 @@ public:
             break;
         }
         case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
-            if (e.button.button == SDL_BUTTON_LEFT) m_leftTap = true;
-            else if (e.button.button == SDL_BUTTON_RIGHT) m_rightTap = true;
+            if (e.button.button == SDL_BUTTON_LEFT) ++m_leftTaps;
+            else if (e.button.button == SDL_BUTTON_RIGHT) ++m_rightTaps;
             break;
         case SDL_MOUSEWHEEL: {
             float y = (float)e.wheel.y;
@@ -92,7 +92,7 @@ public:
     OkayUI::Input Build(float mouseX, float mouseY, bool leftDown, bool rightDown, bool blocked, bool deliverKeys) {
         OkayUI::Input in;
         in.mouseX = mouseX; in.mouseY = mouseY;
-        in.mouseDown = leftDown || m_leftTap; in.rightDown = rightDown || m_rightTap; in.blocked = blocked;
+        in.mouseDown = Button(leftDown, m_leftTaps, m_leftShown); in.rightDown = Button(rightDown, m_rightTaps, m_rightShown); in.blocked = blocked;
         in.wheel = m_wheel;
         if (deliverKeys) {
             std::memcpy(m_out, m_text, sizeof(m_out));
@@ -107,7 +107,6 @@ public:
         m_up = m_down = m_copy = m_cut = m_paste = false;
         m_text[0] = 0;
         m_wheel = 0.0f;
-        m_leftTap = m_rightTap = false;
         m_back = m_del = m_left = m_right = m_home = m_end = m_enter = m_escape = m_selectAll = false;
         return in;
     }
@@ -139,7 +138,21 @@ private:
     char  m_text[64] = {0};
     char  m_out[64] = {0};
     float m_wheel = 0.0f;
-    bool  m_leftTap = false, m_rightTap = false;   // a button went down since the last frame (even if it is already up again)
+    // Presses of a button not yet shown to OkayUI (each one must reach it as an up-then-down edge, even when two arrive between two
+    // frames: a fast double click at a low frame rate), and whether the last frame showed the button down.
+    int   m_leftTaps = 0, m_rightTaps = 0;
+    bool  m_leftShown = false, m_rightShown = false;
+    /// One button's state for the frame: a press not yet shown is shown down, but only after a frame that showed it up (so it is an
+    /// edge); with no press waiting it is the button as it is now.
+    static bool Button(bool held, int& taps, bool& shown) {
+        bool down;
+        if (taps > 0) {
+            if (shown) down = false;            // shown down last frame: one frame up first, so this press is a new edge
+            else { down = true; --taps; }
+        } else down = held;
+        shown = down;
+        return down;
+    }
     bool  m_back = false, m_del = false, m_left = false, m_right = false, m_home = false, m_end = false;
     bool  m_enter = false, m_escape = false, m_selectAll = false, m_shift = false;
 };

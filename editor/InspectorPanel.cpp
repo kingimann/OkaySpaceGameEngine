@@ -5,6 +5,8 @@
 #include "InspectorModel.hpp"
 #include "PrefabEdit.hpp"
 #include "OkayPanels.hpp"   // OkayUIHasKeyboard: a hosted OkayUI field being typed in keeps the undo step open
+#include "MainShared.hpp"   // UseOkayUIBackend: the generic card on OkayUI
+#include <deque>
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
@@ -246,7 +248,10 @@ bool ObjectField(const char* label, std::string& guid, okay::Scene& scene, bool 
 // A drop-down arrow on the right of the last item (a text box holding a path): click it, or right-click the box, for the file picker.
 bool AssetPathPicker(std::string& value, const char* kind) {
     bool changed = false;
-    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    // The field's own rectangle: a labelled text box's item reaches past its label, and the arrow was drawn over the label's last letters
+    // (seen while porting this to OkayUI, docs/own_ui_toolkit.md section 15). The box ends one item width in, at most.
+    const ImVec2 mn = ImGui::GetItemRectMin();
+    const ImVec2 mx(std::min(ImGui::GetItemRectMax().x, mn.x + ImGui::CalcItemWidth()), ImGui::GetItemRectMax().y);
     const bool boxHot = ImGui::IsItemHovered();
     const bool over = boxHot && ImGui::IsMouseHoveringRect(ImVec2(mx.x - 22.0f, mn.y), mx, false);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -257,6 +262,10 @@ bool AssetPathPicker(std::string& value, const char* kind) {
     }
     if (over) ImGui::SetTooltip("Choose a file from the project (or right-click)");
     static bool wantPicker = false;
+    // Each field its own menu and picker: they all used one id ("##pathpick"), so opening one opened every path field's menu at once
+    // (the Mesh Renderer's six showed "Choose from project... / Clear" six times, and as many search boxes in the picker; seen while
+    // porting the Mesh Renderer to OkayUI, docs/own_ui_toolkit.md section 15).
+    ImGui::PushID(&value);
     ImGui::PushID("##pathpick");
     if (boxHot && (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)))) {
         ImGui::ClearActiveID();
@@ -269,6 +278,7 @@ bool AssetPathPicker(std::string& value, const char* kind) {
     }
     if (wantPicker) { wantPicker = false; ImGui::OpenPopup("##pickfile"); }
     if (AssetPickerPopup("##pickfile", value, kind ? kind : "", s_ed ? s_ed->projectDir() : std::string())) changed = true;
+    ImGui::PopID();
     ImGui::PopID();
     return changed;
 }
@@ -435,6 +445,144 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
 
 // ---- The card for components without their own Inspector ------------------------------------------------------------
 
+// The same card as OkayUI field rows (docs/own_ui_toolkit.md section 15): one row per shown property, built from the registry like
+// PropertyField, edits written to every target the same way. False: not drawn this frame (the Dear ImGui card is drawn instead).
+static bool DrawFallbackOkayUI(okay::editor::EditorState& ed, const std::vector<GameObject*>& targets, const std::string& typeName, int idx,
+                               const std::vector<const PropertyDesc*>& shown, okay::Component* comp, int have) {
+    using namespace okaypanels;
+    InspFieldList L;
+    std::deque<std::string> text;                    // labels and display names (a deque keeps their addresses)
+    std::deque<std::vector<const char*>> lists;      // enum options as C strings
+    std::vector<const PropertyDesc*> rowDesc;        // the property each row edits (null for a title or a note)
+    std::vector<FieldState> rowState;
+    L.rows.reserve(shown.size() + 4);
+    if (have > 1) {
+        char b[64]; std::snprintf(b, sizeof b, "Editing %d selected objects", have);
+        L.Note(b, true);
+        rowDesc.push_back(nullptr); rowState.emplace_back();
+    }
+    std::string group;
+    for (const PropertyDesc* d : shown) {
+        if (d->group != group) {
+            group = d->group;
+            if (!group.empty()) { text.push_back(group); L.Group(text.back().c_str()); rowDesc.push_back(nullptr); rowState.emplace_back(); }
+        }
+        const FieldState st = ReadField(targets, typeName, idx, *d);
+        if (st.have == 0) continue;
+        text.push_back(PrettyName(d->name) + "##" + d->name);
+        const char* label = text.back().c_str();
+        int k = -1;
+        switch (d->type) {
+        case PropertyType::Bool: k = L.Check(label, nullptr); L[k].bv = st.value.AsBool(); break;
+        case PropertyType::Int:
+            k = L.DragInt(label, nullptr, d->step > 0.0 ? (float)d->step : 0.2f, d->hasRange ? (int)d->rangeMin : 0, d->hasRange ? (int)d->rangeMax : 0);
+            L[k].iv = (int)st.value.AsInt();
+            break;
+        case PropertyType::Float: {
+            const float v = st.value.AsFloat();
+            k = L.Drag(label, nullptr, 1, 0.0f, d->hasRange ? (float)d->rangeMin : 0.0f, d->hasRange ? (float)d->rangeMax : 0.0f);
+            L[k].fv[0] = v;
+            L[k].speed = d->step > 0.0 ? (float)d->step : (d->hasRange && d->rangeMax > d->rangeMin) ? (float)((d->rangeMax - d->rangeMin) / 300.0) : std::max(0.01f, std::fabs(v) * 0.01f);
+            break;
+        }
+        case PropertyType::String:
+            k = L.Text(label, nullptr); L[k].sv = st.mixed ? std::string() : st.value.AsString(); L[k].wrap = d->multiline;
+            break;
+        case PropertyType::Vec2: case PropertyType::Vec3: case PropertyType::Vec4: case PropertyType::Quat: {
+            const bool q = d->type == PropertyType::Quat;
+            const int n = q ? 3 : PropertyTypeComponentCount(d->type);
+            k = L.Drag(label, nullptr, n, 1.0f);
+            InspRow& r = L[k];
+            if (d->type == PropertyType::Vec2) { const Vec2 a = st.value.AsVec2(); r.fv[0] = a.x; r.fv[1] = a.y; }
+            else if (d->type == PropertyType::Vec3) { const Vec3 a = st.value.AsVec3(); r.fv[0] = a.x; r.fv[1] = a.y; r.fv[2] = a.z; }
+            else if (d->type == PropertyType::Vec4) { const Vec4 a = st.value.AsVec4(); r.fv[0] = a.x; r.fv[1] = a.y; r.fv[2] = a.z; r.fv[3] = a.w; }
+            else { const Vec3 e = st.value.AsQuat().ToEuler(); r.fv[0] = e.x; r.fv[1] = e.y; r.fv[2] = e.z; }
+            r.axisTags = true;
+            if (q) { r.speed = 1.0f; if (st.mixed) r.mixedAxes = 7u; }
+            else {
+                r.speed = d->step > 0.0 ? (float)d->step : d->hasRange && d->rangeMax > d->rangeMin ? (float)((d->rangeMax - d->rangeMin) / 300.0) : 0.01f;
+                if (d->hasRange) { r.lo = (float)d->rangeMin; r.hi = (float)d->rangeMax; }
+                for (std::size_t a = 0; a < st.axisMixed.size() && a < 4; ++a) if (st.axisMixed[a]) r.mixedAxes |= 1u << a;
+            }
+            break;
+        }
+        case PropertyType::Color: {
+            const Color c = st.value.AsColor();
+            k = L.Color(label, nullptr, 4);
+            L[k].fv[0] = c.r; L[k].fv[1] = c.g; L[k].fv[2] = c.b; L[k].fv[3] = c.a;
+            break;
+        }
+        case PropertyType::Enum: {
+            lists.emplace_back();
+            for (const std::string& o : d->enumOptions) lists.back().push_back(o.c_str());
+            k = L.Combo(label, nullptr, lists.back().data(), (int)lists.back().size());
+            L[k].iv = st.value.AsEnum();
+            break;
+        }
+        case PropertyType::AssetPath:
+            k = L.Asset(label, nullptr, d->assetKind.c_str(), d->assetKind.c_str());
+            L[k].sv = st.value.AsString();
+            break;
+        case PropertyType::ObjectRef: {
+            k = L.Asset(label, nullptr, "object", "object");   // an object dragged from the Hierarchy too
+            L[k].sv = st.value.AsString();   // the guid; the name it shows is the object's
+            break;
+        }
+        default: break;
+        }
+        if (k < 0) { text.pop_back(); continue; }
+        InspRow& r = L[k];
+        r.mixed = st.mixed;
+        r.disabled = d->IsReadOnly();
+        r.tipLookup = true;
+        rowDesc.resize((std::size_t)k, nullptr); rowState.resize((std::size_t)k);
+        rowDesc.push_back(d); rowState.push_back(st);
+    }
+    rowDesc.resize(L.rows.size(), nullptr); rowState.resize(L.rows.size());
+    // an object field shows the object's name: its own text holds the guid, so the name goes into a copy the row points at
+    std::deque<std::string> guids;
+    for (std::size_t k = 0; k < L.rows.size(); ++k) {
+        InspRow& r = L.rows[k];
+        if (r.kind != InspRowAsset || std::strcmp(r.pickKind, "object") != 0) continue;
+        guids.push_back(r.sv);
+        GameObject* g = r.mixed || r.sv.empty() ? nullptr : ed.scene().FindByGuid(r.sv);
+        r.s = &guids.back();
+        r.sv = r.mixed || r.sv.empty() ? std::string() : g ? g->name : std::string("(missing object)");
+    }
+    L.hooks = FieldHooksFor(comp);
+    MarkPrefabOverrides(comp, L);
+    char sid[64]; std::snprintf(sid, sizeof sid, "##okayui_card%p", (void*)comp);
+    if (!DrawFieldListOkayUI(sid, L)) return false;
+    bool wrote = false;
+    for (std::size_t k = 0; k < L.rows.size(); ++k) {
+        InspRow& r = L.rows[k];
+        const PropertyDesc* d = rowDesc[k];
+        if (!d || !r.changed) continue;
+        switch (d->type) {
+        case PropertyType::Bool: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeBool(r.bv)) > 0; break;
+        case PropertyType::Int: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeInt(r.iv)) > 0; break;
+        case PropertyType::Float: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeFloat(r.fv[0])) > 0; break;
+        case PropertyType::String: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeString(r.sv)) > 0; break;
+        case PropertyType::Vec2: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec2({r.fv[0], r.fv[1]}), r.axes) > 0; break;
+        case PropertyType::Vec3: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec3({r.fv[0], r.fv[1], r.fv[2]}), r.axes) > 0; break;
+        case PropertyType::Vec4: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeVec4({r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
+        case PropertyType::Quat: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeQuat(Quat::Euler(Vec3{r.fv[0], r.fv[1], r.fv[2]}))) > 0; break;
+        case PropertyType::Color: wrote |= WriteFieldAxes(targets, typeName, idx, *d, PropertyValue::MakeColor(Color{r.fv[0], r.fv[1], r.fv[2], r.fv[3]}), r.axes) > 0; break;
+        case PropertyType::Enum: {
+            const int e = r.iv;
+            if (e >= 0 && e < (int)d->enumOptions.size()) wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeEnum(e, d->enumOptions[(std::size_t)e])) > 0;
+            break;
+        }
+        case PropertyType::AssetPath: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeAssetPath(r.sv)) > 0; break;
+        case PropertyType::ObjectRef: wrote |= WriteField(targets, typeName, idx, *d, PropertyValue::MakeObjectRef(*r.s)) > 0; break;
+        default: break;
+        }
+    }
+    if (!L.prefabChosen.empty()) RunPrefabFieldMenu(comp, L.prefabField, L.prefabChosen);
+    if (wrote) ed.dirty = true;
+    return true;
+}
+
 static bool s_headerDrawn = false;
 void BeginInspectorFrame() { s_headerDrawn = false; }
 
@@ -461,8 +609,9 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
     if (std::find(targets.begin(), targets.end(), go) == targets.end()) targets = {go};
     int have = 0;
     for (GameObject* g : targets) if (PropertyRegistry::GetProperty(*g, ComponentPath(info->name, idx) + "." + shown[0]->name).IsValid()) ++have;
-    if (have > 1) ImGui::TextDisabled("Editing %d selected objects", have);
     SetTipComponent(comp);   // which component the per-property prefab marks belong to
+    if (UseOkayUIBackend() && DrawFallbackOkayUI(ed, targets, info->name, idx, shown, comp, have)) { ImGui::Spacing(); return; }
+    if (have > 1) ImGui::TextDisabled("Editing %d selected objects", have);
     std::string group;
     for (const PropertyDesc* d : shown) {
         if (d->group != group) {
@@ -692,6 +841,107 @@ void PrefabFieldMark(const char* label) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this value into %s. Other instances that did not change it take it too.", pname.c_str());
         ImGui::EndPopup();
     }
+}
+
+// ---- Stage 2: the OkayUI rows' tooltips, prefab marks and pickers --------------------------------------------------------------------
+
+bool PrefabFieldOverridden(const okay::Component* comp, const char* label) {
+    if (!comp || !label || s_changeOf.empty() || !s_changesRoot) return false;
+    auto it = s_changeOf.find(comp);
+    if (it == s_changeOf.end() || it->second >= s_changes.size()) return false;
+    return !ChangedFieldsForLabel(s_changes[it->second], *comp, label).empty();
+}
+
+void MarkPrefabOverrides(const okay::Component* comp, okaypanels::InspFieldList& list) {
+    if (!comp || s_changeOf.find(comp) == s_changeOf.end()) return;   // the component is not changed: no field is
+    for (okaypanels::InspRow& r : list.rows) {
+        if (!r.label || !*r.label || r.kind == okaypanels::InspRowSection || r.kind == okaypanels::InspRowGroup || r.kind == okaypanels::InspRowNote ||
+            r.kind == okaypanels::InspRowSmallButton || r.kind == okaypanels::InspRowButton || r.kind == okaypanels::InspRowLabel)
+            continue;
+        r.overridden = PrefabFieldOverridden(comp, r.label);
+    }
+}
+
+namespace {
+// The fields of a labelled property that differ, the change they are in, and what Revert / Apply act on (PrefabFieldMark's rules).
+bool PrefabFieldTargets(const okay::Component* comp, const std::string& label, const PrefabChange*& ch, std::vector<std::string>& fields,
+                        std::vector<PrefabTarget>& targets) {
+    if (!comp || !s_changesRoot) return false;
+    auto it = s_changeOf.find(comp);
+    if (it == s_changeOf.end() || it->second >= s_changes.size()) return false;
+    ch = &s_changes[it->second];
+    fields = ChangedFieldsForLabel(*ch, *comp, label);
+    if (fields.empty()) return false;
+    for (const std::string& f : fields) targets.push_back(TargetOf(*ch, f));
+    if (ch->wholeRecordOnly || ch->added || ch->removed) targets = {TargetOf(*ch)};
+    return true;
+}
+} // namespace
+
+void RunPrefabFieldMenu(const okay::Component* comp, const std::string& label, const std::string& id) {
+    const PrefabChange* ch = nullptr;
+    std::vector<std::string> fields;
+    std::vector<PrefabTarget> targets;
+    if (!PrefabFieldTargets(comp, label, ch, fields, targets)) return;
+    if (id == okaypanels::kInspPrefabRevert) Queue(PrefabReq::Revert, s_changesRoot, targets);
+    else if (id == okaypanels::kInspPrefabApply) Queue(PrefabReq::Apply, s_changesRoot, targets);
+}
+
+okaypanels::InspFieldHooks FieldHooksFor(const okay::Component* comp) {
+    okaypanels::InspFieldHooks h;
+    std::string type;
+    if (comp) if (auto info = PropertyRegistry::FindFor(*comp)) type = info->name;
+    if (!type.empty()) h.tipFor = [type](const char* label) { return FieldTooltip(type, label); };
+    h.prefabMenu = [comp](const char* label, std::vector<okaypanels::PanelMenuEntry>& out) {
+        const PrefabChange* ch = nullptr;
+        std::vector<std::string> fields;
+        std::vector<PrefabTarget> targets;
+        if (!PrefabFieldTargets(comp, label, ch, fields, targets)) return;
+        okaypanels::PanelMenuEntry e;
+        e.kind = okaypanels::PanelMenuHeading;
+        e.label = "Overridden from " + std::filesystem::path(s_changesRoot->prefabSource).filename().string();
+        out.push_back(e);
+        for (const std::string& f : fields)
+            for (const PrefabFieldDiff& d : ch->fields)
+                if (d.name == f) { e.label = f + ": " + d.prefabValue + " -> " + d.instanceValue; out.push_back(e); }
+        okaypanels::PanelMenuEntry sep; sep.kind = okaypanels::PanelMenuSeparator; out.push_back(sep);
+        okaypanels::PanelMenuEntry r;
+        r.id = okaypanels::kInspPrefabRevert; r.label = "Revert Property"; r.tip = "Put this property back to the prefab's value.";
+        out.push_back(r);
+        r.id = okaypanels::kInspPrefabApply; r.label = "Apply Property to Prefab";
+        r.tip = "Write this value into the prefab. Other instances that did not change it take it too.";
+        out.push_back(r);
+    };
+    h.choices = [](const okaypanels::InspRow& row, std::vector<std::string>& values, std::vector<std::string>& names, std::vector<void*>&) {
+        const std::string kind = row.pickKind ? row.pickKind : "";
+        if (kind == "layers") {
+            for (int i = 0; i < 32; ++i) names.push_back(okay::Layers::Name(i));
+            return;
+        }
+        if (!s_ed) return;
+        if (kind == "object") {
+            for (const auto& up : s_ed->scene().Objects()) {
+                GameObject* g = up.get();
+                if (!g || g->transient) continue;
+                values.push_back(g->Guid());
+                std::string nm = g->name;
+                if (g->transform && g->transform->Parent()) nm += "  (in " + g->transform->Parent()->gameObject->name + ")";
+                names.push_back(nm);
+            }
+            return;
+        }
+        const std::string root = s_ed->projectDir();
+        if (root.empty()) return;
+        std::error_code ec;
+        const std::filesystem::path assets = std::filesystem::path(root) / "Assets";
+        values = ListAssetsOfKind(std::filesystem::is_directory(assets, ec) ? assets.string() : root, kind);
+        for (const std::string& f : values) {
+            std::string rel = f;
+            if (f.rfind(root, 0) == 0) rel = f.substr(root.size() + (f.size() > root.size() && (f[root.size()] == '/' || f[root.size()] == '\\') ? 1 : 0));
+            names.push_back(rel);
+        }
+    };
+    return h;
 }
 
 void PrefabComponentMenu(okay::Component* comp) {

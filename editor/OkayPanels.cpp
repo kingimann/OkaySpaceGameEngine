@@ -10,6 +10,7 @@
 #include "OkayUIEditorPanels.hpp"
 #include "EditorPanelViews.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "InspectorModel.hpp"   // AssetKindAccepts: which rows take a file dragged from the Project panel
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,7 @@ struct MetricsFromImGui {
         m.framePadding = OkayUI::Vec2{st.FramePadding.x, st.FramePadding.y};
         m.innerSpacing = OkayUI::Vec2{st.ItemInnerSpacing.x, st.ItemInnerSpacing.y};
         m.itemWidth = ImGui::CalcItemWidth();
+        m.indentSpacing = st.IndentSpacing;
         okayuiscreens::SetEditorMetrics(m);
     }
     ~MetricsFromImGui() { okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{}); }
@@ -328,6 +330,7 @@ bool DrawTransformOkayUI(okaypanels::TransformModel& model, okaypanels::Transfor
         }
         OkayUI::Rect menu;
         if (r.menuCopy.w > 0.0f) menu = OkayUI::Rect{r.menuCopy.x - 16.0f, r.menuCopy.y - 12.0f, r.menuCopy.w + 32.0f, r.menuPaste.y + r.menuPaste.h - r.menuCopy.y + 24.0f};
+        else if (r.fieldMenu.w > 0.0f) menu = r.fieldMenu;
         return SectionDrawn{r.contentHeight, menu};
     }, bleed);
 }
@@ -337,7 +340,7 @@ bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel& model, okaypanels::Me
         const okayuiscreens::MeshRendererResult r = okayuiscreens::DrawMeshRenderer(model, x, y, w, h);
         intent = r.intent;
         return SectionDrawn{r.contentHeight, r.popup};
-    });
+    }, HeaderBleed());   // stage 2: room for a field's prefab bar left of the region
 }
 
 bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked) {
@@ -347,6 +350,52 @@ bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked) {
         clicked = r.open;
         return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
     });
+}
+
+bool DrawFieldListOkayUI(const char* id, okaypanels::InspFieldList& list) {
+    // a file dragged from the Project panel, or an object from the Hierarchy: which rows take it (an outline), before they are drawn
+    const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+    const char* dragged = (pl && pl->IsDataType("ASSET_PATH") && pl->Data) ? (const char*)pl->Data : nullptr;
+    const bool draggedObject = pl && pl->IsDataType("GO_PTR") && pl->Data;
+    auto objectKind = [](const char* k) { return std::strcmp(k, "object") == 0 || std::strcmp(k, "objectname") == 0; };
+    for (okaypanels::InspRow& r : list.rows) {
+        r.dropState = 0;
+        if (!r.dropKind) continue;
+        if (objectKind(r.dropKind)) { if (draggedObject) r.dropState = 1; }
+        else if (dragged) r.dropState = AssetKindAccepts(r.dropKind, dragged) ? 1 : 2;
+    }
+    std::vector<OkayUI::Rect> rows;
+    char win[96];
+    std::snprintf(win, sizeof win, "%s%08x##okayui", id, (unsigned)ImGui::GetID(id));   // one OkayUI window per body
+    const bool drawn = HostSection(id, [&](float x, float y, float w, float h) {
+        okayuiscreens::FieldListResult r = okayuiscreens::DrawFieldList(list, win, x, y, w, h);
+        rows = std::move(r.rows);
+        return SectionDrawn{r.contentHeight, r.popup};
+    }, HeaderBleed());
+    if (!drawn || (!dragged && !draggedObject)) return drawn;
+    // a drop: a Dear ImGui drop target over each row that takes one (the rows are OkayUI's, the drag is Dear ImGui's)
+    const ImVec2 o = ImGui::GetMainViewport()->Pos;
+    for (std::size_t k = 0; k < list.rows.size() && k < rows.size(); ++k) {
+        okaypanels::InspRow& r = list.rows[k];
+        const OkayUI::Rect& q = rows[k];
+        if (!r.dropKind || q.w <= 0.0f || q.h <= 0.0f) continue;
+        const ImRect rr(o.x + q.x, o.y + q.y, o.x + q.x + q.w, o.y + q.y + q.h);
+        ImGui::PushID((int)k);
+        if (ImGui::BeginDragDropTargetCustom(rr, ImGui::GetID("##fielddrop"))) {
+            if (objectKind(r.dropKind)) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                    okay::GameObject* g = *(okay::GameObject**)p->Data;
+                    if (g) { *r.S() = std::strcmp(r.dropKind, "object") == 0 ? g->Guid() : g->name; r.changed = true; }
+                }
+            } else if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                const std::string path((const char*)p->Data);
+                if (AssetKindAccepts(r.dropKind, path)) { *r.S() = path; r.changed = true; }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::PopID();
+    }
+    return true;
 }
 
 bool OkayUIHasKeyboard() { return OkayUI::WantsTextInput(); }
@@ -373,6 +422,7 @@ bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okayp
 bool DrawTransformOkayUI(okaypanels::TransformModel&, okaypanels::TransformIntent&, int*) { return false; }
 bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel&, okaypanels::MeshRendererIntent&) { return false; }
 bool DrawAddComponentOkayUI(std::uint32_t, bool& clicked) { clicked = false; return false; }
+bool DrawFieldListOkayUI(const char*, okaypanels::InspFieldList&) { return false; }
 bool OkayUIHasKeyboard() { return false; }
 }
 #endif

@@ -507,6 +507,10 @@ bool DragFloat3(const char* label, float v[3], float speed, float minV, float ma
 /// Ctrl+click types a number. The plain SliderInt / SliderFloat keep OkayUI's groove-and-knob look.
 bool SliderInt(const char* label, int* value, int minV, int maxV, const char* format);
 bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format);
+/// SliderFlags_Logarithmic: the grab moves on a logarithmic scale (Dear ImGui's flag of that name), so a range like 0.25 to 8 has 1 near its
+/// middle; for a range of positive numbers (otherwise the scale stays linear).
+enum SliderFlags : unsigned { SliderFlags_None = 0, SliderFlags_Logarithmic = 1u };
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format, unsigned flags);
 /// Two or three framed sliders in a row sharing one label (each a frame, a grab and its value in `format`), ItemInnerSpacing (x) apart.
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* format);
 bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* format);

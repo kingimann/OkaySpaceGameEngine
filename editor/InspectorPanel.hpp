@@ -100,6 +100,18 @@ void DrawMixedNote(const okay::Component* comp);
 /// The same note's text ("" when there is none).
 std::string MixedNoteText(const okay::Component* comp);
 
+// ---- The Inspector on OkayUI, stage 2 (docs/own_ui_toolkit.md section 15) -----------------------------------------------------------
+/// The hooks a component body's OkayUI rows ask (shared/InspectorFieldsModel.hpp InspFieldHooks): the registry's tooltip for a field's
+/// label (FieldTip), an overridden field's prefab menu, and what a picker lists (project files of an asset kind, the scene's objects for
+/// "object", the 32 layer names for "layers"). `comp` is the component the rows belong to.
+okaypanels::InspFieldHooks FieldHooksFor(const okay::Component* comp);
+/// Mark the rows whose field is changed from the prefab (cheap when the component is not changed: one lookup).
+void MarkPrefabOverrides(const okay::Component* comp, okaypanels::InspFieldList& list);
+/// Is the field drawn with this label changed from the prefab (PrefabFieldMark's test)?
+bool PrefabFieldOverridden(const okay::Component* comp, const char* label);
+/// Carry out a row chosen in a field's prefab menu (kInspPrefabRevert / kInspPrefabApply): queued like PrefabFieldMark's menu.
+void RunPrefabFieldMenu(const okay::Component* comp, const std::string& label, const std::string& id);
+
 /// Play mode: a note across the top that edits are not kept. No-op while editing.
 void DrawPlayModeNote(okay::editor::EditorState& ed);
 

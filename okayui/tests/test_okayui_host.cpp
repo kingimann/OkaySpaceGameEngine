@@ -62,6 +62,28 @@ int main() {
         SDL_Event m = d; m.button.button = SDL_BUTTON_MIDDLE; c.Feed(m);      // other buttons are not OkayUI's
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
     }
+    {   // two clicks between two frames (a fast double click at a low frame rate): two presses, each an up-then-down edge
+        InputCollector c;
+        SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_LEFT;
+        SDL_Event u = d; u.type = SDL_MOUSEBUTTONUP;
+        c.Feed(d); c.Feed(u); c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        // a second click arriving in the frame after the first was shown: the button is shown up once in between
+        c.Feed(d); c.Feed(u);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        c.Feed(d); c.Feed(u);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, false, false, false, false).mouseDown);
+        // a press held across frames (a drag) stays down
+        c.Feed(d);
+        CHECK(!c.Build(5, 5, true, false, false, false).mouseDown);   // the last frame showed it down: up once first
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(c.Build(5, 5, true, false, false, false).mouseDown);
+        CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+    }
     {   // keys are dropped, not kept, when OkayUI may not have them: nothing arrives a frame late
         InputCollector c;
         c.Feed(Text("x")); c.Feed(Key(SDLK_BACKSPACE));

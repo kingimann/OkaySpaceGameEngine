@@ -13,6 +13,7 @@
 #include "test_framework.hpp"
 #include "EditorPanelViews.hpp"
 #include "InspectorStackOkayUI.hpp"
+#include "InspectorBodiesFixtures.hpp"
 #include "okayui_compare_rig.hpp"
 
 using namespace okaycompare;
@@ -74,6 +75,34 @@ void ImGuiInspector(Scene& s, const oked::PanelViewHooks& hooks) {
     if (add) ++s.addComponentOpened;
 }
 
+// Stage 2 (docs/own_ui_toolkit.md section 15): one component body as field rows. Dear ImGui: the rows drawn as the editor's component
+// code draws them, with the Inspector's spacing and value column (PushItemWidth(-label column)); OkayUI: the same rows with the same
+// metrics. Each frame builds the rows from the values, as the editor's builders do.
+void ImGuiBody(inspbody::Body b, inspbody::Values& v, const oked::PanelViewHooks& hooks) {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 12));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(9, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
+    const float labelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.46f, 128.0f, 190.0f);
+    ImGui::PushItemWidth(-labelW);
+    P::InspFieldList L = inspbody::Rows(b, v);
+    oked::DrawFieldListBodyImGui(L, hooks);
+    ImGui::PopItemWidth();
+    ImGui::PopStyleVar(3);
+    inspbody::Apply(b, v, L);
+}
+okayuiscreens::FieldListResult OkayBody(inspbody::Body b, inspbody::Values& v, float x, float y, float w, float h) {
+    const inspfix::InspectorMetrics im;
+    okayuiscreens::EditorMetrics em;
+    em.itemSpacing = UI::Vec2{im.itemX, im.itemY}; em.framePadding = UI::Vec2{im.frameX, im.frameY}; em.innerSpacing = UI::Vec2{im.innerX, im.innerY};
+    em.itemWidth = inspfix::InspectorItemWidth(w);
+    okayuiscreens::SetEditorMetrics(em);
+    P::InspFieldList L = inspbody::Rows(b, v);
+    const okayuiscreens::FieldListResult r = okayuiscreens::DrawFieldList(L, "Body##okayui", x, y, w, h);
+    okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{});
+    inspbody::Apply(b, v, L);
+    return r;
+}
+
 } // namespace
 
 #if defined(_MSC_VER)
@@ -96,6 +125,21 @@ int main() {
         };
     };
 
+    if (const char* prof = std::getenv("OKAY_UI_PROFILE"); prof && std::string(prof).rfind("body", 0) == 0) {   // body:<name>:<imgui|okayui>
+        const std::string pr(prof);
+        const bool im = pr.find(":imgui") != std::string::npos;
+        inspbody::Body b = inspbody::BodyLight;
+        for (int i = 0; i < inspbody::BodyCount; ++i) if (pr.find(std::string(":") + inspbody::kBodyNames[i] + ":") != std::string::npos) b = (inspbody::Body)i;
+        ImGuiRig imr; OkayRig ok;
+        inspbody::Values v;
+        oked::PanelViewHooks h = hooks; h.headingFont = imr.heading;
+        auto imB = [&] { ImGuiBody(b, v, h); };
+        auto okB = [&] { OkayBody(b, v, bx, by, bw, bh); };
+        imr.mx = imr.my = ok.sim.mx = ok.sim.my = -100.0f;
+        for (int i = 0; i < 10; ++i) { if (im) imr.Frame(imB); else ok.Frame(okB); }
+        if (im) ProfiledFrames([&] { imr.Frame(imB); }); else ProfiledFrames([&] { ok.Frame(okB); });
+        return 0;
+    }
     if (const char* prof = std::getenv("OKAY_UI_PROFILE")) {   // callgrind: one side only
         const bool im = std::string(prof).find(":imgui") != std::string::npos;
         ImGuiRig imr; OkayRig ok;
@@ -204,6 +248,56 @@ int main() {
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report(which == 0 ? "inspector-multi" : "inspector-camera", imPic, okPic, t);
+    }
+
+
+    // ================= stage 2: the component bodies (pictures and speed; the same input does the same) =================
+    for (int bi = 0; bi < inspbody::BodyCount; ++bi) {
+        const inspbody::Body b = (inspbody::Body)bi;
+        inspbody::Values imv, okv;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        oked::PanelViewHooks h = hooks; h.headingFont = im.heading;
+        okayuiscreens::FieldListResult okr;
+        auto imBody = [&] { ImGuiBody(b, imv, h); };
+        auto okBody = [&] { okr = OkayBody(b, okv, bx, by, bw, bh); };
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report(std::string("body-") + inspbody::kBodyNames[bi], imPic, okPic, t);
+        auto clickBoth = [&](float x, float y) {
+            im.Click(x, y, imBody);
+            ok.sim.Move(x, y); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody); ok.Frame(okBody);
+        };
+        auto rowOf = [&](const char* label) -> UI::Rect {
+            P::InspFieldList L = inspbody::Rows(b, okv);
+            for (std::size_t k = 0; k < L.rows.size() && k < okr.rows.size(); ++k)
+                if (std::string(L.rows[k].label, P::InspVisibleLen(L.rows[k].label)) == label) return okr.rows[k];
+            return UI::Rect{};
+        };
+        if (b == inspbody::BodyLight) {   // a check box and a small button: the same in both
+            const UI::Rect cs = rowOf("Cast Shadows");
+            clickBoth(cs.x + 11.0f, cs.y + cs.h * 0.5f);
+            CHECK(!imv.castShadows && !okv.castShadows);
+            const UI::Rect tb = rowOf("Torch");
+            clickBoth(tb.x + tb.w * 0.5f, tb.y + tb.h * 0.5f);
+            CHECK(imv.clicked.size() == 1 && okv.clicked.size() == 1 && imv.clicked[0] == "Torch" && okv.clicked[0] == "Torch");
+        }
+        if (b == inspbody::BodyBoxCollider) {   // the fold-out folds in both
+            const UI::Rect pm = rowOf("Physics Material");
+            clickBoth(pm.x + 30.0f, pm.y + pm.h * 0.5f);
+            for (int i = 0; i < 2; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+            const UI::Rect fr = rowOf("Friction");
+            CHECK(fr.w == 0.0f);
+            const UI::Rect ot = rowOf("Only Tag");
+            CHECK(ot.y < pm.y + 60.0f);
+        }
+        if (b == inspbody::BodyRigidbody) {   // the freeze boxes on one line: a click on Y ticks Y in both
+            const UI::Rect fy = rowOf("Y");
+            clickBoth(fy.x + 11.0f, fy.y + fy.h * 0.5f);
+            CHECK(imv.fy && okv.fy && !imv.fx && !okv.fx);
+        }
     }
 
     // ================= the tables =================

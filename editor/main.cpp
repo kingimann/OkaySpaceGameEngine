@@ -115,6 +115,7 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -30105,6 +30106,13 @@ static bool DrawTransformWithOkayUI(EditorState& ed, GameObject* go) {
     const ImGuiID openId = ImGui::GetID("Transform");   // the Dear ImGui header's own open flag: switching versions keeps it
     m.open = store->GetInt(openId, 1) != 0;
     m.isCamera = isCam; m.uniform = s_uniformScale; m.selectedCount = multi ? (int)ed.MultiSelection().size() : 1; m.pasteValid = s_tcopyValid;
+    const okaypanels::InspFieldHooks hooks = oked::FieldHooksFor(t);   // stage 2: the rows' tooltips and prefab marks (FieldTip)
+    m.hooks = &hooks;
+    if (oked::PrefabChangedFor(t)) {
+        m.posOverridden = oked::PrefabFieldOverridden(t, "Position");
+        m.rotOverridden = oked::PrefabFieldOverridden(t, "Rotation");
+        m.scaleOverridden = oked::PrefabFieldOverridden(t, "Scale");
+    }
     okaypanels::TransformIntent in;
     int pressedOn = 0;   // 1 the header, 2 Position's label, 3 Rotation's, 4 Scale's
     if (!oked::DrawTransformOkayUI(m, in, &pressedOn)) return false;
@@ -30152,6 +30160,7 @@ static bool DrawTransformWithOkayUI(EditorState& ed, GameObject* go) {
     if (in.resetRot) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
     if (in.resetScale && !isCam) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
     if (in.toggleUniform) s_uniformScale = !s_uniformScale;
+    if (!in.prefabChosen.empty()) oked::RunPrefabFieldMenu(t, in.prefabField, in.prefabChosen);
     return true;
 }
 
@@ -30177,11 +30186,15 @@ static bool DrawMeshRendererWithOkayUI(EditorState& ed, MeshRenderer* mr) {
     okaypanels::MeshRendererModel m;
     m.v = &v;
     m.verts = (int)mr->mesh.vertices.size(); m.tris = (int)mr->mesh.triangles.size() / 3; m.uvs = !mr->mesh.uvs.empty();
+    const okaypanels::InspFieldHooks hooks = oked::FieldHooksFor(mr);   // stage 2: the fields' tooltips and prefab marks
+    m.hooks = &hooks;
+    if (oked::PrefabChangedFor(mr)) m.overridden = [mr](const char* label) { return oked::PrefabFieldOverridden(mr, label); };
     okaypanels::MeshRendererIntent in;
     ImGui::PushID(mr);   // two Mesh Renderers on one object keep their own sections
     const bool drawn = oked::DrawMeshRendererOkayUI(m, in);
     ImGui::PopID();
     if (!drawn) return false;
+    if (!in.prefabChosen.empty()) oked::RunPrefabFieldMenu(mr, in.prefabField, in.prefabChosen);
     if (!in.changed) return true;
     mr->color = {v.color[0], v.color[1], v.color[2], v.color[3]};
     mr->wireframe = v.wireframe;
@@ -30205,6 +30218,714 @@ static bool DrawMeshRendererWithOkayUI(EditorState& ed, MeshRenderer* mr) {
         mr->meshPath.clear();
     }
     ed.dirty = true;
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 2 (docs/own_ui_toolkit.md section 15) --------------------------------------------------------
+// Component bodies as field rows (shared/InspectorFieldsModel.hpp): each builder below lists the rows its Dear ImGui body draws, in the
+// same order, with the same labels, ranges, formats and tooltips, pointing at the component's values; the OkayUI section edits them in
+// place and the builder then does what the Dear ImGui code does after each widget. False: the section was not drawn this frame (a popup
+// or a window covers it) and the caller draws the Dear ImGui body. The Dear ImGui bodies stay the default and the fallback.
+
+static std::uint32_t RowCol(float r, float g, float b) {
+    return okaypanels::HierCol((unsigned)std::lround(std::clamp(r, 0.0f, 1.0f) * 255.0f), (unsigned)std::lround(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                               (unsigned)std::lround(std::clamp(b, 0.0f, 1.0f) * 255.0f));
+}
+
+// Draws the rows as an OkayUI section of the Inspector (under the component's id), with the component's tooltips, prefab marks and
+// pickers; runs a chosen prefab menu row. `proc`: the Mesh Renderer's procedural textures for a grid picker.
+static bool DrawRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L, bool proc = false) {
+    L.hooks = oked::FieldHooksFor(comp);
+    if (proc) {
+        auto files = L.hooks.choices;
+        L.hooks.choices = [files](const okaypanels::InspRow& row, std::vector<std::string>& values, std::vector<std::string>& names, std::vector<void*>& thumbs) {
+            if (std::strcmp(row.pickKind, "proc") != 0) { if (files) files(row, values, names, thumbs); return; }
+            for (const std::string& pn : okay::ProcTextureNames()) {
+                values.push_back("proc:" + pn); names.push_back(pn); thumbs.push_back(GetThumb("proc:" + pn));
+            }
+        };
+    }
+    oked::MarkPrefabOverrides(comp, L);
+    ImGui::PushID(comp);
+    const bool drawn = oked::DrawFieldListOkayUI(id, L);
+    ImGui::PopID();
+    if (drawn && !L.prefabChosen.empty()) oked::RunPrefabFieldMenu(comp, L.prefabField, L.prefabChosen);
+    return drawn;
+}
+
+static bool DrawLightWithOkayUI(EditorState& ed, Light* li, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTypes[] = {"Directional", "Point", "Spot", "Area"};
+    static const char* const kFalls[] = {"Linear", "Inverse Square"};
+    static const struct { const char* n; float kv; const char* tip; } kKelvin[] = {
+        {"Candle", 1900.0f, "1900 K"}, {"Bulb", 2700.0f, "2700 K"}, {"Noon", 6500.0f, "6500 K"}, {"Overcast", 7500.0f, "7500 K"}, {"Shade", 10000.0f, "10000 K"}};
+    static const struct { const char* n; float a, sp; } kFlick[] = {{"Candle", 0.25f, 6.0f}, {"Torch", 0.35f, 9.0f}, {"Faulty bulb", 0.9f, 18.0f}};
+    InspFieldList L;
+    L.rows.reserve(48);
+    int ty = (int)li->type;
+    const int kType = L.Combo("Type##light", &ty, kTypes, 4);
+    L.Tip("Directional = sun (parallel).\nPoint = bulb (all directions).\nSpot = cone.\nArea = soft broad panel (windows, screens, studio fill).");
+    L.Check("Use Temperature##light", &li->useTemperature); L.TipLookup();
+    int kPreset[5] = {-1, -1, -1, -1, -1}, kColor = -1;
+    float c[4] = {li->color.r, li->color.g, li->color.b, li->color.a};
+    if (li->useTemperature) {
+        L.Slider("Kelvin##light", &li->temperature, 1500.0f, 15000.0f, "%.0f K");
+        const Color k = Light::KelvinToColor(li->temperature);
+        L.SameLine(); L.Swatch("##kprev", k.r, k.g, k.b); L.Tip("2700K warm  -  6500K daylight  -  10000K cool");
+        for (int ki = 0; ki < 5; ++ki) {
+            if (ki) L.SameLine(4.0f);
+            const Color pk = Light::KelvinToColor(kKelvin[ki].kv);
+            kPreset[ki] = L.SmallButton(kKelvin[ki].n, RowCol(pk.r, pk.g, pk.b)); L.Tip(kKelvin[ki].tip);
+        }
+    } else { kColor = L.Color("Color##light", c, 4); L.TipLookup(); }
+    L.Drag("Intensity##light", &li->intensity, 1, 0.02f, 0.0f, 8.0f); L.TipLookup();
+    L.Section("Ambient (scene floor)");
+    L.Slider("Ambient##light", &li->ambient, 0.0f, 1.0f); L.Tip("Unlit floor brightness (taken from the first light)");
+    float ac[3] = {li->ambientColor.r, li->ambientColor.g, li->ambientColor.b};
+    const int kAmb = L.Color("Ambient Tint##light", ac, 3); L.TipLookup();
+    int fo = (int)li->falloff, kFall = -1;
+    if (li->type != Light::Type::Directional) {
+        L.Section(li->type == Light::Type::Spot ? "Spot" : li->type == Light::Type::Area ? "Area" : "Point");
+        L.Drag("Range##light", &li->range, 1, 0.2f, 0.1f, 500.0f); L.TipLookup();
+        kFall = L.Combo("Falloff##light", &fo, kFalls, 2);
+        L.Tip("Linear = predictable (1-d/range)^2 rolloff.\nInverse Square = physically-based 1/d^2, brighter near the source.");
+    }
+    if (li->type == Light::Type::Spot) {
+        L.Slider("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f); L.TipLookup();
+        L.Slider("Softness##light", &li->spotSoftness, 0.0f, 1.0f); L.Tip("0 = crisp cone edge, 1 = very feathered");
+    }
+    L.Section("Shadows");
+    L.Check("Cast Shadows##light", &li->castShadows);
+    L.Tip(li->type == Light::Type::Directional
+              ? "Sun shadows (cascaded). One Directional light casts them \xE2\x80\x94 the first\nthat has Cast Shadows on. Others still light the scene.\nQuality changes the map size and distance (Low / Medium / High)."
+              : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+    {
+        const char* note = okay::FeatureGapNote(li->type == Light::Type::Directional ? okay::RenderFeature::SunShadowCascades : okay::RenderFeature::SpotPointShadows);
+        if (note && note[0]) L.Note(note, false, true);
+    }
+    if (li->type == Light::Type::Directional && !okay::DirectionalShadowWarning().empty())
+        L.ColorText(RowCol(1.0f, 0.75f, 0.35f), okay::DirectionalShadowWarning().c_str(), true);
+    if (li->castShadows) {
+        L.Slider("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f); L.Tip("0 = invisible, 1 = fully dark (down to the ambient light)");
+        L.Slider("Bias##lightsh", &li->shadowBias, 0.0f, 4.0f);
+        L.Tip("Raise if surfaces get dark speckles/stripes (shadow acne).\nLower if shadows look detached from the objects casting them.");
+    }
+    L.Section("Flicker");
+    L.Slider("Amount##lightfl", &li->flicker, 0.0f, 1.0f); L.Tip("Randomly dims the light while the game runs\n(torches, candles, a failing bulb). 0 = steady.");
+    int kFlick3[3] = {-1, -1, -1};
+    if (li->flicker > 0.0f) {
+        L.Slider("Speed##lightfl", &li->flickerSpeed, 0.5f, 30.0f, "%.1f /s"); L.TipLookup();
+        for (int fi = 0; fi < 3; ++fi) { if (fi) L.SameLine(4.0f); kFlick3[fi] = L.SmallButton(kFlick[fi].n); }
+        L.Note("Flicker plays in Play mode and in the built game.");
+    }
+    L.Note(li->type == Light::Type::Point ? "Radiates from this object's position out to Range."
+           : li->type == Light::Type::Area ? "Soft broad fill from this position out to Range (wrap-lit)."
+           : "Rotate this object to aim the light (its +Z is the direction).");
+    const int kRemove = L.SmallButton("Remove##light");
+    if (!DrawRowsOkayUI(li, "##okayui_light", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kType].changed) li->type = (Light::Type)ty;
+    if (kColor >= 0 && L[kColor].changed) li->color = {c[0], c[1], c[2], c[3]};
+    if (L[kAmb].changed) li->ambientColor = {ac[0], ac[1], ac[2], 1.0f};
+    if (kFall >= 0 && L[kFall].changed) li->falloff = (Light::Falloff)fo;
+    for (int ki = 0; ki < 5; ++ki) if (kPreset[ki] >= 0 && L[kPreset[ki]].clicked) { li->temperature = kKelvin[ki].kv; ed.dirty = true; }
+    for (int fi = 0; fi < 3; ++fi) if (kFlick3[fi] >= 0 && L[kFlick3[fi]].clicked) { li->flicker = kFlick[fi].a; li->flickerSpeed = kFlick[fi].sp; ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = li;
+    return true;
+}
+
+static bool DrawCameraWithOkayUI(EditorState& ed, Camera* cam, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kProjs[] = {"Orthographic", "Perspective"};
+    static const char* const kAxes[] = {"Vertical", "Horizontal"};
+    static const char* const kClears[] = {"Skybox", "Solid Color", "Depth Only", "Don't Clear"};
+    static const struct { const char* n; float h; } kSensors[] = {{"Full frame", 24.0f}, {"Super 35", 18.66f}, {"APS-C", 15.6f}, {"Micro 4/3", 13.0f}, {"16mm", 7.49f}};
+    static const struct { const char* n; float v; } kFovs[] = {{"60", 60.0f}, {"75", 75.0f}, {"90", 90.0f}, {"110", 110.0f}};
+    static const struct { const char* n; const char* id; float r, g, b; } kBgs[] = {
+        {"Sky", "##bgp0", 0.36f, 0.58f, 0.85f}, {"Dusk", "##bgp1", 0.16f, 0.12f, 0.24f}, {"Night", "##bgp2", 0.02f, 0.03f, 0.07f}, {"White", "##bgp3", 1, 1, 1}, {"Black", "##bgp4", 0, 0, 0}};
+    InspFieldList L;
+    L.rows.reserve(64);
+    int proj = (int)cam->projection;
+    const float projLabel = ImGui::CalcTextSize("Projection").x + ImGui::GetStyle().ItemInnerSpacing.x;
+    const int kProj = L.Combo("Projection", &proj, kProjs, 2); L.TipLookup();
+    L.Last().width = std::max(120.0f, ImGui::GetContentRegionAvail().x - projLabel);
+    int kSensor[5] = {-1, -1, -1, -1, -1}, kFov[4] = {-1, -1, -1, -1}, kAxis = -1;
+    int ax = cam->fovAxisHorizontal ? 1 : 0;
+    char fovNote[64] = "";
+    if (cam->projection == Camera::Projection::Orthographic) {
+        L.Drag("Size", &cam->orthographicSize, 1, 0.1f, 0.1f, 1000.0f); L.TipLookup();
+    } else {
+        L.Check("Physical Camera", &cam->physicalCamera); L.Tip("Drive FOV from real lens optics (focal length + sensor size),\nlike a real camera.");
+        if (cam->physicalCamera) {
+            L.Drag("Focal Length", &cam->focalLength, 1, 0.5f, 1.0f, 300.0f, "%.1f mm"); L.TipLookup();
+            L.Drag("Sensor Height", &cam->sensorHeight, 1, 0.1f, 1.0f, 100.0f, "%.1f mm"); L.TipLookup();
+            for (int si = 0; si < 5; ++si) { if (si) L.SameLineOrWrap(4.0f); kSensor[si] = L.SmallButton(kSensors[si].n); }
+            std::snprintf(fovNote, sizeof fovNote, "Effective FOV: %.1f deg", cam->VerticalFovDegrees(16.0f / 9.0f));
+            L.Note(fovNote, true);
+        } else {
+            L.Slider("Field of View", &cam->fieldOfView, 10.0f, 170.0f, "%.0f deg"); L.TipLookup();
+            for (int fi = 0; fi < 4; ++fi) { if (fi) L.SameLine(4.0f); kFov[fi] = L.SmallButton(kFovs[fi].n); }
+            kAxis = L.Combo("FOV Axis", &ax, kAxes, 2); L.TipLookup();
+        }
+    }
+    L.Section("Background");
+    int cf = (int)cam->clearFlags;
+    const int kClear = L.Combo("Clear Flags", &cf, kClears, 4);
+    L.Tip("Skybox / Solid Color replace this camera's rectangle.\nDepth Only draws over the cameras underneath (a weapon, a minimap).\n"
+          "Don't Clear keeps their colour and depth.\nCameras run lowest Depth first. The first one always clears.");
+    float bg[4] = {cam->backgroundColor.r, cam->backgroundColor.g, cam->backgroundColor.b, cam->backgroundColor.a};
+    int kBg = -1, kSwatch[5] = {-1, -1, -1, -1, -1};
+    if (cam->clearFlags == Camera::ClearFlags::SolidColor) {
+        kBg = L.Color("Background", bg, 4); L.TipLookup();
+        for (int b = 0; b < 5; ++b) { if (b) L.SameLine(4.0f); kSwatch[b] = L.Swatch(kBgs[b].id, kBgs[b].r, kBgs[b].g, kBgs[b].b, 1.0f, 22.0f, 18.0f); L.Tip(kBgs[b].n); }
+    }
+    L.Section("Clipping Planes");
+    L.Drag("Near", &cam->nearClip, 1, 0.01f, 0.001f, 100.0f); L.TipLookup();
+    L.Drag("Far", &cam->farClip, 1, 1.0f, 1.0f, 100000.0f); L.TipLookup();
+    L.Section("Zoom & Framing");
+    L.Slider("Zoom", &cam->zoom, 0.25f, 8.0f, "%.2fx", true); L.Tip("2 = twice as close (narrower view / half the 2D size). Scripts: camera_zoom_to(z, seconds).");
+    L.SameLine(); const int kZoom1 = L.SmallButton("1x##zoomreset");
+    const bool cam3D = cam->projection == Camera::Projection::Perspective;
+    L.Slider("Dutch Angle", &cam->dutch, -45.0f, 45.0f, "%.1f deg"); L.Tip("Roll the view around its direction: tense / dramatic shots (3D).");
+    float shift[2] = {cam->lensShiftX, cam->lensShiftY};
+    const int kShift = L.Drag("Lens Shift", shift, 2, 0.005f, -1.0f, 1.0f, "%.3f");
+    L.Tip("Slide the image without turning the camera (fraction of the view):\nkeeps vertical lines straight in architecture shots, off-centre framing.");
+    if (!cam3D) {
+        L.Check("Pixel Perfect", &cam->pixelPerfect); L.Tip("Snap the camera to whole pixels so pixel art doesn't shimmer when it moves.");
+        if (cam->pixelPerfect) { L.Drag("Pixels Per Unit", &cam->pixelsPerUnit, 1, 1.0f, 1.0f, 1024.0f, "%.0f"); L.TipLookup(); }
+    }
+    L.Section("Camera Shake");
+    L.Slider("Amount", &cam->shakeAmount, 0.0f, 3.0f, "%.2f units"); L.Tip("How far the camera moves at full shake.");
+    if (cam3D) L.Slider("Angle", &cam->shakeAngle, 0.0f, 15.0f, "%.1f deg");
+    L.Slider("Frequency", &cam->shakeFrequency, 1.0f, 60.0f, "%.0f Hz"); L.TipLookup();
+    L.Slider("Recovery", &cam->shakeRecovery, 0.1f, 10.0f, "%.1f /s"); L.Tip("How quickly the shake settles (higher = shorter shakes).");
+    const int kShake = L.Button("Test Shake");
+    L.Last().disabled = !ed.isPlaying();
+    L.Tip(ed.isPlaying() ? "Shake it now (strength 0.6)." : "Press Play, then try it here.\nIn scripts: camera_shake(0.5); in Actions: Shake Camera.");
+    L.Section("Viewport Rect");
+    float rc[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
+    const int kRect = L.Drag("X / Y / W / H", rc, 4, 0.01f, 0.0f, 1.0f);
+    L.Tip("Where on screen this camera draws (0..1, origin bottom-left).\nUse for split-screen / mini-maps.");
+    L.Section("Culling Mask");
+    L.Mask("Layers", &cam->cullingMask);
+    L.Spacing();
+    L.Check("Main", &cam->main); L.TipLookup();
+    L.SameLine(); L.Drag("Depth", &cam->depth, 1, 0.1f);
+    L.Last().width = 90.0f;
+    L.Tip("Draw order: lower Depth draws first, higher Depth on top.\nThe highest-Depth camera marked Main is the scene's main camera\n"
+          "(audio listener, scripts). Overlay cameras should not be Main.");
+    L.Text("Render Target", &cam->renderTarget);
+    L.Tip("Optional name. After this camera draws, its picture is kept\nas CameraTarget(name) \xE2\x80\x94 a minimap texture, a mirror, a scope.");
+    const int kOverlay = L.Button("Add overlay camera");
+    L.Tip("A second camera in the corner, drawn after this one.\nMove it, set its culling mask, or switch Clear Flags to Solid Color.");
+    const int kRemove = L.SmallButton("Remove##cam");
+    if (!DrawRowsOkayUI(cam, "##okayui_camera", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kProj].changed) cam->projection = (Camera::Projection)proj;
+    if (kAxis >= 0 && L[kAxis].changed) cam->fovAxisHorizontal = ax == 1;
+    for (int si = 0; si < 5; ++si) if (kSensor[si] >= 0 && L[kSensor[si]].clicked) { cam->sensorHeight = kSensors[si].h; ed.dirty = true; }
+    for (int fi = 0; fi < 4; ++fi) if (kFov[fi] >= 0 && L[kFov[fi]].clicked) { cam->fieldOfView = kFovs[fi].v; ed.dirty = true; }
+    if (L[kClear].changed) cam->clearFlags = (Camera::ClearFlags)cf;
+    if (kBg >= 0 && L[kBg].changed) cam->backgroundColor = {bg[0], bg[1], bg[2], bg[3]};
+    for (int b = 0; b < 5; ++b) if (kSwatch[b] >= 0 && L[kSwatch[b]].clicked) { cam->backgroundColor = {kBgs[b].r, kBgs[b].g, kBgs[b].b, 1.0f}; ed.dirty = true; }
+    if (cam->farClip <= cam->nearClip) { cam->farClip = cam->nearClip + 0.01f; ed.dirty = true; }   // keep a valid depth range
+    if (L[kZoom1].clicked) { cam->zoom = 1.0f; ed.dirty = true; }
+    if (L[kShift].changed) { cam->lensShiftX = shift[0]; cam->lensShiftY = shift[1]; }
+    if (cam->pixelsPerUnit < 1.0f) cam->pixelsPerUnit = 1.0f;
+    if (L[kShake].clicked && ed.isPlaying()) cam->Shake(0.6f);
+    if (L[kRect].changed) { cam->rectX = rc[0]; cam->rectY = rc[1]; cam->rectW = rc[2]; cam->rectH = rc[3]; }
+    if (L[kOverlay].clicked) {
+        Camera* keep = ed.scene().mainCamera;
+        GameObject* ov = ed.scene().CreateGameObject("Overlay Camera");
+        auto* oc = ov->AddComponent<Camera>();
+        oc->main = false;
+        oc->depth = cam->depth + 1.0f;
+        oc->clearFlags = Camera::ClearFlags::DepthOnly;
+        oc->rectX = 0.68f; oc->rectY = 0.68f; oc->rectW = 0.28f; oc->rectH = 0.28f;
+        oc->projection = cam->projection;
+        if (ov->transform && cam->gameObject && cam->gameObject->transform) {
+            ov->transform->localPosition = cam->gameObject->transform->localPosition + Vec3{0, 2.0f, -2.0f};
+            ov->transform->localRotation = cam->gameObject->transform->localRotation;
+        }
+        if (ed.scene().mainCamera == oc) ed.scene().mainCamera = keep;
+        ed.Select(ov); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = cam;
+    return true;
+}
+
+static bool DrawRigidbody3DWithOkayUI(EditorState& ed, GameObject* go, Rigidbody3D* rb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTypes[] = {"Dynamic", "Kinematic", "Static"};
+    InspFieldList L;
+    L.rows.reserve(32);
+    int bt = (int)rb->bodyType;
+    const int kType = L.Combo("Body Type##rb3", &bt, kTypes, 3); L.TipLookup();
+    L.Drag("Gravity Scale##rb3", &rb->gravityScale, 1, 0.05f);
+    L.Drag("Mass##rb3", &rb->mass, 1, 0.05f, 0.01f, 1000.0f);
+    L.Drag("Drag##rb3", &rb->drag, 1, 0.01f, 0.0f, 100.0f);
+    L.Drag("Bounciness##rb3", &rb->bounciness, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Friction##rb3", &rb->friction, 1, 0.01f, 0.0f, 2.0f);
+    L.Tip("Coulomb friction (0 = ice). Combined between contacting bodies so things slow, stack and hold on slopes.");
+    L.Drag("Max Fall Speed##rb3", &rb->maxFallSpeed, 1, 0.1f, 0.0f, 200.0f);
+    L.Tip("Terminal fall speed (0 = unlimited). Caps downward velocity for stable long falls.");
+    L.Note("Freeze position");
+    L.SameLine(); L.Check("X##fz", &rb->freezeX);
+    L.SameLine(); L.Check("Y##fz", &rb->freezeY);
+    L.SameLine(); L.Check("Z##fz", &rb->freezeZ);
+    L.Check("Freeze Rotation##rb3", &rb->freezeRotation); L.Tip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling).");
+    if (!rb->freezeRotation) L.Drag("Angular Drag##rb3", &rb->angularDrag, 1, 0.01f, 0.0f, 10.0f);
+    L.Check("Allow Sleep##rb3", &rb->allowSleep); L.Tip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+    L.Check("Continuous Collision##rb3", &rb->continuousCollision);
+    L.Tip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+    L.Drag("Rolling Resistance##rb3", &rb->rollingResistance, 1, 0.005f, 0.0f, 1.0f, "%.3f");
+    L.Tip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+    L.Check("Use Child Colliders##rb3", &rb->compoundChildren);
+    L.Tip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
+    char note[128];
+    if (go->transform && go->transform->Parent()) {
+        L.Label("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
+        L.Last().wrap = true;
+    } else {
+        std::snprintf(note, sizeof note, "Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
+        L.Note(note, true, true);
+    }
+    const int kRemove = L.SmallButton("Remove##rb3");
+    if (!DrawRowsOkayUI(rb, "##okayui_rb3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kType].changed) rb->bodyType = (Rigidbody3D::BodyType)bt;
+    if (L[kRemove].clicked) toRemove = rb;
+    return true;
+}
+
+// The 3D colliders' shared rows: Trigger and Layer, the Physics Material fold-out (PhysicsMaterialFields) and the trigger filter
+// (TriggerFilterFields). `id` is the collider's suffix ("bc3"); the strings the rows point at live in `st`.
+struct ColliderRowsState {
+    std::deque<std::string> text;
+    bool ownF = false, ownB = false;
+    int fm = 0, bm = 0;
+    std::string layersText;
+    int kOwnF = -1, kOwnB = -1, kFm = -1, kBm = -1, kLayers = -1;
+};
+template <class Col>
+static void AddColliderRows(okaypanels::InspFieldList& L, Col* c, const char* id, ColliderRowsState& st, bool triggerAndLayer = true) {
+    static const char* const kModes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
+    auto label = [&](const char* base, const char* pre) { st.text.push_back(std::string(base) + pre + id); return st.text.back().c_str(); };
+    if (triggerAndLayer) {
+        L.Check(label("Trigger", "##"), &c->isTrigger);
+        L.SameLine(); L.DragInt(label("Layer", "##"), &c->layer, 0.1f, 0, 31); L.Last().width = 80.0f;
+    }
+    L.Tree(label("Physics Material", "##pm"));
+    st.ownF = c->friction >= 0.0f; st.ownB = c->bounciness >= 0.0f;
+    st.fm = (int)c->frictionCombine; st.bm = (int)c->bounceCombine;
+    st.kOwnF = L.Check(label("Own Friction", "##pm"), &st.ownF);
+    L.Tip("Off: use the Rigidbody's friction, as before. On: this collider has its own (0 is ice, 1 is rubber).");
+    if (st.ownF) {
+        L.Drag(label("Friction", "##pm"), &c->friction, 1, 0.01f, 0.0f, 10.0f);
+        st.kFm = L.Combo(label("Friction Mix", "##pm"), &st.fm, kModes, 5);
+        L.Tip("How this friction mixes with the one it touches. Default is the geometric mean.");
+    }
+    st.kOwnB = L.Check(label("Own Bounciness", "##pm"), &st.ownB);
+    L.Tip("Off: use the Rigidbody's bounciness. On: this collider has its own (0 dead, 1 never loses height).");
+    if (st.ownB) {
+        L.Drag(label("Bounciness", "##pm"), &c->bounciness, 1, 0.01f, 0.0f, 1.0f);
+        st.kBm = L.Combo(label("Bounce Mix", "##pm"), &st.bm, kModes, 5);
+        L.Tip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
+    }
+    L.TreeEnd();
+    if (c->isTrigger) {
+        L.Text(label("Only Tag", "##tf"), &c->triggerTag, "any tag (e.g. Player)");
+        L.Tip("The trigger only reacts to objects with this tag; everything else\npasses through with no Enter / Stay / Exit events. Blank = any object.");
+        st.layersText = LayerMaskToList(c->triggerLayers);
+        st.kLayers = L.Text(label("Only Layers", "##tf"), &st.layersText, "all layers");
+        L.Tip("Only colliders on these layers set the trigger off: numbers or names\nseparated by commas (0,3 or Default,Enemy). Blank = all layers.");
+    }
+}
+template <class Col>
+static void ApplyColliderRows(okaypanels::InspFieldList& L, Col* c, const ColliderRowsState& st) {
+    if (st.kOwnF >= 0 && L[st.kOwnF].changed) c->friction = st.ownF ? 0.5f : -1.0f;
+    if (st.kFm >= 0 && L[st.kFm].changed) c->frictionCombine = (okay::CombineMode)st.fm;
+    if (st.kOwnB >= 0 && L[st.kOwnB].changed) c->bounciness = st.ownB ? 0.3f : -1.0f;
+    if (st.kBm >= 0 && L[st.kBm].changed) c->bounceCombine = (okay::CombineMode)st.bm;
+    if (st.kLayers >= 0 && L[st.kLayers].changed) c->triggerLayers = okay::Layers::MaskFromList(st.layersText);
+}
+
+static bool DrawBoxCollider3DWithOkayUI(EditorState& ed, GameObject* go, BoxCollider3D* bc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(32);
+    float sz[3] = {bc->size.x, bc->size.y, bc->size.z}, off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
+    const int kSize = L.Drag("Size##bc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    const int kOff = L.Drag("Offset##bc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    ColliderRowsState st;
+    AddColliderRows(L, bc, "bc3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##bc3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##bc3", &bc->autoFit); L.TipLookup();
+    const int kEdit = L.Button("Edit Collider##bc3", g_colliderEdit);
+    L.Tip("Show draggable face handles in the Scene view so you can\npull each side of the box to match the model. Turn off when done.");
+    if (g_colliderEdit) L.Note("Drag the colored dots on each face in the Scene view.");
+    const int kRemove = L.SmallButton("Remove##bc3");
+    if (!DrawRowsOkayUI(bc, "##okayui_bc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) bc->size = {sz[0], sz[1], sz[2]};
+    if (L[kOff].changed) bc->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, bc, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitBox(go, bc); ed.dirty = true; }
+    if (L[kAuto].changed && bc->autoFit) FitColliders(go);
+    if (bc->autoFit) FitColliders(go, true);
+    if (L[kEdit].clicked) {
+        g_colliderEdit = !g_colliderEdit;
+        if (!g_colliderEdit) g_colliderDragAxis = -1;   // leaving edit mode ends any drag
+    }
+    if (L[kRemove].clicked) toRemove = bc;
+    return true;
+}
+
+static bool DrawSphereCollider3DWithOkayUI(EditorState& ed, GameObject* go, SphereCollider3D* sc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    L.Drag("Radius##sc3", &sc->radius, 1, 0.05f, 0.0f, 1000.0f);
+    float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
+    const int kOff = L.Drag("Offset##sc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    ColliderRowsState st;
+    AddColliderRows(L, sc, "sc3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##sc3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##sc3", &sc->autoFit); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##sc3");
+    if (!DrawRowsOkayUI(sc, "##okayui_sc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) sc->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, sc, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitSphere(go, sc); ed.dirty = true; }
+    if (L[kAuto].changed && sc->autoFit) FitColliders(go);
+    if (sc->autoFit) FitColliders(go, true);
+    if (L[kRemove].clicked) toRemove = sc;
+    return true;
+}
+
+static bool DrawCapsuleCollider3DWithOkayUI(EditorState& ed, GameObject* go, CapsuleCollider3D* cap, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kAxes[] = {"X", "Y", "Z"};
+    InspFieldList L;
+    L.rows.reserve(26);
+    L.Drag("Radius##cap3", &cap->radius, 1, 0.05f, 0.0f, 1000.0f);
+    L.Drag("Height##cap3", &cap->height, 1, 0.05f, 0.0f, 1000.0f);
+    L.Combo("Axis##cap3", &cap->axis, kAxes, 3);
+    float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
+    const int kOff = L.Drag("Offset##cap3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    ColliderRowsState st;
+    AddColliderRows(L, cap, "cap3", st);
+    int kFit = -1;
+    if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##cap3");
+    L.SameLine();
+    const int kAuto = L.Check("Auto Fit##cap3", &cap->autoFit); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##cap3");
+    if (!DrawRowsOkayUI(cap, "##okayui_cap3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cap->offset = {off[0], off[1], off[2]};
+    ApplyColliderRows(L, cap, st);
+    if (kFit >= 0 && L[kFit].clicked) { FitCapsule(go, cap); ed.dirty = true; }
+    if (L[kAuto].changed && cap->autoFit) FitColliders(go);
+    if (cap->autoFit) FitColliders(go, true);
+    if (L[kRemove].clicked) toRemove = cap;
+    return true;
+}
+
+static bool DrawMeshCollider3DWithOkayUI(EditorState& ed, GameObject* go, MeshCollider3D* mcol, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(28);
+    char buf[200];
+    const std::string status = mcol->StatusMessage();
+    if (mcol->UsesConvexHull()) {
+        std::snprintf(buf, sizeof buf, "Dynamic body: convex hull, %d vertices / %d triangles. Concave gaps are filled in.", mcol->HullVertexCount(), mcol->HullTriangleCount());
+        L.Note(buf, true, true);
+    } else if (mcol->HasTriangles()) {
+        const TriMesh& tm = mcol->Tris();
+        std::snprintf(buf, sizeof buf, "Exact triangles: %d (BVH %d nodes%s)", tm.TriangleCount(), tm.NodeCount(),
+                      tm.DroppedTriangles() > 0 ? (", " + std::to_string(tm.DroppedTriangles()) + " degenerate skipped").c_str() : "");
+        L.Note(buf, true, true);
+    }
+    if (!status.empty()) { L.ColorText(RowCol(1.0f, 0.75f, 0.3f), status.c_str(), true); L.Last().wrap = true; }
+    if (!mcol->UsesConvexHull()) L.Note("Static or kinematic: exact triangles. A dynamic Rigidbody uses the convex hull.", false, true);
+    ColliderRowsState st;
+    AddColliderRows(L, mcol, "mc3", st);
+    float sz[3] = {mcol->size.x, mcol->size.y, mcol->size.z}, off[3] = {mcol->offset.x, mcol->offset.y, mcol->offset.z};
+    int kSize = -1, kOff = -1, kFit = -1;
+    if (!mcol->HasTriangles()) {
+        kSize = L.Drag("Fallback Size##mc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        kOff = L.Drag("Fallback Offset##mc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        if (go->GetComponent<MeshRenderer>()) kFit = L.SmallButton("Fit to mesh##mc3");
+    }
+    const int kRebuild = L.SmallButton("Rebuild##mc3");
+    L.Tip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
+    L.SameLine(); const int kRemove = L.SmallButton("Remove##mc3");
+    if (!DrawRowsOkayUI(mcol, "##okayui_mc3", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    ApplyColliderRows(L, mcol, st);
+    if (kSize >= 0 && L[kSize].changed) mcol->size = {sz[0], sz[1], sz[2]};
+    if (kOff >= 0 && L[kOff].changed) mcol->offset = {off[0], off[1], off[2]};
+    if (kFit >= 0 && L[kFit].clicked) { FitColliders(go); ed.dirty = true; }
+    if (L[kRebuild].clicked) { mcol->Invalidate(); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = mcol;
+    return true;
+}
+
+static bool DrawScriptWithOkayUI(EditorState& ed, ScriptComponent* sc) {
+    using namespace okaypanels;
+    InspFieldList L;
+    const int kOpen = L.SmallButton("Open in Script Editor");
+    const char* liveBuf = PeekCodeBuffer(sc);
+    const std::vector<ScriptField> fields = ParseScriptFields(liveBuf ? std::string(liveBuf) : sc->Source());
+    struct Var {   // one variable's rows and the values they edit
+        std::string cur, text;
+        bool overridden = false, b = false, isVec = false, isNum = false, isObj = false;
+        float v[3] = {0, 0, 0};
+        int kValue = -1, kRevert = -1;
+    };
+    std::deque<Var> vars;
+    std::deque<std::string> text;
+    L.rows.reserve(fields.size() * 3 + 4);
+    if (fields.empty()) {
+        L.Note("No public variables. Declare top-level vars,");
+        L.Note("e.g.  public float speed = 5;");
+    } else {
+        L.Section("Variables");
+        const float nameCol = std::max(80.0f, ImGui::GetContentRegionAvail().x * 0.42f);   // the name column, as the Dear ImGui body
+        for (const ScriptField& f : fields) {
+            vars.emplace_back();
+            Var& v = vars.back();
+            v.overridden = sc->fields.count(f.name) != 0;
+            v.cur = v.overridden ? sc->fields[f.name] : f.def;
+            if (!f.header.empty()) { L.Spacing(); text.push_back(f.header); L.Section(text.back().c_str()); }
+            text.push_back(f.name);
+            L.Label(text.back().c_str(), v.overridden ? kInspOverriddenVar : 0u, true);
+            text.push_back(f.tooltip.empty() ? (f.type.empty() ? f.name : f.type) : f.tooltip);
+            L.Tip(text.back().c_str());
+            L.SameLine(-1.0f, nameCol - ImGui::GetCursorPosX());   // SameLine(nameCol) counts from the window's left; the rows from the region's
+            const std::string& cur = v.cur;
+            v.isVec = f.type.find("Vector3") != std::string::npos || f.type.find("Vector2") != std::string::npos ||
+                      f.type.find("Vec3") != std::string::npos || cur.find("Vector3") != std::string::npos || cur.find("Vector2") != std::string::npos;
+            if (cur == "true" || cur == "false") {
+                v.b = cur == "true";
+                v.kValue = L.Check("##v", &v.b);
+            } else if (v.isVec) {
+                if (auto lp = cur.find('('); lp != std::string::npos) {
+                    std::string inside = cur.substr(lp + 1);
+                    if (auto rp = inside.find(')'); rp != std::string::npos) inside = inside.substr(0, rp);
+                    for (char& ch : inside) if (ch == ',') ch = ' ';
+                    std::istringstream is(inside); is >> v.v[0] >> v.v[1] >> v.v[2];
+                }
+                v.kValue = L.Drag("##v", v.v, 3, 0.05f); L.Last().width = -28.0f;
+            } else if (f.type.find("GameObject") != std::string::npos || f.type.find("Transform") != std::string::npos) {
+                v.isObj = true;
+                std::string sv = cur;
+                if (sv.size() >= 2 && (sv.front() == '"' || sv.front() == '\'') && sv.back() == sv.front()) sv = sv.substr(1, sv.size() - 2);
+                text.push_back((sv.empty() ? std::string("None (") + (f.type.empty() ? "Object" : f.type) + ")" : sv) + "##objslot");
+                v.kValue = L.Button(text.back().c_str(), false, -28.0f);
+                L.Tip("Drag a GameObject from the Hierarchy here to assign");
+                L.Last().dropKind = "objectname";
+            } else {
+                char* endp = nullptr;
+                std::string num = cur;
+                if (!num.empty() && (num.back() == 'f' || num.back() == 'F' || num.back() == 'd' || num.back() == 'D')) num.pop_back();
+                const double dv = std::strtod(num.c_str(), &endp);
+                v.isNum = endp && *endp == '\0' && !num.empty();
+                if (v.isNum) {
+                    v.v[0] = (float)dv;
+                    v.kValue = f.hasRange ? L.Slider("##v", v.v, f.rmin, f.rmax) : L.Drag("##v", v.v, 1, 0.05f);
+                } else {
+                    v.text = cur;
+                    if (v.text.size() >= 2 && (v.text.front() == '"' || v.text.front() == '\'') && v.text.back() == v.text.front()) v.text = v.text.substr(1, v.text.size() - 2);
+                    v.kValue = L.Text("##v", &v.text);
+                }
+                L.Last().width = -28.0f;
+            }
+            if (v.overridden) {
+                L.SameLine();
+                v.kRevert = L.SmallButton("o");
+                text.push_back("Revert to the script default (" + f.def + ")");
+                L.Tip(text.back().c_str());
+            }
+        }
+    }
+    if (!DrawRowsOkayUI(sc, "##okayui_script", L)) return false;
+    if (L[kOpen].clicked) {
+        g_showScriptEditor = true;
+        if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end()) g_scriptTabs.push_back(sc);
+        g_activeScriptTab = sc; g_focusScriptTab = sc;
+    }
+    std::size_t vi = 0;
+    for (const ScriptField& f : fields) {
+        Var& v = vars[vi++];
+        if (v.kRevert >= 0 && L[v.kRevert].clicked) { sc->fields.erase(f.name); sc->ApplyFieldOverrides(); ed.dirty = true; continue; }
+        if (v.kValue < 0) continue;
+        InspRow& r = L[v.kValue];
+        if (!r.changed) continue;
+        std::string cur = v.cur;
+        if (cur == "true" || cur == "false") cur = v.b ? "true" : "false";
+        else if (v.isVec) { char nb[96]; std::snprintf(nb, sizeof nb, "new Vector3(%g, %g, %g)", v.v[0], v.v[1], v.v[2]); cur = nb; }
+        else if (v.isObj) cur = std::string("\"") + *r.S() + "\"";
+        else if (v.isNum) { char nb[32]; std::snprintf(nb, sizeof nb, "%g", v.v[0]); cur = nb; }
+        else cur = std::string("\"") + v.text + "\"";
+        sc->fields[f.name] = cur; sc->ApplyFieldOverrides(); ed.dirty = true;
+    }
+    return true;
+}
+
+// The Mesh Renderer below Primitive: the mesh file, the texture with its browse button, procedural picker, thumbnail and its UV rows,
+// the maps (normal, specular, occlusion, metal / rough, emissive), the mesh tools, the material preset and Add Physics.
+static char g_matPresetPath[256] = "Assets/Material.okaymat";   // the material preset's path (both versions)
+static bool DrawMeshRendererRestWithOkayUI(EditorState& ed, GameObject* go, MeshRenderer* mr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kFilters[] = {"Smooth", "Pixel"};
+    InspFieldList L;
+    L.rows.reserve(64);
+    std::deque<std::string> text;
+    auto thumb = [&](const std::string& path) {   // TexFieldThumb: only when a thumbnail exists
+        if (path.empty()) return;
+        if (SDL_Texture* t = GetThumb(path)) { L.Image("##thumb", t, 40.0f, 40.0f); text.push_back(path); L.Last().sv = path; }
+    };
+    auto pathRow = [&](const char* label, std::string* v) {   // a path field with the editor's AssetPathPicker and drop target
+        const int k = L.Text(label, v);
+        L.Last().pick = InspPickList; L.Last().dropKind = "";
+        return k;
+    };
+    std::string meshPath = mr->meshPath;
+    const int kMesh = L.Text("Mesh File##mesh", &meshPath);
+    L.Tip("A .okaymesh or .obj file this object's mesh comes from (and is reloaded from when the scene opens).");
+    L.SameLine(); const int kLoad = L.SmallButton("Load##obj");
+    const int kTex = pathRow("##meshtex", &mr->texture); L.TipLookup(); L.Last().width = 210.0f;
+    L.SameLine(4.0f); const int kBrowse = L.Button("...##meshtexbrowse"); L.Tip("Browse...");
+    L.SameLine(4.0f); L.Label("Texture");
+    std::string procPick = mr->texture;
+    L.SameLineOrWrap(); const int kProc = L.SmallButton("Procedural##tex");
+    L.Last().pick = InspPickGrid; L.Last().pickKind = "proc"; L.Last().s = &procPick;
+    L.Tip("Built-in tileable textures (brick, wood, stone, grass...)\ngenerated in code \xE2\x80\x94 no image files needed.");
+    float til[2] = {mr->tiling.x, mr->tiling.y}, toff[2] = {mr->texOffset.x, mr->texOffset.y}, scr[2] = {mr->uvScroll.x, mr->uvScroll.y};
+    int fi = (int)mr->texFilter;
+    int kClearTex = -1, kTil = -1, kOffs = -1, kFilt = -1, kScroll = -1, kThumbTex = -1;
+    if (!mr->texture.empty()) {
+        L.SameLineOrWrap(); kClearTex = L.SmallButton("Clear##tex");
+        const std::size_t before = L.rows.size();
+        thumb(mr->texture);
+        if (L.rows.size() > before) kThumbTex = (int)before;
+        kTil = L.Drag("Tiling##mesh", til, 2, 0.05f, 0.01f, 64.0f);
+        kOffs = L.Drag("Offset##mesh", toff, 2, 0.01f);
+        L.Tip("Slide the texture (UV offset after tiling) \xE2\x80\x94 position a texture or pick a cell from an atlas.");
+        kFilt = L.Combo("Filter##mesh", &fi, kFilters, 2);
+        L.Tip("Smooth = bilinear (3D/photos). Pixel = nearest, crisp pixel-art with no up-close blur.");
+        kScroll = L.Drag("UV Scroll##mesh", scr, 2, 0.01f); L.Tip("Animated texture: UV units/second (flowing water, lava, belts).");
+        L.Check("Triplanar##mesh", &mr->triplanar);
+        L.Tip("Project the texture on the 3 world axes (no UV seams; great for terrain/cliffs).\nTiling is the world-space scale.");
+    }
+    pathRow("Normal Map##mesh", &mr->normalMap); L.TipLookup();
+    int kClearN = -1, kThumbN = -1;
+    if (!mr->normalMap.empty()) {
+        L.SameLine(); kClearN = L.SmallButton("Clear##nmap");
+        const std::size_t before = L.rows.size();
+        thumb(mr->normalMap);
+        if (L.rows.size() > before) kThumbN = (int)before;
+        L.Slider("Bump Strength##mesh", &mr->normalStrength, 0.0f, 2.0f); L.TipLookup();
+    }
+    L.Slider("Reflectivity##mesh", &mr->reflectivity, 0.0f, 1.0f); L.TipLookup();
+    L.Slider("Metallic##mesh", &mr->metallic, 0.0f, 1.0f); L.TipLookup();
+    pathRow("Specular Map##mesh", &mr->specularMap); L.TipLookup();
+    int kClearS = -1, kClearAo = -1, kClearMr = -1, kClearE = -1;
+    if (!mr->specularMap.empty()) { L.SameLine(); kClearS = L.SmallButton("Clear##smap"); }
+    pathRow("Occlusion Map##mesh", &mr->aoMap); L.TipLookup();
+    if (!mr->aoMap.empty()) {
+        L.SameLine(); kClearAo = L.SmallButton("Clear##aomap");
+        L.Slider("Occlusion##mesh", &mr->aoStrength, 0.0f, 1.0f); L.TipLookup();
+    }
+    pathRow("Metal / Rough##mesh", &mr->metallicRoughnessMap);
+    L.Tip("glTF packed map: green = roughness, blue = metallic.\nMultiplied with Metallic and the highlight tightness.");
+    if (!mr->metallicRoughnessMap.empty()) { L.SameLine(); kClearMr = L.SmallButton("Clear##mrmap"); }
+    pathRow("Emissive Map##mesh", &mr->emissiveMap); L.TipLookup();
+    if (!mr->emissiveMap.empty()) { L.SameLine(); kClearE = L.SmallButton("Clear##emap"); }
+    char counts[96];
+    std::snprintf(counts, sizeof counts, "%d verts, %d triangles", (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
+    L.Note(counts, true);
+    char subTip[128];
+    if (g_meshSelFaces.empty()) std::snprintf(subTip, sizeof subTip, "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those.");
+    else std::snprintf(subTip, sizeof subTip, "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.", (int)g_meshSelFaces.size());
+    text.push_back(subTip);
+    const int kSub = L.SmallButton("Subdivide##mesh"); L.Tip(text.back().c_str());
+    L.SameLine(); const int kSubS = L.SmallButton("Subdiv+Smooth##mesh");
+    L.Tip("Quadruple the triangles and relax them \xE2\x80\x94 turns a\nlow-poly blockout (e.g. Human) into smooth high-poly.");
+    L.SameLine(); const int kSmooth = L.SmallButton("Smooth##mesh");
+    L.SameLine(); const int kWeld = L.SmallButton("Weld##mesh");
+    const int kRecenter = L.SmallButton("Recenter##mesh");
+    L.SameLine(); const int kGround = L.SmallButton("Ground##mesh");
+    L.SameLine(); const int kFit = L.SmallButton("Fit 1u##mesh");
+    L.SameLine(); const int kRemove = L.SmallButton("Remove##mesh");
+    L.Section("Material preset");
+    std::string matPath = g_matPresetPath;
+    const int kMatPath = pathRow("##matpath", &matPath);
+    L.SameLine(); const int kSave = L.SmallButton("Save##mat");
+    L.SameLine(); const int kLoadMat = L.SmallButton("Load##mat");
+    int kPhys = -1;
+    if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) kPhys = L.SmallButton("Add Physics (Rigidbody + Box)##mesh");
+    if (!DrawRowsOkayUI(mr, "##okayui_meshrest", L, true)) return false;
+    if (L[kMesh].changed) { mr->meshPath = meshPath; ed.dirty = true; }
+    if (L[kLoad].clicked && !mr->meshPath.empty()) LoadMeshFileInto(ed, mr);
+    if (L[kTex].changed) ed.dirty = true;
+    if (L[kBrowse].clicked) {
+        EditorState* edp = &ed; auto* mrp = mr;
+        okay::filedialog::OpenOne("Choose a texture image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                  [edp, mrp](const std::string& p) { mrp->texture = p; edp->dirty = true; });
+    }
+    if (L[kProc].changed) { ed.PushUndo(); mr->texture = procPick; ed.dirty = true; }
+    if (kClearTex >= 0 && L[kClearTex].clicked) { mr->texture.clear(); ed.dirty = true; }
+    for (int kt : {kThumbTex, kThumbN})
+        if (kt >= 0 && L[kt].clicked) { g_pingAsset = L[kt].sv; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+    if (kTil >= 0 && L[kTil].changed) { mr->tiling = {til[0], til[1]}; ed.dirty = true; }
+    if (kOffs >= 0 && L[kOffs].changed) { mr->texOffset = {toff[0], toff[1]}; ed.dirty = true; }
+    if (kFilt >= 0 && L[kFilt].changed) { mr->texFilter = (MeshRenderer::TexFilter)fi; ed.dirty = true; }
+    if (kScroll >= 0 && L[kScroll].changed) { mr->uvScroll = {scr[0], scr[1]}; ed.dirty = true; }
+    if (kClearN >= 0 && L[kClearN].clicked) { mr->normalMap.clear(); ed.dirty = true; }
+    if (kClearS >= 0 && L[kClearS].clicked) { mr->specularMap.clear(); ed.dirty = true; }
+    if (kClearAo >= 0 && L[kClearAo].clicked) { mr->aoMap.clear(); ed.dirty = true; }
+    if (kClearMr >= 0 && L[kClearMr].clicked) { mr->metallicRoughnessMap.clear(); ed.dirty = true; }
+    if (kClearE >= 0 && L[kClearE].clicked) { mr->emissiveMap.clear(); ed.dirty = true; }
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSub].clicked) {
+        ed.PushUndo();
+        if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
+        else mr->mesh.Subdivide();                                               // whole mesh
+        ed.dirty = true;
+    }
+    if (L[kSubS].clicked) {
+        mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
+        ConsoleLog("Subdivided + smoothed: " + std::to_string(mr->mesh.TriangleCount()) + " triangles");
+    }
+    if (L[kSmooth].clicked) {
+        Vec3 sz = mr->mesh.Size();
+        mr->mesh.Subdivide();
+        mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
+        ed.dirty = true;
+    }
+    if (L[kWeld].clicked) { int n = mr->mesh.WeldVertices(); ConsoleLog("Welded " + std::to_string(n) + " duplicate verts"); ed.dirty = true; }
+    if (L[kRecenter].clicked) { mr->mesh.RecenterToOrigin(); ed.dirty = true; }
+    if (L[kGround].clicked) { mr->mesh.GroundPivot(); ed.dirty = true; }
+    if (L[kFit].clicked) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = mr;
+    if (L[kMatPath].changed && matPath.size() < sizeof(g_matPresetPath)) std::snprintf(g_matPresetPath, sizeof g_matPresetPath, "%s", matPath.c_str());
+    if (L[kSave].clicked) {
+        if (Material::FromRenderer(*mr).SaveToFile(g_matPresetPath)) ConsoleLog(std::string("Saved material ") + g_matPresetPath);
+        else ConsoleLog("Material save failed");
+    }
+    if (L[kLoadMat].clicked) {
+        Material m;
+        if (Material::LoadFromFile(g_matPresetPath, m)) { m.ApplyTo(*mr); ed.dirty = true; ConsoleLog(std::string("Loaded material ") + g_matPresetPath); }
+        else ConsoleLog("Material load failed");
+    }
+    if (kPhys >= 0 && L[kPhys].clicked) sPendingMeshPhysics = go;
     return true;
 }
 
@@ -31134,6 +31855,8 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             }   // the Dear ImGui shading fields
+            // The rest (the mesh file, the texture and maps, the mesh tools, the material preset) is OkayUI's with the switch too (section 15).
+            if (!(UseOkayUIBackend() && DrawMeshRendererRestWithOkayUI(ed, go, mr, toRemove))) {
             // Import a 3D model from an .OBJ file.
             char mp[256];
             std::strncpy(mp, mr->meshPath.c_str(), sizeof(mp) - 1);
@@ -31161,7 +31884,8 @@ void DrawInspector(EditorState& ed) {
             // Built-in procedural textures: generated in code (no files), tileable,
             // and they ship with the game — pick one to texture instantly.
             {
-                ImGui::SameLine();
+                // on this line only when it fits: in a docked Inspector the row ran out of the window (seen in section 15's pictures)
+                SameLineOrWrap(ImGui::CalcTextSize("Procedural").x + ImGui::GetStyle().FramePadding.x * 2.0f);
                 if (ImGui::SmallButton("Procedural##tex")) ImGui::OpenPopup("##procpick");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Built-in tileable textures (brick, wood, stone, grass...)\ngenerated in code — no image files needed.");
                 if (ImGui::BeginPopup("##procpick")) {
@@ -31182,7 +31906,7 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (!mr->texture.empty()) {
-                ImGui::SameLine();
+                SameLineOrWrap(ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2.0f);
                 if (ImGui::SmallButton("Clear##tex")) { mr->texture.clear(); ed.dirty = true; }
                 TexFieldThumb(mr->texture);
                 float til[2] = {mr->tiling.x, mr->tiling.y};
@@ -31308,7 +32032,7 @@ void DrawInspector(EditorState& ed) {
             // Material presets: save the current look as a reusable .okaymat, or
             // load one (also accepts a .okaymat dropped from the Project).
             SectionHeader("Material preset");
-            static char matPath[256] = "Assets/Material.okaymat";
+            char (&matPath)[256] = g_matPresetPath;   // shared with the OkayUI version
             ImGui::InputText("##matpath", matPath, sizeof(matPath));
             std::string dropped;
             if (AcceptAssetPathField(dropped) && dropped.size() < sizeof(matPath)) {
@@ -31331,6 +32055,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Add Physics (Rigidbody + Box)##mesh"))
                     sPendingMeshPhysics = go;
             }
+            }   // the Dear ImGui body
         }
     }
     if (auto* tr = dynamic_cast<Terrain*>(curComp)) {
@@ -33211,6 +33936,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* li = dynamic_cast<Light*>(curComp)) {
         if (CompHeader("Light", li, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawLightWithOkayUI(ed, li, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             const char* types[] = {"Directional", "Point", "Spot", "Area"};
             int ty = (int)li->type;
             if (ImGui::Combo("Type##light", &ty, types, 4)) { li->type = (Light::Type)ty; ed.dirty = true; }
@@ -33307,10 +34033,12 @@ void DrawInspector(EditorState& ed) {
                 : li->type == Light::Type::Area ? "Soft broad fill from this position out to Range (wrap-lit)."
                 : "Rotate this object to aim the light (its +Z is the direction).");
             if (ImGui::SmallButton("Remove##light")) toRemove = li;
+            }   // the Dear ImGui body
         }
     }
     if (auto* cam = dynamic_cast<Camera*>(curComp)) {
         if (CompHeader("Camera", cam, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawCameraWithOkayUI(ed, cam, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             int proj = (int)cam->projection;
             const char* projs[] = {"Orthographic", "Perspective"};
             // Use the row's width so the full name stays visible in a narrow inspector.
@@ -33503,6 +34231,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("A second camera in the corner, drawn after this one.\n"
                                   "Move it, set its culling mask, or switch Clear Flags to Solid Color.");
             if (ImGui::SmallButton("Remove##cam")) toRemove = cam;
+            }   // the Dear ImGui body
         }
     }
     if (auto* lod = dynamic_cast<LODGroup*>(curComp)) {
@@ -33719,6 +34448,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* rb3 = dynamic_cast<Rigidbody3D*>(curComp))
         if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawRigidbody3DWithOkayUI(ed, go, rb3, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             auto* rb = go->GetComponent<Rigidbody3D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -33749,9 +34479,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
             if (go->transform && go->transform->Parent())
                 ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
-            else
+            else {   // wrapped: in a docked Inspector the line ran out of the window (section 15's pictures)
+                ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextDisabled("Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
+                ImGui::PopTextWrapPos();
+            }
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
+            }   // the Dear ImGui body
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
         if (CompHeader("Joint 3D", jt, &toRemove)) {
@@ -34582,8 +35316,10 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mcol = dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Mesh Collider 3D", mcol, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawMeshCollider3DWithOkayUI(ed, go, mcol, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             // Exact triangles while static or kinematic. A dynamic body uses the convex hull.
             const std::string status = mcol->StatusMessage();
+            ImGui::PushTextWrapPos(0.0f);   // the notes wrap: in a docked Inspector they ran out of the window (section 15's pictures)
             if (mcol->UsesConvexHull()) {
                 ImGui::TextDisabled("Dynamic body: convex hull, %d vertices / %d triangles. Concave gaps are filled in.",
                                     mcol->HullVertexCount(), mcol->HullTriangleCount());
@@ -34595,6 +35331,7 @@ void DrawInspector(EditorState& ed) {
             if (!status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", status.c_str());
             if (!mcol->UsesConvexHull())
                 ImGui::TextDisabled("Static or kinematic: exact triangles. A dynamic Rigidbody uses the convex hull.");
+            ImGui::PopTextWrapPos();
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
@@ -34612,10 +35349,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild the triangle BVH now (it also rebuilds automatically when the mesh changes).");
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mc3")) toRemove = mcol;
+            }   // the Dear ImGui body
         }
     }
     if (auto* bc = dynamic_cast<BoxCollider3D*>(curComp); bc && !dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Box Collider 3D", bc, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawBoxCollider3DWithOkayUI(ed, go, bc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (DragVec3Axis("Size##bc3", sz, 0.05f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
@@ -34643,10 +35382,12 @@ void DrawInspector(EditorState& ed) {
                                   "pull each side of the box to match the model. Turn off when done.");
             if (g_colliderEdit) ImGui::TextDisabled("Drag the colored dots on each face in the Scene view.");
             if (ImGui::SmallButton("Remove##bc3")) toRemove = bc;
+            }   // the Dear ImGui body
         }
     }
     if (auto* sc = dynamic_cast<SphereCollider3D*>(curComp)) {
         if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawSphereCollider3DWithOkayUI(ed, go, sc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
             if (DragVec3Axis("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
@@ -34663,10 +35404,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##sc3");
             if (sc->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##sc3")) toRemove = sc;
+            }   // the Dear ImGui body
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider3D*>(curComp)) {
         if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawCapsuleCollider3DWithOkayUI(ed, go, cap, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
             const char* axes[] = {"X", "Y", "Z"};
@@ -34686,6 +35429,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Auto Fit##cap3");
             if (cap->autoFit) FitColliders(go, true);
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
+            }   // the Dear ImGui body
         }
     }
     // A GameObject may carry several scripts.
@@ -34697,6 +35441,7 @@ void DrawInspector(EditorState& ed) {
                           : std::filesystem::path(sc->Path()).stem().string();
         std::string slabel = "Script (" + sname + ")";
         if (CompHeader(slabel.c_str(), sc, &toRemove)) {
+            if (!(UseOkayUIBackend() && DrawScriptWithOkayUI(ed, sc))) {   // the body is OkayUI's with the preview switch
             if (ImGui::SmallButton("Open in Script Editor")) {
                 g_showScriptEditor = true;
                 if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end())
@@ -34808,6 +35553,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
             }
+            }   // the Dear ImGui body
         }
         ImGui::PopID();
     }

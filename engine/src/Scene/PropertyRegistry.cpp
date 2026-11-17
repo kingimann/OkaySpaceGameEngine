@@ -1,3 +1,4 @@
+#include "okay/Modules/ModuleRegistry.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -507,6 +508,7 @@ void RegisterBuiltinProperties() {
     if (t.builtinsDone.load(std::memory_order_acquire)) return;
     struct Guard { bool& flag; explicit Guard(bool& f) : flag(f) { flag = true; } ~Guard() { flag = false; } } guard(registering);
     detail::RegisterBuiltinPropertyTable();
+    (void)ModuleRegistry::Get();   // the modules add their own property tables
     t.builtinsDone.store(true, std::memory_order_release);
 }
 

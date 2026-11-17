@@ -1,3 +1,4 @@
+#include "okay/Scene/SceneRules.hpp"
 #include "okay/Testing/SceneValidator.hpp"
 
 #include "okay/Components/AudioSource.hpp"
@@ -6,7 +7,6 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
-#include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Components/Foliage.hpp"
@@ -481,6 +481,14 @@ struct Checker {
                       "); only one is meant to exist");
     }
 
+    void SingletonRule(const rules::SingletonRuleEntry& rule) {
+        const auto all = rule.find(scene);
+        for (std::size_t i = 1; i < all.size(); ++i)
+            Add(Severity::Warning, "component.duplicate_singleton", all[i]->gameObject ? ObjectPath(all[i]->gameObject) : "",
+                rule.name, std::string("There is more than one ") + rule.name + " in the scene (" + std::to_string(all.size()) +
+                      "); only one is meant to exist");
+    }
+
     void Names() {
         std::map<std::pair<const void*, std::string>, std::vector<const GameObject*>> groups;
         std::vector<std::pair<const void*, std::string>> order;
@@ -537,7 +545,7 @@ struct Checker {
         if (opt.checkNames) {
             Names();
             Singleton<EventSystem>("EventSystem");
-            Singleton<DayNightCycle>("DayNightCycle");
+            for (const auto& rule : rules::SingletonRules()) SingletonRule(rule);
             Singleton<CinemachineBrain>("CinemachineBrain");
             Singleton<PauseMenu>("PauseMenu");
             Singleton<SteamManager>("SteamManager");

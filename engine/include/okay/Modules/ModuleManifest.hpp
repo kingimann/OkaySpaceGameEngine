@@ -20,6 +20,7 @@ struct ModuleManifest {
     std::vector<std::string> components;  ///< component types it adds
     std::vector<std::string> serializers; ///< scene record names it reads and writes
     std::vector<std::string> vsNodes;     ///< visual-script nodes it adds (names)
+    std::vector<std::string> scriptApi;   ///< OkayScript functions it adds (ScriptApiRegistry)
     std::string vsGroup;                  ///< visual-script palette group ("" = none)
     std::vector<std::string> editor;      ///< editor panels, windows and menu items it adds
     std::vector<std::string> sources;     ///< engine/-relative glob patterns of the files it owns

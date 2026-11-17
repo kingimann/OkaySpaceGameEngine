@@ -59,6 +59,7 @@ bool ModuleManifest::Parse(const std::string& text, ModuleManifest& out, std::st
         else if (k == "components") m.components = SplitList(v);
         else if (k == "serializers") m.serializers = SplitList(v);
         else if (k == "vs_nodes") m.vsNodes = SplitList(v);
+        else if (k == "script_api") m.scriptApi = SplitList(v);
         else if (k == "vs_group") m.vsGroup = v;
         else if (k == "editor") m.editor = SplitList(v);
         else if (k == "sources") m.sources = SplitList(v, ' ');

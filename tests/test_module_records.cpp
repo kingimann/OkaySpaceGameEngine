@@ -6,7 +6,9 @@
 #include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
-#include "okay/Components/Ragdoll.hpp"
+#ifdef OKAY_TEST_ALL_MODULES
+#include "okay/Components/Ragdoll.hpp"   // its code is not in a build without the ragdoll module
+#endif
 #include <sstream>
 
 using namespace okay;
@@ -26,6 +28,7 @@ int main() {
     auto& reg = ModuleRegistry::Get();
     const bool skyOn = reg.IsEnabled("sky_weather"), ragOn = reg.IsEnabled("ragdoll"), navOn = reg.IsEnabled("ai_navigation");
 
+#ifdef OKAY_TEST_ALL_MODULES
     if (skyOn && ragOn && navOn) {
         // ---- records written by the modules read back to the same values, and writing again gives the same text
         Scene s("T");
@@ -56,7 +59,9 @@ int main() {
         CHECK(b2 && b2->GetComponent<NavMeshObstacle>() && b2->GetComponent<NavMeshObstacle>()->carve);
         CHECK(b2 && b2->GetComponent<NavMeshSurface>() && b2->GetComponent<NavMeshSurface>()->settings.agentRadius == 0.77f && !b2->GetComponent<NavMeshSurface>()->autoBounds);
         CHECK(SceneSerializer::Serialize(back) == text);
-    } else {
+    } else
+#endif
+    {
         // ---- a build without those modules keeps their records as they are and says why
         Scene s("T");
         s.CreateGameObject("Body");
@@ -68,7 +73,7 @@ int main() {
         std::string err;
         std::vector<std::string> warnings;
         CHECK(SceneSerializer::Deserialize(back, text, &err, &warnings));
-        CHECK(back.Find("Body") && back.Find("Body")->GetComponent<Ragdoll>() == nullptr);
+        CHECK(back.Find("Body") && back.Find("Body")->Components().size() == 1);   // only the Transform: the record was not loaded
         bool said = false;
         for (auto& w : warnings) if (w.find("ragdoll") != std::string::npos && w.find("is off in this build") != std::string::npos) said = true;
         CHECK(said);

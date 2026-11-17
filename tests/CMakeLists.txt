@@ -3951,3 +3951,15 @@ add_executable(test_module_records test_module_records.cpp)
 target_link_libraries(test_module_records PRIVATE okay::engine)
 add_test(NAME module_records COMMAND test_module_records)
 set_tests_properties(module_records PROPERTIES LABELS "module:core")
+
+# Script functions, property tables and validator rules that modules register (sky_weather, ragdoll)
+add_executable(test_module_script_api test_module_script_api.cpp)
+target_link_libraries(test_module_script_api PRIVATE okay::engine)
+add_test(NAME module_script_api COMMAND test_module_script_api)
+set_tests_properties(module_script_api PROPERTIES LABELS "module:core")
+
+# these two tests know which modules are on: the all-modules build also runs the parts that use the modules' own classes
+if(OKAY_MODULES STREQUAL "all")
+    target_compile_definitions(test_module_records PRIVATE OKAY_TEST_ALL_MODULES=1)
+    target_compile_definitions(test_module_script_api PRIVATE OKAY_TEST_ALL_MODULES=1)
+endif()

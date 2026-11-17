@@ -87,7 +87,6 @@ add_library(okay_engine
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
-    src/Components/Ragdoll.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
     src/Net/NetBuildSync.cpp
@@ -306,6 +305,8 @@ target_sources(okay_engine PRIVATE
     src/Modules/Health.cpp
     src/Modules/Interact.cpp
     src/Render/ModelReaderRegistry.cpp
+    src/Scripting/ScriptApiRegistry.cpp
+    src/Scene/SceneRules.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
     ${OKAY_MODULES_REGISTER_SOURCES})
 list(LENGTH OKAY_MODULES_ENABLED _okay_mod_on)

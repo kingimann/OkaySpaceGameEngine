@@ -12,12 +12,15 @@ bool Has(const std::vector<std::string>& v, const std::string& s) {
 } // namespace
 
 ModuleRegistry& ModuleRegistry::Get() {
-    static ModuleRegistry* r = [] {
-        auto* p = new ModuleRegistry();   // lives for the whole run, never destroyed (no exit-order problems)
-        detail::RegisterGeneratedModules(*p);
-        p->RunRegisterHooks();
-        return p;
-    }();
+    // Not a function-local static initialiser: a hook may ask for the registry again while it runs (a module that adds a property table
+    // reaches the property registry, which wants the module list). The second call gets the half-filled registry instead of deadlocking.
+    // Modules are added once at start, before other threads run engine code (see the class comment).
+    static ModuleRegistry* r = nullptr;
+    if (!r) {
+        r = new ModuleRegistry();   // lives for the whole run, never destroyed (no exit-order problems)
+        detail::RegisterGeneratedModules(*r);
+        r->RunRegisterHooks();
+    }
     return *r;
 }
 

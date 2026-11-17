@@ -12,3 +12,5 @@ serializers=ragdoll
 vs_group=
 editor=
 sources=include/okay/Components/Ragdoll.hpp src/Components/Ragdoll.cpp
+compile=src/Components/Ragdoll.cpp
+script_api=ragdoll,ragdoll_push,is_ragdoll

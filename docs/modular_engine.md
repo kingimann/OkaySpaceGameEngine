@@ -24,6 +24,15 @@ Sizes (`libokay_engine.a`, -O0 with debug info): all modules 472,029,618; `OKAY_
 Build Game now refuses (not only warns) a scene that uses a module that is off, unless "Build anyway" is ticked (editor code compiles; not run).
 Still open from the owner's list: VM bindings and visual-script nodes per module (vs_nodes), property tables per module, renderer contributions, GameObject menu and templates filtering.
 
+## Step: validator rules, property tables, script functions (2026-11-17)
+New registries (all reached through `ModuleRegistry::Get()`): `ScriptApiRegistry` (OkayScript functions, copied into the VM's builtin table), `rules::AddSingletonRule` (validator), module property tables via `PropertyBuilder` from `register.cpp`, `ModuleRegistry::Get()` no longer deadlocks when a hook asks for it again. Moved: sky_weather (DayNightCycle property table, singleton rule, `time_of_day`), ragdoll (`ragdoll`, `ragdoll_push`, `is_ragdoll`; `Ragdoll.cpp` is now `compile=`). Manifests have `script_api=`.
+| Library `libokay_engine.a` (-O0, debug info) | bytes |
+|---|---|
+| all modules | 472,505,974 |
+| `OKAY_MODULES=core` | 423,838,648 (-48.7 MB, -10.3%; the step before: 424,718,384) |
+nm symbol count in the core library: Ragdoll 0, DayNightCycle 0 (all build: 366 and 627). NavMeshSurface still 1444: the navigation module is only partly moved (records), its classes are still named by the validator, ProjectDiagnostics, property tables, VM, EngineApi, visual-script builtins and BehaviorTreeRunner. A linked test (`test_module_script_api`, stripped, -O0): 39,731,792 bytes all, 36,504,144 core (-8.1%).
+Not done: nav and the other modules' property tables/validators/VM functions, visual-script nodes (`vs_nodes`), renderer contributions, GameObject menu/templates filtering.
+
 ## Measured sizes (stage 0)
 
 From `python3 scripts/module_sizes.py <build folder>` on 2026-11-17: source lines and the code+data bytes of each

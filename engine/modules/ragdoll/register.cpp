@@ -1,7 +1,9 @@
 // Module ragdoll: its scene records (moved here unchanged from SceneSerializer.cpp, which now finds them through the
 // ComponentSerializerRegistry). Linked only when the module is on.
 #include "okay/Components/Ragdoll.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Modules/ModuleRegistry.hpp"
+#include "okay/Scripting/ScriptApiRegistry.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/RecordIO.hpp"
@@ -12,6 +14,26 @@ namespace modules {
 using rec::Quote; using rec::ReadQuoted; using rec::KvOut; using rec::KvIn;
 
 void Register_ragdoll(ModuleContext&) {
+    // ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz) shoves the chest (or the part nearest an optional px, py, pz).
+    AddScriptApi("ragdoll", [](GameObject* self, std::vector<vs::VsValue>& a) -> vs::VsValue {
+        auto* rd = self ? self->GetComponent<Ragdoll>() : nullptr;
+        if (!rd) return vs::VsValue{0.0f};
+        if (!a.empty() && a[0].AsFloat() == 0.0f) { rd->Deactivate(); return vs::VsValue{1.0f}; }
+        return vs::VsValue{rd->Activate() ? 1.0f : 0.0f};
+    });
+    AddScriptApi("ragdoll_push", [](GameObject* self, std::vector<vs::VsValue>& a) -> vs::VsValue {
+        auto* rd = self ? self->GetComponent<Ragdoll>() : nullptr;
+        if (!rd || a.size() < 3) return vs::VsValue{0.0f};
+        const Vec3 v{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+        const Vec3 at = a.size() >= 6 ? Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}
+                                      : rd->ParticlePosition(rd->BoneParticle(humanoid::Torso));
+        rd->Hit(at, v);
+        return vs::VsValue{1.0f};
+    });
+    AddScriptApi("is_ragdoll", [](GameObject* self, std::vector<vs::VsValue>&) -> vs::VsValue {
+        auto* rd = self ? self->GetComponent<Ragdoll>() : nullptr;
+        return vs::VsValue{rd && rd->IsActive() ? 1.0f : 0.0f};
+    });
     {
         ComponentSerializerRegistry::Entry e;
         e.name = "ragdoll";

@@ -4,7 +4,6 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
-#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -129,7 +128,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
 #include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
-#include "okay/Components/DayNightCycle.hpp"   // time_of_day
+#include "okay/Scripting/ScriptApiRegistry.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -5972,13 +5971,7 @@ struct OkayScriptVM::Impl {
             if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
             return Value{};
         };
-        b["time_of_day"] = [sceneOf](std::vector<Value>& a) {
-            Scene* s = sceneOf();
-            DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr;
-            if (!dn) return Value{-1.0f};
-            if (!a.empty()) dn->SetTime(a[0].AsFloat());
-            return Value{dn->Hour()};
-        };
+        // time_of_day([hours]): added by the sky_weather module (ScriptApiRegistry)
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
@@ -6667,27 +6660,7 @@ struct OkayScriptVM::Impl {
             }
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
-        // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz)
-        // shoves the chest (or the part nearest an optional px, py, pz).
-        b["ragdoll"] = [selfObj](std::vector<Value>& a) {
-            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
-            if (!rd) return Value{0.0f};
-            if (!a.empty() && a[0].AsFloat() == 0.0f) { rd->Deactivate(); return Value{1.0f}; }
-            return Value{rd->Activate() ? 1.0f : 0.0f};
-        };
-        b["ragdoll_push"] = [selfObj](std::vector<Value>& a) {
-            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
-            if (!rd || a.size() < 3) return Value{0.0f};
-            const Vec3 v{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
-            const Vec3 at = a.size() >= 6 ? Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}
-                                          : rd->ParticlePosition(rd->BoneParticle(humanoid::Torso));
-            rd->Hit(at, v);
-            return Value{1.0f};
-        };
-        b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
-            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
-            return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
-        };
+        // ragdoll(), ragdoll_push(), is_ragdoll(): added by the ragdoll module (ScriptApiRegistry)
         b["dive"] = [selfObj](std::vector<Value>&) {
             HumanoidActions::RequestDive(selfObj());
             return Value{};
@@ -11020,6 +10993,11 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ForceMode2D.Impulse"] = [](std::vector<Value>&) { return Value{1.0f}; };
+        // Functions the modules add (okay/Scripting/ScriptApiRegistry.hpp).
+        for (const auto& api : ScriptApis()) {
+            const ScriptApiFn fn = api.second;
+            b[api.first] = [this, fn](std::vector<Value>& a) -> Value { return fn(rt.host ? rt.host->gameObject : nullptr, a); };
+        }
     }
 };
 

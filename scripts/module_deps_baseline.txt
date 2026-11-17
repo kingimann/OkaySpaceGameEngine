@@ -309,6 +309,7 @@ include/okay/Scene/UITemplates.hpp -> scripting_okayscript
 include/okay/Scene/UITemplates.hpp -> weapons
 include/okay/Script/AnimIkTools.hpp -> character_controllers
 include/okay/Script/AnimIkTools.hpp -> model_import
+include/okay/Scripting/ScriptApiRegistry.hpp -> scripting_visual
 include/okay/Scripting/ScriptVM.hpp -> scripting_visual
 include/okay/VisualScript/Nodes.hpp -> audio
 include/okay/VisualScript/Nodes.hpp -> networking
@@ -601,7 +602,6 @@ src/Scene/BuiltinPropertiesGameplay.cpp -> physics3d
 src/Scene/BuiltinPropertiesGameplay.cpp -> render3d_effects
 src/Scene/BuiltinPropertiesGameplay.cpp -> rpg_stats
 src/Scene/BuiltinPropertiesGameplay.cpp -> scripting_okayscript
-src/Scene/BuiltinPropertiesGameplay.cpp -> sky_weather
 src/Scene/BuiltinPropertiesGameplay.cpp -> ui_kit
 src/Scene/BuiltinPropertiesGameplay.cpp -> vehicles
 src/Scene/BuiltinPropertiesGameplay.cpp -> weapons
@@ -647,13 +647,11 @@ src/Scene/SceneSerializer.cpp -> networking
 src/Scene/SceneSerializer.cpp -> particles
 src/Scene/SceneSerializer.cpp -> physics2d
 src/Scene/SceneSerializer.cpp -> physics3d
-src/Scene/SceneSerializer.cpp -> ragdoll
 src/Scene/SceneSerializer.cpp -> render3d_effects
 src/Scene/SceneSerializer.cpp -> rpg_stats
 src/Scene/SceneSerializer.cpp -> save_games
 src/Scene/SceneSerializer.cpp -> scripting_okayscript
 src/Scene/SceneSerializer.cpp -> scripting_visual
-src/Scene/SceneSerializer.cpp -> sky_weather
 src/Scene/SceneSerializer.cpp -> splines
 src/Scene/SceneSerializer.cpp -> survival
 src/Scene/SceneSerializer.cpp -> terrain_foliage
@@ -697,7 +695,6 @@ src/Scripting/OkayScriptVM.cpp -> networking
 src/Scripting/OkayScriptVM.cpp -> particles
 src/Scripting/OkayScriptVM.cpp -> physics2d
 src/Scripting/OkayScriptVM.cpp -> physics3d
-src/Scripting/OkayScriptVM.cpp -> ragdoll
 src/Scripting/OkayScriptVM.cpp -> relay_online
 src/Scripting/OkayScriptVM.cpp -> render3d_effects
 src/Scripting/OkayScriptVM.cpp -> rpg_stats
@@ -725,7 +722,6 @@ src/Testing/SceneValidator.cpp -> relay_online
 src/Testing/SceneValidator.cpp -> render3d_effects
 src/Testing/SceneValidator.cpp -> scripting_okayscript
 src/Testing/SceneValidator.cpp -> scripting_visual
-src/Testing/SceneValidator.cpp -> sky_weather
 src/Testing/SceneValidator.cpp -> splines
 src/Testing/SceneValidator.cpp -> terrain_foliage
 src/Testing/SceneValidator.cpp -> tilemap2d

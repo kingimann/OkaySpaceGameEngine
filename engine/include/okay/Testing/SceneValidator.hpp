@@ -128,6 +128,7 @@ struct ValidatorOptions {
 
 class SceneValidator {
 public:
+
     /// Check a scene that is already loaded.
     static ValidationReport Validate(const Scene& scene, const ValidatorOptions& options = {});
     /// Load serialized scene text into a scratch scene and check it. A document that

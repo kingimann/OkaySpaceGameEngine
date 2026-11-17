@@ -1,0 +1,409 @@
+#include "okayms/link.hpp"
+
+#include <map>
+#include <cstring>
+
+namespace okayms {
+namespace {
+
+constexpr uint16_t kFileRelocsStripped = 0x0001;
+constexpr uint16_t kFileExecutable = 0x0002;
+constexpr uint16_t kFileLargeAddress = 0x0020;
+constexpr uint16_t kRelAbsolute = 0;
+constexpr uint16_t kRelRel32 = 4;
+constexpr uint32_t kAlignMask = 0x00F00000u;
+constexpr uint32_t kImageFlagDrop = kAlignMask | kScnLnkInfo | kScnLnkRemove | kScnLnkComdat | 0x01000000u | 0x8u;
+
+uint32_t read_u32(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+void write_u32(uint8_t* p, uint32_t value) {
+    for (int i = 0; i < 4; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+bool power_of_two(uint32_t value) {
+    return value != 0 && (value & (value - 1u)) == 0;
+}
+
+bool align_up(uint32_t value, uint32_t align, uint32_t* out, std::string* error) {
+    if (!power_of_two(align)) {
+        *error = "alignment is not a power of two";
+        return false;
+    }
+    const uint32_t mask = align - 1u;
+    if (value > 0xFFFFFFFFu - mask) {
+        *error = "alignment overflow";
+        return false;
+    }
+    *out = (value + mask) & ~mask;
+    return true;
+}
+
+// PE Format section flags: a zero alignment nibble means 16 bytes.
+bool contribution_alignment(uint32_t characteristics, uint32_t* align, std::string* error) {
+    const uint32_t nibble = (characteristics >> 20) & 0xFu;
+    if (nibble == 0) {
+        *align = 16;
+        return true;
+    }
+    if (nibble > 14) {
+        *error = "invalid section alignment";
+        return false;
+    }
+    *align = 1u << (nibble - 1u);
+    return true;
+}
+
+struct OutSection {
+    std::string name;
+    uint32_t characteristics = 0;
+    std::vector<uint8_t> bytes;
+    uint32_t virtual_size = 0;
+    bool any_data = false;
+    uint32_t rva = 0;
+    uint32_t raw_pointer = 0;
+    uint32_t raw_size = 0;
+};
+
+struct Placed {
+    bool defined = false;
+    bool absolute = false;
+    uint32_t out_section = 0;
+    uint32_t offset = 0;
+    uint32_t absolute_value = 0;
+};
+
+struct Contrib {
+    bool present = false;
+    uint32_t out_section = 0;
+    uint32_t offset = 0;
+};
+
+}  // namespace
+
+Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options) {
+    if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {
+        return Result<std::vector<uint8_t>>::fail("file alignment must be a power of two from 512 to 65536");
+    }
+    if (!power_of_two(options.section_alignment) || options.section_alignment < options.file_alignment) {
+        return Result<std::vector<uint8_t>>::fail("section alignment must be a power of two and at least the file alignment");
+    }
+    if (options.image_base == 0 || (options.image_base & 0xFFFFULL) != 0) {
+        return Result<std::vector<uint8_t>>::fail("image base must be a multiple of 64 KiB");
+    }
+
+    for (const ObjectFile& object : objects) {
+        for (const Section& section : object.sections) {
+            if ((section.characteristics & kScnLnkComdat) != 0) {
+                return Result<std::vector<uint8_t>>::fail("COMDAT sections are not supported");
+            }
+        }
+    }
+
+    std::vector<OutSection> outs;
+    std::map<std::string, uint32_t> section_index;
+    std::vector<std::vector<Contrib>> contribs(objects.size());
+
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ObjectFile& object = objects[oi];
+        contribs[oi].resize(object.sections.size());
+        for (size_t si = 0; si < object.sections.size(); ++si) {
+            const Section& section = object.sections[si];
+            if ((section.characteristics & kScnLnkRemove) != 0) continue;
+            if (section.name.empty() || section.name.size() > 8) {
+                return Result<std::vector<uint8_t>>::fail("section name is too long for an image");
+            }
+            uint32_t align = 0;
+            std::string error;
+            if (!contribution_alignment(section.characteristics, &align, &error)) {
+                return Result<std::vector<uint8_t>>::fail(error);
+            }
+            uint32_t index = 0;
+            const auto found = section_index.find(section.name);
+            if (found == section_index.end()) {
+                index = static_cast<uint32_t>(outs.size());
+                section_index[section.name] = index;
+                OutSection created;
+                created.name = section.name;
+                outs.push_back(std::move(created));
+            } else {
+                index = found->second;
+            }
+            OutSection& out = outs[index];
+            out.characteristics |= section.characteristics;
+
+            uint32_t at = 0;
+            if (!align_up(out.virtual_size, align, &at, &error)) {
+                return Result<std::vector<uint8_t>>::fail(error);
+            }
+            const uint32_t length = section.data.empty()
+                                        ? section.virtual_size
+                                        : static_cast<uint32_t>(section.data.size());
+            if (section.data.size() > 0xFFFFFFFFu || at > 0xFFFFFFFFu - length) {
+                return Result<std::vector<uint8_t>>::fail("section is too large");
+            }
+            if (!section.data.empty()) {
+                if (out.bytes.size() < out.virtual_size) out.bytes.resize(out.virtual_size, 0);
+                if (out.bytes.size() < at) out.bytes.resize(at, 0);
+                out.bytes.insert(out.bytes.end(), section.data.begin(), section.data.end());
+                out.any_data = true;
+                out.virtual_size = static_cast<uint32_t>(out.bytes.size());
+            } else {
+                out.virtual_size = at + length;
+                if (out.any_data) out.bytes.resize(out.virtual_size, 0);
+            }
+            contribs[oi][si].present = true;
+            contribs[oi][si].out_section = index;
+            contribs[oi][si].offset = at;
+        }
+    }
+    if (outs.empty()) return Result<std::vector<uint8_t>>::fail("image has no sections");
+
+    std::string error;
+    const uint32_t header_bytes = 64u + 4u + 20u + 240u + 40u * static_cast<uint32_t>(outs.size());
+    uint32_t size_of_headers = 0;
+    if (!align_up(header_bytes, options.file_alignment, &size_of_headers, &error)) {
+        return Result<std::vector<uint8_t>>::fail(error);
+    }
+    uint32_t rva = 0;
+    if (!align_up(size_of_headers, options.section_alignment, &rva, &error)) {
+        return Result<std::vector<uint8_t>>::fail(error);
+    }
+    uint32_t raw_cursor = size_of_headers;
+    uint32_t size_of_code = 0;
+    uint32_t size_of_init = 0;
+    uint32_t size_of_uninit = 0;
+    uint32_t base_of_code = 0;
+    bool saw_code = false;
+    for (OutSection& out : outs) {
+        out.rva = rva;
+        const uint32_t span = out.virtual_size == 0 ? options.section_alignment : out.virtual_size;
+        if (out.rva > 0xFFFFFFFFu - span) return Result<std::vector<uint8_t>>::fail("image is too large");
+        uint32_t next = 0;
+        if (!align_up(out.rva + span, options.section_alignment, &next, &error)) {
+            return Result<std::vector<uint8_t>>::fail(error);
+        }
+        rva = next;
+        out.characteristics &= ~kImageFlagDrop;
+        if (out.any_data) {
+            if (!align_up(static_cast<uint32_t>(out.bytes.size()), options.file_alignment, &out.raw_size, &error)) {
+                return Result<std::vector<uint8_t>>::fail(error);
+            }
+            out.raw_pointer = raw_cursor;
+            if (raw_cursor > 0xFFFFFFFFu - out.raw_size) return Result<std::vector<uint8_t>>::fail("image is too large");
+            raw_cursor += out.raw_size;
+        }
+        if ((out.characteristics & kScnCntCode) != 0) {
+            size_of_code += out.raw_size;
+            if (!saw_code) {
+                base_of_code = out.rva;
+                saw_code = true;
+            }
+        } else if (!out.any_data) {
+            size_of_uninit += out.virtual_size;
+        } else {
+            size_of_init += out.raw_size;
+        }
+    }
+    const uint32_t size_of_image = rva;
+
+    std::vector<std::vector<Placed>> placed(objects.size());
+    std::map<std::string, Placed> globals;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ObjectFile& object = objects[oi];
+        placed[oi].resize(object.symbols.size());
+        for (size_t si = 0; si < object.symbols.size(); ++si) {
+            const Symbol& symbol = object.symbols[si];
+            if (symbol.storage == kClassWeakExternal) continue;
+            Placed slot;
+            if (symbol.section == kSectionAbsolute) {
+                slot.defined = true;
+                slot.absolute = true;
+                slot.absolute_value = symbol.value;
+            } else if (symbol.section > 0) {
+                if (static_cast<size_t>(symbol.section) > object.sections.size()) {
+                    return Result<std::vector<uint8_t>>::fail("symbol section is outside the object");
+                }
+                const Contrib& contrib = contribs[oi][static_cast<size_t>(symbol.section) - 1u];
+                if (!contrib.present) {
+                    return Result<std::vector<uint8_t>>::fail("symbol is in a section that was not linked");
+                }
+                if (symbol.value > 0xFFFFFFFFu - contrib.offset) {
+                    return Result<std::vector<uint8_t>>::fail("symbol offset overflows");
+                }
+                slot.defined = true;
+                slot.out_section = contrib.out_section;
+                slot.offset = contrib.offset + symbol.value;
+            }
+            placed[oi][si] = slot;
+            if (slot.defined && symbol.storage == kClassExternal) {
+                const auto already = globals.find(symbol.name);
+                if (already != globals.end()) {
+                    return Result<std::vector<uint8_t>>::fail("duplicate symbol " + symbol.name);
+                }
+                globals[symbol.name] = slot;
+            }
+        }
+    }
+
+    int entry_matches = 0;
+    Placed entry;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        for (size_t si = 0; si < objects[oi].symbols.size(); ++si) {
+            const Symbol& symbol = objects[oi].symbols[si];
+            if (symbol.name != options.entry || symbol.section <= 0) continue;
+            ++entry_matches;
+            entry = placed[oi][si];
+        }
+    }
+    if (entry_matches == 0) return Result<std::vector<uint8_t>>::fail("entry symbol is not defined");
+    if (entry_matches > 1) return Result<std::vector<uint8_t>>::fail("entry symbol is ambiguous");
+    if (!entry.defined || entry.absolute) return Result<std::vector<uint8_t>>::fail("entry symbol is not in a section");
+    if (entry.offset > 0xFFFFFFFFu - outs[entry.out_section].rva) {
+        return Result<std::vector<uint8_t>>::fail("entry point overflows");
+    }
+    const uint32_t entry_rva = outs[entry.out_section].rva + entry.offset;
+
+    auto resolve = [&](size_t oi, uint32_t symbol_index, Placed* out, std::string* err) -> bool {
+        const ObjectFile& object = objects[oi];
+        if (symbol_index >= object.symbols.size()) {
+            *err = "relocation symbol index is outside the symbol table";
+            return false;
+        }
+        const Symbol& symbol = object.symbols[symbol_index];
+        if (symbol.storage == kClassWeakExternal) {
+            *err = "weak externals are not supported";
+            return false;
+        }
+        if (symbol.section > 0 || symbol.section == kSectionAbsolute) {
+            *out = placed[oi][symbol_index];
+            if (!out->defined) {
+                *err = "undefined symbol " + symbol.name;
+                return false;
+            }
+            return true;
+        }
+        if (symbol.section == 0 && symbol.storage == kClassExternal) {
+            const auto found = globals.find(symbol.name);
+            if (found == globals.end()) {
+                *err = "undefined symbol " + symbol.name;
+                return false;
+            }
+            *out = found->second;
+            return true;
+        }
+        *err = "undefined symbol " + symbol.name;
+        return false;
+    };
+
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ObjectFile& object = objects[oi];
+        for (size_t si = 0; si < object.sections.size(); ++si) {
+            const Section& section = object.sections[si];
+            const Contrib& contrib = contribs[oi][si];
+            if (!contrib.present) continue;
+            if (section.relocations.empty()) continue;
+            OutSection& out = outs[contrib.out_section];
+            if (!out.any_data) {
+                return Result<std::vector<uint8_t>>::fail("relocation in an uninitialized section");
+            }
+            for (const Relocation& reloc : section.relocations) {
+                if (reloc.type == kRelAbsolute) continue;
+                if (reloc.type != kRelRel32) {
+                    return Result<std::vector<uint8_t>>::fail(
+                        "unsupported relocation " + std::to_string(reloc.type));
+                }
+                if (static_cast<uint64_t>(reloc.offset) + 4u > section.data.size()) {
+                    return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");
+                }
+                Placed target;
+                if (!resolve(oi, reloc.symbol, &target, &error)) return Result<std::vector<uint8_t>>::fail(error);
+                const uint32_t location = contrib.offset + reloc.offset;
+                if (static_cast<uint64_t>(location) + 4u > out.bytes.size()) {
+                    return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");
+                }
+                uint64_t target_va = 0;
+                if (target.absolute) {
+                    target_va = target.absolute_value;
+                } else {
+                    target_va = options.image_base + outs[target.out_section].rva + target.offset;
+                }
+                const uint64_t site_va = options.image_base + out.rva + location;
+                const int32_t addend = static_cast<int32_t>(read_u32(out.bytes.data() + location));
+                const int64_t result = static_cast<int64_t>(addend) +
+                                       (static_cast<int64_t>(target_va) - (static_cast<int64_t>(site_va) + 4));
+                if (result < static_cast<int64_t>(-2147483647 - 1) || result > 2147483647LL) {
+                    return Result<std::vector<uint8_t>>::fail("REL32 relocation does not fit");
+                }
+                write_u32(out.bytes.data() + location, static_cast<uint32_t>(static_cast<int32_t>(result)));
+            }
+        }
+    }
+
+    std::vector<uint8_t> image(size_of_headers, 0);
+    image[0] = 'M';
+    image[1] = 'Z';
+    image[0x3C] = 64;
+    image[0x40] = 'P';
+    image[0x41] = 'E';
+    auto put16 = [&](size_t at, uint16_t value) {
+        image[at] = static_cast<uint8_t>(value);
+        image[at + 1] = static_cast<uint8_t>(value >> 8);
+    };
+    auto put32 = [&](size_t at, uint32_t value) {
+        for (int i = 0; i < 4; ++i) image[at + i] = static_cast<uint8_t>(value >> (8 * i));
+    };
+    auto put64 = [&](size_t at, uint64_t value) {
+        for (int i = 0; i < 8; ++i) image[at + i] = static_cast<uint8_t>(value >> (8 * i));
+    };
+    put16(0x44, kMachineAmd64);
+    put16(0x46, static_cast<uint16_t>(outs.size()));
+    put32(0x54, 240);
+    put16(0x56, static_cast<uint16_t>(kFileRelocsStripped | kFileExecutable | kFileLargeAddress));
+    put16(0x58, 0x20B);
+    image[0x5B] = 1;
+    put32(0x5C, size_of_code);
+    put32(0x60, size_of_init);
+    put32(0x64, size_of_uninit);
+    put32(0x68, entry_rva);
+    put32(0x6C, base_of_code);
+    put64(0x70, options.image_base);
+    put32(0x78, options.section_alignment);
+    put32(0x7C, options.file_alignment);
+    put16(0x80, options.major_operating_system);
+    put16(0x82, options.minor_operating_system);
+    put16(0x88, options.major_subsystem);
+    put16(0x8A, options.minor_subsystem);
+    put32(0x90, size_of_image);
+    put32(0x94, size_of_headers);
+    put16(0x9C, options.subsystem);
+    put16(0x9E, options.dll_characteristics);
+    put64(0xA0, options.stack_reserve);
+    put64(0xA8, options.stack_commit);
+    put64(0xB0, options.heap_reserve);
+    put64(0xB8, options.heap_commit);
+    put32(0xC4, 16);
+
+    size_t section_at = 0x148;
+    for (const OutSection& out : outs) {
+        std::memset(image.data() + section_at, 0, 40);
+        std::memcpy(image.data() + section_at, out.name.data(), out.name.size());
+        put32(section_at + 8, out.virtual_size);
+        put32(section_at + 12, out.rva);
+        put32(section_at + 16, out.raw_size);
+        put32(section_at + 20, out.raw_pointer);
+        put32(section_at + 36, out.characteristics);
+        section_at += 40;
+    }
+
+    for (const OutSection& out : outs) {
+        if (!out.any_data) continue;
+        const size_t end = static_cast<size_t>(out.raw_pointer) + out.raw_size;
+        if (image.size() < end) image.resize(end, 0);
+        std::memcpy(image.data() + out.raw_pointer, out.bytes.data(), out.bytes.size());
+    }
+    return Result<std::vector<uint8_t>>::success(std::move(image));
+}
+
+}  // namespace okayms

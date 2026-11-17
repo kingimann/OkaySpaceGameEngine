@@ -18719,8 +18719,9 @@ void DrawFileDialogs(EditorState& ed) {
             }
             if (s_buildSec == 2) {
                 ImGui::Spacing();
-                ImGui::SetNextItemWidth(90); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
-                ImGui::SetNextItemWidth(90); ImGui::InputInt("Height", &g_build.height, 0);
+                const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;   // five digits at any text size
+                ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width",  &g_build.width, 0); ImGui::SameLine();
+                ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height", &g_build.height, 0);
                 const char* presets[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "960 x 600", "800 x 600"};
                 static int presetSel = 0; ImGui::SetNextItemWidth(180);
                 if (ImGui::Combo("Resolution preset", &presetSel, presets, IM_ARRAYSIZE(presets))) {
@@ -19911,8 +19912,11 @@ void DrawProjectSettings(EditorState& ed) {
             ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
             ImGui::SetNextItemWidth(160);
             ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Width##ps", &g_project.defaultWidth); ImGui::SameLine();
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
+            // Wide enough for five digits at any text size, and no -/+ buttons: at 110 px the buttons took the
+            // room and 1280 x 720 showed as "12" and "72".
+            const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Width##ps", &g_project.defaultWidth, 0); ImGui::SameLine();
+            ImGui::SetNextItemWidth(numW); ImGui::InputInt("Height##ps", &g_project.defaultHeight, 0);
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);

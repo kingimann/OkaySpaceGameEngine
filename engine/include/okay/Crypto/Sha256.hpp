@@ -38,8 +38,7 @@
 
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__)) && !defined(OKAY_SHA256_NO_SHANI)
 #define OKAY_SHA256_SHANI 1
-#include <cpuid.h>
-#include <cstdlib>
+#include <cstdlib>   // (no <cpuid.h>: it clashes with MinGW's <intrin.h> __cpuid, which <immintrin.h> pulls in)
 #include <immintrin.h>
 #endif
 
@@ -187,12 +186,17 @@ __attribute__((target("sha,sse4.1,ssse3"))) inline void ShaNiCompress(std::uint3
 }
 
 /// True when this CPU has the SHA extensions, SSSE3 and SSE4.1.
+inline void CpuidLeaf(unsigned leaf, unsigned sub, unsigned& a, unsigned& b, unsigned& c, unsigned& d) {
+    __asm__ __volatile__("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "0"(leaf), "2"(sub));
+}
+
 inline bool CpuHasShaNi() {
     unsigned a = 0, b = 0, c = 0, d = 0;
-    if (__get_cpuid_max(0, nullptr) < 7) return false;
-    __cpuid(1, a, b, c, d);
+    CpuidLeaf(0, 0, a, b, c, d);
+    if (a < 7) return false;                                   // highest basic leaf
+    CpuidLeaf(1, 0, a, b, c, d);
     const bool ssse3 = (c >> 9) & 1u, sse41 = (c >> 19) & 1u;
-    __cpuid_count(7, 0, a, b, c, d);
+    CpuidLeaf(7, 0, a, b, c, d);
     return ssse3 && sse41 && ((b >> 29) & 1u);
 }
 #endif

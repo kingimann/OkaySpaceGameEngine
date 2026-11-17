@@ -2,6 +2,9 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Core/TolerantNumbers.hpp"
+#include <cmath>
+#include <vector>
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -77,25 +80,102 @@ struct Material {
           << "outline " << (outline ? 1 : 0) << " " << outlineWidth << " "
           << outlineColor.r << " " << outlineColor.g << " " << outlineColor.b << "\n"
           << "uvanim " << uvScroll.x << " " << uvScroll.y << " " << (triplanar ? 1 : 0) << "\n"
-          << "texture " << (texture.empty() ? "-" : texture) << "\n";
+          << "texture " << TexturePathText(texture) << "\n";
         return o.str();
     }
-    static Material FromText(const std::string& text) {
-        Material m;
-        std::istringstream in(text);
-        std::string tok;
-        while (in >> tok) {
-            if (tok == "color")        in >> m.color.r >> m.color.g >> m.color.b >> m.color.a;
-            else if (tok == "emissive")in >> m.emissive.r >> m.emissive.g >> m.emissive.b;
-            else if (tok == "specular")in >> m.specular >> m.shininess;
-            else if (tok == "flags")   { int u = 0, d = 0; in >> u >> d; m.unlit = u != 0; m.doubleSided = d != 0; }
-            else if (tok == "tiling")  in >> m.tiling.x >> m.tiling.y;
-            else if (tok == "shader")  { int s = 0; in >> s >> m.toonBands; m.shader = (MeshRenderer::Shader)s; }
-            else if (tok == "rim")     in >> m.rimStrength >> m.rimPower >> m.rimColor.r >> m.rimColor.g >> m.rimColor.b;
-            else if (tok == "outline") { int o = 0; in >> o >> m.outlineWidth >> m.outlineColor.r >> m.outlineColor.g >> m.outlineColor.b; m.outline = o != 0; }
-            else if (tok == "uvanim")  { int tp = 0; in >> m.uvScroll.x >> m.uvScroll.y >> tp; m.triplanar = tp != 0; }
-            else if (tok == "texture") { std::string t; in >> t; m.texture = (t == "-") ? "" : t; }
+    /// The texture path as the `texture` line writes it. "-" is no texture. A plain path is written as it is
+    /// (what every version wrote, so older engines still read it); one with a space, a tab, a quote or a line
+    /// break, or one that is literally "-", is put in double quotes with \\ \" \n \r \t escapes.
+    static std::string TexturePathText(const std::string& path) {
+        if (path.empty()) return "-";
+        bool quote = path == "-" || path[0] == '"';
+        for (char c : path) if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '"') quote = true;
+        if (!quote) return path;
+        std::string o = "\"";
+        for (char c : path) {
+            if (c == '\\') o += "\\\\";
+            else if (c == '"') o += "\\\"";
+            else if (c == '\n') o += "\\n";
+            else if (c == '\r') o += "\\r";
+            else if (c == '\t') o += "\\t";
+            else o += c;
         }
+        return o + "\"";
+    }
+    /// Read back what TexturePathText wrote: `rest` is everything after "texture " on the line. A plain value
+    /// is the whole rest of the line, so an older file that wrote a spaced path unquoted loads it whole too.
+    static std::string TexturePathFromText(std::string rest) {
+        while (!rest.empty() && (rest.back() == ' ' || rest.back() == '\t')) rest.pop_back();
+        std::size_t i = 0;
+        while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+        rest.erase(0, i);
+        if (rest.empty() || rest == "-") return "";
+        if (rest[0] != '"') return rest;
+        std::string o;
+        for (std::size_t k = 1; k < rest.size(); ++k) {
+            const char c = rest[k];
+            if (c == '"') break;                                   // the closing quote
+            if (c == '\\' && k + 1 < rest.size()) {
+                const char n = rest[++k];
+                o += n == 'n' ? '\n' : n == 'r' ? '\r' : n == 't' ? '\t' : n;
+            } else o += c;
+        }
+        return o;
+    }
+
+    /// Read a material. Each line is read on its own and each number on its own: a word that is not a number,
+    /// or nan / inf, leaves just that field at its default, and everything else in the file still loads.
+    /// Older files (one token per field, unquoted texture) load as before. `problems`, when given, counts the
+    /// fields that were dropped.
+    static Material FromText(const std::string& text, int* problems = nullptr) {
+        Material m;
+        int bad = 0;
+        std::istringstream lines(text);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            std::istringstream ls(line);
+            std::string key;
+            if (!(ls >> key)) continue;
+            if (key == "texture") {
+                const std::size_t at = line.find("texture");
+                m.texture = TexturePathFromText(line.substr(at + 7));
+                continue;
+            }
+            std::vector<std::string> v;
+            for (std::string t; ls >> t;) v.push_back(t);
+            // Field i of this line as a finite float into `dst`; anything else keeps `dst` and is counted.
+            auto f = [&](std::size_t i, float& dst) {
+                float x = 0.0f;
+                if (i < v.size() && ParseTolerantFloat(v[i], x) && std::isfinite(x)) dst = x;
+                else ++bad;
+            };
+            auto n = [&](std::size_t i, int& dst) {
+                float x = 0.0f;
+                if (i < v.size() && ParseTolerantFloat(v[i], x) && std::isfinite(x) && x == std::floor(x) &&
+                    x >= -1.0e6f && x <= 1.0e6f) dst = (int)x;
+                else ++bad;
+            };
+            auto b = [&](std::size_t i, bool& dst) { int x = dst ? 1 : 0; n(i, x); dst = x != 0; };
+            if (key == "color")         { f(0, m.color.r); f(1, m.color.g); f(2, m.color.b); f(3, m.color.a); }
+            else if (key == "emissive") { f(0, m.emissive.r); f(1, m.emissive.g); f(2, m.emissive.b); }
+            else if (key == "specular") { f(0, m.specular); f(1, m.shininess); }
+            else if (key == "flags")    { b(0, m.unlit); b(1, m.doubleSided); }
+            else if (key == "tiling")   { f(0, m.tiling.x); f(1, m.tiling.y); }
+            else if (key == "shader") {
+                int s = (int)m.shader;
+                n(0, s);
+                // An id this build does not know (a damaged file, or a newer shader) draws as Standard.
+                if (s < 0 || s > (int)MeshRenderer::Shader::Velvet) { ++bad; s = (int)MeshRenderer::Shader::Standard; }
+                m.shader = (MeshRenderer::Shader)s;
+                n(1, m.toonBands);
+            }
+            else if (key == "rim")      { f(0, m.rimStrength); f(1, m.rimPower); f(2, m.rimColor.r); f(3, m.rimColor.g); f(4, m.rimColor.b); }
+            else if (key == "outline")  { b(0, m.outline); f(1, m.outlineWidth); f(2, m.outlineColor.r); f(3, m.outlineColor.g); f(4, m.outlineColor.b); }
+            else if (key == "uvanim")   { f(0, m.uvScroll.x); f(1, m.uvScroll.y); b(2, m.triplanar); }
+            // "okaymat 1" and keys from a newer version are skipped.
+        }
+        if (problems) *problems = bad;
         return m;
     }
 

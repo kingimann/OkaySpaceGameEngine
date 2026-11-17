@@ -35,6 +35,8 @@ flags and CPU we ran, not a guarantee.
 
 SHA-256, HMAC-SHA256 and PBKDF2-HMAC-SHA256 are the exception: they are one header (`Crypto/Sha256.hpp`) with no link needed, and they are NOT behind `OKAY_OWN_CRYPTO`: they were always the engine's own code (checksums, account passwords, anti-cheat tag) and libsodium is not used for them. Until `claude/one-sha256` there were three separate copies; `docs/sha256_comparison.md` says how the best one was chosen and how all outputs were checked to be byte-identical.
 
+Speed only (2026-11-16, branch `claude2/own-http-sha-fast`): the SHA-256 block function was made faster, and on x86 CPUs with the SHA extensions those instructions are used (picked once at run time; `OKAY_SHA256_PORTABLE=1` forces the portable function). Every digest is the same as before (FIPS 180-4 vectors, 100,000 random messages in random pieces against Python hashlib with both block functions, the crypto suites including the libsodium cross-checks, ASan and UBSan). Nothing else in `okay::crypto` changed, and nothing changed about which library is used for anything: libsodium stays the default for everything it does, and `okay::crypto` is still not a default replacement for it (rule 18).
+
 `okay::crypto` is its own static library (`okay_crypto`, `okay::crypto` in CMake), so code that must not link the engine can use it:
 `shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz
 targets and benchmark link only it.

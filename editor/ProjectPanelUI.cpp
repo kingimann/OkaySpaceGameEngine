@@ -466,10 +466,23 @@ struct ImportEdit {
 };
 ImportEdit g_imp;
 
+// A grey note under a setting, wrapped at the panel's edge (a plain TextDisabled line ran off the Inspector's right
+// side: "Read while it plays keeps a long file in a small fixed amount" with the rest cut off).
+void Hint(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
 bool Combo(const char* label, int& value, std::initializer_list<const char*> items) {
     bool changed = false;
     std::vector<const char*> v(items);
-    ImGui::SetNextItemWidth(160);
+    // As wide as its longest choice (a fixed 160 px showed "Load the whole fi"), but never wider than the panel.
+    float widest = 0.0f;
+    for (const char* it : v) widest = std::max(widest, ImGui::CalcTextSize(it).x);
+    const float want = widest + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(label, nullptr, true).x - ImGui::GetStyle().ItemInnerSpacing.x;
+    ImGui::SetNextItemWidth(std::max(160.0f, std::min(want, room)));
     if (ImGui::BeginCombo(label, value >= 0 && value < (int)v.size() ? v[value] : "")) {
         for (int i = 0; i < (int)v.size(); ++i)
             if (ImGui::Selectable(v[i], value == i)) { value = i; changed = true; }
@@ -502,7 +515,7 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
     ok::ImportSettings& e = g_imp.edit;
     ImGui::TextDisabled("IMPORT SETTINGS");
     if (e.fromNewerVersion) {
-        ImGui::TextDisabled("Made by a newer editor. Shown, but not changed here.");
+        Hint("Made by a newer editor. Shown, but not changed here.");
         return false;
     }
     switch (e.kind) {
@@ -511,36 +524,36 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             int si = 7;
             for (int i = 0; i < 11; ++i) if (sizes[i] == e.texture.maxSize) si = i;
             if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
-            ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            Hint("Bigger pictures are made smaller when loaded.");
             if (kShowTextureSamplerSettings) {
             int fi = static_cast<int>(e.texture.filter);
             if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"})) e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi);
-            ImGui::TextDisabled("Point keeps hard pixel edges.");
+            Hint("Point keeps hard pixel edges.");
             int wi = static_cast<int>(e.texture.wrap);
             if (Combo("Wrap", wi, {"Repeat", "Clamp", "Mirror"})) e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(wi);
-            ImGui::TextDisabled("What is drawn past the picture's edge.");
+            Hint("What is drawn past the picture's edge.");
             ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
-            ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
-            ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+            Hint("Smaller copies for far away. Off: always full size.");
+            Hint("Applies in the editor view and OpenGL / software games.");
             }
             break;
         }
         case ok::AssetType::Model: {
             ImGui::SetNextItemWidth(160);
             ImGui::DragFloat("Scale", &e.model.scale, 0.01f, 0.0001f, 10000.0f, "%.4f");
-            ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
+            Hint("Multiplies its size when you add it to a scene.");
             int ni = static_cast<int>(e.model.normals);
             if (Combo("Normals", ni, {"From the file", "Calculate (smooth)", "Flat (faceted)"})) e.model.normals = static_cast<ok::ModelImportSettings::Normals>(ni);
             if (e.model.normals == ok::ModelImportSettings::Normals::Calculate) {
                 ImGui::SetNextItemWidth(160);
                 ImGui::DragFloat("Smoothing angle", &e.model.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg");
-                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                Hint("Sharper edges stay hard. Not for rigged parts.");
             } else if (e.model.normals == ok::ModelImportSettings::Normals::Flat) {
-                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                Hint("Each face shaded alone. Not for rigged parts.");
             }
             ImGui::Checkbox("Import animations", &e.model.importAnimations);
-            ImGui::TextDisabled("Off: no clips, rest pose.");
-            ImGui::TextDisabled("Used when the model is next added to a scene.");
+            Hint("Off: no clips, rest pose.");
+            Hint("Used when the model is next added to a scene.");
             break;
         }
         case ok::AssetType::Audio: {
@@ -548,10 +561,10 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
                 e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
                                              : ok::AudioImportSettings::LoadMode::Decode;
-            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            Hint("Read while it plays keeps a long file in a small fixed amount of memory.");
             ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
-            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-            ImGui::TextDisabled("Used the next time the file is loaded.");
+            Hint("Left and right become a single channel. Off keeps the recording as it is.");
+            Hint("Used the next time the file is loaded.");
             break;
         }
         default: return false;

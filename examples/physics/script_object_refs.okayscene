@@ -1,0 +1,106 @@
+okayscene 3
+name "Script object references"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 20 1 20 0 0 0 0
+end
+gameobject 1 "Floor Mesh"
+  active 1
+  parent 0
+  transform 0 0 0 0 0 0 1 20 1 20
+  mesh "Cube" 0.35 0.4 0.35 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 2 "Hidden Enemy"
+  active 0
+  parent -1
+  tag "Foe"
+  transform -6 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.3 0.3 0.3 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Enemy"
+  active 1
+  parent -1
+  tag "Foe"
+  transform -3 0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 1 1 1 0 0 0 0
+  mesh "Cube" 0.85 0.2 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 4 "Enemy"
+  active 1
+  parent -1
+  tag "Foe"
+  transform 0 0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 1 1 1 0 0 0 0
+  mesh "Cube" 0.85 0.2 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 5 "Enemy"
+  active 1
+  parent -1
+  tag "Foe"
+  transform 3 0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 1 1 1 0 0 0 0
+  mesh "Cube" 0.85 0.2 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 6 "Ball"
+  active 1
+  parent -1
+  transform 3 4 0 0 0 0 1 0.6 0.6 0.6
+  spherecollider3d 0.5 0 0 0 0 0 0
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  mesh "Sphere" 0.2 0.6 0.9 1 0 "" 0
+  material 0 0 0 0 16 1 "" 1 1
+  script "okayscript" "// The ball lands on the RIGHT enemy (x = 3). All three enemies are named \"Enemy\".
+// `other` is a reference to the exact object hit, so the right one is destroyed.
+public int hits;
+void OnCollisionEnter(string other) {
+  if (other.CompareTag(\"Foe\")) {
+    float x = other.transform.position.x;
+    Debug.Log($\"Ball hit {other} at x = {x}\");
+    Destroy(other);
+    hits++;
+  }
+}
+" "" 0
+end
+gameobject 7 "Spinner"
+  active 1
+  parent -1
+  transform 0 3 -3 0 0 0 1 1 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0 0 0 0 0.03 0
+  mesh "Cube" 0.9 0.8 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+  script "okayscript" "// Rigidbody calls from a script: the box spins and floats.
+// It also checks that GameObject.Find skips the switched-off \"Hidden Enemy\".
+public bool hiddenFound;
+public bool hiddenFoundAny;
+void Start() {
+  Rigidbody rb = GetComponent<Rigidbody>();
+  rb.useGravity = false;
+  rb.AddTorque(new Vector3(0, 3, 0), ForceMode.VelocityChange);
+  hiddenFound = GameObject.Find(\"Hidden Enemy\") != null;
+  hiddenFoundAny = GameObject.FindIncludingInactive(\"Hidden Enemy\") != null;
+  Debug.Log($\"Spinner: spin = {rb.angularVelocity.y} rad/s, Find(Hidden Enemy) found = {hiddenFound}, FindIncludingInactive found = {hiddenFoundAny}\");
+}
+" "" 0
+end
+gameobject 8 "Directional Light"
+  active 1
+  parent -1
+  transform 0 6 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 9 "Main Camera"
+  active 1
+  parent -1
+  transform 0 4.5 11 -0.13485 0 0 0.99086 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

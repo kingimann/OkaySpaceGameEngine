@@ -177,7 +177,7 @@ int main() {
     {
         ImportSettings t = ImportSettings::Defaults(AssetType::Texture);
         CHECK(t.version == ImportSettings::CurrentVersion(AssetType::Texture));
-        CHECK(t.texture.sRGB && t.texture.mipmaps && !t.texture.compress && t.texture.maxSize == 2048);
+        CHECK(t.texture.sRGB && t.texture.mipmaps && !t.texture.compress && t.texture.maxSize == 0);   // no limit: the same as no meta (#888 finding 75)
         t.texture.sRGB = false;
         t.texture.filter = TextureImportSettings::Filter::Point;
         t.texture.wrap = TextureImportSettings::Wrap::Clamp;

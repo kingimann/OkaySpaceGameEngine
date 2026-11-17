@@ -28130,14 +28130,14 @@ void DrawModeling(EditorState& ed) {
             for (int t = 0; t < (int)m->mesh.polyFace.size(); ++t) if (want.count(m->mesh.polyFace[t])) g_meshSelFaces.push_back(t);
         };
         host.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
-            static std::unordered_map<std::string, SDL_Texture*> cache;
+            static std::unordered_map<std::string, okay::ui2d::Tex> cache;
             auto it = cache.find(key);
             if (it != cache.end()) return it->second;
             static int s_frame = -1, s_made = 0;
             if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
-            if (s_made >= 2 || !g_sdlRenderer) return nullptr;   // a couple of pictures per frame, the rest fill in
+            if (s_made >= 2 || !g_gfx) return nullptr;   // a couple of pictures per frame, the rest fill in
             ++s_made;
-            SDL_Texture* tex = nullptr;
+            okay::ui2d::Tex tex = nullptr;
             {
                 okay::Scene sc;
                 GameObject* g = sc.CreateGameObject("guided thumb");
@@ -44741,9 +44741,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && !ed.scene().refImages.empty()) {
         for (const RefImage& ri : ed.scene().refImages) {
             if (!ri.visible || ri.path.empty() || !(ri.width > 0.0f)) continue;
-            SDL_Texture* rt = GetThumb(ri.path);
+            okay::ui2d::Tex rt = GetThumb(ri.path);
             if (!rt) continue;
-            int iw = 0, ih = 0; SDL_QueryTexture(rt, nullptr, nullptr, &iw, &ih);
+            int iw = 0, ih = 0; g_gfx->QueryTexture(rt, iw, ih);
             if (iw <= 0 || ih <= 0) continue;
             const std::array<Vec3, 4> c4 = okay::modeling::RefPlaneCorners((okay::modeling::RefPlane)std::clamp(ri.plane, 0, 2), ri.centre, ri.width, (float)ih / (float)iw, ri.flipX);
             ImVec2 sp[4]; bool ok = true;

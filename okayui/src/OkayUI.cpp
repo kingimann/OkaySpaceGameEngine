@@ -584,7 +584,6 @@ float g_childPadY = -1.0f;
 float g_childPad = -1.0f;
 inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (g_look ? 15.0f : 12.0f)); }
 inline float textH() { return fH() * g_theme.textScale; }
-inline float rowH() { return g_framePadY >= 0.0f ? textH() + 2.0f * g_framePadY : fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
 struct VisLabel {
@@ -674,7 +673,7 @@ inline bool aaOn() { return g_theme.antiAliased; }   // Theme::antiAliased (the 
 // a scrolling child, a section scrolled out of view). The overlay batch has no clip and is never culled.
 inline bool clippedAway(float x0, float y0, float x1, float y1) {
     if (g_toOverlay || !g_curClipOn) return false;
-    const SDL_Rect& r = g_curClipRect;
+    const okay::ui2d::Rect& r = g_curClipRect;
     return x1 <= (float)r.x || y1 <= (float)r.y || x0 >= (float)(r.x + r.w) || y0 >= (float)(r.y + r.h);
 }
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
@@ -3365,16 +3364,6 @@ bool Button(const char* label, Vec2 size) {
     return Button(hashLabel(label), x, y, w, h, label);
 }
 
-// A size from ImGui-style arguments: 0 or less (or not a number) in either axis keeps the automatic value.
-static float sizeOr(float v, float automatic) { return (v > 0.0f && std::isfinite(v)) ? std::min(v, 1.0e6f) : automatic; }
-
-bool Button(const char* label, Vec2 size) {
-    if (!g_lay.active) return false;
-    const float w = sizeOr(size.x, labelW(label) + 24.0f), h = sizeOr(size.y, rowH());
-    float x, y; place(w, h, x, y);
-    return Button(hashLabel(label), x, y, w, h, label);
-}
-
 bool SmallButton(const char* label) {
     if (!g_lay.active) return false;
     const float w = labelW(VisLabel(label).b) + 12.0f, h = textH() + 6.0f;   // tight padding
@@ -4090,6 +4079,8 @@ void comboFace(float x, float y, float w, float h, bool hover, const char* previ
     PushClipRect(x, y, std::max(0.0f, w - h), h);
     drawText(x + (g_framePadX >= 0.0f ? g_framePadX : 6.0f), y + (h - textH()) * 0.5f, preview, g_theme.textScale, g_theme.text);
     PopClipRect();
+}
+
 // A framed combo's box (StyleVar_FramedWidgets): a rounded field in Col_FrameBg, the text FramePadding.x in (clipped before the button),
 // and at the right end a square button as tall as the field in Col_Button with a filled triangle pointing down in the text colour.
 // The triangle's size and place (0.37 of the text height either side of the button's centre, its top edge 0.34 of the text height

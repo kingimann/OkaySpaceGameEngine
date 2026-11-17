@@ -750,6 +750,21 @@ static void testDistLayout() {
     check(got == expect, "layout matches the script's top exe, Tools DLL, version, assets and example", o);
 }
 
+static void testImportedCache() {
+    printf("test: an imported gcc -c command is restored from the cache\n");
+    fresh("icache");
+    write("a.cpp", "int a(){return 3;}\n");
+    string src = (gRoot / "a.cpp").string();
+    string obj = (gRoot / "a.o").string();
+    write("build.okay",
+          "action\n  cmd = g++ -c " + src + " -o " + obj + "\n  output = " + obj + "\n  inputs = " + src + "\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "first imported compile is a miss", o);
+    fs::remove(gRoot / "a.o");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && fs::exists(gRoot / "a.o"), "deleted object is restored from the cache", o);
+}
+
 static void testNativeManifest() {
     printf("test: okay-build native writes a manifest from the source tree\n");
     fresh("native");
@@ -1049,6 +1064,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

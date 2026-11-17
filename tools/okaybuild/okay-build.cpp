@@ -1476,6 +1476,53 @@ static vector<string> shellWords(const string& c) { // enough shell lexing to fi
     return w;
 }
 static bool endsWith(const string& s, const char* x) { size_t n = strlen(x); return s.size() >= n && s.compare(s.size() - n, n, x) == 0; }
+static string toolBase(string s) {
+    auto p = s.find_last_of("/\\"); if (p != string::npos) s = s.substr(p + 1);
+    if (endsWith(s, ".exe")) s.resize(s.size() - 4);
+    return s;
+}
+static bool gccLike(const string& b) {
+    return b == "gcc" || b == "g++" || b == "clang" || b == "clang++" || b == "cc" || b == "c++" || b.find("gcc") != string::npos || b.find("g++") != string::npos || b.find("clang") != string::npos;
+}
+// 2 = not a compile. Otherwise the same codes as lookupCache. Imported gcc/clang/cl -c commands
+// are keyed by the preprocessed text, the original words, and the compiler file.
+static int lookupImported(const Action& a, string& key, string& errOut) {
+    auto w = shellWords(a.rawCmd);
+    if (w.size() < 2) return 2;
+    string base = toolBase(w[0]);
+    bool gcc = gccLike(base), cl = base == "cl";
+    if (!gcc && !cl) return 2;
+    bool compile = false; string output, dep;
+    vector<string> pp; pp.push_back(w[0]); pp.push_back(gcc ? "-E" : "/E");
+    for (size_t i = 1; i < w.size(); ++i) {
+        const string& s = w[i];
+        if (gcc && (s == "-c" || s == "-MMD" || s == "-MD")) { if (s == "-c") compile = true; continue; }
+        if (gcc && (s == "-o" || s == "-MF" || s == "-MT") && i + 1 < w.size()) {
+            if (s == "-o") output = w[++i]; else if (s == "-MF") dep = w[++i]; else ++i;
+            continue;
+        }
+        if (cl && (s == "/c" || s == "-c")) { compile = true; continue; }
+        if (cl && (s.rfind("/Fo", 0) == 0 || s.rfind("/Fe", 0) == 0)) { output = s.substr(3); continue; }
+        pp.push_back(s);
+    }
+    if (!compile || (output.empty() && a.output.empty())) return 2;
+    string dest = a.output.empty() ? output : a.output;
+    string depfile = a.depfile.empty() ? dep : a.depfile;
+    string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
+    if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
+    string id = compilerIdentity(w[0]); string cmd = hashArgv(w);
+    uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
+    key = hex64(h);
+    string dir = cacheDirOf(key);
+    if (!fs::is_regular_file(dir + "/obj")) return 0;
+    if (!depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
+    std::error_code ec;
+    fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec);
+    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!depfile.empty()) fs::copy_file(dir + "/dep", depfile, fs::copy_options::overwrite_existing, ec);
+    rememberCache(key);
+    return 1;
+}
 // --- build.ninja reader: only what we need (build statements with outputs, rule, inputs, implicit and order-only inputs)
 struct NinjaEdge { string rule; vector<string> outs, ins, implicit, orderOnly; };
 static vector<string> ninjaSplit(const string& s) { // split on unescaped spaces; '$ ' '$:' '$$' unescaped; ':' | '||' kept as words
@@ -1750,8 +1797,10 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (!err.empty()) { done(id, false, err, false); continue; }
                 long long tStep = nowNs();
                 string cacheKey, tag = "-";
-                if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) {
-                    int cr = lookupCache(a, cacheKey, out);
+                int cr = 2;
+                if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) cr = lookupCache(a, cacheKey, out);
+                else if (gUseCache && a.kind == "RUN") cr = lookupImported(a, cacheKey, out);
+                if (cr != 2) {
                     if (cr < 0) { noteStep(a.kind, a.desc, nowNs() - tStep, "fail"); done(id, false, out, false); continue; }
                     if (cr == 1) {
                         ++gCacheHit; tag = "hit"; printf("        cache hit\n"); fflush(stdout);
@@ -1910,8 +1959,10 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                         }
                         long long tStep = nowNs();
                         string cacheKey, tag = "-"; bool cached = false;
-                        if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) {
-                            int cr = lookupCache(a, cacheKey, out);
+                        int cr = 2;
+                        if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) cr = lookupCache(a, cacheKey, out);
+                        else if (gUseCache && a.kind == "RUN") cr = lookupImported(a, cacheKey, out);
+                        if (cr != 2) {
                             if (cr < 0) { ok = false; tag = "fail"; }
                             else if (cr == 1) { cached = true; tag = "hit"; ++gCacheHit; std::lock_guard<std::mutex> pl(mu); printf("        cache hit\n"); fflush(stdout); }
                             else { tag = "miss"; ++gCacheMiss; std::lock_guard<std::mutex> pl(mu); printf("        cache miss\n"); fflush(stdout); }

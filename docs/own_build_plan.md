@@ -60,6 +60,9 @@ If `MAKEFLAGS` or `OKAY_JOBSERVER` contains `--jobserver-auth=fifo:PATH`, okay-b
 ## Report diff
 `okay-build report diff A B` reads two saved reports (history numbers or file paths) and prints steps that are only in one of them, and steps whose time changed.
 
+## Imported compiles in the cache
+An imported command whose first word is gcc, g++, clang, clang++ or cl, and which passes `-c` or `/c`, is preprocessed and keyed like a structured compile. A later build that is missing the object copies it back and does not compile. Archives and links are left as ordinary commands.
+
 ## Native manifest (no CMake)
 `okay-build native <repo>` reads the source tree, not a CMake build directory. It writes a `build.okay` with `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math`. Files that are only compiled for optional backends (Assimp, Steamworks, the Win32 platform file) are left out. Includes and the Linux defines (`OKAY_HAVE_SODIUM`, the platform SDL/own/X11 switches) are written into that manifest. The real `test_math` run is recorded below when it has been measured.
 

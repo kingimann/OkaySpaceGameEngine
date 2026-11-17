@@ -85,18 +85,27 @@ struct Module {
 
 std::string printModule(const Module& m);
 
-// Constant folding and dead-code elimination. Folding stays inside one block, so a
-// value that changes in a loop is not treated as a constant. From the integer rules
-// in ISO/IEC 9899 and two's-complement wrapping.
+// Constant folding, cross-block constant and copy propagation, and dead-code
+// elimination. A value that is changed in a loop is not treated as a constant.
+// From the integer rules in ISO/IEC 9899 and two's-complement wrapping.
 void optimizeModule(Module& m);
 
-// Up to three callee-saved registers (rbx, r12, r13) for values whose address
-// is not taken. home[v] is -1 when v stays in its stack slot, otherwise 0, 1, or 2.
+// Linear scan over rbx, r12–r15, rsi, rdi, and r8–r11. rax, rcx, and rdx stay
+// scratch. home[v] is -1 when v stays in its stack slot, otherwise an index into
+// that list (0..4 are callee-saved). saved lists the callee-saved indices the
+// prologue must preserve. spill and reload name the caller-saved homes to write
+// to the stack before a call and to read back after it. Address-taken values and
+// floating-point values stay on the stack.
 struct RegHomes {
     std::vector<int> home;
-    int count = 0;
+    std::vector<int> saved;
+    std::vector<std::vector<std::vector<int>>> spill;
+    std::vector<std::vector<std::vector<int>>> reload;
 };
 RegHomes assignRegs(const Function& f);
+
+// Tests turn this off to count stack traffic with every value in its slot.
+void setAllocateRegisters(bool on);
 
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",

@@ -7,7 +7,7 @@ namespace okaycc {
 namespace {
 
 const char* kArgReg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
-const char* kPhys[] = {"%rbx", "%r12", "%r13"};
+const char* kPhys[] = {"%rbx", "%r12", "%r13", "%r14", "%r15", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"};
 const RegHomes* curHomes = nullptr;
 
 int homeOf(int v) {
@@ -52,6 +52,24 @@ void load(std::string& s, const Operand& o, const char* reg) {
     s += ", ";
     s += reg;
     s += "\n";
+}
+
+bool listed(int v, const std::vector<int>& xs) {
+    for (int x : xs)
+        if (x == v) return true;
+    return false;
+}
+
+void loadFrom(std::string& s, const Operand& o, const char* reg, const std::vector<int>& spilled) {
+    if (o.kind == Operand::Kind::Reg && listed(o.reg, spilled)) {
+        s += "  movq ";
+        s += slot(o.reg);
+        s += ", ";
+        s += reg;
+        s += "\n";
+        return;
+    }
+    load(s, o, reg);
 }
 
 std::string hex64(std::uint64_t v) {
@@ -198,7 +216,8 @@ const char* setcc(Inst::Op op, bool uns) {
     }
 }
 
-void emitInst(std::string& s, const Function& f, const Inst& in) {
+void emitInst(std::string& s, const Function& f, const Inst& in, const std::vector<int>& spilled,
+              const std::vector<int>& reload) {
     if (in.fp && in.op == Inst::Op::Cvt) {
         int src = in.extra;
         int code = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
@@ -355,31 +374,38 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Call: {
+        for (int v : spilled) {
+            s += "  movq ";
+            s += kPhys[homeOf(v)];
+            s += ", ";
+            s += slot(v);
+            s += "\n";
+        }
         int nstack = 0;
         if (!in.stack.empty()) {
             nstack = static_cast<int>(in.stack.size());
             for (int i = nstack - 1; i >= 0; --i) {
-                load(s, in.stack[static_cast<std::size_t>(i)], "%rax");
+                loadFrom(s, in.stack[static_cast<std::size_t>(i)], "%rax", spilled);
                 s += "  pushq %rax\n";
             }
         } else {
             nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
             if (nstack % 2) s += "  subq $8, %rsp\n";
             for (int i = nstack - 1; i >= 0; --i) {
-                load(s, in.args[static_cast<std::size_t>(6 + i)], "%rax");
+                loadFrom(s, in.args[static_cast<std::size_t>(6 + i)], "%rax", spilled);
                 s += "  pushq %rax\n";
             }
         }
         int nreg = static_cast<int>(in.args.size()) < 6 ? static_cast<int>(in.args.size()) : 6;
         if (!in.stack.empty()) nreg = static_cast<int>(in.args.size());
         for (int i = 0; i < nreg && i < 6; ++i) {
-            load(s, in.args[static_cast<std::size_t>(i)], "%rax");
+            loadFrom(s, in.args[static_cast<std::size_t>(i)], "%rax", spilled);
             s += "  movq %rax, ";
             s += kArgReg[i];
             s += "\n";
         }
         if (in.func.empty()) {
-            load(s, in.a, "%rax");
+            loadFrom(s, in.a, "%rax", spilled);
             if (in.va) s += "  movq %rax, %r11\n  xorl %eax, %eax\n  call *%r11\n";
             else s += "  call *%rax\n";
         } else if (in.func == "syscall") {
@@ -406,6 +432,13 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         if (in.fp && in.dst >= 0) storeXmm(s, 0, in.dst, in.extra);
         else if (in.dst >= 0) store(s, "%rax", in.dst);
         if (in.b.kind == Operand::Kind::Reg) store(s, "%rdx", in.b.reg);
+        for (int v : reload) {
+            s += "  movq ";
+            s += slot(v);
+            s += ", ";
+            s += kPhys[homeOf(v)];
+            s += "\n";
+        }
         break;
     }
     case Inst::Op::Ret:
@@ -509,11 +542,12 @@ std::string emitFunction(const Function& f) {
         }
     }
     int saveBase = cursor;
-    cursor += homes.count * 8;
+    cursor += static_cast<int>(homes.saved.size()) * 8;
     int memFrame = cursor;
     if (memFrame % 16) memFrame += 8;
     std::vector<int> saveDisp;
-    for (int i = 0; i < homes.count; ++i) saveDisp.push_back(-(saveBase + 8 * (i + 1)));
+    for (std::size_t i = 0; i < homes.saved.size(); ++i)
+        saveDisp.push_back(-(saveBase + 8 * (static_cast<int>(i) + 1)));
     std::string s;
     if (!f.localSym) {
         s += ".globl ";
@@ -527,11 +561,11 @@ std::string emitFunction(const Function& f) {
         s += std::to_string(memFrame);
         s += ", %rsp\n";
     }
-    for (int i = 0; i < homes.count; ++i) {
+    for (std::size_t i = 0; i < homes.saved.size(); ++i) {
         s += "  movq ";
-        s += kPhys[i];
+        s += kPhys[homes.saved[i]];
         s += ", ";
-        s += std::to_string(saveDisp[static_cast<std::size_t>(i)]);
+        s += std::to_string(saveDisp[i]);
         s += "(%rbp)\n";
     }
     int nreg = f.params < 6 ? f.params : 6;
@@ -539,23 +573,7 @@ std::string emitFunction(const Function& f) {
         s += "  movq ";
         s += kArgReg[i];
         s += ", ";
-        int h = homeOf(i);
-        s += h >= 0 ? kPhys[h] : slot(i);
-        s += "\n";
-    }
-    for (int i = 6; i < f.params; ++i) {
-        int disp = 16 + 8 * (i - 6);
-        s += "  movq ";
-        s += std::to_string(disp);
-        s += "(%rbp), %rax\n";
-        store(s, "%rax", i);
-    }
-    for (std::size_t i = 0; i < f.xmmSlot.size(); ++i) {
-        int w = i < f.xmmWidth.size() ? f.xmmWidth[i] : 8;
-        s += w <= 4 ? "  movss %xmm" : "  movsd %xmm";
-        s += std::to_string(i);
-        s += ", ";
-        s += slot(f.xmmSlot[i]);
+        s += slot(i);
         s += "\n";
     }
     if (f.vaNamed >= 0 && !localOff.empty()) {
@@ -575,11 +593,37 @@ std::string emitFunction(const Function& f) {
             s += "(%rbp)\n";
         }
     }
+    for (int i = 0; i < nreg; ++i) {
+        int h = homeOf(i);
+        if (h < 0) continue;
+        s += "  movq ";
+        s += slot(i);
+        s += ", ";
+        s += kPhys[h];
+        s += "\n";
+    }
+    for (int i = 6; i < f.params; ++i) {
+        int disp = 16 + 8 * (i - 6);
+        s += "  movq ";
+        s += std::to_string(disp);
+        s += "(%rbp), %rax\n";
+        store(s, "%rax", i);
+    }
+    for (std::size_t i = 0; i < f.xmmSlot.size(); ++i) {
+        int w = i < f.xmmWidth.size() ? f.xmmWidth[i] : 8;
+        s += w <= 4 ? "  movss %xmm" : "  movsd %xmm";
+        s += std::to_string(i);
+        s += ", ";
+        s += slot(f.xmmSlot[i]);
+        s += "\n";
+    }
     int localIndex = 0;
-    for (const Block& b : f.blocks) {
+    for (int bi = 0; bi < static_cast<int>(f.blocks.size()); ++bi) {
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
         s += blockName(f.name, b.name);
         s += ":\n";
-        for (const Inst& in : b.code) {
+        for (int ii = 0; ii < static_cast<int>(b.code.size()); ++ii) {
+            const Inst& in = b.code[static_cast<std::size_t>(ii)];
             if (in.op == Inst::Op::Local || in.op == Inst::Op::Lea || in.op == Inst::Op::LeaSym ||
                 in.op == Inst::Op::Load || in.op == Inst::Op::Store || in.op == Inst::Op::GLoad ||
                 in.op == Inst::Op::GStore) {
@@ -587,17 +631,18 @@ std::string emitFunction(const Function& f) {
                 if (in.op == Inst::Op::Local) off = localOff[static_cast<std::size_t>(localIndex++)];
                 emitMem(s, in, off);
             } else {
-                emitInst(s, f, in);
+                emitInst(s, f, in, homes.spill[static_cast<std::size_t>(bi)][static_cast<std::size_t>(ii)],
+                         homes.reload[static_cast<std::size_t>(bi)][static_cast<std::size_t>(ii)]);
             }
         }
     }
     s += f.name;
     s += "_epilogue:\n";
-    for (int i = 0; i < homes.count; ++i) {
+    for (std::size_t i = 0; i < homes.saved.size(); ++i) {
         s += "  movq ";
-        s += std::to_string(saveDisp[static_cast<std::size_t>(i)]);
+        s += std::to_string(saveDisp[i]);
         s += "(%rbp), ";
-        s += kPhys[i];
+        s += kPhys[homes.saved[i]];
         s += "\n";
     }
     s += "  movq %rbp, %rsp\n  popq %rbp\n  ret\n";

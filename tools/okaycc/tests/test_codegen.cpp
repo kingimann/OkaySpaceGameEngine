@@ -115,8 +115,58 @@ int main() {
     {
         std::string as;
         int got = runExit("int add(int a, int b){return a+b;} int main(){return add(20, 22);}\n", &as);
-        if (got != 42 || as.find("%rbx") == std::string::npos) {
+        bool reg = as.find("%rbx") != std::string::npos || as.find("%r8") != std::string::npos ||
+                   as.find("%r9") != std::string::npos || as.find("%r10") != std::string::npos ||
+                   as.find("%r11") != std::string::npos || as.find("%r12") != std::string::npos ||
+                   as.find("%rsi, %rax") != std::string::npos || as.find("%rdi, %rax") != std::string::npos;
+        if (got != 42 || !reg) {
             std::fprintf(stderr, "FAIL regalloc exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "int hot(int n) {\n"
+            "  int a; int b; int c; int d; int i;\n"
+            "  a = 1; b = 2; c = 3; d = 4; i = 0;\n"
+            "  while (i < n) {\n"
+            "    a = a + b;\n"
+            "    b = b + c;\n"
+            "    c = c + d;\n"
+            "    d = d + i;\n"
+            "    i = i + 1;\n"
+            "  }\n"
+            "  return a + b + c + d;\n"
+            "}\n"
+            "int main() { return hot(4); }\n";
+        auto stackIn = [](const std::string& as) {
+            std::string begin = "hot_while0_cond:";
+            std::string end = "hot_while0_end:";
+            auto i = as.find(begin);
+            auto j = i == std::string::npos ? std::string::npos : as.find(end, i);
+            if (i == std::string::npos || j == std::string::npos) return -1;
+            int n = 0;
+            for (std::size_t p = i; p < j; ) {
+                p = as.find("(%rbp)", p);
+                if (p == std::string::npos || p >= j) break;
+                ++n;
+                p += 6;
+            }
+            return n;
+        };
+        okaycc::setAllocateRegisters(false);
+        okaycc::Diagnostics offD;
+        std::string off = okaycc::compileToAssembly(src, offD);
+        okaycc::setAllocateRegisters(true);
+        okaycc::Diagnostics onD;
+        std::string on = okaycc::compileToAssembly(src, onD);
+        int offN = stackIn(off);
+        int onN = stackIn(on);
+        int got = runExit(src, nullptr);
+        if (!offD.ok() || !onD.ok() || offN < 0 || onN < 0 || !(onN < offN) || got != 115) {
+            std::fprintf(stderr, "FAIL hot loop stack %d -> %d exit %d\n", offN, onN, got);
             ++okaycc_test::gFail;
         } else {
             ++gOk;

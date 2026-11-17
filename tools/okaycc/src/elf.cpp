@@ -15,10 +15,13 @@ constexpr std::size_t kHeader = 64;
 constexpr std::size_t kPhdr = 56;
 constexpr std::size_t kLoadOff = kHeader + kPhdr;
 
-enum Reg { Rax = 0, Rcx = 1, Rdx = 2, Rbx = 3, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7, R8 = 8, R9 = 9, R12 = 12, R13 = 13 };
+enum Reg {
+    Rax = 0, Rcx = 1, Rdx = 2, Rbx = 3, Rsp = 4, Rbp = 5, Rsi = 6, Rdi = 7,
+    R8 = 8, R9 = 9, R10 = 10, R11 = 11, R12 = 12, R13 = 13, R14 = 14, R15 = 15
+};
 
 const int kArg[] = {Rdi, Rsi, Rdx, Rcx, R8, R9};
-const int kPhys[] = {Rbx, R12, R13};
+const int kPhys[] = {Rbx, R12, R13, R14, R15, Rsi, Rdi, R8, R9, R10, R11};
 const RegHomes* curHomes = nullptr;
 
 int homeOf(int v) {
@@ -423,7 +426,21 @@ void fpBin(Image& im, int width, int opcode) {
     u8(im, modrm(3, 0, 1));
 }
 
-void emitInst(Image& im, const Function& f, const Inst& in) {
+void movDisp(Image& im, int disp, int reg, bool store);
+
+bool listed(int v, const std::vector<int>& xs) {
+    for (int x : xs)
+        if (x == v) return true;
+    return false;
+}
+
+void loadRaxCall(Image& im, const Operand& o, const std::vector<int>& spilled) {
+    if (o.kind == Operand::Kind::Reg && listed(o.reg, spilled)) movRaxSlot(im, o.reg);
+    else loadRax(im, o);
+}
+
+void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<int>& spilled,
+              const std::vector<int>& reload) {
     if (in.fp && in.op == Inst::Op::Cvt) {
         int src = in.extra;
         int code = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
@@ -587,29 +604,30 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Call: {
+        for (int v : spilled) movDisp(im, slotDisp(v), kPhys[homeOf(v)], true);
         int nstack = 0;
         if (!in.stack.empty()) {
             nstack = static_cast<int>(in.stack.size());
             for (int i = nstack - 1; i >= 0; --i) {
-                loadRax(im, in.stack[static_cast<std::size_t>(i)]);
+                loadRaxCall(im, in.stack[static_cast<std::size_t>(i)], spilled);
                 pushReg(im, Rax);
             }
         } else {
             nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
             if (nstack % 2) aluImm(im, Rsp, 8, 5);
             for (int i = nstack - 1; i >= 0; --i) {
-                loadRax(im, in.args[static_cast<std::size_t>(6 + i)]);
+                loadRaxCall(im, in.args[static_cast<std::size_t>(6 + i)], spilled);
                 pushReg(im, Rax);
             }
         }
         int nreg = static_cast<int>(in.args.size()) < 6 ? static_cast<int>(in.args.size()) : 6;
         if (!in.stack.empty()) nreg = static_cast<int>(in.args.size());
         for (int i = 0; i < nreg && i < 6; ++i) {
-            loadRax(im, in.args[static_cast<std::size_t>(i)]);
+            loadRaxCall(im, in.args[static_cast<std::size_t>(i)], spilled);
             movReg(im, kArg[i], Rax);
         }
         if (in.func.empty()) {
-            loadRax(im, in.a);
+            loadRaxCall(im, in.a, spilled);
             if (in.va) {
                 u8(im, 0x49);
                 u8(im, 0x89);
@@ -657,6 +675,7 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
                 i32(im, slotDisp(in.b.reg));
             }
         }
+        for (int v : reload) movDisp(im, slotDisp(v), kPhys[homeOf(v)], false);
         break;
     }
     case Inst::Op::Ret:
@@ -749,19 +768,49 @@ void emitFunction(Image& im, const Function& f) {
         }
     }
     int saveBase = cursor;
-    cursor += homes.count * 8;
+    cursor += static_cast<int>(homes.saved.size()) * 8;
     int used = cursor;
     if (used % 16) used += 8;
     std::vector<int> saveDisp;
-    for (int i = 0; i < homes.count; ++i) saveDisp.push_back(-(saveBase + 8 * (i + 1)));
+    for (std::size_t i = 0; i < homes.saved.size(); ++i)
+        saveDisp.push_back(-(saveBase + 8 * (static_cast<int>(i) + 1)));
     pushReg(im, Rbp);
     movReg(im, Rbp, Rsp);
     if (used) aluImm(im, Rsp, used, 5);
-    for (int i = 0; i < homes.count; ++i) movDisp(im, saveDisp[static_cast<std::size_t>(i)], kPhys[i], true);
+    for (std::size_t i = 0; i < homes.saved.size(); ++i)
+        movDisp(im, saveDisp[i], kPhys[homes.saved[i]], true);
     int nreg = f.params < 6 ? f.params : 6;
     for (int i = 0; i < nreg; ++i) {
         movReg(im, Rax, kArg[i]);
-        movSlotRax(im, i);
+        rexW(im, Rax, Rbp);
+        u8(im, 0x89);
+        u8(im, modrm(2, Rax, Rbp));
+        i32(im, slotDisp(i));
+    }
+    if (f.vaNamed >= 0 && !localOff.empty()) {
+        int base = localOff[0];
+        for (int i = 0; i < 8; ++i) {
+            u8(im, 0xF3);
+            u8(im, 0x0F);
+            u8(im, 0x7F);
+            u8(im, modrm(2, i, Rbp));
+            i32(im, base + 48 + 16 * i);
+        }
+        for (int i = 0; i < 6; ++i) {
+            rexW(im, kArg[i], Rbp);
+            u8(im, 0x89);
+            u8(im, modrm(2, kArg[i], Rbp));
+            i32(im, base + 8 * i);
+        }
+    }
+    for (int i = 0; i < nreg; ++i) {
+        int h = homeOf(i);
+        if (h < 0) continue;
+        rexW(im, Rax, Rbp);
+        u8(im, 0x8B);
+        u8(im, modrm(2, Rax, Rbp));
+        i32(im, slotDisp(i));
+        movReg(im, kPhys[h], Rax);
     }
     for (int i = 6; i < f.params; ++i) {
         int disp = 16 + 8 * (i - 6);
@@ -775,29 +824,12 @@ void emitFunction(Image& im, const Function& f) {
         int w = i < f.xmmWidth.size() ? f.xmmWidth[i] : 8;
         xmmMem(im, static_cast<int>(i), slotDisp(f.xmmSlot[i]), w, true);
     }
-    if (f.vaNamed >= 0 && !localOff.empty()) {
-        int base = localOff[0];
-        for (int i = 0; i < 8; ++i) {
-            u8(im, 0xF3);
-            u8(im, 0x0F);
-            u8(im, 0x7F);
-            u8(im, modrm(2, i, Rbp));
-            i32(im, base + 48 + 16 * i);
-        }
-    }
-    if (f.vaNamed >= 0 && !localOff.empty()) {
-        int base = localOff[0];
-        for (int i = 0; i < 6; ++i) {
-            rexW(im, kArg[i], Rbp);
-            u8(im, 0x89);
-            u8(im, modrm(2, kArg[i], Rbp));
-            i32(im, base + 8 * i);
-        }
-    }
     int localIndex = 0;
-    for (const Block& b : f.blocks) {
+    for (int bi = 0; bi < static_cast<int>(f.blocks.size()); ++bi) {
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
         im.labels[blockName(f.name, b.name)] = im.bytes.size();
-        for (const Inst& in : b.code) {
+        for (int ii = 0; ii < static_cast<int>(b.code.size()); ++ii) {
+            const Inst& in = b.code[static_cast<std::size_t>(ii)];
             bool mem = in.op == Inst::Op::Local || in.op == Inst::Op::Lea || in.op == Inst::Op::LeaSym ||
                        in.op == Inst::Op::Load || in.op == Inst::Op::Store || in.op == Inst::Op::GLoad ||
                        in.op == Inst::Op::GStore;
@@ -806,12 +838,14 @@ void emitFunction(Image& im, const Function& f) {
                 if (in.op == Inst::Op::Local) off = localOff[static_cast<std::size_t>(localIndex++)];
                 emitMem(im, in, off);
             } else {
-                emitInst(im, f, in);
+                emitInst(im, f, in, homes.spill[static_cast<std::size_t>(bi)][static_cast<std::size_t>(ii)],
+                         homes.reload[static_cast<std::size_t>(bi)][static_cast<std::size_t>(ii)]);
             }
         }
     }
     im.labels[f.name + "_epilogue"] = im.bytes.size();
-    for (int i = 0; i < homes.count; ++i) movDisp(im, saveDisp[static_cast<std::size_t>(i)], kPhys[i], false);
+    for (std::size_t i = 0; i < homes.saved.size(); ++i)
+        movDisp(im, saveDisp[i], kPhys[homes.saved[i]], false);
     movReg(im, Rsp, Rbp);
     popReg(im, Rbp);
     u8(im, 0xC3);

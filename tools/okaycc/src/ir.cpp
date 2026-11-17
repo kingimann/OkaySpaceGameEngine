@@ -1,5 +1,6 @@
 #include "ir.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -518,30 +519,63 @@ void optimizeModule(Module& m) {
     }
 }
 
+namespace {
+
+constexpr int kCalleeRegs = 5;
+constexpr int kCallerRegs = 6;
+constexpr int kPhysRegs = kCalleeRegs + kCallerRegs;
+
+bool gAllocate = true;
+
+void sizeHomes(RegHomes& h, const Function& f, int nregs) {
+    h.home.assign(static_cast<std::size_t>(nregs), -1);
+    h.spill.assign(f.blocks.size(), {});
+    h.reload.assign(f.blocks.size(), {});
+    for (std::size_t b = 0; b < f.blocks.size(); ++b) {
+        std::size_t n = f.blocks[b].code.size();
+        h.spill[b].assign(n, {});
+        h.reload[b].assign(n, {});
+    }
+}
+
+}  // namespace
+
+void setAllocateRegisters(bool on) { gAllocate = on; }
+
 RegHomes assignRegs(const Function& f) {
-    std::vector<char> used;
     std::vector<char> mem;
-    auto touch = [&](int r) {
-        if (r < 0) return;
-        if (r >= static_cast<int>(used.size())) used.resize(static_cast<std::size_t>(r + 1), 0);
-        used[static_cast<std::size_t>(r)] = 1;
-    };
     auto markMem = [&](int r) {
-        touch(r);
+        if (r < 0) return;
         if (r >= static_cast<int>(mem.size())) mem.resize(static_cast<std::size_t>(r + 1), 0);
         mem[static_cast<std::size_t>(r)] = 1;
     };
-    int n = f.params;
-    if (n > 0) used.assign(static_cast<std::size_t>(n), 1);
-    for (const Block& b : f.blocks) {
-        for (const Inst& in : b.code) {
-            touch(in.dst);
-            if (in.a.kind == Operand::Kind::Reg) touch(in.a.reg);
-            if (in.b.kind == Operand::Kind::Reg) touch(in.b.reg);
+    int nregs = f.params;
+    std::vector<int> calls;
+    struct Site {
+        int block;
+        int inst;
+        int index;
+    };
+    std::vector<Site> sites;
+    auto note = [&](int r) {
+        if (r >= nregs) nregs = r + 1;
+    };
+    int at = 0;
+    for (int bi = 0; bi < static_cast<int>(f.blocks.size()); ++bi) {
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
+        for (int ii = 0; ii < static_cast<int>(b.code.size()); ++ii, ++at) {
+            const Inst& in = b.code[static_cast<std::size_t>(ii)];
+            sites.push_back(Site{bi, ii, at});
+            if (in.op == Inst::Op::Call) calls.push_back(at);
+            note(in.dst);
+            if (in.a.kind == Operand::Kind::Reg) note(in.a.reg);
+            if (in.b.kind == Operand::Kind::Reg) note(in.b.reg);
             for (const Operand& arg : in.args)
-                if (arg.kind == Operand::Kind::Reg) touch(arg.reg);
+                if (arg.kind == Operand::Kind::Reg) note(arg.reg);
             for (const Operand& word : in.stack)
-                if (word.kind == Operand::Kind::Reg) touch(word.reg);
+                if (word.kind == Operand::Kind::Reg) note(word.reg);
+            for (const Operand& x : in.xmm)
+                if (x.kind == Operand::Kind::Reg) note(x.reg);
             if (in.op == Inst::Op::Lea && in.a.kind == Operand::Kind::Reg) markMem(in.a.reg);
             if (in.fp) {
                 if (in.a.kind == Operand::Kind::Reg && in.extra != 0) markMem(in.a.reg);
@@ -549,21 +583,223 @@ RegHomes assignRegs(const Function& f) {
                 bool fpDst = in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul ||
                              in.op == Inst::Op::Div || in.op == Inst::Op::Mov || in.op == Inst::Op::Call ||
                              in.op == Inst::Op::Xor;
-                if (in.op == Inst::Op::Cvt && (in.b.kind == Operand::Kind::Imm && (in.b.imm == 4 || in.b.imm == 8)))
+                if (in.op == Inst::Op::Cvt && in.b.kind == Operand::Kind::Imm && (in.b.imm == 4 || in.b.imm == 8))
                     fpDst = true;
                 if (fpDst) markMem(in.dst);
             }
-            for (const Operand& x : in.xmm)
-                if (x.kind == Operand::Kind::Reg) markMem(x.reg);
         }
     }
     for (int s : f.xmmSlot) markMem(s);
+    const int nb = static_cast<int>(f.blocks.size());
+    std::map<std::string, int> id;
+    std::vector<int> blockAt(static_cast<std::size_t>(nb), 0);
+    std::vector<std::vector<int>> succs(static_cast<std::size_t>(nb));
+    int cursor = 0;
+    for (int bi = 0; bi < nb; ++bi) {
+        blockAt[static_cast<std::size_t>(bi)] = cursor;
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
+        id[b.name] = bi;
+        cursor += static_cast<int>(b.code.size());
+    }
+    for (int bi = 0; bi < nb; ++bi) {
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
+        bool term = false;
+        auto edge = [&](const std::string& name) {
+            auto it = id.find(name);
+            if (it != id.end()) succs[static_cast<std::size_t>(bi)].push_back(it->second);
+        };
+        for (const Inst& in : b.code) {
+            if (in.op == Inst::Op::Jmp) {
+                edge(in.label);
+                term = true;
+                break;
+            }
+            if (in.op == Inst::Op::Br) {
+                edge(in.label);
+                edge(in.label2);
+                term = true;
+                break;
+            }
+            if (in.op == Inst::Op::Ret) {
+                term = true;
+                break;
+            }
+        }
+        if (!term && bi + 1 < nb) succs[static_cast<std::size_t>(bi)].push_back(bi + 1);
+    }
+    std::vector<std::vector<char>> liveIn(static_cast<std::size_t>(nb), std::vector<char>(static_cast<std::size_t>(nregs), 0));
+    std::vector<std::vector<char>> liveOut(static_cast<std::size_t>(nb), std::vector<char>(static_cast<std::size_t>(nregs), 0));
+    auto useOp = [&](std::vector<char>& cur, const Operand& o) {
+        if (o.kind == Operand::Kind::Reg && o.reg >= 0 && o.reg < nregs) cur[static_cast<std::size_t>(o.reg)] = 1;
+    };
+    auto applyUses = [&](std::vector<char>& cur, const Inst& in) {
+        if (in.op != Inst::Op::Lea) useOp(cur, in.a);
+        useOp(cur, in.b);
+        for (const Operand& arg : in.args) useOp(cur, arg);
+        for (const Operand& word : in.stack) useOp(cur, word);
+        for (const Operand& x : in.xmm) useOp(cur, x);
+    };
+    int guard = nb * nb + 4;
+    bool flow = true;
+    while (flow && guard-- > 0) {
+        flow = false;
+        for (int bi = nb - 1; bi >= 0; --bi) {
+            std::vector<char> out(static_cast<std::size_t>(nregs), 0);
+            for (int s : succs[static_cast<std::size_t>(bi)]) {
+                for (int v = 0; v < nregs; ++v)
+                    if (liveIn[static_cast<std::size_t>(s)][static_cast<std::size_t>(v)])
+                        out[static_cast<std::size_t>(v)] = 1;
+            }
+            const Block& b = f.blocks[static_cast<std::size_t>(bi)];
+            int last = static_cast<int>(b.code.size()) - 1;
+            for (int ii = 0; ii <= last; ++ii) {
+                const Inst& in = b.code[static_cast<std::size_t>(ii)];
+                if (in.op == Inst::Op::Jmp || in.op == Inst::Op::Br || in.op == Inst::Op::Ret) {
+                    last = ii;
+                    break;
+                }
+            }
+            std::vector<char> cur = out;
+            for (int ii = last; ii >= 0; --ii) {
+                const Inst& in = b.code[static_cast<std::size_t>(ii)];
+                if (in.dst >= 0 && in.dst < nregs) cur[static_cast<std::size_t>(in.dst)] = 0;
+                applyUses(cur, in);
+            }
+            if (cur != liveIn[static_cast<std::size_t>(bi)] || out != liveOut[static_cast<std::size_t>(bi)]) {
+                liveIn[static_cast<std::size_t>(bi)] = cur;
+                liveOut[static_cast<std::size_t>(bi)] = out;
+                flow = true;
+            }
+        }
+    }
+    std::vector<int> begin(static_cast<std::size_t>(nregs), -2);
+    std::vector<int> end(static_cast<std::size_t>(nregs), -2);
+    auto extend = [&](int r, int where) {
+        if (r < 0 || r >= nregs) return;
+        if (begin[static_cast<std::size_t>(r)] == -2 || where < begin[static_cast<std::size_t>(r)])
+            begin[static_cast<std::size_t>(r)] = where;
+        if (end[static_cast<std::size_t>(r)] == -2 || where > end[static_cast<std::size_t>(r)])
+            end[static_cast<std::size_t>(r)] = where;
+    };
+    for (int bi = 0; bi < nb; ++bi) {
+        const Block& b = f.blocks[static_cast<std::size_t>(bi)];
+        int last = static_cast<int>(b.code.size()) - 1;
+        for (int ii = 0; ii <= last; ++ii) {
+            const Inst& in = b.code[static_cast<std::size_t>(ii)];
+            if (in.op == Inst::Op::Jmp || in.op == Inst::Op::Br || in.op == Inst::Op::Ret) {
+                last = ii;
+                break;
+            }
+        }
+        std::vector<char> cur = liveOut[static_cast<std::size_t>(bi)];
+        for (int ii = last; ii >= 0; --ii) {
+            const Inst& in = b.code[static_cast<std::size_t>(ii)];
+            int where = blockAt[static_cast<std::size_t>(bi)] + ii;
+            for (int v = 0; v < nregs; ++v)
+                if (cur[static_cast<std::size_t>(v)]) extend(v, where);
+            if (in.dst >= 0) extend(in.dst, where);
+            if (in.dst >= 0 && in.dst < nregs) cur[static_cast<std::size_t>(in.dst)] = 0;
+            applyUses(cur, in);
+            for (int v = 0; v < nregs; ++v)
+                if (cur[static_cast<std::size_t>(v)]) extend(v, where);
+        }
+    }
     RegHomes h;
-    h.home.assign(used.size(), -1);
-    for (int i = 0; i < static_cast<int>(used.size()) && h.count < 3; ++i) {
-        if (!used[static_cast<std::size_t>(i)]) continue;
-        if (i < static_cast<int>(mem.size()) && mem[static_cast<std::size_t>(i)]) continue;
-        h.home[static_cast<std::size_t>(i)] = h.count++;
+    sizeHomes(h, f, nregs);
+    if (!gAllocate) return h;
+
+    struct Iv {
+        int v;
+        int b;
+        int e;
+    };
+    std::vector<Iv> ivs;
+    for (int v = 0; v < nregs; ++v) {
+        if (v < static_cast<int>(mem.size()) && mem[static_cast<std::size_t>(v)]) continue;
+        if (begin[static_cast<std::size_t>(v)] < -1) continue;
+        ivs.push_back(Iv{v, begin[static_cast<std::size_t>(v)], end[static_cast<std::size_t>(v)]});
+    }
+    std::sort(ivs.begin(), ivs.end(), [](const Iv& a, const Iv& b) {
+        if (a.b != b.b) return a.b < b.b;
+        return a.v < b.v;
+    });
+
+    struct Act {
+        int v;
+        int e;
+        int reg;
+    };
+    std::vector<Act> active;
+    std::vector<int> freeCallee = {0, 1, 2, 3, 4};
+    std::vector<int> freeCaller = {5, 6, 7, 8, 9, 10};
+    auto take = [](std::vector<int>& bag) {
+        if (bag.empty()) return -1;
+        int best = 0;
+        for (int i = 1; i < static_cast<int>(bag.size()); ++i)
+            if (bag[static_cast<std::size_t>(i)] < bag[static_cast<std::size_t>(best)]) best = i;
+        int r = bag[static_cast<std::size_t>(best)];
+        bag.erase(bag.begin() + best);
+        return r;
+    };
+    auto release = [&](int reg) {
+        if (reg < kCalleeRegs) freeCallee.push_back(reg);
+        else freeCaller.push_back(reg);
+    };
+    auto crosses = [&](const Iv& iv) {
+        for (int c : calls)
+            if (iv.b <= c && c < iv.e) return true;
+        return false;
+    };
+    for (const Iv& iv : ivs) {
+        std::vector<Act> keep;
+        for (const Act& a : active) {
+            if (a.e < iv.b) release(a.reg);
+            else keep.push_back(a);
+        }
+        active.swap(keep);
+        int reg = -1;
+        bool call = crosses(iv);
+        if (call) reg = take(freeCallee);
+        if (reg < 0 && !call) reg = take(freeCaller);
+        if (reg < 0) reg = take(freeCallee);
+        if (reg < 0) reg = take(freeCaller);
+        if (reg < 0 && !active.empty()) {
+            int worst = 0;
+            for (int i = 1; i < static_cast<int>(active.size()); ++i)
+                if (active[static_cast<std::size_t>(i)].e > active[static_cast<std::size_t>(worst)].e) worst = i;
+            if (active[static_cast<std::size_t>(worst)].e > iv.e) {
+                reg = active[static_cast<std::size_t>(worst)].reg;
+                h.home[static_cast<std::size_t>(active[static_cast<std::size_t>(worst)].v)] = -1;
+                active.erase(active.begin() + worst);
+            }
+        }
+        if (reg < 0) continue;
+        h.home[static_cast<std::size_t>(iv.v)] = reg;
+        active.push_back(Act{iv.v, iv.e, reg});
+    }
+
+    std::vector<char> usedPhys(static_cast<std::size_t>(kPhysRegs), 0);
+    for (int home : h.home) {
+        if (home >= 0 && home < kCalleeRegs) usedPhys[static_cast<std::size_t>(home)] = 1;
+    }
+    for (int i = 0; i < kCalleeRegs; ++i)
+        if (usedPhys[static_cast<std::size_t>(i)]) h.saved.push_back(i);
+
+    for (const Site& site : sites) {
+        if (std::find(calls.begin(), calls.end(), site.index) == calls.end()) continue;
+        const Inst& in = f.blocks[static_cast<std::size_t>(site.block)].code[static_cast<std::size_t>(site.inst)];
+        for (int v = 0; v < nregs; ++v) {
+            int home = h.home[static_cast<std::size_t>(v)];
+            if (home < kCalleeRegs) continue;
+            int b0 = begin[static_cast<std::size_t>(v)];
+            int e0 = end[static_cast<std::size_t>(v)];
+            bool redefined = v == in.dst || (in.b.kind == Operand::Kind::Reg && v == in.b.reg);
+            if (!(b0 <= site.index && site.index <= e0)) continue;
+            if (redefined && b0 == site.index) continue;
+            h.spill[static_cast<std::size_t>(site.block)][static_cast<std::size_t>(site.inst)].push_back(v);
+            if (!redefined && e0 > site.index)
+                h.reload[static_cast<std::size_t>(site.block)][static_cast<std::size_t>(site.inst)].push_back(v);
+        }
     }
     return h;
 }

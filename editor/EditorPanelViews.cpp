@@ -5,8 +5,10 @@
 #include "EditorPanelViews.hpp"
 
 #include "imgui.h"
+#include "imgui_internal.h"   // PushMultiItemsWidths (the Transform's three cells, as the editor's DragVec3Axis)
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1014,6 +1016,359 @@ HierarchyIntent DrawHierarchyBodyImGui(const HierarchyModel& m, HierarchyState& 
         } else { st.menuKind = HierMenuNone; st.menuRow = 0; }
     }
     return in;
+}
+
+} // namespace oked
+
+// ---- Inspector, stage 1 ----------------------------------------------------------------------------------------------------------
+// editor/main.cpp DrawInspector's object header card, CompHeader, the Transform (DragVec3Axis), the Mesh Renderer's shading fields and
+// the Add Component button, drawn from shared/InspectorPanelModel.hpp. The editor still draws its own Dear ImGui Inspector; these
+// bodies are the same parts written against the model, which the comparison test runs against the OkayUI port.
+
+namespace oked {
+
+namespace {
+
+bool InspSameLineOrWrapIm(float nextW) {
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    const float used = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x;
+    if (right - used < nextW) return false;
+    ImGui::SameLine();
+    return true;
+}
+float InspButtonWIm(const char* label) { return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f; }
+
+// editor/main.cpp DragVec3Axis.
+bool InspVec3Im(const char* label, float v[3], float speed, const char* fmt, bool* activated) {
+    bool changed = false;
+    if (activated) *activated = false;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    ImGui::PushID(label);
+    ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
+    for (int i = 0; i < 3; ++i) {
+        ImGui::PushID(i);
+        if (i > 0) ImGui::SameLine(0, st.ItemInnerSpacing.x);
+        const float room = ImGui::CalcItemWidth() - st.FramePadding.x * 2.0f - 4.0f;
+        const char* f = InspAxisFormat(fmt, v[i], room, [](const char* t) { return ImGui::CalcTextSize(t).x; });
+        if (ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, f)) changed = true;
+        if (activated && ImGui::IsItemActivated()) *activated = true;
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x + 3.0f, mx.y), kInspAxisCol[i], 2.0f);
+        ImGui::PopID();
+        ImGui::PopItemWidth();
+    }
+    ImGui::SameLine(0, st.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(label, ImGui::FindRenderedTextEnd(label));
+    ImGui::PopID();
+    return changed;
+}
+
+} // namespace
+
+InspectorHeaderIntent DrawInspectorHeaderBodyImGui(InspectorHeaderModel& m, InspectorHeaderState& st, const PanelViewHooks&) {
+    InspectorHeaderIntent in;
+    st.newTag[sizeof(st.newTag) - 1] = '\0';
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+    ImGui::BeginChild("##objheader", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+    bool act = m.active;
+    if (ImGui::Checkbox("##active", &act)) in.toggleActive = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kInspActiveTip);
+    ImGui::SameLine();
+    {
+        const float ih = ImGui::GetFrameHeight(), isz = 17.0f;
+        const ImVec2 ip = ImGui::GetCursorScreenPos();
+        ImPen pen{ImGui::GetWindowDrawList()};
+        HierDrawIcon(pen, m.icon, ip.x, ip.y + (ih - isz) * 0.5f, isz);
+        ImGui::Dummy(ImVec2(isz + 2.0f, ih));
+        ImGui::SameLine();
+    }
+    const float staticW = ImGui::CalcTextSize("Static").x + ImGui::CalcTextSize("Lock").x + ImGui::GetFrameHeight() * 2.0f +
+                          (ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x) * 2.0f;
+    const bool narrow = ImGui::GetContentRegionAvail().x - staticW < 120.0f;
+    ImGui::SetNextItemWidth(narrow ? -1.0f : ImGui::GetContentRegionAvail().x - staticW);
+    if (m.name && m.nameSize > 0) { m.name[m.nameSize - 1] = '\0'; if (ImGui::InputText("##name", m.name, m.nameSize)) in.nameChanged = true; }
+    if (!narrow) ImGui::SameLine();
+    bool stat = m.isStatic;
+    if (ImGui::Checkbox("Static", &stat)) in.toggleStatic = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kInspStaticTip);
+    ImGui::SameLine();
+    bool lk = m.locked;
+    if (ImGui::Checkbox("Lock", &lk)) in.toggleLock = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kInspLockTip);
+
+    const std::string curTag = m.tag.empty() ? std::string("Untagged") : m.tag;
+    const float tagLblW = ImGui::CalcTextSize("Layer").x + ImGui::GetStyle().ItemInnerSpacing.x;
+    const float comboW = std::clamp(ImGui::GetContentRegionAvail().x - tagLblW, 90.0f, 150.0f);
+    ImGui::SetNextItemWidth(comboW);
+    if (ImGui::BeginCombo("Tag", curTag.c_str())) {
+        if (st.closeTagList) { ImGui::CloseCurrentPopup(); st.closeTagList = false; }
+        std::vector<std::string> builtin, custom;
+        if (m.tags) m.tags(builtin, custom);
+        if (ImGui::Selectable("Untagged", curTag == "Untagged")) { in.setTag = true; in.tag.clear(); }
+        for (const std::string& t : builtin)
+            if (ImGui::Selectable(t.c_str(), curTag == t)) { in.setTag = true; in.tag = t; }
+        if (!custom.empty()) {
+            ImGui::Separator();
+            for (std::size_t i = 0; i < custom.size(); ++i) {
+                const std::string& t = custom[i];
+                if (ImGui::Selectable(t.c_str(), curTag == t)) { in.setTag = true; in.tag = t; }
+                if (ImGui::BeginPopupContextItem((std::string("tagctx") + std::to_string(i)).c_str())) {
+                    if (ImGui::IsWindowAppearing()) { CopyToBuf(st.renameBuf, sizeof(st.renameBuf), t); st.renameError.clear(); }
+                    if (st.closeRename) { ImGui::CloseCurrentPopup(); st.closeRename = false; }
+                    ImGui::SetNextItemWidth(170);
+                    const bool enter = ImGui::InputText("##tagrename", st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    const bool click = ImGui::Button("Rename");
+                    if (enter || click) {
+                        if (t == st.renameBuf) ImGui::CloseCurrentPopup();
+                        else { in.renameTag = true; in.tagFrom = t; in.tagTo = st.renameBuf; }
+                    }
+                    if (!st.renameError.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", st.renameError.c_str());
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Remove tag from list")) { in.removeTag = true; in.removeTagName = t; }
+                    ImGui::EndPopup();
+                }
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::IsWindowAppearing()) st.tagError.clear();
+        ImGui::SetNextItemWidth(120);
+        const bool entered = ImGui::InputTextWithHint("##newtag", "new tag...", st.newTag, sizeof(st.newTag), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        const bool clicked = ImGui::Button("Add");
+        if ((entered || clicked) && st.newTag[0]) { in.addTag = true; in.newTag = st.newTag; }
+        if (!st.tagError.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", st.tagError.c_str());
+        ImGui::EndCombo();
+    }
+    InspSameLineOrWrapIm(comboW + tagLblW);
+    ImGui::SetNextItemWidth(comboW);
+    if (ImGui::BeginCombo("Layer", m.layerName.c_str())) {
+        ImGui::TextDisabled("%s", kInspLayerListNote);
+        for (int i = 0; i < 32; ++i) {
+            const std::string nm = m.layerNameOf ? m.layerNameOf(i) : std::to_string(i);
+            if (ImGui::Selectable((nm + "##layer" + std::to_string(i)).c_str(), m.layer == i)) in.setLayer = i;
+            if (ImGui::BeginPopupContextItem((std::string("layerctx") + std::to_string(i)).c_str())) {
+                std::string text, hint;
+                if (m.layerRenameInfo) m.layerRenameInfo(i, text, hint);
+                if (ImGui::IsWindowAppearing()) { CopyToBuf(st.renameBuf, sizeof(st.renameBuf), text); st.renameError.clear(); }
+                if (st.closeRename) { ImGui::CloseCurrentPopup(); st.closeRename = false; }
+                ImGui::TextDisabled("Layer %d name", i);
+                ImGui::SetNextItemWidth(170);
+                if (ImGui::InputTextWithHint("##layername", hint.c_str(), st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    in.renameLayer = true; in.layerIndex = i; in.layerTo = st.renameBuf;
+                }
+                if (ImGui::SmallButton("Reset to default")) { in.resetLayer = true; in.layerIndex = i; }
+                if (!st.renameError.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", st.renameError.c_str());
+                ImGui::EndPopup();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    const float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
+    {
+        const bool same = InspSameLineOrWrapIm(btnW);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > btnW) {
+            if (same) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
+            else ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW));
+        }
+    }
+    if (ImGui::Button("Save as Prefab")) in.savePrefab = true;
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    return in;
+}
+
+CompHeaderIntent DrawComponentHeaderBodyImGui(const CompHeaderModel& m, const PanelViewHooks&) {
+    CompHeaderIntent in;
+    ImGui::PushID(m.label.c_str());
+    const float fh = ImGui::GetFrameHeight();
+    const float startX = ImGui::GetCursorPosX();
+    const float barW = ImGui::GetContentRegionAvail().x;
+    const float arrowW = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float lead = fh + 4.0f + fh * 0.66f + 6.0f;
+    const float spaceW = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+    std::string title((std::size_t)std::ceil(lead / spaceW), ' ');
+    {
+        const float badgeW = m.diag > 0 ? 22.0f : 0.0f;
+        const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
+        title += CompHeaderTitle(m.label, room, [](const char* t) { return ImGui::CalcTextSize(t).x; });
+    }
+    title += "###hdr";
+    if (m.sectionGap > 0.0f) ImGui::Dummy(ImVec2(0, m.sectionGap));
+    ImGui::SetNextItemOpen(m.open, ImGuiCond_Always);
+    if (!m.enabled) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
+    const bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+    if (open != m.open) in.toggleOpen = true;
+    if (!m.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.tip.c_str());
+    if (!m.enabled) ImGui::PopStyleColor();
+    if (!m.managed.empty() && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Managed by Character Model: you normally don't edit this.\n%s", m.managed.c_str());
+    const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
+    {
+        ImVec4 barCol = Unpack(m.color); barCol.w = 0.95f;
+        if (m.prefabChanged) barCol = ImVec4(0.30f, 0.62f, 1.0f, 1.0f);
+        ImGui::GetWindowDrawList()->AddRectFilled(hmn, ImVec2(hmn.x + 3.0f, hmx.y),
+                                                  ImGui::GetColorU32(m.enabled ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)), 1.5f);
+    }
+    const bool hdrRightClick = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+    ImGui::SameLine(startX + arrowW);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+    {
+        const float cb = ImGui::GetFrameHeight();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (fh - cb) * 0.5f);
+        bool en = m.enabled;
+        if (ImGui::Checkbox("##enabled", &en)) in.toggleEnabled = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(m.enabled ? "Enabled (click to turn this component off)" : "Disabled (click to turn it on)");
+    }
+    ImGui::PopStyleVar();
+    ImGui::SameLine(0, 6.0f);
+    {
+        ImPen pen{ImGui::GetWindowDrawList()};
+        InspDrawGlyph(pen, m.glyph, m.color, m.enabled, ImGui::GetCursorScreenPos().x, hmn.y, fh);
+    }
+    ImGui::SameLine(startX + barW - fh);
+    {
+        const ImVec2 bp(ImGui::GetCursorScreenPos().x, hmn.y);
+        ImGui::SetCursorScreenPos(bp);
+        if (ImGui::InvisibleButton("##compmenu", ImVec2(fh, fh))) ImGui::OpenPopup("##compctx");
+        const bool hov = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (hov) dl->AddRectFilled(bp, ImVec2(bp.x + fh, bp.y + fh), IM_COL32(255, 255, 255, 24), 4.0f);
+        for (int d = -1; d <= 1; ++d)
+            dl->AddCircleFilled(ImVec2(bp.x + fh * 0.5f + d * 4.5f, bp.y + fh * 0.5f), 1.6f, ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), 8);
+        if (hov) ImGui::SetTooltip("Component options (or right-click the header)");
+    }
+    if (m.prefabChanged && ImGui::IsMouseHoveringRect(hmn, hmx) && ImGui::IsWindowHovered()) ImGui::SetTooltip("Changed from the prefab");
+    if (hdrRightClick) ImGui::OpenPopup("##compctx");
+    if (ImGui::BeginPopup("##compctx")) {
+        std::vector<PanelMenuEntry> entries;
+        if (m.buildMenu) m.buildMenu(entries);
+        std::string chosen;
+        HierMenuEntries(entries, chosen);
+        if (!chosen.empty()) in.menuId = chosen;
+        ImGui::EndPopup();
+    }
+    if (m.diag > 0) {
+        ImPen pen{ImGui::GetWindowDrawList()};
+        const ImVec2 bang = ImGui::CalcTextSize("!");
+        HierDrawDiag(pen, m.diag, hmx.x - fh - 18.0f, (hmn.y + hmx.y) * 0.5f, bang.x, bang.y);
+    }
+    ImGui::PopID();
+    if (open && !m.managed.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Managed by Character Model - you normally don't edit this.");
+        ImGui::TextDisabled("%s", m.managed.c_str());
+    }
+    if (open && !m.mixedNote.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.78f, 0.40f, 1.0f));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(m.mixedNote.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What you change here is set on every selected object.");
+    }
+    return in;
+}
+
+TransformIntent DrawTransformBodyImGui(TransformModel& m, const PanelViewHooks&) {
+    TransformIntent in;
+    ImGui::SetNextItemOpen(m.open, ImGuiCond_Always);
+    const bool open = ImGui::CollapsingHeader("Transform");
+    if (open != m.open) in.toggleOpen = true;
+    if (ImGui::BeginPopupContextItem("##tfctx")) {
+        if (ImGui::MenuItem("Copy Transform Values")) in.copy = true;
+        if (ImGui::MenuItem("Paste Transform Values", nullptr, false, m.pasteValid)) in.paste = true;
+        ImGui::EndPopup();
+    }
+    if (!open) return in;
+    if (m.selectedCount > 1) ImGui::TextDisabled("(editing %d selected objects)", m.selectedCount);
+    bool act = false, any = false;
+    if (InspVec3Im("Position", m.pos, 0.05f, "%.3f", &act)) in.posChanged = true;
+    any |= act;
+    if (InspVec3Im("Rotation", m.rot, 1.0f, "%.2f", &act)) in.rotChanged = true;
+    any |= act;
+    const float before[3] = {m.scale[0], m.scale[1], m.scale[2]};
+    if (m.isCamera) ImGui::BeginDisabled();
+    if (InspVec3Im("Scale", m.scale, 0.05f, "%.3f", &act)) {
+        if (m.uniform) TransformUniformScale(before, m.scale);
+        in.scaleChanged = true;
+    }
+    any |= act;
+    in.activated = any;
+    if (m.isCamera) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
+    if (ImGui::SmallButton("Reset Pos")) in.resetPos = true;
+    InspSameLineOrWrapIm(InspButtonWIm("Reset Rot"));
+    if (ImGui::SmallButton("Reset Rot")) in.resetRot = true;
+    if (!m.isCamera) InspSameLineOrWrapIm(InspButtonWIm("Reset Scale"));
+    if (!m.isCamera && ImGui::SmallButton("Reset Scale")) in.resetScale = true;
+    if (!m.isCamera) {
+        InspSameLineOrWrapIm(ImGui::GetFrameHeight() + ImGui::CalcTextSize("Uniform").x + 8.0f);
+        bool uni = m.uniform;
+        if (ImGui::Checkbox("Uniform##scl", &uni)) in.toggleUniform = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
+    }
+    return in;
+}
+
+MeshRendererIntent DrawMeshRendererBodyImGui(MeshRendererModel& m, const PanelViewHooks&) {
+    MeshRendererIntent in;
+    if (!m.v) return in;
+    MeshRendererValues& v = *m.v;
+    bool& ch = in.changed;
+    const std::string stats = MeshStatsText(m);
+    if (!stats.empty()) ImGui::TextDisabled("%s", stats.c_str());
+    if (ImGui::ColorEdit4("Color##mesh", v.color)) ch = true;
+    if (ImGui::Checkbox("Wireframe", &v.wireframe)) ch = true;
+    if (ImGui::Combo("Shader##mesh", &v.shader, kMeshShaderNames, 9)) { ch = true; in.shaderChanged = true; }
+    if (v.shader == MeshShaderToon && ImGui::SliderInt("Cel Bands##mesh", &v.toonBands, 2, 6)) ch = true;
+    if (v.shader == MeshShaderGradient) {
+        if (ImGui::ColorEdit3("Gradient Top##mesh", v.gradientTop)) ch = true;
+        if (ImGui::ColorEdit3("Gradient Bottom##mesh", v.gradientBottom)) ch = true;
+    }
+    if (v.shader == MeshShaderFresnel) ImGui::TextDisabled("%s", kMeshFresnelNote);
+    if (ImGui::SliderFloat("Rim##mesh", &v.rimStrength, 0.0f, 2.0f)) ch = true;
+    if (v.rimStrength > 0.0f) {
+        if (ImGui::SliderFloat("Rim Power##mesh", &v.rimPower, 1.0f, 8.0f)) ch = true;
+        if (ImGui::ColorEdit3("Rim Color##mesh", v.rimColor)) ch = true;
+    }
+    if (ImGui::Checkbox("Outline##mesh", &v.outline)) ch = true;
+    if (v.outline) {
+        if (ImGui::DragFloat("Outline Width##mesh", &v.outlineWidth, 0.002f, 0.0f, 1.0f)) ch = true;
+        if (ImGui::ColorEdit3("Outline Color##mesh", v.outlineColor)) ch = true;
+    }
+    if (ImGui::Checkbox("Cast Shadows##mesh", &v.castShadows)) ch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kMeshCastTip);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Receive Shadows##mesh", &v.receiveShadows)) ch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kMeshReceiveTip);
+    if (ImGui::Checkbox("Ground Shadow##mesh", &v.groundShadow)) ch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kMeshGroundTip);
+    if (v.groundShadow) {
+        if (ImGui::DragFloat("Shadow Ground Y##mesh", &v.groundShadowY, 0.05f, -1000.0f, 1000.0f)) ch = true;
+        if (ImGui::SliderFloat("Shadow Strength##mesh", &v.groundShadowStrength, 0.0f, 1.0f)) ch = true;
+    }
+    if (ImGui::ColorEdit3("Emissive##mesh", v.emissive)) ch = true;
+    if (ImGui::SliderFloat("Specular##mesh", &v.specular, 0.0f, 1.0f)) ch = true;
+    if (v.specular > 0.0f && ImGui::SliderFloat("Shininess##mesh", &v.shininess, 1.0f, 128.0f)) ch = true;
+    if (ImGui::Combo("Primitive", &v.primitive, kMeshPrimitiveNames, kMeshPrimitiveCount)) { ch = true; in.primitiveChanged = true; }
+    return in;
+}
+
+bool DrawAddComponentButtonImGui(const PanelViewHooks& hooks) {
+    const ImVec4 a = Unpack(hooks.accent);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(a.x, a.y, a.z, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(a.x, a.y, a.z, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(a.x, a.y, a.z, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    const float acW = ImGui::GetContentRegionAvail().x;
+    const float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;
+    if (acPad > 0.0f) ImGui::Indent(acPad);
+    const bool hit = ImGui::Button(kAddComponentLabel, ImVec2(acPad > 0.0f ? 260.0f : -1, 30));
+    if (acPad > 0.0f) ImGui::Unindent(acPad);
+    ImGui::PopStyleColor(4);
+    return hit;
 }
 
 } // namespace oked

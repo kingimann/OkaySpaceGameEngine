@@ -48,4 +48,15 @@ okaypanels::RenderingSettingsIntent DrawRenderingSettingsBodyImGui(okaypanels::R
 okaypanels::HierarchyIntent DrawHierarchyBodyImGui(const okaypanels::HierarchyModel& m, okaypanels::HierarchyState& st,
                                                    const PanelViewHooks& hooks);
 
+/// The Inspector, stage 1 (docs/own_ui_toolkit.md section 14): the object header card, a component's header bar, the Transform, the
+/// Mesh Renderer's shading fields and the Add Component button (true when clicked), drawn from shared/InspectorPanelModel.hpp. The editor
+/// still draws its own Inspector (editor/main.cpp DrawInspector); these are the same parts written against the model, which the
+/// comparison test runs against the OkayUI port.
+okaypanels::InspectorHeaderIntent DrawInspectorHeaderBodyImGui(okaypanels::InspectorHeaderModel& m, okaypanels::InspectorHeaderState& st,
+                                                               const PanelViewHooks& hooks);
+okaypanels::CompHeaderIntent DrawComponentHeaderBodyImGui(const okaypanels::CompHeaderModel& m, const PanelViewHooks& hooks);
+okaypanels::TransformIntent DrawTransformBodyImGui(okaypanels::TransformModel& m, const PanelViewHooks& hooks);
+okaypanels::MeshRendererIntent DrawMeshRendererBodyImGui(okaypanels::MeshRendererModel& m, const PanelViewHooks& hooks);
+bool DrawAddComponentButtonImGui(const PanelViewHooks& hooks);
+
 } // namespace oked

@@ -129,17 +129,30 @@ int   g_editedFrameId = 0; unsigned long long g_editedFrame = 0;   // the item e
 
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; };   // w <= 0: the default width; modal: a click outside does not close it
-PopupSlot g_popups[8];
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false;   // w <= 0: the default width; modal: a click outside does not close it
+                   unsigned long long touched = 0; };   // the last frame it was asked for (a closed slot not asked for longest is reused)
+PopupSlot g_popups[32];
+extern unsigned long long g_frameCount;
+// Every combo box and menu keeps a slot. When all are taken (an editor with many hosted panels has more combos than slots), the closed
+// slot that was asked for longest ago is given to the new id: a closed popup has nothing worth keeping but its last place.
 PopupSlot* popupSlot(int id, bool create) {
-    for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
+    for (PopupSlot& p : g_popups) if (p.used && p.id == id) { p.touched = g_frameCount; return &p; }
     if (!create) return nullptr;
-    for (PopupSlot& p : g_popups) if (!p.used) { p.used = true; p.id = id; p.open = false; return &p; }
-    return nullptr;
+    PopupSlot* reuse = nullptr;
+    for (PopupSlot& p : g_popups) {
+        if (!p.used) { reuse = &p; break; }
+        if (!p.open && p.touched < g_frameCount && (!reuse || p.touched < reuse->touched)) reuse = &p;
+    }
+    if (!reuse) return nullptr;
+    *reuse = PopupSlot();
+    reuse->used = true; reuse->id = id; reuse->touched = g_frameCount;
+    return reuse;
 }
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+int   g_fieldFocus = 0;          // the text field that had the keyboard when last drawn ...
+bool  g_fieldFocusSeen = false;  // ... and whether it was drawn this frame (a field that is not drawn, as in a popup that closed, gives the keyboard up)
 float g_fieldPadL = -1.0f, g_fieldPadR = -1.0f;   // a text field's inner padding at the left / right while SearchField draws one (< 0: the usual)
 int   g_nextOpen = -1;            // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
@@ -986,6 +999,11 @@ OvRect g_ovPrev[16]; int g_ovPrevN = 0;
 inline void registerOverlay(float x, float y, float w, float h, bool modal) {
     if (g_ovCurN < 16) g_ovCur[g_ovCurN++] = OvRect{ x, y, w, h, modal };
 }
+// The open popups' boxes with their depth in the popup stack (1 = opened from a window), this frame's and last frame's. A widget in a
+// popup body does not take the pointer where a popup opened from it (deeper, drawn above it) covered it on the last frame: a press on
+// a right-click menu opened from a row of a list must not also click the list rows under that menu.
+struct PopRect { float x, y, w, h; int depth; };
+PopRect g_popCur[8], g_popPrev[8]; int g_popCurN = 0, g_popPrevN = 0;
 // ---- Window stacking (z-order) -------------------------------------------------------------------
 // Every window has a stamp (WinSlot::z): higher draws in front, a click raises it, 0 is the bottom (docked content). The windows
 // begun this frame register their rectangles (g_wCur); last frame's rectangles (g_wPrev) cover the windows not begun yet. A
@@ -1078,7 +1096,13 @@ inline bool inClip() {
 inline bool hit(float x, float y, float w, float h) {
     if (g_disCount > 0) return false;   // inside BeginDisabled: no hover, no click
     if (!hitOverlay(x, y, w, h)) return false;
-    if (g_popupTop > 0) return true;   // a widget inside a popup body
+    if (g_popupTop > 0) {   // a widget inside a popup body: only a deeper popup above it can take the pointer
+        for (int i = 0; i < g_popPrevN; ++i) {
+            const PopRect& r = g_popPrev[i];
+            if (r.depth > g_popupTop && pointIn(g_in.mouseX, g_in.mouseY, r.x, r.y, r.w, r.h)) return false;
+        }
+        return true;
+    }
     if (!inClip()) return false;
     if (g_hitWinOn && coveredByHigher(g_in.mouseX, g_in.mouseY, g_hitWinZ, g_hitWinId)) return false;   // a window above covers the pointer
     for (int i = 0; i < g_ovPrevN; ++i) {
@@ -1173,6 +1197,8 @@ void BeginFrame(const Input& in) {
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
+    for (int i = 0; i < g_popCurN; ++i) g_popPrev[i] = g_popCur[i];
+    g_popPrevN = g_popCurN; g_popCurN = 0;
     for (int i = 0; i < g_wCurN; ++i) g_wPrev[i] = g_wCur[i];   // last frame's window rectangles, for stacking
     g_wPrevN = g_wCurN; g_wCurN = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_wheelUsed = false; g_escapeUsed = false;
     g_lay.active = false;            // widgets called outside Begin/End no-op
@@ -1608,6 +1634,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = g_focusSelectAll ? 0 : len; g_focusSelectAll = false; }
     if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
+    if (focused) { g_fieldFocus = id; g_fieldFocusSeen = true; }
     Composition comp = (focused && !(flags & InputText_ReadOnly)) ? GetComposition() : Composition();
     const bool composing = comp.active;   // the input method owns Backspace, the arrows, Enter and Escape while it composes
 
@@ -1686,11 +1713,15 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         if (g_in.escape && !composing) { if (g_focus == id) { g_lostFocusId = id; g_lostFocusEdited = (g_editedId == id); } g_focus = 0; focused = false; }
     }
 
-    // Rounded box (focused gets an accent border hint).
+    // Rounded box (focused gets an accent border hint). With Dear ImGui's framed look (StyleVar_FramedWidgets) a frame has no border, as
+    // with the editor's FrameBorderSize of 0: only the frame colour, lighter when hovered and while it has the keyboard.
     const float rd = rnd();
+    if (g_framedWidgets) rrect(x, y, w, h, rd, pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
+    else {
     rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
     if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f,
                                             pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
+    }
 
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
@@ -1771,6 +1802,10 @@ void mergeOverlay() {
 }
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
+    // A text field that had the keyboard and was not drawn this frame (its popup closed, its panel was not shown) gives it up, as Dear
+    // ImGui drops an active item that was not submitted: the keys must not go on to a field nobody sees, and WantsTextInput() turns false.
+    if (g_focus != 0 && g_focus == g_fieldFocus && !g_fieldFocusSeen) { g_lostFocusId = g_focus; g_lostFocusEdited = (g_editedId == g_focus); g_focus = 0; }
+    g_fieldFocusSeen = false;
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) { if (g_focus != 0) { g_lostFocusId = g_focus; g_lostFocusEdited = (g_editedId == g_focus); } g_focus = 0; }   // click on empty space drops keyboard focus
     // A floating chip follows the cursor while dragging (drawn in the overlay so it's
@@ -3088,7 +3123,7 @@ static bool Checkbox_ed(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);   // "##" and what follows only name the widget
     const float sz = boxSize(), h = std::max(rowH(), sz);
-    const float w = sz + 8.0f + labelW(vis.b);
+    const float w = sz + (vis.b[0] ? 8.0f + labelW(vis.b) : 0.0f);   // no label: just the box (Dear ImGui's: no gap after it either)
     float x, y; place(w, h, x, y);
     return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value);
 }
@@ -3099,7 +3134,7 @@ static bool RadioButton_ed(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
     const VisLabel vis(label);
     const float sz = boxSize(), h = std::max(rowH(), sz);
-    const float w = sz + 8.0f + labelW(vis.b);
+    const float w = sz + (vis.b[0] ? 8.0f + labelW(vis.b) : 0.0f);
     float x, y; place(w, h, x, y);
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value, option);
 }
@@ -4483,6 +4518,15 @@ void EndPopup() {
         const bool inSub = c.subX1 > c.subX0 && pointIn(g_in.mouseX, g_in.mouseY, c.subX0, c.subY0, c.subX1 - c.subX0, c.subY1 - c.subY0);
         if (!inside && !inSub) p->open = false;
     }
+    if (p && p->open && g_popCurN < 8) g_popCur[g_popCurN++] = PopRect{c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f, g_popupTop + 1};
+    // A popup opened from inside another one (a right-click menu on a row of an open list): a press in it is inside its parent too,
+    // so the parent stays open while it is used, as in Dear ImGui.
+    if (p && p->open && g_popupTop > 0) {
+        PopupCtx& pc = g_popupStack[g_popupTop - 1];
+        const float x0 = c.x, y0 = c.y, x1 = c.x + c.w, y1 = c.y + *c.hSlot + c.padY * 2.0f;
+        if (pc.subX1 <= pc.subX0) { pc.subX0 = x0; pc.subY0 = y0; pc.subX1 = x1; pc.subY1 = y1; }
+        else { pc.subX0 = std::min(pc.subX0, x0); pc.subY0 = std::min(pc.subY0, y0); pc.subX1 = std::max(pc.subX1, x1); pc.subY1 = std::max(pc.subY1, y1); }
+    }
     g_lay = c.lay;   // restore parent layout
 }
 
@@ -4537,8 +4581,9 @@ namespace { int g_comboCloseId = 0; }   // a press on an open combo's box: the r
 bool BeginCombo(const char* label, const char* preview) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
+    const VisLabel vis(label);   // the "##id" part is not shown
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
@@ -4549,7 +4594,7 @@ bool BeginCombo(const char* label, const char* preview) {
         if (g_released) {
             if (insideBox && ps) {
                 if (g_comboCloseId == id) ps->open = false;
-                else if (!ps->open) { ps->open = true; ps->x = x; ps->y = y + h; ps->w = boxW; g_openPopupThisFrame = ps->id; }
+                else if (!ps->open) { ps->open = true; ps->x = x; ps->y = y + h; ps->w = std::max(boxW, g_popupW); g_openPopupThisFrame = ps->id; }   // a pushed PopupWidth wider than the box widens the list (Dear ImGui fits it to its content)
             }
             g_comboCloseId = 0; g_active = 0;
         }
@@ -4565,7 +4610,7 @@ bool BeginCombo(const char* label, const char* preview) {
     if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
     }
-    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
     if (!ps) return false;
     const bool shown = beginPopupBody(ps->id);
     if (shown) { g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = boxW; g_lay.prevH = h; }   // GetItemRect right after BeginCombo is the box
@@ -6014,7 +6059,7 @@ void ResetState() {
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
     for (int k = 0; k < KeyId_COUNT; ++k) { g_keyNow[k] = g_keyPrev[k] = false; g_keySince[k] = g_keyNextRepeat[k] = 0.0; }
-    g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
+    g_hot = g_active = g_focus = 0; g_fieldFocus = 0; g_fieldFocusSeen = false; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
     g_fieldPadL = g_fieldPadR = -1.0f;
     g_popupPadX = g_popupPadY = g_popupW = g_innerX = g_childPadY = -1.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
@@ -6035,6 +6080,7 @@ void ResetState() {
     GetDockBuilderTree().Clear();
     ColorPickerReset();
     g_ovCurN = g_ovPrevN = 0;
+    g_popCurN = g_popPrevN = 0;
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
@@ -6093,18 +6139,29 @@ bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, f
         const int id = n == 1 ? base : base + (i + 1) * 7919;
         const bool inside = hit(cx, y, cw, h);
         double typed = 0.0;
-        const int e = numberEdit(id, cx, y, cw, h, inside, (double)v[i], false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
+        // Ctrl+click or a double click types a number (Dear ImGui's drag fields take both)
+        const bool dbl = inside && g_pressed && IsMouseDoubleClicked(0);
+        const int e = numberEdit(id, cx, y, cw, h, inside, (double)v[i], false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed, !dbl);
         if (e == 2) { const float nv = (float)typed; if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; } }
         if (e != 0) continue;
         g_lastId = id; if (inside) g_hot = id;
+        // Dear ImGui's drag threshold: the value follows the pointer only once it has moved 3 pixels from the press (half of
+        // io.MouseDragThreshold), so a click does not nudge it; from then on every pixel counts.
+        static bool s_pastThreshold = false;
         if (g_active == id) {
             if (!g_in.mouseDown) g_active = 0;
-            else if (g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed)) {
-                float nv = v[i] + g_mouseDX * speed;
-                if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-                if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
+            else {
+                if (!s_pastThreshold) {   // at least 3 pixels from where it was pressed
+                    const float ddx = g_in.mouseX - g_dragOriginX[0], ddy = g_in.mouseY - g_dragOriginY[0];
+                    s_pastThreshold = ddx * ddx + ddy * ddy >= 9.0f;
+                }
+                if (s_pastThreshold && g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed)) {
+                    float nv = v[i] + g_mouseDX * speed;
+                    if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                    if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
+                }
             }
-        } else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; }
+        } else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; s_pastThreshold = false; }
         frameField(cx, y, cw, h, inside, g_active == id);
         char buf[64]; formatValue(buf, sizeof buf, format, (double)v[i], false);
         centredText(cx, y, cw, h, buf, g_theme.text);

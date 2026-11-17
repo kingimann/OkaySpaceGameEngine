@@ -272,6 +272,18 @@ void DrawComponentDiagMarker(const GameObject* go, const char* label, ImVec2 hea
     DrawMarker(ImVec2(headerMax.x - fh - 18.0f, mid), error, TipFor(rows));
 }
 
+int ComponentDiagLevel(const GameObject* go, const char* label, std::string* tip) {
+    if (!go || !label) return 0;
+    std::vector<Diagnostic> rows;
+    for (const Diagnostic& d : EditorDiagnostics().ForObject(go->Guid()))
+        if (ComponentMatches(d, label)) rows.push_back(d);
+    if (rows.empty()) return 0;
+    bool error = false;
+    for (const Diagnostic& d : rows) if (d.severity == DiagSeverity::Error) error = true;
+    if (tip) *tip = TipFor(rows);
+    return error ? 2 : 1;
+}
+
 int ObjectDiagLevel(const GameObject* go, std::string* tip) {
     if (!go) return 0;
     const std::vector<Diagnostic> rows = EditorDiagnostics().ForObject(go->Guid());

@@ -7,6 +7,7 @@
 //    built from the property registry, editing every selected object at once
 //  - the component menu (copy / paste / reset values), prefab changes, the Play-mode note
 #include "EditorState.hpp"
+#include "EditorPanelModels.hpp"   // PanelMenuEntry: the component menu as data for the OkayUI Inspector
 #include "imgui.h"
 #include <functional>
 #include <string>
@@ -49,6 +50,10 @@ void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, 
                            okay::Component*& toRemove, float cursorYBefore, CompHeaderFn header);
 /// The "Copy Values / Paste Values / Reset" rows of a component's menu. Call inside its popup.
 void ComponentValueMenu(okay::Component* comp);
+/// The same rows as data, for a menu drawn by OkayUI (a separator, then Copy Values, Paste Values, Reset; nothing for a component
+/// without registered properties), and the request a chosen row makes (kind 1 copy, 2 paste, 3 reset).
+void ComponentValueMenuEntries(okay::Component* comp, std::vector<okaypanels::PanelMenuEntry>& out);
+void RequestComponentValues(okay::Component* comp, int kind);
 /// Run what the menu asked for. After the component loop, with the object that was drawn.
 void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go);
 
@@ -74,6 +79,9 @@ void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go);
 void PrefabFieldMark(const char* label);
 /// The prefab rows of a component's "..." menu (Revert / Apply Component). Call inside its popup.
 void PrefabComponentMenu(okay::Component* comp);
+/// The same prefab rows as data (a separator and the two rows; nothing when the component is not changed), and running a chosen one.
+void PrefabComponentMenuEntries(okay::Component* comp, std::vector<okaypanels::PanelMenuEntry>& out);
+void RunPrefabComponentMenu(okay::Component* comp, const std::string& id);
 /// Actions the Hierarchy's context menu asks for on an instance (the Inspector runs the same code from its buttons).
 enum class PrefabAction { RevertAll, ApplyAll, Unpack, UnpackCompletely, UpdateAll };
 void QueuePrefabAction(PrefabAction action, okay::GameObject* instanceRoot);
@@ -89,6 +97,8 @@ void FieldTip(const char* label);
 /// With several objects selected: one line under a component header naming the values that differ between them
 /// ("Different on the selected objects: Intensity, Color"). No-op otherwise.
 void DrawMixedNote(const okay::Component* comp);
+/// The same note's text ("" when there is none).
+std::string MixedNoteText(const okay::Component* comp);
 
 /// Play mode: a note across the top that edits are not kept. No-op while editing.
 void DrawPlayModeNote(okay::editor::EditorState& ed);

@@ -1475,6 +1475,20 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
                                ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
     add_test(NAME okayui_hierarchy_imgui COMMAND test_okayui_hierarchy_imgui)
     set_tests_properties(okayui_hierarchy_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # The Inspector, stage 1, the same way (docs/own_ui_toolkit.md section 14): the header card, Transform, the Mesh Renderer, the bars.
+    add_executable(test_okayui_inspector_imgui test_okayui_inspector_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_inspector_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_inspector_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_inspector_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_inspector_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_inspector_imgui COMMAND test_okayui_inspector_imgui)
+    set_tests_properties(okayui_inspector_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # Hosted OkayUI bodies give way to Dear ImGui windows drawn in front of them (shared/OkayUIHostImGui.hpp): the History window
     # behind Project Settings once painted its Undo/Redo row over it. Dear ImGui only, headless.
     add_executable(test_okayui_host_layering test_okayui_host_layering.cpp)

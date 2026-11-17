@@ -1543,3 +1543,195 @@ and with the Inspector's, to within one pixel; and a picture of the sound import
 
 Windows (not built or run here; the measurements are from Linux under Xvfb with the software SDL renderer), other UI scales and the
 Compact density in the real editor (the headless test covers the Inspector's Comfortable spacing only), a docked History or Profiler.
+
+## 14. The Inspector, stage 1: the header card, the component bars, Transform, the Mesh Renderer's shading, Add Component
+
+The editor's most-used panel after the Hierarchy, ported the way sections 9 to 12 port a panel: a std-only model, a Dear ImGui body
+drawn from it (for the comparison test; the editor's own Dear ImGui Inspector stays the default), the OkayUI port, the editor glue
+behind the developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`), and the two test suites. The Inspector is large (its
+component code runs to about 11,000 lines of `editor/main.cpp`), so this is stage 1. Written from what the editor's `DrawInspector`,
+`CompHeader` and `DragVec3Axis` draw and do, Dear ImGui's documented collapsing header, drag field, colour field and combo behaviour as
+the editor uses them, and measurements of both pictures; no code from any other project.
+
+### 14.1 What is ported, and how the rest still draws
+
+| Part | Where it was | Now |
+|---|---|---|
+| The object header card: the active box (it takes the children and the whole selection), the type icon, the name, Static, Lock (an undo step), the Tag list (the built-in tags, the project's tags, the add field at the bottom; right-click a project tag to rename it or take it off the list), the Layer list (right-click a layer to rename it, or Reset to default), Save as Prefab, a file dropped on the card | `DrawInspector` | `okaypanels::InspectorHeaderModel`, `okayuiscreens::DrawInspectorHeader`, `DrawInspectorHeaderWithOkayUI` (the editor's rules for tags and layers: `Tags::Add`, `TryRenameLayer`, the tag rename across the scene with an undo step) |
+| Every component's header bar: the fold arrow, the enable box, the family mark, the name (cut with an ellipsis), the problems marker, the "..." menu (also a right-click on the bar): Move Up and Down, Expand and Collapse All, Copy, Paste and Reset Values, the prefab's Revert and Apply Component, Remove Component; the Character Model note and the "Different on the selected objects" note under an open bar; a drag from the bar onto the visual script | `CompHeader` | `CompHeaderModel` (the menu is data, asked for only while it is open), `DrawComponentHeader`, `CompHeaderOkayUI`. Every component goes through `CompHeader`, the ones drawn from the property registry too, so every bar is OkayUI's |
+| Transform: the header (right-click: Copy and Paste Transform Values), Position, Rotation and Scale as three drag cells each with the axis colours (fewer decimals in a narrow Inspector), "(editing N selected objects)", the camera's locked scale, Reset Pos, Reset Rot, Reset Scale, Uniform | `DrawInspector`, `DragVec3Axis` | `TransformModel`, `DrawTransform`, `DrawTransformWithOkayUI` (the euler angles kept per object, edits to every selected object, one undo step when a drag begins, the resets with their own step) |
+| Mesh Renderer, its shading: the stats line, Color, Wireframe, Shader (Cel Bands, the gradient colours, the Fresnel note), Rim (Rim Power, Rim Color), Outline (width, colour), Cast and Receive Shadows, Ground Shadow (its Y and strength), Emissive, Specular (Shininess), Primitive | `DrawInspector` | `MeshRendererModel`, `DrawMeshRenderer`, `DrawMeshRendererWithOkayUI` |
+| The Add Component button | `DrawInspector` | `DrawAddComponentButton`; the browser it opens is still the Dear ImGui popup |
+
+**How the unported parts draw: each ported part is a section inside the Inspector's own Dear ImGui window.** The two ways the brief
+offered were (a) the unported components keep drawing with Dear ImGui inside the OkayUI frame, or (b) the whole Inspector falls back to
+Dear ImGui while an unported component is present. (b) would almost never show OkayUI: nearly every object carries a component that is
+not ported yet (a collider, a rigidbody, a script, a light). (a) is what `HostSection` (section 10.3) already does for Project Settings:
+the Dear ImGui window stays (the dock tab, the scroll bar, the window's own scrolling), each ported part is one placeholder item as tall
+as the OkayUI part drew on the last frame, and OkayUI draws into the part of it the window shows. So the Inspector is, from top to
+bottom: the play-mode note and Lock Inspector (Dear ImGui), the header card (OkayUI), the prefab banner and the UI layout card (Dear
+ImGui), the Transform (OkayUI), then for each component its bar (OkayUI) and its body (Dear ImGui, but the Mesh Renderer's shading
+fields are OkayUI), the divider (Dear ImGui) and Add Component (OkayUI). Every part keeps its Dear ImGui code: a part falls back to it
+for any frame OkayUI cannot draw it (a Dear ImGui popup or window covers it, as for every hosted panel), and it is the default.
+
+`HostSection` gained a `bleed`: Dear ImGui's framed headers reach half the window padding (8 pixels) past the content on both sides, so
+the bars' sections are offered and clipped that much wider. The Transform's open state is the Dear ImGui header's own flag (switching
+toolkits keeps it), the copy of a transform and Uniform are shared by both versions.
+
+**Undo.** The editor records one undo step per edited field by watching Dear ImGui's active item (`WatchEditUndo`). A drag on an
+OkayUI field keeps the placeholder pressed, so that works as it is; a field being typed in has the mouse up, so the watcher now also
+counts "a hosted OkayUI field has the keyboard" (`OkayUIHasKeyboard`) as an active widget. The Transform still records its own step
+when a drag begins, Lock, the resets, the paste and the tag rename theirs, exactly as in the Dear ImGui version.
+
+### 14.2 Gaps closed in OkayUI (`okayui/src/OkayUI.cpp`; tested in `okayui_inspector`)
+
+- **A popup opened from a row of an open popup** (the right-click menu of a tag in the Tag list): a press in it no longer closes the list
+  (its box is added to the list's "inside" area, as a sub-menu's already was), and the list's rows under it no longer take that press
+  (a widget in a popup body ignores the pointer where a deeper popup covered it on the last frame).
+- **A combo's list as wide as its content**: a pushed `StyleVar_PopupWidth` wider than the box widens the list (Dear ImGui fits a combo's
+  list to its content; the Tag list holds an add field and a button).
+- **Popup slots**: there were 8, never freed, and every combo box takes one when it is first drawn. With the hosted panels and the
+  Inspector's four combos the editor would have run out (a combo that silently never opens). Now 32, and a closed slot that has not been
+  asked for longest is reused for a new id.
+- **`BeginCombo` showed the `##id` part of its label** ("Shader##mesh"); seen on the first comparison picture. Fixed.
+- **Drag fields like Dear ImGui's**: a double click types a number (as Ctrl+click did), and the value follows the pointer only once it
+  has moved 3 pixels from the press (Dear ImGui's drag threshold: a click no longer nudges a value).
+- **A text field that is not drawn gives the keyboard up** (Dear ImGui drops an active item that is not submitted): the field of a
+  rename menu that closed kept the keyboard, so Escape went to it, keys went nowhere and `WantsTextInput()` stayed true.
+- **Framed text fields have no border** (`StyleVar_FramedWidgets`, the look the editor's panels push): Dear ImGui draws the editor's frames
+  without one (FrameBorderSize 0). Seen in the real editor's Inspector (the name field had a light outline). Every hosted panel's text
+  fields change: 13 older golden images (`editorpanels_problems*`, `_tagslayers*`, `_player_rendering`, `hierarchy_*`) were re-made and
+  looked at (only the outline went), and the comparisons moved the right way (Tags and Layers 4.23 to 4.19 average difference, Player
+  1.16 to 1.14, the Hierarchy rename 3.09% to 2.80% clearly different).
+- **A check box without a label takes no label gap** (it took 8 pixels): the header card's icon and name sat 8 pixels to the right of Dear
+  ImGui's, so a narrower Inspector put Static and Lock on their own row sooner than Dear ImGui did (seen in the real editor after folding
+  a component: Dear ImGui's row changed, OkayUI's did not).
+- **Long lists show eight rows at a time** (the Layer list's 32, the Primitive list's 23), as Dear ImGui's combo does; the wheel scrolls
+  them by rows, the list opens with the current row in view, and a thin bar shows where it is. (Written in the Inspector view, not yet a
+  toolkit piece.)
+- **The bar's name is cut by whole characters**: the editor's `CompHeader` dropped one byte and then any continuation bytes, which could
+  leave the first byte of a two-byte character before the ellipsis (the bug section 12.2 fixed in the Hierarchy). The rule is now
+  `CompHeaderTitle` in the model, used by both versions.
+
+Two older tests changed only their input: `okayui_editor_panels` waits a third of a second between two presses on the same drag field
+(they were a double click, which now types), and `okayui_screens` sends its Backspace presses one frame each (it nested a frame inside a
+frame, so the search field was not drawn in the outer one and gave up the keyboard). The older golden images that changed are the 13 of
+the field border above.
+
+### 14.3 Tests
+
+- `okayui_inspector` (`okayui/tests/test_okayui_inspector.cpp`, 119 checks, headless; the host is `okayui/tests/InspectorFixtures.hpp`
+  and the parts are stacked as the editor stacks them by `InspectorStackOkayUI.hpp`): the shared rules (the bar's title cut with UTF-8,
+  the shorter formats of a narrow row, the cell widths, uniform scale, the stats line, the menu head and tail, the colour bytes, the button
+  width, the value column); the whole stack (the parts follow each other, the bars reach 8 pixels past the region, the cells share the
+  value column); the card (the active box, typing a name, Static, Lock with its undo step, the tag list's eight rows, picking Player, a new
+  tag added with Enter and the list closing, a refused tag keeping the list open with the reason, renaming a project tag from its
+  right-click menu while the list stays open, a refused rename, Remove tag from list, the layer list's eight rows and the wheel, picking
+  layer 4, renaming layer 5, Save as Prefab); a narrow Inspector (the name takes its row, the button the whole width); the bars (the
+  arrow folds, the name part folds, the enable box does not fold, the menu's 8 rows, a greyed-out row takes no click, Move Down and its
+  undo, the right-click menu, Remove Component and its undo, Collapse All, a required component's menu); the Transform (a 20-pixel drag
+  on Position X with one undo step, Rotation Y, a double click and Ctrl+click typing a number, Reset Pos with its undo step, Reset Rot,
+  Reset Scale, Uniform, Copy and Paste Transform Values, folding); the camera (scale locked, no Reset Scale, no Uniform); two objects
+  selected (the note, a drag moving both, the mixed-values note, a change going to both); the Mesh Renderer (Wireframe, Receive Shadows,
+  the shader list and Toon's Cel Bands, the Rim slider and its two rows, a colour cell drag of 12 with the threshold, a click that does
+  not nudge it, Ground Shadow's rows, the Primitive list, Add Component); the toolkit pieces of 14.2 on their own. Four golden images:
+  `inspector_full`, `_tag_list`, `_comp_menu`, `_multi`.
+- `okayui_inspector_imgui` (`tests/test_okayui_inspector_imgui.cpp`, 17 checks): both versions of the stack from the same objects, the
+  Dear ImGui one as one window with the parts in order (as the editor draws them); the same input does the same in both (drags on
+  Position X, Rotation Z and Scale Y in whole pixels, with one undo step each; Reset Pos and Reset Scale; Cast Shadows and Ground Shadow;
+  a bar's enable box and arrow; folding the Mesh Renderer, after which Add Component still lines up; Static); the speed and pixel tables
+  below; `OKAYUI_SHOT_DIR` writes the pictures and `OKAY_UI_PROFILE=insp:<imgui|okayui>` runs one side for callgrind.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector"`: 41 of 41 pass (34 in a Release tree: every OkayUI suite with its golden images and the
+  comparisons; 7 that need the engine, `okayui`, `ui_backend`, `inspector_model`, `scene_hierarchy_search`, `deep_hierarchy`,
+  `hierarchy_context_model`, `hierarchy_row_model`, in the editor's `-O1` tree). `editor/main.cpp` passes the syntax-only check with
+  and without `OKAY_HAVE_OKAYUI`; `OkayPanels.cpp` was checked both ways; the editor was built and run (14.6).
+
+### 14.4 Speed
+
+The sample object (a header card, the Transform, a Mesh Renderer open and three closed components, Add Component), per frame, the
+parts and the test host's model filling (the same code on both sides). Instructions: callgrind, 200 frames after a warm-up. Wall time:
+the median of 150 frames, three runs (load 2.6 to 6), the range shown.
+
+| Case | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render |
+|---|---:|---:|---:|---:|---:|---:|
+| The sample object | 463,300 | 324,600 (30% fewer) | 149 to 159 us | 103 to 108 us | 62.9 to 63.8 ms | 20.1 to 20.5 ms |
+| Two objects selected | | | 155 to 166 us | 103 to 112 us | 63.1 to 63.4 ms | 20.0 to 20.5 ms |
+| The camera (no Mesh Renderer) | | | 111 to 122 us | 48 to 57 us | 52.8 to 54.4 ms | 11.0 ms |
+
+As before, "build + render" uses the CPU rasteriser and says more about it than about the toolkits.
+
+### 14.5 Pixels
+
+Both versions on a 560-pixel-wide canvas, 1480 tall, the same rasteriser; "clearly different": a channel more than 48 apart (the gate is 12%).
+
+| Picture | Average difference | Clearly different |
+|---|---:|---:|
+| The sample object | 2.23 | 1.92% |
+| Two objects selected | 2.51 | 2.22% |
+| The camera | 1.07 | 0.91% |
+
+What the first comparison found and what was changed for it: the "##mesh" shown after "Shader" (14.2), the colour markers (Dear ImGui's
+is the left 3 pixels of the rounded cell, not a square bar), the arrow of a component that is off (grey with its name), the bars' 8
+pixels past the region. The divider above Add Component stays Dear ImGui's in the editor, so the OkayUI picture leaves it out.
+
+### 14.6 In the real editor
+
+The editor was built (Linux, `-O1`, assertions on; `main.cpp` peaked at 5.1 GB) and run under Xvfb at 1920 x 1200 with the physics
+playground, once with Dear ImGui and once with `OKAY_DEV=1 OKAY_UI_BACKEND=okayui`, driven by the same clicks (xdotool), "7 Hook"
+selected. Done and looked at in both, side by side:
+
+- typing 2.5 into Position X (a double click, select all, type, Enter), a 40-pixel drag on Position Y (7.5 to 9.5 in both), Ctrl+Z (back
+  to 7.5 in both), Reset Pos (zeros in both), Ctrl+Z and Ctrl+Z again (back to 2.5, 7.5, 15 and then to the first -7, 7.5, 15 in both);
+- a 40-pixel drag on Scale X (0.3 to 2.3 in both) and Ctrl+Z (back in both); Uniform ticked and the same drag (all three to 2.3 in both);
+- the Mesh Renderer's enable box (off: the box empty, the name and the arrow grey, the left bar grey, in both), Ctrl+Z (on again in both);
+  its "..." menu, its arrow (folded and unfolded in both), the Shader list, the Layer list, the Tag list;
+- Ctrl+click of a second object: "(editing 2 selected objects)" and "Different on the selected objects: Color" in both.
+
+The Inspector's rectangle (430 x 1130) differs clearly in 1.50% to 3.07% of its pixels between the two runs (after the fixes below), the
+differences only text edges (pictures `<scratchpad>/shots/oin/s2/`, `s3/`: `im-*.png`, `ok-*.png`, `side-*.png`, `diff-*.png`).
+
+Found in the real editor and fixed in this step: the light outline of OkayUI's text fields, the 8-pixel gap after an unlabeled check box
+(so Static and Lock wrapped at a different width than Dear ImGui's), lists taller than Dear ImGui's (14.2). Found and fixed in the Dear
+ImGui path: dragging a Position, Rotation or Scale number in an assertion build aborted the editor (`BeginDragDropSource` after the
+row's label, which has no id; it now passes `ImGuiDragDropFlags_SourceAllowNullID`, so a drag from the label onto the visual script
+works as meant; release builds without assertions only skipped it before). The OkayUI Transform got the same label drags.
+
+The drag abort was confirmed on the unchanged starting branch
+(`claude2/okayui-hierarchy-2`, built the same way): the same assertion on the first drag of Position X.
+
+Twice a Ctrl+Z did not take in the **Dear ImGui** editor of this branch (once after Reset Pos, once after the Uniform drag; OkayUI's took
+both times). Reset Pos and Ctrl+Z three times in a row on the unchanged branch's editor and on this branch's Dear ImGui editor side by side
+undid every time in both, so it is not something this branch changed as far as that shows; the cause is not known (possibly the key
+arriving in a frame Dear ImGui does not see it under Xvfb at about 20 FPS). Not looked into further.
+
+### 14.7 What still differs (blunt)
+
+- Text edges (OkayUI's baked Roboto against Dear ImGui's), and the Add Component label sits 2 pixels higher.
+- **Where a list opens.** In the docked Inspector Dear ImGui opens the Shader, Layer and "..." lists to the left of the box (over the
+  Scene view); OkayUI opens them under the box, kept on the screen. The "..." menu is right-aligned to the screen edge in OkayUI.
+- The text widths differ by under a pixel ("Static" + "Lock"), so at a width right on the edge one version may wrap Static and Lock
+  and the other not.
+- Tooltips and the hover cursor are OkayUI's; the colour picker that opens from a swatch is OkayUI's picker, not Dear ImGui's.
+- **Per-field prefab marks and the registry's field tooltips** (`FieldTip`: the blue bar and the Revert / Apply Property menu on a field
+  changed from its prefab) are not drawn on the OkayUI Transform and Mesh Renderer fields. The component bar does show "changed from the
+  prefab" and its Revert / Apply Component rows.
+- The Mesh Renderer below Primitive (the mesh file, the texture and map fields with their pickers, drop targets and thumbnails, the mesh
+  tools, the material preset) and every other component's body stay Dear ImGui; stage 2 is the asset fields (shared by many components).
+
+### 14.8 Not verified
+
+Windows (not built or run; Linux under Xvfb with the software SDL renderer), other UI scales and the Compact density in the real editor,
+a docked Inspector narrower than 430 pixels, prefab instances in the OkayUI Inspector (the menu rows are written from the Dear ImGui
+code and not clicked), the drag from a bar or a label onto the visual script (written, not tried), a file dropped on the OkayUI card (the
+same Dear ImGui drop target on its placeholder, not tried), the Tag and Layer renames in the real editor (tested headless only).
+
+### 14.9 Coverage (usage report)
+
+| What | Before (committed report) | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,335 of 27,578 (99.1%) | 27,585 of 27,842 (99.1%) |
+| Types, flags and enums available | 11,888 of 12,233 (97.2%) | 11,957 of 12,316 (97.1%) |
+| Call sites in ported functions | 713 (2.6%) | 935 (3.4%) |
+
+As with the Hierarchy, the totals grew because the model bodies (222 calls) sit next to the editor's own `DrawInspector`, which stays the
+default.

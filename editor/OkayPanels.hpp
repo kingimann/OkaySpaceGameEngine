@@ -55,4 +55,18 @@ bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okay
 /// object fields take it). Same return value as above.
 bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent);
 
+/// The Inspector, stage 1 (docs/own_ui_toolkit.md section 14), each part a section inside the current ImGui window (the Inspector), drawn
+/// where the Dear ImGui part would be: the object header card, a component's header bar, the Transform, the Mesh Renderer's shading
+/// fields and the Add Component button. Same return value as above (false: draw the Dear ImGui part this frame). `barPressed`: the left
+/// button went down on the bar this frame (the host starts its "drag onto the visual script" source then).
+bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel& model, okaypanels::InspectorHeaderState& state, okaypanels::InspectorHeaderIntent& intent);
+bool DrawCompHeaderOkayUI(const char* windowId, const okaypanels::CompHeaderModel& model, okaypanels::CompHeaderIntent& intent, bool* barPressed);
+/// `pressedOn` (the Transform): the left button went down on 1 the header, 2 Position's label, 3 Rotation's, 4 Scale's (0 nothing).
+bool DrawTransformOkayUI(okaypanels::TransformModel& model, okaypanels::TransformIntent& intent, int* pressedOn);
+bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel& model, okaypanels::MeshRendererIntent& intent);
+/// `clicked`: the button was clicked (the host opens its Add Component browser).
+bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked);
+/// A hosted OkayUI field has the keyboard (the Inspector's undo watcher keeps its step open while one is typed in).
+bool OkayUIHasKeyboard();
+
 } // namespace oked

@@ -28,6 +28,8 @@ void DrawObjectDiagMarker(const okay::GameObject* go, ImVec2 rowMin, ImVec2 rowM
 void DrawComponentDiagMarker(const okay::GameObject* go, const char* label, ImVec2 headerMin, ImVec2 headerMax);
 bool ObjectHasDiag(const okay::GameObject* go);
 bool ComponentHasDiag(const okay::GameObject* go, const char* label);
+/// Problems on one component: 0 none, 1 warnings, 2 errors; `tip` gets the marker's hover text.
+int ComponentDiagLevel(const okay::GameObject* go, const char* label, std::string* tip);
 void DrawSceneDiagMarker(ImVec2 rowMin, ImVec2 rowMax);
 /// The same facts as values, for a panel that draws its own marker (the OkayUI Hierarchy): 0 none, 1 warnings, 2 errors, and the
 /// marker's hover text.

@@ -1178,8 +1178,9 @@ float PanelMenuWidth(const std::vector<PanelMenuEntry>& es) {
 }
 
 // A menu's entries, drawn with OkayUI: rows in the popup body (MenuItem inside a popup), sub-menus to the right (BeginMenu). `top`:
-// the popup's own rows (their ids and rectangles go into the result). The chosen item's id goes to `chosen`.
-void DrawPanelMenu(const std::vector<PanelMenuEntry>& es, std::string& chosen, HierarchyResult* top) {
+// the popup's own rows (their ids and rectangles go into `topIds` and `topRows`). The chosen item's id goes to `chosen`.
+void DrawPanelMenu(const std::vector<PanelMenuEntry>& es, std::string& chosen, std::vector<std::string>* topIds, std::vector<UI::Rect>* topRows) {
+    const bool top = topIds != nullptr && topRows != nullptr;
     for (const PanelMenuEntry& e : es) {
         switch (e.kind) {
         case PanelMenuSeparator:
@@ -1192,17 +1193,17 @@ void DrawPanelMenu(const std::vector<PanelMenuEntry>& es, std::string& chosen, H
         case PanelMenuSub:
             if (!e.enabled) { UI::MenuItem(e.label.c_str(), nullptr, false, false); break; }
             if (UI::BeginMenu(e.label.c_str())) {
-                if (top) { top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect()); }
+                if (top) { topIds->push_back(e.id); topRows->push_back(UI::GetItemRect()); }
                 UI::PushStyleVar(UI::StyleVar_PopupWidth, PanelMenuWidth(e.children) + 40.0f);
-                DrawPanelMenu(e.children, chosen, nullptr);
+                DrawPanelMenu(e.children, chosen, nullptr, nullptr);
                 UI::PopStyleVar();
                 UI::EndMenu();
-            } else if (top) { top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect()); }
+            } else if (top) { topIds->push_back(e.id); topRows->push_back(UI::GetItemRect()); }
             break;
         default: {
             const bool hit = UI::MenuItem(e.label.c_str(), e.shortcut.empty() ? nullptr : e.shortcut.c_str(), e.kind == PanelMenuToggle && e.checked, e.enabled);
             if (top) {
-                top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect());
+                topIds->push_back(e.id); topRows->push_back(UI::GetItemRect());
                 if (UI::IsItemHovered() || (!e.enabled && UI::IsMouseHoveringRect(UI::GetItemRectMin(), UI::GetItemRectMax()))) {
                     if (!e.enabled && !e.reason.empty()) UI::SetTooltip("%s", e.reason.c_str());
                     else if (!e.tip.empty()) UI::SetTooltip("%s", e.tip.c_str());
@@ -1546,7 +1547,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});   // Dear ImGui's popup padding (the rows reach half the spacing past it)
             if (UI::BeginPopup("##hiermenu")) {
                 std::string chosen;
-                DrawPanelMenu(entries, chosen, &res);
+                DrawPanelMenu(entries, chosen, &res.menuIds, &res.menuRows);
                 res.menu = UI::Rect{};
                 if (!res.menuRows.empty()) {
                     const UI::Rect a = res.menuRows.front(), b = res.menuRows.back();
@@ -1558,6 +1559,731 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             UI::PopStyleVar(2);
             if (!UI::IsPopupOpen("##hiermenu")) { st.menuKind = HierMenuNone; st.menuRow = 0; }
         }
+    }
+    UI::End();
+    return res;
+}
+
+
+// ---- Inspector, stage 1 (docs/own_ui_toolkit.md section 14) -----------------------------------------------------------------------
+// Written from what the editor's Inspector draws and does (editor/main.cpp DrawInspector, CompHeader, DragVec3Axis, the Mesh
+// Renderer's fields) and Dear ImGui's documented collapsing header, drag field and colour field behaviour as the editor uses them;
+// sizes measured on the comparison pictures. The rules and the small drawings come from shared/InspectorPanelModel.hpp.
+
+namespace {
+
+const UI::Color32 kCardBg = UI::RGBA(41, 43, 51);                // ImVec4(0.16, 0.17, 0.20): the object header card
+const UI::Color32 kOffText = UI::RGBA(153, 158, 168);            // ImVec4(0.60, 0.62, 0.66): a component that is off
+const UI::Color32 kOffBar = UI::RGBA(115, 120, 130, 204);        // ImVec4(0.45, 0.47, 0.51, 0.8): its left bar
+const UI::Color32 kPrefabBar = UI::RGBA(77, 158, 255);           // ImVec4(0.30, 0.62, 1.0): changed from its prefab
+const unsigned char kMixed[3] = {242, 199, 102};                 // ImVec4(0.95, 0.78, 0.40): values that differ
+const unsigned char kManaged[3] = {242, 191, 89};                // ImVec4(0.95, 0.75, 0.35)
+
+// Dear ImGui's SmallButton with the host's frame padding: one text line tall, the label FramePadding.x in on each side.
+bool InspSmallButton(const char* label) {
+    UI::CenterNextOnLine();
+    std::string vis(label);
+    const std::size_t hh = vis.find("##");
+    if (hh != std::string::npos) vis.resize(hh);
+    return UI::Button(label, UI::Vec2{UI::CalcTextWidth(vis.c_str()) + 2.0f * g_metrics.framePadding.x, UI::GetFontSize()});
+}
+
+// Dear ImGui's SameLine-or-wrap of the editor (SameLineOrWrap): stay on the line when `nextW` still fits before `right`.
+bool InspSameLineOrWrap(const UI::Rect& last, float right, float nextW) {
+    if (right - (last.x + last.w + g_metrics.itemSpacing.x) < nextW) return false;
+    UI::SameLine();
+    return true;
+}
+
+// Dear ImGui's tree arrow at (x, y) in a `size` square: down when open, right when closed.
+void InspArrow(const UI::DrawList& dl, float x, float y, float size, bool open, UI::Color32 col) {
+    const float r = size * 0.40f, cx = x + size * 0.5f, cy = y + size * 0.5f;
+    if (open) dl.AddTriangleFilled(UI::Vec2{cx, cy + 0.75f * r}, UI::Vec2{cx + 0.866f * r, cy - 0.75f * r}, UI::Vec2{cx - 0.866f * r, cy - 0.75f * r}, col);
+    else dl.AddTriangleFilled(UI::Vec2{cx + 0.75f * r, cy}, UI::Vec2{cx - 0.75f * r, cy + 0.866f * r}, UI::Vec2{cx - 0.75f * r, cy - 0.866f * r}, col);
+}
+
+// The frame of Dear ImGui's collapsing header at (x, y), w by h: the header colours (held, hovered, or plain), the frame rounding.
+UI::Rect InspHeaderFrameAt(float x, float y, float w, float h, bool hovered, bool held) {
+    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{x, y}, UI::Vec2{x + w, y + h}, held ? kHeaderActive : hovered ? kHeaderHovered : kHeader, 6.0f);
+    return UI::Rect{x, y, w, h};
+}
+
+// A row of an open list (Dear ImGui's Selectable in a combo): one text line and the item spacing tall as one flat row, the selected one
+// in the header colour; a click closes the list.
+bool ListRow(const char* label, bool selected) {
+    UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{g_metrics.itemSpacing.x, 0.0f});
+    const bool hit = UI::Selectable(label, selected, UI::Selectable_Header | UI::Selectable_ClosePopup, UI::Vec2{0.0f, UI::GetFontSize() + g_metrics.itemSpacing.y});
+    UI::PopStyleVar();
+    return hit;
+}
+
+// The rows of an open list, at most 8 at a time as Dear ImGui's combo shows them (a taller list scrolls): `row(k)` draws row k. The
+// wheel over the list moves it by whole rows, the list opens with the current row in view, and a thin bar at its right shows where it
+// is. Rows out of view are not drawn at all (they cannot take a click).
+constexpr int kListRows = 8;
+template <class Row>
+void ListWindow(const char* key, int count, int current, Row row) {
+    struct Slot { unsigned id = 0; int first = 0; int frame = -10; };
+    static Slot slots[8];
+    const unsigned id = UI::GetID(key);
+    const int frame = UI::GetFrameCount();
+    Slot* sl = nullptr;
+    for (Slot& s : slots) if (s.id == id) sl = &s;
+    if (!sl) { sl = &slots[0]; for (Slot& s : slots) if (s.frame < sl->frame) sl = &s; *sl = Slot(); sl->id = id; }
+    const int maxFirst = std::max(0, count - kListRows);
+    if (sl->frame < frame - 1) sl->first = std::clamp(current - kListRows / 2 + 1, 0, maxFirst);   // just opened: the current row in view
+    sl->frame = frame;
+    const float rowH = UI::GetFontSize() + g_metrics.itemSpacing.y;
+    const UI::Vec2 p0 = UI::GetCursorScreenPos();
+    const float listW = UI::GetContentRegionAvail().x;
+    const int shown = std::min(count, kListRows);
+    const float wheel = UI::GetFrameInput().wheel;
+    if (count > kListRows && wheel != 0.0f && UI::IsMouseHoveringRect(p0, UI::Vec2{p0.x + listW, p0.y + rowH * (float)shown}))
+        sl->first = std::clamp(sl->first - (int)std::lround(wheel * 3.0f), 0, maxFirst);
+    for (int k = sl->first; k < sl->first + shown && k < count; ++k) row(k);
+    if (count > kListRows) {   // the bar: a faint track and a grab as long as the share in view
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        const float h = rowH * (float)shown, x = p0.x + listW + 2.0f;
+        const float gh = std::max(16.0f, h * (float)shown / (float)count), gy = p0.y + (h - gh) * (float)sl->first / (float)maxFirst;
+        dl.AddRectFilled(UI::Vec2{x, gy}, UI::Vec2{x + 4.0f, gy + gh}, UI::RGBA(255, 255, 255, 61), 2.0f);
+    }
+}
+
+// The editor's colour field (Dear ImGui's ColorEdit3/4 with its default look): the channels as whole numbers 0 to 255 in drag cells,
+// each with its colour marker at the left edge, a swatch a frame tall that opens a picker, the label after it. True on a change.
+bool InspColorEdit(const char* label, float* c, int n, UI::Rect* rowRect = nullptr) {
+    UI::PushID(label);
+    const float fh = UI::GetFrameHeight(), inner = g_metrics.innerSpacing.x;
+    const float full = g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : 200.0f;
+    const float inputs = std::max(full - (fh + inner), 1.0f);
+    const float items = inputs - inner * (float)(n - 1);
+    bool changed = false;
+    const UI::Vec2 p0 = UI::GetCursorScreenPos();
+    float prev = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        if (i > 0) UI::SameLine(inner);
+        const float next = std::floor(items * (float)(i + 1) / (float)n);
+        UI::SetNextItemWidth(std::max(next - prev, 1.0f));
+        prev = next;
+        UI::PushID(i);
+        // While a cell is dragged its unrounded value is kept (Dear ImGui's drag keeps the part of a step the mouse moved), so a slow drag
+        // adds up exactly; the colour gets the whole number.
+        static unsigned s_dragId = 0;
+        static float s_dragVal = 0.0f;
+        const unsigned cid = UI::GetID("##ch");
+        float b = s_dragId == cid ? s_dragVal : (float)ColorByte(c[i]);
+        if (UI::DragFloat("##ch", &b, 1.0f, 0.0f, 255.0f, "%3.0f")) {
+            const float nb = std::round(std::min(255.0f, std::max(0.0f, b)));
+            if (nb != (float)ColorByte(c[i])) { c[i] = nb / 255.0f; changed = true; }
+        }
+        if (UI::IsItemActive()) { s_dragId = cid; s_dragVal = b; }
+        else if (s_dragId == cid) s_dragId = 0;
+        const UI::Rect r = UI::GetItemRect();
+        {   // Dear ImGui's marker: the left 3 pixels of the cell's rounded frame, in the channel's colour
+            const UI::DrawList& dl = UI::GetWindowDrawList();
+            dl.PushClipRect(UI::Vec2{r.x, r.y}, UI::Vec2{r.x + 3.0f, r.y + r.h});
+            dl.AddRectFilled(UI::Vec2{r.x, r.y}, UI::Vec2{r.x + r.w, r.y + r.h}, kColorMarker[i], 6.0f);
+            dl.PopClipRect();
+        }
+        UI::PopID();
+    }
+    UI::SameLine(inner);
+    float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+    if (UI::ColorButton("##swatch", rgba, UI::ColorEdit_NoAlpha, fh)) UI::OpenPopup("##picker");
+    {
+        MenuLook look_(220.0f);
+        if (UI::BeginPopup("##picker")) {
+            float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+            if (UI::ColorPicker4("##pick", tmp, (n == 4 ? 0 : UI::ColorEdit_NoAlpha) | UI::ColorEdit_NoLabel)) {
+                for (int i = 0; i < n; ++i) c[i] = tmp[i];
+                changed = true;
+            }
+            UI::EndPopup();
+        }
+    }
+    std::string vis(label);
+    const std::size_t hh = vis.find("##");
+    if (hh != std::string::npos) vis.resize(hh);
+    if (!vis.empty()) { UI::SameLine(inner); UI::Text(vis.c_str()); }
+    const UI::Vec2 p1 = UI::GetItemRectMax();
+    if (rowRect) *rowRect = UI::Rect{p0.x, p0.y, p1.x - p0.x, fh};
+    UI::PopID();
+    return changed;
+}
+
+// One of the Transform's three rows (the editor's DragVec3Axis): three drag cells sharing the field width, each with its axis
+// colour bar, the label after them. `activated`: a cell became active this frame.
+bool InspVec3Row(const char* label, float v[3], float speed, const char* fmt, bool* activated, UI::Rect cells[3], UI::Rect* labelRect = nullptr) {
+    UI::PushID(label);
+    const float inner = g_metrics.innerSpacing.x;
+    const float full = g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : 200.0f;
+    float widths[3];
+    InspCellWidths(full, 3, inner, widths);
+    bool changed = false;
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) UI::SameLine(inner);
+        UI::PushID(i);
+        const float room = widths[i] - g_metrics.framePadding.x * 2.0f - 4.0f;
+        const char* f = InspAxisFormat(fmt, v[i], room, [](const char* t) { return UI::CalcTextWidth(t); });
+        UI::SetNextItemWidth(widths[i]);
+        if (UI::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, f)) changed = true;
+        if (activated && UI::IsItemActivated()) *activated = true;
+        const UI::Rect r = UI::GetItemRect();
+        if (cells) cells[i] = r;
+        UI::GetWindowDrawList().AddRectFilled(UI::Vec2{r.x, r.y}, UI::Vec2{r.x + 3.0f, r.y + r.h}, kInspAxisCol[i], 2.0f);
+        UI::PopID();
+    }
+    UI::SameLine(inner);
+    UI::Text(label);
+    if (labelRect) *labelRect = UI::GetItemRect();
+    UI::PopID();
+    return changed;
+}
+
+} // namespace
+
+// ---- the object header card ------------------------------------------------------------------------------------------------------
+
+InspectorHeaderResult DrawInspectorHeader(InspectorHeaderModel& m, InspectorHeaderState& st, float x, float y, float w, float h) {
+    InspectorHeaderResult res;
+    InspectorHeaderIntent& in = res.intent;
+    st.newTag[sizeof(st.newTag) - 1] = '\0';
+    st.renameBuf[sizeof(st.renameBuf) - 1] = '\0';
+    UI::BareNextWindow();
+    if (UI::Begin("InspectorHeader##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        const float top = UI::GetCursorScreenPos().y;
+        const float fh = UI::GetFrameHeight();
+        const float sx = g_metrics.itemSpacing.x, ix = g_metrics.innerSpacing.x;
+        UI::PushStyleColor(UI::Col_ChildBg, kCardBg);
+        UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{14.0f, 10.0f});
+        UI::PushStyleVar(UI::StyleVar_ChildRounding, 8.0f);
+        UI::BeginChild("##objheader", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_Borders | UI::ChildFlags_AutoResizeY);
+        UI::PopStyleVar();   // the rounding: the outline is drawn; frames inside round as usual
+        const float left = UI::GetCursorScreenPos().x;
+        const float right = left + UI::GetContentRegionAvail().x;
+        // row 1: the active box, the type icon, the name, Static and Lock
+        bool act = m.active;
+        if (UI::Checkbox("##active", &act)) in.toggleActive = true;
+        res.activeBox = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("%s", kInspActiveTip);
+        UI::SameLine();
+        {
+            const UI::Vec2 ip = UI::GetCursorScreenPos();
+            const float isz = 17.0f;
+            OkPen pen{UI::GetWindowDrawList()};
+            HierDrawIcon(pen, m.icon, ip.x, ip.y + (fh - isz) * 0.5f, isz);
+            UI::Dummy(isz + 2.0f, fh);
+            UI::SameLine();
+        }
+        const float staticW = UI::CalcTextWidth("Static") + UI::CalcTextWidth("Lock") + fh * 2.0f + (ix + sx) * 2.0f;
+        const float avail = right - UI::GetCursorScreenPos().x;
+        const bool narrow = avail - staticW < 120.0f;
+        UI::SetNextItemWidth(narrow ? avail : avail - staticW);
+        if (m.name && m.nameSize > 0) {
+            m.name[m.nameSize - 1] = '\0';
+            if (UI::InputText("##name", m.name, (int)std::min<std::size_t>(m.nameSize, 1u << 20))) in.nameChanged = true;
+        } else {
+            static char none[2] = "";
+            UI::InputText("##name", none, 2);
+        }
+        res.nameField = UI::GetItemRect();
+        if (!narrow) UI::SameLine();
+        bool stat = m.isStatic;
+        if (UI::Checkbox("Static", &stat)) in.toggleStatic = true;
+        res.staticBox = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("%s", kInspStaticTip);
+        UI::SameLine();
+        bool lk = m.locked;
+        if (UI::Checkbox("Lock", &lk)) in.toggleLock = true;
+        res.lockBox = UI::GetItemRect();
+        if (UI::IsItemHovered()) UI::SetTooltip("%s", kInspLockTip);
+
+        // row 2: Tag, Layer, Save as Prefab
+        const float tagLblW = UI::CalcTextWidth("Layer") + ix;
+        const float comboW = std::clamp(right - left - tagLblW, 90.0f, 150.0f);
+        const std::string curTag = m.tag.empty() ? std::string("Untagged") : m.tag;
+        UI::Rect last;
+        {
+            std::vector<std::string> builtin, custom;   // asked for only while the list shows
+            UI::SetNextItemWidth(WithLabel(comboW, "Tag"));
+            MenuLook look_(0.0f);
+            // the list is as wide as the box, or as its add field and button when they need more (Dear ImGui fits it to its content)
+            UI::PushStyleVar(UI::StyleVar_PopupWidth, std::max(comboW, 120.0f + sx + UI::CalcTextWidth("Add") + 2.0f * g_metrics.framePadding.x + 20.0f));
+            const bool open = UI::BeginCombo("Tag", curTag.c_str());
+            res.tagCombo = UI::Rect{left, UI::GetItemRectMin().y, comboW, fh};
+            if (open) {
+                if (st.closeTagList) { UI::CloseCurrentPopup(); st.closeTagList = false; }
+                if (m.tags) m.tags(builtin, custom);
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                auto row = [&](const std::string& t, const char* label) {
+                    const bool hit = ListRow(label, curTag == t);
+                    res.tagRows.push_back(UI::GetItemRect());
+                    return hit;
+                };
+                if (row("Untagged", "Untagged")) { in.setTag = true; in.tag.clear(); }
+                for (const std::string& t : builtin)
+                    if (row(t, t.c_str())) { in.setTag = true; in.tag = t; }
+                if (!custom.empty()) {
+                    Divider();
+                    for (std::size_t i = 0; i < custom.size(); ++i) {
+                        const std::string& t = custom[i];
+                        UI::PushID((int)i);
+                        if (row(t, t.c_str())) { in.setTag = true; in.tag = t; }
+                        // the right-click menu as wide as its field and button (Dear ImGui fits a popup to its content)
+                        UI::PushStyleVar(UI::StyleVar_PopupWidth, 170.0f + sx + UI::CalcTextWidth("Rename") + 2.0f * g_metrics.framePadding.x + 20.0f);
+                        const bool ctx = UI::BeginPopupContextItem("##tagctx");
+                        UI::PopStyleVar();
+                        if (ctx) {
+                            if (st.renameKind != 1 || st.renameFrom != t) {
+                                st.renameKind = 1; st.renameFrom = t; st.renameError.clear();
+                                CopyToBuf(st.renameBuf, sizeof(st.renameBuf), t);
+                            }
+                            if (st.closeRename) { UI::CloseCurrentPopup(); st.closeRename = false; st.renameKind = 0; }
+                            UI::SetNextItemWidth(170.0f);
+                            const bool enter = UI::InputText("##tagrename", st.renameBuf, (int)sizeof(st.renameBuf), UI::InputText_EnterReturnsTrue);
+                            res.renameField = UI::GetItemRect();
+                            UI::SameLine();
+                            const bool click = UI::Button("Rename");
+                            res.renameButton = UI::GetItemRect();
+                            if (enter || click) {
+                                if (t == st.renameBuf) { UI::CloseCurrentPopup(); st.renameKind = 0; }
+                                else { in.renameTag = true; in.tagFrom = t; in.tagTo = st.renameBuf; }
+                            }
+                            if (!st.renameError.empty()) UI::TextColored(kBad[0], kBad[1], kBad[2], st.renameError.c_str());
+                            Divider();
+                            if (MenuRow("Remove tag from list")) { in.removeTag = true; in.removeTagName = t; st.renameKind = 0; }
+                            res.removeTagRow = UI::GetItemRect();
+                            UI::EndPopup();
+                        }
+                        UI::PopID();
+                    }
+                }
+                Divider();
+                UI::SetNextItemWidth(120.0f);
+                const bool entered = UI::InputTextWithHint("##newtag", "new tag...", st.newTag, (int)sizeof(st.newTag), UI::InputText_EnterReturnsTrue);
+                res.newTagField = UI::GetItemRect();
+                UI::SameLine();
+                const bool clicked = UI::Button("Add");
+                res.addTagButton = UI::GetItemRect();
+                if ((entered || clicked) && st.newTag[0]) { in.addTag = true; in.newTag = st.newTag; }
+                if (!st.tagError.empty()) UI::TextColored(kBad[0], kBad[1], kBad[2], st.tagError.c_str());
+                res.popup = UI::Rect{p0.x - 10.0f, p0.y - 8.0f, std::max(comboW, 120.0f + sx + UI::CalcTextWidth("Add") + 2.0f * g_metrics.framePadding.x + 20.0f),
+                                     UI::GetCursorScreenPos().y - p0.y + 16.0f};
+                UI::EndCombo();
+            } else st.tagError.clear();
+            UI::PopStyleVar();
+            last = UI::Rect{left, res.tagCombo.y, comboW + tagLblW, fh};
+        }
+        InspSameLineOrWrap(last, right, comboW + tagLblW);
+        {
+            UI::SetNextItemWidth(WithLabel(comboW, "Layer"));
+            MenuLook look_(0.0f);
+            UI::PushStyleVar(UI::StyleVar_PopupWidth, std::max(comboW, UI::CalcTextWidth(kInspLayerListNote) + 20.0f));
+            const float lx = UI::GetCursorScreenPos().x;
+            const bool open = UI::BeginCombo("Layer", m.layerName.c_str());
+            res.layerCombo = UI::Rect{lx, UI::GetItemRectMin().y, comboW, fh};
+            if (open) {
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                UI::TextDisabled(kInspLayerListNote);
+                res.layerRows.assign(32, UI::Rect{});   // rows out of view stay zero size
+                ListWindow("##layerrows", 32, m.layer, [&](int i) {
+                    const std::string nm = m.layerNameOf ? m.layerNameOf(i) : std::to_string(i);
+                    UI::PushID(i);
+                    if (ListRow(nm.c_str(), m.layer == i)) in.setLayer = i;
+                    res.layerRows[(std::size_t)i] = UI::GetItemRect();
+                    UI::PushStyleVar(UI::StyleVar_PopupWidth, 170.0f + 20.0f);
+                    const bool ctx = UI::BeginPopupContextItem("##layerctx");
+                    UI::PopStyleVar();
+                    if (ctx) {
+                        std::string text, hint;
+                        if (m.layerRenameInfo) m.layerRenameInfo(i, text, hint);
+                        if (st.renameKind != 2 || st.renameLayer != i) {
+                            st.renameKind = 2; st.renameLayer = i; st.renameError.clear();
+                            CopyToBuf(st.renameBuf, sizeof(st.renameBuf), text);
+                        }
+                        if (st.closeRename) { UI::CloseCurrentPopup(); st.closeRename = false; st.renameKind = 0; }
+                        char head[32];
+                        std::snprintf(head, sizeof head, "Layer %d name", i);
+                        UI::TextDisabled(head);
+                        UI::SetNextItemWidth(170.0f);
+                        const bool enter = UI::InputTextWithHint("##layername", hint.c_str(), st.renameBuf, (int)sizeof(st.renameBuf), UI::InputText_EnterReturnsTrue);
+                        res.renameField = UI::GetItemRect();
+                        if (enter) { in.renameLayer = true; in.layerIndex = i; in.layerTo = st.renameBuf; }
+                        if (InspSmallButton("Reset to default")) { in.resetLayer = true; in.layerIndex = i; }
+                        res.renameButton = UI::GetItemRect();
+                        if (!st.renameError.empty()) UI::TextColored(kBad[0], kBad[1], kBad[2], st.renameError.c_str());
+                        UI::EndPopup();
+                    }
+                    UI::PopID();
+                });
+                res.popup = UI::Rect{p0.x - 10.0f, p0.y - 8.0f, std::max(comboW, UI::CalcTextWidth(kInspLayerListNote) + 20.0f),
+                                     UI::GetCursorScreenPos().y - p0.y + 16.0f};
+                UI::EndCombo();
+            }
+            UI::PopStyleVar();
+            last = UI::Rect{lx, res.layerCombo.y, comboW + tagLblW, fh};
+        }
+        {
+            const float btnW = UI::CalcTextWidth("Save as Prefab") + g_metrics.framePadding.x * 2.0f;
+            const bool same = InspSameLineOrWrap(last, right, btnW);
+            const float cx = same ? last.x + last.w + sx : left;
+            const float room = right - cx;
+            if (room > btnW) UI::SetCursorPosX(UI::GetCursorPosX() + (room - btnW));
+            if (UI::Button("Save as Prefab", UI::Vec2{btnW, fh})) in.savePrefab = true;
+            res.savePrefab = UI::GetItemRect();
+        }
+        UI::EndChild();
+        res.card = UI::GetItemRect();
+        UI::PopStyleVar();
+        UI::PopStyleColor();
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- a component's header bar ------------------------------------------------------------------------------------------------------
+
+CompHeaderResult DrawComponentHeader(const CompHeaderModel& m, const char* id, float bleed, float x, float y, float w, float h) {
+    CompHeaderResult res;
+    CompHeaderIntent& in = res.intent;
+    UI::BareNextWindow();
+    // the window reaches `bleed` past the region on both sides (the bar is drawn there); the content starts `bleed` in
+    if (UI::Begin(id ? id : "CompHeader##okayui", x - bleed, y, w + 2.0f * bleed, h)) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        if (bleed > 0.0f) UI::Indent(bleed);
+        const float top = UI::GetCursorScreenPos().y;
+        const float fh = UI::GetFrameHeight(), fs = UI::GetFontSize(), px = g_metrics.framePadding.x;
+        if (m.sectionGap > 0.0f) UI::Dummy(0.0f, m.sectionGap);
+        const UI::Vec2 p0 = UI::GetCursorScreenPos();
+        const float barW = w;
+        const float arrowW = fs + px * 2.0f;
+        const float cbSize = fs + 4.0f;                                   // the enable box: a frame with 2-pixel padding
+        const UI::Rect cb{p0.x + arrowW, p0.y + (fh - cbSize) * 0.5f, cbSize, cbSize};
+        const UI::Rect menuBtn{p0.x + barW - fh, p0.y, fh, fh};
+        const float glyphX = cb.x + cbSize + 6.0f;
+        // the bar's own clicks: the parts left of the box and between the mark and the "..." button fold it
+        // While its menu is open nothing on the bar is hovered (Dear ImGui blocks the windows under an open popup): no highlight, no tooltip.
+        const bool menuOpen = UI::IsPopupOpen("##compctx");
+        const bool overBar = !menuOpen && UI::IsMouseHoveringRect(UI::Vec2{p0.x - bleed, p0.y}, UI::Vec2{p0.x + barW + bleed, p0.y + fh});
+        const bool overCb = UI::IsMouseHoveringRect(UI::Vec2{cb.x, cb.y}, UI::Vec2{cb.x + cb.w, cb.y + cb.h});
+        const bool overMenu = !menuOpen && UI::IsMouseHoveringRect(UI::Vec2{menuBtn.x, menuBtn.y}, UI::Vec2{menuBtn.x + menuBtn.w, menuBtn.y + menuBtn.h});
+        UI::SetCursorScreenPos(UI::Vec2{p0.x - bleed, p0.y});
+        UI::PushID("##bar");
+        const bool barClick = UI::InvisibleButton("##hdr", barW + 2.0f * bleed, fh);
+        const bool barHeld = UI::IsItemActive();
+        UI::PopID();
+        if (barClick && !overCb && !overMenu) in.toggleOpen = true;
+        const bool hot = overBar && !overCb && !overMenu;
+        res.bar = InspHeaderFrameAt(p0.x - bleed, p0.y, barW + 2.0f * bleed, fh, hot, barHeld && !overCb && !overMenu);
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        if (hot && !m.tip.empty()) UI::SetTooltip("%s", m.tip.c_str());
+        else if (hot && !m.managed.empty()) UI::SetTooltip("Managed by Character Model: you normally don't edit this.\n%s", m.managed.c_str());
+        else if (overBar && m.prefabChanged && !overCb && !overMenu) UI::SetTooltip("Changed from the prefab");
+        // the bar down the left edge (the family colour; blue when changed from the prefab; grey while off)
+        {
+            UI::Color32 bar = m.prefabChanged ? kPrefabBar : UI::ColorMulAlpha(m.color | 0xff000000u, 0.95f);
+            if (!m.enabled) bar = kOffBar;
+            dl.AddRectFilled(UI::Vec2{res.bar.x, p0.y}, UI::Vec2{res.bar.x + 3.0f, p0.y + fh}, bar, 1.5f);
+        }
+        InspArrow(dl, p0.x + px, p0.y + g_metrics.framePadding.y, fs, m.open, m.enabled ? UI::GetColorU32(UI::Col_Text) : kOffText);   // grey with the name while off
+        res.arrow = UI::Rect{p0.x, p0.y, arrowW, fh};
+        // the name, after the room the box and the mark take (Dear ImGui's header text starts after the arrow)
+        {
+            const float lead = fh + 4.0f + fh * 0.66f + 6.0f;
+            const float spaceW = std::max(1.0f, UI::CalcTextWidth(" "));
+            const float leadPx = std::ceil(lead / spaceW) * spaceW;
+            const float badgeW = m.diag > 0 ? 22.0f : 0.0f;
+            const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
+            const std::string title = CompHeaderTitle(m.label, room, [](const char* t) { return UI::CalcTextWidth(t); });
+            const float tx = p0.x + fs + px * 3.0f + leadPx;
+            UI::PushClipRect(p0.x - bleed, p0.y, barW + 2.0f * bleed, fh);
+            dl.AddText(UI::Vec2{tx, p0.y + g_metrics.framePadding.y + kRowTextDy}, m.enabled ? UI::GetColorU32(UI::Col_Text) : kOffText, title.c_str());
+            UI::PopClipRect();
+        }
+        // the enable box
+        UI::SetCursorScreenPos(UI::Vec2{cb.x, cb.y});
+        UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{2.0f, 2.0f});
+        bool en = m.enabled;
+        if (UI::Checkbox("##enabled", &en)) in.toggleEnabled = true;
+        res.enableBox = UI::GetItemRect();
+        if (!menuOpen && UI::IsItemHovered()) UI::SetTooltip("%s", m.enabled ? "Enabled (click to turn this component off)" : "Disabled (click to turn it on)");
+        UI::PopStyleVar();
+        // the family mark
+        {
+            OkPen pen{dl};
+            InspDrawGlyph(pen, m.glyph, m.color, m.enabled, glyphX, p0.y, fh);
+        }
+        // the "..." button
+        UI::SetCursorScreenPos(UI::Vec2{menuBtn.x, menuBtn.y});
+        bool openMenu = UI::InvisibleButton("##compmenu", fh, fh);
+        res.menuButton = menuBtn;
+        {
+            const bool mh = overMenu;
+            if (mh) dl.AddRectFilled(UI::Vec2{menuBtn.x, menuBtn.y}, UI::Vec2{menuBtn.x + fh, menuBtn.y + fh}, UI::RGBA(255, 255, 255, 24), 4.0f);
+            for (int d = -1; d <= 1; ++d)
+                dl.AddCircleFilled(UI::Vec2{menuBtn.x + fh * 0.5f + (float)d * 4.5f, menuBtn.y + fh * 0.5f}, 1.6f,
+                                   UI::GetColorU32(mh ? UI::Col_Text : UI::Col_TextDisabled), 8);
+            if (mh) UI::SetTooltip("Component options (or right-click the header)");
+        }
+        if (overBar && UI::IsMouseReleased(1)) openMenu = true;
+        // the problems marker, left of the "..." button
+        if (m.diag > 0) {
+            OkPen pen{dl};
+            const float cx = p0.x + barW + bleed - fh - 18.0f, cy = p0.y + fh * 0.5f;
+            HierDrawDiag(pen, m.diag, cx, cy + kRowTextDy * 0.0f, UI::CalcTextWidth("!"), fs);
+            if (!m.diagTip.empty() && UI::IsMouseHoveringRect(UI::Vec2{cx - 9.0f, cy - 9.0f}, UI::Vec2{cx + 9.0f, cy + 9.0f})) UI::SetTooltip("%s", m.diagTip.c_str());
+        }
+        // back below the bar
+        UI::SetCursorScreenPos(p0);
+        UI::Dummy(barW, fh);
+        // the menu
+        if (openMenu) UI::OpenPopup("##compctx");
+        if (UI::IsPopupOpen("##compctx")) {
+            std::vector<PanelMenuEntry> entries;
+            if (m.buildMenu) m.buildMenu(entries);
+            MenuLook look_(PanelMenuWidth(entries));
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+            if (UI::BeginPopup("##compctx")) {
+                std::string chosen;
+                DrawPanelMenu(entries, chosen, &res.menuIds, &res.menuRows);
+                if (!res.menuRows.empty()) {
+                    const UI::Rect a = res.menuRows.front(), b = res.menuRows.back();
+                    res.menu = UI::Rect{a.x - 16.0f, a.y - 12.0f, a.w + 32.0f, b.y + b.h - a.y + 24.0f};
+                }
+                if (!chosen.empty()) in.menuId = chosen;
+                UI::EndPopup();
+            }
+            UI::PopStyleVar(2);
+        }
+        // the notes under an open bar
+        if (m.open && !m.managed.empty()) {
+            UI::TextColored(kManaged[0], kManaged[1], kManaged[2], "Managed by Character Model - you normally don't edit this.");
+            UI::TextDisabled(m.managed.c_str());
+        }
+        if (m.open && !m.mixedNote.empty()) {
+            UI::PushTextWrapPos(0.0f);
+            UI::TextColored(kMixed[0], kMixed[1], kMixed[2], m.mixedNote.c_str());
+            UI::PopTextWrapPos();
+            if (UI::IsItemHovered()) UI::SetTooltip("What you change here is set on every selected object.");
+        }
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Transform -----------------------------------------------------------------------------------------------------------------
+
+TransformResult DrawTransform(TransformModel& m, float bleed, float x, float y, float w, float h) {
+    TransformResult res;
+    TransformIntent& in = res.intent;
+    UI::BareNextWindow();
+    if (UI::Begin("Transform##okayui", x - bleed, y, w + 2.0f * bleed, h)) {   // reaching `bleed` past the region, as the bar does
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        if (bleed > 0.0f) UI::Indent(bleed);
+        const float top = UI::GetCursorScreenPos().y;
+        const float fh = UI::GetFrameHeight(), fs = UI::GetFontSize(), px = g_metrics.framePadding.x;
+        const UI::Vec2 p0 = UI::GetCursorScreenPos();
+        const float barW = w;
+        const float right = p0.x + barW;
+        // the header: Dear ImGui's collapsing header, "Transform"
+        UI::SetCursorScreenPos(UI::Vec2{p0.x - bleed, p0.y});
+        const bool click = UI::InvisibleButton("##tfhdr", barW + 2.0f * bleed, fh);
+        const bool held = UI::IsItemActive(), hov = UI::IsItemHovered() && !UI::IsPopupOpen("##tfctx");
+        if (click) in.toggleOpen = true;
+        res.header = InspHeaderFrameAt(p0.x - bleed, p0.y, barW + 2.0f * bleed, fh, hov, held);
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        InspArrow(dl, p0.x + px, p0.y + g_metrics.framePadding.y, fs, m.open, UI::GetColorU32(UI::Col_Text));
+        dl.AddText(UI::Vec2{p0.x + fs + px * 3.0f, p0.y + g_metrics.framePadding.y + kRowTextDy}, UI::GetColorU32(UI::Col_Text), "Transform");
+        // right-click the header: copy the whole transform, paste it onto another object
+        {
+            MenuLook look_(MenuWidth({"Copy Transform Values", "Paste Transform Values"}));
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+            if (UI::BeginPopupContextItem("##tfctx")) {
+                if (UI::MenuItem("Copy Transform Values")) in.copy = true;
+                res.menuCopy = UI::GetItemRect();
+                if (UI::MenuItem("Paste Transform Values", nullptr, false, m.pasteValid)) in.paste = true;
+                res.menuPaste = UI::GetItemRect();
+                UI::EndPopup();
+            }
+            UI::PopStyleVar(2);
+        }
+        UI::SetCursorScreenPos(p0);
+        UI::Dummy(barW, fh);
+        if (m.open) {
+            if (m.selectedCount > 1) {
+                char note[64];
+                std::snprintf(note, sizeof(note), "(editing %d selected objects)", m.selectedCount);
+                UI::TextDisabled(note);
+            }
+            bool act = false;
+            if (InspVec3Row("Position", m.pos, 0.05f, "%.3f", &act, res.pos, &res.posLabel)) in.posChanged = true;
+            if (InspVec3Row("Rotation", m.rot, 1.0f, "%.2f", &act, res.rot, &res.rotLabel)) in.rotChanged = true;
+            const float before[3] = {m.scale[0], m.scale[1], m.scale[2]};
+            if (m.isCamera) UI::BeginDisabled(true);
+            if (InspVec3Row("Scale", m.scale, 0.05f, "%.3f", &act, res.scale, &res.scaleLabel)) {
+                if (m.uniform) TransformUniformScale(before, m.scale);
+                in.scaleChanged = true;
+            }
+            if (m.isCamera) { UI::EndDisabled(); UI::TextDisabled("(camera scale is locked)"); }
+            in.activated = act;
+            // the quick resets
+            if (InspSmallButton("Reset Pos")) in.resetPos = true;
+            UI::Rect last = res.resetPos = UI::GetItemRect();
+            auto btnW = [&](const char* l) { return UI::CalcTextWidth(l) + px * 2.0f; };
+            InspSameLineOrWrap(last, right, btnW("Reset Rot"));
+            if (InspSmallButton("Reset Rot")) in.resetRot = true;
+            last = res.resetRot = UI::GetItemRect();
+            if (!m.isCamera) {
+                InspSameLineOrWrap(last, right, btnW("Reset Scale"));
+                if (InspSmallButton("Reset Scale")) in.resetScale = true;
+                last = res.resetScale = UI::GetItemRect();
+                InspSameLineOrWrap(last, right, fh + UI::CalcTextWidth("Uniform") + 8.0f);
+                bool uni = m.uniform;
+                if (UI::Checkbox("Uniform##scl", &uni)) in.toggleUniform = true;
+                res.uniform = UI::GetItemRect();
+                if (UI::IsItemHovered()) UI::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
+            }
+        }
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Mesh Renderer (the shading part) ------------------------------------------------------------------------------------------------
+
+MeshRendererResult DrawMeshRenderer(MeshRendererModel& m, float x, float y, float w, float h) {
+    MeshRendererResult res;
+    MeshRendererIntent& in = res.intent;
+    UI::BareNextWindow();
+    if (UI::Begin("MeshRenderer##okayui", x, y, w, h) && m.v) {
+        EditorRows rows_;
+        FieldColors fields_;
+        UI::PushStyleVar(UI::StyleVar_ItemInnerSpacing, g_metrics.innerSpacing);
+        const float top = UI::GetCursorScreenPos().y;
+        const float itemW = g_metrics.itemWidth > 0.0f ? g_metrics.itemWidth : DefaultItemWidth(w);
+        MeshRendererValues& v = *m.v;
+        bool& ch = in.changed;
+        auto tip = [](const char* t) { if (UI::IsItemHovered()) UI::SetTooltip("%s", t); };
+        auto slider = [&](const char* label, float* f, float lo, float hi, UI::Rect* rect = nullptr) {
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::SliderFloat(label, f, lo, hi, "%.3f")) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        auto drag = [&](const char* label, float* f, float speed, float lo, float hi, UI::Rect* rect = nullptr) {
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            if (UI::DragFloat(label, f, speed, lo, hi, "%.3f")) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        auto box = [&](const char* label, bool* b, UI::Rect* rect = nullptr) {
+            if (UI::Checkbox(label, b)) ch = true;
+            if (rect) *rect = UI::GetItemRect();
+        };
+        // Dear ImGui's Combo: the box with the item's name, a list of rows one text line and the spacing tall, the current one marked
+        auto combo = [&](const char* label, int* cur, const char* const* items, int count, UI::Rect* rect) {
+            MenuLook look_(0.0f);
+            UI::PushStyleVar(UI::StyleVar_PopupWidth, itemW);
+            UI::SetNextItemWidth(WithLabel(itemW, label));
+            const int c = *cur >= 0 && *cur < count ? *cur : -1;
+            const float bx = UI::GetCursorScreenPos().x;
+            int picked = -1;
+            const bool open = UI::BeginCombo(label, c >= 0 ? items[c] : "");
+            const float by = UI::GetItemRectMin().y;
+            if (open) {
+                res.listRows.assign((std::size_t)count, UI::Rect{});   // rows out of view stay zero size
+                ListWindow(label, count, c, [&](int k) {
+                    UI::PushID(k);
+                    if (ListRow(items[k], k == c)) picked = k;
+                    res.listRows[(std::size_t)k] = UI::GetItemRect();
+                    UI::PopID();
+                });
+                UI::EndCombo();
+            }
+            UI::PopStyleVar();
+            if (rect) *rect = UI::Rect{bx, by, itemW, UI::GetFrameHeight()};
+            if (picked < 0 || picked == *cur) return false;
+            *cur = picked;
+            return true;
+        };
+        const std::string stats = MeshStatsText(m);
+        if (!stats.empty()) UI::TextDisabled(stats.c_str());
+        if (InspColorEdit("Color##mesh", v.color, 4, &res.color)) ch = true;
+        box("Wireframe", &v.wireframe, &res.wireframe);
+        if (combo("Shader##mesh", &v.shader, kMeshShaderNames, 9, &res.shader)) { ch = true; in.shaderChanged = true; }
+        if (v.shader == MeshShaderToon) {
+            UI::SetNextItemWidth(WithLabel(itemW, "Cel Bands##mesh"));
+            if (UI::SliderInt("Cel Bands##mesh", &v.toonBands, 2, 6, "%d")) ch = true;
+        }
+        if (v.shader == MeshShaderGradient) {
+            if (InspColorEdit("Gradient Top##mesh", v.gradientTop, 3)) ch = true;
+            if (InspColorEdit("Gradient Bottom##mesh", v.gradientBottom, 3)) ch = true;
+        }
+        if (v.shader == MeshShaderFresnel) UI::TextDisabled(kMeshFresnelNote);
+        slider("Rim##mesh", &v.rimStrength, 0.0f, 2.0f, &res.rim);
+        if (v.rimStrength > 0.0f) {
+            slider("Rim Power##mesh", &v.rimPower, 1.0f, 8.0f);
+            if (InspColorEdit("Rim Color##mesh", v.rimColor, 3)) ch = true;
+        }
+        box("Outline##mesh", &v.outline, &res.outline);
+        if (v.outline) {
+            drag("Outline Width##mesh", &v.outlineWidth, 0.002f, 0.0f, 1.0f);
+            if (InspColorEdit("Outline Color##mesh", v.outlineColor, 3)) ch = true;
+        }
+        box("Cast Shadows##mesh", &v.castShadows, &res.castShadows);
+        tip(kMeshCastTip);
+        UI::SameLine();
+        box("Receive Shadows##mesh", &v.receiveShadows, &res.receiveShadows);
+        tip(kMeshReceiveTip);
+        box("Ground Shadow##mesh", &v.groundShadow, &res.groundShadow);
+        tip(kMeshGroundTip);
+        if (v.groundShadow) {
+            drag("Shadow Ground Y##mesh", &v.groundShadowY, 0.05f, -1000.0f, 1000.0f, &res.groundShadowY);
+            slider("Shadow Strength##mesh", &v.groundShadowStrength, 0.0f, 1.0f, &res.shadowStrength);
+        }
+        if (InspColorEdit("Emissive##mesh", v.emissive, 3, &res.emissive)) ch = true;
+        slider("Specular##mesh", &v.specular, 0.0f, 1.0f, &res.specular);
+        if (v.specular > 0.0f) slider("Shininess##mesh", &v.shininess, 1.0f, 128.0f);
+        if (combo("Primitive", &v.primitive, kMeshPrimitiveNames, kMeshPrimitiveCount, &res.primitive)) { ch = true; in.primitiveChanged = true; }
+        res.contentHeight = ContentHeight(top);
+        UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Add Component -------------------------------------------------------------------------------------------------------------------
+
+AddComponentResult DrawAddComponentButton(std::uint32_t accent, float x, float y, float w, float h) {
+    AddComponentResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("AddComponent##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        const float top = UI::GetCursorScreenPos().y;
+        const float avail = UI::GetContentRegionAvail().x;
+        const float bw = AddComponentWidth(avail);
+        if (avail > 300.0f) UI::SetCursorPosX(UI::GetCursorPosX() + (avail - 260.0f) * 0.5f);
+        UI::PushStyleColor(UI::Col_Button, UI::ColorMulAlpha(accent | 0xff000000u, 0.85f));
+        UI::PushStyleColor(UI::Col_ButtonHovered, accent | 0xff000000u);
+        UI::PushStyleColor(UI::Col_ButtonActive, UI::ColorMulAlpha(accent | 0xff000000u, 0.75f));
+        UI::PushStyleColor(UI::Col_Text, UI::RGBA(255, 255, 255));
+        if (UI::Button(kAddComponentLabel, UI::Vec2{bw, 30.0f})) res.open = true;
+        res.button = UI::GetItemRect();
+        UI::PopStyleColor(4);
+        res.contentHeight = ContentHeight(top);
     }
     UI::End();
     return res;

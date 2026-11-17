@@ -81,8 +81,10 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, co
 // last frame, the part of it the window shows offered to OkayUI and used as the clip (the window scrolls it like any item), and
 // the popup the body has open offered too. `draw(x, y, w, h)` returns the body's height and its popup rectangle.
 struct SectionDrawn { float height = 0.0f; OkayUI::Rect popup; };
+// `bleed`: the body may draw that many pixels past the placeholder on the left and the right (Dear ImGui's framed headers reach half the
+// window padding out); that strip is offered and clipped with it, within what the window shows.
 template <class Draw>
-bool HostSection(const char* itemId, Draw draw) {
+bool HostSection(const char* itemId, Draw draw, float bleed = 0.0f) {
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (!win || okayuihost::OutsideMainWindow(win)) return false;
     float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
@@ -116,8 +118,8 @@ bool HostSection(const char* itemId, Draw draw) {
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     const ImVec2 c0 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Min), c1 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Max);
     const ImRect clip(c0, c1);
-    const float x0 = std::max(p.x, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
-    const float x1 = std::min(p.x + w, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
+    const float x0 = std::max(p.x - bleed, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
+    const float x1 = std::min(p.x + w + bleed, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
     if (x1 <= x0 || y1 <= y0) return true;            // scrolled out of view: the space stays, nothing is drawn
     OkayUIRegion().Offer(x0, y0, x1 - x0, y1 - y0, hovered);
     OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
@@ -280,6 +282,75 @@ bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypane
     });
 }
 
+// ---- the Inspector, stage 1 (docs/own_ui_toolkit.md section 14) ----------------------------------------------------------------------
+// Each ported part is a section in the Inspector's own Dear ImGui window, between the parts that are still Dear ImGui's (the prefab
+// banner, the UI layout card, every component body but the Mesh Renderer's shading fields): the window scrolls them all alike.
+
+namespace {
+float HeaderBleed() { return std::floor(ImGui::GetStyle().WindowPadding.x * 0.5f); }
+}
+
+bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel& model, okaypanels::InspectorHeaderState& state, okaypanels::InspectorHeaderIntent& intent) {
+    return HostSection("##okayui_insp_header", [&](float x, float y, float w, float h) {
+        const okayuiscreens::InspectorHeaderResult r = okayuiscreens::DrawInspectorHeader(model, state, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawCompHeaderOkayUI(const char* windowId, const okaypanels::CompHeaderModel& model, okaypanels::CompHeaderIntent& intent, bool* barPressed) {
+    const float bleed = HeaderBleed();
+    if (barPressed) *barPressed = false;
+    return HostSection("##okayui_comphdr", [&](float x, float y, float w, float h) {
+        const okayuiscreens::CompHeaderResult r = okayuiscreens::DrawComponentHeader(model, windowId, bleed, x, y, w, h);
+        intent = r.intent;
+        if (barPressed && OkayUI::IsMouseClicked(0) &&
+            OkayUI::IsMouseHoveringRect(OkayUI::Vec2{r.bar.x, r.bar.y}, OkayUI::Vec2{r.bar.x + r.bar.w, r.bar.y + r.bar.h}) &&
+            !OkayUI::IsMouseHoveringRect(OkayUI::Vec2{r.enableBox.x, r.enableBox.y}, OkayUI::Vec2{r.enableBox.x + r.enableBox.w, r.enableBox.y + r.enableBox.h}) &&
+            !OkayUI::IsMouseHoveringRect(OkayUI::Vec2{r.menuButton.x, r.menuButton.y}, OkayUI::Vec2{r.menuButton.x + r.menuButton.w, r.menuButton.y + r.menuButton.h}))
+            *barPressed = true;
+        return SectionDrawn{r.contentHeight, r.menu};
+    }, bleed);
+}
+
+bool DrawTransformOkayUI(okaypanels::TransformModel& model, okaypanels::TransformIntent& intent, int* pressedOn) {
+    const float bleed = HeaderBleed();
+    if (pressedOn) *pressedOn = 0;
+    return HostSection("##okayui_transform", [&](float x, float y, float w, float h) {
+        const okayuiscreens::TransformResult r = okayuiscreens::DrawTransform(model, bleed, x, y, w, h);
+        intent = r.intent;
+        auto over = [](const OkayUI::Rect& q) { return q.w > 0.0f && OkayUI::IsMouseHoveringRect(OkayUI::Vec2{q.x, q.y}, OkayUI::Vec2{q.x + q.w, q.y + q.h}); };
+        if (pressedOn && OkayUI::IsMouseClicked(0)) {
+            if (over(r.header)) *pressedOn = 1;
+            else if (over(r.posLabel)) *pressedOn = 2;
+            else if (over(r.rotLabel)) *pressedOn = 3;
+            else if (over(r.scaleLabel)) *pressedOn = 4;
+        }
+        OkayUI::Rect menu;
+        if (r.menuCopy.w > 0.0f) menu = OkayUI::Rect{r.menuCopy.x - 16.0f, r.menuCopy.y - 12.0f, r.menuCopy.w + 32.0f, r.menuPaste.y + r.menuPaste.h - r.menuCopy.y + 24.0f};
+        return SectionDrawn{r.contentHeight, menu};
+    }, bleed);
+}
+
+bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel& model, okaypanels::MeshRendererIntent& intent) {
+    return HostSection("##okayui_meshrenderer", [&](float x, float y, float w, float h) {
+        const okayuiscreens::MeshRendererResult r = okayuiscreens::DrawMeshRenderer(model, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawAddComponentOkayUI(std::uint32_t accent, bool& clicked) {
+    clicked = false;
+    return HostSection("##okayui_addcomponent", [&](float x, float y, float w, float h) {
+        const okayuiscreens::AddComponentResult r = okayuiscreens::DrawAddComponentButton(accent, x, y, w, h);
+        clicked = r.open;
+        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
+    });
+}
+
+bool OkayUIHasKeyboard() { return OkayUI::WantsTextInput(); }
+
 } // namespace oked
 
 #else
@@ -297,5 +368,11 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProces
 bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
 bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
 bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
+bool DrawInspectorHeaderOkayUI(okaypanels::InspectorHeaderModel&, okaypanels::InspectorHeaderState&, okaypanels::InspectorHeaderIntent&) { return false; }
+bool DrawCompHeaderOkayUI(const char*, const okaypanels::CompHeaderModel&, okaypanels::CompHeaderIntent&, bool*) { return false; }
+bool DrawTransformOkayUI(okaypanels::TransformModel&, okaypanels::TransformIntent&, int*) { return false; }
+bool DrawMeshRendererOkayUI(okaypanels::MeshRendererModel&, okaypanels::MeshRendererIntent&) { return false; }
+bool DrawAddComponentOkayUI(std::uint32_t, bool& clicked) { clicked = false; return false; }
+bool OkayUIHasKeyboard() { return false; }
 }
 #endif

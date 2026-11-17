@@ -63,6 +63,12 @@ PORTED = [
     ("Hierarchy (the body drawn from the model; the editor's own DrawHierarchy is still its default)", "editor/EditorPanelViews.cpp", "DrawHierarchyBodyImGui"),
     ("Hierarchy's toolbar buttons", "editor/EditorPanelViews.cpp", "HierToolButton"),
     ("Hierarchy's menus", "editor/EditorPanelViews.cpp", "HierMenuEntries"),
+    ("Inspector header card (the body drawn from the model; the editor's own DrawInspector is still its default)", "editor/EditorPanelViews.cpp", "DrawInspectorHeaderBodyImGui"),
+    ("Inspector component header bar", "editor/EditorPanelViews.cpp", "DrawComponentHeaderBodyImGui"),
+    ("Inspector Transform", "editor/EditorPanelViews.cpp", "DrawTransformBodyImGui"),
+    ("Inspector Transform's vector rows", "editor/EditorPanelViews.cpp", "InspVec3Im"),
+    ("Inspector Mesh Renderer (shading fields)", "editor/EditorPanelViews.cpp", "DrawMeshRendererBodyImGui"),
+    ("Inspector Add Component button", "editor/EditorPanelViews.cpp", "DrawAddComponentButtonImGui"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

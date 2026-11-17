@@ -4,6 +4,7 @@
 #include "ConsolePanel.hpp"
 #include "InspectorModel.hpp"
 #include "PrefabEdit.hpp"
+#include "OkayPanels.hpp"   // OkayUIHasKeyboard: a hosted OkayUI field being typed in keeps the undo step open
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
@@ -83,7 +84,9 @@ void WatchEditUndo(okay::editor::EditorState& ed) {
     ImGuiContext& g = *GImGui;
     const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right);
     const bool clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    const bool activeMine = g.ActiveId != 0 && InEditorWindow(g.ActiveIdWindow);
+    // A field of a hosted OkayUI part (the Inspector's OkayUI parts, OKAY_UI_BACKEND=okayui) being typed in counts as an active widget:
+    // the mouse is up while the text changes, and the step must close only when the field is left.
+    const bool activeMine = (g.ActiveId != 0 && InEditorWindow(g.ActiveIdWindow)) || OkayUIHasKeyboard();
     if (!u.IsOpen()) {
         // The picture is taken on the press, before the widget changes anything.
         // (In a huge scene the extra picture on every click would be felt: then only a pressed widget starts one.)
@@ -489,16 +492,22 @@ void FieldTip(const char* label) {
     if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
 }
 
-void DrawMixedNote(const okay::Component* comp) {
-    if (!comp || !s_ed || !comp->gameObject) return;
+std::string MixedNoteText(const okay::Component* comp) {
+    if (!comp || !s_ed || !comp->gameObject) return std::string();
     const std::vector<GameObject*>& sel = s_ed->MultiSelection();
-    if (sel.size() < 2 || std::find(sel.begin(), sel.end(), comp->gameObject) == sel.end()) return;
+    if (sel.size() < 2 || std::find(sel.begin(), sel.end(), comp->gameObject) == sel.end()) return std::string();
     auto info = PropertyRegistry::FindFor(*comp);
-    if (!info) return;
+    if (!info) return std::string();
     const std::vector<std::string> names = MixedPropertyNames(sel, info->name, ComponentIndexOf(*comp->gameObject, *comp));
-    if (names.empty()) return;
+    if (names.empty()) return std::string();
     std::string text = "Different on the selected objects: ";
     for (std::size_t i = 0; i < names.size(); ++i) text += (i ? ", " : "") + names[i];
+    return text;
+}
+
+void DrawMixedNote(const okay::Component* comp) {
+    const std::string text = MixedNoteText(comp);
+    if (text.empty()) return;
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.78f, 0.40f, 1.0f));
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(text.c_str());
@@ -526,6 +535,27 @@ void ComponentValueMenu(okay::Component* comp) {
     if (ImGui::MenuItem("Reset")) { s_reqComp = comp; s_reqKind = 3; }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put every value back to what a new component has.");
     PrefabComponentMenu(comp);   // Revert / Apply Component for a prefab instance's changed component
+}
+
+void ComponentValueMenuEntries(okay::Component* comp, std::vector<okaypanels::PanelMenuEntry>& out) {
+    if (!comp || !HasRegisteredProperties(*comp)) return;
+    auto info = PropertyRegistry::FindFor(*comp);
+    okaypanels::PanelMenuEntry sep; sep.kind = okaypanels::PanelMenuSeparator; out.push_back(sep);
+    okaypanels::PanelMenuEntry e;
+    e.id = okaypanels::kCompMenuCopy; e.label = "Copy Values"; out.push_back(e);
+    e = okaypanels::PanelMenuEntry();
+    e.id = okaypanels::kCompMenuPaste; e.label = "Paste Values";
+    e.enabled = s_clip.Valid() && info && info->name == s_clip.type;
+    e.reason = s_clip.Valid() ? "The copied values belong to a different component." : "Copy the values of another component of this kind first.";
+    out.push_back(e);
+    e = okaypanels::PanelMenuEntry();
+    e.id = okaypanels::kCompMenuReset; e.label = "Reset"; e.tip = "Put every value back to what a new component has.";
+    out.push_back(e);
+}
+
+void RequestComponentValues(okay::Component* comp, int kind) {
+    if (!comp || kind < 1 || kind > 3) return;
+    s_reqComp = comp; s_reqKind = kind;
 }
 
 void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go) {
@@ -673,6 +703,29 @@ void PrefabComponentMenu(okay::Component* comp) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(ch.added ? "Remove this component: the prefab does not have it." : "Put every value of this component back to the prefab's.");
     if (ImGui::MenuItem(ch.added ? "Apply Added Component to Prefab" : "Apply Component to Prefab")) Queue(PrefabReq::Apply, s_changesRoot, {TargetOf(ch)});
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this component into the prefab. Other instances that did not change it take it too.");
+}
+
+void PrefabComponentMenuEntries(okay::Component* comp, std::vector<okaypanels::PanelMenuEntry>& out) {
+    auto it = comp ? s_changeOf.find(comp) : s_changeOf.end();
+    if (it == s_changeOf.end() || it->second >= s_changes.size() || !s_changesRoot) return;
+    const PrefabChange& ch = s_changes[it->second];
+    okaypanels::PanelMenuEntry sep; sep.kind = okaypanels::PanelMenuSeparator; out.push_back(sep);
+    okaypanels::PanelMenuEntry e;
+    e.id = okaypanels::kCompMenuPrefabRevert; e.label = ch.added ? "Revert Added Component" : "Revert Component to Prefab";
+    e.tip = ch.added ? "Remove this component: the prefab does not have it." : "Put every value of this component back to the prefab's.";
+    out.push_back(e);
+    e = okaypanels::PanelMenuEntry();
+    e.id = okaypanels::kCompMenuPrefabApply; e.label = ch.added ? "Apply Added Component to Prefab" : "Apply Component to Prefab";
+    e.tip = "Write this component into the prefab. Other instances that did not change it take it too.";
+    out.push_back(e);
+}
+
+void RunPrefabComponentMenu(okay::Component* comp, const std::string& id) {
+    auto it = comp ? s_changeOf.find(comp) : s_changeOf.end();
+    if (it == s_changeOf.end() || it->second >= s_changes.size() || !s_changesRoot) return;
+    const PrefabChange& ch = s_changes[it->second];
+    if (id == okaypanels::kCompMenuPrefabRevert) Queue(PrefabReq::Revert, s_changesRoot, {TargetOf(ch)});
+    else if (id == okaypanels::kCompMenuPrefabApply) Queue(PrefabReq::Apply, s_changesRoot, {TargetOf(ch)});
 }
 
 // Next button of the header row: on the same line when it fits, else on a new one (a narrow Inspector must not clip the buttons).

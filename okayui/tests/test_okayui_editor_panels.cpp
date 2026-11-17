@@ -528,6 +528,7 @@ int main() {
         CHECK(rHz.h == UI::GetFontSize() + 16.0f && hzW == 160.0f);       // a text line plus 2 x 8; no label, so the frame is the width
         sim.Move(rHz.x + 50, rHz.y + 10); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Move(rHz.x + 80, rHz.y + 10); sim.Frame(ui); sim.Up(); sim.Frame(ui);
         CHECK(hz == 80.0f);
+        sim.Frames(20, ui);   // a third of a second: the next press is not the second click of a double click (that types a number)
         sim.Move(rHz.x + 50, rHz.y + 10); sim.Frame(ui); sim.Down(); sim.Frame(ui); sim.Move(rHz.x + 450, rHz.y + 10); sim.Frame(ui); sim.Up(); sim.Frame(ui);
         CHECK(hz == 240.0f);                                               // clamped
         sim.ctrl = true; sim.Click(rHz.x + 50, rHz.y + 10, ui); sim.ctrl = false;

@@ -27455,11 +27455,70 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
 // takes CompHeader elsewhere, so this is not a parameter).
 static const char* sCompHeaderTip = nullptr;
 static float g_inspSectionGap = 0.0f;   // space above a component header inside the Inspector (density; 0 elsewhere)
+// CompHeader's bar drawn by OkayUI (the preview switch; docs/own_ui_toolkit.md section 14): the same model of the same bar, the menu as
+// data. False: not drawn this frame (a popup or a window covers it), and CompHeader draws the Dear ImGui bar. Called inside PushID(comp).
+static bool CompHeaderOkayUI(const char* label, okay::Component* comp, okay::Component** toRemove, bool removable, const char* managed,
+                             bool& open) {
+    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
+    auto it = sCompOpen.find(okey);
+    bool want = it == sCompOpen.end() ? managed == nullptr : it->second;   // managed ones start folded
+    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    okaypanels::CompHeaderModel m;
+    m.label = label; m.enabled = comp->enabled; m.open = want;
+    m.color = ImGui::ColorConvertFloat4ToU32(CategoryColor(label)); m.glyph = CategoryGlyph(label);
+    m.prefabChanged = oked::PrefabChangedFor(comp);
+    m.diag = ComponentDiagLevel(comp->gameObject, label, &m.diagTip);
+    if (sCompHeaderTip) { m.tip = sCompHeaderTip; sCompHeaderTip = nullptr; }
+    if (managed) m.managed = managed;
+    if (want) m.mixedNote = oked::MixedNoteText(comp);
+    m.sectionGap = g_inspSectionGap;
+    m.buildMenu = [comp, removable](std::vector<okaypanels::PanelMenuEntry>& out) {
+        okaypanels::CompMenuHead(out);
+        oked::ComponentValueMenuEntries(comp, out);
+        oked::PrefabComponentMenuEntries(comp, out);
+        okaypanels::CompMenuTail(out, removable);
+    };
+    char wid[48]; std::snprintf(wid, sizeof(wid), "CompHdr%p##okayui", (void*)comp);
+    okaypanels::CompHeaderIntent in;
+    bool barPressed = false;
+    if (!oked::DrawCompHeaderOkayUI(wid, m, in, &barPressed)) return false;
+    {   // a drag from the bar onto the visual script, as from the Dear ImGui bar
+        static okay::Component* s_dragFrom = nullptr;
+        if (barPressed) s_dragFrom = comp;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_dragFrom = nullptr;
+        if (s_dragFrom == comp && ImGui::BeginDragDropSource()) {
+            const std::string payload = std::string("component\n") + label;
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload.c_str(), payload.size() + 1);
+            ImGui::TextUnformatted(label);
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
+    }
+    if (in.toggleEnabled) comp->enabled = !comp->enabled;
+    open = in.toggleOpen ? !want : want;
+    sCompOpen[okey] = open;
+    const std::string& id = in.menuId;
+    if (id == okaypanels::kCompMenuUp) { sMoveComp = comp; sMoveDelta = -1; }
+    else if (id == okaypanels::kCompMenuDown) { sMoveComp = comp; sMoveDelta = +1; }
+    else if (id == okaypanels::kCompMenuExpand) sCompForceRequest = 1;
+    else if (id == okaypanels::kCompMenuCollapse) sCompForceRequest = 0;
+    else if (id == okaypanels::kCompMenuCopy) oked::RequestComponentValues(comp, 1);
+    else if (id == okaypanels::kCompMenuPaste) oked::RequestComponentValues(comp, 2);
+    else if (id == okaypanels::kCompMenuReset) oked::RequestComponentValues(comp, 3);
+    else if (id == okaypanels::kCompMenuPrefabRevert || id == okaypanels::kCompMenuPrefabApply) oked::RunPrefabComponentMenu(comp, id);
+    else if (id == okaypanels::kCompMenuRemove && removable) *toRemove = comp;
+    return true;
+}
+
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
     oked::SetTipComponent(comp);   // FieldTip() after each hand-written field looks its tooltip up for this component
     ImGui::PushID(comp);
+    if (UseOkayUIBackend()) {
+        bool open = false;
+        if (CompHeaderOkayUI(label, comp, toRemove, removable, managed, open)) { ImGui::PopID(); return open; }
+    }
     bool en = comp->enabled;
     const float fh = ImGui::GetFrameHeight();
     const float startX = ImGui::GetCursorPosX();
@@ -27473,13 +27532,8 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         std::string nm = label;
         const float badgeW = ComponentHasDiag(comp->gameObject, label) ? 22.0f : 0.0f;
         const float room = barW - arrowW - lead - fh - 10.0f - badgeW;
-        if (room > 20.0f && ImGui::CalcTextSize(nm.c_str()).x > room) {
-            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) {
-                nm.pop_back();
-                while (!nm.empty() && (static_cast<unsigned char>(nm.back()) & 0xC0) == 0x80) nm.pop_back();
-            }
-            nm += "\xE2\x80\xA6";
-        }
+        // cut to fit with an ellipsis, whole characters only (shared with the OkayUI bar: shared/InspectorPanelModel.hpp)
+        nm = okaypanels::CompHeaderTitle(nm, room, [](const char* t) { return ImGui::CalcTextSize(t).x; });
         title += nm;
     }
     title += "###hdr";
@@ -29900,6 +29954,260 @@ void DrawModeling(EditorState& ed) {
     ImGui::End();
 }
 
+// ---- The Inspector's OkayUI parts (OKAY_UI_BACKEND=okayui with OKAY_DEV=1; docs/own_ui_toolkit.md section 14) ----------------------
+// The object header card, the Transform, the Mesh Renderer's shading fields and the Add Component button (each component's header bar
+// is in CompHeader). Each fills the shared model (shared/InspectorPanelModel.hpp) from the object, draws through editor/OkayPanels.cpp
+// (an OkayUI section inside this Dear ImGui window) and carries out the intent as the Dear ImGui code does. False: the section was not
+// drawn this frame (a popup or a window covers it) and the caller draws the Dear ImGui part.
+
+static okaypanels::InspectorHeaderState g_inspHeaderState;
+static bool s_tcopyValid = false;           // the Transform's Copy / Paste Transform Values (both versions)
+static Vec3 s_tcopyPos, s_tcopyScl;
+static Quat s_tcopyRot;
+static bool s_uniformScale = false;         // linked scale axes: drag one, all follow (both versions)
+
+static void InspectorSaveAsPrefab(EditorState& ed, GameObject* go) {
+    std::string p = go->name + ".okayprefab";
+    if (!ed.projectDir().empty()) {   // into the project's Assets folder, where the Project panel shows it
+        std::error_code pe;
+        std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
+        p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
+    }
+    if (oked::SaveAsPrefabFile(*go, p)) {
+        ConsoleLog("Saved prefab " + p);
+        go->prefabSource = p;   // link the live object so it becomes an instance
+        ed.dirty = true;
+    } else ConsoleLog("Prefab save failed");
+}
+
+// After the header card (the last item: the Dear ImGui card's child, or the OkayUI card's placeholder). The OkayUI card's placeholder is
+// the active item while the card is used (a drag selecting the name's text): its hint shows only while a file is really dragged.
+static void InspectorHeaderDrop(EditorState& ed, GameObject* go, bool okayui = false) {
+    // Drop a Project asset onto the object header to attach it: a .okay script
+    // adds a Script component bound to that file; a .okaymat applies its look; an
+    // image sets the texture.
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            std::string path((const char*)p->Data), ext;
+            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+            if (ext == ".okay" || ext == ".okayvs") {
+                AttachScriptAsset(ed, go, path);
+            } else if (ext == ".okaymat") {
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    Material m; if (Material::LoadFromFile(path, m)) {
+                        ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
+                    }
+                }
+            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
+                ed.PushUndo();
+                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
+                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
+                ed.dirty = true; ConsoleLog("Set texture");
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && (!okayui || ImGui::GetDragDropPayload()))
+        ImGui::SetTooltip("Drop a script/material/image here to attach it");
+}
+
+static bool DrawInspectorHeaderWithOkayUI(EditorState& ed, GameObject* go) {
+    static char nameBuf[128];
+    std::snprintf(nameBuf, sizeof(nameBuf), "%s", go->name.c_str());
+    okaypanels::InspectorHeaderModel m;
+    m.active = go->active; m.name = nameBuf; m.nameSize = sizeof(nameBuf);
+    m.isStatic = go->isStatic; m.locked = go->editorLocked;
+    m.icon = HierIconKind(go);
+    m.tag = go->tag; m.layer = go->layer; m.layerName = okay::Layers::Name(go->layer);
+    m.tags = [](std::vector<std::string>& builtin, std::vector<std::string>& custom) {
+        builtin.assign(okay::Tags::Builtin().begin(), okay::Tags::Builtin().end());
+        custom = okay::Tags::Custom();
+    };
+    m.layerNameOf = [](int i) { return okay::Layers::Name(i); };
+    m.layerRenameInfo = [](int i, std::string& text, std::string& hint) {
+        text = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        hint = okay::Layers::DefaultName(i)[0] ? std::string(okay::Layers::DefaultName(i)) : "Layer " + std::to_string(i);
+    };
+    okaypanels::InspectorHeaderIntent in;
+    okaypanels::InspectorHeaderState& st = g_inspHeaderState;
+    if (!oked::DrawInspectorHeaderOkayUI(m, st, in)) return false;
+    InspectorHeaderDrop(ed, go, true);   // a file dropped on the card (the placeholder is the last item)
+    if (in.toggleActive) {
+        const bool act = !go->active;
+        const auto& sel = ed.MultiSelection();
+        if (sel.size() > 1) for (GameObject* g : sel) SetActiveRecursive(g, act);   // whole multi-selection
+        else SetActiveRecursive(go, act);
+        ed.dirty = true;
+    }
+    if (in.nameChanged) { go->name = nameBuf; ed.dirty = true; }
+    if (in.toggleStatic) { go->isStatic = !go->isStatic; ed.dirty = true; }
+    if (in.toggleLock) { ed.PushUndo(); SetLockedRecursive(go, !go->editorLocked); ed.dirty = true; }
+    if (in.setTag) {
+        if (in.tag.empty()) { go->SetTag(""); ed.dirty = true; }
+        else if (go->SetTag(in.tag)) ed.dirty = true;
+    }
+    if (in.addTag) {
+        const std::string nt = in.newTag;
+        const bool listed = okay::Tags::Contains(nt);
+        if (nt == "Untagged") { go->SetTag(""); ed.dirty = true; st.newTag[0] = '\0'; st.tagError.clear(); st.closeTagList = true; }
+        else if (!okay::Tags::Add(nt)) st.tagError = okay::Tags::IsValidName(nt) ? "the tag list is full" : okay::Tags::WhyInvalid(nt);
+        else {
+            if (!listed) SaveProjectSettings();
+            if (go->SetTag(nt)) ed.dirty = true;
+            st.newTag[0] = '\0'; st.tagError.clear(); st.closeTagList = true;
+        }
+    }
+    if (in.setLayer >= 0) { go->layer = in.setLayer; ed.dirty = true; }
+    if (in.savePrefab) InspectorSaveAsPrefab(ed, go);
+    if (in.renameTag) {   // TagRenameMenu's rules
+        const std::string& from = in.tagFrom; const std::string& to = in.tagTo;
+        if (to == from) st.closeRename = true;
+        else if (okay::Tags::Contains(to)) st.renameError = "that tag is already in the list";
+        else if (!okay::Tags::IsValidName(to)) st.renameError = okay::Tags::WhyInvalid(to);
+        else {
+            ed.PushUndo();   // the objects that carry the tag change too
+            if (okay::Tags::Rename(from, to)) {
+                const int n = ed.scene().ReplaceTag(from, to);
+                SaveProjectSettings();
+                ed.dirty = true;
+                ConsoleLog("Renamed tag " + from + " to " + to + " (" + std::to_string(n) + " object" + (n == 1 ? "" : "s") + " in this scene)");
+                st.closeRename = true; st.renameError.clear();
+            } else st.renameError = "that tag cannot be renamed";
+        }
+    }
+    if (in.removeTag) { okay::Tags::Remove(in.removeTagName); SaveProjectSettings(); }
+    if ((in.renameLayer || in.resetLayer) && okay::Layers::IsValid(in.layerIndex)) {   // LayerRenameMenu's rules
+        std::string err;
+        if (TryRenameLayer(in.layerIndex, in.resetLayer ? std::string(okay::Layers::DefaultName(in.layerIndex)) : in.layerTo, err)) {
+            st.closeRename = true; st.renameError.clear();
+        } else st.renameError = err;
+    }
+    return true;
+}
+
+static bool DrawTransformWithOkayUI(EditorState& ed, GameObject* go) {
+    Transform* t = go->transform;
+    if (!t) return false;
+    Vec3& e = g_euler[go];
+    {   // the shown euler follows the real rotation when it changed elsewhere (gizmo, script, undo), as in the Dear ImGui version
+        Quat cur = t->localRotation, mine = Quat::Euler(e);
+        float dot = cur.x*mine.x + cur.y*mine.y + cur.z*mine.z + cur.w*mine.w;
+        if (std::fabs(dot) < 0.999999f) e = cur.ToEuler();
+    }
+    const bool isCam = go->GetComponent<Camera>() != nullptr;
+    const bool multi = ed.MultiSelection().size() > 1;
+    okaypanels::TransformModel m;
+    m.pos[0] = t->localPosition.x; m.pos[1] = t->localPosition.y; m.pos[2] = t->localPosition.z;
+    m.rot[0] = e.x; m.rot[1] = e.y; m.rot[2] = e.z;
+    m.scale[0] = t->localScale.x; m.scale[1] = t->localScale.y; m.scale[2] = t->localScale.z;
+    ImGuiStorage* store = ImGui::GetStateStorage();
+    const ImGuiID openId = ImGui::GetID("Transform");   // the Dear ImGui header's own open flag: switching versions keeps it
+    m.open = store->GetInt(openId, 1) != 0;
+    m.isCamera = isCam; m.uniform = s_uniformScale; m.selectedCount = multi ? (int)ed.MultiSelection().size() : 1; m.pasteValid = s_tcopyValid;
+    okaypanels::TransformIntent in;
+    int pressedOn = 0;   // 1 the header, 2 Position's label, 3 Rotation's, 4 Scale's
+    if (!oked::DrawTransformOkayUI(m, in, &pressedOn)) return false;
+    {   // a drag from the header (the component) or a row's label (the field) onto the visual script, as in the Dear ImGui version
+        static int s_from = 0;
+        if (pressedOn) s_from = pressedOn;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_from = 0;
+        if (s_from == 4 && isCam) s_from = 0;
+        static const char* const kPayload[5] = {"", "component\nTransform", "field\nposition", "field\nrotation", "field\nscale"};
+        static const char* const kTitle[5] = {"", "Transform", "Position", "Rotation", "Scale"};
+        if (s_from > 0 && ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("VS_INSPECTOR", kPayload[s_from], std::strlen(kPayload[s_from]) + 1);
+            ImGui::TextUnformatted(kTitle[s_from]);
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
+    }
+    auto others = [&](auto&& apply) {
+        if (!multi) return;
+        for (GameObject* g : ed.MultiSelection())
+            if (g && g != go && g->transform) apply(g);
+    };
+    if (in.toggleOpen) store->SetInt(openId, m.open ? 0 : 1);
+    if (in.copy) { s_tcopyPos = t->localPosition; s_tcopyRot = t->localRotation; s_tcopyScl = t->localScale; s_tcopyValid = true; }
+    if (in.paste && s_tcopyValid) {
+        ed.PushUndo();
+        t->localPosition = s_tcopyPos; t->localRotation = s_tcopyRot; t->localScale = s_tcopyScl;
+        ed.dirty = true;
+    }
+    if (in.posChanged) {
+        t->localPosition = {m.pos[0], m.pos[1], m.pos[2]}; ed.dirty = true;
+        others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
+    }
+    if (in.rotChanged) {
+        e = {m.rot[0], m.rot[1], m.rot[2]};
+        t->localRotation = Quat::Euler(e); ed.dirty = true;
+        others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
+    }
+    if (in.scaleChanged && !isCam) {
+        t->localScale = {m.scale[0], m.scale[1], m.scale[2]}; ed.dirty = true;
+        others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
+    }
+    if (in.activated) ed.PushUndo();
+    if (in.resetPos) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
+    if (in.resetRot) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
+    if (in.resetScale && !isCam) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
+    if (in.toggleUniform) s_uniformScale = !s_uniformScale;
+    return true;
+}
+
+static bool DrawMeshRendererWithOkayUI(EditorState& ed, MeshRenderer* mr) {
+    okaypanels::MeshRendererValues v;
+    v.color[0] = mr->color.r; v.color[1] = mr->color.g; v.color[2] = mr->color.b; v.color[3] = mr->color.a;
+    v.wireframe = mr->wireframe;
+    v.shader = (int)mr->shader;
+    if (mr->unlit && mr->shader == MeshRenderer::Shader::Standard) v.shader = okaypanels::MeshShaderUnlit;   // the old Unlit flag
+    v.toonBands = mr->toonBands;
+    v.gradientTop[0] = mr->gradientTop.r; v.gradientTop[1] = mr->gradientTop.g; v.gradientTop[2] = mr->gradientTop.b;
+    v.gradientBottom[0] = mr->gradientBottom.r; v.gradientBottom[1] = mr->gradientBottom.g; v.gradientBottom[2] = mr->gradientBottom.b;
+    v.rimStrength = mr->rimStrength; v.rimPower = mr->rimPower;
+    v.rimColor[0] = mr->rimColor.r; v.rimColor[1] = mr->rimColor.g; v.rimColor[2] = mr->rimColor.b;
+    v.outline = mr->outline; v.outlineWidth = mr->outlineWidth;
+    v.outlineColor[0] = mr->outlineColor.r; v.outlineColor[1] = mr->outlineColor.g; v.outlineColor[2] = mr->outlineColor.b;
+    v.castShadows = mr->castShadows; v.receiveShadows = mr->receiveShadows; v.groundShadow = mr->groundShadow;
+    v.groundShadowY = mr->groundShadowY; v.groundShadowStrength = mr->groundShadowStrength;
+    v.emissive[0] = mr->emissive.r; v.emissive[1] = mr->emissive.g; v.emissive[2] = mr->emissive.b;
+    v.specular = mr->specular; v.shininess = mr->shininess;
+    v.primitive = -1;
+    for (int i = 0; i < okaypanels::kMeshPrimitiveCount; ++i) if (mr->mesh.name == okaypanels::kMeshPrimitiveNames[i]) v.primitive = i;
+    okaypanels::MeshRendererModel m;
+    m.v = &v;
+    m.verts = (int)mr->mesh.vertices.size(); m.tris = (int)mr->mesh.triangles.size() / 3; m.uvs = !mr->mesh.uvs.empty();
+    okaypanels::MeshRendererIntent in;
+    ImGui::PushID(mr);   // two Mesh Renderers on one object keep their own sections
+    const bool drawn = oked::DrawMeshRendererOkayUI(m, in);
+    ImGui::PopID();
+    if (!drawn) return false;
+    if (!in.changed) return true;
+    mr->color = {v.color[0], v.color[1], v.color[2], v.color[3]};
+    mr->wireframe = v.wireframe;
+    if (in.shaderChanged) {
+        mr->shader = (MeshRenderer::Shader)v.shader;
+        mr->unlit = (mr->shader == MeshRenderer::Shader::Unlit);   // keep the old flag in step
+    }
+    mr->toonBands = v.toonBands;
+    mr->gradientTop = {v.gradientTop[0], v.gradientTop[1], v.gradientTop[2], 1.0f};
+    mr->gradientBottom = {v.gradientBottom[0], v.gradientBottom[1], v.gradientBottom[2], 1.0f};
+    mr->rimStrength = v.rimStrength; mr->rimPower = v.rimPower;
+    mr->rimColor = {v.rimColor[0], v.rimColor[1], v.rimColor[2], 1.0f};
+    mr->outline = v.outline; mr->outlineWidth = v.outlineWidth;
+    mr->outlineColor = {v.outlineColor[0], v.outlineColor[1], v.outlineColor[2], 1.0f};
+    mr->castShadows = v.castShadows; mr->receiveShadows = v.receiveShadows; mr->groundShadow = v.groundShadow;
+    mr->groundShadowY = v.groundShadowY; mr->groundShadowStrength = v.groundShadowStrength;
+    mr->emissive = {v.emissive[0], v.emissive[1], v.emissive[2], 1.0f};
+    mr->specular = v.specular; mr->shininess = v.shininess;
+    if (in.primitiveChanged && v.primitive >= 0 && v.primitive < okaypanels::kMeshPrimitiveCount) {
+        mr->mesh = Mesh::FromName(okaypanels::kMeshPrimitiveNames[v.primitive]);
+        mr->meshPath.clear();
+    }
+    ed.dirty = true;
+    return true;
+}
+
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
     // Row spacing, field height and the value / label split come from the density setting (Appearance > Density)
@@ -29968,6 +30276,11 @@ void DrawInspector(EditorState& ed) {
     // Header: an active toggle + a type chip + the object name on
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
+    // With the OkayUI preview (OKAY_UI_BACKEND=okayui) the card is OkayUI's (docs/own_ui_toolkit.md section 14); the Dear ImGui card
+    // below draws whenever that one does not (the switch is off, or a popup or window covers this part of the Inspector).
+    if (UseOkayUIBackend() && DrawInspectorHeaderWithOkayUI(ed, go)) {
+        ImGui::Spacing();
+    } else {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
@@ -30098,50 +30411,13 @@ void DrawInspector(EditorState& ed) {
             else ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW));
         }
     }
-    if (ImGui::Button("Save as Prefab")) {
-        std::string p = go->name + ".okayprefab";
-        if (!ed.projectDir().empty()) {   // into the project's Assets folder, where the Project panel shows it
-            std::error_code pe;
-            std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets", pe);
-            p = (std::filesystem::path(ed.projectDir()) / "Assets" / p).string();
-        }
-        if (oked::SaveAsPrefabFile(*go, p)) {
-            ConsoleLog("Saved prefab " + p);
-            go->prefabSource = p;   // link the live object so it becomes an instance
-            ed.dirty = true;
-        } else ConsoleLog("Prefab save failed");
-    }
+    if (ImGui::Button("Save as Prefab")) InspectorSaveAsPrefab(ed, go);
     ImGui::EndChild();
-    // Drop a Project asset onto the object header to attach it: a .okay script
-    // adds a Script component bound to that file; a .okaymat applies its look; an
-    // image sets the texture.
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
-            std::string path((const char*)p->Data), ext;
-            if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
-            for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-            if (ext == ".okay" || ext == ".okayvs") {
-                AttachScriptAsset(ed, go, path);
-            } else if (ext == ".okaymat") {
-                if (auto* mr = go->GetComponent<MeshRenderer>()) {
-                    Material m; if (Material::LoadFromFile(path, m)) {
-                        ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true; ConsoleLog("Applied material");
-                    }
-                }
-            } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") {
-                ed.PushUndo();
-                if (auto* mr = go->GetComponent<MeshRenderer>())        mr->texture = path;
-                else if (auto* sr = go->GetComponent<SpriteRenderer>()) sr->texture = path;
-                ed.dirty = true; ConsoleLog("Set texture");
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-        ImGui::SetTooltip("Drop a script/material/image here to attach it");
+    InspectorHeaderDrop(ed, go);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::Spacing();
+    }   // the Dear ImGui card
 
     // ---- Prefab instance header, per-property marks and the changes list ------------------
     // "Prefab: <name>" with Open / Select Asset / Revert All / Apply All / Create Variant / Update All / Unpack, then what differs
@@ -30344,6 +30620,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     CharacterModelPanel(ed, go);
+    if (!(UseOkayUIBackend() && DrawTransformWithOkayUI(ed, go))) {   // OkayUI's Transform with the preview switch, else Dear ImGui's
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
     if (ImGui::BeginDragDropSource()) {
         const char* payload = "component\nTransform";
@@ -30355,9 +30632,6 @@ void DrawInspector(EditorState& ed) {
     // Right-click the Transform header: copy the whole TRS, paste it onto another
     // object.
     {
-        static bool s_tcopyValid = false;
-        static Vec3 s_tcopyPos, s_tcopyScl;
-        static Quat s_tcopyRot;
         if (ImGui::BeginPopupContextItem("##tfctx")) {
             Transform* t = go->transform;
             if (ImGui::MenuItem("Copy Transform Values")) {
@@ -30393,7 +30667,8 @@ void DrawInspector(EditorState& ed) {
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Position");
-        if (ImGui::BeginDragDropSource()) {
+        // the label is the last item and has no id: Dear ImGui needs SourceAllowNullID there (without it, it asserts while a cell is held)
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             const char* payload = "field\nposition";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
             ImGui::TextUnformatted("Position");
@@ -30417,7 +30692,8 @@ void DrawInspector(EditorState& ed) {
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Rotation");
-        if (ImGui::BeginDragDropSource()) {
+        // the label is the last item and has no id: Dear ImGui needs SourceAllowNullID there (without it, it asserts while a cell is held)
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             const char* payload = "field\nrotation";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
             ImGui::TextUnformatted("Rotation");
@@ -30426,7 +30702,6 @@ void DrawInspector(EditorState& ed) {
         }
         // Cameras aren't scalable (scaling warps the view); show it read-only.
         bool isCam = go->GetComponent<Camera>() != nullptr;
-        static bool s_uniformScale = false;   // linked axes: drag one, all follow
         float scl[3] = {t->localScale.x, t->localScale.y, t->localScale.z};
         float sclOld[3] = {scl[0], scl[1], scl[2]};
         if (isCam) ImGui::BeginDisabled();
@@ -30445,7 +30720,7 @@ void DrawInspector(EditorState& ed) {
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Scale");
-        if (!isCam && ImGui::BeginDragDropSource()) {
+        if (!isCam && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             const char* payload = "field\nscale";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
             ImGui::TextUnformatted("Scale");
@@ -30466,6 +30741,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
         }
     }
+
+    }   // the Dear ImGui Transform
 
     // Draw the remaining components in their stored order so the user-controlled
     // arrangement is honored. Transform is drawn above (fixed at index 0) and skipped.
@@ -30759,6 +31036,8 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mr = dynamic_cast<MeshRenderer*>(curComp)) {
         if (CompHeader("Mesh Renderer", mr, &toRemove)) {
+            // The shading fields (the stats line to the Primitive list) are OkayUI's with the preview switch; the rest stays Dear ImGui's.
+            if (!(UseOkayUIBackend() && DrawMeshRendererWithOkayUI(ed, mr))) {
             if (!mr->mesh.vertices.empty())
                 ImGui::TextDisabled("%d verts  \xE2\x80\xA2  %d tris%s",
                                     (int)mr->mesh.vertices.size(),
@@ -30854,6 +31133,7 @@ void DrawInspector(EditorState& ed) {
                 mr->meshPath.clear();
                 ed.dirty = true;
             }
+            }   // the Dear ImGui shading fields
             // Import a 3D model from an .OBJ file.
             char mp[256];
             std::strncpy(mp, mr->meshPath.c_str(), sizeof(mp) - 1);
@@ -41488,18 +41768,25 @@ void DrawInspector(EditorState& ed) {
     static char acFilter[64] = "";
     // Prominent, accent-tinted primary action — centre a wide
     // "Add Component" button under the component list.
-    ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
-    float acW = ImGui::GetContentRegionAvail().x;
-    float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
-    if (acPad > 0.0f) ImGui::Indent(acPad);
     // The browser: categories on the left (plus Recent), that category's components
     // on the right as a plain list; typing searches every category at once.
     static std::string s_acCat;                  // selected category ("Recent" = recently added)
     static std::vector<std::string> s_acRecent;  // labels, most recent first
-    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) {
+    bool acClicked = false;
+    // With the OkayUI preview the button is OkayUI's (docs/own_ui_toolkit.md section 14); the browser it opens stays Dear ImGui's.
+    if (!(UseOkayUIBackend() && oked::DrawAddComponentOkayUI(ImGui::ColorConvertFloat4ToU32(AccentCol(1.0f)), acClicked))) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+        float acW = ImGui::GetContentRegionAvail().x;
+        float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
+        if (acPad > 0.0f) ImGui::Indent(acPad);
+        acClicked = ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30));
+        if (acPad > 0.0f) ImGui::Unindent(acPad);
+        ImGui::PopStyleColor(4);
+    }
+    if (acClicked) {
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }
@@ -41508,8 +41795,6 @@ void DrawInspector(EditorState& ed) {
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }
-    if (acPad > 0.0f) ImGui::Unindent(acPad);
-    ImGui::PopStyleColor(4);
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopup("AddComponent")) {

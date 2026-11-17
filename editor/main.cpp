@@ -45,6 +45,9 @@
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
 #include "okay/Modeling/MeshUndo.hpp"       // mesh-edit undo steps (mesh, selection, modifier list)
+#include "okay/Modeling/ModelOpUndo.hpp"    // one undo step per Modeling-window button, on the active stack
+#include "okay/Modeling/ShapeOps.hpp"       // Subdivide / Weld / Recenter / Ground / Fit 1u, shared by two panels
+#include "okay/Modeling/MeshExport.hpp"     // Export OBJ file name (never overwrites)
 #include "okay/Modeling/MeshLibrary.hpp"        // browse .okaymesh parts in the project
 #include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
 #include "okay/Modeling/Curve.hpp"           // Bezier curves to pipes, ribbons and swept profiles
@@ -91,6 +94,7 @@
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#include "QuitPromptState.hpp"          // the quit prompt's per-frame state (ImGui-free, tested)
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
@@ -1985,6 +1989,10 @@ bool FetchVerified(const std::string& version, const std::string& asset, const f
     okayversions::Sources src;
     src.bucketBase = SupabaseReleasesBase();
     src.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
+    {   // an old signed list replayed is refused (shared/UpdateGuard.hpp); the floor sits beside this program
+        const fs::path self = okay::restart::CurrentExecutable();
+        if (!self.empty()) src.floorFile = self.parent_path() / okayupdate::kFloorName;
+    }
     std::error_code ec;
     static unsigned n = 0;
     const okayversions::Index index = okayversions::LoadIndex(src, [&](const std::string& url, std::string& out) {
@@ -3443,6 +3451,31 @@ static void EditUndoPoint(EditorState& ed, MeshRenderer* mr) {
     if (!mr || mr != EditedRenderer()) { ed.PushUndo(); return; }
     okay::modeling::PushMeshUndo(g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), g_nextUndoLabel);
     g_nextUndoLabel.clear();
+}
+// Run one whole-mesh button (Modeling window, Mesh Renderer inspector) as exactly one undo step: a mesh step in
+// Edit Mesh on this object, a scene step otherwise (okay/Modeling/ModelOpUndo.hpp, tested headless). Before this,
+// the buttons pushed a scene step even in Edit Mesh, so Ctrl+Z took back the previous mesh edit together with them,
+// and Weld / Recenter / Ground / Fit 1u pushed no step at all.
+static bool ModelOp(EditorState& ed, MeshRenderer* mr, const char* label, const std::function<void(Mesh&)>& fn) {
+    if (!mr) return false;
+    const bool editing = mr == EditedRenderer();
+    const std::string name = label ? label : "";
+    const bool changed = okay::modeling::RunUndoableMeshOp(editing, g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), name,
+                                                           [&] { ed.PushUndo(name); }, fn);
+    g_nextUndoLabel.clear();
+    if (changed || !editing) ed.dirty = true;
+    return changed;
+}
+// One of the detail / pivot buttons both panels show (okay/Modeling/ShapeOps.hpp): the same code, the same undo.
+static void ShapeOpButton(EditorState& ed, MeshRenderer* mr, okay::modeling::ShapeOp op, bool small, const char* idSuffix) {
+    const std::string id = std::string(okay::modeling::ShapeOpLabel(op)) + idSuffix;
+    const bool pressed = small ? ImGui::SmallButton(id.c_str()) : ImGui::Button(id.c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::modeling::ShapeOpTip(op));
+    if (!pressed || !mr) return;
+    const std::vector<int> faces = op == okay::modeling::ShapeOp::Subdivide ? g_meshSelFaces : std::vector<int>{};
+    std::string msg;
+    ModelOp(ed, mr, okay::modeling::ShapeOpLabel(op), [&](Mesh& m) { msg = okay::modeling::ApplyShapeOp(m, op, faces); });
+    if (!msg.empty()) ConsoleLog(msg);
 }
 // Ctrl+Z / Ctrl+Y in edit mode. Returns false when there's no mesh step to take
 // (then the ordinary scene undo applies).
@@ -13075,11 +13108,17 @@ void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) 
 // discards changes.
 static bool ScriptTabDirty(okay::ScriptComponent* t);
 void DrawQuitPrompt(EditorState& ed, bool& running) {
-    static bool open = false;
-    if (g_quitRequested && !open) {
-        if (!AnyUnsavedWork(ed)) { running = false; g_quitRequested = false; return; }
-        ImGui::OpenPopup("Unsaved Changes");
-        open = true;
+    // A quit that arrives while another modal is up waits for it to close, and a prompt that another
+    // modal knocked down is opened again, so Exit and the close button never stop working (#888 finding 142).
+    static oked::QuitPromptState quit;
+    const bool showing = ImGui::IsPopupOpen("Unsaved Changes");
+    ImGuiWindow* topModal = ImGui::GetTopMostPopupModal();
+    const bool otherModal = topModal && !showing;
+    const bool unsaved = g_quitRequested && AnyUnsavedWork(ed);
+    switch (oked::StepQuitPrompt(quit, g_quitRequested, unsaved, showing, otherModal)) {
+        case oked::QuitStep::QuitNow: running = false; g_quitRequested = false; return;
+        case oked::QuitStep::OpenPrompt: ImGui::OpenPopup("Unsaved Changes"); break;
+        case oked::QuitStep::None: break;
     }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -13098,19 +13137,19 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
-            g_quitRequested = false; open = false;
+            g_quitRequested = false; oked::QuitPromptAnswered(quit);
             if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            g_quitRequested = false; open = false;
+            g_quitRequested = false; oked::QuitPromptAnswered(quit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
-            running = false; g_quitRequested = false; open = false;
+            running = false; g_quitRequested = false; oked::QuitPromptAnswered(quit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -19823,6 +19862,12 @@ void DrawAboutPopup() {
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
+        {   // the update signature check: ON, or OFF with the reason (docs/security.md "Updater signing")
+            static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+            ImGui::TextColored(sigStatus.state == okayupdate::SigState::On ? ImVec4(0.45f, 0.80f, 0.55f, 1.0f) : ImVec4(0.93f, 0.74f, 0.35f, 1.0f), "%s", sigStatus.line.c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
@@ -28502,58 +28547,45 @@ void DrawModeling(EditorState& ed) {
         ImGui::TextDisabled("%d verts, %d triangles",
                             (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
         SectionHeader("Detail");
-        if (ImGui::Button("Subdivide##model")) {
-            ed.PushUndo();
-            if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
-            else                         mr->mesh.Subdivide();                      // whole mesh
-            ed.dirty = true;
-        }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, false, "##model");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(g_meshSelFaces.empty()
                 ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
                 : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                 (int)g_meshSelFaces.size());
         ImGui::SameLine();
-        if (ImGui::Button("Subdiv + Smooth##model")) {
-            mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
-            ConsoleLog("Subdivided + smoothed: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
-        }
-        // Loop Cut (Blender Ctrl+R): insert N editable edge loops across an axis.
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SubdivSmooth, false, "##model");
+        // Slice: cut the whole mesh with N planes across an axis (Mesh::SliceAxis). This was also called "Loop Cut";
+        // the real edge-ring Loop Cut is Ctrl+R / the Loop Cut button in Edit Mesh (modeling::LoopCut).
         static int s_loopCount = 1;
         ImGui::SetNextItemWidth(70);
-        ImGui::DragInt("##loopn", &s_loopCount, 0.1f, 1, 32, "%d loops");
-        ImGui::SameLine(); ImGui::TextDisabled("Loop Cut:");
+        ImGui::DragInt("##loopn", &s_loopCount, 0.1f, 1, 32, "%d slices", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SameLine(); ImGui::TextDisabled("Slice:");
         ImGui::SameLine();
-        if (ImGui::Button("X##loop")) { ed.PushUndo(); mr->mesh.LoopCut(0, s_loopCount); ed.dirty = true; }
+        if (ImGui::Button("X##loop")) ModelOp(ed, mr, "Slice X", [&](Mesh& m) { m.SliceAxis(0, s_loopCount); });
         ImGui::SameLine();
-        if (ImGui::Button("Y##loop")) { ed.PushUndo(); mr->mesh.LoopCut(1, s_loopCount); ed.dirty = true; }
+        if (ImGui::Button("Y##loop")) ModelOp(ed, mr, "Slice Y", [&](Mesh& m) { m.SliceAxis(1, s_loopCount); });
         ImGui::SameLine();
-        if (ImGui::Button("Z##loop")) { ed.PushUndo(); mr->mesh.LoopCut(2, s_loopCount); ed.dirty = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Insert evenly-spaced edge loops across the mesh on an axis (Blender's Ctrl+R) — add editable divisions to a wall/box/cylinder.");
+        if (ImGui::Button("Z##loop")) ModelOp(ed, mr, "Slice Z", [&](Mesh& m) { m.SliceAxis(2, s_loopCount); });
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the whole mesh with evenly spaced planes across an axis: adds editable divisions to a wall/box/cylinder.\nFor a real edge loop through a ring of quads, use Loop Cut (Ctrl+R) in Edit Mesh.");
         ImGui::SameLine();
-        if (ImGui::Button("Smooth##model")) {
-            Vec3 sz = mr->mesh.Size();
-            mr->mesh.Subdivide();
-            mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
-            ed.dirty = true;
-        }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SmoothRound, false, "##model");
         static float s_relax = 0.5f;
         SectionHeader("Clean up");
         ImGui::SetNextItemWidth(130); ImGui::SliderFloat("##rlx", &s_relax, 0.05f, 1.0f, "strength %.2f");
         ImGui::SameLine();
-        if (ImGui::Button("Relax##model")) { ed.PushUndo(); mr->mesh.Smooth(s_relax); ed.dirty = true; }
+        if (ImGui::Button("Relax##model")) ModelOp(ed, mr, "Relax", [&](Mesh& m) { m.Smooth(s_relax); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laplacian smooth: relax every vertex toward its neighbours without adding triangles (evens out sculpts and lumpy imports).");
         ImGui::SameLine();
         if (ImGui::Button("Fill Holes##model")) {
-            ed.PushUndo(); int nH = mr->mesh.FillHoles();
+            int nH = 0; ModelOp(ed, mr, "Fill Holes", [&](Mesh& m) { nH = m.FillHoles(); });
             ConsoleLog(nH > 0 ? ("Filled " + std::to_string(nH) + " hole(s)") : std::string("No holes found"));
             ed.dirty = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap every open boundary (e.g. after Delete Faces) so the mesh is watertight again.");
         ImGui::SameLine();
         if (ImGui::Button("Bridge##model")) {
-            ed.PushUndo();
-            bool ok = mr->mesh.BridgeLoops();
+            bool ok = false; ModelOp(ed, mr, "Bridge", [&](Mesh& m) { ok = m.BridgeLoops(); });
             ConsoleLog(ok ? std::string("Bridged the two openings")
                           : std::string("[warn] Bridge needs exactly two open boundaries (delete two facing faces first)"));
             ed.dirty = true;
@@ -28564,11 +28596,7 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         auto symAxis = [&](const char* lbl, int axis) {
             if (!ImGui::SmallButton(lbl)) return;
-            ed.PushUndo();
-            Vec3 n{axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f};
-            mr->mesh.Bisect({0, 0, 0}, n, false, true);   // keep + half, seam open
-            mr->mesh.Mirror(axis);                         // reflect + weld the seam
-            ed.dirty = true;
+            ModelOp(ed, mr, "Symmetrize", [&](Mesh& m) { m.Symmetrize(axis); });   // Mesh::Symmetrize: keep + half, mirror, weld
         };
         symAxis("X##sym", 0); ImGui::SameLine();
         symAxis("Y##sym", 1); ImGui::SameLine();
@@ -28577,61 +28605,58 @@ void DrawModeling(EditorState& ed) {
         static float s_snapAll = 0.25f;
         ImGui::SetNextItemWidth(130); ImGui::DragFloat("##snapall", &s_snapAll, 0.01f, 0.01f, 5.0f, "grid %.2f");
         ImGui::SameLine();
-        if (ImGui::Button("Snap Grid##model")) { ed.PushUndo(); mr->mesh.SnapToGrid(s_snapAll); ed.dirty = true; }
+        if (ImGui::Button("Snap Grid##model")) ModelOp(ed, mr, "Snap Grid", [&](Mesh& m) { m.SnapToGrid(s_snapAll); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize every vertex to this grid step — crisp low-poly look, modular kit alignment.");
         SectionHeader("Shading");
-        if (ImGui::Button("Shade Smooth##model")) { mr->mesh.ComputeSmoothNormals(); ed.dirty = true; }
+        if (ImGui::Button("Shade Smooth##model")) ModelOp(ed, mr, "Shade Smooth", [&](Mesh& m) { m.ComputeSmoothNormals(); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blend lighting across faces (organic shapes). Saved with the scene.");
         ImGui::SameLine();
-        if (ImGui::Button("Flat##shade")) { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; ed.dirty = true; }
+        if (ImGui::Button("Flat##shade")) ModelOp(ed, mr, "Shade Flat", [&](Mesh& m) { m.normals.clear(); m.autoSmoothAngle = 0.0f; });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faceted lighting per face (crisp low-poly look).");
         static float s_autoSmooth = 30.0f;
         ImGui::SetNextItemWidth(120);
         ImGui::DragFloat("##asang", &s_autoSmooth, 1.0f, 5.0f, 89.0f, "angle %.0f\xC2\xB0");
         ImGui::SameLine();
-        if (ImGui::Button("Auto Smooth##model")) { ed.PushUndo(); mr->mesh.ComputeAutoSmoothNormals(s_autoSmooth); ed.dirty = true; }
+        if (ImGui::Button("Auto Smooth##model")) ModelOp(ed, mr, "Auto Smooth", [&](Mesh& m) { m.ComputeAutoSmoothNormals(s_autoSmooth); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blender's Auto Smooth: smooth across shallow edges, crisp across sharp ones\n(above this angle). A cylinder gets a smooth barrel + hard cap rims in one click.\nSaved with the scene.");
         static float s_jitter = 0.05f; static int s_jitterSeed = 1;
         SectionHeader("Deform");
         ImGui::SetNextItemWidth(130); ImGui::DragFloat("##jit", &s_jitter, 0.005f, 0.0f, 2.0f, "amount %.3f");
         ImGui::SameLine();
         if (ImGui::Button("Jitter##model")) {
-            ed.PushUndo(); mr->mesh.JitterVertices({}, s_jitter, s_jitterSeed++); ed.dirty = true;
+            const int seed = s_jitterSeed++;
+            ModelOp(ed, mr, "Jitter", [&](Mesh& m) { m.JitterVertices({}, s_jitter, seed); });
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nudge every vertex by a random offset — instant hand-made / rocky look (each click varies).");
         static float s_shear = 0.3f;
         ImGui::SameLine(); ImGui::SetNextItemWidth(80);
         ImGui::DragFloat("##shr", &s_shear, 0.01f, -3.0f, 3.0f, "shear %.2f");
         ImGui::SameLine();
-        if (ImGui::Button("Shear X##model")) { ed.PushUndo(); mr->mesh.Shear(0, 1, s_shear); ed.dirty = true; }
+        if (ImGui::Button("Shear X##model")) ModelOp(ed, mr, "Shear X", [&](Mesh& m) { m.Shear(0, 1, s_shear); });
         ImGui::SameLine();
-        if (ImGui::Button("Z##shear")) { ed.PushUndo(); mr->mesh.Shear(2, 1, s_shear); ed.dirty = true; }
+        if (ImGui::Button("Z##shear")) ModelOp(ed, mr, "Shear Z", [&](Mesh& m) { m.Shear(2, 1, s_shear); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slant the mesh: slide along the axis proportionally to height — leaning towers, italic props.");
         SectionHeader("Pivot & export");
-        if (ImGui::Button("Weld##model")) {
-            int n = mr->mesh.WeldVertices();
-            ConsoleLog("Welded " + std::to_string(n) + " duplicate verts"); ed.dirty = true;
-        }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Weld, false, "##model");
         ImGui::SameLine();
-        if (ImGui::Button("Recenter##model")) { mr->mesh.RecenterToOrigin(); ed.dirty = true; }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Recenter, false, "##model");
         ImGui::SameLine();
-        if (ImGui::Button("Ground##model")) { mr->mesh.GroundPivot(); ed.dirty = true; }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Ground, false, "##model");
         ImGui::SameLine();
-        if (ImGui::Button("Fit 1u##model")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
+        ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Fit1u, false, "##model");
         ImGui::SameLine();
         if (ImGui::Button("Export OBJ##model")) {
-            // Save into the project's Assets folder under the object's name.
-            std::string base = go->name.empty() ? std::string("mesh") : go->name;
-            for (char& ch : base) if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+            // Save into the project's Assets folder under the object's name, never on top of an existing file
+            // (okay/Modeling/MeshExport.hpp: Box.obj, then Box_2.obj, ...). Face colours go to a .mtl beside it.
             namespace fs = std::filesystem;
             fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
                                                       : fs::path(ed.projectDir()) / "Assets";
             std::error_code ec; fs::create_directories(assets, ec);
-            std::string out = (assets / (base + ".obj")).string();
+            std::string out = okay::modeling::NextFreeExportPath(assets, go->name);
             if (mr->DisplayMesh().SaveOBJ(out)) ConsoleLog("Exported " + out);
             else ConsoleLog("[error] OBJ export failed: " + out);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this mesh to Assets/<name>.obj — use it in other objects, projects, or Blender.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this mesh to Assets/<name>.obj (with face colours in a .mtl, vertex colours, quads and normals)\nfor other objects, projects, or Blender. An existing file is never replaced: the next free name is used.");
 
         SectionHeader("UV Unwrap");
         ImGui::TextDisabled("Project texture coordinates onto the mesh:");
@@ -28642,11 +28667,11 @@ void DrawModeling(EditorState& ed) {
         // (corner UVs); otherwise it's split at the new seams so it draws exactly.
         auto project = [&](const std::function<void(Mesh&)>& fn) {
             const bool editing = mr == EditedRenderer();
-            if (editing) EditUndoPoint(ed, mr); else ed.PushUndo();
-            mr->mesh.cornerUVs.clear();
-            fn(mr->mesh);
-            if (!editing) mr->mesh = mr->mesh.SplitCornerUVs();
-            ed.dirty = true;
+            ModelOp(ed, mr, "UV Project", [&](Mesh& m) {
+                m.cornerUVs.clear();
+                fn(m);
+                if (!editing) m = m.SplitCornerUVs();
+            });
         };
         if (ImGui::Button("Box##uv")) project([&](Mesh& m) { m.ProjectUVBox(s_uvTile); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tri-planar: each face projects along its dominant axis. The go-to for buildings and edited geometry.");
@@ -28663,26 +28688,26 @@ void DrawModeling(EditorState& ed) {
             ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
 
         // Whole-mesh modeling ops (symmetry / deform / shell).
-        if (ImGui::Button("Mirror X##model")) { ed.PushUndo(); mr->mesh.Mirror(0); ed.dirty = true; }
-        ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) { ed.PushUndo(); mr->mesh.Mirror(1); ed.dirty = true; }
-        ImGui::SameLine(); if (ImGui::Button("Mirror Z##model")) { ed.PushUndo(); mr->mesh.Mirror(2); ed.dirty = true; }
+        if (ImGui::Button("Mirror X##model")) ModelOp(ed, mr, "Mirror X", [&](Mesh& m) { m.Mirror(0); });
+        ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) ModelOp(ed, mr, "Mirror Y", [&](Mesh& m) { m.Mirror(1); });
+        ImGui::SameLine(); if (ImGui::Button("Mirror Z##model")) ModelOp(ed, mr, "Mirror Z", [&](Mesh& m) { m.Mirror(2); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Append a flipped copy across the axis plane so the model is symmetric (seam welded).");
         static float s_spherify = 1.0f, s_twist = 90.0f, s_solid = 0.1f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##sph", &s_spherify, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine(); if (ImGui::Button("Spherify##model")) { ed.PushUndo(); mr->mesh.Spherify(s_spherify); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Spherify##model")) ModelOp(ed, mr, "Spherify", [&](Mesh& m) { m.Spherify(s_spherify); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the shape toward a sphere (0 = none, 1 = full).");
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##tw", &s_twist, -360.0f, 360.0f, "%.0f");
-        ImGui::SameLine(); if (ImGui::Button("Twist Y##model")) { ed.PushUndo(); mr->mesh.Twist(s_twist, 1); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Twist Y##model")) ModelOp(ed, mr, "Twist Y", [&](Mesh& m) { m.Twist(s_twist, 1); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wring the mesh around Y (degrees per world unit of height).");
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##sol", &s_solid, 0.01f, 1.0f, "%.2f");
-        ImGui::SameLine(); if (ImGui::Button("Solidify##model")) { ed.PushUndo(); mr->mesh.Solidify(s_solid); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Solidify##model")) ModelOp(ed, mr, "Solidify", [&](Mesh& m) { m.Solidify(s_solid); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Give a flat/curved surface thickness (adds an inner shell).");
         static float s_taper = 0.4f, s_bend = 90.0f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##tp", &s_taper, 0.0f, 2.0f, "%.2f");
-        ImGui::SameLine(); if (ImGui::Button("Taper Y##model")) { ed.PushUndo(); mr->mesh.Taper(1, s_taper); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Taper Y##model")) ModelOp(ed, mr, "Taper Y", [&](Mesh& m) { m.Taper(1, s_taper); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale the top toward the centre (cylinder->cone). 1 = no change, 0 = point.");
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##bn", &s_bend, -180.0f, 180.0f, "%.0f");
-        ImGui::SameLine(); if (ImGui::Button("Bend X##model")) { ed.PushUndo(); mr->mesh.Bend(s_bend, 0); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Bend X##model")) ModelOp(ed, mr, "Bend X", [&](Mesh& m) { m.Bend(s_bend, 0); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Curve the mesh into an arc along X (degrees over its length).");
 
         // ---- Modifiers (Blender-style: array / remesh / decimate / boolean) ----
@@ -28691,13 +28716,13 @@ void DrawModeling(EditorState& ed) {
         static int   s_arrayN = 3; static float s_arrayDX = 1.5f;
         ImGui::SetNextItemWidth(70); ImGui::DragInt("##arrn", &s_arrayN, 0.1f, 1, 64);
         ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##arrdx", &s_arrayDX, 0.05f, -50.0f, 50.0f, "dx %.2f");
-        ImGui::SameLine(); if (ImGui::Button("Array X##model")) { ed.PushUndo(); mr->mesh.Array(s_arrayN, {s_arrayDX, 0, 0}); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Array X##model")) ModelOp(ed, mr, "Array X", [&](Mesh& m) { m.Array(s_arrayN, {s_arrayDX, 0, 0}); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Repeat the mesh N times, each shifted further along X (fences, columns, stairs).");
 
         static float s_voxel = 0.25f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##vox", &s_voxel, 0.02f, 2.0f, "voxel %.2f");
         ImGui::SameLine(); if (ImGui::Button("Remesh##model")) {
-            ed.PushUndo(); mr->mesh.Remesh(s_voxel);
+            ModelOp(ed, mr, "Remesh", [&](Mesh& m) { m.Remesh(s_voxel); });
             ConsoleLog("Remeshed: " + std::to_string(mr->mesh.TriangleCount()) + " tris @ voxel " + std::to_string(s_voxel));
             ed.dirty = true;
         }
@@ -28706,7 +28731,7 @@ void DrawModeling(EditorState& ed) {
         static float s_decim = 0.3f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##dec", &s_decim, 0.02f, 2.0f, "cell %.2f");
         ImGui::SameLine(); if (ImGui::Button("Decimate##model")) {
-            ed.PushUndo(); int t = mr->mesh.Decimate(s_decim);
+            int t = 0; ModelOp(ed, mr, "Decimate", [&](Mesh& m) { t = m.Decimate(s_decim); });
             ConsoleLog("Decimated to " + std::to_string(t) + " triangles");
             ed.dirty = true;
         }
@@ -28737,8 +28762,7 @@ void DrawModeling(EditorState& ed) {
                 Mesh other = om->mesh;
                 Vec3 delta = meshes[s_boolTarget]->transform->Position() - go->transform->Position();
                 for (Vec3& v : other.vertices) v += delta;
-                ed.PushUndo();
-                mr->mesh = Mesh::Boolean(mr->mesh, other, op, s_boolVox);
+                ModelOp(ed, mr, "Boolean", [&](Mesh& m) { m = Mesh::Boolean(m, other, op, s_boolVox); });
                 ConsoleLog(std::string("Boolean ") + what + ": " + std::to_string(mr->mesh.TriangleCount()) + " tris");
                 ed.dirty = true;
             };
@@ -28750,7 +28774,7 @@ void DrawModeling(EditorState& ed) {
 
         // Convex hull + planar bisect (both operate on this mesh alone).
         if (ImGui::Button("Convex Hull##model")) {
-            ed.PushUndo(); mr->mesh.MakeConvexHull();
+            ModelOp(ed, mr, "Convex Hull", [&](Mesh& m) { m.MakeConvexHull(); });
             ConsoleLog("Convex hull: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
             ed.dirty = true;
         }
@@ -28758,12 +28782,11 @@ void DrawModeling(EditorState& ed) {
         ImGui::TextDisabled("Bisect (keep half, capped):");
         auto biAxis = [&](const char* lbl, Vec3 n) {
             if (ImGui::Button(lbl)) {
-                ed.PushUndo();
-                Vec3 c = mr->mesh.vertices.empty() ? Vec3{0,0,0} : Vec3{0,0,0};
-                Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-                c = {(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};  // cut through the centre
-                mr->mesh.Bisect(c, n, true, true);
-                ed.dirty = true;
+                ModelOp(ed, mr, "Bisect", [&](Mesh& m) {
+                    Vec3 lo, hi; m.Bounds(lo, hi);
+                    const Vec3 c{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};  // cut through the centre
+                    m.Bisect(c, n, true, true);
+                });
             }
         };
         biAxis("+X##bi", {1,0,0});  ImGui::SameLine(); biAxis("-X##bi", {-1,0,0}); ImGui::SameLine();
@@ -28803,11 +28826,11 @@ void DrawModeling(EditorState& ed) {
 
         static float s_fatten = 0.1f, s_wire = 0.08f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##fat", &s_fatten, -1.0f, 1.0f, "%.2f");
-        ImGui::SameLine(); if (ImGui::Button("Shrink/Fatten##model")) { ed.PushUndo(); mr->mesh.ShrinkFatten(s_fatten); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Shrink/Fatten##model")) ModelOp(ed, mr, "Shrink/Fatten", [&](Mesh& m) { m.ShrinkFatten(s_fatten); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push every vertex out (+) or in (-) along its normal — inflate or shrink the surface.");
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##wire", &s_wire, 0.01f, 0.5f, "%.2f");
         ImGui::SameLine(); if (ImGui::Button("Wireframe##model")) {
-            ed.PushUndo(); mr->mesh.Wireframe(s_wire);
+            ModelOp(ed, mr, "Wireframe", [&](Mesh& m) { m.Wireframe(s_wire); });
             ConsoleLog("Wireframe: " + std::to_string(mr->mesh.TriangleCount()) + " tris");
             ed.dirty = true;
         }
@@ -28817,19 +28840,19 @@ void DrawModeling(EditorState& ed) {
         ImGui::SetNextItemWidth(70); ImGui::DragFloat("##dispA", &s_dispAmt, 0.01f, 0.0f, 5.0f, "amt %.2f");
         ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragFloat("##dispF", &s_dispFreq, 0.05f, 0.05f, 20.0f, "frq %.2f");
         ImGui::SameLine(); ImGui::SetNextItemWidth(60); ImGui::DragInt("##dispS", &s_dispSeed, 0.1f, 0, 9999, "s%d");
-        ImGui::SameLine(); if (ImGui::Button("Displace##model")) { ed.PushUndo(); mr->mesh.Displace(s_dispAmt, s_dispFreq, s_dispSeed); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Displace##model")) ModelOp(ed, mr, "Displace", [&](Mesh& m) { m.Displace(s_dispAmt, s_dispFreq, s_dispSeed); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Roughen the surface with value noise along normals (Subdivide first for fine detail).");
 
         static float s_castR = 1.0f;
         ImGui::SetNextItemWidth(90); ImGui::SliderFloat("##castr", &s_castR, 0.1f, 5.0f, "r %.2f");
-        ImGui::SameLine(); if (ImGui::Button("Cast Cyl Y##model")) { ed.PushUndo(); mr->mesh.CastToCylinder(s_castR, 1, 1.0f); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Cast Cyl Y##model")) ModelOp(ed, mr, "Cast Cyl Y", [&](Mesh& m) { m.CastToCylinder(s_castR, 1, 1.0f); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Round the cross-section toward a cylinder of this radius around Y.");
 
         static float s_stretch = 1.5f;
         ImGui::SetNextItemWidth(80); ImGui::SliderFloat("##str", &s_stretch, 0.1f, 4.0f, "%.2f");
-        ImGui::SameLine(); if (ImGui::Button("Stretch X##model")) { ed.PushUndo(); mr->mesh.Stretch(0, s_stretch); ed.dirty = true; }
-        ImGui::SameLine(); if (ImGui::Button("Y##str")) { ed.PushUndo(); mr->mesh.Stretch(1, s_stretch); ed.dirty = true; }
-        ImGui::SameLine(); if (ImGui::Button("Z##str")) { ed.PushUndo(); mr->mesh.Stretch(2, s_stretch); ed.dirty = true; }
+        ImGui::SameLine(); if (ImGui::Button("Stretch X##model")) ModelOp(ed, mr, "Stretch X", [&](Mesh& m) { m.Stretch(0, s_stretch); });
+        ImGui::SameLine(); if (ImGui::Button("Y##str")) ModelOp(ed, mr, "Stretch Y", [&](Mesh& m) { m.Stretch(1, s_stretch); });
+        ImGui::SameLine(); if (ImGui::Button("Z##str")) ModelOp(ed, mr, "Stretch Z", [&](Mesh& m) { m.Stretch(2, s_stretch); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale along one axis about the mesh centre (stretch/squash).");
 
         // ---- Interactive edit mode (vertex/face select + move + ops + sculpt) ----
@@ -31123,42 +31146,24 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::TextDisabled("%d verts, %d triangles",
                                 (int)mr->mesh.vertices.size(), mr->mesh.TriangleCount());
-            if (ImGui::SmallButton("Subdivide##mesh")) {
-                ed.PushUndo();
-                if (!g_meshSelFaces.empty()) mr->mesh.SubdivideFaces(g_meshSelFaces);   // just the picked face(s)
-                else                         mr->mesh.Subdivide();                      // whole mesh
-                ed.dirty = true;
-            }
+            // The same buttons as the Modeling window's Edit page, through the same code (ShapeOps.hpp) and undo.
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, true, "##mesh");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(g_meshSelFaces.empty()
                     ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
                     : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                     (int)g_meshSelFaces.size());
             ImGui::SameLine();
-            if (ImGui::SmallButton("Subdiv+Smooth##mesh")) {  // low-poly -> high-poly (rounds it)
-                mr->mesh.SubdivideSmooth(1, 0.5f); ed.dirty = true;
-                ConsoleLog("Subdivided + smoothed: " + std::to_string(mr->mesh.TriangleCount()) + " triangles");
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Quadruple the triangles and relax them — turns a\nlow-poly blockout (e.g. Human) into smooth high-poly.");
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SubdivSmooth, true, "##mesh");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Smooth##mesh")) {     // subdivide + reproject to sphere
-                Vec3 sz = mr->mesh.Size();
-                mr->mesh.Subdivide();
-                mr->mesh.ProjectToSphere(0.5f * std::fmax(sz.x, std::fmax(sz.y, sz.z)));
-                ed.dirty = true;
-            }
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SmoothRound, true, "##mesh");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Weld##mesh")) {       // merge coincident verts
-                int n = mr->mesh.WeldVertices();
-                ConsoleLog("Welded " + std::to_string(n) + " duplicate verts");
-                ed.dirty = true;
-            }
-            if (ImGui::SmallButton("Recenter##mesh")) { mr->mesh.RecenterToOrigin(); ed.dirty = true; }
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Weld, true, "##mesh");
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Recenter, true, "##mesh");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Ground##mesh")) { mr->mesh.GroundPivot(); ed.dirty = true; }
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Ground, true, "##mesh");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Fit 1u##mesh")) { mr->mesh.ScaleToFit(1.0f); ed.dirty = true; }
+            ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Fit1u, true, "##mesh");
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##mesh")) toRemove = mr;
             // Material presets: save the current look as a reusable .okaymat, or
@@ -49822,6 +49827,7 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();

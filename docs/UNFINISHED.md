@@ -139,7 +139,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Humanoid animation quality, procedural object holding, 2.5D controller improvements, backpedal and strafe animations, character joint hinges and detail (animation team)
 - Splitting the largest files: launcher `main.cpp`, the OkayScript VM, component serializer registry, editor `main.cpp` into panel files
 - ~~Remove the hard-coded Supabase URL and key from CMake; stop committing dist binaries~~ DONE on `claude/hygiene-1`: address and publishable key now live only in `config/public-account.json` (no longer in CMake or the page); dist binaries removed from git, lint added. Optional owner step: rotate the old key in Supabase and edit that file (`docs/accounts.md`)
-- Security plan SEC1: relay isolation, script file-path safety, updater signing, reactions privacy SQL; anti-cheat hardening
+- Security plan SEC1 (built, see `docs/security.md`; owner steps left: create the update signing key and add the GitHub secret and variable, run `docs/sql/reactions_privacy.sql`; still open: a signed timestamp against update "freezes", per-packet authentication on relay data frames, moving the app to `reaction_counts`); anti-cheat hardening
 - README matching reality and a component audit document
 
 ## From the feature map (Partial and Planned)
@@ -200,7 +200,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | sign the launcher, editor and player downloads (ed25519 as the anti-cheat manifest does) and verify before swapping; the SEC1... |
+| [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | owner steps (update signing key, two GitHub entries, run reactions_privacy.sql); a signed timestamp against update freezes; per-packet authentication on relay data frames; move the app to reaction_counts and then limit the raw reactions SELECT |
 
 ### 18. Build, export & release
 

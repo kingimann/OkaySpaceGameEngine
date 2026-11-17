@@ -190,6 +190,15 @@ private:
     std::vector<std::string> unknown_;
 };
 
+/// Components of modules the selection turns off: type name -> module title. The menus use it to hide them.
+inline std::map<std::string, std::string> OffComponents(const Selection& sel, const ModuleRegistry& reg) {
+    std::map<std::string, std::string> out;
+    for (auto& e : reg.All())
+        if (!sel.IsOn(e.manifest.name))
+            for (auto& c : e.manifest.components) out[c] = e.manifest.title;
+    return out;
+}
+
 /// What the open scene uses: per module, how many objects have one of its components.
 inline std::map<std::string, int> UsageInScene(const ModuleRegistry& reg, const okay::Scene& scene) {
     std::map<std::string, int> out;

@@ -40,6 +40,8 @@ struct Scene {
     int isolate = -1;
     bool sortAZ = false;
     std::vector<std::string> log;     // what the host did, for the tests
+    bool flatDirty = true;            // the rows need flattening again (like the editor's row model: only when something changed)
+    int activeRowCache = -1, activeFor = -2;
 
     int Add(const std::string& n, int parent = -1, int icon = P::HierIconDot) {
         Node d; d.name = n; d.parent = parent; d.icon = icon;
@@ -93,10 +95,14 @@ struct Scene {
             m.rowCount = (int)hits.size();
             m.fillRow = [this](int i, P::HierRow& r) { ++fills; Fill(hits[(std::size_t)i], i, r); r.path = Path(hits[(std::size_t)i]); };
         } else {
-            Flatten();
+            if (flatDirty) { Flatten(); flatDirty = false; activeFor = -2; }
             m.rowCount = (int)rows.size();
             m.fillRow = [this](int i, P::HierRow& r) { ++fills; Fill(rows[(std::size_t)i], i, r); };
-            for (int i = 0; i < (int)rows.size(); ++i) if (rows[(std::size_t)i] == active) m.activeRow = i;
+            if (activeFor != active) {
+                activeFor = active; activeRowCache = -1;
+                for (int i = 0; i < (int)rows.size(); ++i) if (rows[(std::size_t)i] == active) { activeRowCache = i; break; }
+            }
+            m.activeRow = activeRowCache;
         }
         m.focused = true;
         m.buildMenu = [this](int kind, std::uint64_t row, std::vector<P::PanelMenuEntry>& out) {
@@ -141,7 +147,7 @@ struct Scene {
             else for (int n : r) selected.insert(n);
         }
         if (in.selectAll) { selected.clear(); for (int n : rows) selected.insert(n); }
-        if (in.openId) nodes[(std::size_t)NodeOf(in.openId)].open = in.open;
+        if (in.openId) { nodes[(std::size_t)NodeOf(in.openId)].open = in.open; flatDirty = true; }
         if (in.toggleActive) { auto& n = nodes[(std::size_t)NodeOf(in.toggleActive)]; n.active = !n.active; log.push_back("active " + n.name); }
         if (in.toggleLock) { auto& n = nodes[(std::size_t)NodeOf(in.toggleLock)]; n.locked = !n.locked; log.push_back("lock " + n.name); }
         if (in.renameId) { nodes[(std::size_t)NodeOf(in.renameId)].name = in.renameTo; log.push_back("rename " + in.renameTo); }
@@ -150,7 +156,7 @@ struct Scene {
             const int t = in.dropTarget ? NodeOf(in.dropTarget) : -1;
             static const char* kWhere[] = {"before", "inside", "after", "root"};
             log.push_back(std::string("drop ") + nodes[(std::size_t)d].name + " " + kWhere[in.dropWhere] + (t >= 0 ? " " + nodes[(std::size_t)t].name : std::string()));
-            if (t < 0 || !Under(t, d)) Move(d, in.dropWhere == P::HierDropRoot ? -1 : t, in.dropWhere);
+            if (t < 0 || !Under(t, d)) { Move(d, in.dropWhere == P::HierDropRoot ? -1 : t, in.dropWhere); flatDirty = true; }
         }
         if (!in.dropAsset.empty()) log.push_back("asset " + in.dropAsset + (in.dropTarget ? " on " + nodes[(std::size_t)NodeOf(in.dropTarget)].name : std::string(" at top")));
         if (!in.menuId.empty()) {

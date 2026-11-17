@@ -4178,10 +4178,9 @@ bool popupRow(const char* label, const char* shortcut, bool selected, bool enabl
         line(cx - a * 1.2f, cy, cx - a * 0.3f, cy + a * 0.9f, 2.0f, col);
         line(cx - a * 0.3f, cy + a * 0.9f, cx + a * 1.3f, cy - a * 0.9f, 2.0f, col);
     }
-    if (arrow) {      // a small right-pointing triangle, as Dear ImGui's sub-menu rows have
-        const float a = th * 0.22f, cx = right - th * 0.4f, cy = iy + th * 0.5f;
-        const float xs[3] = {cx - a * 0.6f, cx - a * 0.6f, cx + a * 0.8f}, ys[3] = {cy - a, cy + a, cy};
-        tri(xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], col);
+    if (arrow) {      // a right-pointing triangle a text line tall at the right end, as Dear ImGui's sub-menu rows have
+        const float r = th * 0.40f, cx = right - th * 0.5f, cy = iy + th * 0.5f;
+        tri(cx + 0.750f * r, cy, cx - 0.750f * r, cy + 0.866f * r, cx - 0.750f * r, cy - 0.866f * r, col);
     }
     return ih;
 }

@@ -1140,16 +1140,15 @@ bool ToolIconButton(const char* id, bool plus, bool active, UI::Rect& rect) {
     return hit;
 }
 
-// How wide a menu of these entries is (the longest label and its shortcut).
+// How wide a menu of these entries is, in Dear ImGui's columns: the longest label, the spacing and the longest shortcut, the spacing
+// (MenuLook adds the padding and the room for a check mark or an arrow).
 float PanelMenuWidth(const std::vector<PanelMenuEntry>& es) {
-    float w = 0.0f;
+    float label = 0.0f, shortcut = 0.0f;
     for (const PanelMenuEntry& e : es) {
-        float ew = UI::CalcTextWidth(e.label.c_str());
-        if (!e.shortcut.empty()) ew += UI::CalcTextWidth(e.shortcut.c_str()) + 24.0f;
-        if (e.kind == PanelMenuSub) ew += UI::GetFontSize();
-        w = std::max(w, ew);
+        label = std::max(label, UI::CalcTextWidth(e.label.c_str()));
+        if (!e.shortcut.empty()) shortcut = std::max(shortcut, UI::CalcTextWidth(e.shortcut.c_str()));
     }
-    return w;
+    return label + (shortcut > 0.0f ? 12.0f + shortcut : 0.0f) + 12.0f;
 }
 
 // A menu's entries, drawn with OkayUI: rows in the popup body (MenuItem inside a popup), sub-menus to the right (BeginMenu). `top`:
@@ -1194,6 +1193,7 @@ const UI::Color32 kDimText = UI::RGBA(140, 140, 140);           // ImVec4(0.55, 
 const UI::Color32 kPrefabText = UI::RGBA(140, 194, 255);        // ImVec4(0.55, 0.76, 1.0): a prefab instance's root
 const UI::Color32 kHeaderMain = UI::RGBA(150, 152, 160);
 const UI::Color32 kHeaderOther = UI::RGBA(120, 190, 255);
+const float kRowTextDy = 1.0f;   // OkayUI's glyphs sit a pixel higher in the line than Dear ImGui's (measured on the comparison pictures)
 
 } // namespace
 
@@ -1245,15 +1245,17 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
         Divider();
         // ---- the list: only the rows in view are asked for and drawn, each at its own y, so the scroll bar covers them all
         UI::BeginChild("##hiertree", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_None);
-        const UI::Vec2 origin = UI::GetCursorScreenPos();
-        const float listW = UI::GetContentRegionAvail().x, viewH = UI::GetContentRegionAvail().y;
+        // The cursor starts scrolled with the content: the visible top is where it would be unscrolled, the view what is left of it.
+        const float scroll = UI::GetScrollY();
+        const UI::Vec2 at = UI::GetCursorScreenPos();
+        const UI::Vec2 origin{at.x, at.y + scroll};
+        const float listW = UI::GetContentRegionAvail().x, viewH = std::max(0.0f, UI::GetContentRegionAvail().y - scroll);
         res.list = UI::Rect{origin.x, origin.y, listW, viewH};
         const float rowH = fs + 8.0f;          // a text line and the spacing (Dear ImGui's GetTextLineHeightWithSpacing)
         res.rowHeight = rowH;
-        float scroll = UI::GetScrollY();
         if (m.revealRow >= 0 && !m.searching) {
             const float want = HierRevealScroll(m.revealRow, rowH, scroll, viewH);
-            if (want != scroll) { UI::SetScrollY(want); scroll = want; }
+            if (want != scroll) UI::SetScrollY(want);   // takes effect next frame (the child measures this frame's content first)
         }
         res.scrollY = st.scrollY = scroll;
         const UI::DrawList& dl = UI::GetWindowDrawList();
@@ -1272,13 +1274,25 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
         bool overRow = false;
         HierRow row;
         const HierClipRange clip = HierVisibleRange(m.rowCount, rowH, scroll, viewH);
-        if (m.rowCount == 0 && !m.searching) {
+        if (m.rowCount == 0 && !m.searching) {   // the editor's empty-panel note: a diamond, the title, the hint wrapped, all centred
             res.empty = true;
-            const float top = origin.y + std::max(0.0f, viewH * 0.34f);
-            const float tw = UI::CalcTextWidth(kHierEmptyTitle) * 1.25f;
-            dl.AddText(UI::Vec2{origin.x + (listW - tw) * 0.5f, top}, UI::GetColorU32(UI::Col_Text), kHierEmptyTitle, UI::GetFontSize() / 16.0f * 1.25f);
-            const float hw = UI::CalcTextWidth(kHierEmptyHint);
-            dl.AddText(UI::Vec2{origin.x + std::max(0.0f, (listW - hw) * 0.5f), top + fs * 1.25f + 8.0f}, UI::GetColorU32(UI::Col_TextDisabled), kHierEmptyHint);
+            float ty = origin.y + viewH * 0.34f;
+            if (viewH >= 40.0f) {
+                const float gs = fs * 1.6f, cx = origin.x + listW * 0.5f, cy = ty + gs * 0.6f;
+                const UI::Color32 gc = UI::RGBA(102, 107, 120);   // (0.40, 0.42, 0.47)
+                dl.AddQuad(UI::Vec2{cx, cy - gs * 0.55f}, UI::Vec2{cx + gs * 0.55f, cy}, UI::Vec2{cx, cy + gs * 0.55f}, UI::Vec2{cx - gs * 0.55f, cy}, gc, 2.0f);
+                dl.AddCircleFilled(UI::Vec2{cx, cy}, gs * 0.14f, gc);
+                ty += gs * 1.3f + 16.0f;
+                auto centred = [&](const char* t, UI::Color32 c) {
+                    for (const std::string& l : HierWrapWords(t, std::max(40.0f, listW - 16.0f), [](const std::string& x) { return UI::CalcTextWidth(x.c_str()); })) {
+                        dl.AddText(UI::Vec2{origin.x + std::max(0.0f, (listW - UI::CalcTextWidth(l.c_str())) * 0.5f), ty + kRowTextDy}, c, l.c_str());
+                        ty += fs + 8.0f;
+                    }
+                };
+                centred(kHierEmptyTitle, UI::RGBA(168, 173, 184));   // (0.66, 0.68, 0.72)
+                ty += 8.0f;
+                centred(kHierEmptyHint, UI::RGBA(117, 120, 130));    // (0.46, 0.47, 0.51)
+            } else dl.AddText(UI::Vec2{origin.x, origin.y + kRowTextDy}, UI::GetColorU32(UI::Col_TextDisabled), kHierEmptyTitle);
         }
         for (int ri = clip.first; ri < clip.last; ++ri) {
             row = HierRow();
@@ -1335,7 +1349,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             const std::string shown = HierEllipsize(row.name, room, [](const std::string& t) { return UI::CalcTextWidth(t.c_str()); });
             if (!renaming) {
                 const std::string label = shown + tail;
-                dl.AddText(UI::Vec2{textX + spaceW, ry}, tc, label.c_str());
+                dl.AddText(UI::Vec2{textX + spaceW, ry + kRowTextDy}, tc, label.c_str());
             }
             if (shown != row.name && hovered && !renaming) UI::SetTooltip("%s", row.name.c_str());
             {   // the type icon and the prefab mark
@@ -1349,7 +1363,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             if (m.searching) {   // the parents after the name, dim, so same-named results can be told apart
                 if (!row.path.empty()) {
                     const float nx = rx + UI::CalcTextWidth(("     " + shown).c_str()) + 12.0f;
-                    dl.AddText(UI::Vec2{nx, ry + 1.0f}, UI::GetColorU32(UI::Col_TextDisabled, 0.75f), ("in " + row.path).c_str());
+                    dl.AddText(UI::Vec2{nx, ry + 1.0f + kRowTextDy}, UI::GetColorU32(UI::Col_TextDisabled, 0.75f), ("in " + row.path).c_str());
                 }
                 HierDrawBadges(pen, row.badges, x1, ty0, ty1, 0.0f);
                 HierDrawDiag(pen, row.diag, x1 - 48.0f, (ty0 + ty1) * 0.5f, bang.x, bang.y);
@@ -1449,7 +1463,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             UI::TextDisabled(foot.c_str());
         } else {
             const float avail = origin.y + viewH - (origin.y + m.rowCount * rowH - scroll);
-            UI::InvisibleButton("##hierempty", std::max(1.0f, listW), std::max(24.0f, avail - 16.0f));
+            UI::InvisibleButton("##hierempty", std::max(1.0f, listW), std::max(24.0f, avail - 24.0f));   // (Dear ImGui: the room less twice the spacing, and its own)
             res.emptyArea = UI::GetItemRect();
             if (UI::BeginDragDropTarget(UI::DragDrop_NoDefaultRect)) {
                 const UI::Rect er = res.emptyArea;
@@ -1502,6 +1516,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
             else if (m.buildMenu) m.buildMenu(st.menuKind, st.menuRow, entries);
             MenuLook look_(PanelMenuWidth(entries));
             UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});   // Dear ImGui's popup padding (the rows reach half the spacing past it)
             if (UI::BeginPopup("##hiermenu")) {
                 std::string chosen;
                 DrawPanelMenu(entries, chosen, &res);
@@ -1513,7 +1528,7 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
                 if (!chosen.empty()) { in.menuId = chosen; in.menuKind = st.menuKind; in.menuRow = st.menuRow; }
                 UI::EndPopup();
             }
-            UI::PopStyleVar();
+            UI::PopStyleVar(2);
             if (!UI::IsPopupOpen("##hiermenu")) { st.menuKind = HierMenuNone; st.menuRow = 0; }
         }
     }

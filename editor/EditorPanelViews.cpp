@@ -772,15 +772,30 @@ HierarchyIntent DrawHierarchyBodyImGui(const HierarchyModel& m, HierarchyState& 
     }
     st.scrollY = ImGui::GetScrollY();
     const HierClipRange clip = HierVisibleRange(m.rowCount, rowH, ImGui::GetScrollY() - listY, viewH);
-    if (m.rowCount == 0 && !m.searching) {   // editor/main.cpp EmptyState, in short
+    if (m.rowCount == 0 && !m.searching) {   // editor/main.cpp EmptyState: a diamond, the title, the hint wrapped, all centred
         const ImVec2 avail = ImGui::GetContentRegionAvail();
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail.y * 0.34f);
-        ImGui::SetWindowFontScale(1.25f);
-        ImGui::SetCursorPosX(listX + std::max(0.0f, (avail.x - ImGui::CalcTextSize(kHierEmptyTitle).x) * 0.5f));
-        ImGui::TextUnformatted(kHierEmptyTitle);
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::SetCursorPosX(listX + std::max(0.0f, (avail.x - ImGui::CalcTextSize(kHierEmptyHint).x) * 0.5f));
-        ImGui::TextDisabled("%s", kHierEmptyHint);
+        if (avail.y < 40.0f) ImGui::TextDisabled("%s", kHierEmptyTitle);
+        else {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail.y * 0.34f);
+            auto centred = [&](const char* txt, ImVec4 col) {
+                const float x0 = ImGui::GetCursorPosX();
+                for (const std::string& l : HierWrapWords(txt, std::max(40.0f, avail.x - 16.0f), [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; })) {
+                    ImGui::SetCursorPosX(x0 + std::max(0.0f, (avail.x - ImGui::CalcTextSize(l.c_str()).x) * 0.5f));
+                    ImGui::TextColored(col, "%s", l.c_str());
+                }
+            };
+            const float gs = fs * 1.6f;
+            const ImVec2 cp = ImGui::GetCursorScreenPos();
+            const ImVec2 c(cp.x + avail.x * 0.5f, cp.y + gs * 0.6f);
+            const ImU32 gc = ImGui::GetColorU32(ImVec4(0.40f, 0.42f, 0.47f, 1.0f));
+            dl->AddQuad(ImVec2(c.x, c.y - gs * 0.55f), ImVec2(c.x + gs * 0.55f, c.y), ImVec2(c.x, c.y + gs * 0.55f), ImVec2(c.x - gs * 0.55f, c.y), gc, 2.0f);
+            dl->AddCircleFilled(c, gs * 0.14f, gc);
+            ImGui::Dummy(ImVec2(0, gs * 1.3f));
+            ImGui::Spacing();
+            centred(kHierEmptyTitle, ImVec4(0.66f, 0.68f, 0.72f, 1.0f));
+            ImGui::Spacing();
+            centred(kHierEmptyHint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f));
+        }
     }
     const ImGuiPayload* live = ImGui::GetDragDropPayload();
     HierRow row;

@@ -198,6 +198,26 @@ inline const char* kHierSearchTip =
 inline const char* kHierEmptyTitle = "Empty scene";
 inline const char* kHierEmptyHint = "Add objects from the GameObject menu, or right-click here.";
 
+/// `text` broken into lines no wider than `maxW` at the spaces (a word longer than that keeps its own line), measured by
+/// `width(const std::string&)`: the editor's empty-panel note (main.cpp EmptyState).
+template <class Measure>
+std::vector<std::string> HierWrapWords(const std::string& text, float maxW, Measure width) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::size_t i = 0;
+    while (i <= text.size()) {
+        std::size_t j = text.find(' ', i);
+        if (j == std::string::npos) j = text.size();
+        const std::string word = text.substr(i, j - i);
+        const std::string trial = line.empty() ? word : line + " " + word;
+        if (!line.empty() && width(trial) > maxW) { lines.push_back(line); line = word; }
+        else line = trial;
+        i = j + 1;
+    }
+    if (!line.empty()) lines.push_back(line);
+    return lines;
+}
+
 inline const char* HierEyeTip(bool active) {
     return active ? "Hide (deactivate) this object and its children" : "Show (activate) this object and its children";
 }
@@ -219,9 +239,9 @@ std::string HierEllipsize(const std::string& text, float maxW, Measure width) {
     if (maxW < 12.0f || width(text) <= maxW) return text;
     const char* ell = "\xE2\x80\xA6";
     std::string s = text;
-    while (!s.empty() && width(s + ell) > maxW) {
-        s.pop_back();
+    while (!s.empty() && width(s + ell) > maxW) {   // drop the last character: its continuation bytes, then its first byte
         while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+        if (!s.empty()) s.pop_back();
     }
     return s.empty() ? std::string(ell) : s + ell;
 }

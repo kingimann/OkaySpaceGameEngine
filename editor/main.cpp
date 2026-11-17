@@ -20098,9 +20098,9 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
     if (ImGui::CalcTextSize(text.c_str()).x <= maxW) return text;
     const char* ell = "\xE2\x80\xA6";
     std::string s = text;
-    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {
-        s.pop_back();
+    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {   // drop the last character whole (it left a lone first byte)
         while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+        if (!s.empty()) s.pop_back();
     }
     return s.empty() ? std::string(ell) : s + ell;
 }

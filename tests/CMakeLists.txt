@@ -1461,6 +1461,20 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
                                ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
     add_test(NAME okayui_editor_panels_imgui COMMAND test_okayui_editor_panels_imgui)
     set_tests_properties(okayui_editor_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # The Hierarchy panel the same way (docs/own_ui_toolkit.md section 12): the village and 3,000 and 20,000 objects.
+    add_executable(test_okayui_hierarchy_imgui test_okayui_hierarchy_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_hierarchy_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_hierarchy_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_hierarchy_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_hierarchy_imgui COMMAND test_okayui_hierarchy_imgui)
+    set_tests_properties(okayui_hierarchy_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)

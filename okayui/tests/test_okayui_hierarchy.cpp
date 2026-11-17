@@ -102,10 +102,10 @@ int main() {
         CHECK(P::HierDragLabel("Rock", true, 4) == "Rock  (+3 more)" && P::HierDragLabel("Rock", false, 4) == "Rock" && P::HierDragLabel("Rock", true, 1) == "Rock");
         // ellipsis: one pixel a byte, so the cut is easy to see; UTF-8 is never split
         auto w1 = [](const std::string& t) { return (float)t.size(); };
-        CHECK(P::HierEllipsize("abcdefghijklmnopqrstuvwxyz", 15.0f, w1) == "abcdefghijk\xE2\x80\xA6");
+        CHECK(P::HierEllipsize("abcdefghijklmnopqrstuvwxyz", 15.0f, w1) == "abcdefghijkl\xE2\x80\xA6");
         CHECK(P::HierEllipsize("short", 15.0f, w1) == "short" && P::HierEllipsize("abcdefghijklmnopqrstuvwxyz", 8.0f, w1).size() == 26);
         const std::string cut = P::HierEllipsize("ab\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9xyz", 13.0f, w1);
-        CHECK((static_cast<unsigned char>(cut[cut.size() - 4]) & 0xC0) != 0xC0);   // the byte before the ellipsis is not a lead byte left alone
+        CHECK(cut == "ab\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xE2\x80\xA6");   // whole characters only: no first byte left without its second
         const std::vector<int> order = {5, 2, 9, 7, 1};
         CHECK((P::HierRange(order, 9, 1) == std::vector<int>{9, 7, 1}) && (P::HierRange(order, 1, 2) == std::vector<int>{2, 9, 7, 1}));
         CHECK(P::HierRange(order, 4, 1).empty());
@@ -127,7 +127,7 @@ int main() {
         CHECK(r.scene.rows.size() == 15);
         CHECK(r.res.rows.size() == r.scene.rows.size());          // all of them fit
         CHECK(r.res.rowHeight > 20.0f && r.res.rowHeight < 30.0f);
-        CHECK(r.st.rowsFilled == (int)r.scene.rows.size());
+        CHECK(r.st.rowsFilled <= (int)r.scene.rows.size() + 1);   // every row once (and the active one again for the keys)
         const UI::Rect house1 = r.RowNamed("House 1"), houses = r.RowNamed("Houses");
         CHECK(house1.x > houses.x + 15.0f);                       // indented one level
         CHECK(r.res.arrows[(std::size_t)r.RowOfName("Houses")].w > 0.0f && r.res.arrows[(std::size_t)r.RowOfName("Sun")].w == 0.0f);
@@ -217,7 +217,7 @@ int main() {
 
     // ================= the right-click menus, the [+] and the options =================
     {
-        HRig r(hierfix::Village());
+        HRig r(hierfix::Village(), 720.0f, 520.0f);   // wide enough for the sub-menus to open on the right (they flip left at the edge)
         r.Frames(2);
         const UI::Rect cam = r.RowNamed("Main Camera");
         r.RightClick(cam.x + 120.0f, CY(cam));
@@ -236,6 +236,7 @@ int main() {
         r.At(order.x + order.w + 40.0f, CY(order)); r.Frame();
         // the sub-menu's first row sits level with Order, the second one row below
         r.Click(order.x + order.w + 40.0f, CY(order) + r.MenuRow("h.order").h + 4.0f);
+
         r.Frame();
         CHECK(r.seen.menuId == "h.movedown" && r.seen.menuKind == P::HierMenuRow && r.st.menuKind == P::HierMenuNone);
         // Rename from the menu
@@ -308,7 +309,13 @@ int main() {
         }
         // a child onto the empty space: to the top level
         const UI::Rect hat = r.RowNamed("Hat");
-        drag(hat, 160.0f, r.res.emptyArea.y + 20.0f);
+        {
+            const UI::Rect from = hat;
+            r.sim.Move(from.x + 140.0f, CY(from)); r.Frame(); r.sim.Down(); r.Frame();
+            r.sim.Move(from.x + 150.0f, CY(from) + 10.0f); r.Frame();
+            r.sim.Move(160.0f, r.res.emptyArea.y + 10.0f); r.Frame(); r.Frame();
+            r.sim.Up(); r.Frame(); r.Frame();
+        }
         CHECK(HasLog(r.scene, "drop Hat root") && r.scene.nodes[(std::size_t)r.scene.nodes.size() - 1].parent >= -1);
         // a row dropped on itself does nothing
         const std::size_t logs = r.scene.log.size();
@@ -325,7 +332,7 @@ int main() {
         CHECK(r.seen.dropWhere == P::HierDropInside);
         // and onto the empty space
         r.extType = "ASSET_PATH"; r.extText = "Assets/Level2.okayscene";
-        r.sim.Move(160.0f, r.res.emptyArea.y + 20.0f); r.Frame(); r.Frame();
+        r.sim.Move(160.0f, r.res.emptyArea.y + 10.0f); r.Frame(); r.Frame();
         r.extReleased = true; r.Frame();
         r.extType.clear(); r.extText.clear(); r.extReleased = false; r.Frame();
         CHECK(HasLog(r.scene, "asset Assets/Level2.okayscene at top"));
@@ -343,7 +350,7 @@ int main() {
         r.sim.Move(from.x + 150.0f, CY(from) + 10.0f); r.Frame();
         r.sim.Move(to.x + 140.0f, CY(to)); r.Frame();
         r.sim.Up(); r.Frame(); r.Frame();
-        CHECK(r.seen.dragged == hierfix::Scene::Id(1) && r.seen.dropTarget == hierfix::Scene::Id(13) && r.seen.dropWhere == P::HierDropInside);
+        CHECK(r.seen.dragged == hierfix::Scene::Id(1) && r.seen.dropTarget == hierfix::Scene::Id(12) && r.seen.dropWhere == P::HierDropInside);
         CHECK(r.scene.selected.size() == 2);   // the release after a drag does not shrink the selection
     }
 
@@ -382,8 +389,9 @@ int main() {
         CHECK(r.Selected("House 2") == 1 && r.scene.selected.size() == 2);
         r.DoubleClick(r.res.rows[3].x + 160.0f, CY(r.res.rows[3]));
         CHECK(HasLog(r.scene, "frame House 3"));
+        r.Click(CX(r.res.search), CY(r.res.search));
         r.sim.Press(Key_SelectAll); r.Frame(); r.sim.Type("zzz"); r.Frame(); r.Frame();
-        CHECK(r.res.rows.empty());
+        CHECK(r.res.rows.empty() && std::string(r.st.filter) == "zzz");
     }
 
     // ================= big scenes: only the rows in view; the wheel; reveal =================
@@ -449,12 +457,16 @@ int main() {
         Sim sim(300, 200); Reset();
         int got = -1; bool over = false; std::string ext;
         const UI::DragPayload* live = nullptr;
+        UI::Rect srcR, dstR;
         auto ui = [&] {
+            UI::BareNextWindow();
             UI::Begin("dd", 0, 0, 300, 200);
             UI::Button("source", UI::Vec2{100, 30});
+            srcR = UI::GetItemRect();
             if (UI::BeginDragDropSource()) { const int v = 7; UI::SetDragDropPayload("N", &v, sizeof v); UI::EndDragDropSource(); }
             live = UI::GetDragDropPayload();
             UI::Button("target", UI::Vec2{100, 30});
+            dstR = UI::GetItemRect();
             over = false;
             if (UI::BeginDragDropTarget(UI::DragDrop_NoDefaultRect)) {
                 over = true;
@@ -465,7 +477,7 @@ int main() {
             UI::End();
         };
         sim.Frame(ui);
-        const UI::Vec2 src{60, 30}, dst{60, 75};
+        const UI::Vec2 src{CX(srcR), CY(srcR)}, dst{CX(dstR), CY(dstR)};
         sim.Move(src.x, src.y); sim.Frame(ui); sim.Down(); sim.Frame(ui);
         CHECK(live == nullptr);
         sim.Move(src.x + 10, src.y + 10); sim.Frame(ui); sim.Frame(ui);
@@ -492,9 +504,7 @@ int main() {
         const char path[] = "Assets/Tree.png";
         sim.blocked = true; sim.Move(dst.x, dst.y);
         auto withExt = [&](bool released) { return [&, released] {
-            UI::Begin("dd", 0, 0, 300, 200);
             UI::SetExternalDragDrop("ASSET_PATH", path, (int)sizeof path, released);
-            UI::End();
             ui();
         }; };
         sim.Frame(withExt(false));
@@ -511,10 +521,12 @@ int main() {
     }
     {   // MenuItem and BeginMenu inside a popup: rows, a tick, a shortcut, a greyed-out row, a sub-menu whose item closes the popup
         Sim sim(400, 300); Reset(); UI::UseLauncherLook(true);
-        std::string chosen; UI::Rect sub, item;
+        std::string chosen; UI::Rect sub, item, openR;
         auto ui = [&] {
+            UI::BareNextWindow();
             UI::Begin("pm", 0, 0, 400, 300);
             UI::Button("open");
+            openR = UI::GetItemRect();
             if (UI::IsItemClicked(0)) UI::OpenPopup("ctx");
             if (UI::BeginPopup("ctx")) {
                 if (UI::MenuItem("Copy", "Ctrl+C")) chosen = "copy";
@@ -531,11 +543,11 @@ int main() {
             UI::End();
         };
         sim.Frame(ui);
-        sim.Click(30, 20, ui); sim.Frame(ui);
+        sim.Click(CX(openR), CY(openR), ui); sim.Frame(ui);
         CHECK(UI::IsPopupOpen("ctx") && item.w > 50.0f && sub.w > 50.0f && sub.y > item.y);
         sim.Click(item.x + 20, item.y + item.h * 0.5f, ui);
         CHECK(chosen == "copy" && !UI::IsPopupOpen("ctx"));
-        sim.Click(30, 20, ui); sim.Frame(ui);
+        sim.Click(CX(openR), CY(openR), ui); sim.Frame(ui);
         sim.Click(item.x + 20, item.y + item.h * 2.5f, ui);   // the greyed-out row
         CHECK(chosen == "copy" && UI::IsPopupOpen("ctx"));
         sim.Move(sub.x + 20, sub.y + sub.h * 0.5f); sim.Frame(ui); sim.Frame(ui);

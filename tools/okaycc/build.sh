@@ -30,6 +30,7 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_elf tests/test_elf.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_diff tests/test_diff.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_link tests/test_link.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_libc tests/test_libc.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
@@ -40,4 +41,5 @@ done
 ./build/test_elf
 ./build/test_diff
 ./build/test_link
+./build/test_libc
 tests/test_plan.sh

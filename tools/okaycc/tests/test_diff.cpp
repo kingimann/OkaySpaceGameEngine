@@ -1,4 +1,5 @@
 #include "elf.hpp"
+#include "link.hpp"
 #include "diag.hpp"
 #include "harness.hpp"
 
@@ -26,10 +27,33 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
     return WEXITSTATUS(run);
 }
 
+static std::vector<std::vector<unsigned char>> loadLibc() {
+    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c"};
+    std::vector<std::vector<unsigned char>> objs;
+    for (const char* path : files) {
+        okaycc::Diagnostics d;
+        auto obj = okaycc::compileToObject(readFile(path), d, path);
+        if (!d.ok() || obj.empty()) return {};
+        objs.push_back(std::move(obj));
+    }
+    return objs;
+}
+
 static void diffOne(const std::string& name, const std::string& srcPath) {
     std::string src = readFile(srcPath);
     okaycc::Diagnostics d;
     std::vector<unsigned char> bin = okaycc::compileToElf(src, d, srcPath);
+    if (!d.ok() || bin.empty()) {
+        okaycc::Diagnostics d2;
+        auto obj = okaycc::compileToObject(src, d2, srcPath);
+        auto libc = loadLibc();
+        std::string error;
+        if (d2.ok() && !obj.empty() && !libc.empty()) {
+            libc.insert(libc.begin(), std::move(obj));
+            bin = okaycc::linkObjects(libc, error);
+            if (!bin.empty()) d.clear();
+        }
+    }
     if (!d.ok() || bin.empty()) {
         std::fprintf(stderr, "FAIL %s okay-cc\n%s", name.c_str(), d.format().c_str());
         ++okaycc_test::gFail;

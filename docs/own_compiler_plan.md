@@ -11,7 +11,7 @@ Every line is written here from the documents named below. No copied compiler so
 - The x86-64 code generator emits System V assembly for that subset. Tests assemble it with the system assembler and link it with the system linker (`gcc`). Narrow integers are sign-extended when loaded. An `int *` steps by 4. A `char *` steps by 1.
 - A call to `write` is the Linux write system call, so a program can print without a C library. The same programs are compiled with the system gcc and the exit code and standard output are compared.
 - The whole test suite has been run with AddressSanitizer and UndefinedBehaviorSanitizer on the compiler (`SAN=1 tools/okaycc/build.sh`). That run was clean.
-- The optimizer is not a separate pass yet. The ELF writer encodes x86-64 instructions itself. It writes a static executable and a relocatable object with a symbol table and `R_X86_64_PC32`, `R_X86_64_PLT32`, and `R_X86_64_64` relocations. `okay-ld` links those objects into one executable. Those paths do not use the system assembler or the system linker. The assembly path still does. A COFF writer is not started. The driver is `okay-cc`.
+- The optimizer is not a separate pass yet. The ELF writer encodes x86-64 instructions itself. It writes a static executable and a relocatable object with a symbol table and `R_X86_64_PC32`, `R_X86_64_PLT32`, and `R_X86_64_64` relocations. `okay-ld` links those objects into one executable. A small libc (`write`, `exit`, `memcpy`, `memset`, `strlen`, `strcmp`) is C compiled by okay-cc; `syscall` is the Linux syscall instruction. Those paths do not use the system assembler or the system linker. The assembly path still does. A COFF writer is not started. The driver is `okay-cc`.
 
 ## Written from
 

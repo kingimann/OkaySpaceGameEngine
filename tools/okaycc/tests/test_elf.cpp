@@ -1,4 +1,5 @@
 #include "elf.hpp"
+#include "link.hpp"
 #include "diag.hpp"
 #include "harness.hpp"
 
@@ -14,9 +15,34 @@
 
 static int gOk = 0;
 
+static std::vector<std::vector<unsigned char>> loadLibc() {
+    const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c"};
+    std::vector<std::vector<unsigned char>> objs;
+    for (const char* path : files) {
+        std::ifstream in(path);
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        okaycc::Diagnostics d;
+        auto obj = okaycc::compileToObject(src, d, path);
+        if (!d.ok() || obj.empty()) return {};
+        objs.push_back(std::move(obj));
+    }
+    return objs;
+}
+
 static int runExit(const std::string& src) {
     okaycc::Diagnostics d;
     std::vector<unsigned char> bin = okaycc::compileToElf(src, d);
+    if (!d.ok() || bin.empty()) {
+        okaycc::Diagnostics d2;
+        auto obj = okaycc::compileToObject(src, d2, "t.c");
+        auto libc = loadLibc();
+        std::string error;
+        if (d2.ok() && !obj.empty() && !libc.empty()) {
+            libc.insert(libc.begin(), std::move(obj));
+            bin = okaycc::linkObjects(libc, error);
+            if (!bin.empty()) d.clear();
+        }
+    }
     if (!d.ok() || bin.empty()) {
         std::fprintf(stderr, "no elf\n%s", d.format().c_str());
         return -1;

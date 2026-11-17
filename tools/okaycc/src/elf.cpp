@@ -475,8 +475,12 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             loadRax(im, in.a);
             u8(im, 0xFF);
             u8(im, 0xD0);
-        } else if (in.func == "write") {
-            movImm(im, Rax, 1);
+        } else if (in.func == "syscall") {
+            // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
+            movReg(im, Rax, Rdi);
+            movReg(im, Rdi, Rsi);
+            movReg(im, Rsi, Rdx);
+            movReg(im, Rdx, Rcx);
             u8(im, 0x0F);
             u8(im, 0x05);
         } else {

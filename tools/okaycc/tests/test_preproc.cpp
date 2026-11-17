@@ -181,6 +181,25 @@ int main() {
         checkFiles("include guards", fs, "/src/main.c", {}, "int b ;\nint a ;\n", nullptr);
     }
 
+    {
+        okaycc::MemoryFiles fs;
+        fs.add("/src/main.c", "#include \"a.h\"\n#include \"a.h\"\n");
+        fs.add("/src/a.h", "#pragma once\nint a;\n");
+        checkFiles("pragma once", fs, "/src/main.c", {}, "int a ;\n", nullptr);
+    }
+    {
+        okaycc::MemoryFiles fs;
+        fs.add("/t.c", "#pragma mystery\nint x;\n");
+        okaycc::Diagnostics d;
+        std::string got = okaycc::preprocess(fs, "/t.c", {}, d);
+        if (!d.ok() || got != "int x ;\n" || d.format().find("ignoring unknown pragma") == std::string::npos) {
+            std::fprintf(stderr, "FAIL unknown pragma\n%s--- got ---\n%s", d.format().c_str(), got.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+
     okaycc_test::gPass += gOk;
     std::printf("preproc: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);
     return okaycc_test::gFail == 0 ? 0 : 1;

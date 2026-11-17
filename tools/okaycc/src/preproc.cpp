@@ -9,6 +9,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -416,6 +417,7 @@ private:
     std::deque<Token> pending_;
     std::map<std::string, Macro> macros_;
     std::vector<Cond> conds_;
+    std::set<std::string> once_;
     bool isolate_ = false;
     bool lineStart_ = true;
     int steps_ = 0;
@@ -525,10 +527,26 @@ private:
         else if (n == "undef") doUndef();
         else if (n == "include") doInclude();
         else if (n == "error") doError();
+        else if (n == "pragma") doPragma();
         else {
             diags_.error(name.file, name.line, name.column, "unsupported directive #" + n);
             skipRestOfLine();
         }
+    }
+
+    void doPragma() {
+        std::vector<Token> line = restOfLine();
+        if (!line.empty() && line[0].isName() && line[0].text == "once") {
+            if (!stack_.empty()) once_.insert(normalizePath(stack_.back().file));
+            return;
+        }
+        std::string text = "ignoring unknown pragma";
+        if (!line.empty()) {
+            text += " ";
+            text += line[0].text;
+        }
+        const Token& at = line.empty() ? directiveAt_ : line[0];
+        diags_.warning(at.file.empty() ? directiveAt_.file : at.file, at.line, at.column, text);
     }
 
     void doIf(bool live, int kind) {
@@ -828,6 +846,7 @@ private:
             errorAt(at, "include nested too deeply");
             return;
         }
+        if (once_.count(normalizePath(found))) return;
         if (!pushFile(found, &at)) errorAt(at, "cannot find header \"" + header + "\"");
     }
 

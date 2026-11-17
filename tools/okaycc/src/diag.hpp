@@ -10,13 +10,19 @@ struct Diag {
     int line = 1;
     int column = 1;
     std::string message;
+    bool warning = false;
 };
 
 // Collected front-end errors. The compiler does not throw for a bad program.
 class Diagnostics {
 public:
     void error(const std::string& file, int line, int column, const std::string& message);
-    bool ok() const { return items_.empty(); }
+    void warning(const std::string& file, int line, int column, const std::string& message);
+    bool ok() const {
+        for (const Diag& d : items_)
+            if (!d.warning) return false;
+        return true;
+    }
     const std::vector<Diag>& items() const { return items_; }
     std::string format() const;
     void clear() { items_.clear(); }

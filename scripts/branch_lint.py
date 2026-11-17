@@ -24,6 +24,7 @@ docs:     warns when engine/ editor/ launcher/ code changed and no docs/*.md cha
 mingw:    compiles each changed header and source under engine/ with the MinGW cross compiler (MINGW_CXX, default
           x86_64-w64-mingw32-g++-win32, else x86_64-w64-mingw32-g++). Files that include SDL, imgui, GL, X11, sodium, curl
           or openssl headers are skipped (the SDK is not installed here) and listed. Errors are warnings, never fatal.
+  python3 scripts/branch_lint.py tests    ...      -fsyntax-only (host compiler) on each changed tests/*.cpp (fatal)
 Exit code 1 only for includes and secrets findings that are errors. Prints GitHub annotations (::error / ::warning).
 Standard library and git only.
 """
@@ -174,6 +175,32 @@ def check_mingw(root, base, head, rev=None, workers=4, strict=False, files=None)
     return findings
 
 
+def check_tests_syntax(root, base, head, rev=None, workers=4, files=None):
+    """Host compiler -fsyntax-only on each changed tests/test_*.cpp (fatal: CI would fail on it after a long build)."""
+    import shutil, subprocess
+    from concurrent.futures import ThreadPoolExecutor
+    cxx = os.environ.get("CXX") or next((c for c in ("g++", "c++", "clang++") if shutil.which(c)), None)
+    if files is None:
+        files = changed_files(root, base, head, rev)
+    files = [f for f in files if f.startswith("tests/") and f.endswith(".cpp") and os.path.exists(os.path.join(root, f))]
+    if not files or not cxx:
+        print("tests: nothing to check" if not files else "tests: no C++ compiler; skipped", file=sys.stderr); return []
+    inc = ["-Iengine/include", "-Iengine/src", "-Ishared", "-Iokayui/include", "-Ilauncher", "-Ieditor", "-Itests", f"-DOKAY_SOURCE_DIR=\"{root}\""]
+    def one(f):
+        p = subprocess.run([cxx, "-std=c++17", "-fsyntax-only", "-w", *inc, f], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=300)
+        return f, p.returncode, p.stderr
+    findings, skipped = [], []
+    with ThreadPoolExecutor(workers) as ex:
+        for f, rc, err in ex.map(one, files):
+            if rc == 0: continue
+            first = next((l for l in err.splitlines() if "error" in l), err.strip()[:200])
+            if "No such file or directory" in first:
+                skipped.append(f); continue
+            findings.append({"sev": "error", "file": f, "line": 1, "text": first[:160], "msg": "does not compile: " + first[:200]})
+    print(f"tests: compiler {cxx}; checked {len(files) - len(skipped)} of {len(files)} test files" + (f"; skipped (header not installed here): {', '.join(skipped[:6])}" if skipped else ""), file=sys.stderr)
+    return findings
+
+
 PROGRAM_EXT = (".exe", ".dll", ".so", ".dylib", ".a", ".lib", ".pdb", ".o", ".msi", ".dmg", ".appimage", ".apk", ".ipa", ".wasm", ".zip", ".7z", ".rar",
                ".tar", ".gz", ".tgz", ".xz", ".bz2", ".jar")
 ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tga", ".ttf", ".otf", ".woff", ".woff2", ".wav", ".ogg", ".mp3", ".flac", ".mp4", ".webm",
@@ -218,7 +245,7 @@ def emit(findings, label):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "mingw", "all"])
+    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "mingw", "tests", "all"])
     ap.add_argument("--root", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
@@ -242,6 +269,8 @@ def main():
         print(f"docs: {len(f)} finding(s)", file=sys.stderr)
     if a.check == "mingw":
         f = check_mingw(root, a.base, a.head, a.rev, strict=a.strict, files=a.files); err += emit(f, "mingw")
+    if a.check == "tests":
+        f = check_tests_syntax(root, a.base, a.head, a.rev, files=a.files); err += emit(f, "tests-syntax")
     return 1 if err else 0
 
 

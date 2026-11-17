@@ -1397,9 +1397,11 @@ ImVec4 FromU32(std::uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c | 0xff
 
 void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
     int skip = 0;
+    std::size_t closedAt = (std::size_t)-1;   // the closed fold-out's row: a row put on its line is still drawn (the Modifiers' "...")
     for (std::size_t k = 0; k < list.rows.size(); ++k) {
         InspRow& r = list.rows[k];
-        if (skip > 0) {
+        if (skip == 1 && k == closedAt + 1 && r.sameLine) {
+        } else if (skip > 0) {
             if (r.kind == InspRowTree) ++skip;
             else if (r.kind == InspRowTreeEnd) --skip;
             continue;
@@ -1419,6 +1421,8 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             }
             if (fits) {
                 if (r.sameLineAt >= 0.0f) ImGui::SameLine(ImGui::GetWindowContentRegionMin().x + r.sameLineAt);   // from the region's left
+                else if (r.alignRight)   // a small button ending at the region's right edge (stage 8)
+                    ImGui::SameLine(ImGui::GetContentRegionMax().x - (ImGui::CalcTextSize(r.label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f));
                 else ImGui::SameLine(0.0f, r.sameLineGap);
             }
         }
@@ -1555,7 +1559,18 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             }
             break;
         }
-        case InspRowSection: SectionHeaderImGui(r.Text(), hooks); break;
+        case InspRowSection:
+            if (r.small) {   // the First Person Hands window's Section
+                ImGui::Spacing();
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float h = ImGui::GetTextLineHeight();
+                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h), IM_COL32(120, 170, 230, 255), 1.5f);
+                ImGui::Indent(9.0f);
+                ImGui::TextUnformatted(r.Text());
+                ImGui::Unindent(9.0f);
+                ImGui::Separator();
+            } else SectionHeaderImGui(r.Text(), hooks);
+            break;
         case InspRowGroup: ImGui::SeparatorText(r.Text()); break;
         case InspRowNote:
             if (r.alignFrame && !r.wrap) ImGui::AlignTextToFramePadding();
@@ -1576,8 +1591,14 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             break;
         case InspRowSmallButton:
             if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
-            if (ImGui::SmallButton(r.label)) r.clicked = true;
+            if (ImGui::SmallButton(r.label)) { r.clicked = true; if (r.menu) ImGui::OpenPopup("##rowmenu"); }
             if (r.color) ImGui::PopStyleColor();
+            if (r.menu && ImGui::BeginPopup("##rowmenu")) {   // stage 8: the entries as a menu (the Modifiers' "...")
+                std::string chosen;
+                HierMenuEntries(*r.menu, chosen);
+                if (!chosen.empty()) { r.sv = chosen; r.changed = true; }
+                ImGui::EndPopup();
+            }
             if (r.dragType) {   // a drag handle (stage 7)
                 if (ImGui::BeginDragDropSource()) {
                     ImGui::SetDragDropPayload(r.dragType, &r.tag, sizeof(int));
@@ -1699,12 +1720,12 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         }
         case InspRowTree: {
             if (r.on) ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            const bool open = ImGui::TreeNode(r.label);
+            const bool open = r.collapsing ? ImGui::CollapsingHeader(r.label) : ImGui::TreeNode(r.label);
             *r.B() = open;
-            if (!open) skip = 1;
+            if (!open) { skip = 1; closedAt = k; }
             break;
         }
-        case InspRowTreeEnd: ImGui::TreePop(); break;
+        case InspRowTreeEnd: if (!r.collapsing) ImGui::TreePop(); break;
         case InspRowSpacing: ImGui::Spacing(); break;
         case InspRowSeparator: ImGui::Separator(); hoverTip = false; break;
         case InspRowBullet: ImGui::BulletText("%s", r.Text()); break;

@@ -580,6 +580,7 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
 
 static NavRowsDrawFn g_navRowsDraw = nullptr;
 void SetNavRowsDrawer(NavRowsDrawFn draw) { g_navRowsDraw = draw; }
+bool InspectorRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows) { return g_navRowsDraw && g_navRowsDraw(comp, id, rows); }
 
 // The Nav Mesh Agent as rows: the Dear ImGui body's fields, labels, ranges and tips in its order; the Area Mask is a mask row with the
 // AreaMaskCombo's two preset buttons inside the list, its summary as the closed text and the area names. False: not drawn this frame.

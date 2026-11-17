@@ -34304,6 +34304,176 @@ static bool DrawWorldSpaceUIWithOkayUI(EditorState& ed, WorldSpaceUI* w3, okay::
     return true;
 }
 
+// ---- The Inspector's OkayUI parts, stage 8 (docs/own_ui_toolkit.md section 21) --------------------------------------------------------
+// Modifiers, written from its Dear ImGui body below: the summary line, + Add Modifier, Apply All, and per modifier the on box, a fold-out
+// named by its type with the "..." menu at the right edge (Move Up, Move Down, Apply, Copy, Remove), its cost or error, its fields and
+// Show in edit mode. The Boolean's cutter list is a search list of the scene's objects (ObjNamePicker's typed name is 'Use "<name>"').
+// The fold-out's right-click menu is not a row: the "..." opens the same menu.
+static bool DrawModifiersWithOkayUI(EditorState& ed, GameObject* go, okay::MeshModifiers* mm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    using MT = okay::MeshModifier::Type;
+    static const char* const kOps[] = {"Union", "Subtract", "Intersect"};
+    InspFieldList L;
+    L.rows.reserve(24 + 24 * mm->modifiers.size());
+    auto* mmr = go->GetComponent<MeshRenderer>();
+    char sum[96];
+    if (!mmr) L.ColorText(RowCol(1.0f, 0.6f, 0.4f), "Needs a Mesh Renderer on this object.");
+    else { std::snprintf(sum, sizeof sum, "Base %d tris  ->  result %d tris", mmr->mesh.TriangleCount(), mmr->DisplayMesh().TriangleCount()); L.Note(sum, true); }
+    L.Tip("Non-destructive: the object's own mesh is kept and still editable;\nthe modifiers below build what's drawn, collided with and exported.\nApply bakes one into the mesh for good.");
+    static std::vector<const char*> typeNames;
+    if (typeNames.empty()) for (int t = 0; t < (int)MT::Count; ++t) typeNames.push_back(okay::MeshModifier::TypeName((MT)t));
+    int addType = -1;
+    const int kAdd = L.Combo("##addmod", &addType, typeNames.data(), (int)typeNames.size()); L.Last().width = 160.0f; L.Last().preview = "+ Add Modifier";
+    L.SameLine(); const int kApplyAll = L.SmallButton("Apply All##mods"); L.Last().disabled = mm->modifiers.empty();
+    L.Tip("Bake the whole stack into the mesh and clear it.");
+    // the menu of each modifier: its entries depend on where it is in the stack
+    std::vector<std::vector<PanelMenuEntry>> menus(mm->modifiers.size());
+    std::vector<std::string> objNames;
+    for (const auto& up : ed.scene().Objects()) if (up.get() != go) objNames.push_back(up->name);
+    std::vector<const char*> objItems;
+    for (const std::string& n : objNames) objItems.push_back(n.c_str());
+    struct ModRows { int menu = -1, cutter = -1, cutterIdx = -1, showCut = -1, rmPoint[64] = {}, nPoints = 0, plus = -1, arc = -1, wave = -1, helix = -1;
+                     bool cutVis = false; std::string label, cost; };
+    std::vector<ModRows> mr(mm->modifiers.size());
+    for (int i = 0; i < (int)mm->modifiers.size(); ++i) {
+        okay::MeshModifier& m = mm->modifiers[(std::size_t)i];
+        ModRows& R = mr[(std::size_t)i];
+        auto item = [](const char* id, const char* label, bool on = true) { PanelMenuEntry e; e.id = id; e.label = label; e.enabled = on; return e; };
+        std::vector<PanelMenuEntry>& me = menus[(std::size_t)i];
+        me.push_back(item("up", "Move Up", i > 0));
+        me.push_back(item("down", "Move Down", i + 1 < (int)mm->modifiers.size()));
+        { PanelMenuEntry sep; sep.kind = PanelMenuSeparator; me.push_back(sep); }
+        me.push_back(item("apply", "Apply")); me.back().tip = "Bake just this modifier into the mesh and remove it";
+        me.push_back(item("copy", "Copy")); me.back().tip = "Add a copy of this modifier (same settings) right below it";
+        me.push_back(item("remove", "Remove"));
+        L.Separator();
+        L.Check("##on", &m.enabled); L.Tip("Turn this modifier on / off");
+        L.SameLine();
+        R.label = std::string(okay::MeshModifier::TypeName(m.type)) + "###mod" + std::to_string(i);
+        L.Tree(R.label.c_str()); L.Last().on = true;
+        L.SameLine(); R.menu = L.MenuButton("...", &me); L.Last().alignRight = true; L.Tip("Move, Apply or Remove");
+        // the menu button is on the fold-out's line, so the fold-out's rows begin after it (the tree row opened them)
+        if (i < (int)mm->errors.size() && !mm->errors[(std::size_t)i].empty()) L.ColorText(RowCol(1.0f, 0.55f, 0.35f), mm->errors[(std::size_t)i].c_str());
+        else if (m.enabled && i < (int)mm->costMs.size()) {
+            char c[32]; std::snprintf(c, sizeof c, "%.2f ms", mm->costMs[(std::size_t)i]); R.cost = c; L.Note(R.cost.c_str());
+        }
+        switch (m.type) {
+        case MT::Mirror:
+            L.Check("X##mx", &m.mirrorX); L.TipLookup(); L.SameLine(); L.Check("Y##my", &m.mirrorY); L.TipLookup();
+            L.SameLine(); L.Check("Z##mz", &m.mirrorZ); L.TipLookup(); L.SameLine(); L.Note("axes"); L.Last().alignFrame = true;
+            L.Check("Merge at the mirror##mm", &m.mirrorMerge);
+            L.Tip("Weld vertices on the mirror plane so there's no seam.\nA mesh that crosses the plane is cut there first (the + side is kept).");
+            break;
+        case MT::Array:
+            L.DragInt("Count##ac", &m.count, 0.1f, 1, 1000); L.TipLookup();
+            L.Check("Relative (x mesh size)##ar", &m.relative); L.TipLookup();
+            L.Drag("Offset##ao", &m.offset.x, 3, 0.01f, 0.0f, 0.0f, "%.2f");
+            L.Tip(m.relative ? "Step between copies, times the mesh size (1.1 = a 10% gap)" : "Step between copies, in units");
+            break;
+        case MT::Subdivision:
+            L.SliderInt("Levels##sl", &m.levels, 0, 4);
+            L.Tip("Each level splits every face into one quad per corner (x4)\nand rounds the shape (Catmull-Clark). Model in quads for best results.");
+            L.Check("Smooth shading##ss", &m.smoothShading); L.TipLookup();
+            break;
+        case MT::Solidify: L.Drag("Thickness##st", &m.thickness, 1, 0.005f, -10.0f, 10.0f); L.TipLookup(); break;
+        case MT::Bevel:
+            L.Drag("Width##bw", &m.width, 1, 0.002f, 0.0001f, 10.0f, "%.3f"); L.TipLookup();
+            L.SliderInt("Segments##bs", &m.segments, 1, 8); L.TipLookup();
+            L.Slider("Angle limit##ba", &m.angle, 0.0f, 180.0f, "%.0f deg"); L.Tip("Only edges whose faces meet at least this sharply are beveled.");
+            break;
+        case MT::Boolean: {
+            L.Combo("Operation##bo", &m.boolOp, kOps, 3); L.TipLookup();
+            for (std::size_t q = 0; q < objNames.size(); ++q) if (objNames[q] == m.target) R.cutterIdx = (int)q;
+            R.cutter = L.Combo("##on", &R.cutterIdx, objItems.data(), (int)objItems.size()); L.Last().width = 150.0f;
+            L.Last().preview = m.target.empty() ? "(pick an object)" : m.target.c_str();
+            L.Last().search = true; L.Last().searchHint = "type a name..."; L.Last().searchKeys = objItems.data();
+            L.SameLine(); L.Note("cutter"); L.Last().alignFrame = true;
+            L.Drag("Voxel size##bv", &m.voxel, 1, 0.002f, 0.005f, 5.0f, "%.3f");
+            L.Tip("The boolean is built on a voxel grid: smaller = crisper seams, slower.\nIt re-runs whenever the cutter moves.");
+            if (GameObject* cut = ed.scene().Find(m.target))
+                if (auto* cmr = cut->GetComponent<MeshRenderer>()) { R.cutVis = cmr->enabled; R.showCut = L.Check("Show cutter##bshow", &R.cutVis); L.TipLookup(); }
+            break;
+        }
+        case MT::Decimate:
+            L.Drag("Cell size##dc", &m.cellSize, 1, 0.002f, 0.0001f, 10.0f, "%.3f"); L.Tip("Vertices closer than this merge: bigger = fewer triangles.");
+            break;
+        case MT::Displace:
+            L.Drag("Strength##ds", &m.strength, 1, 0.002f, -10.0f, 10.0f); L.TipLookup();
+            L.Drag("Frequency##df", &m.frequency, 1, 0.05f, 0.01f, 100.0f); L.TipLookup();
+            L.DragInt("Seed##dseed", &m.seed, 0.2f); L.TipLookup();
+            break;
+        case MT::CurveArray:
+            L.DragInt("Count##cac", &m.count, 0.1f, 1, 1000); L.TipLookup();
+            L.Check("Follow the curve##caa", &m.align);
+            L.Tip("Turn each copy so the mesh's +X axis points along the curve.\nOff = copies keep their own direction.");
+            L.Note("Curve points (x, y, z), start to end:");
+            R.nPoints = std::min((int)m.path.size(), 64);
+            for (int pi = 0; pi < R.nPoints; ++pi) {
+                L.Drag("##cp", &m.path[(std::size_t)pi].x, 3, 0.02f, -1000.0f, 1000.0f, "%.2f"); L.Last().width = 190.0f;
+                L.SameLine(); R.rmPoint[pi] = L.SmallButton("X##cpx"); L.Tip("Remove");
+            }
+            R.plus = L.SmallButton("+ Point##cpa"); L.SameLine(); R.arc = L.SmallButton("Arc##cpr");
+            L.SameLine(); R.wave = L.SmallButton("Wave##cpw"); L.SameLine(); R.helix = L.SmallButton("Helix##cph");
+            break;
+        default: break;
+        }
+        L.Check("Show in edit mode##se", &m.showInEditMode); L.Tip("Off = hidden while you edit this object's vertices (Tab).");
+        L.TreeEnd();
+    }
+    if (mm->modifiers.empty()) L.Note("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace, Array Along Curve.");
+    if (!DrawRowsOkayUI(mm, "##okayui_modifiers", L)) return false;
+    if (L.AnyActivated()) ed.PushUndo();
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kAdd].changed && addType >= 0) {
+        ed.PushUndo();
+        okay::MeshModifier m = okay::MeshModifier::Make((MT)addType);
+        if ((MT)addType == MT::Boolean)   // the nearest other mesh as a starting cutter
+            for (const auto& up : ed.scene().Objects()) if (up.get() != go && up->GetComponent<MeshRenderer>()) { m.target = up->name; break; }
+        mm->modifiers.push_back(m);
+        ed.dirty = true;
+    }
+    if (L[kApplyAll].clicked) { ed.PushUndo(); mm->ApplyAll(); ed.dirty = true; }
+    int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1, copyAt = -1;
+    for (int i = 0; i < (int)mr.size(); ++i) {
+        okay::MeshModifier& m = mm->modifiers[(std::size_t)i];
+        ModRows& R = mr[(std::size_t)i];
+        if (R.menu >= 0 && L[R.menu].changed) {
+            const std::string& id = L[R.menu].sv;
+            if (id == "up") { moveFrom = i; moveTo = i - 1; } else if (id == "down") { moveFrom = i; moveTo = i + 1; }
+            else if (id == "apply") applyAt = i; else if (id == "copy") copyAt = i; else if (id == "remove") removeAt = i;
+        }
+        if (R.cutter >= 0 && L[R.cutter].changed) {
+            if (R.cutterIdx >= 0) m.target = objNames[(std::size_t)R.cutterIdx];
+            else if (!L[R.cutter].sv.empty()) m.target = L[R.cutter].sv;
+        }
+        if (R.showCut >= 0 && L[R.showCut].changed)
+            if (GameObject* cut = ed.scene().Find(m.target)) if (auto* cmr = cut->GetComponent<MeshRenderer>()) { ed.PushUndo(); cmr->enabled = R.cutVis; }
+        int rm = -1;
+        for (int pi = 0; pi < R.nPoints; ++pi) if (L[R.rmPoint[pi]].clicked && m.path.size() > 2) rm = pi;
+        if (rm >= 0) { m.path.erase(m.path.begin() + rm); ed.dirty = true; }
+        if (R.plus >= 0 && L[R.plus].clicked) {
+            const Vec3 last = m.path.empty() ? Vec3{0, 0, 0} : m.path.back();
+            const Vec3 prev = m.path.size() > 1 ? m.path[m.path.size() - 2] : Vec3{0, 0, 0};
+            m.path.push_back(last + (last - prev)); ed.dirty = true;
+        }
+        if (R.arc >= 0 && L[R.arc].clicked) { m.path.clear(); for (int a = 0; a <= 8; ++a) { const float t = 3.14159265f * (float)a / 8.0f; m.path.push_back({2.0f * std::cos(t), 0.0f, -2.0f * std::sin(t)}); } ed.dirty = true; }
+        if (R.wave >= 0 && L[R.wave].clicked) { m.path.clear(); for (int a = 0; a <= 10; ++a) m.path.push_back({0.4f * (float)a, 0.5f * std::sin((float)a * 0.9f), 0.0f}); ed.dirty = true; }
+        if (R.helix >= 0 && L[R.helix].clicked) { m.path.clear(); for (int a = 0; a <= 16; ++a) { const float t = 0.7f * (float)a; m.path.push_back({1.5f * std::cos(t), 0.12f * (float)a, 1.5f * std::sin(t)}); } ed.dirty = true; }
+    }
+    if (moveFrom >= 0 || removeAt >= 0 || applyAt >= 0 || copyAt >= 0) ed.PushUndo();
+    if (copyAt >= 0) { mm->Duplicate(copyAt); ed.dirty = true; }
+    if (moveFrom >= 0) { mm->Move(moveFrom, moveTo); ed.dirty = true; }
+    if (removeAt >= 0) { mm->modifiers.erase(mm->modifiers.begin() + removeAt); ed.dirty = true; }
+    if (applyAt >= 0) {
+        std::string err;
+        if (mm->Apply(applyAt, &err)) { ConsoleLog("Applied modifier"); if (g_meshEdit && g_meshEditObj == go) g_meshEditStartSet = false; }
+        else ConsoleLog("Couldn't apply: " + err);
+        ed.dirty = true;
+    }
+    (void)toRemove;   // the body has no Remove button (the component bar's menu removes it)
+    return true;
+}
+
 // What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
 static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIBackend() && DrawRowsOkayUI(comp, id, L); }
 static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
@@ -36509,8 +36679,12 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
         if (CompHeader("First Person Hands", fhs, &toRemove)) {
-            DrawFpHandsBody(ed, fhs);
-            if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
+            bool rm = false;
+            if (UseOkayUIBackend() && DrawFpHandsBodyOkayUI(ed, fhs, rm)) { if (rm) toRemove = fhs; }   // OkayUI's with the preview switch (section 21)
+            else {
+                DrawFpHandsBody(ed, fhs);
+                if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
+            }
         }
     }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
@@ -37089,7 +37263,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* mm = dynamic_cast<okay::MeshModifiers*>(curComp)) {
-        if (CompHeader("Modifiers", mm, &toRemove)) {
+        if (CompHeader("Modifiers", mm, &toRemove) && !(UseOkayUIBackend() && DrawModifiersWithOkayUI(ed, go, mm, toRemove))) {   // OkayUI's with the preview switch (section 21)
             using MT = okay::MeshModifier::Type;
             auto* mmr = go->GetComponent<MeshRenderer>();
             if (!mmr) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Needs a Mesh Renderer on this object.");

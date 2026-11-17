@@ -120,6 +120,13 @@ struct InspRow {
     // the pointer.
     const char* dragType = nullptr;
     int dropped = -1;
+    // stage 8: InspRowTree / InspRowTreeEnd with `collapsing`: Dear ImGui's CollapsingHeader (a frame-tall bar the region wide, the rows
+    // inside not indented; `on`: open at first). InspRowSection with `small`: the First Person Hands window's heading (a thin tick, the
+    // label in the body face, a rule). InspRowSmallButton with `menu`: a click opens these entries as a menu; the picked entry's id goes in
+    // `sv` and the row is marked changed.
+    bool collapsing = false, small = false;
+    bool alignRight = false;             ///< with sameLine: a small button put at the region's right edge (the Modifiers' "...")
+    const std::vector<PanelMenuEntry>* menu = nullptr;
     const char* searchHint = nullptr;
     const char* const* searchKeys = nullptr;
     // InspRowMask with presets (the Nav Mesh Agent's Area Mask): small buttons on one line at the top of the open list instead of
@@ -279,6 +286,10 @@ struct InspFieldList {
     int Mask(const char* label, int* bits) { const int k = Add(InspRowMask, label); rows.back().i = bits; rows.back().pickKind = "layers"; return k; }
     int Tree(const char* label) { return Add(InspRowTree, label); }
     int TreeEnd() { return Add(InspRowTreeEnd, ""); }
+    int Header(const char* label, bool openAtFirst = false) { const int k = Add(InspRowTree, label); rows.back().collapsing = true; rows.back().on = openAtFirst; return k; }
+    int HeaderEnd() { const int k = Add(InspRowTreeEnd, ""); rows.back().collapsing = true; return k; }
+    int SmallSection(const char* label) { const int k = Add(InspRowSection, label); rows.back().small = true; return k; }
+    int MenuButton(const char* label, const std::vector<PanelMenuEntry>* entries) { const int k = Add(InspRowSmallButton, label); rows.back().menu = entries; return k; }
     int Spacing() { return Add(InspRowSpacing, ""); }
     int Separator() { return Add(InspRowSeparator, ""); }
     /// A colour gradient: `stops` holds kMax x 5 floats (time, r, g, b, a), `count` how many are used, `sel` the selected one.

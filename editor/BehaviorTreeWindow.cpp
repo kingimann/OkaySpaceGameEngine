@@ -8,6 +8,8 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "BehaviorTreeWindow.hpp"
+#include "NavigationWindow.hpp"            // InspectorRowsOkayUI (stage 8)
+#include "../shared/InspectorFieldsModel.hpp"
 #include "MainShared.hpp"               // g_paused: a breakpoint pauses Play
 #include "ConsolePanel.hpp"             // ConsoleLog
 #include "EditorWidgets.hpp"            // AccentCol
@@ -1817,12 +1819,103 @@ void DrawBehaviorTreeWindow(EditorState& ed) {
 // ---------------------------------------------------------------------------
 // Inspector / Add Component / dev hooks
 // ---------------------------------------------------------------------------
+// The Behavior Tree Runner's body as field rows (the Inspector, stage 8; docs/own_ui_toolkit.md section 21), written from the Dear ImGui
+// body below: the same fields, widths, tips and buttons; a blackboard key is a list of the tree's keys when it has some. False: not drawn.
+static bool DrawBehaviorTreeRunnerRows(EditorState& ed, GameObject* go, BehaviorTreeRunner* r, Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(32 + 4 * r->overrides.size());
+    L.Text("Tree##btr", &r->treePath); L.Last().width = -60.0f; L.Tip("The .okaybt file, relative to the project folder (Assets/Guard.okaybt).");
+    L.SameLine(); const int kPick = L.SmallButton("...##btrpick");
+    const int kOpen = L.SmallButton("Open in Behavior Tree window##btr");
+    L.SameLineOrWrap(); const int kGuard = L.SmallButton("Guard sample##btr");
+    L.Tip("Write Assets/Guard.okaybt (patrol, see the player, chase, attack, back to the patrol) and use it here.");
+    L.Drag("Tick Rate##btr", &r->tickRate, 1, 0.5f, 0.0f, 120.0f, "%.0f /s"); L.Tip("Ticks per second (0 = every frame).");
+    L.Check("Run On Start##btr", &r->runOnStart);
+    L.SameLineOrWrap(); L.Check("Debug Log##btr", &r->debug); L.Tip("Log every node that finishes and every run of the tree.");
+    L.Check("Home Point##btr", &r->homeOverride); L.Tip("Where Wander roams around (off: where the NPC starts).");
+    if (r->homeOverride) { L.SameLine(); L.Drag("##btrhome", &r->homePoint.x, 3, 0.05f); L.Last().width = -1.0f; }
+    L.Note("Blackboard overrides"); L.Tip("Values that replace the tree's defaults on this NPC.");
+    std::shared_ptr<const BehaviorTree> tree = r->treePath.empty() ? nullptr : BehaviorTree::Load(r->treePath);
+    std::vector<const char*> keys;
+    if (tree) for (const auto& k : tree->keys) keys.push_back(k.name.c_str());
+    struct OvRow { int key = -1, idx = -1, remove = -1; };
+    std::vector<OvRow> ov(r->overrides.size());
+    for (std::size_t i = 0; i < r->overrides.size(); ++i) {
+        auto& o = r->overrides[i];
+        if (!keys.empty()) {
+            for (std::size_t q = 0; q < keys.size(); ++q) if (o.first == keys[q]) ov[i].idx = (int)q;
+            ov[i].key = L.Combo("##ok", &ov[i].idx, keys.data(), (int)keys.size()); L.Last().width = 110.0f;
+            L.Last().preview = o.first.empty() ? "(key)" : o.first.c_str();
+        } else { ov[i].key = L.Text("##ok", &o.first, "key"); L.Last().width = 110.0f; }
+        L.SameLine(); L.Text("##ov", &o.second, "value"); L.Last().width = -30.0f;
+        L.SameLine(); ov[i].remove = L.SmallButton("x");
+    }
+    const int kAdd = L.SmallButton("+ Override##btr");
+    std::string cannot;
+    if (!tree && !r->treePath.empty()) { cannot = "Cannot read " + r->treePath; L.ColorText(HierCol(242, 97, 89), cannot.c_str()); }
+    if (go->GetComponent<NavMeshAgent>()) L.Note("Moves through the Nav Mesh Agent.", false, true);
+    else if (go->GetComponent<NPCController>()) L.Note("Moves through the NPC Controller (its states stand down).", false, true);
+    else L.Note("Moves over the navigation on its own (add a Nav Mesh Agent for avoidance).", false, true);
+    int kRun = -1;
+    if (ed.isPlaying()) {
+        L.Label(r->IsRunning() ? "Running" : "Stopped");
+        char st[160];
+        std::snprintf(st, sizeof st, "%.1f s, %d run%s%s%s", (double)r->Clock(), r->Completions(), r->Completions() == 1 ? "" : "s",
+                      r->Completions() ? ", last " : "", r->Completions() ? BtStatusName(r->LastResult()) : "");
+        L.SameLine(); L.Note(st, true);
+        const std::vector<int> path = r->ActivePath();
+        if (!path.empty() && r->Tree()) {
+            std::string s;
+            for (std::size_t i = 0; i < path.size(); ++i) { const BtNode* n = r->Tree()->Find(path[i]); if (i) s += " > "; s += n ? (n->name.empty() ? n->Def().title : n->name) : "?"; }
+            L.Label(s.c_str(), 0, false, true); L.Last().wrap = true;
+        }
+        for (const auto& e : r->blackboard.Entries()) { const std::string t = e.name + " = " + e.value.AsString(); L.Note(t.c_str(), true); }
+        kRun = L.SmallButton(r->IsRunning() ? "Stop##btrlive" : "Run##btrlive");
+    }
+    const int kRemove = L.SmallButton("Remove##btrunner");
+    if (!oked::InspectorRowsOkayUI(r, "##okayui_btrunner", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kPick].clicked) {
+        const std::string dir = ProjectAssetsDir(ed);
+        EditorState* edp = &ed; auto* rp = r;
+        okay::filedialog::OpenOne("Pick a behavior tree", dir.empty() ? std::string() : dir + "/", okay::filedialog::Filters("behavior trees", {"*.okaybt"}), [edp, rp](const std::string& f) {
+            edp->PushUndo(); rp->treePath = ProjectRelative(*edp, f); edp->dirty = true;
+        });
+    }
+    if (L[kOpen].clicked) {
+        if (r->treePath.empty()) g_showBehaviorTree = true;
+        else OpenBehaviorTreeFile(ed, BehaviorTree::ResolvePath(r->treePath));
+        U().liveObj = go->name;
+    }
+    if (L[kGuard].clicked) {
+        const std::string dir = ProjectAssetsDir(ed);
+        const std::string path = dir.empty() ? std::string("Guard.okaybt") : (std::filesystem::path(dir) / "Guard.okaybt").string();
+        std::string err;
+        if (BehaviorTree::GuardSample().SaveToFile(path, &err)) {
+            ed.PushUndo(); r->treePath = ProjectRelative(ed, path); ed.dirty = true;
+            BehaviorTree::Forget(path); OpenBehaviorTreeFile(ed, path); U().liveObj = go->name;
+        } else ConsoleLog("Behavior Tree: " + err, 2);
+    }
+    int removeAt = -1;
+    for (std::size_t i = 0; i < ov.size(); ++i) {
+        if (!keys.empty() && L[ov[i].key].changed && ov[i].idx >= 0) r->overrides[i].first = keys[(std::size_t)ov[i].idx];
+        if (L[ov[i].remove].clicked) removeAt = (int)i;
+    }
+    if (removeAt >= 0) { ed.PushUndo(); r->overrides.erase(r->overrides.begin() + removeAt); ed.dirty = true; }
+    if (L[kAdd].clicked) { ed.PushUndo(); r->overrides.emplace_back(tree && !tree->keys.empty() ? tree->keys.front().name : std::string(), std::string()); ed.dirty = true; }
+    if (kRun >= 0 && L[kRun].clicked) { if (r->IsRunning()) r->Stop(); else r->Run(); }
+    if (L[kRemove].clicked) toRemove = r;
+    return true;
+}
+
 void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp, Component*& toRemove, BtCompHeaderFn header) {
     if (!go || !comp) return;
     auto* r = dynamic_cast<BehaviorTreeRunner*>(comp);
     if (!r) return;
     if (!header("Behavior Tree Runner", r, &toRemove, true)) return;
     if (!ed.projectDir().empty()) BehaviorTree::SetAssetBaseDir(ed.projectDir());
+    if (DrawBehaviorTreeRunnerRows(ed, go, r, toRemove)) return;   // OkayUI's with the preview switch (docs/own_ui_toolkit.md section 21)
     {
         char buf[260];
         std::snprintf(buf, sizeof(buf), "%s", r->treePath.c_str());

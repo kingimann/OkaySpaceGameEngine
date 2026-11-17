@@ -1,4 +1,6 @@
 #include "FpHandsWindow.hpp"
+#include "NavigationWindow.hpp"   // InspectorRowsOkayUI (stage 8)
+#include "../shared/InspectorFieldsModel.hpp"
 #include "okay/Components/FpHandsPreview.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
@@ -170,6 +172,152 @@ FirstPersonHands* FindHands(EditorState& ed) {
 }
 
 } // namespace
+
+// ---- the body as OkayUI field rows (stage 8) ------------------------------------------------------------------------------------------
+// Written from DrawFpHandsBody and its helpers above, row for row: Help is a wrapping note, Section the small section heading, a
+// CollapsingHeader a collapsing header row, Vec a three-cell drag, Col a three-channel colour. The preset list has no per-preset tooltip
+// in OkayUI (its help line under the list says the same).
+namespace {
+struct FpRows {
+    okaypanels::InspFieldList L;
+    std::vector<Color*> cols;     // the colour rows' values: their alpha is set to 1 on a change, as Col does
+    std::vector<int> colRows;
+    void Vec(const char* label, Vec3& v, float speed) { L.Drag(label, &v.x, 3, speed); }
+    void Col(const char* label, Color& c) { colRows.push_back(L.Color(label, &c.r, 3)); cols.push_back(&c); }
+};
+void HandRows(FpRows& f, const char* title, FirstPersonHands::HandSide& s) {
+    auto& L = f.L;
+    L.Header(title);
+    L.Check("Enabled", &s.enabled);
+    f.Vec("Position", s.position, 0.005f); f.Vec("Rotation", s.rotation, 0.5f);
+    L.Drag("Uniform scale", &s.uniformScale, 1, 0.01f, 0.2f, 3.0f); f.Vec("Scale", s.scale, 0.01f);
+    L.Check("Custom colour", &s.useColour);
+    if (s.useColour) f.Col("Colour", s.colour); else L.Note("Colour comes from the character's skin.");
+    L.Drag("Width", &s.size.x, 1, 0.01f, 0.2f, 3.0f); L.Drag("Height", &s.size.y, 1, 0.01f, 0.2f, 3.0f); L.Drag("Depth", &s.size.z, 1, 0.01f, 0.2f, 3.0f);
+    f.Vec("Wrist offset", s.wristOffset, 0.005f); f.Vec("Wrist rotation", s.wristRotation, 0.5f);
+    L.Drag("Elbow bend", &s.elbowBend, 1, 0.5f, -80.0f, 120.0f); L.Drag("Reach", &s.reach, 1, 0.005f, -0.4f, 0.6f);
+    L.Check("Forearm", &s.forearm); L.Tip("The arm under the hand. The Old look and Minimal presets turn it off.");
+    L.Check("Sleeve and forearm use the shirt colour", &s.matchShirt);
+    if (s.forearm) {
+        L.Drag("Forearm length", &s.forearmLength, 1, 0.01f, 0.05f, 1.2f); L.Drag("Forearm thickness", &s.forearmThickness, 1, 0.005f, 0.02f, 0.4f);
+        f.Col("Forearm colour", s.forearmColour);
+    }
+    L.Check("Sleeve", &s.sleeve);
+    if (s.sleeve) { L.Drag("Sleeve length", &s.sleeveLength, 1, 0.01f, 0.04f, 0.8f); f.Col("Sleeve colour", s.sleeveColour); }
+    L.HeaderEnd();
+}
+void OthersArmRows(FpRows& f, const char* title, FirstPersonHands::OthersArm& a) {
+    auto& L = f.L;
+    L.Header(title);
+    L.Check("Forearm", &a.forearm); L.Tip("The body's forearm. On so the arm still connects to the hand.");
+    L.Drag("Forearm length", &a.forearmLength, 1, 0.01f, 0.05f, 1.2f); L.Drag("Forearm thickness", &a.forearmThickness, 1, 0.005f, 0.02f, 0.4f);
+    f.Col("Forearm colour", a.forearmColour);
+    L.Drag("Hand width", &a.handSize.x, 1, 0.01f, 0.2f, 3.0f); L.Drag("Hand height", &a.handSize.y, 1, 0.01f, 0.2f, 3.0f);
+    L.Drag("Hand depth", &a.handSize.z, 1, 0.01f, 0.2f, 3.0f);
+    f.Vec("Wrist offset", a.wristOffset, 0.005f); f.Vec("Wrist rotation", a.wristRotation, 0.5f);
+    L.Drag("Elbow bend", &a.elbowBend, 1, 0.5f, 0.0f, 120.0f); L.Drag("Reach", &a.reach, 1, 0.005f, -0.4f, 0.6f);
+    L.HeaderEnd();
+}
+} // namespace
+
+bool DrawFpHandsBodyOkayUI(EditorState& ed, FirstPersonHands* h, bool& remove) {
+    using namespace okaypanels;
+    remove = false;
+    if (!h) return false;
+    static const char* const kStyles[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+                                          "One hand right", "One hand left", "Two handed", "Carry in front", "Over the shoulder"};
+    static const char* const kModes[] = {"One hand (right)", "One hand (left)", "Two hands"};
+    FpRows f;
+    InspFieldList& L = f.L;
+    L.rows.reserve(160);
+    L.Note("Your own arm in first person. Other players always see the full character. "
+           "Pick a Preset to compare looks; the Preview window updates as you change it.", false, true);
+    static std::vector<const char*> presets;
+    if (presets.empty()) for (int i = 0; i < FirstPersonHands::kPresetCount; ++i) presets.push_back(FirstPersonHands::PresetName((FirstPersonHands::Preset)i));
+    int preset = (int)h->preset;
+    const int kPreset = L.Combo("Preset", &preset, presets.data(), (int)presets.size());
+    L.Last().preview = FirstPersonHands::PresetName(h->preset);
+    L.Note(FirstPersonHands::PresetHelp(h->preset), false, true);
+    const int kNormal = L.Button("Use normal first-person arms"); L.Tip("Sets every player-view number to the Normal preset. Ctrl+Z puts it back.");
+    L.SameLine(); const int kOld = L.Button("Old look"); L.Tip("The look before presets, for comparing.");
+    L.Check("Left click swings the arm", &h->swingOnClick); L.Tip("Others see the same swing on the real arm.");
+    L.Separator();
+    const int kPreview = L.Button("Open Preview");
+    L.SameLine(); const int kApply = L.Button("Apply"); L.Tip("Play mode restores the scene when you press Stop. Apply copies these values back.");
+    L.SmallSection("Player View");
+    L.Check("Show when empty", &h->showWhenEmpty); L.Check("Show while running", &h->showWhileRunning);
+    int mode = (int)h->holdMode;
+    const int kMode = L.Combo("Hold mode", &mode, kModes, 3);
+    L.Note("A two-handed item uses both hands even if the mode is one hand.", false, true);
+    L.Drag("Bob amount", &h->bobAmount, 1, 0.01f, 0.0f, 3.0f); L.Drag("Sway amount", &h->swayAmount, 1, 0.01f, 0.0f, 3.0f);
+    L.Drag("Punch", &h->punchAmount, 1, 0.01f, 0.0f, 3.0f); L.Tip("Punch swing amount.");
+    L.Drag("Hand FOV", &h->handFov, 1, 0.2f, 0.0f, 120.0f); L.Tip("Hand field of view. 0 uses the camera. A smaller value draws the hands larger.");
+    f.Vec("Item offset", h->itemOffset, 0.005f); L.Tip("Held item offset.");
+    f.Vec("Item rotation", h->itemRotation, 0.5f); L.Tip("Held item rotation.");
+    L.Drag("Item scale", &h->itemScale, 1, 0.01f, 0.1f, 3.0f); L.Tip("Held item scale.");
+    HandRows(f, "Left hand", h->left);
+    HandRows(f, "Right hand", h->right);
+    const int kResetPlayer = L.SmallButton("Reset##player");
+    L.SameLine(); L.Note("Player view");
+    L.SmallSection("Others View");
+    L.Note("Where the held item sits on the full body, and where each hand grips it. The arms follow the item.", false, true);
+    f.Vec("Item offset", h->othersItemOffset, 0.005f); L.Tip("Side, up, forward, in metres, added to the hold.");
+    f.Vec("Item rotation", h->othersItemRotation, 0.5f);
+    L.Drag("Arm lift", &h->othersArmLift, 1, 0.005f, -1.0f, 1.0f); L.Drag("Arm reach", &h->othersArmForward, 1, 0.005f, -1.0f, 1.0f);
+    OthersArmRows(f, "Left arm", h->othersLeft);
+    OthersArmRows(f, "Right arm", h->othersRight);
+    L.Note("Grip points and the hold style live on the item.");
+    HoldableObject* item = HeldItem(h);
+    if (!item && g_open) item = g_preview.ExampleItem();
+    int style = item ? (int)item->style : 0, kStyle = -1, kP[5] = {-1, -1, -1, -1, -1}, kResetGrips = -1;
+    if (!item) L.Note("Open the preview to edit an example item's grip points, or pick something up to edit that item.", false, true);
+    else {
+        kStyle = L.Combo("Hold style", &style, kStyles, 14);
+        kP[0] = L.SmallButton("One hand right"); L.SameLine(); kP[1] = L.SmallButton("One hand left");
+        kP[2] = L.SmallButton("Two handed"); L.SameLine(); kP[3] = L.SmallButton("Carry in front");
+        kP[4] = L.SmallButton("Over shoulder");
+        f.Vec("In-hand offset", item->holdOffset, 0.01f); f.Vec("In-hand rotation", item->holdRotation, 0.5f);
+        L.Drag("In-hand scale", &item->inHandScale, 1, 0.01f, 0.1f, 3.0f);
+        f.Vec("FP offset", item->fpOffset, 0.005f); f.Vec("FP rotation", item->fpRotation, 0.5f);
+        L.Drag("FP scale", &item->fpScale, 1, 0.01f, 0.1f, 3.0f);
+        f.Vec("TP offset", item->tpOffset, 0.005f); f.Vec("TP rotation", item->tpRotation, 0.5f);
+        for (HoldableObject::Grip* g : {&item->leftGrip, &item->rightGrip}) {
+            L.Check(g == &item->leftGrip ? "Left grip" : "Right grip", &g->enabled);
+            if (g->enabled) { f.Vec("Grip position", g->position, 0.01f); f.Vec("Grip rotation", g->rotation, 0.5f); }
+        }
+        kResetGrips = L.SmallButton("Reset grips");
+    }
+    const int kResetOthers = L.SmallButton("Reset##others");
+    L.SameLine(); L.Note("Others view");
+    const int kRemove = L.SmallButton("Remove##fphs");
+    if (!oked::InspectorRowsOkayUI(h, "##okayui_fphands", L)) return false;
+    bool dirty = L.AnyChanged();
+    for (std::size_t i = 0; i < f.colRows.size(); ++i) if (L[f.colRows[i]].changed) f.cols[i]->a = 1.0f;
+    if (L[kPreset].changed && preset >= 0) { ed.PushUndo("First person preset"); h->ApplyPreset((FirstPersonHands::Preset)preset); dirty = true; }
+    if (L[kNormal].clicked) { ed.PushUndo("Use normal first-person arms"); h->UseNormalArms(); dirty = true; }
+    if (L[kOld].clicked) { ed.PushUndo("First person old look"); h->UseOldLook(); dirty = true; }
+    if (L[kPreview].clicked) { g_open = true; g_object = h->gameObject ? h->gameObject->name : ""; }
+    if (L[kApply].clicked) { if (ed.isPlaying()) FirstPersonHands::CaptureApplied(ed.scene()); dirty = true; }
+    if (L[kMode].changed) h->holdMode = (FirstPersonHands::HoldMode)mode;
+    if (L[kResetPlayer].clicked) { h->ResetPlayerView(); dirty = true; }
+    if (item) {
+        if (L[kStyle].changed) item->style = (HoldableObject::Style)style;
+        static const HoldableObject::Preset kPresetOf[5] = {HoldableObject::Preset::OneHandRight, HoldableObject::Preset::OneHandLeft,
+                                                            HoldableObject::Preset::TwoHanded, HoldableObject::Preset::CarryFront,
+                                                            HoldableObject::Preset::OverShoulder};
+        for (int i = 0; i < 5; ++i) if (L[kP[i]].clicked) { item->ApplyPreset(kPresetOf[i]); dirty = true; }
+        if (L[kResetGrips].clicked) {
+            item->leftGrip = {}; item->rightGrip = {};
+            item->leftGrip.enabled = item->WantsTwoHands(); item->rightGrip.enabled = item->WantsTwoHands();
+            item->leftGrip.position = {-0.2f, 0.0f, 0.0f}; item->rightGrip.position = {0.2f, 0.0f, 0.0f};
+            dirty = true;
+        }
+    }
+    if (L[kResetOthers].clicked) { h->ResetOthersView(); dirty = true; }
+    if (L[kRemove].clicked) remove = true;
+    if (dirty) ed.dirty = true;
+    return true;
+}
 
 void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (!h) return;

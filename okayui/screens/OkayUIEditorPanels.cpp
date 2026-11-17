@@ -1585,6 +1585,9 @@ const unsigned char kMixed[3] = {242, 199, 102};                 // ImVec4(0.95,
 const unsigned char kManaged[3] = {242, 191, 89};                // ImVec4(0.95, 0.75, 0.35)
 
 // Dear ImGui's SmallButton with the host's frame padding: one text line tall, the label FramePadding.x in on each side.
+// How far a CollapsingHeader's bar reaches into the window's padding on each side (Dear ImGui: half the window padding, less a pixel).
+constexpr float kCollapsingBleed = 3.0f;
+
 bool InspSmallButton(const char* label) {
     UI::CenterNextOnLine();
     std::string vis(label);
@@ -2558,9 +2561,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             return s_trees.back().second;
         };
         auto setPopup = [&](const UI::Rect& r) { if (r.w > 0.0f) res.popup = r; };
+        std::size_t closedAt = (std::size_t)-1;   // the closed fold-out's row: a row put on its line is still drawn (the Modifiers' "...")
         for (std::size_t k = 0; k < list.rows.size(); ++k) {
             InspRow& r = list.rows[k];
-            if (skipDepth > 0) {
+            if (skipDepth == 1 && k == closedAt + 1 && r.sameLine) {
+            } else if (skipDepth > 0) {
                 if (r.kind == InspRowTree) ++skipDepth;
                 else if (r.kind == InspRowTreeEnd) --skipDepth;
                 continue;
@@ -2581,7 +2586,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     const UI::Rect pr = UI::GetItemRect();
                     fits = regionX + w - (std::round(pr.x + pr.w) + gap) >= nextW;
                 }
-                if (fits) {
+                if (fits && r.alignRight) {   // a small button ending at the region's right edge (stage 8: the Modifiers' "...")
+                    const UI::Rect pr = UI::GetItemRect();
+                    const float bw = UI::CalcTextWidth(Visible(r.label).c_str()) + 2.0f * g_metrics.framePadding.x;
+                    UI::SameLine(std::max(0.0f, regionX + w - bw - (pr.x + pr.w)));
+                } else if (fits) {
                     if (r.sameLineAt >= 0.0f) {
                         const UI::Rect pr = UI::GetItemRect();
                         UI::SameLine(std::max(0.0f, regionX + r.sameLineAt - (pr.x + pr.w)));
@@ -2829,6 +2838,18 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 break;
             }
             case InspRowSection: {   // the editor's SectionHeader: Spacing, the accent tick, the heading face (22 pixels), a rule
+                if (r.small) {   // the First Person Hands window's Section (stage 8): Spacing, a thin tick, the label in the body face, a rule
+                    UI::Dummy(1.0f, 0.0f);
+                    const UI::Vec2 p = UI::GetCursorScreenPos();
+                    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{p.x, p.y + 1.0f}, UI::Vec2{p.x + 3.0f, p.y + fs}, UI::RGBA(120, 170, 230), 1.5f);
+                    UI::Indent(9.0f);
+                    UI::Text(r.Text());
+                    UI::Unindent(9.0f);
+                    const UI::Vec2 q = UI::GetCursorScreenPos();
+                    UI::Dummy(std::max(1.0f, regionX + w - q.x), 1.0f);
+                    UI::GetWindowDrawList().AddLine(UI::Vec2{q.x, q.y + 0.5f}, UI::Vec2{regionX + w, q.y + 0.5f}, UI::GetColorU32(UI::Col_Separator), 1.0f);
+                    break;
+                }
                 UI::Dummy(1.0f, 0.0f);
                 UI::PushTextScale(22.0f / 18.0f);
                 UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());   // the heading's line is the heading face tall
@@ -2898,8 +2919,25 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             }
             case InspRowSmallButton:
                 if (r.color) UI::PushStyleColor(UI::Col_Text, r.color | 0xff000000u);
-                if (InspSmallButton(r.label)) r.clicked = true;
+                if (InspSmallButton(r.label)) { r.clicked = true; if (r.menu) UI::OpenPopup("##rowmenu"); }
                 if (r.color) UI::PopStyleColor();
+                if (r.menu && UI::IsPopupOpen("##rowmenu")) {   // stage 8: the entries as a menu (the Modifiers' "...")
+                    MenuLook look_(PanelMenuWidth(*r.menu));
+                    UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+                    UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});
+                    if (UI::BeginPopup("##rowmenu")) {
+                        std::string pick;
+                        std::vector<std::string> ids; std::vector<UI::Rect> mrows;
+                        const UI::Vec2 mp = UI::GetCursorScreenPos();
+                        DrawPanelMenu(*r.menu, pick, &ids, &mrows);
+                        const UI::Vec2 me = UI::GetCursorScreenPos();
+                        setPopup(UI::Rect{mp.x - 16.0f, mp.y - 12.0f, PanelMenuWidth(*r.menu) + 32.0f, me.y - mp.y + 24.0f});
+                        res.listRows = mrows;
+                        if (!pick.empty()) { r.sv = pick; r.changed = true; }
+                        UI::EndPopup();
+                    }
+                    UI::PopStyleVar(2);
+                }
                 if (r.dragType) {   // a drag handle (stage 7): the Inventory's slot order
                     if (UI::BeginDragDropSource()) {
                         UI::SetDragDropPayload(r.dragType, &r.tag, sizeof(int));
@@ -3119,6 +3157,22 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             }
             case InspRowTree: {   // Dear ImGui's TreeNode: an arrow and the label, one text line tall; the rows inside indented
                 bool& open = treeOpen(treeKey, r.on);
+                if (r.collapsing) {   // Dear ImGui's CollapsingHeader (stage 8): a frame-tall bar across the region and a little into the
+                                      // window's padding on both sides, the arrow and label inside; the rows under it are not indented
+                    const UI::Vec2 p = UI::GetCursorScreenPos();
+                    const float ext = kCollapsingBleed;
+                    UI::SetCursorScreenPos(UI::Vec2{regionX - ext, p.y});
+                    if (UI::InvisibleButton("##hdr", w + 2.0f * ext, fh)) open = !open;
+                    const bool hov = UI::IsItemHovered(), held = UI::IsItemActive();
+                    InspHeaderFrameAt(regionX - ext, p.y, w + 2.0f * ext, fh, hov, held);
+                    const std::string vis = Visible(r.label);
+                    const float ax = regionX - ext + g_metrics.framePadding.x;
+                    InspArrow(UI::GetWindowDrawList(), ax + 0.15f * fs, p.y + g_metrics.framePadding.y, 0.7f * fs, open, UI::GetColorU32(UI::Col_Text));
+                    UI::GetWindowDrawList().AddText(UI::Vec2{ax + fs + g_metrics.framePadding.x, p.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
+                    *r.B() = open;
+                    if (!open) skipDepth = 1;
+                    break;
+                }
                 const std::string vis = Visible(r.label);
                 const float tw = fs + g_metrics.framePadding.x * 2.0f + UI::CalcTextWidth(vis.c_str());
                 const UI::Vec2 p = UI::GetCursorScreenPos();
@@ -3135,11 +3189,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 UI::GetWindowDrawList().AddText(UI::Vec2{p.x + fs + g_metrics.framePadding.x * 2.0f, p.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
                 *r.B() = open;
                 if (open) { UI::Indent(g_metrics.indentSpacing); ++indent; }
-                else skipDepth = 1;
+                else { skipDepth = 1; closedAt = k; }
                 break;
             }
             case InspRowTreeEnd:
-                if (indent > 0) { UI::Unindent(g_metrics.indentSpacing); --indent; }
+                if (!r.collapsing && indent > 0) { UI::Unindent(g_metrics.indentSpacing); --indent; }
                 break;
             case InspRowSpacing:
                 UI::Dummy(1.0f, 0.0f);

@@ -33,6 +33,9 @@ void DrawNavigationInspector(okay::editor::EditorState& ed, okay::GameObject* go
 // draws a body's rows (its DrawRowsOkayUI, behind the preview switch); null or false: Dear ImGui's body is drawn.
 using NavRowsDrawFn = bool (*)(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows);
 void SetNavRowsDrawer(NavRowsDrawFn draw);
+// The same drawer for the bodies of other files (stage 8: Behavior Tree Runner, First Person Hands): false when it is not set or the
+// preview switch is off (Dear ImGui's body is drawn then).
+bool InspectorRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& rows);
 
 // The Add Component rows (Gameplay). `item(absent, label)` is the menu's row widget.
 void NavigationAddComponentItems(okay::editor::EditorState& ed, okay::GameObject* go,

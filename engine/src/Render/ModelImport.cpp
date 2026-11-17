@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ModelReaderRegistry.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
 #include "okay/Render/AmfReader.hpp"
 #include "okay/Render/X3dReader.hpp"
@@ -825,42 +826,15 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
             --loaderDepth;
             return r;
         };
-        bool good = RunReaderGuarded([&]() -> bool { return s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
-                  : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
-                  : s == 5 ? ReadBvhFile(path, out, &e1)
-                  : s == 6 ? ReadOffFile(path, out, &e1)
-                  : s == 7 ? ReadSmdFile(path, out, &e1)
-                  : s == 8 ? ReadMd5File(path, out, &e1)
-                  : s == 9 ? ReadMs3dFile(path, out, &e1)
-                  : s == 10 ? ReadAseFile(path, out, &e1)
-                  : s == 11 ? Read3mfFile(path, out, &e1, flatten)
-                  : s == 12 ? ReadAmfFile(path, out, &e1, flatten)
-                  : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
-                  : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
-                  : s == 15 ? ReadLwoFile(path, out, &e1)
-                  : s == 16 ? ReadBlendFile(path, out, &e1, flatten)   // the Blender reader flattens by itself
-                  : s == 17 ? ReadMd2File(path, out, &e1)
-                  : s == 18 ? ReadMd3File(path, out, &e1)
-                  : s == 19 ? ReadIrrMeshFile(path, out, &e1)
-                  : s == 20 ? ReadB3dFile(path, out, &e1)
-                  : s == 21 ? ReadXFile(path, out, &e1)
-                  : s == 22 ? ReadAc3dFile(path, out, &e1)
-                  : s == 23 ? ReadOgreXmlFile(path, out, &e1)
-                  : s == 24 ? ReadXglFile(path, out, &e1)
-                  : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : s == 26 ? ReadNffFile(path, out, &e1)
-                  : s == 27 ? ReadTerragenFile(path, out, &e1)
-                  : s == 28 ? ReadMdcFile(path, out, &e1)
-                  : s == 29 ? ReadHmpFile(path, out, &e1)
-                  : s == 30 ? ReadCsmFile(path, out, &e1)
-                  : s == 31 ? ReadQ3dFile(path, out, &e1)
-                  : s == 33 ? ReadRawFile(path, out, &e1)
-                  : s == 34 ? ReadIqmFile(path, out, &e1)
-                  : s == 35 ? ReadCobFile(path, out, &e1)
-                  : s == 36 ? ReadNdoFile(path, out, &e1)
-                  : s == 39 ? ReadPmxFile(path, out, &e1)
-                  : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
-                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
+        // Slots 0 to 2 (OBJ, STL, PLY) are core. Every other format is a reader the model_import module registers
+        // (engine/modules/model_import/register.cpp); a build without that module has none of them.
+        bool good = RunReaderGuarded([&]() -> bool {
+            if (s == 0) return ReadObjFile(path, out, &e1);
+            if (s == 1) return ReadStlFile(path, out, &e1);
+            if (s == 2) return ReadPlyFile(path, out, &e1);
+            if (const ModelReaderFn* rd = FindModelReader(s)) return (*rd)(path, out, &e1, flatten, &irrLoader);
+            e1 = "no reader is wired to this slot (the model_import module is off in this build)";
+            return false; }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

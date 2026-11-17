@@ -245,41 +245,6 @@ add_library(okay_engine
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
-    src/Render/ColladaReader.cpp
-    src/Render/Max3dsReader.cpp
-    src/Render/BvhReader.cpp
-    src/Render/OffReader.cpp
-    src/Render/SmdReader.cpp
-    src/Render/Md5Reader.cpp
-    src/Render/Ms3dReader.cpp
-    src/Render/AseReader.cpp
-    src/Render/BlendReader.cpp
-    src/Render/ThreeMfReader.cpp
-    src/Render/AmfReader.cpp
-    src/Render/X3dReader.cpp
-    src/Render/DxfReader.cpp
-    src/Render/LwoReader.cpp
-    src/Render/Md2Reader.cpp
-    src/Render/Md3Reader.cpp
-    src/Render/IrrMeshReader.cpp
-    src/Render/B3dReader.cpp
-    src/Render/XFileReader.cpp
-    src/Render/Ac3dReader.cpp
-    src/Render/OgreXmlReader.cpp
-    src/Render/XglReader.cpp
-    src/Render/IrrSceneReader.cpp
-    src/Render/NffReader.cpp
-    src/Render/IqmReader.cpp
-    src/Render/CobReader.cpp
-    src/Render/NdoReader.cpp
-    src/Render/TerragenReader.cpp
-    src/Render/MdcReader.cpp
-    src/Render/HmpReader.cpp
-    src/Render/CsmReader.cpp
-    src/Render/Q3dReader.cpp
-    src/Render/RawReader.cpp
-    src/Render/PmxReader.cpp
-    src/Render/LwsReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
@@ -340,6 +305,7 @@ target_sources(okay_engine PRIVATE
     src/Modules/ModuleRegistry.cpp
     src/Modules/Health.cpp
     src/Modules/Interact.cpp
+    src/Render/ModelReaderRegistry.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
     ${OKAY_MODULES_REGISTER_SOURCES})
 list(LENGTH OKAY_MODULES_ENABLED _okay_mod_on)

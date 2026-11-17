@@ -15,6 +15,9 @@ Design and decisions: `design/modular_gameplay_contracts.md` (section 11).
 - Serializer, OkayScript VM, property tables, visual-script factory, validators and renderer still name every component, so most modules cannot be stripped yet.
 - Scene v3 to v4 health merge, GameObject menu filtering, exporter drops nothing (warns only), preset player builds.
 
+## Stripping proof (2026-11-17, Linux, -O0 with debug info, same build tree)
+`libokay_engine.a`: 471,149,566 bytes with every module, 425,180,764 with `-DOKAY_MODULES=core` (-46 MB, -9.8%): the 35 model reader files, `Interactable.cpp` and the register.cpp of 8 modules are not in the library. `ReadColladaFile` is absent from the core library (nm). `test_modules` (112 checks) and `test_obj_import` pass in the core build; tests that call a stripped reader do not link there.
+
 ## Measured sizes (stage 0)
 
 From `python3 scripts/module_sizes.py <build folder>` on 2026-11-17: source lines and the code+data bytes of each

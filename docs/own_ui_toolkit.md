@@ -2437,3 +2437,107 @@ Seen and not changed: Dear ImGui's lists still open left of their box under Xvfb
 
 Windows; other UI scales and densities; the item list with a filled Item Database in the real editor; Generate, Random and the material
 rows' edits in the real editor (tried headless); Play mode for all eight; the Voxel Digger's Tool Power drag feel (plain in OkayUI).
+
+## 20. The Inspector, stage 7: the stage 6 gaps, Stats, Inventory, Camera Follow, the World UIs, the vehicle, Joint 3D
+
+Behind the same developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`); Dear ImGui stays the default and the fallback. Written from
+the editor's own Dear ImGui bodies (`editor/main.cpp` DrawInspector and ItemPicker) and measurements of both pictures; the logarithmic
+drag from Dear ImGui's documented behaviour (the drag moves along the range's logarithmic scale, a share of the whole range per pixel),
+checked against Dear ImGui itself in a test; no code from any other project.
+
+### 20.1 The stage 6 gaps
+
+- **The item list has a search field** (a combo row with `search`): the list's rows whose name or id holds the typed text, any case; a
+  typed text that is no id adds 'Use "<text>"', which puts that text in as the id (as the editor's ItemPicker). The field takes the
+  keyboard as the list opens. The same field is in the comparison drawer.
+- **Tool Power's drag is logarithmic** in OkayUI (`DragFloat` with `SliderFlags_Logarithmic`, new). Dragged in both toolkits by the same
+  pixels, the values are the same to 4 decimals: 0 to 100 at 0.5 per pixel, +30 px from 1: 3.98 in both; 0.25 to 8, -40 px from 1: 0.836
+  in both; Tool Power's 0 to a billion, +-60 px from 3: 3.0 in both (it barely moves; a plain drag gave 9).
+- **A filled Item Database in the real editor** (7 items, loaded by the dev hook `OKAY_UI_ITEMS=1 OKAY_UI_CONTENT_DIR=<project>`): the
+  Inventory's slot list on `examples/voxel/voxel_tools.okayscene`'s Player, both toolkits: the list, "pl" typed (Apple, Wood Plank and
+  'Use "pl"' in both), Wood Plank picked, Ctrl+Z (`steps-itemsearch.png`, `steps-plank.png`).
+
+### 20.2 What is ported
+
+| Component | Builder (`editor/main.cpp`) | Notes |
+|---|---|---|
+| Stats | `DrawStatsWithOkayUI` | every row; the HP bar is a new row (`InspRowProgress`, Dear ImGui's ProgressBar); Max and To Next wrap when they do not fit |
+| Inventory | `DrawInventoryWithOkayUI` | every row; each slot's "::" is a drag handle (a small button with `dragType`: dropped on another slot's handle, it moves there), the item list with search, the count, X |
+| Camera Follow | `DrawCameraFollowWithOkayUI` | every row |
+| World UI (3D label) | `DrawWorldUIWithOkayUI` | every row; a localized label keeps Dear ImGui's body (as Text, section 17) |
+| World Space UI (3D) | `DrawWorldSpaceUIWithOkayUI` | every row |
+| Vehicle Seat | `DrawVehicleSeatWithOkayUI` | every row |
+| Vehicle Controller (Car) | `DrawVehicleWithOkayUI` | every row |
+| Joint 3D | `DrawJoint3DWithOkayUI` | every row of every mode |
+
+**Counts.** Ported to field rows: **57** (49 after stage 6, and these 8). Generic card: 8. Still Dear ImGui: **about 166**. By
+example-scene count: Inventory 2 scenes, the others 1 each, and World UI (3D label) none (the "worldui3d" scene key is the World Space UI;
+both are ported). Next by count: Modifiers, Behavior Tree Runner and First Person Hands (2 scenes each), then Sequence Player, NPC
+Controller, Dialogue Runner, Quest Log and the debris emitter (1 each).
+
+### 20.3 Found and fixed
+
+- **Notes cut off, both toolkits:** the Vehicle's two-line drive note, the World Space UI's, Joint 3D's, Stats', Camera Follow's and World
+  UI's now wrap (one wrapping note each).
+- **Wrap decisions in whole pixels (OkayUI):** a label measured 29.48 pixels against Dear ImGui's 29 put Stats' Max on the next line in
+  OkayUI only. Same-line-or-wrap now measures in whole pixels, as Dear ImGui lays items out (such a label may end under a pixel past the
+  region).
+- **An open list's last row was cut by its edge (OkayUI, every combo list):** the list measured its height one item spacing short
+  ("Slider (prismatic)" in Joint 3D's Mode list, and a field under a short list showed through). Golden `inspector_joint3d_modes`.
+- **A list's search lost the keyboard** when the frame count started again (the test kit's rigs): a list now counts as just opened then.
+
+### 20.4 Tests
+
+- `okayui_inspector` (573 checks; 7 new golden images: `inspector_itemsearch_open`, `_itemsearch_use`, `_stats`, `_inventory`,
+  `_joint3d`, `_joint3d_modes`): the search (any case, one item found, 'Use "<text>"' and its pick); Tool Power's drag; the HP bar's size;
+  the slot handle's drag puts the second slot first; no row of the eight bodies runs past the region by a pixel or more; the open list's
+  last row.
+- `okayui_inspector_imgui` (76 checks): the eight bodies in both toolkits; the logarithmic drag in both, four cases.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector|prefab"`: 46 of 47 pass; `prefab_variants` fails its long temp-path check as in
+  section 19.3 (another agent has it). The six files of section 18.4 pass the syntax-only check without `OKAY_HAVE_OKAYUI`; the editor
+  builds with it.
+
+### 20.5 Speed and pixels
+
+Instructions per frame (callgrind, 200 frames): Stats 149,153 against 113,935 (24% fewer), Inventory 134,725 against 99,892 (26%), Camera
+Follow 86,879 against 54,406 (37%), World UI 230,188 against 176,941 (23%), Vehicle Seat 114,551 against 73,275 (36%), Vehicle 252,107
+against 188,555 (25%), Joint 3D 171,165 against 115,757 (32%), World Space UI 91,293 against 57,160 (37%).
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Stats | 104.0 us | 51.9 us | 52.2 ms | 8.3 ms | 0.83% |
+| Inventory | 105.2 us | 56.8 us | 50.1 ms | 6.5 ms | 0.64% |
+| Camera Follow | 88.9 us | 22.5 us | 45.6 ms | 2.8 ms | 0.38% |
+| World UI (3D label) | 124.3 us | 51.5 us | 49.2 ms | 7.0 ms | 1.02% |
+| Vehicle Seat | 94.8 us | 36.5 us | 46.9 ms | 4.4 ms | 0.65% |
+| Vehicle Controller (Car) | 117.6 us | 78.5 us | 61.0 ms | 15.1 ms | 1.96% |
+| Joint 3D | 104.2 us | 46.7 us | 49.4 ms | 6.8 ms | 1.26% |
+| World Space UI (3D) | 85.8 us | 23.5 us | 44.8 ms | 2.8 ms | 0.80% |
+
+The earlier bodies' numbers are unchanged; the highest of all is still Terrain at 3.75%.
+
+### 20.6 In the real editor
+
+Under Xvfb at 1920 x 1200, both toolkits side by side; pictures in `<scratchpad>/shots/oi7/`. **Each side-by-side is scroll-matched:**
+`oi4-logs/drive/pair7.py` finds the offset that lines up the two Inspectors' rows (within 80 pixels) and shifts the OkayUI side by it;
+the offsets were 0 or 1 pixel, except after the slot drag (63 pixels: Dear ImGui scrolled during the drag), and the pictures say so.
+Looked at:
+
+- `examples/vehicle/vehicle_test.okayscene`, Car: Vehicle Controller and Vehicle Seat (`side-10-car.png` to `side-14-car.png`); Follow
+  Camera on (three rows appear) and Ctrl+Z (`steps-follow.png`).
+- `examples/voxel/voxel_tools.okayscene`, Player's Inventory with the filled Item Database (`side-24-player-end.png`), the search
+  (`steps-itemsearch.png`, `steps-plank.png`), the second slot dragged onto the first and Ctrl+Z (`steps-reorder.png`).
+- `examples/physics/physics_playground.okayscene`, a rope ball's Joint 3D (`side-40-joint.png`), Mode to Hinge and Ctrl+Z
+  (`side-42-hinge.png`, `crop-43.png`).
+- `examples/visual_script/playground/camera.okayscene`, Main Camera's Camera Follow (`side-50-camfollow.png`), a Smoothing drag and Ctrl+Z
+  (`steps-smooth.png`).
+- `examples/ui_text/ui_text.okayscene`, Orc Chief's Stats (`side-60-stats.png`), a Health drag (the bar follows) and Ctrl+Z
+  (`steps-health.png`); a Nameplate's World Space UI (`side-63-w3.png`), Constant size off and Ctrl+Z (`steps-constsize.png`).
+
+Seen and not changed: the Vehicle's wrapped drive note breaks one word apart ("Space =" against "Space" / "= handbrake"); Dear ImGui's
+lists still open left of their box under Xvfb.
+
+### 20.7 Not verified
+
+Windows; other UI scales; World UI (3D label) in the real editor (no example scene has one; compared headless); Play mode for all eight;
+an Inventory with a weight limit in the real editor (compared headless).

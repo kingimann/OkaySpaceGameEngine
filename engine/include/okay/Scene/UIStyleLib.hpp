@@ -235,11 +235,19 @@ inline bool StyleSkips(GameObject* go) {
     return false;
 }
 /// The same, for `root` and everything under it (the parts StyleSkips names are left as they are; `root` itself is always styled).
-inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal, bool isRoot = true) {
+inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal, bool isRoot = true, const UIPanel* backing = nullptr) {
     if (!root) return 0;
-    int n = (isRoot || !StyleSkips(root)) ? ApplyStyleOne(root, sp, pal) : 0;
+    const bool styled = isRoot || !StyleSkips(root);
+    int n = styled ? ApplyStyleOne(root, sp, pal) : 0;
+    // A style can put a light fill under text that the look made light (a yellow card under cream letters): text on a solid panel is moved to 4.5 : 1.
+    if (auto* p = root->GetComponent<UIPanel>(); p && styled && p->color.a >= 0.5f) backing = p;
+    if (backing)
+        if (auto* tr = root->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
+            tr->color = UITheme::Fixed(tr->color, backing->color, UITheme::kTextContrast);
+            if (backing->useGradient) tr->color = UITheme::Fixed(tr->color, backing->colorBottom, UITheme::kTextContrast);
+        }
     if (root->transform)
-        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal, false);
+        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal, false, backing);
     return n;
 }
 
@@ -291,7 +299,7 @@ inline const uilib::DataSection* FindTheme(const std::string& name) {
 inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     const uilib::DataSection* s = FindTheme(name);
     if (!s) return false;
-    if (const std::string* p = s->Get("preset")) { th.ApplyPreset(UITheme::PresetFromName(*p)); th.themeName = s->name; return true; }
+    if (const std::string* p = s->Get("preset")) { th.ApplyPreset(UITheme::PresetFromName(*p)); th.themeName = s->name; th.MakeReadable(); return true; }
     th.preset = (int)UITheme::Preset::Custom; th.themeName = s->name;
     th.panel = Hex(s->Str("panel"), th.panel); th.panelBottom = Hex(s->Str("panelBottom"), th.panelBottom);
     th.accent = Hex(s->Str("accent"), th.accent); th.text = Hex(s->Str("text"), th.text); th.muted = Hex(s->Str("muted"), th.muted);
@@ -313,6 +321,8 @@ inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     // `font` names which shipped font the theme wants ("pixel" = the built-in 8x8 font, "dejavu" = DejaVu Sans). It is not written into fontPath:
     // that is a project file path, and the shipped font is not a file of the player's project. The built-in font is used.
     th.fontPath.clear();
+    th.textShadow = s->Num("textShadow", 0) > 0;
+    th.MakeReadable();
     return true;
 }
 

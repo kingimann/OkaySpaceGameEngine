@@ -136,22 +136,22 @@ group Controls Rebinding
     text Hdr1 "KEYBOARD AND MOUSE" pos=40,66 size=250,16 px=12 color=accent up=1
     text Hdr2 "CONTROLLER" pos=326,66 size=180,16 px=12 color=accent up=1
     keybind Jump "Jump" anchor=topleft pos=28,88 size=270,32 action=Jump def=key:space,pad:a
-    keybind JumpPad " " anchor=topleft pos=310,88 size=222,32 action=Jump pad=1
+    keybind JumpPad "Jump" anchor=topleft pos=310,88 size=222,32 action=Jump pad=1
     keybind Fire "Fire" pos=28,130 size=270,32 action=Fire def=key:f,pad:rt
-    keybind FirePad " " pos=310,130 size=222,32 action=Fire pad=1
+    keybind FirePad "Fire" pos=310,130 size=222,32 action=Fire pad=1
     keybind Interact "Use" pos=28,172 size=270,32 action=Interact def=key:e,pad:x
-    keybind InteractPad " " pos=310,172 size=222,32 action=Interact pad=1
+    keybind InteractPad "Use" pos=310,172 size=222,32 action=Interact pad=1
     keybind Reload "Reload" pos=28,214 size=270,32 action=Reload def=key:r,pad:y
-    keybind ReloadPad " " pos=310,214 size=222,32 action=Reload pad=1
+    keybind ReloadPad "Reload" pos=310,214 size=222,32 action=Reload pad=1
     keybind Crouch "Crouch" pos=28,256 size=270,32 action=Crouch def=key:c,pad:b
-    keybind CrouchPad " " pos=310,256 size=222,32 action=Crouch pad=1
+    keybind CrouchPad "Crouch" pos=310,256 size=222,32 action=Crouch pad=1
     keybind Sprint "Sprint" pos=28,298 size=270,32 action=Sprint def=key:shift,pad:ls
-    keybind SprintPad " " pos=310,298 size=222,32 action=Sprint pad=1
+    keybind SprintPad "Sprint" pos=310,298 size=222,32 action=Sprint pad=1
     keybind Map "Map" pos=28,340 size=270,32 action=OpenMap def=key:m,pad:back
-    keybind MapPad " " pos=310,340 size=222,32 action=OpenMap pad=1
+    keybind MapPad "Map" pos=310,340 size=222,32 action=OpenMap pad=1
     keybind Pause "Pause" pos=28,382 size=270,32 action=PauseGame def=key:p,pad:start
-    keybind PausePad " " pos=310,382 size=222,32 action=PauseGame pad=1
-    text Tip "Click a box, then press the key or button you want. Backspace puts the default back." pos=28,426 size=504,40 px=13 color=dim wrap=1
+    keybind PausePad "Pause" pos=310,382 size=222,32 action=PauseGame pad=1
+    text Tip "Click a box, then press the key or button you want. Backspace puts the default back." pos=28,430 size=504,44 px=14 color=dim wrap=1
     button Reset "Reset all" pos=28,500 size=250,40 btn=secondary act=resetkeys
     button Done "Done" pos=290,500 size=242,40 act="hide:rebinding"
 
@@ -190,7 +190,7 @@ group Level Select
     rep n=8 cols=4 dx=152 dy=170
       panel Level pos=28,70 size=140,150 fill=card cr=10 border=1
         panel Thumb pos=10,10 size=120,80 fill=field cr=6
-          icon Mark "map" pos=44,24 size=32,32 color=dim
+          icon Mark "flag" pos=44,24 size=32,32 color=dim
         text Name "Level {i}" pos=0,96 size=140,22 px=16 align=c bold=1
         icon Star1 "star" pos=34,122 size=20,20 color=warning
         icon Star2 "star" pos=60,122 size=20,20 color=warning
@@ -230,11 +230,11 @@ group HUD Shooter
     bar HealthBar pos=44,14 size=216,14 value=0.8 fill=danger
     icon Shield "shield" pos=12,36 size=22,22 color=accent
     bar ArmorBar pos=44,40 size=216,10 value=0.4 fill=accent
-  panel Ammo anchor=bottomright pos=-24,-24 size=200,64 fill=backdrop cr=10
-    text Mag "24" pos=14,4 size=80,56 px=44 bold=1
-    text Reserve "/ 120" pos=94,22 size=90,30 px=22 color=dim
-  panel Cross anchor=center pos=0,0 size=24,24 fill=none cr=0
-    divider H pos=0,11 size=24,2
+  panel Ammo anchor=bottomright pos=-24,-24 size=216,64 fill=backdrop cr=10
+    icon AmmoIcon "bullet" pos=12,16 size=32,32 color=accent
+    text Mag "24" pos=52,6 size=62,52 px=40 bold=1
+    text Reserve "/ 120" pos=114,24 size=90,30 px=22 color=dim
+  icon Cross "crosshair" anchor=center pos=0,0 size=28,28 color=text
   text Timer "02:45" anchor=topcenter pos=0,16 size=160,34 px=28 bold=1 align=c
   button Pause "Pause" anchor=topright pos=-20,16 size=124,38 btn=secondary act="show:pause_menu;pause:1" icon=pause
 
@@ -260,7 +260,7 @@ group HUD RPG
       panel Slot pos=10,8 size=60,52 fill=card cr=8 border=1
         text Key "{i}" pos=4,2 size=20,16 px=12 color=dim
   panel Mini anchor=bottomright pos=-20,-20 size=140,140 fill=backdrop cr=70 shape=circle
-    icon Pin "map" pos=54,54 size=32,32 color=accent
+    icon Pin "compass" pos=54,54 size=32,32 color=accent
 
 [screen hud_racing]
 name = HUD Racing
@@ -351,7 +351,7 @@ group HUD Strategy
     rep n=6 cols=3 dx=78 dy=70
       button Cmd pos=10,10 size=70,60 btn=secondary text="{i}" 
   panel Mini anchor=bottomleft pos=12,-12 size=190,190 fill=backdrop cr=12
-    icon Pin "map" pos=79,79 size=32,32 color=accent
+    icon Pin "compass" pos=79,79 size=32,32 color=accent
 
 [screen minimap_frame]
 name = Minimap Frame
@@ -361,7 +361,7 @@ tags = map, minimap, compass, zoom, radar
 group Minimap Frame
   panel Frame anchor=topright pos=-20,20 size=200,236 fill=backdrop cr=14
     panel Map pos=10,10 size=180,180 fill=card cr=90 shape=circle
-      icon Pin "map" pos=74,74 size=32,32 color=accent
+      icon Pin "compass" pos=74,74 size=32,32 color=accent
       text North "N" pos=80,4 size=20,20 px=16 bold=1 align=c color=danger
     text Place "Old Mill Road" pos=10,196 size=140,22 px=14 color=dim
     button Plus "+" pos=152,196 size=18,22 btn=secondary px=14
@@ -436,7 +436,7 @@ group Shop
     rep n=6 cols=3 dx=222 dy=182
       panel Item pos=24,72 size=210,170 fill=card cr=12 border=1
         panel Pic pos=12,12 size=186,70 fill=field cr=8
-          icon Icon "bag" pos=77,19 size=32,32 color=dim
+          icon Icon "gem" pos=71,13 size=44,44 color=dim
         text Name "Item {i}" pos=12,88 size=186,22 px=16 bold=1
         text Price "120 gold" pos=12,110 size=186,20 px=14 color=warning
         button Buy "Buy" pos=12,132 size=186,28 btn=primary px=14

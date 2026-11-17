@@ -65,7 +65,6 @@ release job or the installer build for this change.
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
-| 7m | UI library slice 2: game HUD parts and data-driven glue | File > Examples > UI library > ui_library_2 (then Play), or GameObject > UI > Game HUD and Data; file `examples\ui_library\ui_library_2.okayscene` | New in this change; headless tests and pictures only, real window and editor menus unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
@@ -84,7 +83,6 @@ release job or the installer build for this change.
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
 | 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
-| 7zr | UI library slice 3: app parts (menu bar, toolbar, tree view, data table, wizard, form group, colour picker upgrade) | File > Examples > UI library > ui_library_3 (then Play), or GameObject > UI > App; file `examples\ui_library\ui_library_3.okayscene` | New in this change; headless tests and pictures only, real window and editor menus unverified |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
@@ -681,41 +679,6 @@ The pictures are software renders (`ui_library_shots`), not a real window. The e
 were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
 world-space Canvas yet.
 
-## 7m. UI library slice 2: game HUD parts and data-driven glue
-
-**What it is.** A UI screen with six cards for the parts added in slice 2 of the in-game UI component library
-([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed). Game parts: ammo counter,
-ability icon with a cooldown ring, interaction prompt, radial menu, kill feed, objective tracker, compass, item tooltip card.
-Data parts: two-way binding, show/hide from a condition, a list filled from an array, clickable links and inline pictures in rich
-text, Tab order, hot reload of a UI file.
-
-**Steps.**
-1. Open the editor from its install folder. **File > Examples > UI library (every in-game UI part) > ui_library_2**. (Or **File >
-   Open...** with `<install folder>\examples\ui_library\ui_library_2.okayscene`.)
-2. Press **Play**.
-3. Card "Ammo, ability, prompt": click **Shoot** a few times and **Reload**; click **Use (or press Q)** and watch the ring sweep and the
-   seconds count down; tick **I am near the door** and the "E  Open the door" prompt fades in, untick it and it fades out.
-4. Card "Radial menu, kill feed": click a wedge of the wheel (the text changes to what you picked). Click **New kill** twice: lines appear
-   at the top right of the screen and fade out later.
-5. Card "Objectives, compass": click **Wolf** three times, then **Talk** and **Bridge** (progress 1/3, 2/3, ticks); **Again** starts over.
-   Drag the heading slider: the compass strip slides.
-6. Card "Item tooltip card": pick another item in the dropdown; the card changes name, colour and stats.
-7. Card "Bindings and conditions": drag the volume slider and type in the box (both show the same number); go below 20 for the red
-   warning; tick **Mute** for the "Muted" note.
-8. Card "List, links, hot reload": **Add a score** and **Clear**; click the blue "manual" link ("Link you clicked: manual"). While the
-   game runs, edit and save `examples\ui_library\hot_reload_demo.okayui`: the yellow lines change within half a second.
-9. Press **Tab** (and Shift+Tab): the focus ring walks the buttons.
-10. Stop Play. **GameObject > UI > Game HUD** and **Data** add each part to your own scene; select one to see its Inspector.
-
-**What you should see.** Numbers, rings, lines and lists changing as described; the prompt hidden until the toggle is on; pictures in
-`docs/images/ui_library/` (`hud-*.png`, `rich-links-icons.png`, `example2-*.png`, headless renders).
-
-**Status.** Logic, saving and loading, and the shipped scene are tested headless on Linux (`ui_library2`, `ui_library2_example`,
-`ui_library2_shots`; see the PR for the numbers). The pictures are software renders, not a real window. Nothing ran on Windows. The
-editor menus and Inspector panels were written and syntax-checked but the editor was not built or run. Link clicks on a scaled
-canvas, the Tab key in the editor's Game view and the hot-reload file path (relative to the folder the editor was started in) are
-unverified in a real window.
-
 ## 7r. The walk looks like a walk, Shift looks like a run
 
 Why: "the character walking is basically running". The player used to move at 4.5 m/s for plain W, which is a jog, and at 8 m/s for
@@ -1286,41 +1249,6 @@ More new steps (same branch):
 
 **Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
 
-## 7zr. UI library slice 3: app parts
-
-**What it is.** A UI screen for the app parts added in slice 3 of the in-game UI component library
-([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a menu bar, a toolbar with
-toggles and one-of-a-group buttons, a tree view, a sortable data table that only draws the rows on screen, a wizard with a form group on
-its steps, and the colour picker with a hue / saturation square plus value and alpha sliders.
-
-**Steps.**
-1. Open the editor from its install folder. **File > Examples > UI library (every in-game UI part) > ui_library_3**. (Or **File > Open...**
-   with `<install folder>\examples\ui_library\ui_library_3.okayscene`.)
-2. Press **Play**. The card "What you chose" at the top right reports what every part picked, so you can see each click do something.
-3. Menu bar: click **File**, then **Open**. "Menu: File/Open" shows on the right. Slide the pointer over **Edit** while a menu is open: it
-   switches. **Export (soon)** is greyed out and does nothing. Click anywhere else, or press Escape, to close.
-4. Toolbar (under the title): click **B**, **I**, **U**: each stays pressed, and "Bold 1  Italic 1" shows. **L**, **C**, **R** are
-   one-of-a-group: pressing one releases the others.
-5. Tree: click the little arrow next to **Castle** to open it, click **Gate** to select it, then press Up, Down, Left, Right.
-6. Table: click the **Level** header (sorted ascending, click again for descending), click a row to select it, click **Add a row** a few
-   times and scroll with the mouse wheel. Click the table first, then press Up, Down, PageDown, Home, End.
-7. Wizard: click **Next** with the boxes empty: red sentences show and it stays on step 1. Type a name and an email like `ann@site.com`,
-   click **Next**. On step 2 try an age of `12` (refused), then `29`. Step 3 greets you by name; **Finish** ends it. **Back** goes back and the
-   numbered circles above go back too.
-8. Colour picker: click a swatch, then click and drag in the square (hue across, saturation down) and drag the two sliders (brightness,
-   see-through): the chip at the right shows the colour. **Advanced on / off** hides and shows the square and sliders.
-9. Stop Play. **GameObject > UI > App** adds each part to your own scene (Menu Bar, Toolbar, Tree View, Data Table, Wizard, Form Group);
-   **Color Picker** has an **Advanced** tick in its Inspector. Select a part to see its Inspector.
-
-**What you should see.** Menus dropping down over the other cards, toggles staying pressed, a tree opening and closing, rows reordering when a
-header is clicked and the same person staying selected, a wizard that refuses to go on until its form is valid, and a colour square you can
-drag in. Pictures are in `docs/images/ui_library/` (`menubar-open.png`, `toolbar*.png`, `tree.png`, `table.png`, `form-errors.png`,
-`wizard.png`, `color-advanced.png`, `example3-*.png`; headless renders, not a real window).
-
-**Status.** Logic, saving and loading, the pointer and key paths and the shipped scene are tested headless on Linux (`ui_library3`,
-`ui_library3_example`, `ui_library3_shots`; see the report for the numbers). Nothing ran on Windows or in a real window. The editor
-Inspector and menu entries were written but the whole editor was not run. Gamepad focus-ring navigation does not reach the new parts yet.
-
 ## 16. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -1557,6 +1485,35 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+
+All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+
+1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
+   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
+   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
+2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
+   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
+   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
+3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
+   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
+   UV **tile** field.
+4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
+   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
+5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
+   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
+   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
+   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
+   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
+   the same reader but was not tried by hand.)
+6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
+   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
+   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+
+What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
+`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
+Mesh (it creates a second object).
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 

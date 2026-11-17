@@ -8,6 +8,8 @@
 #include "UIMenuModel.hpp"   // editor/UIMenuModel.hpp: GameObject > UI as data (no ImGui)
 #include <cstdio>
 #include <filesystem>
+#include "okay/Graphics/TtfFont.hpp"
+#include "okay/UI/UIRenderer.hpp"
 #include <fstream>
 #include <map>
 #include <functional>
@@ -475,6 +477,157 @@ int main() {
         CHECK(S::ApplyPresetFile(g, files[1]));
         CHECK(!S::ApplyPresetFile(g, dir + "/missing.okaylook"));
         std::filesystem::remove_all(dir);
+    }
+
+    {   // ---- no pixel font anywhere: no look, screen builder or example scene switches the UI to the 8x8 bitmap font
+        for (const char* f : {"ui_themes", "ui_screens", "ui_styles", "ui_components", "ui_icons"}) {
+            const std::string text = ReadFile(std::string(OKAY_SOURCE_DIR) + "/assets/ui/" + f + ".okaydata");
+            CHECK(!text.empty());
+            CHECK(text.find("font = pixel") == std::string::npos);
+            CHECK(text.find("uifont") == std::string::npos);
+        }
+        for (const char* f : {"ui_library_4", "ui_starter_pack", "ui_mix_styles"}) {
+            const std::string text = ReadFile(std::string(OKAY_SOURCE_DIR) + "/examples/ui_library/" + f + ".okayscene");
+            CHECK(!text.empty());
+            CHECK(text.find("\"pixel\"") == std::string::npos);
+        }
+        for (const auto& t : S::Themes()) { UITheme th; S::ApplyThemeData(th, t.name); CHECK(th.fontPath.empty()); }   // a look never sets a font path
+        Scene sc("font");
+        UIScreens::Build(sc, "main_menu", 0, "Retro Pixel", "Pixel");
+        CHECK(sc.uiFont.empty());                                   // building a screen with the retro look leaves the scene's UI font at the smooth default
+    }
+
+    {   // ---- text fits: no label or button text is wider than its box, in any screen, with any of the 62 looks (the widths are in the logical pixels of the
+        // layout, so they are the same on a 1280 x 720, 1024 x 768 or 2560 x 1080 canvas)
+        std::filesystem::current_path(OKAY_SOURCE_DIR);               // the shipped font is found like in the editor
+        TtfFont* font = SceneUIFont("");
+        CHECK(font != nullptr && font->Valid());
+        int checked = 0, wide = 0;
+        auto measure = [&](GameObject* root, const std::string& what) {
+            std::function<void(GameObject*)> walk = [&](GameObject* g) {
+                if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace && !tr->text.empty()) {
+                    std::string t = tr->text; if (tr->uppercase) for (char& c : t) c = (char)std::toupper((unsigned char)c);
+                    float w = 0.0f;   // the widest line (a wrapped text has its line breaks in it)
+                    for (std::size_t from = 0; from <= t.size();) {
+                        std::size_t to = t.find('\n', from); if (to == std::string::npos) to = t.size();
+                        const std::string ln = t.substr(from, to - from);
+                        w = std::max(w, ui2d::UIMeasureText(font, ln, tr->pixelSize) + (float)ln.size() * tr->letterSpacing * tr->pixelSize);
+                        from = to + 1;
+                    }
+                    ++checked;
+                    if (w > tr->size.x + 1.0f) { ++wide; std::printf("  %s: text \"%s\" is %.0f wide in a %.0f box (%s)\n", what.c_str(), tr->text.c_str(), w, tr->size.x, g->name.c_str()); }
+                }
+                if (auto* b = g->GetComponent<UIButton>(); b && b->interactable && !b->label.empty()) {
+                    const float w = ui2d::UIMeasureText(font, b->label, b->fontScale);
+                    const float room = b->size.x - (b->icon.empty() ? 8.0f : b->iconSize + 20.0f);
+                    ++checked;
+                    if (w > room + 1.0f) { ++wide; std::printf("  %s: button \"%s\" label %.0f wide, room %.0f (%s)\n", what.c_str(), b->label.c_str(), w, room, g->name.c_str()); }
+                }
+                for (Transform* c : g->transform->Children()) if (c && c->gameObject) walk(c->gameObject);
+            };
+            walk(root);
+        };
+        for (const auto& d : UIScreens::Screens()) {
+            if (!d.native.empty()) continue;
+            Scene sc("fit"); GameObject* root = UIScreens::Build(sc, d.id, 0);
+            if (root) measure(root, d.id);
+        }
+        for (const auto& t : S::Themes()) for (const char* id : {"main_menu", "settings", "hud_shooter", "confirm_popup", "inventory_grid"}) {
+            Scene sc("fit2"); GameObject* root = UIScreens::Build(sc, id, 0, t.name);
+            if (root) measure(root, std::string(id) + " with " + t.name);
+        }
+        CHECK(checked > 2000);
+        CHECK(wide == 0);
+    }
+
+    {   // ---- the selected tab's label is readable on every look (it was dark ink on a dark panel in the Underline style)
+        for (const auto& t : S::Themes()) for (const char* id : {"settings", "quest_log"}) {
+            Scene sc("tabs"); GameObject* root = UIScreens::Build(sc, id, 0, t.name);
+            GameObject* tabs = sc.Find("Tabs");
+            auto* tb = tabs ? tabs->GetComponent<UITabs>() : nullptr;
+            CHECK(root && tb);
+            if (!tb) continue;
+            const bool filled = tb->style == UITabs::Style::Segmented || tb->style == UITabs::Style::Pills;
+            const float c = UITheme::Contrast(tb->selectedTextColor, filled ? tb->selected : tb->background);
+            if (c < 3.0f) std::printf("  %s with %s: selected tab text contrast %.2f\n", id, t.name.c_str(), c);
+            CHECK(c >= 3.0f);
+            CHECK(UITheme::Contrast(tb->textColor, tb->background) >= 2.0f || tb->background.a < 0.5f);   // the other tabs are readable too
+        }
+    }
+
+    {   // ---- icons: 64 coverage levels (8 x 8 samples), a smooth edge at 3x; the minimap and map frames show a compass, not a pause-like glyph
+        const uilib::IconDef* heart = uilib::FindIcon("heart");
+        std::set<int> levels; for (auto v : uilib::RenderIcon(*heart, 72)) levels.insert(v);
+        CHECK(levels.size() >= 25);
+        for (const char* id : {"minimap_frame", "hud_rpg", "hud_strategy"}) {
+            const UIScreens::Def* d = UIScreens::Find(id);
+            bool compass = false, map = false;
+            for (const std::string& line : d->body) { if (line.find("\"compass\"") != std::string::npos) compass = true; if (line.find("\"map\"") != std::string::npos) map = true; }
+            CHECK(compass && !map);
+        }
+    }
+
+    {   // ---- every look: text, muted text and button labels reach 4.5 : 1 (the failing look is named)
+        int bad = 0;
+        for (const auto& t : S::Themes()) {
+            UITheme th; S::ApplyThemeData(th, t.name);
+            auto chk = [&](const char* what, Color fg, Color bg) {
+                const float c = UITheme::Contrast(fg, bg);
+                if (c < 4.5f) { ++bad; std::printf("  look %s: %s contrast %.2f (needs 4.5)\n", t.name.c_str(), what, c); }
+            };
+            chk("text on panel", th.text, th.panel); chk("text on panel bottom", th.text, th.panelBottom);
+            chk("muted on panel", th.muted, th.panel); chk("muted on panel bottom", th.muted, th.panelBottom);
+            chk("button text on button", th.buttonText, th.button); chk("button text on hover", th.buttonText, th.buttonHover);
+            chk("button text on pressed", th.buttonText, th.buttonPressed);
+            // and on the real widgets of a screen built with the look
+            for (const char* id : {"main_menu", "settings", "hud_shooter"}) {
+                Scene sc("c"); UIScreens::Build(sc, id, 0, t.name);
+                for (const auto& o : sc.Objects()) if (auto* b = o->GetComponent<UIButton>(); b && b->interactable && !b->label.empty() && b->color.a >= 0.8f) {
+                    const float c = UITheme::Contrast(b->textColor, b->color);
+                    if (c < 4.5f) { ++bad; std::printf("  look %s, %s: button \"%s\" text contrast %.2f\n", t.name.c_str(), id, b->label.c_str(), c); }
+                }
+            }
+        }
+        CHECK(bad == 0);
+    }
+
+    {   // ---- a slider's value has its own space at the right of the track: the track, fill and handle never reach under it
+        UISlider sl; sl.size = {300.0f, 12.0f}; sl.showValue = true;
+        CHECK(sl.ValueSpace() >= 30.0f);
+        CHECK(sl.TrackWidth() + sl.ValueSpace() == sl.size.x);
+        CHECK(sl.TrackWidth() < sl.size.x - 30.0f);
+        sl.showValue = false; CHECK(sl.ValueSpace() == 0.0f && sl.TrackWidth() == sl.size.x);
+        sl.showValue = true; sl.minValue = 0; sl.maxValue = 100; sl.wholeNumbers = true; sl.valueFormat = "{v}%";
+        CHECK(sl.ValueSpace() >= 12.0f + 9.0f * 4.0f);                    // room for "100%" whatever the value now is
+        float a = sl.ValueSpace(); sl.value = 5; CHECK(sl.ValueSpace() == a);   // the track does not jump while dragging
+        int checked = 0;
+        for (const auto& d : UIScreens::Screens()) {
+            if (!d.native.empty()) continue;
+            for (const char* look : {"", "Light", "Fantasy", "Glass", "Candy"}) {
+                Scene scn("sl"); UIScreens::Build(scn, d.id, 0, look);
+                for (const auto& o : scn.Objects()) if (auto* u = o->GetComponent<UISlider>(); u && u->showValue && !u->vertical) {
+                    ++checked;
+                    CHECK(u->TrackWidth() + u->ValueSpace() == u->size.x);
+                    CHECK(u->ValueSpace() > 0.0f && u->TrackWidth() >= 60.0f);
+                }
+            }
+        }
+        CHECK(checked >= 8);
+    }
+
+    {   // ---- text is crisp: no outline and no drop shadow on any UI text unless the look asks for one
+        for (const auto& t : S::Themes()) {
+            Scene sc("tx"); UIScreens::Build(sc, "main_menu", 0, t.name);
+            for (const auto& o : sc.Objects()) if (auto* tr = o->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
+                CHECK(!tr->outline);
+                CHECK(!tr->shadow);
+            }
+        }
+        Scene sc("hud"); UIScreens::Build(sc, "hud_shooter", 0);
+        int stray = 0;
+        for (const auto& o : sc.Objects()) if (o->name.find("Cross") != std::string::npos) if (auto* ib = o->GetComponent<UIButton>()) stray += ib->icon.empty();
+        CHECK(stray == 0);
+        CHECK(sc.Find("Ammo") && sc.Find("AmmoIcon"));    // the ammo counter has its weapon icon
     }
 
     {   // ---- gallery: search and filters

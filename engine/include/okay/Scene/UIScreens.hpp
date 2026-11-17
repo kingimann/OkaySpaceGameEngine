@@ -304,9 +304,28 @@ inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const 
         if (k == "caption") g = Caption(s, parent, n.name.c_str(), n.text, an, pos, size.x, Role(n.Get("color"), slate::Accent()));
         else {
             const int al = n.Get("align") == "c" ? 1 : n.Get("align") == "r" ? 2 : 0;
-            g = Text(s, parent, n.name.c_str(), n.text, an, pos, size, n.Num("px", 16.0f), Role(n.Get("color"), slate::Text()), al, n.Get("bold") == "1");
+            // Text is a notch bigger than the data says (16 -> 17.6), and a line that would run past its box is shrunk to fit it (a smooth
+            // font is about 0.58 of its height wide per letter); wrapped text keeps its size and wraps.
+            float px = n.Num("px", 16.0f);
+            if (n.Get("wrap") != "1") {
+                px *= 1.1f;
+                if (n.Get("bold") == "1" && px >= 26.0f && px <= 40.0f) px *= 1.1f;   // headings are one more step bigger (a 28 title is about 34 on screen)
+                const float est = (float)n.text.size() * px * (n.Get("bold") == "1" ? 0.64f : 0.58f);
+                if (est > size.x * 0.97f && est > 0.0f) px = std::max(9.0f, px * size.x * 0.97f / est);
+            }
+            g = Text(s, parent, n.name.c_str(), n.text, an, pos, size, px, Role(n.Get("color"), slate::Text()), al, n.Get("bold") == "1");
             auto* tr = g->GetComponent<TextRenderer>();
-            if (n.Get("wrap") == "1") { tr->wrap = true; tr->vcenter = false; }
+            if (n.Get("wrap") == "1") {
+                // The text box wraps by the 8x8 font's letter width, which is about twice a smooth letter, so a long line broke at half the box. Break the
+                // lines here with the smooth font's width instead (0.56 of the size per letter) and keep the box a plain, top-aligned text box.
+                const float per = px * (n.Get("bold") == "1" ? 0.62f : 0.56f);
+                const std::size_t maxc = std::max<std::size_t>(8, (std::size_t)(size.x * 0.96f / (per > 1.0f ? per : 1.0f)));
+                std::string out, line, word;
+                auto flush = [&] { if (!word.empty()) { if (!line.empty() && line.size() + 1 + word.size() > maxc) { out += line + "\n"; line.clear(); } line += (line.empty() ? "" : " ") + word; word.clear(); } };
+                for (char c : n.text) { if (c == ' ') flush(); else if (c == '\n') { flush(); out += line + "\n"; line.clear(); } else word += c; }
+                flush(); out += line;
+                tr->text = out; tr->wrap = false; tr->vcenter = false;
+            }
             if (n.Get("up") == "1") { tr->uppercase = true; tr->letterSpacing = 1.0f; }
         }
     } else if (k == "button") {
@@ -317,7 +336,13 @@ inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const 
         if (n.Has("icon")) { bt->icon = "icon:" + n.Get("icon"); bt->iconSize = std::min(size.y - 12.0f, 24.0f); }
         if (n.Get("shape") == "pill") bt->shape = UIShape::Pill;
         if (n.Get("shape") == "circle") bt->shape = UIShape::Circle;
-        if (n.Has("px")) bt->fontScale = n.Num("px", 16.0f) / 8.0f;
+        {   // buttons read a notch bigger (18 px), shrunk when the label would not fit beside the icon
+            float px = n.Has("px") ? n.Num("px", 18.0f) : 18.0f;
+            const float room = size.x - (n.Has("icon") ? bt->iconSize + 28.0f : 16.0f);
+            const float est = (float)n.text.size() * px * 0.6f;
+            if (est > room && room > 0.0f) px = std::max(9.0f, px * room / est);
+            bt->fontScale = px / 8.0f;
+        }
         Script(g, n.Get("act"), "on_click", rootName);
     } else if (k == "badge") {
         g = Badge(s, parent, n.name.c_str(), n.text, an, pos, Role(n.Get("color"), slate::Accent()));

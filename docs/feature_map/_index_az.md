@@ -910,6 +910,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Create page: projects, templates and Git (17.12)
 - create_server (17.8)
 - creation (11.5)
+- Crisp at any size (12.11.7)
 - critical damping (1.2, 36.3)
 - cross fade (27.1)
 - cross product (36.1)

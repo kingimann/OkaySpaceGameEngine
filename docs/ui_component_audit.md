@@ -9,7 +9,7 @@ Method: `scripts/find_existing.py` was run for ui / widget / button / slider and
 `docs/feature_map/12-ingame-ui.md`, `docs/ui_runtime.md`, `docs/ui_html.md`, `docs/UNFINISHED.md` and the tests.
 Each row says **exists (where)** or **gap**. "Slice N" says which slice of the library builds the gap
 (slice 1 = essentials and layout, slice 2 = game parts and data-driven, slice 3 = app parts).
-`New in slice 1` and `New in slice 2` rows are built by the library changes.
+`New in slice 1` rows are built by this change.
 
 The honest summary: most of the library already exists. About 55 of the 100 parts asked for are present, tested and
 reachable from `GameObject > UI`. The gaps are mostly the "built on top" parts (radial menu, data table, tree,
@@ -22,7 +22,7 @@ templates from an array, conditional visibility).
 |---|---|---|
 | Label | exists | `TextRenderer` with Screen Space on; Create > UI > Basic > Text. Localised text key (`LocalizedText`) |
 | Rich text (bold, italic, colour, size) | exists | `UI/RichText.hpp`, `[b] [i] [color=] [size=]`, `docs/ui_runtime.md` |
-| Rich text links and inline icons | **New in slice 2** | `[url=target]` and `[icon=name]` in `UI/RichText.hpp`, drawn by the UI renderer; `UIRichLinks` makes links clickable |
+| Rich text links and inline icons | gap | no `[url]` or `[icon]` tag; slice 2 |
 | Button (variants, icon, toggle) | exists | `UIButton` (toggle mode, icon, `UIStyleVariant` roles Primary/Secondary/Danger/Ghost/Outline/Pill) |
 | Checkbox, toggle switch | exists | `UIToggle` Style = Checkbox / Switch |
 | Radio group | exists | `UIToggle` Style = Radio + `radioGroup` |
@@ -46,21 +46,21 @@ templates from an array, conditional visibility).
 | Part | Status | Where / gap |
 |---|---|---|
 | Health and mana bars with a delayed damage trail | exists | `UIProgressBar` (`trailDelay`, `trailColor`) + `UIBarBind` (follows a variable) |
-| Cooldown icon with a radial sweep | exists + **New in slice 2** | `UIRadialProgress` is the ring; `UIAbilityIcon` adds the icon, seconds left, key and charges |
+| Cooldown icon with a radial sweep | exists | `UIRadialProgress` (no ready-made "ability icon" group: slice 2) |
 | Hotbar / quickslots with drag and drop | exists | `UISlotGrid`, `UIDraggable` / `UIDropTarget`, `Inventory/InventoryInput` |
-| Inventory grid / list, item tooltips from the item database | exists + **New in slice 2** | `GridInventoryUI`, `InventoryUI`, `UIInventoryBind`; `UIItemTooltipCard` is a placeable card for one item (same words as the inventory tooltip) |
+| Inventory grid / list, item tooltips from the item database | partly | `GridInventoryUI`, `InventoryUI`, `UIInventoryBind`; the item tooltip card is a gap (slice 2) |
 | Minimap | exists | `Minimap` (north tick, circular mask) |
-| Compass strip | **New in slice 2** | `UICompass` |
+| Compass strip | gap | slice 2 |
 | Damage numbers / floating text | exists | `UIDamageNumbers` |
 | Crosshair (styles) | exists | `Crosshair` |
-| Objective tracker (HUD list) | **New in slice 2** | `UIObjectiveTracker` reads the existing `QuestLog` (which keeps its own plain overlay, `showTracker`) |
+| Objective tracker (HUD list) | gap | quest data exists (`QuestLog`), the on-screen tracker does not; slice 2 |
 | Dialogue box: typewriter and choices | exists | `UIDialogueBox` |
 | Notification / toast stack | exists | `UIToast` |
 | Scoreboard / leaderboard | exists | `UITemplates::AddScoreboard`, `AddLeaderboard` (templates, not a bound component) |
-| Ammo counter | **New in slice 2** | `UIAmmoCounter` (reads `RangedWeapon`, variables or typed numbers) |
-| Interaction prompt ("Press E") | exists + **New in slice 2** | `HoldPrompt` (hold ring); `UIInteractionPrompt` is the plain key prompt that hides when the player is not near (the key text is typed, not read from an input binding) |
-| Radial menu | **New in slice 2** | `UIRadialMenu` |
-| Kill feed | **New in slice 2** | `UIKillFeed` (pushed by a script or `Announce`; no automatic death event yet) |
+| Ammo counter | gap | slice 2 |
+| Interaction prompt ("Press E") | partly | `HoldPrompt` (hold ring); a plain key prompt with the bound key is a gap (slice 2) |
+| Radial menu | gap | slice 2 |
+| Kill feed | gap | slice 2 |
 | Loading screen | exists | `LoadingScreen`, five layouts |
 
 ## App
@@ -94,20 +94,20 @@ templates from an array, conditional visibility).
 | Aspect-ratio container | **New in slice 1** | `UIAspectRatio` |
 | Safe area | exists | `UISafeArea` |
 | Z-order and layers | exists | `Canvas.sortOrder`, `uiDrawOrder`, the shared layer table (`UI/UIRenderer`) |
-| Focus navigation order for gamepad and keyboard | **New in slice 2** | `NavigateUI` now walks Tab and Shift+Tab through `UI/FocusGraph`'s tab order and honours `UIFocusHint` links; arrows still use the position score; traps are still the modal check |
+| Focus navigation order for gamepad and keyboard | partly | `NavigateUI` works by position; `UI/FocusGraph` (tab order, links, traps) is written but not used by `NavigateUI` (feature map 12.12); slice 2 |
 
 ## Data-driven
 
 | Part | Status | Where / gap |
 |---|---|---|
 | Bind a widget to a variable (one way) | exists | `UITextBind`, `UIBarBind`, `UIInventoryBind` |
-| Two-way binding (a slider writes the variable back) | **New in slice 2** | `UIBind` (slider, stepper, toggle, dropdown, range slider, input field; variables, not Stat components or SyncVars) |
-| List templates repeated from an array | **New in slice 2** | `UIListBind` fills `UIListView` from an array variable; the list's first child is the row template |
-| Conditional visibility from a value | **New in slice 2** | `UIVisibleIf` (variable or expression such as `hp < 30 && !muted`) |
+| Two-way binding (a slider writes the variable back) | gap | slice 2 |
+| List templates repeated from an array | partly | `UIListView` binds script rows; binding to an array variable is feature map 12.13 "Open"; slice 2 |
+| Conditional visibility from a value | gap | `ui_show` / `ui_hide` by script only; slice 2 |
 | Localisation keys | exists | `LocalizedText` on text, button, toggle, input, tooltip; `SceneLocalization` |
 | Styles and themes from a data file | exists | `UITheme` + `.okaytheme` files, `UIThemeAsset`; selectors and states are still open (12.7) |
 | UI described in a text asset that loads into a Canvas | exists | `UIDocument` (line markup and HTML + CSS subset), `docs/ui_html.md` |
-| Hot reload in the editor | **New in slice 2** | `UIHotReload` watches a UIDocument markup file or an `.okaytheme` while the game runs (one file per component) |
+| Hot reload in the editor | partly | `UIDocument.Rebuild` by button; no file watcher; slice 2 |
 
 ## Slice 1 (this change)
 
@@ -116,28 +116,3 @@ New: `UIRangeSlider`, `UIInputValidator`, `UIAspectRatio`, a shipped example sce
 `ui_library_shots`. See [ui_library.md](ui_library.md).
 
 Not done in slice 1 (kept honest): rich text links and icons, the FocusGraph wiring, the form group with Submit.
-
-## Slice 2
-
-New: the game parts `UIRadialMenu`, `UIKillFeed`, `UIAmmoCounter`, `UIInteractionPrompt`, `UIObjectiveTracker`, `UICompass`, `UIItemTooltipCard`,
-`UIAbilityIcon`; the data parts `UIBind`, `UIVisibleIf`, `UIListBind`, `UIHotReload`, `UIFocusHint`, `UIRichLinks`; rich text `[url]` and
-`[icon]` tags; `NavigateUI` Tab order; the shipped scene `examples/ui_library/ui_library_2.okayscene`; tests `ui_library2`,
-`ui_library2_example`, `ui_library2_shots`. See [ui_library.md](ui_library.md) (slice 2 section) for how to try each and what is not done.
-Slice 3 (app parts) is below.
-
-## Slice 3
-
-New: the app parts `UIMenuBar`, `UIToolbar`, `UITreeView`, `UIDataTable`, `UIWizard`, `UIFormGroup`; `UIColorSquare`; the colour picker's
-advanced mode (hue / saturation square, value and alpha sliders, extending `UIColorPicker` in place); the shipped scene
-`examples/ui_library/ui_library_3.okayscene`; tests `ui_library3`, `ui_library3_example`, `ui_library3_shots`. Already there and left as
-they were: `UIContextMenu`, `UITabs`, `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UIListView`, `UISearchBar`, `UIDateTimePicker`,
-`UIInputValidator` (the form group uses it). See [ui_library.md](ui_library.md) (slice 3 section) for how to try each and what is not done.
-
-## Slice 4 (the scale of choice)
-
-Slice 4 adds no new component classes. It adds data and readers on top of the existing ones: styles and themes for every widget that has a look
-(`UIStyleVariant` gained `style`, `styleSize`, `styleDensity`), vector icons for `UIImage`, `UIButton` and rich text, screens built from data, a
-searchable gallery and a simpler GameObject > UI menu. The numbers are in [ui_catalogue.md](ui_catalogue.md); the design is in
-[ui_library.md](ui_library.md). Still not done: stripe, noise and image fills and dashed borders (the renderer cannot draw them), playing the
-theme sound names, gamepad focus for the new data screens, and running the editor menu and Gallery in a real window.
-

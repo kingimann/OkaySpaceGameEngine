@@ -1,6 +1,6 @@
 // Headless pictures (software renderer, same UI pass as the game; not a real window) of UI library slice 4: the themes side by side, the
 // icon sheet, the style sheet, and a picture of every screen. They are written to <build>/tests/ui_library4/ (and to a folder given as the
-// first argument, which is how docs/images/ui_library/ was made). Written for this engine; no other project's code or art.
+// first argument or in the OKAY_SHOT_DIR environment variable; pictures are never kept in the repository). Written for this engine; no other project's code or art.
 #define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include <Okay.hpp>
@@ -109,6 +109,7 @@ int main(int argc, char** argv) {
     RUN_SUITE("ui_library4_shots");
     std::filesystem::current_path(OKAY_SOURCE_DIR);   // so the shipped font (assets/fonts/DejaVuSans.ttf) is found like in the editor
     std::string dir = std::string(OKAY_TEST_OUTPUT_DIR) + "/ui_library4";
+    if (const char* env = std::getenv("OKAY_SHOT_DIR")) if (env[0]) dir = env;   // pictures go outside the repository
     if (argc >= 2 && argv[1][0]) dir = argv[1];
     std::error_code ec;
     std::filesystem::create_directories(dir + "/screens", ec);
@@ -227,26 +228,41 @@ int main(int argc, char** argv) {
         CHECK(sh.img.SavePNG(dir + "/controls-listening.png"));
     }
 
-    {   // a picture of every screen built from data (1280 x 720, saved at half size) and a contact sheet of them
-        std::vector<std::string> ids;
-        for (const auto& d : UIScreens::Screens()) if (d.native.empty()) ids.push_back(d.id);
-        Image contact(4 * 646, (((int)ids.size() + 3) / 4) * 366);
-        for (int y = 0; y < contact.Height(); ++y) for (int x = 0; x < contact.Width(); ++x) contact.SetPixel(x, y, Color::FromBytes(10, 12, 16, 255));
+    {   // a picture of every screen built from data (1280 x 720; a phone-only screen is drawn at 720 x 1280), two contact sheets: one look for all,
+        // and one where every section has its own look
+        static const std::pair<const char*, const char*> kSectionLook[] = {
+            {"menus", "Midnight Blue"}, {"hud", "Space Station"}, {"items", "Wood Plank"}, {"dialogue", "Paper"}, {"social", "Candy"},
+            {"popups", "Comic"}, {"forms", "Mobile Clean"}, {"mobile", "Neon"}, {"loading", "Dark"}};
+        std::vector<const UIScreens::Def*> defs;
+        for (const auto& d : UIScreens::Screens()) if (d.native.empty()) defs.push_back(&d);
+        const int cols = 4, rows = ((int)defs.size() + cols - 1) / cols;
+        Image sheetA(cols * 646, rows * 366), sheetB(cols * 646, rows * 366);
+        for (Image* im : {&sheetA, &sheetB}) for (int y = 0; y < im->Height(); ++y) for (int x = 0; x < im->Width(); ++x) im->SetPixel(x, y, Color::FromBytes(10, 12, 16, 255));
         int ok = 0;
-        for (std::size_t i = 0; i < ids.size(); ++i) {
-            Shot sh = Render(1280, 720, [&](Scene& s) {
-                UIScreens::Build(s, ids[i], 0, "Midnight Blue");
-                if (ids[i].rfind("hud_", 0) == 0 || ids[i] == "minimap_frame" || ids[i] == "touch_hud") {}
-            });
-            ok += sh.ok;
-            if (!sh.ok) { std::cout << "  no picture for screen " << ids[i] << "\n"; continue; }
-            Image half(640, 360);
-            Blit(half, sh.img, 0, 0, 2);
-            half.SavePNG(dir + "/screens/" + ids[i] + ".png");
-            Blit(contact, sh.img, 3 + (int)(i % 4) * 646, 3 + (int)(i / 4) * 366, 2);
+        for (std::size_t i = 0; i < defs.size(); ++i) {
+            const UIScreens::Def& d = *defs[i];
+            std::string sectionLook = "Midnight Blue";
+            for (const auto& sl : kSectionLook) if (d.section == sl.first) sectionLook = sl.second;
+            for (int variant = 0; variant < 2; ++variant) {
+                const std::string look = variant == 0 ? "Midnight Blue" : sectionLook;
+                const bool portrait = !d.landscape;
+                Shot sh = Render(portrait ? 720 : 1280, portrait ? 1280 : 720, [&](Scene& s) { UIScreens::Build(s, d.id, 0, look); });
+                if (variant == 0) ok += sh.ok;
+                if (!sh.ok) { std::cout << "  no picture for screen " << d.id << "\n"; continue; }
+                Image tile(640, 360);   // a portrait picture is scaled to the tile height and centred
+                for (int y = 0; y < 360; ++y) for (int x = 0; x < 640; ++x) tile.SetPixel(x, y, Color::FromBytes(10, 12, 16, 255));
+                if (!portrait) Blit(tile, sh.img, 0, 0, 2);
+                else for (int y = 0; y < 360; ++y) for (int x = 0; x < 202; ++x) {   // 1280 -> 360 is 3.55x: sample the middle of each block
+                    const int sx = std::min(719, (int)((float)x * 3.556f) + 1), sy = std::min(1279, (int)((float)y * 3.556f) + 1);
+                    tile.SetPixel(219 + x, y, sh.img.GetPixel(sx, sy));
+                }
+                if (variant == 0) tile.SavePNG(dir + "/screens/" + d.id + ".png");
+                Blit(variant == 0 ? sheetA : sheetB, tile, 3 + (int)(i % cols) * 646, 3 + (int)(i / cols) * 366, 1);
+            }
         }
-        CHECK(ok == (int)ids.size());
-        CHECK(contact.SavePNG(dir + "/screens-contact-sheet.png"));
+        CHECK(ok == (int)defs.size());
+        CHECK(sheetA.SavePNG(dir + "/screens-contact-sheet.png"));
+        CHECK(sheetB.SavePNG(dir + "/screens-contact-sheet-varied-looks.png"));
     }
 
     TEST_MAIN_RESULT();

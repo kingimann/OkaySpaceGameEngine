@@ -1,7 +1,7 @@
 # UI themes. The first twelve are the built-in looks already in UITheme (preset = name); the rest are defined here by their colours.
-# A theme bundles colours, a font (only fonts we ship: 'pixel' is the built-in 8x8 font, 'dejavu' is assets/fonts/DejaVuSans.ttf), corner radius,
-# spacing, animation timings and the names of its sounds. Switch at run time: ui_set_theme("Neon City") in a script, or the Theme chips in the Inspector.
-# Sound names are stored with the theme and read back with ui_theme_sound("click"); no sound files are shipped and nothing plays by itself yet.
+# A look bundles colours, a font name (only the smooth default font is used: no look switches the UI to the 8x8 pixel font), corner radius,
+# spacing, animation timings and the names of its sounds. Put one on a screen or widget: ui_set_look("Pause Menu", "Neon") in a script, or the Look picker in the Inspector and the UI Gallery.
+# Sound names are stored with the theme and read back with ui_look_sound("Neon", "click"); no sound files are shipped and nothing plays by itself yet.
 # colours: panel panelBottom accent text muted danger success (#RRGGBB). Everything else (button hover, border, disabled...) is worked out from these.
 
 [theme Dark]
@@ -481,7 +481,7 @@ borderWidth = 1
 shadow = 0
 glow = 3
 padding = 12
-font = pixel
+font = default
 fontScale = 2
 hoverScale = 1.0
 speed = 16
@@ -504,7 +504,7 @@ borderWidth = 1
 shadow = 0
 glow = 3
 padding = 12
-font = pixel
+font = default
 fontScale = 2
 hoverScale = 1.0
 speed = 16
@@ -527,7 +527,7 @@ borderWidth = 3
 shadow = 0
 glow = 2
 padding = 12
-font = pixel
+font = default
 fontScale = 2
 hoverScale = 1.0
 speed = 16
@@ -573,7 +573,7 @@ borderWidth = 3
 shadow = 0
 glow = 0
 padding = 12
-font = pixel
+font = default
 fontScale = 2
 hoverScale = 1.0
 speed = 12
@@ -1148,7 +1148,7 @@ borderWidth = 2
 shadow = 0
 glow = 1
 padding = 14
-font = pixel
+font = default
 fontScale = 2
 hoverScale = 1.0
 speed = 12

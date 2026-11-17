@@ -3,7 +3,7 @@
 //
 // An icon is a list of shapes in a 24 x 24 box: circle, ring, ellipse, rectangle, rounded rectangle, line, polygon, polyline, arc, star
 // and regular polygon. A shape that starts with `-` is cut out of what was drawn before it. `use <icon> rot=90 flip=h` turns or mirrors
-// another icon. The picture for a size is made by sampling every pixel 4 x 4 times against the shapes, so the same icon at the same
+// another icon. The picture for a size is made by sampling every pixel 8 x 8 times (64 levels of coverage) against the shapes, so the same icon at the same
 // size always gives the same pixels (tests/test_ui_icons.cpp), on every machine. Written from the plain geometry of those shapes.
 //
 // Where icons are used: any picture or button icon path written as "icon:heart" draws the vector icon `heart` instead of loading a file
@@ -256,16 +256,16 @@ inline std::vector<std::uint8_t> RenderIcon(const IconDef& icon, int px) {
     for (int y = 0; y < px; ++y)
         for (int x = 0; x < px; ++x) {
             int hits = 0;
-            for (int sy = 0; sy < 4; ++sy)
-                for (int sx = 0; sx < 4; ++sx) {
-                    const float ux = ((float)x + ((float)sx + 0.5f) / 4.0f) * k, uy = ((float)y + ((float)sy + 0.5f) / 4.0f) * k;
+            for (int sy = 0; sy < 8; ++sy)
+                for (int sx = 0; sx < 8; ++sx) {
+                    const float ux = ((float)x + ((float)sx + 0.5f) / 8.0f) * k, uy = ((float)y + ((float)sy + 0.5f) / 8.0f) * k;
                     bool in = false;
                     for (const IconShape& s : icon.shapes) {
                         if (ShapeHit(s, ux, uy)) in = !s.cut;
                     }
                     hits += in ? 1 : 0;
                 }
-            out[(std::size_t)y * (std::size_t)px + (std::size_t)x] = (std::uint8_t)(hits * 255 / 16);
+            out[(std::size_t)y * (std::size_t)px + (std::size_t)x] = (std::uint8_t)(hits * 255 / 64);
         }
     return out;
 }

@@ -2154,7 +2154,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
-        Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
+        const float trackW = sl->TrackWidth();   // the value readout has its own space to the right of the track
+        Rect bg{(int)o.x, (int)o.y, (int)trackW, (int)sl->size.y};
         FillUIShape(p, bg, sl->trackShape, sl->cornerRadius,
                     sl->background, sl->background, false, false, op);
         float f = sl->Fraction();
@@ -2164,9 +2165,9 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             int kh = (int)(sl->size.x * sl->knobSize);
             kn = {(int)o.x - 2, (int)(o.y + sl->size.y * (1.0f - f)) - kh / 2, (int)sl->size.x + 4, kh};
         } else {
-            fl = {(int)o.x, (int)o.y, (int)(sl->size.x * f), (int)sl->size.y};
+            fl = {(int)o.x, (int)o.y, (int)(trackW * f), (int)sl->size.y};
             int kw = (int)(sl->size.y * sl->knobSize);
-            kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
+            kn = {(int)(o.x + trackW * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
         }
         // grok/ui-options: a fill gradient only when asked; otherwise the old solid fill.
         FillUIShape(p, fl, sl->trackShape, sl->cornerRadius,
@@ -2184,10 +2185,11 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
-            // Inside the track. Drawing past the right edge hung "0.80" off the card.
+            // In its own space at the right end of the box, never over the track (a vertical slider has no room, so it keeps the old place).
             const float tw = UITextW(vbuf, px);
             float tx = o.x + sl->size.x - tw - 4.0f;
-            if (tx < o.x + 2.0f) tx = o.x + 2.0f;
+            if (!sl->vertical) { const float space = sl->size.x - trackW; tx = o.x + trackW + (space - tw) * 0.5f; if (tx < o.x + trackW + 2.0f) tx = o.x + trackW + 2.0f; }
+            else if (tx < o.x + 2.0f) tx = o.x + 2.0f;
             DrawUIText(p, vbuf, tx, o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
         if (!sl->interactable) { Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
@@ -2400,10 +2402,22 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         // takes the remaining space. Press shifts content down slightly.
         float shift = btn->PressShift() * bk;
         float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * bk : 0.0f;
+        // Icon and label are centred as one group (not the icon at the edge and the label centred in what is left) when both fit.
+        float groupIconX = -1.0f, groupLabelX = -1.0f;
+        if (isz > 0.0f && !btn->label.empty() && !UIButtonTextChild(up.get())) {
+            const float gpx = btn->fontScale * bk * UITextScale();
+            okay::TtfFont* gf = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
+            const float gtw = UIMeasureText(gf, btn->label, gpx), gap = 8.0f * bk, total = isz + gap + gtw;
+            if (total <= bsz.x - 8.0f * bk) {
+                const float sx = o.x + (bsz.x - total) * 0.5f;
+                groupIconX = btn->iconRight ? sx + gtw + gap : sx;
+                groupLabelX = btn->iconRight ? sx : sx + isz + gap;
+            }
+        }
         if (isz > 0.0f) {
             const std::string vname = uilib::IconNameOf(btn->icon);
             Tex itex = vname.empty() ? p.LoadTexture(btn->icon) : nullptr;
-            float ix = btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
+            float ix = groupIconX >= 0.0f ? groupIconX : btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
             Rect ir{(int)ix, (int)(o.y + (bsz.y - isz) * 0.5f + shift), (int)isz, (int)isz};
             if (!vname.empty()) {   // a vector icon in the label colour
                 auto b8 = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (std::uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); };
@@ -2421,7 +2435,7 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             float tw = UIMeasureText(fnt, btn->label, px);
             float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
             float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
-            float tx = left + ((right - left) - tw) * 0.5f;
+            float tx = groupLabelX >= 0.0f ? groupLabelX : left + ((right - left) - tw) * 0.5f;
             float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
             Color tcc = btn->CurrentTextColor();
             RGBA tc{(std::uint8_t)(tcc.r * 255), (std::uint8_t)(tcc.g * 255), (std::uint8_t)(tcc.b * 255), (std::uint8_t)(tcc.a * 255 * op)};
@@ -2823,7 +2837,11 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         p.FillRect(&box);
         const float px = kb->textSize * UITextScale(), ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
         DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
-        const std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
+        std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
+        if (kb->IsListening()) {   // the prompt takes the place of the key on the right, and shortens until it no longer touches the action name
+            const float room = kb->size.x - 24.0f - UITextW(kb->action, px);
+            if (UITextW(keyText, px) > room) keyText = UITextW("Press key", px) <= room ? "Press key" : (UITextW("...", px) <= room ? "..." : "");
+        }
         const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
         DrawUIText(p, keyText, o.x + kb->size.x - 8.0f - UITextW(keyText, px), ty, px, kc);
         if (kb->IsListening()) {

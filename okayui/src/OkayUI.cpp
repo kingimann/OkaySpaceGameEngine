@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <initializer_list>
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
@@ -5711,6 +5712,10 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul) {
 }
 
 // ---- DrawList ---------------------------------------------------------------------------------
+namespace {
+void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]);
+void cachedRoundRect(bool overlay, Vec2 mn, Vec2 mx, float r, Color32 col, const unsigned char c[4]);
+} // namespace
 void DrawList::AddLine(Vec2 a, Vec2 b, Color32 col, float th) const {
     if (!finite2(a) || !finite2(b) || !finite1(th) || th <= 0.0f) return;
     if (!overlay && culledY(std::min(a.y, b.y) - th, std::max(a.y, b.y) + th)) return;
@@ -5722,7 +5727,9 @@ void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding) cons
     if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
     if (!overlay && culledY(mn.y, mx.y)) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, finite1(rounding) ? rounding : 0.0f, c);
+    const float rr = finite1(rounding) ? rounding : 0.0f;
+    if (g_theme.cacheDrawing && g_ttf && rr > 0.5f && !g_cullRow) { cachedRoundRect(overlay, mn, mx, rr, col, c); return; }
+    rrect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, rr, c);
 }
 
 void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) const {
@@ -5873,14 +5880,13 @@ void DrawList::AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, f
     AddPolyline(pts, n + 1, col, false, th);
 }
 
-namespace { void cachedText(float x, float y, const char* text, float scale, const unsigned char c[4]); }
 void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) const {
     if (!text || !*text || !finite2(pos)) return;
     if (scale == 0.0f) scale = g_theme.textScale;
     else if (!(scale > 0.0f) || !finite1(scale)) return;
     if (!overlay && culledY(pos.y - 2.0f, pos.y + 2.0f * fH() * scale + 2.0f)) return;   // generous: glyphs below the line
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
-    if (g_theme.cacheText && g_ttf && !g_toOverlay && !(g_cullRow) && text[1] && text[2] && text[3]) { cachedText(pos.x, pos.y, text, scale, c); return; }
+    if (g_theme.cacheDrawing && g_ttf && !g_toOverlay && !(g_cullRow) && text[1] && text[2] && text[3]) { cachedText(pos.x, pos.y, text, scale, c); return; }
     drawText(pos.x, pos.y, text, scale, c);
 }
 
@@ -6030,7 +6036,7 @@ void cachedRun(bool overlay, unsigned long long key, Vec2 origin, DrawList::Draw
     g_geoSlot[sl] = k + 1;
 }
 
-// Text runs of the launcher look are kept the same way (Theme::cacheText): a page draws the same texts at the same places frame
+// Text runs of the launcher look are kept the same way (Theme::cacheDrawing): a page draws the same texts at the same places frame
 // after frame, and copying a run's quads is cheaper than placing every glyph again. The key is the text's bytes, its scale,
 // colour and the placement settings; the fraction of a pixel of its position is part of the entry (as for any Cached drawing).
 struct TextRunArgs { float x, y, scale; const char* text; const unsigned char* c; };
@@ -6049,6 +6055,17 @@ void cachedText(float x, float y, const char* text, float scale, const unsigned 
         drawText(m.x, m.y, m.text, m.scale, m.c);
     }, &a);
 }
+// A rounded rectangle (anti-aliased corners from the baked discs and bands) is the same shape for the same size, rounding and
+// colour wherever it is: kept and copied (Theme::cacheDrawing).
+struct RoundRectArgs { Vec2 mn, mx; float r; const unsigned char* c; };
+void cachedRoundRect(bool overlay, Vec2 mn, Vec2 mx, float r, Color32 col, const unsigned char c[4]) {
+    unsigned wb, hb, rb; const float w = mx.x - mn.x, h = mx.y - mn.y;
+    std::memcpy(&wb, &w, 4); std::memcpy(&hb, &h, 4); std::memcpy(&rb, &r, 4);
+    unsigned long long k = 1469598103934665603ull;
+    for (unsigned v : {0x72726563u, wb, hb, rb, (unsigned)col, aaOn() ? 1u : 0u}) k = (k ^ v) * 1099511628211ull;
+    RoundRectArgs a{mn, mx, r, c};
+    cachedRun(overlay, k, mn, [](void* u) { const RoundRectArgs& m = *(const RoundRectArgs*)u; rrect(m.mn.x, m.mn.y, m.mx.x - m.mn.x, m.mx.y - m.mn.y, m.r, m.c); }, &a);
+}
 } // namespace
 
 void DrawList::Cached(unsigned long long key, Vec2 origin, DrawFn draw, void* user) const { cachedRun(overlay, key, origin, draw, user); }
@@ -6061,6 +6078,20 @@ const DrawList& GetForegroundDrawList() { return g_foregroundList; }
 // ---- Measurement and cursor -------------------------------------------------------------------
 Vec2 CalcTextSize(const char* text) {
     if (!text || !*text) return Vec2{ 0.0f, textH() };
+    if (g_theme.cacheDrawing && g_ttf) {   // Theme::cacheDrawing: widths remembered by text and scale (a direct-mapped table)
+        struct WidthSlot { unsigned long long h; float w; };
+        static WidthSlot slots[1024];
+        static const fontatlas::Atlas* slotsTtf = nullptr;
+        if (slotsTtf != g_ttf) { std::memset(slots, 0, sizeof(slots)); slotsTtf = g_ttf; }
+        unsigned long long h = 1469598103934665603ull;
+        for (const unsigned char* p = (const unsigned char*)text; *p; ++p) h = (h ^ *p) * 1099511628211ull;
+        unsigned sb; std::memcpy(&sb, &g_theme.textScale, 4);
+        h = (h ^ sb ^ (g_theme.snapAdvances ? 0x80000000u : 0u)) * 1099511628211ull;
+        h |= 1ull;   // never 0 (an empty slot)
+        WidthSlot& sl = slots[(h >> 20) & 1023];
+        if (sl.h != h) { sl.h = h; sl.w = labelW(text); }
+        return Vec2{ sl.w, textH() };
+    }
     return Vec2{ labelW(text), textH() };
 }
 float GetTextLineHeight() { return textH(); }

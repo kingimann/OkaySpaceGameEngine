@@ -823,8 +823,8 @@ void ImageRoundedTests() {
     CHECK(UI::GetDrawData().vertexCount - before == 4);
 }
 
-// Theme::cacheText: text runs copied from the store draw the same pixels as text placed glyph by glyph, at whole and
-// fractional positions, after a move and in other colours; a changed text shows the change.
+// Theme::cacheDrawing: text runs and rounded rectangles copied from the store draw the same pixels as drawn afresh, at whole
+// and fractional positions, after a move and in other colours; a changed text shows the change; widths are the same.
 void CacheTextTests() {
     Sim sim(220, 120);
     const UI::DrawList& dl = UI::GetWindowDrawList();
@@ -835,15 +835,17 @@ void CacheTextTests() {
         dl.AddText({12.4f + ox, 40.6f}, UI::RGBA(80, 200, 255), "Fractional position");
         dl.AddText({10 + ox, 70}, kRed, "Scaled", 1.5f);
         dl.AddText({150, 10}, kRed, "ab");   // short texts are drawn directly
+        dl.AddRectFilled({100 + ox, 60}, {180 + ox, 100}, kRed, 8.0f);   // rounded rectangles are kept too
+        dl.AddRectFilled({100.5f, 20.3f}, {170, 50}, UI::RGBA(80, 200, 255), 6.0f);
     };
     auto render = [&](bool cache, int frames, int* verts = nullptr) {
         Reset();
         UI::UseLauncherLook(true);
-        UI::Style().cacheText = cache;
+        UI::Style().cacheDrawing = cache;
         for (int i = 0; i < frames; ++i) sim.Frame(scene);
         if (verts) *verts = UI::GetDrawData().vertexCount;
         const Bitmap b = sim.Draw(0, 0, 0);
-        UI::Style().cacheText = false;
+        UI::Style().cacheDrawing = false;
         UI::UseLauncherLook(false);
         return b;
     };
@@ -852,17 +854,30 @@ void CacheTextTests() {
     CHECK(plain.rgba == cached.rgba && vPlain == vCached);
     ox = 7.0f;   // moved by whole pixels: copied with an offset
     const Bitmap plainMoved = render(false, 1);
-    Reset(); UI::UseLauncherLook(true); UI::Style().cacheText = true;
+    Reset(); UI::UseLauncherLook(true); UI::Style().cacheDrawing = true;
     ox = 0.0f; sim.Frame(scene); ox = 7.0f; sim.Frame(scene);
     const Bitmap cachedMoved = sim.Draw(0, 0, 0);
     msg = "Another text run";   // a different text is not mistaken for the one kept
     sim.Frame(scene);
     const Bitmap changed = sim.Draw(0, 0, 0);
-    UI::Style().cacheText = false; UI::UseLauncherLook(false);
+    UI::Style().cacheDrawing = false; UI::UseLauncherLook(false);
     CHECK(plainMoved.rgba == cachedMoved.rgba);
     const Bitmap plainChanged = render(false, 1);
     CHECK(plainChanged.rgba == changed.rgba && changed.rgba != cachedMoved.rgba);
     ox = 0.0f; msg = "Cached text run";
+    Reset(); UI::UseLauncherLook(true);
+    float wPlain[3], wCached[3][2];
+    const char* texts[3] = {"Width of this text", "Another width", "Width of this text!"};
+    sim.Frame([&] { for (int i = 0; i < 3; ++i) wPlain[i] = UI::CalcTextSize(texts[i]).x; });
+    UI::Style().cacheDrawing = true;
+    sim.Frame([&] { for (int k = 0; k < 2; ++k) for (int i = 0; i < 3; ++i) wCached[i][k] = UI::CalcTextSize(texts[i]).x; });
+    float scaledCached = 0.0f; sim.Frame([&] { UI::PushTextScale(1.5f); scaledCached = UI::CalcTextSize(texts[0]).x; UI::PopTextScale(); });
+    UI::Style().cacheDrawing = false;
+    float scaledPlain = 0.0f; sim.Frame([&] { UI::PushTextScale(1.5f); scaledPlain = UI::CalcTextSize(texts[0]).x; UI::PopTextScale(); });
+    UI::UseLauncherLook(false);
+    bool same = true;
+    for (int i = 0; i < 3; ++i) for (int k = 0; k < 2; ++k) same = same && wCached[i][k] == wPlain[i];
+    CHECK(same && scaledCached == scaledPlain && scaledPlain > wPlain[0]);
 }
 
 } // namespace

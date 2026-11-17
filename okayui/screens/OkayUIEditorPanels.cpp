@@ -2394,7 +2394,7 @@ bool DragCells(InspRow& r, float frameW, UI::Rect* rowRect) {
         else if (mx) f = "-";
         else if (r.axisBars) f = InspAxisFormat(fmt, v[i], widths[i] - g_metrics.framePadding.x * 2.0f - 4.0f, [](const char* t) { return UI::CalcTextWidth(t); });
         UI::SetNextItemWidth(widths[i]);
-        if (UI::DragFloat("##c", &v[i], r.speed, r.lo, r.hi, f)) { changed = true; r.axes |= 1u << i; }
+        if (UI::DragFloat("##c", &v[i], r.speed, r.lo, r.hi, f, r.logarithmic ? UI::SliderFlags_Logarithmic : 0u)) { changed = true; r.axes |= 1u << i; }
         if (UI::IsItemActivated()) r.activated = true;
         if (i == 0 && rowRect) *rowRect = UI::GetItemRect();
         if (r.axisBars && i < 3) {
@@ -2571,13 +2571,15 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 bool fits = true;
                 if (r.sameLineWrap) {   // the editor's SameLineOrWrap: only when this row's item fits before the region's right edge
                     const std::string vis = Visible(r.label);
-                    const float tw = UI::CalcTextWidth(vis.c_str());
+                    // in whole pixels, as Dear ImGui lays items out (a label measured 29.48 against Dear ImGui's 29 wrapped Stats' Max,
+                    // stage 7)
+                    const float tw = std::round(UI::CalcTextWidth(vis.c_str()));
                     float nextW = tw + 2.0f * g_metrics.framePadding.x;                        // a button
                     if (r.kind == InspRowCheck) nextW = fh + (vis.empty() ? 0.0f : g_metrics.innerSpacing.x + tw);
                     else if (r.kind == InspRowLabel || r.kind == InspRowNote) nextW = tw;
                     else if (r.width > 0.0f) nextW = r.width + (vis.empty() ? 0.0f : g_metrics.innerSpacing.x + tw);   // a field of its own width, its label
                     const UI::Rect pr = UI::GetItemRect();
-                    fits = regionX + w - (pr.x + pr.w + gap) >= nextW;
+                    fits = regionX + w - (std::round(pr.x + pr.w) + gap) >= nextW;
                 }
                 if (fits) {
                     if (r.sameLineAt >= 0.0f) {
@@ -2653,7 +2655,58 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const bool open = UI::BeginCombo(r.label, fitted.c_str());
                 if (r.color) UI::PopStyleColor();
                 const UI::Rect box = UI::GetItemRect();
-                if (open && r.heads) {   // a list with the editor's section headings inside it (the UI Button's Function): every row drawn
+                if (open && r.search) {   // the item list (stage 7): a search field over the rows, as the editor's ItemPicker
+                    struct Find { unsigned id = 0; int frame = -10, age = 0; char text[64] = {}; };
+                    static Find s_find;
+                    const unsigned fid = UI::GetID(r.label);
+                    const int now = UI::GetFrameCount();   // just opened (or the frame count started again): an empty search
+                    const bool fresh = s_find.id != fid || s_find.frame < now - 1 || s_find.frame > now;
+                    if (fresh) { s_find = Find(); s_find.id = fid; }
+                    s_find.frame = UI::GetFrameCount();
+                    const UI::Vec2 lp = UI::GetCursorScreenPos();
+                    // the search takes the keyboard as the list opens (asked again on the next frames: the press that opened the list
+                    // ends on the box, outside the field, and would otherwise take the focus away again)
+                    if (s_find.age++ < 3) UI::SetKeyboardFocusHere();
+                    UI::SetNextItemWidth(std::max(40.0f, frameW - 20.0f));
+                    UI::InputTextWithHint("##itemfind", r.searchHint ? r.searchHint : "Search", s_find.text, (int)sizeof s_find.text);
+                    std::string needle(s_find.text);
+                    for (char& ch : needle) ch = (char)std::tolower((unsigned char)ch);
+                    std::vector<int> hits;
+                    bool exact = false;
+                    for (int q = 0; q < r.count; ++q) {
+                        const char* key = r.searchKeys ? r.searchKeys[q] : "";
+                        if (s_find.text[0] && std::strcmp(key, s_find.text) == 0) exact = true;
+                        if (!needle.empty()) {
+                            std::string hay = std::string(key) + " " + r.items[q];
+                            for (char& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+                            if (hay.find(needle) == std::string::npos) continue;
+                        }
+                        hits.push_back(q);
+                    }
+                    res.listRows.assign((std::size_t)r.count, UI::Rect{});
+                    ListWindow(r.label, (int)hits.size(), -1, [&](int h) {
+                        const int q = hits[(std::size_t)h];
+                        UI::PushID(q);
+                        if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
+                        res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        UI::PopID();
+                    });
+                    bool useTyped = false;
+                    if (s_find.text[0] && !exact) {
+                        const std::string use = std::string("Use \"") + s_find.text + "\"";
+                        ListWindow("##itemuse", 1, -1, [&](int) {   // laid out as the rows above (the list's height counts it)
+                            if (ListRow(use.c_str(), false)) useTyped = true;
+                            res.listRows.push_back(UI::GetItemRect());   // after the items' rows: the typed id's
+                        });
+                    }
+                    // the rows are laid with no spacing under them, and the list's measured height takes one spacing off its last item:
+                    // an empty item puts it back, so the list's last row is inside the list (the field under it showed through, stage 7)
+                    UI::Dummy(0.0f, 0.0f);
+                    const UI::Vec2 le = UI::GetCursorScreenPos();
+                    setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, le.y - lp.y + 16.0f});
+                    UI::EndCombo();
+                    if (useTyped) { r.sv = s_find.text; *cur = -1; r.changed = true; }
+                } else if (open && r.heads) {   // a list with the editor's section headings inside it (the UI Button's Function): every row drawn
                     res.listRows.assign((std::size_t)r.count, UI::Rect{});
                     const UI::Vec2 lp = UI::GetCursorScreenPos();
                     for (int q = 0; q < r.count; ++q) {
@@ -2845,7 +2898,38 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 if (r.color) UI::PushStyleColor(UI::Col_Text, r.color | 0xff000000u);
                 if (InspSmallButton(r.label)) r.clicked = true;
                 if (r.color) UI::PopStyleColor();
+                if (r.dragType) {   // a drag handle (stage 7): the Inventory's slot order
+                    if (UI::BeginDragDropSource()) {
+                        UI::SetDragDropPayload(r.dragType, &r.tag, sizeof(int));
+                        UI::SetDragDropPreview(r.hint ? r.hint : "");
+                        UI::EndDragDropSource();
+                    }
+                    if (UI::BeginDragDropTarget()) {
+                        if (const UI::DragPayload* p = UI::AcceptDragDropPayload(r.dragType))
+                            if (p->size == (int)sizeof(int)) std::memcpy(&r.dropped, p->data, sizeof(int));
+                        UI::EndDragDropTarget();
+                    }
+                }
                 break;
+            case InspRowProgress: {   // Dear ImGui's ProgressBar: the region wide and a frame tall, in the frame colour, the done part in
+                                      // the histogram colour, its text just after the done part (kept inside the bar)
+                constexpr UI::Color32 kImGuiHistogram = UI::RGBA(230, 179, 0);   // Dear ImGui's dark style's (0.90, 0.70, 0.00), which the editor keeps
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                const float bw = std::max(1.0f, w - (p.x - regionX)), t = std::clamp(r.fv[0], 0.0f, 1.0f);
+                UI::Dummy(bw, fh);
+                const UI::DrawList& dl = UI::GetWindowDrawList();
+                const float rd = 6.0f;   // the frame rounding
+                dl.AddRectFilled(UI::Vec2{p.x, p.y}, UI::Vec2{p.x + bw, p.y + fh}, UI::GetColorU32(UI::Col_FrameBg), rd);
+                const float fw = std::floor(bw * t);
+                if (fw > 0.0f)
+                    dl.AddRectFilled(UI::Vec2{p.x, p.y}, UI::Vec2{p.x + fw, p.y + fh}, kImGuiHistogram, rd,
+                                     fw >= bw - rd ? UI::DrawFlags_RoundCornersAll : UI::DrawFlags_RoundCornersLeft);
+                const char* txt = r.Text();
+                const float tw = UI::CalcTextWidth(txt);
+                const float tx = std::clamp(p.x + fw + g_metrics.itemSpacing.x, p.x, p.x + bw - tw - g_metrics.innerSpacing.x);
+                dl.AddText(UI::Vec2{tx, p.y + (fh - fs) * 0.5f}, UI::GetColorU32(UI::Col_Text), txt);
+                break;
+            }
             case InspRowButton: {
                 if (r.on) {
                     UI::PushStyleColor(UI::Col_Button, UI::ColorMulAlpha(kAccent, 0.90f));

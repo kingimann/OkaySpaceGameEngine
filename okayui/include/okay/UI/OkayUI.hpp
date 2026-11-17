@@ -511,6 +511,8 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV, const 
 /// middle; for a range of positive numbers (otherwise the scale stays linear).
 enum SliderFlags : unsigned { SliderFlags_None = 0, SliderFlags_Logarithmic = 1u };
 bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format, unsigned flags);
+/// A drag field with SliderFlags_Logarithmic (Dear ImGui's DragFloat with that flag): the drag moves along a logarithmic scale of the range.
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format, unsigned flags);
 /// Two or three framed sliders in a row sharing one label (each a frame, a grab and its value in `format`), ItemInnerSpacing (x) apart.
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* format);
 bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* format);

@@ -318,6 +318,54 @@ int main() {
         }
     }
 
+    // ================= stage 7: a logarithmic drag goes the same way in both (the Voxel Digger's Tool Power, section 20) =================
+    {
+        struct Case { float lo, hi, speed, start; const char* fmt; float dx; };
+        const Case cases[] = {{0.0f, 100.0f, 0.5f, 1.0f, "%.2f", 30.0f}, {0.25f, 8.0f, 0.01f, 1.0f, "%.3f", -40.0f},
+                              {0.0f, 1.0e9f, 0.1f, 3.0f, "%.1f", 60.0f}, {0.0f, 1.0e9f, 0.1f, 3.0f, "%.1f", -60.0f}};
+        for (const Case& c : cases) {
+            kH = 1480;
+            float iv = c.start, ov = c.start;
+            UI::Rect rr{};
+            auto rows = [&](float* v) { P::InspFieldList L; L.Drag("Power##lg", v, 1, c.speed, c.lo, c.hi, c.fmt); L.Last().logarithmic = true; return L; };
+            ImGuiRig im; OkayRig ok;
+            auto imB = [&] {
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 12));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(9, 8));
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
+                ImGui::PushItemWidth(-160.0f);
+                P::InspFieldList L = rows(&iv);
+                oked::DrawFieldListBodyImGui(L, hooks);
+                ImGui::PopItemWidth();
+                ImGui::PopStyleVar(3);
+            };
+            auto okB = [&] {
+                const inspfix::InspectorMetrics m;
+                okayuiscreens::EditorMetrics em;
+                em.itemSpacing = UI::Vec2{m.itemX, m.itemY}; em.framePadding = UI::Vec2{m.frameX, m.frameY}; em.innerSpacing = UI::Vec2{m.innerX, m.innerY};
+                em.itemWidth = inspfix::InspectorItemWidth(bw);
+                okayuiscreens::SetEditorMetrics(em);
+                P::InspFieldList L = rows(&ov);
+                const okayuiscreens::FieldListResult r = okayuiscreens::DrawFieldList(L, "Log##okayui", bx, by, bw, bh);
+                okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{});
+                if (!r.rows.empty()) rr = r.rows[0];
+            };
+            im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+            for (int i = 0; i < 3; ++i) { im.Frame(imB); ok.Frame(okB); }
+            const float x = std::floor(rr.x + 30.0f), y = std::floor(rr.y + rr.h * 0.5f);
+            im.mx = x; im.my = y; im.Frame(imB); im.down = true; im.Frame(imB);
+            ok.sim.Move(x, y); ok.Frame(okB); ok.sim.Down(); ok.Frame(okB);
+            for (int i = 1; i <= 10; ++i) {
+                const float px = x + std::round(c.dx * (float)i / 10.0f);
+                im.mx = px; im.Frame(imB);
+                ok.sim.Move(px, y); ok.Frame(okB);
+            }
+            im.down = false; im.Frame(imB); ok.sim.Up(); ok.Frame(okB);
+            std::printf("logarithmic drag %g..%g speed %g from %g by %+g px: Dear ImGui %.4f, OkayUI %.4f\n", c.lo, c.hi, c.speed, c.start, c.dx, iv, ov);
+            CHECK(std::fabs(iv - ov) <= 0.02f * std::max(1.0f, std::fabs(iv)));
+        }
+    }
+
     // ================= the tables =================
     std::printf("\n| Panel | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |\n|---|---:|---:|---:|---:|---|\n");
     for (const Row& r : g_rows) {

@@ -1111,5 +1111,79 @@ int main() {
         Check("inspector_voxeldigger", d.Draw());
     }
 
+    // ================= stage 7 (section 20): the item list's search, Tool Power's logarithmic drag =================
+    {   // the search keeps the items whose name or id holds the text; a text that is no id can be used as it is
+        BRig r(inspbody::BodyItemPickup, 460.0f, 900.0f);
+        r.Frames(3);
+        const UI::Rect it = r.R("Item##pk");
+        r.Click(it.x + 40.0f, CY(it));
+        CHECK(r.res.listRows.size() == 4);
+        Check("inspector_itemsearch_open", r.Draw());
+        r.sim.Type("WOOD"); r.Frame(); r.Frame();   // any case; "WOOD" is no id, so 'Use "WOOD"' follows the one item found
+        int shown = 0;
+        for (const UI::Rect& q : r.res.listRows) if (q.w > 0.0f) ++shown;
+        CHECK(shown == 2 && r.res.listRows.size() == 5 && r.res.listRows[2].w > 0.0f && r.res.listRows[4].w > 0.0f);
+        r.Click(r.res.listRows[2]);
+        CHECK(r.v.ipItem == 2 && r.v.ipTyped.empty());
+        r.Click(it.x + 40.0f, CY(it));
+        r.sim.Type("gold_bar"); r.Frame(); r.Frame();
+        CHECK(r.res.listRows.size() == 5 && r.res.listRows[4].w > 0.0f);   // no item: only 'Use "gold_bar"'
+        Check("inspector_itemsearch_use", r.Draw());
+        r.Click(r.res.listRows[4]);
+        CHECK(r.v.ipTyped == "gold_bar" && r.v.ipItem == -1);
+    }
+    {   // Tool Power (0 to a billion, "%.1f", logarithmic): a 60-pixel drag barely moves it, as in Dear ImGui (a plain drag gave +6)
+        BRig r(inspbody::BodyVoxelDigger, 460.0f, 1600.0f);
+        r.Frames(3);
+        const UI::Rect tp = r.R("Tool Power##vdg");
+        r.Drag(tp.x + 30.0f, CY(tp), 60.0f, 10);
+        CHECK(std::fabs(r.v.vdPower - 3.0f) < 0.05f);
+    }
+
+    // ================= stage 7 (section 20): Stats, Inventory, Camera Follow, World UI, Vehicle Seat, Vehicle, Joint 3D =================
+    {   // every body is drawn and no row runs past the region
+        for (inspbody::Body b : {inspbody::BodyStats, inspbody::BodyInventory, inspbody::BodyCameraFollow, inspbody::BodyWorldUI,
+                                 inspbody::BodyVehicleSeat, inspbody::BodyVehicle, inspbody::BodyJoint3D}) {
+            BRig r(b, 460.0f, 1600.0f);
+            r.Frames(3);
+            CHECK(r.res.contentHeight > 80.0f);
+            // a label kept on its line by the whole-pixel fit may end under a pixel past the region (its text is measured in fractions)
+            for (std::size_t k = 0; k < r.res.rows.size(); ++k) {
+                const float right = r.res.rows[k].x + r.res.rows[k].w;
+                if (right > 16.0f + 428.0f + 1.0f) std::printf("  %s row %d '%s' ends at %.2f\n", inspbody::kBodyNames[b], (int)k, r.L.rows[k].label, right);
+                CHECK(right <= 16.0f + 428.0f + 1.0f);
+            }
+        }
+    }
+    {   // Stats: the HP bar is the region wide, a frame tall, under Mana; Max wraps under Health when it does not fit beside it
+        BRig r(inspbody::BodyStats, 460.0f, 1100.0f);
+        r.Frames(3);
+        Check("inspector_stats", r.Draw());
+        const UI::Rect hp = r.res.rows[(std::size_t)r.Row("HP")], mana = r.R("Mana##st");
+        CHECK(hp.w > 420.0f && hp.y > mana.y + mana.h && hp.h > 20.0f && hp.h < 40.0f);
+        const UI::Rect hl = r.R("Health##st"), mx = r.R("Max##sthp");
+        CHECK(mx.w > 0.0f && (std::fabs(CY(mx) - CY(hl)) < 3.0f || mx.y > hl.y + hl.h));
+    }
+    {   // Inventory: the second slot's handle dragged onto the first's puts it first (the editor's order rule); the slot rows share a line
+        BRig r(inspbody::BodyInventory, 460.0f, 1100.0f);
+        r.Frames(3);
+        Check("inspector_inventory", r.Draw());
+        std::vector<int> handles;
+        for (std::size_t k = 0; k < r.L.rows.size(); ++k) if (r.L.rows[k].dragType) handles.push_back((int)k);
+        CHECK(handles.size() == 2);
+        const UI::Rect h0 = r.res.rows[(std::size_t)handles[0]], h1 = r.res.rows[(std::size_t)handles[1]];
+        const UI::Rect item0 = r.res.rows[(std::size_t)handles[0] + 1], x0 = r.res.rows[(std::size_t)handles[0] + 3];
+        CHECK(std::fabs(item0.y - h0.y) < 1.0f && x0.x > item0.x + item0.w);   // on one line, from its top (Dear ImGui's SmallButton first on a line)
+        r.sim.Move(CX(h1), CY(h1)); r.Frame(); r.sim.Down(); r.Frame();
+        for (int i = 1; i <= 6; ++i) { r.sim.Move(CX(h1), CY(h1) + (CY(h0) - CY(h1)) * (float)i / 6.0f); r.Frame(); }
+        r.sim.Up(); r.Frame(); r.Frame();
+        CHECK(r.v.ivOrder.size() == 2 && r.v.ivOrder[0] == 1 && r.v.ivOrder[1] == 0);
+    }
+    {   // Joint 3D as a hinge with a motor and limits
+        BRig r(inspbody::BodyJoint3D, 460.0f, 1000.0f);
+        r.Frames(3);
+        Check("inspector_joint3d", r.Draw());
+    }
+
     TEST_MAIN_RESULT();
 }

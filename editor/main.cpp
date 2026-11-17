@@ -33595,21 +33595,27 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
 
 // ItemPicker as a row: the item database's names in a list 160 wide (its search field is Dear ImGui's only), an id the database does not
 // know shown in orange with the tooltip.
-struct ItemRow { int row = -1, idx = -1; std::vector<std::string> ids, names; std::vector<const char*> items; std::string preview; };
+struct ItemRow { int row = -1, idx = -1; std::vector<std::string> ids, names; std::vector<const char*> items, keys; std::string preview; };
 static void AddItemPickerRow(okaypanels::InspFieldList& L, const char* label, const std::string& id, ItemRow& ir, float width = 160.0f) {
     okay::ItemDatabase& db = okay::ItemDatabase::Get();
     for (const auto& d : db.Items()) { if (d.loose) continue; ir.ids.push_back(d.id); ir.names.push_back(d.DisplayName()); }
-    for (std::size_t i = 0; i < ir.names.size(); ++i) { ir.items.push_back(ir.names[i].c_str()); if (ir.ids[i] == id) ir.idx = (int)i; }
-    if (ir.items.empty()) ir.items.push_back("(no items yet)");   // an empty list opened as a bare sliver (they are made in Items, Loot & Recipes)
+    for (std::size_t i = 0; i < ir.names.size(); ++i) {
+        ir.items.push_back(ir.names[i].c_str()); ir.keys.push_back(ir.ids[i].c_str());
+        if (ir.ids[i] == id) ir.idx = (int)i;
+    }
     const okay::ItemDefinition* cur = db.Find(id);
     const bool unknown = !id.empty() && (!cur || cur->loose);
     ir.preview = cur && !cur->loose ? cur->DisplayName() : id;
     ir.row = L.Combo(label, &ir.idx, ir.items.data(), (int)ir.items.size()); L.Last().width = width; L.Last().preview = ir.preview.c_str();
+    // the search field of the editor's ItemPicker (stage 7): it finds by id or name, and a typed id that is no item can be used as it is
+    L.Last().search = true; L.Last().searchHint = "Search or type an id"; L.Last().searchKeys = ir.keys.data();
     if (unknown) L.Last().color = RowCol(1.0f, 0.6f, 0.3f);
     if (unknown) L.Tip("This id isn't in the Item Database (it still works as a plain name).");
 }
 static bool RunItemPickerRow(okaypanels::InspFieldList& L, std::string& id, const ItemRow& ir) {
-    if (ir.row < 0 || !L[ir.row].changed || ir.idx < 0 || (std::size_t)ir.idx >= ir.ids.size()) return false;
+    if (ir.row < 0 || !L[ir.row].changed) return false;
+    if (ir.idx == -1 && !L[ir.row].sv.empty()) { id = L[ir.row].sv; return true; }   // 'Use "<typed>"'
+    if (ir.idx < 0 || (std::size_t)ir.idx >= ir.ids.size()) return false;
     id = ir.ids[(std::size_t)ir.idx];
     return true;
 }
@@ -34004,6 +34010,278 @@ static bool DrawVoxelTerrainWithOkayUI(EditorState& ed, VoxelTerrain* v, okay::C
     if (kClearFluid >= 0 && L[kClearFluid].clicked) v->ClearFluid();
     if (apply) { v->Apply(); ed.dirty = true; }
     if (L[kRemove].clicked) toRemove = v;
+    return true;
+}
+
+// ---- The Inspector's OkayUI parts, stage 7 (docs/own_ui_toolkit.md section 20) --------------------------------------------------------
+// Stats, Inventory, Camera Follow, World UI (3D label), Vehicle Seat, Vehicle Controller (Car) and Joint 3D, written from their Dear ImGui
+// bodies below as the earlier builders are. New rows: a progress bar (Stats' HP) and a drag handle (the Inventory's "::").
+
+static bool DrawStatsWithOkayUI(EditorState& ed, Stats* st, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    L.Section("Vitals");
+    L.Drag("Health##st", &st->health, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
+    L.SameLineOrWrap(); L.Drag("Max##sthp", &st->maxHealth, 1, 1.0f, 1.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
+    L.Drag("Mana##st", &st->mana, 1, 1.0f, 0.0f, 100000.0f); L.TipLookup();
+    L.SameLineOrWrap(); L.Drag("Max##stmp", &st->maxMana, 1, 1.0f, 0.0f, 100000.0f); L.Last().width = 90.0f; L.TipLookup();
+    L.Progress("HP", st->HealthFraction());
+    L.Section("Progression");
+    L.DragInt("Level##st", &st->level, 0.1f, 1, 999); L.TipLookup();
+    L.DragInt("XP##st", &st->xp, 1.0f, 0, 1000000); L.TipLookup();
+    L.SameLineOrWrap(); L.DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000); L.Last().width = 90.0f; L.TipLookup();
+    L.Section("Attributes");
+    L.DragInt("Strength##st", &st->strength, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Defense##st", &st->defense, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Intelligence##st", &st->intelligence, 0.1f, 0, 999); L.TipLookup();
+    L.DragInt("Agility##st", &st->agility, 0.1f, 0, 999); L.TipLookup();
+    L.Note("scripts: take_damage / heal / add_xp; fires on_death, on_level_up", false, true);
+    const int kRemove = L.SmallButton("Remove##st");
+    if (!DrawRowsOkayUI(st, "##okayui_stats", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = st;
+    return true;
+}
+
+static bool DrawInventoryWithOkayUI(EditorState& ed, Inventory* inv, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(40 + 6 * inv->slots.size());
+    if (ed.isPlaying()) L.Note("Live bag \xE2\x80\x94 Stop puts these slots back.", false, true);
+    L.DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999);
+    L.DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999);
+    L.Tip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+    L.Drag("Weight Limit##inv", &inv->weightLimit, 1, 0.5f, 0.0f, 100000.0f);
+    L.Tip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
+    if (inv->weightLimit > 0.0f) {
+        L.Check("Slow When Over##inv", &inv->slowWhenOverWeight);
+        if (inv->slowWhenOverWeight) L.Slider("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f);
+        char wt[96]; std::snprintf(wt, sizeof wt, "Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
+        L.Label(wt, 0, false, true);
+    }
+    L.Check("Keep On Scene Load##inv", &inv->keepOnSceneLoad);
+    L.Tip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
+    char used[64]; std::snprintf(used, sizeof used, "Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+    L.Label(used, 0, false, true);
+    struct SlotRows { int handle, count, erase; ItemRow item; };
+    std::vector<SlotRows> sr(inv->slots.size());
+    for (std::size_t i = 0; i < inv->slots.size(); ++i) {
+        SlotRows& s = sr[i];
+        s.handle = L.SmallButton("::"); L.Last().dragType = "INV_SLOT"; L.Last().tag = (int)i; L.Last().hint = inv->slots[i].item.c_str();
+        L.SameLine(); AddItemPickerRow(L, "##invit", inv->slots[i].item, s.item, 130.0f);
+        L.SameLine(); s.count = L.DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999); L.Last().width = 70.0f;
+        L.SameLine(); s.erase = L.SmallButton("X");
+    }
+    const int kAdd = L.SmallButton("Add Item##inv");
+    const int kRemove = L.SmallButton("Remove##inv");
+    if (!DrawRowsOkayUI(inv, "##okayui_inventory", L)) return false;
+    if (L.AnyActivated()) ed.PushUndo();
+    if (L.AnyChanged()) ed.dirty = true;
+    int eraseS = -1, moveFrom = -1, moveTo = -1;
+    for (std::size_t i = 0; i < sr.size(); ++i) {
+        okay::Inventory::Slot& sl = inv->slots[i];
+        if (RunItemPickerRow(L, sl.item, sr[i].item)) {
+            ed.PushUndo();
+            const long long cap = inv->StackCap(sl.item);
+            if (sl.count > cap) sl.count = (int)cap;
+            ed.dirty = true;
+        }
+        if (L[sr[i].count].changed) {
+            const long long cap = inv->StackCap(sl.item);
+            if (sl.count > cap) sl.count = (int)cap;
+            if (sl.count < 0) sl.count = 0;
+        }
+        if (L[sr[i].erase].clicked) eraseS = (int)i;
+        if (L[sr[i].handle].dropped >= 0 && L[sr[i].handle].dropped != (int)i) { moveFrom = L[sr[i].handle].dropped; moveTo = (int)i; }
+    }
+    if (moveFrom >= 0 && moveFrom < (int)inv->slots.size()) {   // the dragged slot goes where it was dropped, the rest move up or down
+        ed.PushUndo();
+        okay::Inventory::Slot moved = inv->slots[(std::size_t)moveFrom];
+        inv->slots.erase(inv->slots.begin() + moveFrom);
+        const int to = moveFrom < moveTo ? moveTo - 1 : moveTo;
+        inv->slots.insert(inv->slots.begin() + to, moved);
+        ed.dirty = true;
+    } else if (eraseS >= 0) { ed.PushUndo(); inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+    if (L[kAdd].clicked && !inv->IsFull()) { ed.PushUndo(); inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = inv;
+    return true;
+}
+
+static bool DrawCameraFollowWithOkayUI(EditorState& ed, CameraFollow* cf, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(8);
+    L.Text("Target##cf", &cf->targetName); L.TipLookup();
+    float off[3] = {cf->offset.x, cf->offset.y, cf->offset.z};
+    const int kOff = L.Drag("Offset##cf", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    L.Drag("Smoothing##cf", &cf->smoothing, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+    L.Note("follows the named GameObject (0 = instant snap)", false, true);
+    const int kRemove = L.SmallButton("Remove##cf");
+    if (!DrawRowsOkayUI(cf, "##okayui_camerafollow", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cf->offset = {off[0], off[1], off[2]};
+    if (L[kRemove].clicked) toRemove = cf;
+    return true;
+}
+
+static bool DrawWorldUIWithOkayUI(EditorState& ed, GameObject* go, WorldUI* wu, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if (!wu->loc.key.empty()) return false;   // localized: the key picker is Dear ImGui's (as the Text body, section 17)
+    InspFieldList L;
+    L.rows.reserve(20);
+    bool locOn = false;
+    const int kLoc = L.Check("Localized##wuloc", &locOn); L.Tip(kLocalizedTip);
+    L.Text("Text##wu", &wu->text);
+    float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
+    const int kCol = L.Color("Text Color##wu", c, 4); L.TipLookup();
+    float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
+    const int kBg = L.Color("Background##wu", bg, 4); L.Tip("Panel behind the text. Set alpha to 0 for no panel.");
+    float off[3] = {wu->worldOffset.x, wu->worldOffset.y, wu->worldOffset.z};
+    const int kOff = L.Drag("World Offset##wu", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    L.Tip("Offset from the object in world units (default: 2 above it).");
+    L.Drag("Size##wu", &wu->pixelSize, 1, 0.05f, 0.2f, 16.0f); L.TipLookup();
+    L.Check("Scale With Distance##wu", &wu->scaleWithDistance); L.TipLookup();
+    L.Drag("Max Distance##wu", &wu->maxDistance, 1, 0.5f, 0.0f, 1000.0f); L.Tip("0 = always visible; otherwise hide when farther than this.");
+    L.Drag("Bar (0..1, <0 = none)##wu", &wu->bar, 1, 0.01f, -1.0f, 1.0f);
+    L.Tip("A health/progress bar under the text. Drive it from a script (set the WorldUI's bar).");
+    float bc[4] = {wu->barColor.r, wu->barColor.g, wu->barColor.b, wu->barColor.a};
+    int kBar = -1;
+    if (wu->bar >= 0.0f) { kBar = L.Color("Bar Color##wu", bc, 4); L.TipLookup(); }
+    L.Note("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.", false, true);
+    const int kRemove = L.SmallButton("Remove##wu");
+    if (!DrawRowsOkayUI(wu, "##okayui_worldui", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kCol].changed) wu->color = {c[0], c[1], c[2], c[3]};
+    if (L[kBg].changed) wu->background = {bg[0], bg[1], bg[2], bg[3]};
+    if (L[kOff].changed) wu->worldOffset = {off[0], off[1], off[2]};
+    if (kBar >= 0 && L[kBar].changed) wu->barColor = {bc[0], bc[1], bc[2], bc[3]};
+    if (L[kLoc].changed && locOn) LocalizedTextSwitch(ed, wu->loc, wu->text, go, true);
+    if (L[kRemove].clicked) toRemove = wu;
+    return true;
+}
+
+static bool DrawVehicleSeatWithOkayUI(EditorState& ed, VehicleSeat* c, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Check("Driver Seat##vseat", &c->driver); L.Tip("On: sitting here drives the vehicle with the keyboard. Off: a passenger seat.");
+    L.Drag("Sit Point##vseat", &c->sitPoint.x, 3, 0.01f); L.TipLookup();
+    L.Drag("Exit Point##vseat", &c->exitPoint.x, 3, 0.01f);
+    L.Tip("Where the player steps out (local). If something solid is there, the mirrored sides are tried, then the roof.");
+    L.Drag("Use Radius##vseat", &c->useRadius, 1, 0.05f, 0.1f, 20.0f); L.TipLookup();
+    L.Text("Prompt##vseat", &c->prompt); L.TipLookup();
+    std::string key(c->enterKey ? 1 : 0, c->enterKey);
+    const int kKey = L.Text("Enter / Exit Key##vseat", &key);
+    if (!c->Vehicle()) L.Note("Needs a Vehicle Controller on this object or a parent.", false, true);
+    if (c->occupied) L.Note("Occupied");
+    const int kRemove = L.SmallButton("Remove##vseat");
+    if (!DrawRowsOkayUI(c, "##okayui_vehicleseat", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kKey].changed && !key.empty()) c->enterKey = key[0];   // an emptied field keeps the key, as Dear ImGui's does
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+static bool DrawVehicleWithOkayUI(EditorState& ed, VehicleController* v, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(32);
+    L.Drag("Max Speed##veh", &v->maxSpeed, 1, 0.5f, 0.0f, 300.0f); L.TipLookup();
+    L.Drag("Reverse Speed##veh", &v->reverseSpeed, 1, 0.5f, 0.0f, 100.0f); L.TipLookup();
+    L.Drag("Acceleration##veh", &v->acceleration, 1, 0.5f, 0.5f, 200.0f); L.TipLookup();
+    L.Drag("Brake Force##veh", &v->brakeForce, 1, 0.5f, 0.5f, 300.0f); L.TipLookup();
+    L.Drag("Drag (coast)##veh", &v->drag, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+    L.Drag("Turn Speed##veh", &v->turnSpeed, 1, 1.0f, 0.0f, 400.0f, "%.0f deg/s"); L.TipLookup();
+    L.Drag("Grip##veh", &v->grip, 1, 0.1f, 0.0f, 30.0f); L.Tip("How fast sideways slide is killed. Higher = sticky cornering, lower = slidey.");
+    L.Drag("Handbrake Grip##veh", &v->handbrakeGrip, 1, 0.05f, 0.0f, 30.0f); L.Tip("Grip while the handbrake (Space) is held. Low = drift.");
+    L.Drag("Ground Check##veh", &v->groundCheckDistance, 1, 0.05f, 0.0f, 10.0f); L.TipLookup();
+    L.Check("Follow Camera##veh", &v->followCamera); L.TipLookup();
+    if (v->followCamera) {
+        L.Drag("Cam Distance##veh", &v->camDistance, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+        L.Drag("Cam Height##veh", &v->camHeight, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+        L.Drag("Cam Smoothing##veh", &v->camLerp, 1, 0.1f, 0.0f, 30.0f); L.TipLookup();
+    }
+    L.Separator();
+    L.Check("Raycast Suspension##veh", &v->suspension);
+    L.Tip("Per-wheel down-rays drive a vertical spring (ride height,\nbump absorption) and tilt the chassis when cornering/braking.");
+    if (v->suspension) {
+        L.Drag("Ride Height##veh", &v->rideHeight, 1, 0.05f, 0.05f, 5.0f); L.TipLookup();
+        L.Drag("Spring Strength##veh", &v->springStrength, 1, 1.0f, 1.0f, 400.0f); L.TipLookup();
+        L.Drag("Spring Damping##veh", &v->springDamping, 1, 0.2f, 0.0f, 60.0f); L.TipLookup();
+        L.Drag("Suspension Travel##veh", &v->suspensionTravel, 1, 0.05f, 0.0f, 5.0f); L.TipLookup();
+        L.Drag("Wheel Base##veh", &v->wheelBase, 1, 0.1f, 0.2f, 12.0f); L.TipLookup();
+        L.Drag("Track Width##veh", &v->trackWidth, 1, 0.1f, 0.2f, 8.0f); L.TipLookup();
+        L.Drag("Body Lean##veh", &v->bodyLean, 1, 0.05f, 0.0f, 4.0f); L.Tip("Chassis lean from accel/cornering. 0 = no dynamic lean.");
+        L.Drag("Max Tilt##veh", &v->maxTilt, 1, 0.5f, 0.0f, 45.0f, "%.0f deg"); L.TipLookup();
+        L.Drag("Tilt Smoothing##veh", &v->tiltSmooth, 1, 0.2f, 0.0f, 30.0f); L.TipLookup();
+    }
+    L.Separator();
+    L.Note("Drive: W/S or arrows = gas/reverse, A/D = steer, Space = handbrake. Needs a Rigidbody3D + collider.", false, true);
+    const int kRemove = L.SmallButton("Remove##veh");
+    if (!DrawRowsOkayUI(v, "##okayui_vehicle", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kRemove].clicked) toRemove = v;
+    return true;
+}
+
+static bool DrawJoint3DWithOkayUI(EditorState& ed, Joint3D* jt, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+    InspFieldList L;
+    L.rows.reserve(28);
+    L.Note("Constrains this body to an anchor or another body.", false, true);
+    L.Combo("Mode##jt", &jt->mode, kModes, 5);
+    L.Text("Connected Body##jt", &jt->connectedBody);
+    L.Tip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
+    float a[3] = {jt->anchor.x, jt->anchor.y, jt->anchor.z}, ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+    int kAnchor = -1, kAxis = -1;
+    if (jt->connectedBody.empty()) { kAnchor = L.Drag("Anchor##jt", a, 3, 0.1f); L.TipLookup(); }
+    const bool hinge = jt->mode == (int)Joint3D::Mode::Hinge, slider = jt->mode == (int)Joint3D::Mode::Slider;
+    if (jt->mode != (int)Joint3D::Mode::Pin && !hinge && !slider) {
+        L.Check("Auto distance##jt", &jt->autoConfigure);
+        if (!jt->autoConfigure) L.Drag("Distance##jt", &jt->distance, 1, 0.05f, 0.0f, 1000.0f);
+    }
+    if (jt->mode == (int)Joint3D::Mode::Spring) {
+        L.Drag("Spring##jt", &jt->spring, 1, 0.5f, 0.0f, 5000.0f);
+        L.Drag("Damper##jt", &jt->damper, 1, 0.1f, 0.0f, 500.0f);
+    }
+    if (hinge) {
+        L.Note("Pins a point, spins about the axis. Needs Freeze Rotation OFF.", false, true);
+        kAxis = L.Drag("Axis##jt", ax, 3, 0.05f); L.TipLookup();
+        L.Check("Use Motor##jt", &jt->useMotor); L.TipLookup();
+        if (jt->useMotor) {
+            L.Drag("Motor Speed (deg/s)##jt", &jt->motorSpeed, 1, 1.0f);
+            L.Drag("Max Motor Torque##jt", &jt->maxMotorTorque, 1, 1.0f, 0.0f, 100000.0f);
+        }
+        L.Check("Use Limits##jt", &jt->useLimits); L.TipLookup();
+        if (jt->useLimits) {
+            L.Drag("Min Angle##jt", &jt->minAngle, 1, 1.0f, -360.0f, 360.0f); L.TipLookup();
+            L.Drag("Max Angle##jt", &jt->maxAngle, 1, 1.0f, -360.0f, 360.0f); L.TipLookup();
+        }
+    }
+    if (slider) {
+        L.Note("Slides along the axis only and cannot turn (a drawer, a lift, a piston).", false, true);
+        kAxis = L.Drag("Axis##jtsl", ax, 3, 0.05f); L.Tip("The direction it slides in (world space, taken when Play starts).");
+        L.Check("Use Limits##jtsl", &jt->useLimits);
+        if (jt->useLimits) {
+            L.Drag("Min Travel (m)##jtsl", &jt->minAngle, 1, 0.05f, -1000.0f, 1000.0f);
+            L.Drag("Max Travel (m)##jtsl", &jt->maxAngle, 1, 0.05f, -1000.0f, 1000.0f); L.Tip("How far it may slide from where it starts, in metres.");
+        }
+        L.Check("Use Motor##jtsl", &jt->useMotor);
+        if (jt->useMotor) {
+            L.Drag("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 1, 0.05f);
+            L.Drag("Max Motor Force##jtsl", &jt->maxMotorTorque, 1, 1.0f, 0.0f, 100000.0f);
+        }
+    }
+    L.Check("Breakable##jt", &jt->breakable);
+    if (jt->breakable) L.Drag("Break at (stretch)##jt", &jt->breakForce, 1, 0.1f, 0.0f, 1000.0f);
+    const int kRemove = L.SmallButton("Remove##jt");
+    if (!DrawRowsOkayUI(jt, "##okayui_joint3d", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (kAnchor >= 0 && L[kAnchor].changed) jt->anchor = {a[0], a[1], a[2]};
+    if (kAxis >= 0 && L[kAxis].changed) jt->axis = {ax[0], ax[1], ax[2]};
+    if (L[kRemove].clicked) toRemove = jt;
     return true;
 }
 
@@ -37545,8 +37823,8 @@ void DrawInspector(EditorState& ed) {
             }   // the Dear ImGui body
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
-        if (CompHeader("Joint 3D", jt, &toRemove)) {
-            ImGui::TextDisabled("Constrains this body to an anchor or another body.");
+        if (CompHeader("Joint 3D", jt, &toRemove) && !(UseOkayUIBackend() && DrawJoint3DWithOkayUI(ed, jt, toRemove))) {   // OkayUI's with the preview switch (section 20)
+            WrappedNote("%s", "Constrains this body to an anchor or another body.");
             const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
             ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
@@ -37566,7 +37844,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Damper##jt", &jt->damper, 0.1f, 0.0f, 500.0f);
             }
             if (jt->mode == (int)Joint3D::Mode::Hinge) {
-                ImGui::TextDisabled("Pins a point, spins about the axis. Needs Freeze Rotation OFF.");
+                WrappedNote("%s", "Pins a point, spins about the axis. Needs Freeze Rotation OFF.");
                 float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
                 if (ImGui::DragFloat3("Axis##jt", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
                 oked::FieldTip("Axis##jt");
@@ -37586,7 +37864,7 @@ void DrawInspector(EditorState& ed) {
                 }
             }
             if (jt->mode == (int)Joint3D::Mode::Slider) {
-                ImGui::TextDisabled("Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
+                WrappedNote("%s", "Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
                 float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
                 if (ImGui::DragFloat3("Axis##jtsl", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The direction it slides in (world space, taken when Play starts).");
@@ -38736,7 +39014,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* v = dynamic_cast<VehicleController*>(curComp)) {
-        if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
+        if (CompHeader("Vehicle Controller (Car)", v, &toRemove) && !(UseOkayUIBackend() && DrawVehicleWithOkayUI(ed, v, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
             oked::FieldTip("Max Speed##veh");
             if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
@@ -38789,8 +39067,7 @@ void DrawInspector(EditorState& ed) {
                 oked::FieldTip("Tilt Smoothing##veh");
             }
             ImGui::Separator();
-            ImGui::TextDisabled("Drive: W/S or arrows = gas/reverse, A/D = steer,");
-            ImGui::TextDisabled("Space = handbrake. Needs a Rigidbody3D + collider.");
+            WrappedNote("%s", "Drive: W/S or arrows = gas/reverse, A/D = steer, Space = handbrake. Needs a Rigidbody3D + collider.");
             if (ImGui::SmallButton("Remove##veh")) toRemove = v;
         }
     }
@@ -40201,7 +40478,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* c = dynamic_cast<VehicleSeat*>(curComp)) {
-        if (CompHeader("Vehicle Seat", c, &toRemove)) {
+        if (CompHeader("Vehicle Seat", c, &toRemove) && !(UseOkayUIBackend() && DrawVehicleSeatWithOkayUI(ed, c, toRemove))) {   // OkayUI's with the preview switch (section 20)
             if (ImGui::Checkbox("Driver Seat##vseat", &c->driver)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: sitting here drives the vehicle with the keyboard. Off: a passenger seat.");
             if (ImGui::DragFloat3("Sit Point##vseat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
@@ -40216,7 +40493,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Prompt##vseat");
             char kb[2] = {c->enterKey, 0};
             if (ImGui::InputText("Enter / Exit Key##vseat", kb, sizeof(kb)) && kb[0]) { c->enterKey = kb[0]; ed.dirty = true; }
-            if (!c->Vehicle()) ImGui::TextDisabled("Needs a Vehicle Controller on this object or a parent.");
+            if (!c->Vehicle()) WrappedNote("%s", "Needs a Vehicle Controller on this object or a parent.");
             if (c->occupied) ImGui::TextDisabled("Occupied");
             if (ImGui::SmallButton("Remove##vseat")) toRemove = c;
         }
@@ -42697,16 +42974,16 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* st = dynamic_cast<Stats*>(curComp)) {
-        if (CompHeader("Stats", st, &toRemove)) {
+        if (CompHeader("Stats", st, &toRemove) && !(UseOkayUIBackend() && DrawStatsWithOkayUI(ed, st, toRemove))) {   // OkayUI's with the preview switch (section 20)
             SectionHeader("Vitals");
             if (ImGui::DragFloat("Health##st", &st->health, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Health##st");
-            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            SameLineOrWrap(FieldW(90, "Max")); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##sthp", &st->maxHealth, 1.0f, 1.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##sthp");
             if (ImGui::DragFloat("Mana##st", &st->mana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Mana##st");
-            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            SameLineOrWrap(FieldW(90, "Max")); ImGui::SetNextItemWidth(90);
             if (ImGui::DragFloat("Max##stmp", &st->maxMana, 1.0f, 0.0f, 100000.0f)) ed.dirty = true;
             oked::FieldTip("Max##stmp");
             ImGui::ProgressBar(st->HealthFraction(), ImVec2(-1, 0), "HP");
@@ -42715,7 +42992,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Level##st");
             if (ImGui::DragInt("XP##st", &st->xp, 1.0f, 0, 1000000)) ed.dirty = true;
             oked::FieldTip("XP##st");
-            ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+            SameLineOrWrap(FieldW(90, "To Next")); ImGui::SetNextItemWidth(90);
             if (ImGui::DragInt("To Next##st", &st->xpToNext, 1.0f, 1, 1000000)) ed.dirty = true;
             oked::FieldTip("To Next##st");
             SectionHeader("Attributes");
@@ -42727,13 +43004,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Intelligence##st");
             if (ImGui::DragInt("Agility##st", &st->agility, 0.1f, 0, 999)) ed.dirty = true;
             oked::FieldTip("Agility##st");
-            ImGui::TextDisabled("scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
+            WrappedNote("%s", "scripts: take_damage / heal / add_xp; fires on_death, on_level_up");
             if (ImGui::SmallButton("Remove##st")) toRemove = st;
         }
     }
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
-        if (CompHeader("Inventory", inv, &toRemove)) {
-            if (ed.isPlaying()) ImGui::TextDisabled("Live bag — Stop puts these slots back.");
+        if (CompHeader("Inventory", inv, &toRemove) && !(UseOkayUIBackend() && DrawInventoryWithOkayUI(ed, inv, toRemove))) {   // OkayUI's with the preview switch (section 20)
+            if (ed.isPlaying()) WrappedNote("%s", "Live bag — Stop puts these slots back.");
             auto edited = [&](bool changed) {
                 if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (changed) ed.dirty = true;
@@ -42831,7 +43108,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cf = dynamic_cast<CameraFollow*>(curComp)) {
-        if (CompHeader("Camera Follow", cf, &toRemove)) {
+        if (CompHeader("Camera Follow", cf, &toRemove) && !(UseOkayUIBackend() && DrawCameraFollowWithOkayUI(ed, cf, toRemove))) {   // OkayUI's with the preview switch (section 20)
             char buf[128];
             std::strncpy(buf, cf->targetName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
@@ -42841,7 +43118,7 @@ void DrawInspector(EditorState& ed) {
             if (DragVec3Axis("Offset##cf", off, 0.05f)) { cf->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
             if (ImGui::DragFloat("Smoothing##cf", &cf->smoothing, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Smoothing##cf");
-            ImGui::TextDisabled("follows the named GameObject (0 = instant snap)");
+            WrappedNote("%s", "follows the named GameObject (0 = instant snap)");
             if (ImGui::SmallButton("Remove##cf")) toRemove = cf;
         }
     }
@@ -43392,7 +43669,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* wu = dynamic_cast<WorldUI*>(curComp)) {
-        if (CompHeader("World UI (3D label)", wu, &toRemove)) {
+        if (CompHeader("World UI (3D label)", wu, &toRemove) && !(UseOkayUIBackend() && DrawWorldUIWithOkayUI(ed, go, wu, toRemove))) {   // OkayUI's with the preview switch (section 20)
             const bool wuLoc = LocalizedTextField(ed, "wuloc", wu->loc, wu->text, go);   // or a string-table key
             char tb[160]; std::strncpy(tb, wu->text.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
             if (!wuLoc && ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
@@ -43418,7 +43695,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Bar Color##wu", bc)) { wu->barColor = {bc[0],bc[1],bc[2],bc[3]}; ed.dirty = true; }
                 oked::FieldTip("Bar Color##wu");
             }
-            ImGui::TextDisabled("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+            WrappedNote("%s", "Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::SmallButton("Remove##wu")) toRemove = wu;
         }
     }

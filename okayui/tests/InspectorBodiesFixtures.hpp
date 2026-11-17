@@ -29,14 +29,18 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   BodyObjHolding, BodyHoldable, BodyCharacter, BodyFirstPerson, BodyPlayerView, BodyAnimSM,
                   // stage 6 (section 19): Item Pickup (an unknown item id), Hold Prompt, Water, Flashlight, Pause Menu, Hand (legacy),
                   // Voxel Digger, Voxel Terrain (materials on)
-                  BodyItemPickup, BodyHoldPrompt, BodyWater, BodyFlashlight, BodyPauseMenu, BodyFpHand, BodyVoxelDigger, BodyVoxelTerrain, BodyCount };
+                  BodyItemPickup, BodyHoldPrompt, BodyWater, BodyFlashlight, BodyPauseMenu, BodyFpHand, BodyVoxelDigger, BodyVoxelTerrain,
+                  // stage 7 (section 20): Stats, Inventory (two slots, a weight limit), Camera Follow, World UI, Vehicle Seat, Vehicle
+                  // Controller (Car), Joint 3D (a hinge with motor and limits)
+                  BodyStats, BodyInventory, BodyCameraFollow, BodyWorldUI, BodyVehicleSeat, BodyVehicle, BodyJoint3D, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
                                                   "navagent", "terrain", "curves",
                                                   "objholding", "holdable", "character", "firstperson", "playerview", "animsm",
                                                   "itempickup", "holdprompt", "water", "flashlight", "pausemenu", "fphand", "voxeldigger",
-                                                  "voxelterrain"};
+                                                  "voxelterrain", "stats", "inventory", "camerafollow", "worldui", "vehicleseat", "vehicle",
+                                                  "joint3d"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -162,6 +166,7 @@ struct Values {
     float smSpd0 = 1.0f, smSpd1 = 1.0f, smVal = 0.1f, smBlendT = 0.2f, smSC = 0.3f, smCP = 0.5f, smPS = 0.8f, smIW = 0.2f, smWR = 0.2f, smGA = 0.1f, smAG = 0.1f;
 
     // stage 6
+    std::string ipTyped;   // an id typed in the item list's search and used as it is
     int ipItem = -1, ipCount = 1; std::string ipTag = "Player", ipKey = "e"; bool ipTouch = false, ipHold = true; float ipAuto = 0.0f, ipRange = 3.0f, ipMagnet = 0.0f;
     std::string hpDrop = "e", hpAlt = "g", hpPrompt = "Hold Prompt"; bool hpLoc = false;
     float waCol[4] = {0.15f, 0.4f, 0.6f, 0.8f}, waSize = 50.0f, waDepth = 3.0f, waDens = 1000.0f, waDrag = 1.0f, waH = 0.3f, waL = 8.0f, waS = 1.0f, waRefl = 0.6f, waGlint = 0.5f;
@@ -176,6 +181,17 @@ struct Values {
     bool vtAuto = true, vtCatch = true, vtFoot = false, vtFluid = false; std::string vtTex; int vtSeed = 1234, vtVeins = 12; float vtCatchD = 4.0f;
     std::string vtMName[2] = {"Grass", "Stone"}, vtMDrop[2] = {"dirt", "stone"}; float vtMCol[2][4] = {{0.3f, 0.6f, 0.25f, 1}, {0.5f, 0.5f, 0.5f, 1}};
     float vtMHard[2] = {1.0f, 4.0f}, vtMDens[2] = {1500.0f, 2600.0f}, vtMPer[2] = {1.0f, 1.0f}; bool vtMLoose[2] = {true, false};
+
+    // stage 7
+    float stHp = 75.0f, stHpMax = 100.0f, stMp = 20.0f, stMpMax = 50.0f; int stLvl = 3, stXp = 120, stNext = 300, stStr = 5, stDef = 4, stInt = 6, stAgi = 7;
+    int ivCap = 20, ivStack = 64, ivCount[2] = {3, 1}, ivItem[2] = {0, 1}; float ivWeight = 40.0f, ivOver = 0.5f; bool ivSlow = true, ivKeep = false;
+    std::vector<int> ivOrder = {0, 1};   // the slots' order after a drag
+    std::string cfTarget = "Player"; float cfOff[3] = {0, 3, -6}, cfSmooth = 5.0f;
+    std::string wuText = "Guard"; bool wuLoc = false, wuScale = true; float wuCol[4] = {1, 1, 1, 1}, wuBg[4] = {0, 0, 0, 0.5f}, wuOff[3] = {0, 2, 0}, wuSize = 2.0f, wuMax = 30.0f, wuBar = 0.7f, wuBarCol[4] = {0.2f, 0.9f, 0.3f, 1};
+    bool vsDriver = true; float vsSit[3] = {0, 0.5f, 0}, vsExit[3] = {-1.5f, 0, 0}, vsRadius = 2.5f; std::string vsPrompt = "Press E to drive", vsKey = "e";
+    float vcF[20] = {30, 8, 12, 25, 0.5f, 120, 6, 1, 0.6f, 8, 3, 4, 0.5f, 60, 6, 0.3f, 2.6f, 1.6f, 1, 8}; float vcTilt = 6; bool vcFollow = true, vcSusp = true;
+    int jtMode = 3; std::string jtBody; float jtAnchor[3] = {0, 2, 0}, jtAxis[3] = {0, 1, 0}, jtSpeed = 90, jtTorque = 50, jtMin = -45, jtMax = 45, jtBreak = 10;
+    bool jtMotor = true, jtLimits = true, jtBreakable = false;
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -1106,7 +1122,9 @@ inline P::InspFieldList Rows(Body b, Values& v) {
     case BodyItemPickup: {
         static const char* const kItems[] = {"Apple", "Crate", "Wood Plank", "Stone"};
         L.Note("An item in the world. Walk into it (trigger), come close, or press the key.", false, true);
+        static const char* const kItemIds[] = {"apple", "crate", "plank", "stone"};
         L.Combo("Item##pk", &v.ipItem, kItems, 4); L.Last().width = 160.0f; L.Last().preview = "crate_heavy_wooden_box"; L.Last().color = P::HierCol(255, 153, 76);
+        L.Last().search = true; L.Last().searchHint = "Search or type an id"; L.Last().searchKeys = kItemIds;
         L.DragInt("Count##pk", &v.ipCount, 0.2f, 1, 99999);
         L.Text("Collector Tag##pk", &v.ipTag);
         L.Check("Pick Up On Touch##pk", &v.ipTouch);
@@ -1180,7 +1198,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Section("Real life");
         L.Combo("Preset##vdg", &v.vdPreset, kPr, 4); L.Combo("Dug Ground##vdg", &v.vdCollect, kCo, 4);
         L.Check("Building needs material##vdg", &v.vdNeeds); L.SameLineOrWrap(); L.Check("Creative (unlimited)##vdg", &v.vdCreative);
-        L.Drag("Tool Power##vdg", &v.vdPower, 1, 0.1f, 0.0f, 1.0e9f, "%.1f"); L.Drag("Hardness Scale##vdg", &v.vdHard, 1, 0.05f, 0.1f, 20.0f);
+        L.Drag("Tool Power##vdg", &v.vdPower, 1, 0.1f, 0.0f, 1.0e9f, "%.1f"); L.Last().logarithmic = true; L.Drag("Hardness Scale##vdg", &v.vdHard, 1, 0.05f, 0.1f, 20.0f);
         L.Combo("Brush Shape##vdg", &v.vdShape, kSh, 4);
         L.Drag("Depth Limit##vdg", &v.vdDepth, 1, 0.1f, -1.0f, 200.0f, "%.1f"); L.Drag("Bedrock Height##vdg", &v.vdBed, 1, 0.1f, -1.0f, 500.0f, "%.1f");
         L.Check("Snap to grid##vdg", &v.vdSnap); L.SameLineOrWrap(); L.Check("Slump loose ground##vdg", &v.vdSlump);
@@ -1222,6 +1240,91 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Note("Drawn as one mesh. Last build: 64 of 64 chunks, 12.40 ms.", false, true);
         L.SmallButton("Remove##vox");
         break;
+
+    case BodyStats:
+        L.Section("Vitals");
+        L.Drag("Health##st", &v.stHp, 1, 1.0f, 0.0f, 100000.0f); L.SameLineOrWrap(); L.Drag("Max##sthp", &v.stHpMax, 1, 1.0f, 1.0f, 100000.0f); L.Last().width = 90.0f;
+        L.Drag("Mana##st", &v.stMp, 1, 1.0f, 0.0f, 100000.0f); L.SameLineOrWrap(); L.Drag("Max##stmp", &v.stMpMax, 1, 1.0f, 0.0f, 100000.0f); L.Last().width = 90.0f;
+        L.Progress("HP", v.stHp / v.stHpMax);
+        L.Section("Progression");
+        L.DragInt("Level##st", &v.stLvl, 0.1f, 1, 999); L.DragInt("XP##st", &v.stXp, 1.0f, 0, 1000000);
+        L.SameLineOrWrap(); L.DragInt("To Next##st", &v.stNext, 1.0f, 1, 1000000); L.Last().width = 90.0f;
+        L.Section("Attributes");
+        L.DragInt("Strength##st", &v.stStr, 0.1f, 0, 999); L.DragInt("Defense##st", &v.stDef, 0.1f, 0, 999);
+        L.DragInt("Intelligence##st", &v.stInt, 0.1f, 0, 999); L.DragInt("Agility##st", &v.stAgi, 0.1f, 0, 999);
+        L.Note("scripts: take_damage / heal / add_xp; fires on_death, on_level_up", false, true);
+        L.SmallButton("Remove##st");
+        break;
+    case BodyInventory: {
+        static const char* const kItems[] = {"Apple", "Wood Plank"};
+        static const char* const kIds[] = {"apple", "plank"};
+        L.DragInt("Capacity##inv", &v.ivCap, 0.2f, 1, 999); L.DragInt("Max Stack##inv", &v.ivStack, 0.2f, 0, 9999);
+        L.Drag("Weight Limit##inv", &v.ivWeight, 1, 0.5f, 0.0f, 100000.0f);
+        L.Check("Slow When Over##inv", &v.ivSlow); L.Slider("Over-weight Speed##inv", &v.ivOver, 0.1f, 1.0f);
+        L.Label("Weight: 4.5 / 40.0"); L.Check("Keep On Scene Load##inv", &v.ivKeep); L.Label("Slots: 2 / 20");
+        for (int i = 0; i < 2; ++i) {
+            const int s = v.ivOrder[(std::size_t)i];
+            L.SmallButton("::"); L.Last().dragType = "INV_SLOT"; L.Last().tag = i; L.Last().hint = kItems[s];
+            L.SameLine(); L.Combo("##invit", &v.ivItem[s], kItems, 2); L.Last().width = 130.0f; L.Last().search = true; L.Last().searchKeys = kIds;
+            L.SameLine(); L.DragInt("##invn", &v.ivCount[s], 0.2f, 0, 9999); L.Last().width = 70.0f;
+            L.SameLine(); L.SmallButton("X");
+        }
+        L.SmallButton("Add Item##inv"); L.SmallButton("Remove##inv");
+        break;
+    }
+    case BodyCameraFollow:
+        L.Text("Target##cf", &v.cfTarget); L.Drag("Offset##cf", v.cfOff, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        L.Drag("Smoothing##cf", &v.cfSmooth, 1, 0.1f, 0.0f, 50.0f);
+        L.Note("follows the named GameObject (0 = instant snap)", false, true);
+        L.SmallButton("Remove##cf");
+        break;
+    case BodyWorldUI:
+        L.Check("Localized##wuloc", &v.wuLoc); L.Text("Text##wu", &v.wuText);
+        L.Color("Text Color##wu", v.wuCol, 4); L.Color("Background##wu", v.wuBg, 4);
+        L.Drag("World Offset##wu", v.wuOff, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+        L.Drag("Size##wu", &v.wuSize, 1, 0.05f, 0.2f, 16.0f); L.Check("Scale With Distance##wu", &v.wuScale);
+        L.Drag("Max Distance##wu", &v.wuMax, 1, 0.5f, 0.0f, 1000.0f); L.Drag("Bar (0..1, <0 = none)##wu", &v.wuBar, 1, 0.01f, -1.0f, 1.0f);
+        L.Color("Bar Color##wu", v.wuBarCol, 4);
+        L.Note("Floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.", false, true);
+        L.SmallButton("Remove##wu");
+        break;
+    case BodyVehicleSeat:
+        L.Check("Driver Seat##vseat", &v.vsDriver); L.Drag("Sit Point##vseat", v.vsSit, 3, 0.01f); L.Drag("Exit Point##vseat", v.vsExit, 3, 0.01f);
+        L.Drag("Use Radius##vseat", &v.vsRadius, 1, 0.05f, 0.1f, 20.0f); L.Text("Prompt##vseat", &v.vsPrompt); L.Text("Enter / Exit Key##vseat", &v.vsKey);
+        L.Note("Needs a Vehicle Controller on this object or a parent.", false, true);
+        L.SmallButton("Remove##vseat");
+        break;
+    case BodyVehicle: {
+        static const char* const kN[] = {"Max Speed##veh", "Reverse Speed##veh", "Acceleration##veh", "Brake Force##veh", "Drag (coast)##veh"};
+        for (int i = 0; i < 5; ++i) L.Drag(kN[i], &v.vcF[i], 1, 0.5f, 0.0f, 300.0f);
+        L.Drag("Turn Speed##veh", &v.vcF[5], 1, 1.0f, 0.0f, 400.0f, "%.0f deg/s");
+        L.Drag("Grip##veh", &v.vcF[6], 1, 0.1f, 0.0f, 30.0f); L.Drag("Handbrake Grip##veh", &v.vcF[7], 1, 0.05f, 0.0f, 30.0f);
+        L.Drag("Ground Check##veh", &v.vcF[8], 1, 0.05f, 0.0f, 10.0f); L.Check("Follow Camera##veh", &v.vcFollow);
+        L.Drag("Cam Distance##veh", &v.vcF[9], 1, 0.1f, 0.0f, 50.0f); L.Drag("Cam Height##veh", &v.vcF[10], 1, 0.1f, 0.0f, 50.0f);
+        L.Drag("Cam Smoothing##veh", &v.vcF[11], 1, 0.1f, 0.0f, 30.0f);
+        L.Separator(); L.Check("Raycast Suspension##veh", &v.vcSusp);
+        static const char* const kS[] = {"Ride Height##veh", "Spring Strength##veh", "Spring Damping##veh", "Suspension Travel##veh", "Wheel Base##veh",
+                                         "Track Width##veh", "Body Lean##veh"};
+        for (int i = 0; i < 7; ++i) L.Drag(kS[i], &v.vcF[12 + i], 1, 0.05f, 0.0f, 400.0f);
+        L.Drag("Max Tilt##veh", &v.vcTilt, 1, 0.5f, 0.0f, 45.0f, "%.0f deg"); L.Drag("Tilt Smoothing##veh", &v.vcF[19], 1, 0.2f, 0.0f, 30.0f);
+        L.Separator();
+        L.Note("Drive: W/S or arrows = gas/reverse, A/D = steer, Space = handbrake. Needs a Rigidbody3D + collider.", false, true);
+        L.SmallButton("Remove##veh");
+        break;
+    }
+    case BodyJoint3D: {
+        static const char* const kModes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+        L.Note("Constrains this body to an anchor or another body.", false, true);
+        L.Combo("Mode##jt", &v.jtMode, kModes, 5); L.Text("Connected Body##jt", &v.jtBody); L.Drag("Anchor##jt", v.jtAnchor, 3, 0.1f);
+        L.Note("Pins a point, spins about the axis. Needs Freeze Rotation OFF.", false, true);
+        L.Drag("Axis##jt", v.jtAxis, 3, 0.05f); L.Check("Use Motor##jt", &v.jtMotor);
+        L.Drag("Motor Speed (deg/s)##jt", &v.jtSpeed, 1, 1.0f); L.Drag("Max Motor Torque##jt", &v.jtTorque, 1, 1.0f, 0.0f, 100000.0f);
+        L.Check("Use Limits##jt", &v.jtLimits);
+        L.Drag("Min Angle##jt", &v.jtMin, 1, 1.0f, -360.0f, 360.0f); L.Drag("Max Angle##jt", &v.jtMax, 1, 1.0f, -360.0f, 360.0f);
+        L.Check("Breakable##jt", &v.jtBreakable);
+        L.SmallButton("Remove##jt");
+        break;
+    }
     default: break;
     }
     return L;
@@ -1232,6 +1335,18 @@ inline P::InspFieldList Rows(Body b, Values& v) {
 inline void Apply(Body b, Values& v, P::InspFieldList& L) {
     for (P::InspRow& r : L.rows)
         if (r.clicked) v.clicked.push_back(std::string(r.label, P::InspVisibleLen(r.label)));
+    if (b == BodyInventory)   // a slot's handle dropped on another's: the dragged slot goes there (as the editor's Inventory body)
+        for (P::InspRow& r : L.rows)
+            if (r.dragType && r.dropped >= 0 && r.dropped != r.tag) {
+                const int from = r.dropped, at = r.tag;
+                const int moved = v.ivOrder[(std::size_t)from];
+                v.ivOrder.erase(v.ivOrder.begin() + from);
+                v.ivOrder.insert(v.ivOrder.begin() + (from < at ? at - 1 : at), moved);
+                break;
+            }
+    if (b == BodyItemPickup)
+        for (P::InspRow& r : L.rows)
+            if (r.changed && r.search && *r.I() == -1) v.ipTyped = r.sv;
     if (b == BodyMeshRest)
         for (P::InspRow& r : L.rows)
             if (r.changed && r.kind == P::InspRowSmallButton && r.pick == P::InspPickGrid) v.texture = v.procPick;

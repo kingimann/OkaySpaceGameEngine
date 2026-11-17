@@ -65,6 +65,7 @@ enum InspRowKind : std::uint8_t {
                           ///< small button that clears it; only a drop from the Project panel (dropKind) sets it
     InspRowRadio,         ///< Dear ImGui's RadioButton: on when *i == iv; a click sets *i = iv
     InspRowInputInt,      ///< Dear ImGui's InputInt: a number field with - and + buttons (stage 6: the Voxel Terrain's Seed)
+    InspRowProgress,      ///< Dear ImGui's ProgressBar the region wide: fv[0] the fraction (0..1), the label its text (stage 7: Stats' HP)
     InspRowRange,         ///< Dear ImGui's DragFloatRange2: two drag cells (f[0] low, f[1] high, each kept on its side of the other);
                           ///< fmt and hint are the two formats
 };
@@ -110,6 +111,17 @@ struct InspRow {
     const char* const* items = nullptr;  ///< InspRowCombo
     const char* preview = nullptr;       ///< InspRowCombo: the closed list's text instead of the chosen item's ("Choose a preset...")
     const char* const* heads = nullptr;  ///< InspRowCombo (count entries): not null at q: the editor's section heading before item q
+    // InspRowCombo with a search field at the top of the open list (the editor's ItemPicker, stage 7): the rows whose text or key
+    // (`searchKeys`, count entries, optional) holds the typed text, any case; a typed text that is no key adds a row 'Use "<text>"',
+    // which when picked puts the text in the row's sv, sets *I() to -1 and marks the row changed.
+    bool search = false;
+    // InspRowSmallButton that is a drag handle (the Inventory's "::" per slot, stage 7): it can be dragged onto another handle of the same
+    // `dragType`; the handle it is dropped on gets the dragged row's `tag` in `dropped` (-1: none) and `hint` is the text that follows
+    // the pointer.
+    const char* dragType = nullptr;
+    int dropped = -1;
+    const char* searchHint = nullptr;
+    const char* const* searchKeys = nullptr;
     // InspRowMask with presets (the Nav Mesh Agent's Area Mask): small buttons on one line at the top of the open list instead of
     // Everything and Nothing; a click sets the bits. `count` bits are listed (0: 32), named by `items` when set.
     const char* const* presetNames = nullptr;
@@ -289,6 +301,12 @@ struct InspFieldList {
         return k;
     }
     int InputInt(const char* label, int* v) { const int k = Add(InspRowInputInt, label); rows.back().i = v; return k; }
+    int Progress(const char* text, float fraction, bool copy = false) {
+        const int k = Add(InspRowProgress, copy ? "" : text);
+        if (copy) rows.back().sv = text ? text : "";
+        rows.back().fv[0] = fraction;
+        return k;
+    }
     int Radio(const char* label, int* v, int value) { const int k = Add(InspRowRadio, label); rows.back().i = v; rows.back().iv = value; return k; }
     int Range(const char* label, float* lowHigh, float speed, float lo, float hi, const char* fmtLow, const char* fmtHigh = nullptr) {
         const int k = Add(InspRowRange, label);

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -1462,7 +1463,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             } else {
                 bool ch = false;
                 const char* f = r.mixed ? "-" : fmt;
-                if (n == 1) ch = ImGui::DragFloat(r.label, v, r.speed, r.lo, r.hi, f);
+                if (n == 1) ch = ImGui::DragFloat(r.label, v, r.speed, r.lo, r.hi, f, r.logarithmic ? ImGuiSliderFlags_Logarithmic : 0);
                 else ch = ImGui::DragScalarN(r.label, ImGuiDataType_Float, v, n, r.speed, &r.lo, &r.hi, f);
                 if (ch) r.changed = true;
                 if (ImGui::IsItemActivated()) r.activated = true;
@@ -1494,7 +1495,28 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
             const bool comboOpen = ImGui::BeginCombo(r.label, fitted.c_str());
             if (r.color) ImGui::PopStyleColor();
-            if (comboOpen) {
+            if (comboOpen && r.search) {   // the item list's search field (stage 7), as the editor's ItemPicker
+                static char find[64] = "";
+                if (ImGui::IsWindowAppearing()) { find[0] = 0; ImGui::SetKeyboardFocusHere(); }
+                ImGui::InputTextWithHint("##itemfind", r.searchHint ? r.searchHint : "Search", find, sizeof find);
+                std::string needle(find);
+                for (char& ch : needle) ch = (char)std::tolower((unsigned char)ch);
+                bool exact = false;
+                for (int q = 0; q < r.count; ++q) {
+                    const char* key = r.searchKeys ? r.searchKeys[q] : "";
+                    if (find[0] && std::strcmp(key, find) == 0) exact = true;
+                    if (!needle.empty()) {
+                        std::string hay = std::string(key) + " " + r.items[q];
+                        for (char& ch : hay) ch = (char)std::tolower((unsigned char)ch);
+                        if (hay.find(needle) == std::string::npos) continue;
+                    }
+                    ImGui::PushID(q);
+                    if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
+                    ImGui::PopID();
+                }
+                if (find[0] && !exact && ImGui::Selectable((std::string("Use \"") + find + "\"").c_str())) { r.sv = find; *cur = -1; r.changed = true; }
+                ImGui::EndCombo();
+            } else if (comboOpen) {
                 for (int q = 0; q < r.count; ++q) {
                     if (r.heads && r.heads[q]) SectionHeaderImGui(r.heads[q], hooks);
                     ImGui::PushID(q);
@@ -1556,7 +1578,24 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
             if (ImGui::SmallButton(r.label)) r.clicked = true;
             if (r.color) ImGui::PopStyleColor();
+            if (r.dragType) {   // a drag handle (stage 7)
+                if (ImGui::BeginDragDropSource()) {
+                    ImGui::SetDragDropPayload(r.dragType, &r.tag, sizeof(int));
+                    ImGui::TextUnformatted(r.hint ? r.hint : "");
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(r.dragType))
+                        if (p->DataSize == (int)sizeof(int)) r.dropped = *(const int*)p->Data;
+                    ImGui::EndDragDropTarget();
+                }
+            }
             break;
+        case InspRowProgress: {
+            const char* t = r.Text();
+            ImGui::ProgressBar(r.fv[0], ImVec2(-1, 0), t);
+            break;
+        }
         case InspRowButton: {
             if (r.on) {
                 const ImVec4 a = Unpack(hooks.accent);

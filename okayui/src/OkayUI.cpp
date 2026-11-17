@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
@@ -6153,8 +6154,38 @@ void centredText(float x, float y, float w, float h, const char* t, const unsign
     PopClipRect();
 }
 // `n` (1..4) formatted drag cells in a row sharing a label: each scrubs like DragFloat and can be Ctrl+clicked to type a number.
-bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format) {
+// The decimals a number format shows ("%.1f" 1, "%.0f deg" 0); 3 when it names none.
+int formatDecimals(const char* format) {
+    const char* p = format ? std::strchr(format, '%') : nullptr;
+    if (!p) return 3;
+    while (*++p && (std::strchr("-+ #0", *p) || std::isdigit((unsigned char)*p))) {}
+    if (*p != '.') return 3;   // no precision: the toolkit's "%.3f"
+    int d = 0;
+    while (std::isdigit((unsigned char)*++p)) d = d * 10 + (*p - '0');
+    return d > 9 ? 9 : d;
+}
+
+// A logarithmic drag (SliderFlags_Logarithmic on a drag): the pointer moves a position t from 0 to 1 along the range's logarithmic scale,
+// `speed` per pixel taken as that share of the whole range (speed / (max - min)), so a wide range needs a long drag. A range from 0 starts
+// its scale at the smallest step the format shows (0.1 for "%.1f"); below that the value is the minimum. Worked out from Dear ImGui's
+// documented behaviour and checked against it in okayui_inspector_imgui; ranges that cross zero stay linear.
+struct LogScale {
+    bool ok = false; double lo = 0, hi = 0, floorV = 0;
+    LogScale(float minV, float maxV, const char* format) {
+        if (!(minV < maxV) || minV < 0.0f || !std::isfinite(maxV)) return;
+        const double step = std::pow(10.0, -formatDecimals(format));
+        floorV = minV; lo = minV > 0.0f ? (double)minV : std::min(step, (double)maxV * 0.5); hi = maxV;
+        ok = hi > lo && lo > 0.0;
+    }
+    double T(double v) const { return v <= lo ? 0.0 : v >= hi ? 1.0 : std::log(v / lo) / std::log(hi / lo); }
+    double V(double t) const { return t <= 0.0 ? floorV : t >= 1.0 ? hi : lo * std::pow(hi / lo, t); }
+};
+
+bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format, bool logScale = false) {
     if (!g_lay.active || !v || n < 1 || n > 4) return false;
+    const LogScale ls(minV, maxV, format);
+    if (logScale && !ls.ok) logScale = false;
+    static double s_logT = 0.0;   // the held drag's place on the logarithmic scale (kept so rounding to the format does not stop it)
     const VisLabel vis(label);
     const int base = hashLabel(label);
     const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f, lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
@@ -6185,13 +6216,21 @@ bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, f
                     const float ddx = g_in.mouseX - g_dragOriginX[0], ddy = g_in.mouseY - g_dragOriginY[0];
                     s_pastThreshold = ddx * ddx + ddy * ddy >= 9.0f;
                 }
-                if (s_pastThreshold && g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed)) {
+                if (s_pastThreshold && g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed) && logScale) {
+                    s_logT = std::min(1.0, std::max(0.0, s_logT + (double)g_mouseDX * (double)speed / ((double)maxV - (double)minV)));
+                    const double k = std::pow(10.0, formatDecimals(format));
+                    const float nv = (float)(std::floor(ls.V(s_logT) * k + 0.5) / k);
+                    if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
+                } else if (s_pastThreshold && g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed)) {
                     float nv = v[i] + g_mouseDX * speed;
                     if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
                     if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
                 }
             }
-        } else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; s_pastThreshold = false; }
+        } else if (inside && g_pressed && g_disCount == 0) {
+            g_active = id; g_focusClaimed = true; s_pastThreshold = false;
+            if (logScale) s_logT = ls.T((double)v[i]);
+        }
         frameField(cx, y, cw, h, inside, g_active == id);
         char buf[64]; formatValue(buf, sizeof buf, format, (double)v[i], false);
         centredText(cx, y, cw, h, buf, g_theme.text);
@@ -6275,6 +6314,9 @@ bool fmtSliderCells(const char* label, float* v, int n, float minV, float maxV, 
 } // namespace
 
 bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 1, speed, minV, maxV, format)); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format, unsigned flags) {
+    return noteEdit(fmtDragCells(label, v, 1, speed, minV, maxV, format, (flags & SliderFlags_Logarithmic) != 0u));
+}
 bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 2, speed, minV, maxV, format)); }
 bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* format) { return noteEdit(fmtDragCells(label, v, 3, speed, minV, maxV, format)); }
 bool SliderInt(const char* label, int* v, int minV, int maxV, const char* format) {

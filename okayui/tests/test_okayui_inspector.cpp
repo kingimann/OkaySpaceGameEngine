@@ -1183,6 +1183,18 @@ int main() {
         BRig r(inspbody::BodyJoint3D, 460.0f, 1000.0f);
         r.Frames(3);
         Check("inspector_joint3d", r.Draw());
+        // an open list holds its last row whole (it was cut by the list's edge: "Slider (prismatic)" in the real editor)
+        const UI::Rect md = r.R("Mode##jt");
+        r.Click(md.x + 40.0f, CY(md));
+        CHECK(r.res.listRows.size() == 5);
+        const UI::Rect last = r.res.listRows[4];
+        Check("inspector_joint3d_modes", r.Draw());
+        const Bitmap& pic = r.Draw();
+        // the list's own colour below the last row (not the field under the list): the pixel 2 below its bottom, in its left part
+        const int px = (int)(last.x + 4.0f), py = (int)(last.y + last.h + 1.0f);
+        const std::uint8_t* c = &pic.rgba[((std::size_t)py * (std::size_t)pic.w + (std::size_t)px) * 4];
+        const std::uint8_t* d = &pic.rgba[((std::size_t)(last.y + 2.0f) * (std::size_t)pic.w + (std::size_t)px) * 4];
+        CHECK(std::abs((int)c[0] - (int)d[0]) < 6 && std::abs((int)c[1] - (int)d[1]) < 6 && std::abs((int)c[2] - (int)d[2]) < 6);
     }
 
     TEST_MAIN_RESULT();

@@ -2256,3 +2256,96 @@ Windows; other UI scales and the Compact density; the Function list's headings, 
 slot drop in the real editor; localized texts (Dear ImGui's body by design); a Visual Script in Play mode (its live variables tree) and its
 vector, colour and text variables in the real editor; the Terrain's Scatter, erosion, heightmap import and export in the real editor;
 Shift+click on the anchor grid.
+
+## 18. The Inspector, stage 5: the Player Controller and its parts, Character, Holdable Object, Object Holding, the Animator state machine
+
+The next most used bodies by example-scene count (section 17.2), as field rows behind the same developer switch (`OKAY_DEV=1` and
+`OKAY_UI_BACKEND=okayui`); Dear ImGui stays the default and the fallback. Written from the editor's own Dear ImGui bodies and helpers
+(`editor/main.cpp` DrawInspector, CharacterModelTools, KeyBindCombo, NaturalSpeedsButton, WalkSpeedHintLine, PlayerPartHeader;
+`editor/AnimatorPreview.hpp` the preview buttons and DrawTransport) and measurements of both pictures; no code from any other project.
+
+### 18.1 Stage 4 follow-ups
+
+- **The gradient after an undo** (fresh pictures with the current build, `<scratchpad>/shots/oi4/steps-gradient-v2.png`): a 40-pixel drag on
+  the middle marker gives 0.604 in both, Ctrl+Z gives 0.500 with the middle stop still selected in both; the right-most marker is whole.
+- **The curve plot's scale label** ("x1.8") covered the first key at the top left in both toolkits. It now sits on its own text line above
+  the plot's right end (the editor's ParticleCurveEditor, the comparison drawer and OkayUI's; a click on that line adds no key):
+  `<scratchpad>/shots/oi4/side-64-curve-label.png`, golden `inspector_curves`.
+
+### 18.2 What is ported
+
+| Component | Builder (`editor/main.cpp`) | Notes |
+|---|---|---|
+| Player Controller | `DrawPlayerControllerWithOkayUI` | View (the change still goes through the pending switch), Use natural walk and run speeds, the character model tools |
+| First-person settings | `DrawFirstPersonWithOkayUI` | every row: Feel presets, speeds, the walk-speed hint, key lists (KeyBindCombo, 96 wide), the gamepad list, stance, lean, feel, head bob, slide, dodge, traversal, animation |
+| Third-person settings | `DrawThirdPersonWithOkayUI` | every row, the camera rows, the collision layer list as text |
+| View toggle | `DrawPlayerViewWithOkayUI` | every row |
+| Character | `DrawCharacterWithOkayUI` | the character model tools (`AddCharacterModelToolRows`), Unrig, the rig rows, the clip bindings, clothing, hair, accessories, the eleven colours, the animation, the Clips fold-out with Preview / Stop and the preview transport (`AddTransportRows`), head look, feel |
+| Holdable Object | `DrawHoldableWithOkayUI` | every row, the two presets, the grips |
+| Procedural Object Holding | `DrawObjectHoldingWithOkayUI` | every row, the Play-mode lines |
+| Animator (state machine) | `DrawAnimStateMachineWithOkayUI` | Open Animator Graph, Reset to default, Add built-in actions, Entry, the stance and gait fold-outs, each state (name, clip, speed, loop, x, Preview / Edit clip with the transport) and its transitions fold-out (target, condition, parameter, value, blend, x, + Transition), + Add State |
+
+A fold-out whose label has a "###id" part is kept open by that part alone (the transitions' count is in the shown text).
+
+**Counts.** Ported to field rows: **41** (33 after stage 4, and these 8). Generic card: 8. Still Dear ImGui: **about 182**. Seen in the
+pictures and not ported: Item Pickup, Hold Prompt, the First Person Hands and Hand bodies.
+
+### 18.3 Found and fixed in the pictures
+
+- **Both toolkits:** the state machine's rows ran out of the docked Inspector ("Add built-in actions", each state's loop and x, each
+  transition's value, blend and x, the script note); Hold For Prone and the zoom FOV after their rows; the Character's "Play YOUR authored
+  clips..." and "No clips yet..." notes. They now wrap: the Dear ImGui body with SameLineOrWrap (and `FieldW` / `CheckW` for a field's or a
+  check box's width), the rows with `SameLineOrWrap` (which now counts a row's own width and label).
+- **OkayUI:** wrapped text broke 6 pixels later than Dear ImGui's (the body's window reaches past the region for the prefab bars), so the
+  walk-speed hint took two lines where Dear ImGui took three, and everything below was 36 pixels higher; wrapped notes and labels now end at
+  the region's edge (`WrapAtRegion`). The Sprite Renderer's note, which ran 2 pixels past the region in its golden, now wraps inside.
+
+### 18.4 Tests
+
+- `okayui_inspector` (280 checks; 3 new golden images: `inspector_animsm`, `_character`, `_firstperson`): nothing in the state machine runs
+  past the region; a transition's target list and a pick; the clip previews sit on their clip's line; Max Jumps on Can Jump's line; a key
+  list's 9 rows and a pick; the Holdable's 14 styles.
+- `okayui_inspector_imgui` (56 checks): 6 more bodies in both toolkits.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector|prefab"`: 47 of 47 pass. `editor/main.cpp`, `OkayPanels.cpp`, `EditorPanelViews.cpp`,
+  `NavigationWindow.cpp`, `LevelTools.cpp` and `LocalizationWindow.cpp` pass the syntax-only check without `OKAY_HAVE_OKAYUI`; main.cpp
+  compiled with it.
+
+### 18.5 Speed and pixels
+
+Instructions (callgrind, 200 frames, per frame): Character 436,718 against 383,298 (12% fewer), First-person settings 342,734 against
+255,445 (25% fewer), the state machine 244,774 against 188,149 (23% fewer), Holdable Object 289,226 against 200,718 (31% fewer).
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Procedural Object Holding | 102.8 us | 39.9 us | 51.6 ms | 8.2 ms | 1.20% |
+| Holdable Object | 114.7 us | 48.9 us | 52.7 ms | 10.0 ms | 1.81% |
+| Character | 139.9 us | 75.7 us | 52.6 ms | 10.9 ms | 3.36% |
+| First-person settings | 123.6 us | 73.0 us | 59.9 ms | 16.0 ms | 3.63% |
+| View toggle | 84.6 us | 27.5 us | 47.5 ms | 5.4 ms | 0.83% |
+| Animator state machine | 104.3 us | 48.0 us | 47.7 ms | 7.3 ms | 1.61% |
+
+Every picture is under the 12% gate and the 4% aim; the earlier ones are unchanged (the UI Button stays at 4.54%, section 17.6).
+
+### 18.6 In the real editor
+
+Run under Xvfb at 1920 x 1200, both toolkits side by side, on `examples/fp_hand/fp_hand_test.okayscene` (its Player has a Character, two
+Animator state machines, Procedural Object Holding, a Player Controller with First- and Third-person settings; Carry Crate has a Holdable
+Object). Pictures in `<scratchpad>/shots/oi5/`. Looked at:
+
+- **Player**, every page from the top (`side-01-player.png` to `side-12-page.png`) and from the end (`side-20-end.png` to `side-45-up.png`);
+  after the wrap fix the two Inspectors line up to the pixel (`side-50-fp.png`, `side-51-pc.png`).
+- **First-person settings:** Arcade (every speed changes the same), a 40-pixel drag on Jump Force (10.5), Ctrl+Z twice: the same in both
+  (`steps-fp-feel.png`).
+- **Holdable Object** on Carry Crate: Left Grip off (two rows go), Preset: block, Ctrl+Z twice: the same in both (`steps-holdable.png`).
+- **The state machine:** Idle's transitions open (`side-61-tr-open.png`), the first condition's list (`side-62-cond-open.png`), Bool false,
+  Ctrl+Z, and the fold-out stays open (`steps-sm-cond.png`).
+
+Seen and not changed: a combo's closed text that is longer than its box is cut inside the box in OkayUI and drawn under the arrow in Dear
+ImGui ("Bool false", "CrouchWalk"); Dear ImGui's lists open left of the Inspector under Xvfb; Item Pickup and Hold Prompt (not ported) have
+notes cut in both toolkits.
+
+### 18.7 Not verified
+
+Windows; other UI scales and densities; the character model tools with a real model (Fix Facing, Turn, Fit Collider), the clip preview
+transport and Edit clip in the real editor; a Player whose View is one view only; Play mode (the state machine's current state, the holding
+lines); the Third-person collision layer list typed in the real editor.

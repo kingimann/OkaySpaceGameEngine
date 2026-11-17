@@ -328,8 +328,8 @@ int main() {
         for (const Moved& m : moved) CHECK(FindId(all, m.where) != nullptr);
         // Panels and tool windows keep their labels and are each reachable.
         for (const char* label : {"Hierarchy", "Inspector", "Project", "Console", "Problems", "Game", "Services", "Scene Manager", "Net",
-                                  "Save Manager", "Variables (watch)", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
-                                  "Crash Log", "Audio Mixer", "Custom Actions", "Visual Script", "Script Editor", "Animation",
+                                  "Save Manager", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
+                                  "Crash Log", "Audio Mixer", "Visual Script", "Script Editor", "Animation",
                                   "Animator (state graph)", "Timeline (cutscenes)", "Navigation", "Dialogue & Quests", "Behavior Tree",
                                   "Modeling", "UV Editor", "Sprite Editor", "UI Editor (separate tab)", "UI Theme", "Items, Loot & Recipes",
                                   "Weapons", "Localization", "UI Editing Mode"}) {

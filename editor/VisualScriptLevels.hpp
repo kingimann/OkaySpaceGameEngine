@@ -155,7 +155,7 @@ inline const char* kBasicTypes[] = {
     "Key", "KeyDown", "AxisX", "AxisY", "MouseButton",
     "SetText", "ShowUI", "HideUI",
     "Time", "DeltaTime",
-    "LoadScene", "PauseGame",
+    "LoadScene", "PauseGame", "ScoreAdd",
     "Self", "GetName", "GetTag",
 };
 
@@ -169,6 +169,7 @@ inline const char* kStarterNodes[] = {
     "GetPosition", "SetPosition", "Translate",
     "Key", "PlaySound", "SetText", "ShowUI",
     "DeltaTime", "PauseGame",
+    "Rotate", "LoadScene", "ScoreAdd",
 };
 
 inline int VsStarterCount() { return (int)(sizeof kStarterNodes / sizeof kStarterNodes[0]); }
@@ -276,6 +277,9 @@ inline const char* VsNodeExample(const char* type) {
         {"OnKey", "Press E to open a door."},
         {"Branch", "If health is under 10, play a warning."},
         {"Sequence", "Play a sound, then show a message."},
+        {"Rotate", "Turn a fan blade a little every frame."},
+        {"LoadScene", "Go to the next level when the player reaches the door."},
+        {"ScoreAdd", "Add 1 point when a coin is touched."},
         {"Delay", "Wait 2 seconds, then spawn the next enemy."},
         {"GetVar", "Read score so a text object can show it."},
         {"SetVar", "Set score to 0 when the game starts."},

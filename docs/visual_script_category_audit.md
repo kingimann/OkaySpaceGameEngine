@@ -3720,6 +3720,66 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 
 <!-- generated:end -->
 
+## Plain words and fewer blocks (internal note, 2026-11-17)
+
+Bar for every name, description and recipe: "imagine a 10 year old was using it".
+
+### What already existed (not rebuilt)
+
+- Names: `editor/VisualScriptNames.hpp` (title, old title kept as a search word, pin names) plus a style check
+  (`LintVsTitle`). Hand names, generated engine-API names and text-script builtin names all end up in `Registry()`.
+- Help sentence and example: `VisualScriptNodeHelp.hpp`, `VisualScriptNodeDocs.inc`, `VsNodeExample`.
+- Starter group (26 blocks, now 29), levels (Basic, Intermediate, Advanced), the palette search, a Templates window
+  (30 long templates) and a small Recipes menu with 5 older entries.
+- Saved identifiers: the `.okayvs` file stores the type token, not the title, so a rename of a title never breaks a
+  saved graph. `okay::vs::CanonicalNodeType` (NodeAliases.hpp) is the old-token-to-new-token table; it is still empty
+  because no token was retired in this pass.
+
+### Glossary (the list the test enforces: `editor/VisualScriptGlossary.hpp`)
+
+Banned in a palette name or description: variable, boolean, float, integer, vector, instance, callback, handler,
+parameter, argument, iterate, index, string, array, function, node, euler, quaternion, gameobject, prefab, transform,
+rigidbody, api, enum, struct, null, void, const, cast, json, rpc, lerp, raycast, loop, var, anim, num, id, nav, ik,
+min, max, deg, dist (and their plurals). `VisualScriptPlain.hpp` swaps each for an everyday word when a name or help
+line is shown: variable -> saved value, vector -> direction, vec3 -> position, rigidbody -> physics body,
+prefab -> saved object, function -> named action, string -> text, array -> list, node -> block, loop -> repeat,
+raycast -> line check, index -> place number, rpc -> remote call. Hand-picked names (`VsPlainTitleFor`) win over the swap.
+The allow-list (`kVsGlossaryAllowed`) has four words, each with a reason, and the tests do not use it.
+Verbs first, 2 to 4 words, small words lowercase ("Change Score by"), events keep "On ...".
+
+### Counts (blocks and wires, current set vs the new one-click recipes; measured by tests/test_vs_recipes.cpp)
+
+| Task | Before | Recipe now |
+| --- | --- | --- |
+| Move with keys | 12 blocks, 12 wires (Move with WASD) | 7 blocks, 6 wires |
+| Jump | 3 blocks, 2 wires | 2 blocks, 1 wire |
+| Score (coin) | 6 blocks, 5 wires (Pickup) | 3 blocks, 2 wires |
+| Open door | 19 blocks, 18 wires | 2 blocks, 1 wire |
+| Enemy follows | 3 blocks, 2 wires (Chase) | 2 blocks, 1 wire |
+| Show text | 3 blocks, 2 wires (Message) | 2 blocks, 1 wire |
+| Play sound on click | not in the template list | 2 blocks, 1 wire |
+| Game over at 0 health | 13 blocks, 12 wires (Win or lose, also does score) | 2 blocks, 1 wire |
+| Spawn on click | 8 blocks, 7 wires (Spawner, timed) | 2 blocks by hand (On Click, Spawn Copy Of), not a recipe yet |
+| Change scene | not measured | 2 blocks by hand (On Key Pressed, Load Scene), not a recipe yet |
+
+Halved: door, score, show text, follow, jump (3 to 2). Move with keys is cut by 42 percent (12 to 7 blocks), wires by
+half. Not halved yet: nothing needs a separate number or "this object" block in any recipe (the numbers are typed on
+the block, "Target" empty means this object), but moving with two axes still needs a Multiply block per axis.
+A single "Move With Keys" block would make it 2 blocks; that macro block is NOT built.
+
+Budgets live in the data (`VsRecipe::maxNodes/maxWires`) and the test fails when a recipe grows past them.
+
+### Not done in this pass
+
+- Combined (macro) blocks such as Move With Keys, Jump On Key, Follow Object, When Touched Do, Wait Then Do.
+- Hiding the low-level blocks behind a "Show advanced nodes" switch (the Starter group is the default first view; levels
+  already filter).
+- Auto-connect on drop and insert-on-wire are written as pure, tested functions (`VisualScriptAutoConnect.hpp`) but
+  are not yet called by the canvas code.
+- The plain pin-refusal sentences were not rewritten.
+- No token was retired or merged, so the alias table is still empty; the saved-graph test proves every saved
+  identifier in examples/ and assets/ still loads and runs.
+
 ## Found on the way (listed, not fixed)
 
 These came up while sorting. Nothing below was changed (the titles come from generators and tables other work depends on);

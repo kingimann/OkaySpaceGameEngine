@@ -2,6 +2,7 @@
 // The add-node panel: search, a topic list on the left (grouped under section headings), favourites, and a
 // details pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
+#include "VisualScriptSearch.hpp"
 #include "imgui.h"
 
 #include <algorithm>
@@ -149,7 +150,7 @@ inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc, const VsDef* 
     }
     if (doc) {
         ImGui::Spacing();
-        ImGui::TextWrapped("%s", doc->description.c_str());
+        ImGui::TextWrapped("%s", VsPlainText(doc->description).c_str());
         ImGui::Spacing();
         ImGui::TextDisabled("%s", doc->requirements.c_str());
         if (!doc->example.empty()) { ImGui::Spacing(); ImGui::TextWrapped("%s", doc->example.c_str()); }
@@ -392,10 +393,11 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         e.doc = VsNodeDocFor(d.type);
         e.rank = api ? 2 : 0;
         if (const char* what = VsNodeHelp(d.type)) e.helpLine = what;
-        else if (api && !api->doc.empty()) e.helpLine = api->doc;
+        else if (api && !api->doc.empty()) e.helpLine = VsPlainText(api->doc);
         else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
         if (const char* ex = VsNodeExample(d.type)) e.example = ex;
         e.keywords = VsNodeSearchText(d.type);
+        if (const std::string syn = VsSynonymWords(std::string(d.title ? d.title : "") + " " + e.keywords); !syn.empty()) e.keywords += " " + syn;
         if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
         // Where this node used to sit (Scene Atmosphere, Objects Survival ...): people who remember the old topic
         // still find it by typing that name.
@@ -416,7 +418,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
         // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
         if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
-        if (api) e.desc = api->doc + " In a script: " + api->code + ". ";
+        if (api) e.desc = VsPlainText(api->doc) + " In a script: " + api->code + ". ";
         if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
         else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
         else e.desc += "Gives a value to other nodes. ";
@@ -488,7 +490,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     };
 
     // Sidebar: -3 All, -2 Recent, -1 Favourites, otherwise a topic index. s_sub picks a subcategory.
-    static int s_side = -3;
+    static int s_side = -4;   // the Starter group first
     static int s_sub = -1;
     static std::string s_subName;
     static int s_kb = 0;
@@ -718,7 +720,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                     if (s_side == -1 && !isFav(e.key)) continue;
                     if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
                 }
-                const int sc = score(e, hits);
+                const int sc = needle.empty() ? score(e, hits) : VsStarterBoost(score(e, hits), e.def && VsIsStarter(e.def->type), e.def && std::strncmp(e.def->type, "Fn.", 3) == 0);
                 if (sc > 0) s_rows.push_back(Row{&e, sc});
             }
             if (!needle.empty())

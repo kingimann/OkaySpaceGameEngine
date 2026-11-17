@@ -3962,3 +3962,24 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+add_executable(test_vs_plain_names test_vs_plain_names.cpp)
+target_include_directories(test_vs_plain_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_plain_names PRIVATE okay::engine)
+add_test(NAME vs_plain_names COMMAND test_vs_plain_names)
+
+add_executable(test_vs_recipes test_vs_recipes.cpp)
+target_include_directories(test_vs_recipes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_recipes PRIVATE okay::engine)
+add_test(NAME vs_recipes COMMAND test_vs_recipes)
+
+add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
+target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
+target_compile_definitions(test_vs_saved_graphs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_saved_graphs COMMAND test_vs_saved_graphs)
+
+add_executable(test_vs_search_connect test_vs_search_connect.cpp)
+target_include_directories(test_vs_search_connect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
+add_test(NAME vs_search_connect COMMAND test_vs_search_connect)

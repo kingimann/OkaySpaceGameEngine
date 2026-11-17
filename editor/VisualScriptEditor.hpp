@@ -36,6 +36,8 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptFriendly.hpp"
+#include "VisualScriptPlain.hpp"
+#include "VisualScriptRecipes.hpp"
 #include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -163,6 +165,15 @@ inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
     return defs;
 }
 
+// Plain words (VisualScriptPlain.hpp): a hand-picked name, else the banned words swapped for everyday ones.
+inline std::vector<VsDef> ApplyPlainTitles(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        if (const char* t = VsPlainTitleFor(d.type)) { d.title = t; continue; }
+        if (d.title && !VsGlossaryViolation(d.title).empty()) d.title = VsIntern(VsPlainText(d.title, true));
+    }
+    return defs;
+}
+
 // Levels come from VisualScriptLevels.hpp, not from the big list below, so a
 // new node (including one added on another branch) gets a level by name.
 inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
@@ -177,7 +188,7 @@ inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyPlainTitles(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -829,7 +840,7 @@ inline const std::vector<VsDef>& Registry() {
         {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
         {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
         {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
-    })))));
+    }))))));
     return defs;
 }
 
@@ -3780,7 +3791,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
     if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop in a ready-made graph: coins, a chasing enemy, a door, a health pickup, a countdown.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start here. Drop in a ready-made graph: move with arrow keys, jump, coins and score, a door, an enemy that follows you.");
     if (ImGui::BeginPopup("##vsrecipes")) {
         struct Rec { const char* name; const char* text; };
         static const Rec recs[] = {
@@ -3801,6 +3812,24 @@ inline void Draw(EditorState& ed, bool* open) {
             {"Countdown then win",
              "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Countdown 0.4\npos 2 300 40\nexec 1 0 2\nnode 3 Win\npos 3 560 40\nexec 2 0 3\n"},
         };
+        // The first things a beginner sees: small ready-made recipes (VisualScriptRecipes.hpp), one click each.
+        ImGui::TextDisabled("Start here. One click adds a small working graph.");
+        for (const VsRecipe& r : VsRecipes()) {
+            if (ImGui::MenuItem(r.name)) {
+                st.templateText = r.graph; st.pasteTemplate = true;
+                if (GameObject* go = ed.selected()) VsAddTemplateComponents(go, r.add);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(320);
+                ImGui::TextUnformatted(r.blurb);
+                if (r.needs[0]) ImGui::TextDisabled("%s", r.needs);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("More recipes");
         for (const Rec& r : recs)
             if (ImGui::MenuItem(r.name)) { st.templateText = r.text; st.pasteTemplate = true; }
         ImGui::EndPopup();
@@ -5266,9 +5295,9 @@ inline void Draw(EditorState& ed, bool* open) {
         const ImVec2 c1(c0.x + cardW, c0.y + cardH);
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
-        const char* title = "This graph is empty";
-        const char* hint = "Right-click the canvas, or press Space, to add a node.";
-        const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
+        const char* title = "What is this?";
+        const char* hint = "A script is a chain of blocks: when something happens, do something. Press Recipes to start.";
+        const char* hint2 = "Or add a block and open the Starter group at the top of the list.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
         dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);
         const ImVec2 hs = ImGui::CalcTextSize(hint);

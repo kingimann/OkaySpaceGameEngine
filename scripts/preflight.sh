@@ -37,7 +37,7 @@ conflicts() {
     out=$(git merge-tree --write-tree --name-only "$BASE" HEAD 2>&1); rc=$?
     if [ $rc -eq 0 ]; then return 0; fi
     if [ $rc -ne 1 ]; then echo "   (could not run git merge-tree: $(echo "$out" | head -1)); try: git merge $BASE"; return 0; fi
-    echo "$out" | sed -n '2,$p' | sed '/^$/q' | sed 's/^/   conflict in: /'
+    echo "$out" | awk 'NR==1{next} /^$/{exit} {print "   conflict in: " $0}'
     echo "   Fix: git merge $BASE, resolve (keep both sides), build the touched tests, push."
     echo "   Generated files (docs/FEATURE_MAP.md, docs/feature_map/*): take main's copy, then run python3 scripts/gen_feature_map.py."
     echo "   docs/try_it.md is generated from docs/try_it/*.md: do not edit it, add a file in docs/try_it/ (python3 scripts/gen_try_it.py)."

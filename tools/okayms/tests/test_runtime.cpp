@@ -91,7 +91,7 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
                             "  memset(buf, 65, 2);\n"
                             "  if (buf[0] != 65 || buf[1] != 65) return 2;\n"
                             "  if (strlen(\"hi\") != 2) return 3;\n"
-                            "  printf(\"%d %s %x %c\\n\", -7, \"ok\", 255, 65);\n"
+                            "  printf(\"%d %s %x %c %f\\n\", -7, \"ok\", 255, 65, 1.5 + 2.5);\n"
                             "  return 0;\n"
                             "}\n"));
     const int built = run(cl + " /I" + rt + " /ENTRY:mainCRTStartup /Fe" + dir + "/hi.exe " + dir + "/hi.c " + dir +
@@ -105,8 +105,8 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
     const int code = run("WINEDEBUG=-all WINEPREFIX=$HOME/.okayms-wine timeout 60 wine " + dir + "/hi.exe", dir + "/out.txt");
     const std::string out = slurp(dir + "/out.txt");
     CHECK(tally, code == 0);
-    CHECK(tally, out == "-7 ok ff A\n");
-    if (out != "-7 ok ff A\n") std::fprintf(stderr, "  stdout: [%s]\n", out.c_str());
+    CHECK(tally, out == "-7 ok ff A 4.000000\n");
+    if (out != "-7 ok ff A 4.000000\n") std::fprintf(stderr, "  stdout: [%s]\n", out.c_str());
 }
 
 int main(int argc, char** argv) {

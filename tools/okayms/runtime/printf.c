@@ -52,6 +52,31 @@ int printf(char *fmt, ...) {
             v = va_arg(ap, unsigned int);
             put_u(out, &n, v, 16);
             fmt = fmt + 2;
+        } else if (fmt[0] == '%' && fmt[1] == 'f') {
+            double fval;
+            int fwhole;
+            int fi;
+            double ffrac;
+            fval = va_arg(ap, double);
+            if (fval < 0) {
+                out[n] = '-';
+                n = n + 1;
+                fval = -fval;
+            }
+            fwhole = (int)fval;
+            put_u(out, &n, fwhole, 10);
+            out[n] = '.';
+            n = n + 1;
+            ffrac = fval - (double)fwhole;
+            for (fi = 0; fi < 6; fi = fi + 1) {
+                int fdigit;
+                ffrac = ffrac * 10.0;
+                fdigit = (int)ffrac;
+                out[n] = '0' + fdigit;
+                n = n + 1;
+                ffrac = ffrac - (double)fdigit;
+            }
+            fmt = fmt + 2;
         } else if (fmt[0] == '%' && fmt[1] == 'c') {
             int v;
             v = va_arg(ap, int);

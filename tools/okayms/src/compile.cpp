@@ -17,13 +17,15 @@ enum Tok {
     TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TReturn,
     TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
-    TSizeof, TConst, TStatic, TGoto
+    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble
 };
 
 struct Token {
     Tok kind = TEnd;
     std::string text;
     uint64_t number = 0;
+    // 0 for an integer, 5 for a float literal, 6 for a double literal.
+    int real = 0;
 };
 
 struct Type {
@@ -703,7 +705,54 @@ Tok keyword(const std::string& text) {
     if (text == "const") return TConst;
     if (text == "static") return TStatic;
     if (text == "goto") return TGoto;
+    if (text == "float") return TFloat;
+    if (text == "double") return TDouble;
     return TIdent;
+}
+
+// value = sig * 10^pow10, written as an IEEE-754 double. A float is that
+// value rounded to 24 significant bits.
+uint64_t ieee_real(uint64_t sig, int pow10, bool neg, bool single) {
+    unsigned __int128 mag = sig;
+    int bexp = 0;
+    if (sig == 0) return neg ? (single ? 0x80000000ull : 0x8000000000000000ull) : 0;
+    if (pow10 >= 0) {
+        for (int i = 0; i < pow10; ++i) mag *= 10u;
+        bexp = 0;
+    } else {
+        for (int i = 0; i < -pow10; ++i) {
+            while (mag < (static_cast<unsigned __int128>(1) << 120)) {
+                mag <<= 1;
+                --bexp;
+            }
+            mag /= 10u;
+        }
+    }
+    int hibit = 127;
+    while (hibit > 0 && ((mag >> hibit) & 1u) == 0) --hibit;
+    const int keep = single ? 23 : 52;
+    const int renorm = hibit - keep;
+    if (renorm > 0) {
+        const unsigned __int128 rest = mag & ((static_cast<unsigned __int128>(1) << renorm) - 1u);
+        mag >>= renorm;
+        bexp += renorm;
+        const unsigned __int128 half = static_cast<unsigned __int128>(1) << (renorm - 1);
+        if (rest > half || (rest == half && (mag & 1u))) ++mag;
+        if ((mag >> (keep + 1)) != 0) {
+            mag >>= 1;
+            ++bexp;
+        }
+    } else if (renorm < 0) {
+        mag <<= -renorm;
+        bexp += renorm;
+    }
+    const int bias = single ? 127 : 1023;
+    int encoded = bexp + keep + bias;
+    if (encoded <= 0) return neg ? (single ? 0x80000000ull : 0x8000000000000000ull) : 0;
+    const uint64_t mant_mask = single ? 0x7FFFFFull : 0xFFFFFFFFFFFFFull;
+    const uint64_t mant = static_cast<uint64_t>(mag) & mant_mask;
+    if (single) return (neg ? 0x80000000ull : 0) | (static_cast<uint64_t>(encoded) << 23) | mant;
+    return (neg ? 0x8000000000000000ull : 0) | (static_cast<uint64_t>(encoded) << 52) | mant;
 }
 
 std::vector<Token> lex(const std::string& text, std::string* error) {
@@ -745,12 +794,56 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 ++j;
             }
             if (j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) ++j;
-            if (!any) {
+            bool real = false;
+            uint64_t frac = 0;
+            int frac_digits = 0;
+            int exp10 = 0;
+            bool exp_neg = false;
+            if (base == 10 && j < text.size() && text[j] == '.' && j + 1 < text.size() &&
+                std::isdigit(static_cast<unsigned char>(text[j + 1]))) {
+                real = true;
+                ++j;
+                while (j < text.size() && std::isdigit(static_cast<unsigned char>(text[j]))) {
+                    frac = frac * 10u + static_cast<uint64_t>(text[j] - '0');
+                    ++frac_digits;
+                    ++j;
+                }
+            }
+            if (base == 10 && j < text.size() && (text[j] == 'e' || text[j] == 'E')) {
+                real = true;
+                ++j;
+                if (j < text.size() && (text[j] == '+' || text[j] == '-')) {
+                    exp_neg = text[j] == '-';
+                    ++j;
+                }
+                int e = 0;
+                while (j < text.size() && std::isdigit(static_cast<unsigned char>(text[j]))) {
+                    e = e * 10 + (text[j] - '0');
+                    ++j;
+                }
+                exp10 = exp_neg ? -e : e;
+            }
+            bool as_float = false;
+            if (j < text.size() && (text[j] == 'f' || text[j] == 'F')) {
+                real = true;
+                as_float = true;
+                ++j;
+            }
+            if (!real && j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) ++j;
+            if (!any && !real) {
                 *error = "bad number";
                 return {};
             }
             tok.kind = TNumber;
-            tok.number = value;
+            if (real) {
+                uint64_t sig = value;
+                for (int n = 0; n < frac_digits; ++n) sig *= 10u;
+                sig += frac;
+                tok.number = ieee_real(sig, exp10 - frac_digits, false, as_float);
+                tok.real = as_float ? 5 : 6;
+            } else {
+                tok.number = value;
+            }
             i = j;
             tokens.push_back(tok);
             continue;
@@ -917,6 +1010,8 @@ struct Parser {
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
         if (type.base == 4) return 2;
+        if (type.base == 5) return 4;
+        if (type.base == 6) return 8;
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return structs[type.struct_id].size;
         if (type.base == 0) return 0;
@@ -931,6 +1026,8 @@ struct Parser {
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
         if (type.base == 4) return 2;
+        if (type.base == 5) return 4;
+        if (type.base == 6) return 8;
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return std::max(1, structs[type.struct_id].align);
         return 4;
@@ -1027,10 +1124,13 @@ struct Parser {
         }
         bool unsign = false;
         bool sign = false;
-        while (is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TInt) || is(TVoid) || is(TChar)) {
+        while (is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TInt) || is(TVoid) || is(TChar) ||
+               is(TFloat) || is(TDouble)) {
             if (is(TVoid)) type->base = 0;
             else if (is(TChar)) type->base = 2;
             else if (is(TShort)) type->base = 4;
+            else if (is(TFloat)) type->base = 5;
+            else if (is(TDouble)) type->base = 6;
             else if (is(TInt) || is(TLong)) {
                 if (type->base != 2 && type->base != 4) type->base = 1;
             }
@@ -1183,7 +1283,8 @@ struct Parser {
 
     bool is_decl_start() const {
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
-            is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst))
+            is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
+            is(TFloat) || is(TDouble))
             return true;
         return is(TIdent) && typedefs.find(cur().text) != typedefs.end();
     }
@@ -1711,7 +1812,7 @@ bool Parser::parse_unary(Node* out) {
     if (is(TNumber)) {
         out->kind = Node::IntLit;
         out->number = cur().number;
-        out->type.base = 1;
+        out->type.base = cur().real != 0 ? cur().real : 1;
         next();
     } else if (is(TString)) {
         out->kind = Node::StringLit;
@@ -1756,9 +1857,29 @@ bool Parser::parse_unary(Node* out) {
             out->text = name;
         }
     } else if (is(TLParen)) {
-        next();
-        if (!parse_expr(0, out)) return false;
-        if (!expect(TRParen, "')'")) return false;
+        const Tok ahead = at + 1 < tokens.size() ? tokens[at + 1].kind : TEnd;
+        const bool type_ahead = ahead == TInt || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
+                                ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
+                                ahead == TUnion || ahead == TEnum ||
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end());
+        if (type_ahead) {
+            next();
+            Type ty;
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&ty, &imp, &exp)) return false;
+            while (accept(TStar)) ++ty.pointers;
+            if (!expect(TRParen, "')'")) return false;
+            Node inner;
+            if (!parse_unary(&inner)) return false;
+            out->kind = Node::Unary;
+            out->type = ty;
+            out->kids.push_back(std::move(inner));
+        } else {
+            next();
+            if (!parse_expr(0, out)) return false;
+            if (!expect(TRParen, "')'")) return false;
+        }
     } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot)) {
         out->kind = Node::Unary;
         out->op = cur().kind;
@@ -1859,7 +1980,8 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         bin.op = op;
         bin.kids.push_back(std::move(*out));
         bin.kids.push_back(std::move(right));
-        if (bin.kind == Node::Binary && bin.kids[0].kind == Node::IntLit && bin.kids[1].kind == Node::IntLit) {
+        if (bin.kind == Node::Binary && bin.kids[0].kind == Node::IntLit && bin.kids[1].kind == Node::IntLit &&
+            bin.kids[0].type.base < 5 && bin.kids[1].type.base < 5) {
             const uint64_t left = bin.kids[0].number;
             const uint64_t right_n = bin.kids[1].number;
             bool folded = true;
@@ -1966,6 +2088,14 @@ struct Gen {
         }
         const int off = temp_base - temp_depth * 8;
         ++temp_depth;
+        if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6)) {
+            b(last_type.base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x11);
+            b(0x85);
+            disp(off);
+            return off;
+        }
         store_slot(off, true);
         return off;
     }
@@ -2037,6 +2167,8 @@ int Gen::size_of(const Type& type) const {
     if (type.pointers > 0) return 8;
     if (type.base == 2) return 1;
     if (type.base == 4) return 2;
+    if (type.base == 5) return 4;
+    if (type.base == 6) return 8;
     if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
         type.struct_id < static_cast<int>(structs->size()))
         return (*structs)[type.struct_id].size;
@@ -2196,6 +2328,14 @@ void Gen::load_from_rax(int size, bool is_unsigned) {
 }
 
 void Gen::load_typed(int32_t offset, const Type& type) {
+    if (type.pointers == 0 && (type.base == 5 || type.base == 6)) {
+        b(type.base == 6 ? 0xF2 : 0xF3);
+        b(0x0F);
+        b(0x10);
+        b(0x85);
+        disp(offset);
+        return;
+    }
     const int size = size_of(type);
     if (type.pointer() || size >= 8) load_slot(offset, true);
     else if (size == 4) load_slot(offset, false);
@@ -2241,6 +2381,19 @@ void Gen::promote(Type* type) const {
 bool Gen::gen_expr(const Node& node) {
     if (!error.empty()) return false;
     if (node.kind == Node::IntLit) {
+        if (node.type.base == 5 || node.type.base == 6) {
+            b(0x48);
+            b(0xB8);
+            for (int i = 0; i < 8; ++i) b(static_cast<uint8_t>(node.number >> (8 * i)));
+            b(0x66);
+            if (node.type.base == 6) b(0x48);
+            b(0x0F);
+            b(0x6E);
+            b(0xC0);
+            last_type = Type{};
+            last_type.base = node.type.base;
+            return true;
+        }
         mov_eax_imm(static_cast<uint32_t>(node.number));
         last_type = Type{};
         last_type.base = 1;
@@ -2378,6 +2531,31 @@ bool Gen::gen_expr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Unary) {
+        if (node.op == TEnd && !node.kids.empty()) {
+            if (!gen_expr(node.kids[0])) return false;
+            const Type from = last_type;
+            const Type to = node.type;
+            const bool from_fp = from.pointers == 0 && (from.base == 5 || from.base == 6);
+            const bool to_fp = to.pointers == 0 && (to.base == 5 || to.base == 6);
+            if (!from_fp && to_fp) {
+                b(to.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x2A);
+                b(0xC0);
+            } else if (from_fp && !to_fp) {
+                b(from.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x2C);
+                b(0xC0);
+            } else if (from_fp && to_fp && from.base != to.base) {
+                b(to.base == 6 ? 0xF3 : 0xF2);
+                b(0x0F);
+                b(0x5A);
+                b(0xC0);
+            }
+            last_type = to;
+            return true;
+        }
         if (node.op == TPlusPlus || node.op == TMinusMinus) {
             if (!gen_addr(node.kids[0])) return false;
             const bool pointer = last_type.pointers > 0;
@@ -2441,6 +2619,23 @@ bool Gen::gen_expr(const Node& node) {
         }
         if (!gen_expr(node.kids[0])) return false;
         if (node.op == TMinus) {
+            if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6)) {
+                const bool dbl = last_type.base == 6;
+                b(0x48);
+                b(0xB8);
+                const uint64_t sign = dbl ? 0x8000000000000000ull : 0x80000000ull;
+                for (int i = 0; i < 8; ++i) b(static_cast<uint8_t>(sign >> (8 * i)));
+                b(0x66);
+                if (dbl) b(0x48);
+                b(0x0F);
+                b(0x6E);
+                b(0xC8);
+                if (dbl) b(0x66);
+                b(0x0F);
+                b(0x57);
+                b(0xC1);
+                return true;
+            }
             b(0xF7);
             b(0xD8);
             return true;
@@ -2555,9 +2750,27 @@ bool Gen::gen_expr(const Node& node) {
             }
         }
         if (!gen_expr(node.kids[1])) return false;
+        const bool rhs_fp = last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6);
+        const int rhs_base = last_type.base;
         const int slot = spill();
         if (!error.empty()) return false;
         if (!gen_addr(node.kids[0])) return false;
+        if (rhs_fp) {
+            b(0x48);
+            b(0x89);
+            b(0xC1);
+            b(rhs_base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x10);
+            b(0x85);
+            disp(slot);
+            b(rhs_base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x11);
+            b(0x01);
+            --temp_depth;
+            return true;
+        }
         const int size = std::max(1, size_of(last_type));
         b(0x48);
         b(0x89);
@@ -2654,6 +2867,13 @@ bool Gen::gen_expr(const Node& node) {
             b(0x08);
             load_slot(slot, true);
             --temp_depth;
+            if (node.type.pointers == 0 && (node.type.base == 5 || node.type.base == 6)) {
+                b(0x66);
+                if (node.type.base == 6) b(0x48);
+                b(0x0F);
+                b(0x6E);
+                b(0xC0);
+            }
             last_type = node.type;
             promote(&last_type);
             return true;
@@ -2708,6 +2928,7 @@ bool Gen::gen_expr(const Node& node) {
             }
         }
         std::vector<int> saved;
+        std::vector<Type> saved_types;
         for (size_t arg_i = 0; arg_i < nargs; ++arg_i) {
             const bool named = arg_i < sig.params.size();
             const Type param = named ? sig.params[arg_i] : Type{};
@@ -2721,6 +2942,7 @@ bool Gen::gen_expr(const Node& node) {
             } else if (!gen_expr(node.kids[arg0 + arg_i])) {
                 return false;
             }
+            saved_types.push_back(last_type);
             saved.push_back(spill());
             if (!error.empty()) return false;
         }
@@ -2766,7 +2988,34 @@ bool Gen::gen_expr(const Node& node) {
             b(0x8D);
             disp(hidden);
         }
-        for (int i = 0; i < static_cast<int>(saved.size()); ++i) load_reg(i + reg_base, saved[static_cast<size_t>(i)]);
+        for (int i = 0; i < static_cast<int>(saved.size()); ++i) {
+            const int reg = i + reg_base;
+            const Type& at = saved_types[static_cast<size_t>(i)];
+            const bool fp = at.pointers == 0 && (at.base == 5 || at.base == 6);
+            if (fp && reg >= 0 && reg < 4) {
+                const uint8_t modrm = reg == 0 ? 0x85 : reg == 1 ? 0x8D : reg == 2 ? 0x95 : 0x9D;
+                b(at.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x10);
+                b(modrm);
+                disp(saved[static_cast<size_t>(i)]);
+            } else {
+                load_reg(reg, saved[static_cast<size_t>(i)]);
+            }
+        }
+        if (sig.vararg) {
+            for (int i = 0; i < static_cast<int>(saved.size()); ++i) {
+                const int reg = i + reg_base;
+                const Type& at = saved_types[static_cast<size_t>(i)];
+                if (at.pointers != 0 || (at.base != 5 && at.base != 6) || reg < 0 || reg >= 4) continue;
+                b(0x66);
+                b(reg >= 2 ? 0x4C : 0x48);
+                b(0x0F);
+                b(0x7E);
+                const uint8_t modrm = reg == 0 ? 0xC1 : reg == 1 ? 0xCA : reg == 2 ? 0xD0 : 0xD9;
+                b(modrm);
+            }
+        }
         if (sig.vararg) {
             // The caller of a varargs function writes the register arguments
             // into the 32-byte home area so the callee can walk them.
@@ -2860,6 +3109,90 @@ bool Gen::gen_expr(const Node& node) {
                 last_type = element_type(last_type);
                 last_type.pointers += 1;
                 last_type.array_len = -1;
+            }
+            return true;
+        }
+        const bool left_fp = left_type.pointers == 0 && (left_type.base == 5 || left_type.base == 6);
+        const bool right_fp = last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6);
+        if (left_fp || right_fp) {
+            const bool use_double = (left_fp && left_type.base == 6) || (right_fp && last_type.base == 6);
+            auto as_xmm = [&](const Type& have) {
+                if (have.pointers == 0 && (have.base == 5 || have.base == 6)) {
+                    if (use_double && have.base == 5) {
+                        b(0xF3);
+                        b(0x0F);
+                        b(0x5A);
+                        b(0xC0);
+                    } else if (!use_double && have.base == 6) {
+                        b(0xF2);
+                        b(0x0F);
+                        b(0x5A);
+                        b(0xC0);
+                    }
+                } else {
+                    b(use_double ? 0xF2 : 0xF3);
+                    b(0x0F);
+                    b(0x2A);
+                    b(0xC0);
+                }
+            };
+            as_xmm(last_type);
+            b(use_double ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x10);
+            b(0xC8);
+            if (left_fp) {
+                b(left_type.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x10);
+                b(0x85);
+                disp(off);
+            } else {
+                b(0x8B);
+                b(0x85);
+                disp(off);
+            }
+            --temp_depth;
+            as_xmm(left_type);
+            uint8_t op = 0x58;
+            if (node.op == TMinus) op = 0x5C;
+            else if (node.op == TStar) op = 0x59;
+            else if (node.op == TSlash) op = 0x5E;
+            const bool cmp = node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
+                             node.op == TGe;
+            if (!cmp && node.op != TPlus && node.op != TMinus && node.op != TStar && node.op != TSlash) {
+                error = "operator is not supported";
+                return false;
+            }
+            if (cmp && use_double) b(0x66);
+            if (cmp) {
+                b(0x0F);
+                b(0x2E);
+                b(0xC1);
+            } else {
+                b(use_double ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(op);
+                b(0xC1);
+            }
+            if (cmp) {
+                uint8_t setcc = 0x94;
+                if (node.op == TNe) setcc = 0x95;
+                else if (node.op == TLt) setcc = 0x92;
+                else if (node.op == TGt) setcc = 0x97;
+                else if (node.op == TLe) setcc = 0x96;
+                else if (node.op == TGe) setcc = 0x93;
+                b(0x0F);
+                b(setcc);
+                b(0xC0);
+                b(0x0F);
+                b(0xB6);
+                b(0xC0);
+                last_type = Type{};
+                last_type.base = 1;
+            } else {
+                last_type = Type{};
+                last_type.base = use_double ? 6 : 5;
             }
             return true;
         }
@@ -3216,7 +3549,17 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             const Type& param = local.type;
             const int param_size = gen.size_of(param);
             const bool big = param.base == 3 && param.pointers == 0 && !gen.fits_register(param);
+            const bool fp = param.pointers == 0 && (param.base == 5 || param.base == 6);
             const bool wide = param.pointer() || param_size == 8;
+            if (fp) {
+                const uint8_t modrm = reg == 0 ? 0x85 : reg == 1 ? 0x8D : reg == 2 ? 0x95 : 0x9D;
+                gen.b(param.base == 6 ? 0xF2 : 0xF3);
+                gen.b(0x0F);
+                gen.b(0x11);
+                gen.b(modrm);
+                gen.disp(local.offset);
+                continue;
+            }
             if (big) {
                 if (reg == 0) { gen.b(0x48); gen.b(0x89); gen.b(0xCB); }
                 else if (reg == 1) { gen.b(0x48); gen.b(0x89); gen.b(0xD3); }

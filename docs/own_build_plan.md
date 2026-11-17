@@ -17,8 +17,27 @@ No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
   it was recorded; `--no-stat` turns it off; `-v` prints hashed/trusted counts), response files for long link/archive lines
   (`rsp_threshold` in the toolchain block, default 30000 chars), quoted words so paths may contain spaces, `--build-dir DIR`
   (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
-- Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic), no pools,
-  no restat, no generator steps, no `-k`; structured targets use -MMD (system headers not tracked), imported ones keep CMake's -MD.
+- Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic),
+  no regeneration of the manifest, no-op still slower than Ninja on a just-built tree; structured targets use -MMD
+  (system headers not tracked), imported ones keep CMake's -MD.
+
+## Stage A follow-up (2026-11-17, grok/okaybuild-1): pools, generators, restat, -k, listings
+Written from the same general ideas (a named slot counter beside the worker count, declared outputs as edges,
+content hash of an output after the command, keep scheduling work that does not depend on a failure). No other
+build tool's code was read.
+- `pool NAME` / `depth = N` (at least 1). A step runs only when a worker is free and its pool has a free slot.
+  Link steps (`LD`) use the built-in pool `link` with depth 1 unless the manifest sets `pool link` or `pool = none`
+  on the target. `pool = console` is depth 1 and the command writes straight to the terminal.
+- An action may list `outputs` (more than one), `restat = 1` and `pool`. A target may list `needs` (order-only:
+  wait for the action that produces that file) and `pool` (the link or archive step only). A source that is some
+  action's output does not have to exist when the graph is planned.
+- `restat`: after the command, if every declared output has the same bytes as last time, the previous modification
+  time is put back and dependents are not rebuilt. Dependents already skip identical bytes; restoring the time is
+  what a later mtime check can see.
+- `-k` / `--keep-going`: a failed step does not run its dependents, and other ready steps still run. Without `-k`
+  the build stops taking new steps (steps already running finish).
+- `okay-build targets` prints `name<TAB>lib|exe` and one line per raw output. `okay-build graph [name...]` prints
+  each step as `id<TAB>kind<TAB>desc<TAB>output<TAB>pool=NAME` plus `deps` lines.
 - Bug fixed (2026-11-17): a `#` used to end the line even inside quotes and inside `cmd`, so `sources = "a#b.cpp"` and
   `cmd = printf '#define V 3'` were cut in half. Comments are now stripped only outside quotes, and a `cmd` line is kept whole.
   The same test aborted the process: an output in the current directory has an empty parent path, and

@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -22,6 +23,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <vector>
 
@@ -36,12 +38,15 @@ struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000;
 };
-struct RawAction { string dir, cmd, output, depfile; vector<string> inputs, after; int line = 0; };
-struct Target {
-    string name; bool isLib = false; int line = 0;
-    vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps;
+struct PoolDecl { string name; int depth = 1; int line = 0; };
+struct RawAction {
+    string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int line = 0;
 };
-struct Manifest { Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; };
+struct Target {
+    string name; bool isLib = false; int line = 0; string pool;
+    vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs;
+};
+struct Manifest { Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools; };
 
 // split on whitespace; "double quoted" words may contain spaces
 static vector<string> tokens(const string& line) {
@@ -77,8 +82,14 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
+    auto oneFlag = [&](const vector<string>& v, const string& k) {
+        if (v.size() != 1) throw err(k + " takes one value");
+        if (v[0] == "1" || v[0] == "true" || v[0] == "yes") return true;
+        if (v[0] == "0" || v[0] == "false" || v[0] == "no") return false;
+        throw err(k + " is 1 or 0");
+    };
     while (std::getline(in, line)) {
         ++ln;
         if (!isCmdLine(line)) line = stripComment(line);
@@ -104,13 +115,18 @@ static Manifest parseManifest(const string& file) {
                 }
                 continue;
             }
+            if (t[0] == "pool") {
+                if (t.size() != 2) throw err("expected: pool NAME");
+                for (auto& p : m.pools) if (p.name == t[1]) throw err("duplicate pool '" + t[1] + "'");
+                m.pools.push_back(PoolDecl{t[1], 1, ln}); mode = POOL; continue;
+            }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
             if (t[0] == "target") {
                 if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
                 Target x; x.name = t[1]; x.isLib = t[2] == "lib"; x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target or outdir)");
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, pool, action or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
@@ -123,11 +139,20 @@ static Manifest parseManifest(const string& file) {
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else throw err("unknown toolchain key '" + k + "'");
+        } else if (mode == POOL) {
+            PoolDecl& p = m.pools.back();
+            if (k == "depth") {
+                if (v.size() != 1) throw err("depth takes one value");
+                p.depth = atoi(v[0].c_str()); if (p.depth < 1) throw err("pool depth must be at least 1");
+            } else throw err("unknown pool key '" + k + "'");
         } else if (mode == ACTION) {
             RawAction& x = m.actions.back();
             if (k == "dir") { if (v.size() != 1) throw err("dir takes one value"); x.dir = v[0]; }
             else if (k == "output") { if (v.size() != 1) throw err("output takes one value"); x.output = v[0]; }
+            else if (k == "outputs") add(x.outputs);
             else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); x.depfile = v[0]; }
+            else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
+            else if (k == "restat") x.restat = oneFlag(v, k);
             else if (k == "inputs") add(x.inputs); else if (k == "after") add(x.after);
             else throw err("unknown action key '" + k + "'");
         } else {
@@ -136,11 +161,16 @@ static Manifest parseManifest(const string& file) {
             else if (k == "export_include") add(x.exportIncludes); else if (k == "define") add(x.defines);
             else if (k == "flags") add(x.flags); else if (k == "link_flags") add(x.linkFlags);
             else if (k == "libs") add(x.libs); else if (k == "deps") add(x.deps);
+            else if (k == "needs") add(x.needs);
+            else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else throw err("unknown target key '" + k + "'");
         }
     }
     if (mode != TOP) throw Fail(file + ": missing 'end' at end of file");
-    for (auto& a : m.actions) if (a.cmd.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": action has no cmd");
+    for (auto& a : m.actions) {
+        if (a.cmd.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": action has no cmd");
+        if (a.restat && a.output.empty() && a.outputs.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": restat action has no output");
+    }
     return m;
 }
 
@@ -178,8 +208,8 @@ static string hashArgv(const vector<string>& a) { uint64_t h = 14695981039346656
 
 // ---------------------------------------------------------------- graph
 struct Action {
-    int id = 0; string kind, desc, output, depfile, dir, rawCmd; vector<string> argv, inputs; vector<int> deps, rdeps;
-    string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash;
+    int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
+    vector<int> deps, rdeps; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false;
 };
 struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
 static string gBuildDir = ".";
@@ -230,17 +260,25 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& d : t.deps) go(d);
         std::reverse(po.begin(), po.end()); return po;
     };
+    std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
+    for (auto& r : m.actions) {
+        if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
+        for (auto& o : r.outputs) produced.insert(resolve(r.dir, o));
+    }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
-        vector<string> objs; vector<int> objActs;
+        vector<string> objs; vector<int> objActs; vector<string> needKeys;
+        for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
         for (auto& s : t.sources) {
-            if (!fs::exists(s)) throw Fail("target '" + t.name + "': source '" + s + "' does not exist");
+            string srcKey = resolve("", s);
+            if (!produced.count(srcKey) && !fs::exists(s)) throw Fail("target '" + t.name + "': source '" + s + "' does not exist");
             bool isC = fs::path(s).extension() == ".c";
             string rel = fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
-            a.output = under(".okaybuild/obj/" + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {s};
+            a.output = under(".okaybuild/obj/" + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
+            a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
             a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
             for (auto& f : m.tc.flags) a.argv.push_back(f);
             for (auto& f : t.flags) a.argv.push_back(f);
@@ -251,7 +289,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
             objs.push_back(a.output); objActs.push_back(add(a));
         }
-        Action a; a.target = t.name; a.output = outPath(t); a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold;
+        Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
         if (t.isLib) { a.kind = "AR"; a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; for (auto& o : objs) a.argv.push_back(o); }
         else {
             a.kind = "LD"; a.argv = {m.tc.cxx}; a.rspHead = 1; for (auto& o : objs) a.argv.push_back(o);
@@ -265,19 +303,39 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         }
         finalAct[n] = add(a); g.targetFinal.push_back({n, finalAct[n]});
     }
-    // raw actions (imported commands): run as `cd DIR && CMD` through sh, edges inferred from inputs/outputs
+    // raw actions (imported commands and generators): `cd DIR && CMD` through sh.
+    // Every declared output is an edge source. `after` names the spelling used in the manifest.
     std::map<string, int> byOut, byRawName;
     for (auto& r : m.actions) {
-        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.desc = r.output.empty() ? r.cmd.substr(0, 60) : r.output;
-        a.output = r.output.empty() ? "" : resolve(r.dir, r.output); a.depfile = r.depfile.empty() ? "" : resolve(r.dir, r.depfile);
+        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat;
+        vector<string> outs;
+        if (!r.output.empty()) outs.push_back(resolve(r.dir, r.output));
+        for (auto& o : r.outputs) { string p = resolve(r.dir, o); if (std::find(outs.begin(), outs.end(), p) == outs.end()) outs.push_back(p); }
+        a.outputs = outs; a.output = outs.empty() ? "" : outs[0];
+        a.desc = a.output.empty() ? r.cmd.substr(0, 60) : a.output;
+        a.depfile = r.depfile.empty() ? "" : resolve(r.dir, r.depfile);
         for (auto& i : r.inputs) a.inputs.push_back(resolve(r.dir, i));
         string full = (r.dir.empty() ? "" : "cd " + quote(r.dir) + " && ") + r.cmd;
         a.argv = {"sh", "-c", full};
-        int id = add(a); if (!a.output.empty()) { byOut[a.output] = id; byRawName[r.output] = id; byRawName[a.output] = id; }
+        int id = add(a);
+        if (!r.output.empty()) byRawName[r.output] = id;
+        for (auto& o : outs) byRawName[o] = id;
+    }
+    for (auto& a : g.acts) for (auto& o : a.outputs) {
+        auto it = byOut.find(o);
+        if (it != byOut.end() && it->second != a.id) throw Fail("two actions produce '" + o + "'");
+        byOut[o] = a.id; byRawName[o] = a.id;
+    }
+    for (auto& a : g.acts) {
+        for (auto& in : a.inputs) { auto it = byOut.find(in); if (it != byOut.end() && it->second != a.id) a.deps.push_back(it->second); }
+        for (auto& w : a.waitFor) {
+            auto it = byOut.find(w);
+            if (it == byOut.end()) throw Fail("'" + a.desc + "' waits for '" + w + "', which no action produces");
+            if (it->second != a.id) a.deps.push_back(it->second);
+        }
     }
     for (size_t i = 0; i < m.actions.size(); ++i) {
         Action& a = g.acts[g.acts.size() - m.actions.size() + i];
-        for (auto& in : a.inputs) { auto it = byOut.find(in); if (it != byOut.end() && it->second != a.id) a.deps.push_back(it->second); }
         for (auto& x : m.actions[i].after) { auto it = byRawName.find(x); if (it == byRawName.end()) throw Fail("action '" + a.desc + "': 'after' names unknown action '" + x + "'"); a.deps.push_back(it->second); }
     }
     // cycle check on the final graph (Kahn)
@@ -326,32 +384,55 @@ static vector<string> parseDepfile(const string& path) {
 }
 
 // ---------------------------------------------------------------- state
-struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs; };
+struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs, produced; };
 static std::map<string, Rec> gState; static std::mutex gStateMu;
 static string statePath() { return under(".okaybuild/state"); }
 static void loadState() {
     std::ifstream f(statePath(), std::ios::binary); string l; Rec* cur = nullptr;
-    if (!std::getline(f, l) || l != "okaybuild-state 3") return; // unknown/missing: rebuild everything
+    if (!std::getline(f, l) || (l != "okaybuild-state 3" && l != "okaybuild-state 4")) return; // unknown/missing: rebuild everything
     gPrev.reserve(4096);
     while (std::getline(f, l)) {
         const char* p = l.c_str(); const char* e = p + l.size(); const char* fld[6]; int n = 0; fld[n++] = p;
         for (const char* q = p; q < e && n < 6; ++q) if (*q == '\t') fld[n++] = q + 1;
         auto len = [&](int i) { return (size_t)((i + 1 < n ? fld[i + 1] - 1 : e) - fld[i]); };
-        if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}});
-        else if (n == 6 && l[0] == 'I' && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
-                                                   string path(fld[1], len(1)); cur->inputs.push_back({path, s}); gPrev[path] = s; }
+        if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}, {}});
+        else if (n == 6 && (l[0] == 'I' || l[0] == 'P') && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
+                                                   string path(fld[1], len(1)); (l[0] == 'I' ? cur->inputs : cur->produced).push_back({path, s}); if (l[0] == 'I') gPrev[path] = s; }
     }
 }
 static void saveState() {
     fs::create_directories(under(".okaybuild")); string tmp = statePath() + ".tmp";
-    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-state 3\n";
-      for (auto& [o, r] : gState) { f << "O\t" << o << "\t" << r.cmd << "\n"; for (auto& [p, s] : r.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n"; } }
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-state 4\n";
+      for (auto& [o, r] : gState) {
+          f << "O\t" << o << "\t" << r.cmd << "\n";
+          for (auto& [p, s] : r.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
+          for (auto& [p, s] : r.produced) f << "P\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
+      } }
     fs::rename(tmp, statePath());
 }
 
+static bool fileMissing(const string& p) { struct stat st; return ::stat(p.c_str(), &st) != 0; }
+// restat: the command rewrote an output with the same bytes. Put the previous mtime back so dependents,
+// and anything else looking at mtimes, see no change. Content hashes already skip the rebuild.
+static void restoreMtime(const string& p, long long mtime) {
+    struct timespec ts[2];
+    ts[0].tv_sec = 0; ts[0].tv_nsec = UTIME_OMIT;
+    ts[1].tv_sec = (time_t)(mtime / 1000000000ll); ts[1].tv_nsec = (long)(mtime % 1000000000ll);
+    utimensat(AT_FDCWD, p.c_str(), ts, 0);
+}
+static void noteOutputs(const Action& a, Rec& rec, const vector<std::pair<string, FileSig>>& oldProduced, string& out, bool& ok) {
+    for (auto& o : a.outputs) {
+        forgetHash(o); FileSig now;
+        if (!hashFile(o, now)) { ok = false; out += "okay-build: output missing after the command: " + o + "\n"; return; }
+        bool same = false; FileSig prev{};
+        for (auto& [p, s] : oldProduced) if (p == o) { prev = s; same = s.hash == now.hash; break; }
+        if (a.restat && same) { restoreMtime(o, prev.mtime); now = prev; forgetHash(o); }
+        rec.produced.push_back({o, now});
+    }
+}
 static bool dirty(const Action& a, string& why) {
-    if (a.output.empty()) { why = "no declared output (always runs)"; return true; }
-    if (!fs::exists(a.output)) { why = "output " + a.output + " is missing"; return true; }
+    if (a.outputs.empty()) { why = "no declared output (always runs)"; return true; }
+    for (auto& o : a.outputs) if (fileMissing(o)) { why = "output " + o + " is missing"; return true; }
     const Rec* rp; { std::lock_guard<std::mutex> l(gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } rp = &it->second; } // map nodes are stable
     const Rec& r = *rp;
     if (r.cmd != a.cmdHash) { why = "command line changed"; return true; }
@@ -365,21 +446,29 @@ static bool dirty(const Action& a, string& why) {
 }
 
 // ---------------------------------------------------------------- running commands
-static int runCmd(const vector<string>& argv, string& out) {
+static int waitChild(pid_t pid) {
+    int st = 0; while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) return 128; }
+    return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+}
+static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
+    auto child = [&]() {
+        vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
+        execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
+    };
+    if (stream) { // console pool: the command owns the terminal, one at a time
+        pid_t pid = fork(); if (pid < 0) return 127; if (pid == 0) child(); return waitChild(pid);
+    }
     int fd[2]; if (pipe(fd)) return 127;
     pid_t pid = fork();
-    if (pid == 0) {
-        dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]);
-        vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
-        execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0], strerror(errno)); _exit(127);
-    }
+    if (pid < 0) { close(fd[0]); close(fd[1]); return 127; }
+    if (pid == 0) { dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
     close(fd[1]); char b[4096]; ssize_t n; while ((n = read(fd[0], b, sizeof b)) > 0) out.append(b, (size_t)n);
-    close(fd[0]); int st = 0; waitpid(pid, &st, 0); return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+    close(fd[0]); return waitChild(pid);
 }
 
 static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
 static long long nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-struct Opts { int jobs = 0; bool dry = false, explain = false, verbose = false, profile = false; string file = "build.okay"; };
+struct Opts { int jobs = 0; bool dry = false, explain = false, verbose = false, profile = false, keep = false; string file = "build.okay"; };
 
 // ---------------------------------------------------------------- importer (Stage B)
 // Source of commands: `ninja -t commands [targets]` of an already configured CMake build dir (every compile, archive, link and
@@ -514,71 +603,124 @@ static int importCmake(const string& buildDir, const string& runDir, const strin
     return 0;
 }
 
+struct PoolUse { string name; int depth = 1; int used = 0; };
+static int findPool(const vector<PoolUse>& pools, const string& name) {
+    for (int i = 0; i < (int)pools.size(); ++i) if (pools[i].name == name) return i;
+    return -1;
+}
+static string effectivePool(const Action& a) {
+    if (a.pool == "none") return "-";
+    if (!a.pool.empty()) return a.pool;
+    return a.kind == "LD" ? "link" : "-";
+}
+
 static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     long long tStart = nowNs(); Graph g = plan(m, want); loadState();
     long long tPlan = nowNs() - tStart;
-    int total = (int)g.acts.size(), ran = 0, upToDate = 0; bool failed = false; int running = 0, finished = 0;
-    vector<int> pending(total); vector<char> wouldRun(total, 0); std::vector<int> ready;
+    int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
+    bool anyFail = false, stop = false;
+    vector<PoolUse> pools = {{"link", 1, 0}, {"console", 1, 0}};
+    for (auto& d : m.pools) { int i = findPool(pools, d.name); if (i < 0) pools.push_back({d.name, d.depth, 0}); else pools[i].depth = d.depth; }
+    vector<int> poolIdx(total, -1);
+    for (auto& a : g.acts) {
+        if (a.pool == "none") continue;
+        string n = a.pool.empty() ? (a.kind == "LD" ? "link" : "") : a.pool;
+        if (n.empty()) continue;
+        int i = findPool(pools, n);
+        if (i < 0) throw Fail("action '" + a.desc + "' uses unknown pool '" + n + "'");
+        poolIdx[a.id] = i;
+    }
+    vector<int> pending(total); vector<char> wouldRun(total, 0); vector<int> ready;
     for (auto& a : g.acts) { pending[a.id] = (int)a.deps.size(); if (a.deps.empty()) ready.push_back(a.id); }
     std::mutex mu; std::condition_variable cv; string firstErr;
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
+    if (jobs > total && total > 0) jobs = total;
+    if (jobs < 1) jobs = 1;
+    auto blocked = [&](int id) { int p = poolIdx[id]; return p >= 0 && pools[p].used >= pools[p].depth; };
+    auto take = [&]() -> int {
+        for (int i = (int)ready.size() - 1; i >= 0; --i) if (!blocked(ready[i])) { int id = ready[i]; ready.erase(ready.begin() + i); return id; }
+        return -1;
+    };
     auto worker = [&] {
         std::unique_lock<std::mutex> lk(mu);
         for (;;) {
-            cv.wait(lk, [&] { return !ready.empty() || running == 0; });
-            if (ready.empty() || failed) { if (running == 0) { cv.notify_all(); return; } if (failed) { cv.wait(lk, [&] { return running == 0; }); return; } continue; }
-            int id = ready.back(); ready.pop_back(); ++running; const Action& a = g.acts[id]; lk.unlock();
-            string why; bool d = false; bool ok = true; string out;
-            try {
-            long long t0 = nowNs(); d = dirty(a, why); gNsDirty += nowNs() - t0;
-            if (!d && o.dry) for (int dep : a.deps) if (wouldRun[dep]) { d = true; why = "input " + g.acts[dep].output + " would be rebuilt"; }
-            if (d) {
-                { std::lock_guard<std::mutex> pl(mu); ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
-                  if (o.explain) { printf("        because: %s\n", why.c_str()); }
-                  if (o.verbose || o.dry) { printf("        %s\n", joined(a.argv).c_str()); }
-                  fflush(stdout); }
-                if (!o.dry) {
-                    if (!a.output.empty()) { // "file" in the current directory has an empty parent; creating that throws
-                        fs::path parent = fs::path(a.output).parent_path();
-                        if (!parent.empty()) fs::create_directories(parent);
-                    }
-                    if (a.kind == "AR") fs::remove(a.output);
-                    vector<string> argv = a.argv;
-                    if (a.rspHead > 0 && joined(a.argv).size() > a.rspThreshold) { // long line: put the arguments in a response file
-                        string rf = under(".okaybuild/rsp/" + hashStr(a.output) + ".rsp"); fs::create_directories(fs::path(rf).parent_path());
-                        std::ofstream r(rf, std::ios::trunc);
-                        for (size_t i = a.rspHead; i < a.argv.size(); ++i) { for (char c : a.argv[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; } r << '\n'; }
-                        argv.resize(a.rspHead); argv.push_back("@" + rf);
-                    }
-                    long long ts = nowNs(); int rc = runCmd(argv, out); ok = rc == 0; gNsSpawn += nowNs() - ts; ts = nowNs();
-                    if (ok && !a.output.empty()) {
-                        Rec r; r.cmd = a.cmdHash; vector<string> ins = a.inputs;
-                        if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string n = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), n) == ins.end()) ins.push_back(n); }
-                        forgetHash(a.output);
-                        for (auto& p : ins) { FileSig h; if (!hashFile(p, h)) { ok = false; out += "okay-build: cannot hash input " + p + "\n"; break; } r.inputs.push_back({p, h}); }
-                        if (ok) { std::lock_guard<std::mutex> sl(gStateMu); gState[a.output] = r; }
-                        gNsPost += nowNs() - ts;
-                    } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
-                } else wouldRun[id] = 1;
-            } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
-            } catch (const std::exception& e) {
-                ok = false; out += string("okay-build: ") + e.what() + "\n";
+            cv.wait(lk, [&] {
+                if (stop || ready.empty()) return running == 0;
+                for (int id : ready) if (!blocked(id)) return true;
+                return running == 0;
+            });
+            if (stop || ready.empty()) { if (running == 0) { cv.notify_all(); return; } continue; }
+            int id = take();
+            if (id < 0) {
+                if (running == 0) { anyFail = true; stop = true; firstErr = "okay-build: steps are waiting on a pool but none is free\n"; cv.notify_all(); return; }
+                continue;
             }
-            lk.lock(); --running; ++finished;
-            if (!ok) { if (!failed) firstErr = out; failed = true; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
-            else if (!failed) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);
+            ++running; bool stream = false;
+            if (poolIdx[id] >= 0) { ++pools[poolIdx[id]].used; stream = pools[poolIdx[id]].name == "console"; }
+            const Action& a = g.acts[id]; lk.unlock();
+            string why, out; bool d = false, ok = true; vector<std::pair<string, FileSig>> oldProduced;
+            try {
+                if (a.restat && !a.output.empty()) { std::lock_guard<std::mutex> sl(gStateMu); auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
+                long long t0 = nowNs(); d = dirty(a, why); gNsDirty += nowNs() - t0;
+                if (!d && o.dry) for (int dep : a.deps) if (wouldRun[dep]) { d = true; why = "input " + g.acts[dep].output + " would be rebuilt"; }
+                if (d) {
+                    { std::lock_guard<std::mutex> pl(mu); ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
+                      if (o.explain) printf("        because: %s\n", why.c_str());
+                      if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                      fflush(stdout); }
+                    if (!o.dry) {
+                        for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
+                        if (a.kind == "AR" && !a.output.empty()) fs::remove(a.output);
+                        vector<string> argv = a.argv;
+                        if (a.rspHead > 0 && joined(a.argv).size() > a.rspThreshold) {
+                            string rf = under(".okaybuild/rsp/" + hashStr(a.output.empty() ? a.desc : a.output) + ".rsp");
+                            fs::create_directories(fs::path(rf).parent_path()); std::ofstream r(rf, std::ios::trunc);
+                            for (size_t i = a.rspHead; i < a.argv.size(); ++i) { for (char c : a.argv[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; } r << '\n'; }
+                            argv.resize(a.rspHead); argv.push_back("@" + rf);
+                        }
+                        long long ts = nowNs(); int rc = runCmd(argv, out, stream); ok = rc == 0; gNsSpawn += nowNs() - ts; ts = nowNs();
+                        if (ok && !a.outputs.empty()) {
+                            Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
+                            if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
+                            for (auto& pth : a.outputs) forgetHash(pth);
+                            for (auto& pth : ins) { FileSig h; if (!hashFile(pth, h)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, h}); }
+                            if (ok) noteOutputs(a, rec, oldProduced, out, ok);
+                            if (ok) { std::lock_guard<std::mutex> sl(gStateMu); gState[a.output] = rec; }
+                            gNsPost += nowNs() - ts;
+                        } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+                    } else wouldRun[id] = 1;
+                } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
+            } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
+            lk.lock(); --running; if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; ++finished;
+            if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
+            else if (!stop) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);
             cv.notify_all();
         }
     };
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
     if (!o.dry) saveState();
-    if (failed) { fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    if (anyFail) { fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
     if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
+}
+
+static void listTargets(const Graph& g) {
+    for (auto& tf : g.targetFinal) printf("%s\t%s\n", tf.first.c_str(), g.acts[tf.second].kind == "AR" ? "lib" : "exe");
+    for (auto& a : g.acts) if (a.kind == "RUN") {
+        if (a.outputs.empty()) printf("action\t(always)\t%s\n", a.desc.c_str());
+        else for (auto& pth : a.outputs) printf("action\t%s\n", pth.c_str());
+    }
+}
+static void listGraph(const Graph& g) {
+    for (auto& a : g.acts) {
+        printf("%d\t%s\t%s\t%s\tpool=%s%s\n", a.id, a.kind.c_str(), a.desc.c_str(), a.output.c_str(), effectivePool(a).c_str(), a.restat ? "\trestat" : "");
+        if (!a.deps.empty()) { printf("  deps"); for (int d : a.deps) printf(" %d", d); printf("\n"); }
+        for (size_t i = 1; i < a.outputs.size(); ++i) printf("  output %s\n", a.outputs[i].c_str());
+    }
 }
 
 static string jsonEsc(const string& s) { string r; for (char c : s) { if (c == '"' || c == '\\') { r += '\\'; r += c; } else if (c == '\n') r += "\\n"; else r += c; } return r; }
@@ -601,6 +743,7 @@ int main(int argc, char** argv) {
             else if (a == "-j" && i + 1 < argc) o.jobs = atoi(argv[++i]);
             else if (a.rfind("-j", 0) == 0 && a.size() > 2) o.jobs = atoi(a.c_str() + 2);
             else if (a == "--dry-run" || a == "-n") o.dry = true;
+            else if (a == "-k" || a == "--keep-going") o.keep = true;
             else if (a == "--explain") o.explain = true;
             else if (a == "-v") o.verbose = true;
             else if (a == "--profile") o.profile = true;
@@ -608,8 +751,8 @@ int main(int argc, char** argv) {
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import") cmd = a;
-            else if (a == "-h" || a == "--help") { puts("usage: okay-build [build|clean|compdb|import] [-f build.okay] [-j N] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [target...]"); return 0; }
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets") cmd = a;
+            else if (a == "-h" || a == "--help") { puts("usage: okay-build [build|clean|compdb|import|graph|targets] [-f build.okay] [-j N] [-k] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [target...]"); return 0; }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);
             else want.push_back(a);
         }
@@ -620,10 +763,12 @@ int main(int argc, char** argv) {
         if (gBuildDir != ".") gBuildDir = fs::absolute(gBuildDir).string();
         fs::path mp = fs::absolute(o.file); Manifest m = parseManifest(mp.string()); fs::current_path(mp.parent_path());
         if (cmd == "clean") {
-            Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC" && !a.output.empty()) fs::remove(a.output);
+            Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;
         }
         if (cmd == "compdb") { writeCompdb(m); return 0; }
+        if (cmd == "targets") { listTargets(plan(m, {})); return 0; }
+        if (cmd == "graph") { listGraph(plan(m, want)); return 0; }
         return build(m, want, o);
     } catch (const Fail& e) { fprintf(stderr, "okay-build: error: %s\n", e.what()); return 2; }
     catch (const std::exception& e) { fprintf(stderr, "okay-build: internal error: %s\n", e.what()); return 3; }

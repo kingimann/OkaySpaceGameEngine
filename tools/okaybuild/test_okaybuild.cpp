@@ -6,6 +6,7 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <sys/stat.h>
 #include <sys/wait.h>
 namespace fs = std::filesystem;
 using std::string;
@@ -20,6 +21,8 @@ static int ran(const string& out) { auto p = out.find("ran "); return p == strin
 static void check(bool c, const string& what, const string& ctx = "") { if (c) ++gPass; else { ++gFail; printf("  FAIL: %s\n%s\n", what.c_str(), ctx.c_str()); } }
 static void fresh(const string& name) { gRoot = fs::temp_directory_path() / ("okaybuild_test_" + name); fs::remove_all(gRoot); fs::create_directories(gRoot); }
 static void sleepMs() { std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+static long long mtimeNs(const fs::path& p) { struct stat st{}; if (stat(p.c_str(), &st) != 0) return -1; return (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec; }
+static string readFile(const fs::path& p) { std::ifstream f(p); return string((std::istreambuf_iterator<char>(f)), {}); }
 
 static void basicProject() {
     write("inc/util.h", "#pragma once\nint util();\n");
@@ -183,10 +186,129 @@ static void testImportGenerated() {
     check(system(("'" + gRoot.string() + "/run/app'").c_str()) == 0, "program still correct with GEN=9");
 }
 
+static void testPools() {
+    printf("test: a pool limits how many commands overlap\n");
+    fresh("pool");
+    write("tick.sh",
+          "#!/bin/sh\n"
+          "dir=$1; out=$2; limit=$3\n"
+          "exec 9>>\"$dir/lock\"\n"
+          "flock 9\n"
+          "n=$(cat \"$dir/cur\" 2>/dev/null || echo 0)\n"
+          "n=$((n+1)); echo \"$n\" > \"$dir/cur\"\n"
+          "m=$(cat \"$dir/max\" 2>/dev/null || echo 0)\n"
+          "if [ \"$n\" -gt \"$m\" ]; then echo \"$n\" > \"$dir/max\"; fi\n"
+          "if [ \"$n\" -gt \"$limit\" ]; then echo OVERLAP >> \"$dir/bad\"; fi\n"
+          "flock -u 9\n"
+          "sleep 0.4\n"
+          "flock 9\n"
+          "n=$(cat \"$dir/cur\"); echo $((n-1)) > \"$dir/cur\"\n"
+          "flock -u 9\n"
+          "echo ok > \"$out\"\n");
+    string man = "pool heavy\n  depth = 1\nend\n";
+    for (int i = 0; i < 3; ++i) man += "action\n  cmd = sh tick.sh . o" + std::to_string(i) + " 1\n  output = o" + std::to_string(i) + "\n  pool = heavy\nend\n";
+    write("build.okay", man);
+    int rc; string o = sh("-j4", &rc);
+    check(rc == 0, "depth 1 build succeeds", o);
+    check(!fs::exists(gRoot / "bad"), "depth 1 never runs two commands at once", readFile(gRoot / "bad") + o);
+    check(fs::exists(gRoot / "o0") && fs::exists(gRoot / "o1") && fs::exists(gRoot / "o2"), "all three outputs exist");
+
+    fresh("pool2");
+    write("tick.sh",
+          "#!/bin/sh\n"
+          "dir=$1; out=$2; limit=$3\n"
+          "exec 9>>\"$dir/lock\"\n"
+          "flock 9\n"
+          "n=$(cat \"$dir/cur\" 2>/dev/null || echo 0)\n"
+          "n=$((n+1)); echo \"$n\" > \"$dir/cur\"\n"
+          "m=$(cat \"$dir/max\" 2>/dev/null || echo 0)\n"
+          "if [ \"$n\" -gt \"$m\" ]; then echo \"$n\" > \"$dir/max\"; fi\n"
+          "if [ \"$n\" -gt \"$limit\" ]; then echo OVERLAP >> \"$dir/bad\"; fi\n"
+          "flock -u 9\n"
+          "sleep 0.4\n"
+          "flock 9\n"
+          "n=$(cat \"$dir/cur\"); echo $((n-1)) > \"$dir/cur\"\n"
+          "flock -u 9\n"
+          "echo ok > \"$out\"\n");
+    man = "pool heavy\n  depth = 2\nend\n";
+    for (int i = 0; i < 4; ++i) man += "action\n  cmd = sh tick.sh . o" + std::to_string(i) + " 2\n  output = o" + std::to_string(i) + "\n  pool = heavy\nend\n";
+    write("build.okay", man);
+    o = sh("-j4", &rc);
+    check(rc == 0 && !fs::exists(gRoot / "bad"), "depth 2 stays within 2", readFile(gRoot / "bad") + o);
+    int mx = atoi(readFile(gRoot / "max").c_str());
+    check(mx == 2, "depth 2 actually runs two commands together", "max=" + std::to_string(mx));
+}
+
+static void testGeneratorRestat() {
+    printf("test: generator with declared outputs, and restat leaves dependents alone\n");
+    fresh("genr");
+    write("spec.txt", "base\n");
+    write("gen.sh", "#!/bin/sh\nprintf 'int gen(){return 5;}\\n' > gen.cpp\nprintf '#pragma once\\n#define G 5\\n' > gen.h\n");
+    write("main.cpp", "#include \"gen.h\"\nint gen(); int main(){return gen()==G?0:1;}\n");
+    write("build.okay",
+          "action\n"
+          "  cmd = sh gen.sh\n"
+          "  outputs = gen.cpp gen.h\n"
+          "  inputs = spec.txt\n"
+          "  restat = 1\n"
+          "end\n"
+          "target app exe\n"
+          "  sources = gen.cpp main.cpp\n"
+          "  needs = gen.h\n"
+          "  include = .\n"
+          "end\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && ran(o) == 4, "generator, two compiles and the link", o);
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "generated program runs");
+    long long mt = mtimeNs(gRoot / "gen.h");
+    write("spec.txt", "base\n# ignored by the generator\n");
+    o = sh("--explain", &rc);
+    check(rc == 0 && ran(o) == 1, "only the generator reruns when its output bytes do not change", o);
+    check(mtimeNs(gRoot / "gen.h") == mt && mt > 0, "restat put the output mtime back", "before " + std::to_string(mt) + " after " + std::to_string(mtimeNs(gRoot / "gen.h")));
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "program still runs");
+}
+
+static void testKeepGoing() {
+    printf("test: -k keeps building steps that do not depend on the failure\n");
+    fresh("keep");
+    write("build.okay",
+          "action\n  cmd = echo ok > good.txt\n  output = good.txt\nend\n"
+          "action\n  cmd = echo no > bad.txt; exit 1\n  output = bad.txt\nend\n"
+          "action\n  cmd = echo dep > dep.txt\n  output = dep.txt\n  inputs = bad.txt\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 1, "a failed step exits 1", o);
+    check(!fs::exists(gRoot / "good.txt"), "without -k an independent step does not run", o);
+    check(!fs::exists(gRoot / "dep.txt"), "a step that needs the failed output does not run", o);
+    o = sh("-j1 -k", &rc);
+    check(rc == 1, "-k still exits 1", o);
+    check(fs::exists(gRoot / "good.txt"), "-k runs the independent step", o);
+    check(!fs::exists(gRoot / "dep.txt"), "-k still skips the dependent of the failure", o);
+}
+
+static void testGraphTargets() {
+    printf("test: targets and graph listings, including the link pool\n");
+    fresh("graph"); basicProject();
+    string o = sh("targets");
+    check(o.find("util\tlib") != string::npos && o.find("app\texe") != string::npos, "targets lists the lib and the exe", o);
+    o = sh("graph app");
+    check(o.find("\tLD\t") != string::npos && o.find("pool=link") != string::npos, "graph shows the link step in the link pool", o);
+    check(o.find("src/util.cpp") != string::npos && o.find("deps ") != string::npos, "graph of app includes the library object and edges", o);
+    write("build.okay",
+          "action\n  cmd = echo hi > note.txt\n  output = note.txt\n  pool = console\nend\n"
+          "target app exe\n  sources = missing.cpp\nend\n");
+    write("missing.cpp", "int main(){return 0;}\n");
+    o = sh("graph");
+    check(o.find("pool=console") != string::npos, "console pool is shown", o);
+    write("build.okay", "action\n  cmd = echo x > a.txt\n  output = a.txt\n  pool = nope\nend\n");
+    int rc; o = sh("", &rc);
+    check(rc == 2 && o.find("unknown pool") != string::npos, "unknown pool is an error", o);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

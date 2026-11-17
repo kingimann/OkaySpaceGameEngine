@@ -35,9 +35,11 @@ struct Operand {
 struct Inst {
     enum class Op {
         Mov, Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not,
-        Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret
+        Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret,
+        Local, Lea, LeaSym, Load, Store, GLoad, GStore
     } op = Op::Mov;
     int dst = -1;
+    int extra = 8;  // byte width for load/store
     Operand a;
     Operand b;
     std::string label;
@@ -57,8 +59,17 @@ struct Function {
     std::vector<Block> blocks;
 };
 
+struct Global {
+    std::string name;
+    int size = 0;
+    bool rodata = false;
+    std::vector<unsigned char> bytes;
+    std::string reloc;  // if set, the 8-byte value is the address of this symbol
+};
+
 struct Module {
     std::vector<Function> funcs;
+    std::vector<Global> globals;
 };
 
 std::string printModule(const Module& m);

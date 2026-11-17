@@ -1,3 +1,4 @@
+#include "codegen.hpp"
 #include "diag.hpp"
 #include "files.hpp"
 #include "ir.hpp"
@@ -26,8 +27,9 @@ void usage(std::ostream& out) {
         << "okay-cc --ast [-I dir]... [file]\n"
         << "okay-cc --check [file]\n"
         << "okay-cc --ir [file]\n"
-        << "  --lex prints tokens, --pp runs the preprocessor, --ast prints the tree,\n"
-        << "  --check type-checks the subset, --ir prints three-address code.\n"
+        << "okay-cc --asm [file]\n"
+        << "  --lex tokens, --pp preprocessor, --ast tree, --check types,\n"
+        << "  --ir three-address code, --asm System V x86-64 assembly.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -39,6 +41,7 @@ int main(int argc, char** argv) {
     bool ast = false;
     bool check = false;
     bool ir = false;
+    bool asmm = false;
     std::string path;
     std::vector<std::string> includes;
     for (int i = 1; i < argc; ++i) {
@@ -53,6 +56,8 @@ int main(int argc, char** argv) {
             check = true;
         } else if (a == "--ir") {
             ir = true;
+        } else if (a == "--asm") {
+            asmm = true;
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -72,8 +77,9 @@ int main(int argc, char** argv) {
             path = a;
         }
     }
-    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) +
-            static_cast<int>(ir) != 1) {
+    int modes = static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) +
+                static_cast<int>(ir) + static_cast<int>(asmm);
+    if (modes != 1) {
         usage(std::cerr);
         return 2;
     }
@@ -92,7 +98,9 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
-    if (ir) {
+    if (asmm) {
+        std::cout << okaycc::compileToAssembly(src, diags);
+    } else if (ir) {
         std::cout << okaycc::irText(src, diags);
     } else if (check) {
         okaycc::checkSource(src, diags);

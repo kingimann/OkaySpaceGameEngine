@@ -30,6 +30,13 @@ const char* opName(Inst::Op op) {
     case Inst::Op::Br: return "br";
     case Inst::Op::Call: return "call";
     case Inst::Op::Ret: return "ret";
+    case Inst::Op::Local: return "local";
+    case Inst::Op::Lea: return "lea";
+    case Inst::Op::LeaSym: return "leasym";
+    case Inst::Op::Load: return "load";
+    case Inst::Op::Store: return "store";
+    case Inst::Op::GLoad: return "gload";
+    case Inst::Op::GStore: return "gstore";
     }
     return "?";
 }
@@ -74,6 +81,49 @@ std::string printModule(const Module& m) {
                         s += opnd(in.args[i]);
                     }
                     s += ")";
+                } else if (in.op == Inst::Op::Local) {
+                    s += "local v";
+                    s += std::to_string(in.dst);
+                    s += ", ";
+                    s += opnd(in.a);
+                } else if (in.op == Inst::Op::Lea) {
+                    s += "lea v";
+                    s += std::to_string(in.dst);
+                    s += ", ";
+                    s += opnd(in.a);
+                } else if (in.op == Inst::Op::LeaSym) {
+                    s += "leasym v";
+                    s += std::to_string(in.dst);
+                    s += ", ";
+                    s += in.func;
+                } else if (in.op == Inst::Op::Load) {
+                    s += "load v";
+                    s += std::to_string(in.dst);
+                    s += ", ";
+                    s += opnd(in.a);
+                    s += ", ";
+                    s += std::to_string(in.extra);
+                } else if (in.op == Inst::Op::Store) {
+                    s += "store ";
+                    s += opnd(in.a);
+                    s += ", ";
+                    s += opnd(in.b);
+                    s += ", ";
+                    s += std::to_string(in.extra);
+                } else if (in.op == Inst::Op::GLoad) {
+                    s += "gload v";
+                    s += std::to_string(in.dst);
+                    s += ", ";
+                    s += in.func;
+                    s += ", ";
+                    s += std::to_string(in.extra);
+                } else if (in.op == Inst::Op::GStore) {
+                    s += "gstore ";
+                    s += in.func;
+                    s += ", ";
+                    s += opnd(in.a);
+                    s += ", ";
+                    s += std::to_string(in.extra);
                 } else if (in.op == Inst::Op::Ret) {
                     s += "ret";
                     if (in.a.kind != Operand::Kind::None) {

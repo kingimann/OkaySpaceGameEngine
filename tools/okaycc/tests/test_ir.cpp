@@ -22,17 +22,6 @@ static void checkIr(const char* name, const std::string& src, const std::string&
     else ++okaycc_test::gFail;
 }
 
-static void checkBad(const char* name, const std::string& src, const char* err) {
-    okaycc::Diagnostics d;
-    okaycc::irText(src, d);
-    if (d.format().find(err) == std::string::npos) {
-        std::fprintf(stderr, "FAIL %s missing '%s'\n%s", name, err, d.format().c_str());
-        ++okaycc_test::gFail;
-    } else {
-        ++gOk;
-    }
-}
-
 int main() {
     checkIr("fold", "int main(){return 40+2;}\n",
             "func main\n"
@@ -72,7 +61,14 @@ int main() {
             "  call v0, fact(5)\n"
             "  ret v0\n");
 
-    checkBad("no pointer yet", "int main(){int x; int *p; p = &x; return 0;}\n", "not lowered");
+    checkIr("pointer", "int main(){int x; int *p; x=7; p=&x; *p=9; return x;}\n",
+            "func main\n"
+            "entry:\n"
+            "  mov v0, 7\n"
+            "  lea v2, v0\n"
+            "  mov v1, v2\n"
+            "  store v1, 9, 8\n"
+            "  ret v0\n");
 
     okaycc_test::gPass += gOk;
     std::printf("ir: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);

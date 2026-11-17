@@ -1562,18 +1562,38 @@ public:
     explicit Lowerer(Diagnostics& diags) : diags_(diags) {}
 
     Module run(Tu& tu) {
-        for (auto& d : tu.decls) {
-            if (!d) continue;
-            if (!d->function) {
-                err(d->line, d->col, "globals are not lowered yet");
-                continue;
-            }
-            if (d->body) lowerFunc(*d);
-        }
+        for (auto& d : tu.decls)
+            if (d && !d->function) addGlobal(*d);
+        for (auto& d : tu.decls)
+            if (d && d->function && d->body) lowerFunc(*d);
         return std::move(mod_);
     }
 
 private:
+    struct Val {
+        Operand op;
+        int step = 0;
+        int inner = 0;
+    };
+    struct Addr {
+        Operand op;
+        int width = 8;
+        bool ok = false;
+    };
+    struct Sym {
+        int reg = -1;
+        bool global = false;
+        bool array = false;
+        std::string gname;
+        int width = 8;
+        int step = 0;
+        int inner = 0;
+    };
+    struct Loop {
+        std::string cont;
+        std::string brk;
+    };
+
     Diagnostics& diags_;
     Module mod_;
     Function fn_;
@@ -1583,11 +1603,9 @@ private:
     int ifN_ = 0;
     int forN_ = 0;
     int tmpN_ = 0;
-    std::vector<std::map<std::string, int>> scopes_;
-    struct Loop {
-        std::string cont;
-        std::string brk;
-    };
+    int strN_ = 0;
+    std::vector<std::map<std::string, Sym>> scopes_;
+    std::map<std::string, Sym> globals_;
     std::vector<Loop> loops_;
 
     void err(int line, int col, const std::string& msg) { diags_.error("t.c", line, col, msg); }
@@ -1600,13 +1618,36 @@ private:
     int fresh() { return nextReg_++; }
     std::string lab(const std::string& prefix) { return prefix + std::to_string(tmpN_++); }
 
-    int lookup(const std::string& name, int line, int col) {
+    static int sizeOf(const Type* t) {
+        if (!t) return 8;
+        if (t->kind == Type::Kind::Char) return 1;
+        if (t->kind == Type::Kind::Int || t->kind == Type::Kind::Pointer) return 8;
+        if (t->kind == Type::Kind::Array) {
+            int n = 0;
+            if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
+            return n * sizeOf(t->inner.get());
+        }
+        return 8;
+    }
+    static int valueStep(const Type* t) {
+        if (!t) return 0;
+        if (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Array) return sizeOf(t->inner.get());
+        return 0;
+    }
+    static int innerOf(const Type* t) {
+        if (!t) return 0;
+        if (t->kind == Type::Kind::Pointer || t->kind == Type::Kind::Array) return valueStep(t->inner.get());
+        return 0;
+    }
+
+    Sym* find(const std::string& name) {
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[static_cast<std::size_t>(i)].find(name);
-            if (it != scopes_[static_cast<std::size_t>(i)].end()) return it->second;
+            if (it != scopes_[static_cast<std::size_t>(i)].end()) return &it->second;
         }
-        err(line, col, "not lowered: " + name);
-        return 0;
+        auto g = globals_.find(name);
+        if (g != globals_.end()) return &g->second;
+        return nullptr;
     }
 
     void emitMov(int dst, Operand src) {
@@ -1644,6 +1685,7 @@ private:
         emitMov(t, o);
         return t;
     }
+    int material(Val v) { return asReg(v.op); }
 
     bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
         if (op == "+") {
@@ -1680,8 +1722,6 @@ private:
         if (op == "<=") { out = x <= y; return true; }
         if (op == ">") { out = x > y; return true; }
         if (op == ">=") { out = x >= y; return true; }
-        if (op == "&&") { out = (x != 0) && (y != 0); return true; }
-        if (op == "||") { out = (x != 0) || (y != 0); return true; }
         return false;
     }
 
@@ -1705,41 +1745,227 @@ private:
         return Inst::Op::Add;
     }
 
-    Operand lowerLogic(Expr& e, bool isAnd) {
+    std::string addString(const std::string& bytes) {
+        Global g;
+        g.name = ".Lstr" + std::to_string(strN_++);
+        g.rodata = true;
+        g.size = static_cast<int>(bytes.size()) + 1;
+        g.bytes.assign(bytes.begin(), bytes.end());
+        g.bytes.push_back(0);
+        mod_.globals.push_back(std::move(g));
+        return mod_.globals.back().name;
+    }
+
+    void putI64(std::vector<unsigned char>& b, std::int64_t v) {
+        auto u = static_cast<std::uint64_t>(v);
+        for (int i = 0; i < 8; ++i) b.push_back(static_cast<unsigned char>((u >> (8 * i)) & 0xffu));
+    }
+
+    void addGlobal(Decl& d) {
+        if (!d.type) return;
+        Sym s;
+        s.global = true;
+        s.gname = d.name;
+        s.array = d.type->kind == Type::Kind::Array;
+        s.width = s.array ? sizeOf(d.type->inner.get()) : sizeOf(d.type.get());
+        s.step = valueStep(d.type.get());
+        s.inner = innerOf(d.type.get());
+        Global g;
+        g.name = d.name;
+        if (s.array) {
+            g.size = sizeOf(d.type.get());
+            if (g.size <= 0) err(d.line, d.col, "array length is not a constant");
+        } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Pointer) {
+            g.size = 8;
+            g.reloc = addString(d.init->text);
+        } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
+            g.size = s.width < 8 ? s.width : 8;
+            if (g.size == 8) putI64(g.bytes, static_cast<std::int64_t>(d.init->ival));
+            else g.bytes.push_back(static_cast<unsigned char>(d.init->ival));
+        } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "-" && !d.init->kids.empty() &&
+                   d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Int) {
+            g.size = 8;
+            putI64(g.bytes, -static_cast<std::int64_t>(d.init->kids[0]->ival));
+        } else if (!d.init) {
+            g.size = s.array ? sizeOf(d.type.get()) : (s.width < 8 ? s.width : 8);
+        } else {
+            err(d.line, d.col, "global initializer is not supported");
+            g.size = 8;
+        }
+        mod_.globals.push_back(std::move(g));
+        globals_[d.name] = s;
+    }
+
+    Val readName(const std::string& name, int line, int col) {
+        Sym* s = find(name);
+        if (!s) {
+            err(line, col, "not lowered: " + name);
+            return {};
+        }
+        if (s->array) {
+            if (s->global) {
+                int dst = fresh();
+                Inst in;
+                in.op = Inst::Op::LeaSym;
+                in.dst = dst;
+                in.func = s->gname;
+                emit(in);
+                Val v;
+                v.op = Operand::vreg(dst);
+                v.step = s->step;
+                v.inner = s->inner;
+                return v;
+            }
+            Val v;
+            v.op = Operand::vreg(s->reg);
+            v.step = s->step;
+            v.inner = s->inner;
+            return v;
+        }
+        if (s->global) {
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::GLoad;
+            in.dst = dst;
+            in.func = s->gname;
+            in.extra = s->width;
+            emit(in);
+            Val v;
+            v.op = Operand::vreg(dst);
+            v.step = s->step;
+            v.inner = s->inner;
+            return v;
+        }
+        Val v;
+        v.op = Operand::vreg(s->reg);
+        v.step = s->step;
+        v.inner = s->inner;
+        return v;
+    }
+
+    Val scale(Val idx, int step) {
+        if (step == 1) return idx;
+        if (idx.op.kind == Operand::Kind::Imm) return Val{Operand::number(idx.op.imm * step), 0, 0};
+        int dst = fresh();
+        emitBin(Inst::Op::Mul, dst, idx.op, Operand::number(step));
+        return Val{Operand::vreg(dst), 0, 0};
+    }
+
+    Addr lowerAddr(Expr& e) {
+        Addr a;
+        if (e.kind == Expr::Kind::Name) {
+            Sym* s = find(e.text);
+            if (!s) {
+                err(e.line, e.col, "not lowered: " + e.text);
+                return a;
+            }
+            if (s->array) {
+                Val base = readName(e.text, e.line, e.col);
+                a.op = base.op;
+                a.width = s->width;
+                a.ok = true;
+                return a;
+            }
+            if (s->global) {
+                int dst = fresh();
+                Inst in;
+                in.op = Inst::Op::LeaSym;
+                in.dst = dst;
+                in.func = s->gname;
+                emit(in);
+                a.op = Operand::vreg(dst);
+                a.width = s->width;
+                a.ok = true;
+                return a;
+            }
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::Lea;
+            in.dst = dst;
+            in.a = Operand::vreg(s->reg);
+            emit(in);
+            a.op = Operand::vreg(dst);
+            a.width = s->width == 1 ? 1 : 8;
+            a.ok = true;
+            return a;
+        }
+        if (e.kind == Expr::Kind::Index && e.kids.size() >= 2 && e.kids[0] && e.kids[1]) {
+            Val base = lowerExpr(*e.kids[0]);
+            Val idx = lowerExpr(*e.kids[1]);
+            if (base.step == 0) {
+                err(e.line, e.col, "not lowered");
+                return a;
+            }
+            Val off = scale(idx, base.step);
+            int dst = fresh();
+            emitBin(Inst::Op::Add, dst, base.op, off.op);
+            a.op = Operand::vreg(dst);
+            a.width = base.step;
+            a.ok = true;
+            return a;
+        }
+        if (e.kind == Expr::Kind::Unary && e.text == "*" && !e.kids.empty() && e.kids[0]) {
+            Val p = lowerExpr(*e.kids[0]);
+            a.op = p.op;
+            a.width = p.step == 0 ? 8 : p.step;
+            a.ok = true;
+            return a;
+        }
+        err(e.line, e.col, "not lowered");
+        return a;
+    }
+
+    Val loadAddr(Addr a, int inner) {
+        int dst = fresh();
+        Inst in;
+        in.op = Inst::Op::Load;
+        in.dst = dst;
+        in.a = a.op;
+        in.extra = a.width;
+        emit(in);
+        return Val{Operand::vreg(dst), inner, 0};
+    }
+
+    Val lowerLogic(Expr& e, bool isAnd) {
         int dst = fresh();
         std::string rhsL = lab(isAnd ? "and_rhs" : "or_rhs");
         std::string skL = lab(isAnd ? "and_false" : "or_true");
         std::string endL = lab(isAnd ? "and_end" : "or_end");
-        int left = asReg(lowerExpr(*e.kids[0]));
+        int left = material(lowerExpr(*e.kids[0]));
         if (isAnd) emitBr(left, rhsL, skL);
         else emitBr(left, skL, rhsL);
         startBlock(rhsL);
-        emitMov(dst, lowerExpr(*e.kids[1]));
+        emitMov(dst, lowerExpr(*e.kids[1]).op);
         emitJmp(endL);
         startBlock(skL);
         emitMov(dst, Operand::number(isAnd ? 0 : 1));
         emitJmp(endL);
         startBlock(endL);
-        return Operand::vreg(dst);
+        return Val{Operand::vreg(dst), 0, 0};
     }
 
-    Operand lowerExpr(Expr& e) {
+    Val lowerExpr(Expr& e) {
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
-            return Operand::number(static_cast<std::int64_t>(e.ival));
-        case Expr::Kind::String:
-        case Expr::Kind::Index:
-        case Expr::Kind::Brace:
-            err(e.line, e.col, "not lowered");
-            return Operand::number(0);
+            return Val{Operand::number(static_cast<std::int64_t>(e.ival)), 0, 0};
+        case Expr::Kind::String: {
+            std::string name = addString(e.text);
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::LeaSym;
+            in.dst = dst;
+            in.func = name;
+            emit(in);
+            return Val{Operand::vreg(dst), 1, 0};
+        }
         case Expr::Kind::Name:
-            return Operand::vreg(lookup(e.text, e.line, e.col));
+            return readName(e.text, e.line, e.col);
         case Expr::Kind::Cast:
-            if (e.kids.empty() || !e.kids[0]) return Operand::number(0);
+            if (e.kids.empty() || !e.kids[0]) return {};
             return lowerExpr(*e.kids[0]);
         case Expr::Kind::Comma: {
-            Operand last = Operand::number(0);
+            Val last{};
             for (auto& k : e.kids)
                 if (k) last = lowerExpr(*k);
             return last;
@@ -1758,7 +1984,7 @@ private:
                     std::int64_t folded = 0;
                     fold(e.text, static_cast<std::int64_t>(e.kids[0]->ival),
                          static_cast<std::int64_t>(e.kids[1]->ival), folded);
-                    return Operand::number(folded);
+                    return Val{Operand::number(folded), 0, 0};
                 }
                 return lowerLogic(e, e.text == "&&");
             }
@@ -1769,116 +1995,224 @@ private:
             return lowerCond(e);
         case Expr::Kind::Call:
             return lowerCall(e);
+        case Expr::Kind::Index: {
+            Addr a = lowerAddr(e);
+            if (!a.ok) return {};
+            int inner = 0;
+            if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
+                if (Sym* s = find(e.kids[0]->text)) inner = s->inner;
+            }
+            return loadAddr(a, inner);
+        }
+        case Expr::Kind::Brace:
+            err(e.line, e.col, "not lowered");
+            return {};
         }
         err(e.line, e.col, "not lowered");
-        return Operand::number(0);
+        return {};
     }
 
-    Operand lowerUnary(Expr& e) {
-        if (e.text == "&" || e.text == "*") {
-            err(e.line, e.col, "not lowered");
-            return Operand::number(0);
+    Val lowerUnary(Expr& e) {
+        if (e.kids.empty() || !e.kids[0]) return {};
+        if (e.text == "&") {
+            if (e.kids[0]->kind == Expr::Kind::Name) {
+                Sym* s = find(e.kids[0]->text);
+                if (!s) {
+                    err(e.line, e.col, "not lowered: " + e.kids[0]->text);
+                    return {};
+                }
+                if (s->array || s->global) {
+                    Val base = readName(e.kids[0]->text, e.line, e.col);
+                    if (s->array) return base;
+                    int dst = fresh();
+                    Inst in;
+                    in.op = Inst::Op::LeaSym;
+                    in.dst = dst;
+                    in.func = s->gname;
+                    emit(in);
+                    Val v;
+                    v.op = Operand::vreg(dst);
+                    v.step = s->width == 1 ? 1 : 8;
+                    v.inner = s->step;
+                    return v;
+                }
+                int dst = fresh();
+                Inst in;
+                in.op = Inst::Op::Lea;
+                in.dst = dst;
+                in.a = Operand::vreg(s->reg);
+                emit(in);
+                Val v;
+                v.op = Operand::vreg(dst);
+                v.step = s->width == 1 ? 1 : 8;
+                v.inner = s->step;
+                return v;
+            }
+            Addr a = lowerAddr(*e.kids[0]);
+            Val v;
+            v.op = a.op;
+            v.step = a.width;
+            return v;
         }
-        if (e.kids.empty() || !e.kids[0]) return Operand::number(0);
+        if (e.text == "*") {
+            Val p = lowerExpr(*e.kids[0]);
+            Addr a;
+            a.op = p.op;
+            a.width = p.step == 0 ? 8 : p.step;
+            a.ok = true;
+            return loadAddr(a, p.inner);
+        }
         if (e.text == "+") return lowerExpr(*e.kids[0]);
-        Operand a = lowerExpr(*e.kids[0]);
+        Val a = lowerExpr(*e.kids[0]);
         if (e.text == "-") {
-            if (a.kind == Operand::Kind::Imm && a.imm != std::numeric_limits<std::int64_t>::min())
-                return Operand::number(-a.imm);
+            if (a.op.kind == Operand::Kind::Imm && a.op.imm != std::numeric_limits<std::int64_t>::min())
+                return Val{Operand::number(-a.op.imm), 0, 0};
             int dst = fresh();
             Inst in;
             in.op = Inst::Op::Neg;
             in.dst = dst;
-            in.a = a;
+            in.a = a.op;
             emit(in);
-            return Operand::vreg(dst);
+            return Val{Operand::vreg(dst), 0, 0};
         }
         if (e.text == "!") {
-            if (a.kind == Operand::Kind::Imm) return Operand::number(a.imm == 0 ? 1 : 0);
+            if (a.op.kind == Operand::Kind::Imm) return Val{Operand::number(a.op.imm == 0 ? 1 : 0), 0, 0};
             int dst = fresh();
-            emitBin(Inst::Op::Ceq, dst, a, Operand::number(0));
-            return Operand::vreg(dst);
+            emitBin(Inst::Op::Ceq, dst, a.op, Operand::number(0));
+            return Val{Operand::vreg(dst), 0, 0};
         }
         if (e.text == "~") {
-            if (a.kind == Operand::Kind::Imm) return Operand::number(~a.imm);
+            if (a.op.kind == Operand::Kind::Imm) return Val{Operand::number(~a.op.imm), 0, 0};
             int dst = fresh();
             Inst in;
             in.op = Inst::Op::Not;
             in.dst = dst;
-            in.a = a;
+            in.a = a.op;
             emit(in);
-            return Operand::vreg(dst);
+            return Val{Operand::vreg(dst), 0, 0};
         }
         err(e.line, e.col, "not lowered");
-        return Operand::number(0);
+        return {};
     }
 
-    Operand lowerInc(Expr& e, bool pre) {
+    Val lowerInc(Expr& e, bool pre) {
         if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
             err(e.line, e.col, "not lowered");
-            return Operand::number(0);
+            return {};
         }
-        int slot = lookup(e.kids[0]->text, e.line, e.col);
+        Sym* s = find(e.kids[0]->text);
+        if (!s || s->global || s->array) {
+            err(e.line, e.col, "not lowered");
+            return {};
+        }
         Operand one = Operand::number(e.text == "--" ? -1 : 1);
         if (pre) {
-            emitBin(Inst::Op::Add, slot, Operand::vreg(slot), one);
-            return Operand::vreg(slot);
+            emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
+            return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         int old = fresh();
-        emitMov(old, Operand::vreg(slot));
-        emitBin(Inst::Op::Add, slot, Operand::vreg(slot), one);
-        return Operand::vreg(old);
+        emitMov(old, Operand::vreg(s->reg));
+        emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
+        return Val{Operand::vreg(old), s->step, s->inner};
     }
 
-    Operand lowerBin(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return Operand::number(0);
-        Operand a = lowerExpr(*e.kids[0]);
-        Operand b = lowerExpr(*e.kids[1]);
+    Val lowerBin(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return {};
+        Val a = lowerExpr(*e.kids[0]);
+        Val b = lowerExpr(*e.kids[1]);
         std::int64_t folded = 0;
-        if (a.kind == Operand::Kind::Imm && b.kind == Operand::Kind::Imm && fold(e.text, a.imm, b.imm, folded))
-            return Operand::number(folded);
-        int dst = fresh();
-        emitBin(binOp(e.text), dst, a, b);
-        return Operand::vreg(dst);
-    }
-
-    Operand lowerAssign(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return Operand::number(0);
-        if (e.kids[0]->kind != Expr::Kind::Name || e.text != "=") {
-            err(e.line, e.col, "not lowered");
-            return Operand::number(0);
+        if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
+            fold(e.text, a.op.imm, b.op.imm, folded))
+            return Val{Operand::number(folded), 0, 0};
+        if ((e.text == "+" || e.text == "-") && a.step != 0 && b.step == 0) {
+            Val off = scale(b, a.step);
+            int dst = fresh();
+            emitBin(e.text == "+" ? Inst::Op::Add : Inst::Op::Sub, dst, a.op, off.op);
+            return Val{Operand::vreg(dst), a.step, a.inner};
         }
-        int slot = lookup(e.kids[0]->text, e.line, e.col);
-        Operand rhs = lowerExpr(*e.kids[1]);
-        emitMov(slot, rhs);
-        return Operand::vreg(slot);
+        if (e.text == "+" && b.step != 0 && a.step == 0) {
+            Val off = scale(a, b.step);
+            int dst = fresh();
+            emitBin(Inst::Op::Add, dst, b.op, off.op);
+            return Val{Operand::vreg(dst), b.step, b.inner};
+        }
+        if (e.text == "-" && a.step != 0 && a.step == b.step) {
+            int diff = fresh();
+            emitBin(Inst::Op::Sub, diff, a.op, b.op);
+            int q = fresh();
+            emitBin(Inst::Op::Div, q, Operand::vreg(diff), Operand::number(a.step));
+            return Val{Operand::vreg(q), 0, 0};
+        }
+        int dst = fresh();
+        emitBin(binOp(e.text), dst, a.op, b.op);
+        return Val{Operand::vreg(dst), 0, 0};
     }
 
-    Operand lowerCond(Expr& e) {
-        if (e.kids.size() < 3 || !e.kids[0] || !e.kids[1] || !e.kids[2]) return Operand::number(0);
+    Val lowerAssign(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1] || e.text != "=") {
+            err(e.line, e.col, "not lowered");
+            return {};
+        }
+        Val rhs = lowerExpr(*e.kids[1]);
+        Expr& lhs = *e.kids[0];
+        if (lhs.kind == Expr::Kind::Name) {
+            Sym* s = find(lhs.text);
+            if (!s) {
+                err(e.line, e.col, "not lowered: " + lhs.text);
+                return {};
+            }
+            if (s->array) {
+                err(e.line, e.col, "not lowered");
+                return {};
+            }
+            if (s->global) {
+                Inst in;
+                in.op = Inst::Op::GStore;
+                in.func = s->gname;
+                in.a = rhs.op;
+                in.extra = s->width;
+                emit(in);
+                return rhs;
+            }
+            emitMov(s->reg, rhs.op);
+            return Val{Operand::vreg(s->reg), s->step, s->inner};
+        }
+        Addr a = lowerAddr(lhs);
+        if (!a.ok) return {};
+        Inst in;
+        in.op = Inst::Op::Store;
+        in.a = a.op;
+        in.b = rhs.op;
+        in.extra = a.width;
+        emit(in);
+        return rhs;
+    }
+
+    Val lowerCond(Expr& e) {
+        if (e.kids.size() < 3 || !e.kids[0] || !e.kids[1] || !e.kids[2]) return {};
         int dst = fresh();
         std::string tL = lab("cond_then");
         std::string fL = lab("cond_else");
         std::string eL = lab("cond_end");
-        emitBr(asReg(lowerExpr(*e.kids[0])), tL, fL);
+        emitBr(material(lowerExpr(*e.kids[0])), tL, fL);
         startBlock(tL);
-        emitMov(dst, lowerExpr(*e.kids[1]));
+        emitMov(dst, lowerExpr(*e.kids[1]).op);
         emitJmp(eL);
         startBlock(fL);
-        emitMov(dst, lowerExpr(*e.kids[2]));
+        emitMov(dst, lowerExpr(*e.kids[2]).op);
         emitJmp(eL);
         startBlock(eL);
-        return Operand::vreg(dst);
+        return Val{Operand::vreg(dst), 0, 0};
     }
 
-    Operand lowerCall(Expr& e) {
+    Val lowerCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
             err(e.line, e.col, "not lowered");
-            return Operand::number(0);
+            return {};
         }
         std::vector<Operand> args;
         for (std::size_t i = 1; i < e.kids.size(); ++i)
-            if (e.kids[i]) args.push_back(lowerExpr(*e.kids[i]));
+            if (e.kids[i]) args.push_back(lowerExpr(*e.kids[i]).op);
         int dst = fresh();
         Inst in;
         in.op = Inst::Op::Call;
@@ -1886,7 +2220,7 @@ private:
         in.func = e.kids[0]->text;
         in.args = std::move(args);
         emit(in);
-        return Operand::vreg(dst);
+        return Val{Operand::vreg(dst), 0, 0};
     }
 
     void lowerStmt(Stmt& s) {
@@ -1905,7 +2239,7 @@ private:
         case Stmt::Kind::Return: {
             Inst in;
             in.op = Inst::Op::Ret;
-            if (s.expr) in.a = lowerExpr(*s.expr);
+            if (s.expr) in.a = lowerExpr(*s.expr).op;
             emit(in);
             break;
         }
@@ -1933,13 +2267,32 @@ private:
     }
 
     void lowerLocal(Decl& d) {
-        if (d.type && (d.type->kind == Type::Kind::Pointer || d.type->kind == Type::Kind::Array)) {
-            err(d.line, d.col, "not lowered");
+        if (!d.type) return;
+        Sym s;
+        s.width = d.type->kind == Type::Kind::Array ? sizeOf(d.type->inner.get()) : sizeOf(d.type.get());
+        s.step = valueStep(d.type.get());
+        s.inner = innerOf(d.type.get());
+        if (d.type->kind == Type::Kind::Array) {
+            s.array = true;
+            int bytes = sizeOf(d.type.get());
+            if (bytes <= 0) {
+                err(d.line, d.col, "array length is not a constant");
+                bytes = 8;
+            }
+            int addr = fresh();
+            Inst in;
+            in.op = Inst::Op::Local;
+            in.dst = addr;
+            in.a = Operand::number(bytes);
+            emit(in);
+            s.reg = addr;
+            if (!d.name.empty()) scopes_.back()[d.name] = s;
             return;
         }
         int slot = fresh();
-        if (!d.name.empty()) scopes_.back()[d.name] = slot;
-        if (d.init) emitMov(slot, lowerExpr(*d.init));
+        s.reg = slot;
+        if (!d.name.empty()) scopes_.back()[d.name] = s;
+        if (d.init) emitMov(slot, lowerExpr(*d.init).op);
     }
 
     void lowerIf(Stmt& s) {
@@ -1947,7 +2300,7 @@ private:
         std::string thenL = "if" + std::to_string(id) + "_then";
         std::string elseL = "if" + std::to_string(id) + "_else";
         std::string endL = "if" + std::to_string(id) + "_end";
-        int cond = s.expr ? asReg(lowerExpr(*s.expr)) : asReg(Operand::number(0));
+        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
         emitBr(cond, thenL, s.elseS ? elseL : endL);
         startBlock(thenL);
         if (s.thenS) lowerStmt(*s.thenS);
@@ -1967,7 +2320,7 @@ private:
         std::string eL = "while" + std::to_string(id) + "_end";
         emitJmp(cL);
         startBlock(cL);
-        int cond = s.expr ? asReg(lowerExpr(*s.expr)) : asReg(Operand::number(0));
+        int cond = s.expr ? material(lowerExpr(*s.expr)) : material(Val{Operand::number(0), 0, 0});
         emitBr(cond, bL, eL);
         startBlock(bL);
         loops_.push_back(Loop{cL, eL});
@@ -1994,7 +2347,7 @@ private:
         }
         emitJmp(cL);
         startBlock(cL);
-        if (s.expr) emitBr(asReg(lowerExpr(*s.expr)), bL, eL);
+        if (s.expr) emitBr(material(lowerExpr(*s.expr)), bL, eL);
         else emitJmp(bL);
         startBlock(bL);
         loops_.push_back(Loop{s.expr2 ? sL : cL, eL});
@@ -2020,8 +2373,14 @@ private:
         loops_.clear();
         if (d.type) {
             for (const Param& p : d.type->params) {
-                int id = nextReg_++;
-                if (!p.name.empty()) scopes_.back()[p.name] = id;
+                Sym s;
+                s.reg = nextReg_++;
+                if (p.type) {
+                    s.width = sizeOf(p.type.get());
+                    s.step = valueStep(p.type.get());
+                    s.inner = innerOf(p.type.get());
+                }
+                if (!p.name.empty()) scopes_.back()[p.name] = s;
             }
         }
         startBlock("entry");

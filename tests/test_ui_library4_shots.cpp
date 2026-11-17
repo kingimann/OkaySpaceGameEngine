@@ -23,15 +23,34 @@ namespace {
 
 struct Shot { bool ok = false; Image img{1, 1}; };
 
+// One software renderer for the whole process, as the player has one: the glyph atlas texture of a font is made for the first renderer and kept
+// (UIPainterSDL.hpp SDLFontAtlas), so a second renderer would draw no text. Every picture is drawn into the top-left corner of one big surface.
+struct Canvas3x { SDL_Surface* surf = nullptr; SDL_Renderer* ren = nullptr; };
+Canvas3x& Big() {
+    static Canvas3x c = [] {
+        Canvas3x k;
+        k.surf = SDL_CreateRGBSurfaceWithFormat(0, 3840, 2160, 32, SDL_PIXELFORMAT_ABGR8888);
+        k.ren = k.surf ? SDL_CreateSoftwareRenderer(k.surf) : nullptr;
+        return k;
+    }();
+    return c;
+}
+
 Shot Render(int width, int height, const std::function<void(Scene&)>& build, bool pixelFont = false) {
     Shot out;
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, SDL_PIXELFORMAT_ABGR8888);
-    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
-    if (!ren) { if (surf) SDL_FreeSurface(surf); return out; }
+    Canvas3x& big = Big();
+    SDL_Renderer* ren = big.ren;
+    SDL_Surface* surf = big.surf;
+    if (!ren || width > 3840 || height > 2160) return out;
     std::unordered_map<std::string, SDL_Texture*> cache;
-    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_Rect all{0, 0, 3840, 2160};
+    SDL_RenderSetViewport(ren, &all);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
     SDL_SetRenderDrawColor(ren, 18, 22, 32, 255);
     SDL_RenderClear(ren);
+    SDL_Rect vp{0, 0, width, height};
+    SDL_RenderSetViewport(ren, &vp);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     Scene scene("shot");
     scene.physicsEnabled = false;
     scene.uiFont = pixelFont ? "pixel" : "";   // the default UI font is the smooth TrueType face; "pixel" (the old 8x8 bitmap) is only the opt-in look
@@ -49,8 +68,6 @@ Shot Render(int width, int height, const std::function<void(Scene&)>& build, boo
         for (int x = 0; x < width; ++x) out.img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
     }
     for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
-    SDL_DestroyRenderer(ren);
-    SDL_FreeSurface(surf);
     int drawn = 0;
     const unsigned char* px = out.img.Data();
     for (int i = 0; i < width * height; ++i) if (px[i * 4] != 18 || px[i * 4 + 1] != 22 || px[i * 4 + 2] != 32) ++drawn;

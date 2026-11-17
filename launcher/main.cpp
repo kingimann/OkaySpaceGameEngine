@@ -8,7 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
-#include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
+#include "WavPlayback.hpp"   // the one WAV loading seam (our own decoder by default; SDL_LoadWAV with OKAY_OWN_WAV=0)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
@@ -5420,6 +5420,17 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
         // clip's own storage and free SDL's at once, so no path (a converted clip, an
         // unsupported width, a replaced entry) can leave it behind (#718).
         SDL_AudioSpec wavSpec{};
+        if (!failed) {
+            // Once per run: which WAV reader the voice clips use, in the engine's own wording (wav::ReaderLogLine), on
+            // stderr and in okay_launcher.log next to the launcher (the Windows launcher has no console).
+            static bool toldReader = false;
+            if (!toldReader) {
+                toldReader = true;
+                const char* line = okay::wav::ReaderLogLine(okay::wav::OwnWavEnabled());
+                std::fprintf(stderr, "%s\n", line);
+                okay::restart::AppendLog(fs::path(g_exeDir) / "okay_launcher.log", line);
+            }
+        }
         if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();

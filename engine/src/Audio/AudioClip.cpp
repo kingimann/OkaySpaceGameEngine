@@ -1,11 +1,14 @@
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/WavDecoder.hpp"
 #include "AudioInternal.hpp"
+#include "okay/Core/Log.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace okay {
@@ -94,6 +97,31 @@ void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t fr
     }
 }
 
+bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out, std::string* error) {
+    out.clear();
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    const std::streamoff n = f.tellg();
+    if (n > 0 && f.seekg(0, std::ios::beg)) {
+        out.resize(static_cast<std::size_t>(n));
+        f.read(reinterpret_cast<char*>(out.data()), n);
+        out.resize(static_cast<std::size_t>(f.gcount()));   // a file cut while it was read: what was there
+        return true;
+    }
+    // Size unknown (not a regular file): read it as a stream.
+    f.clear();
+    f.seekg(0, std::ios::beg);
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+void NoteWavReader(bool own) {
+    // One line per run, so a person can see which WAV reader is in use (docs/try_it.md, section 9). The launcher's
+    // voice clips print the same text (wav::ReaderLogLine).
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) OKAY_INFO(wav::ReaderLogLine(own));
+}
+
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
     const float k = 1.0f / static_cast<float>(channels);
@@ -132,11 +160,11 @@ AudioClip AudioClip::FromChannels(const std::vector<float>& left, const std::vec
 bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmix) {
     samples.clear();
     channels = 1;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { if (error) *error = "cannot open " + path; return false; }
-    std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
-                                   std::istreambuf_iterator<char>());
-    if (wav::OwnWavEnabled()) {   // opt-in own decoder (OKAY_OWN_WAV); the code below stays the default
+    std::vector<unsigned char> buf;
+    if (!audio_detail::ReadWholeFile(path, buf, error)) return false;
+    const bool own = wav::OwnWavEnabled();
+    audio_detail::NoteWavReader(own);
+    if (own) {   // our own decoder, the default; OKAY_OWN_WAV=0 runs the old code below (one more release)
         wav::WavAudio a;
         std::string e;
         if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
@@ -144,8 +172,11 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
         channels = audio_detail::KeptChannels(a.channels, downmix);
         if (channels == a.channels) samples = std::move(a.samples);
         else {
+            // Mono: the channels summed in order, then divided by the count, the same arithmetic as the WAV stream
+            // (AudioStream, ConvertWavFrames), so a streamed and a whole-file load of one file are equal bit for bit
+            // (test audio_stream; DownmixToMono multiplies by 1/channels, which differs in the last bit for 3, 5, 6...).
             samples.resize(a.FrameCount());
-            audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
+            audio_detail::SumDivideToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
         }
         return true;
     }

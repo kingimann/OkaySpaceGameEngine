@@ -33,6 +33,24 @@ inline int KeptChannels(int fileChannels, bool downmix) { return (downmix || fil
 /// channels each (1 averages every file channel).
 void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t frames, float* out, int outCh);
 
+/// The whole file into `out`: one sized read when the size is known (a byte-at-a-time stream iterator took 51 ms
+/// for a 20 MB WAV against 3 ms). False with "cannot open <path>" when it cannot be opened.
+bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out, std::string* error);
+
+/// Logs, once per run, which WAV reader is in use (wav::ReaderLogLine): whole-file loads and streamed WAV both call it.
+void NoteWavReader(bool own);
+
+/// Mono from `channels` interleaved channels, summed in order then divided by the count: the arithmetic of the WAV
+/// paths (ConvertWavFrames, AudioClip::LoadWAV, the WAV stream), so streamed and whole-file loads agree bit for bit.
+inline void SumDivideToMono(const float* in, std::size_t frames, int channels, float* out) {
+    const std::size_t ch = static_cast<std::size_t>(channels);
+    for (std::size_t i = 0; i < frames; ++i) {
+        float acc = 0.0f;
+        for (std::size_t c = 0; c < ch; ++c) acc += in[i * ch + c];
+        out[i] = acc / static_cast<float>(channels);
+    }
+}
+
 /// Averages `in` (interleaved, `channels` per frame) to mono.
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out);
 

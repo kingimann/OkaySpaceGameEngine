@@ -86,7 +86,7 @@ release job or the installer build for this change.
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
-| 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
+| 9 | Own WAV decoder (**the default** since 2026-11-16), whole and streamed | nothing to set; `OKAY_OWN_WAV=0` for the old one; `examples\own_wav` (`own_wav_test`, and `stream_test` for streaming) | Console line says which reader ran (the launcher writes it to `okay_launcher.log`); Windows sound unverified |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
@@ -1484,7 +1484,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
-| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| WAV (the default now) | nothing (`OKAY_OWN_WAV=0` = old, this release only) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav`; streamed: `examples\own_wav\stream_test.okayscene` with `alaw_tone.wav` | you hear it: own = a clean 440 Hz tone, old = buzzy; Console line `audio: WAV files load with our own reader ...` | no startup word |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
 | Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
 | OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
@@ -1521,23 +1521,45 @@ at the top (rule 4a).
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
 
-### 9. Own WAV decoder
+### 9. Own WAV decoder (the default now)
 
-* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). It is **not** part of `OKAY_OWN_STACK=1` and **not** in
-  the startup line; it is only in the engine's `AudioClip::LoadWAV` (whole-file loads; streamed large files still use
-  the old parser).
+* **What changed.** Since the owner's approval of 2026-11-16 ("Switch, but keep improving it") every WAV file loads with
+  our own reader by default: sounds in the editor and in exported games (`AudioClip::LoadWAV`, whole-file loads),
+  streamed sounds (a Music Player, or an Audio Source with **Stream** ticked: since 2026-11-16 these use our reader too)
+  and the launcher's voice clips. Nothing to set.
+* **Going back (this release only).** `set OKAY_OWN_WAV=0` in a Command Prompt, then start the editor (or launcher)
+  from that same window. `OKAY_OWN_WAV=1` forces ours. The next release deletes the old one.
+* **How to tell which one ran.** The first WAV load of a run writes one line to the log and the editor's **Console**:
+  `audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)`, or
+  `audio: WAV files load with the OLD reader (...)`. The launcher writes the same line once per run, at the first voice
+  clip it plays, to `okay_launcher.log` in the launcher's folder (next to `OkaySpace.exe`).
 * **Sample file.** `examples\own_wav\mulaw_tone.wav` (2 s of a 440 Hz sine, 8-bit mu-law, 22,050 Hz; we generated it
   from our own signal, no outside source) and the scene `own_wav_test.okayscene` that plays it.
-* **Steps.**
-  1. Start the editor with no variable. **File > Open...** `examples\own_wav\own_wav_test.okayscene`, Play. The old
-     decoder does not read the format tag: it treats the bytes as plain 8-bit samples, so you should hear the same
-     note but **distorted and buzzy**, at a different loudness (worked out by computing what the old code does to
-     these bytes: its output is nowhere near the sine, error 1.09 on a 0.5 amplitude signal; not heard).
-  2. Close the editor, `set OKAY_OWN_WAV=1`, start it again, open the same scene, Play. You should hear a **clean, soft
-     steady tone** (about A, 440 Hz). That difference is the proof the own decoder is in use.
-* **Verified here:** `okay::wav::DecodeWav` (compiled on its own) reads this file as 22,050 Hz mono, 44,100 frames,
-  mu-law, peak 0.512, and every sample within 0.016 of an ideal 440 Hz sine of amplitude 0.5. The
-  `own_wav` test covers mu-law. **Unverified:** what you hear on Windows.
+* **Compare the two.**
+  1. Start the editor normally (no variable). **File > Open...** `examples\own_wav\own_wav_test.okayscene`, Play. You
+     should hear a **clean, soft steady tone** (about A, 440 Hz), and the Console shows the "our own reader" line.
+  2. Close the editor. In a Command Prompt: `set OKAY_OWN_WAV=0`, then start `OkayEngine.exe` from that window, open
+     the same scene, Play. The old reader does not read the format tag: it treats the bytes as plain 8-bit samples, so
+     you should hear the same note but **distorted and buzzy**, at a different loudness (worked out by computing what
+     the old code does to these bytes: error 1.09 on a 0.5 amplitude signal; not heard), and the Console shows the
+     "OLD reader" line.
+  3. For an ordinary 16-bit WAV of your own the two sound the same (the samples are equal bit for bit). For 8, 24 and
+     32-bit files ours rounds to the nearest 16-bit step where the old launcher path cut toward zero: at most 2 steps
+     out of 32,768 apart, not audible.
+* **Streamed (new).** `examples\own_wav\alaw_tone.wav` (2 s of a 440 Hz sine, 8-bit A-law, 22,050 Hz; made by
+  `scripts/gen_own_wav_alaw_tone.py`, our own signal and encoder) and the scene `stream_test.okayscene`, whose **Music
+  Player** streams it (Stream is on).
+  1. Start the editor normally. **File > Open...** `examples\own_wav\stream_test.okayscene`, Play. You should hear a
+     **clean, soft steady tone** (440 Hz), repeating every 2 s, and the Console shows the "our own reader" line.
+  2. With `set OKAY_OWN_WAV=0` (as above) the same scene plays the old streamed reader, which reads A-law bytes as plain
+     8-bit samples: **loud, buzzy noise** around the note (worked out from the bytes: about 1.6 times as loud as the tone,
+     samples up to 0.97 away from it; not heard).
+  3. Any Audio Source works the same way: put `alaw_tone.wav` on it, tick **Stream**, Play.
+* **Verified here (Linux):** streaming `alaw_tone.wav` through `AudioStream` gives the sine to within 0.0079 (one A-law
+  step), and the scene loads with its Music Player set to stream that file (test `own_wav_stream`).
+  `okay::wav::DecodeWav` reads `mulaw_tone.wav` as 22,050 Hz mono, 44,100 frames, mu-law, peak
+  0.512, every sample within 0.016 of an ideal 440 Hz sine of amplitude 0.5; the WAV and audio tests pass with the new
+  default and with `OKAY_OWN_WAV=0`. **Unverified:** what you hear on Windows, and the Console line on Windows.
 
 ### 10. Own HTTP client
 
@@ -1661,3 +1683,23 @@ already made from them still open and play, and the scene builders stay in the e
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## WAV decoder speed and memory (developer bench, not part of the Windows release)
+
+Compares our own WAV decoder (`okay::wav`) with `SDL_LoadWAV` on the same files: time and peak memory of the decode alone
+and of the launcher's whole voice-clip load to the format it plays. It is a program in the test build, not something in
+`OkaySpace.exe`, so it cannot be tried from the release. Linux (or any build with tests on and SDL2 found; the memory
+columns need glibc, elsewhere they print `-`):
+
+1. Build it: `cmake -B build -DOKAY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release`, then `ninja -C build bench_wav_decoder`.
+2. Run it: `build/tests/bench_wav_decoder` (about 30 seconds). With no argument it reads the repository's WAV files and
+   writes a generated set of 13 files (about 260 MB, 16-bit stereo from 1 s to 10 min, 8/24/32-bit, float32/64, A-law,
+   mu-law, MS and IMA ADPCM, a 6-channel extensible file) to `<temp>/okay_wav_bench` the first time; `--gen DIR` puts
+   them elsewhere. Or give it your own `.wav` files or folders.
+3. You should see a table, one row per file: milliseconds and peak MiB for our decoder and SDL, and the ratio (below 1
+   means ours is faster or smaller), first for the decode alone ("raw"), then for the load to the playback format
+   ("final"). Expect every "final" ratio below 1, and SDL to print `fail` on the float64 file (it does not read it).
+4. `--digest` prints a hash of our output per file; run it before and after a change to the decoder: the lines must
+   match.
+
+The measured table is in [own_wav_decoder.md](own_wav_decoder.md), "Speed and memory against SDL".

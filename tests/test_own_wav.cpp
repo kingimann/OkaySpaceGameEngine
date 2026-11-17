@@ -5,13 +5,16 @@
 // (python3 optional: SKIP, unless OKAY_REQUIRE_DIFFERENTIAL=1).
 #include "test_framework.hpp"
 #include "okay/Audio/WavDecoder.hpp"
+#include "okay/Audio/WavPlayback.hpp"
 #include "okay/Audio/AudioClip.hpp"
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
 #ifndef _WIN32
@@ -84,6 +87,28 @@ static void TestPcm() {
         Bytes d2; const double x = -0.5; std::uint64_t u; std::memcpy(&u, &x, 8); P32(d2, std::uint32_t(u)); P32(d2, std::uint32_t(u >> 32));
         CHECK(Dec(Wav(Fmt(3, 1, 8000, 8, 64), d2), a));
         CHECK(a.samples.size() == 1 && a.samples[0] == -0.5f);
+        // float 64 too large for a float: the largest float of its sign, never infinity (packed, and with a block
+        // align of two samples, the general loop); NaN and infinity: 0. The 16-bit playback output clamps.
+        const double big[5] = {1e300, -1e300, std::nan(""), 1.0 / 0.0, 0.75};
+        Bytes d3, d4;
+        for (double v : big) {
+            std::uint64_t b; std::memcpy(&b, &v, 8);
+            P32(d3, std::uint32_t(b)); P32(d3, std::uint32_t(b >> 32));
+            P32(d4, std::uint32_t(b)); P32(d4, std::uint32_t(b >> 32)); P32(d4, 0); P32(d4, 0);
+        }
+        const float fm = std::numeric_limits<float>::max();
+        for (int strided = 0; strided < 2; ++strided) {
+            CHECK(Dec(Wav(Fmt(3, 1, 8000, strided ? 16 : 8, 64), strided ? d4 : d3), a));
+            CHECK(a.samples.size() == 5 && a.samples[0] == fm && a.samples[1] == -fm && a.samples[2] == 0.0f &&
+                  a.samples[3] == 0.0f && a.samples[4] == 0.75f);
+        }
+        const Bytes w3 = Wav(Fmt(3, 1, 8000, 8, 64), d3);
+        wav::PlaybackClip pc;
+        CHECK(wav::DecodeForPlayback(w3.data(), w3.size(), pc) && pc.bytes.size() == 10);
+        if (pc.bytes.size() == 10) {
+            std::int16_t v[5]; std::memcpy(v, pc.bytes.data(), 10);
+            CHECK(v[0] == 32767 && v[1] == -32768 && v[2] == 0 && v[3] == 0 && v[4] == 24576);
+        }
     }
     { // WAVE_FORMAT_EXTENSIBLE, PCM sub-format, stereo 16 bit
         Bytes x; P16(x, 22); P16(x, 16); P32(x, 3);
@@ -332,6 +357,12 @@ static void TestLoadWavSwitch() {
     Bytes d; for (int i = 0; i < 12; ++i) { P16(d, unsigned((i * 1000) & 0xFFFF)); }
     Bytes w = Wav(Fmt(1, 6, 8000, 12, 16), d);
     { std::ofstream f(path, std::ios::binary); f.write(reinterpret_cast<const char*>(w.data()), long(w.size())); }
+    // With no variable the build default decides: ours since 2026-11-16 (OKAY_EXPECT_OWN_WAV_DEFAULT is 0 only in a
+    // -DOKAY_OWN_WAV=OFF build). A value other than 0 or 1 is ignored.
+    unsetenv("OKAY_OWN_WAV");
+    CHECK(wav::OwnWavEnabled() == bool(OKAY_EXPECT_OWN_WAV_DEFAULT));
+    setenv("OKAY_OWN_WAV", "yes", 1);
+    CHECK(wav::OwnWavEnabled() == bool(OKAY_EXPECT_OWN_WAV_DEFAULT));
     setenv("OKAY_OWN_WAV", "0", 1);
     CHECK(!wav::OwnWavEnabled());
     AudioClip oldC; CHECK(oldC.LoadWAV(path));
@@ -339,7 +370,8 @@ static void TestLoadWavSwitch() {
     CHECK(wav::OwnWavEnabled());
     AudioClip newC; CHECK(newC.LoadWAV(path));
     CHECK(oldC.channels == newC.channels && oldC.sampleRate == newC.sampleRate && oldC.samples.size() == newC.samples.size());
-    for (std::size_t i = 0; i < oldC.samples.size() && i < newC.samples.size(); ++i) CHECK_NEAR(oldC.samples[i], newC.samples[i], 1e-6);
+    // bit for bit: the mono downmix of 3+ channels uses the old reader's (and the WAV stream's) sum-then-divide
+    for (std::size_t i = 0; i < oldC.samples.size() && i < newC.samples.size(); ++i) CHECK(oldC.samples[i] == newC.samples[i]);
     // stereo kept as stereo, downmix flag halves it
     Bytes ds; P16(ds, 16384); P16(ds, 0);
     Bytes ws = Wav(Fmt(1, 2, 8000, 4, 16), ds);

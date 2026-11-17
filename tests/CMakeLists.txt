@@ -86,6 +86,38 @@ add_executable(test_own_wav test_own_wav.cpp)
 target_link_libraries(test_own_wav PRIVATE okay::engine)
 add_test(NAME own_wav COMMAND test_own_wav WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(own_wav PROPERTIES TIMEOUT 240)
+# What this build's WAV default should be (ON since the owner's approval of 2026-11-16; -DOKAY_OWN_WAV=OFF keeps the
+# old path as the default for one more release). own_wav and wav_playback check the unset-variable case against it.
+if(OKAY_OWN_WAV)
+    set(OKAY_EXPECT_OWN_WAV_DEFAULT 1)
+else()
+    set(OKAY_EXPECT_OWN_WAV_DEFAULT 0)
+endif()
+target_compile_definitions(test_own_wav PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=${OKAY_EXPECT_OWN_WAV_DEFAULT})
+# Both build-time settings, in every build: the decoder's two sources compiled on their own, once as an ON build
+# (no define) and once as an OFF build (OKAY_OWN_WAV_DEFAULT_OFF, what engine/CMakeLists.txt sets for
+# -DOKAY_OWN_WAV=OFF), each checked with the variable unset, 0, 1 and other values. No engine link, so it is cheap.
+foreach(_wd on off)
+    add_executable(test_own_wav_default_${_wd} test_own_wav_default.cpp
+        ${PROJECT_SOURCE_DIR}/engine/src/Audio/WavDecoder.cpp ${PROJECT_SOURCE_DIR}/engine/src/Audio/WavPlayback.cpp)
+    target_compile_features(test_own_wav_default_${_wd} PRIVATE cxx_std_17)
+    target_include_directories(test_own_wav_default_${_wd} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${CMAKE_CURRENT_SOURCE_DIR})
+    if(_wd STREQUAL "off")
+        target_compile_definitions(test_own_wav_default_${_wd} PRIVATE OKAY_OWN_WAV_DEFAULT_OFF OKAY_EXPECT_OWN_WAV_DEFAULT=0)
+    else()
+        target_compile_definitions(test_own_wav_default_${_wd} PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=1)
+    endif()
+    add_test(NAME own_wav_default_${_wd} COMMAND test_own_wav_default_${_wd})
+endforeach()
+# Streaming with our own WAV decoder (okay::wav::WavStream, AudioStream): streamed equals whole-file bit for bit on every
+# format under random piece sizes, seeks and loops, every truncation of the small files, a file cut while it plays, and
+# AudioStream against AudioClip::LoadWAV (and the OKAY_OWN_WAV=0 fallback). The file also builds on its own with
+# sanitizers (see its header).
+add_executable(test_own_wav_stream test_own_wav_stream.cpp)
+target_link_libraries(test_own_wav_stream PRIVATE okay::engine)
+target_compile_definitions(test_own_wav_stream PRIVATE OKAY_STREAM_TEST_ENGINE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_wav_stream COMMAND test_own_wav_stream WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_wav_stream PROPERTIES TIMEOUT 240)
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)
@@ -3573,6 +3605,7 @@ add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMA
 # equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
+target_compile_definitions(test_wav_playback PRIVATE OKAY_EXPECT_OWN_WAV_DEFAULT=${OKAY_EXPECT_OWN_WAV_DEFAULT})
 find_package(SDL2 QUIET)
 if(SDL2_FOUND)
     target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)
@@ -3585,6 +3618,19 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+# Not a test: speed and peak heap of our WAV decoder against SDL_LoadWAV (docs/own_wav_decoder.md, "Speed and memory
+# against SDL"). Built when SDL2 is found, never run by ctest. Writes its generated files to <temp>/okay_wav_bench.
+if(SDL2_FOUND)
+    add_executable(bench_wav_decoder bench_wav_decoder.cpp)
+    target_link_libraries(bench_wav_decoder PRIVATE okay::engine)
+    target_include_directories(bench_wav_decoder PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)
+    target_compile_definitions(bench_wav_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(bench_wav_decoder PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(bench_wav_decoder PRIVATE ${SDL2_LIBRARIES})
+    endif()
+endif()
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt

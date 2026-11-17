@@ -24,6 +24,8 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
+#include "ScriptingDensity.hpp"      // the Density choice: one table of sizes for the graph, palette and toolbar
+#include "ScriptingDensityUi.hpp"
 #include "VisualScriptChoices.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptCategories.hpp"
@@ -3489,7 +3491,8 @@ inline void Draw(EditorState& ed, bool* open) {
     const bool typing = io.WantTextInput;
     {
         VsSession& ses = Session();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
+        const oked::scriptui::Metrics dm = oked::scriptui::Current();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.tabPad.x, dm.tabPad.y));
         if (ImGui::BeginTabBar("##vstabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
             for (int i = 0; i < (int)ses.tabs.size(); ++i) {
                 VsEditState& tab = *ses.tabs[(std::size_t)i];
@@ -3610,9 +3613,10 @@ inline void Draw(EditorState& ed, bool* open) {
     bool addComment = false;
     bool openTpl = false;
     int alignReq = 0;   // 1 left, 2 right, 3 top, 4 bottom
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
+    const oked::scriptui::Metrics dm = oked::scriptui::Current();   // Density (Graph > Density): every pane reads this one table
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.framePad.x, dm.framePad.y));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.itemSpacing.x, dm.itemSpacing.y));
     if (ImGui::Button("Graph")) ImGui::OpenPopup("##vsfile");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("New, open, save, undo, align, and the panels");
     if (ImGui::BeginPopup("##vsfile")) {
@@ -3661,6 +3665,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::Separator();
         ImGui::MenuItem("Outline", nullptr, &st.showOutline);
         ImGui::MenuItem("Node details", nullptr, &st.showDetails);
+        oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Script editor
         ImGui::MenuItem("Minimap", nullptr, &st.showMinimap);
         ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
         ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
@@ -3833,8 +3838,18 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         int nErr = 0, nWarn = 0;
         for (const auto& is : st.issues) (is.severity == 0 ? nErr : nWarn)++;
-        const float rightW = 520.0f;
+        // The right cluster is as wide as its buttons (padding follows the Density). When the window is too narrow for all of
+        // it beside the left buttons, the Outline / Details buttons drop out (both are in the Graph menu as well) instead of
+        // the clusters running into each other.
+        auto btnW = [&](const char* t) { return ImGui::CalcTextSize(t, nullptr, true).x + 2.0f * dm.framePad.x + dm.itemSpacing.x; };
+        char probLbl[64];
+        if (nErr + nWarn == 0) std::snprintf(probLbl, sizeof probLbl, "No problems");
+        else std::snprintf(probLbl, sizeof probLbl, "%d problem%s", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
+        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("-") + btnW("100%") + btnW("+");
+        const float panelW = btnW("Outline") + btnW("Details");
         const float avail = ImGui::GetWindowContentRegionMax().x;
+        const bool panelBtns = avail - ImGui::GetCursorPosX() >= coreW + panelW + 24.0f;
+        const float rightW = coreW + (panelBtns ? panelW : 0.0f);
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, avail - rightW));
         {
             char lbl[64];
@@ -3863,11 +3878,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::Button("+##vszoomin")) st.zoom = std::clamp(st.zoom * 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
         ImGui::SameLine();
-        if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
-        ImGui::SameLine();
-        if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the selected node does");
+        if (panelBtns) {
+            if (ImGui::Button(st.showOutline ? "Outline" : "Outline##off")) st.showOutline = !st.showOutline;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Events, variables and parameters");
+            ImGui::SameLine();
+            if (ImGui::Button(st.showDetails ? "Details" : "Details##off")) st.showDetails = !st.showDetails;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What the selected node does");
+        }
     }
     ImGui::PopStyleVar(3);
     if (alignReq && st.sel.size() >= 2) {
@@ -3984,9 +4001,9 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // ---- Events list: every event chain in the graph; click one to jump to it ----
     if (st.showOutline) {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-        ImGui::BeginChild("vsoutline", ImVec2(268, 0), true);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(dm.windowPad.x, dm.windowPad.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.itemSpacing.x, dm.itemSpacing.y * 0.8f));
+        ImGui::BeginChild("vsoutline", ImVec2(dm.outlineW, 0), true);
         ImGui::TextUnformatted("Events");
         ImGui::Separator();
         int shown = 0;
@@ -4214,9 +4231,11 @@ inline void Draw(EditorState& ed, bool* open) {
     };
 
     // Roomy layout (world units, scaled by the zoom).
-    const float NODE_W_BASE = 292.0f * z, HEADER_H = 64.0f * z, ROW_H = 40.0f * z, PIN_R = 9.0f * z;
-    const float BOX_W = 136.0f * z;   // inline value box on an unconnected data input
-    const float PAD = 16.0f * z, ROUND = 12.0f * z;
+    // Sizes come from the Density table (editor/ScriptingDensity.hpp), scaled by the canvas zoom.
+    // (`dm` is the Density table read at the top of this function.)
+    const float NODE_W_BASE = dm.nodeW * z, HEADER_H = dm.headerH * z, ROW_H = dm.rowH * z, PIN_R = dm.pinR * z;
+    const float BOX_W = dm.boxW * z;   // inline value box on an unconnected data input
+    const float PAD = dm.nodePad * z, ROUND = dm.round * z;
     auto inputLinked = [&](int node, int pin) {
         for (const auto& l : g.dataLinks) if (l.consumer == node && l.inPin == pin) return true;
         return false;
@@ -4386,10 +4405,13 @@ inline void Draw(EditorState& ed, bool* open) {
         const std::string title = VsNodeTitle(n, *d);
         const bool isStep = d->param >= 3 && d->param <= 5;   // Action / Action Steps / Check
         const std::string stepLine = isStep ? VsStepLine(n) : std::string();
-        float titleW = ImGui::CalcTextSize(title.c_str()).x + PAD * 2.0f;
-        if (isStep) titleW = std::max(titleW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z) + PAD * 2.0f);
-        const float NODE_W = std::max({NODE_W_BASE, titleW,
-            d->dataIn.empty() ? 0.0f : PAD + inLabelW + 8.0f * z + BOX_W + PAD + outLabelW + PAD});
+        float titleTextW = ImGui::CalcTextSize(title.c_str()).x;
+        if (isStep) titleTextW = std::max(titleTextW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z));
+        // The width rule (title + the status badge beside it, input labels + value box + output labels) is in the header.
+        oked::scriptui::NodeWidthIn nwi;
+        nwi.zoom = z; nwi.titleW = titleTextW; nwi.badgeW = ImGui::CalcTextSize("Missing").x + 10.0f * z;
+        nwi.hasDataIn = !d->dataIn.empty(); nwi.inLabelW = inLabelW; nwi.outLabelW = outLabelW; nwi.boxW = BOX_W;
+        const float NODE_W = oked::scriptui::NodeWidth(dm, nwi);
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
         nodeRect[n.id] = {p0, p1};
         const bool hovered = ImGui::IsMouseHoveringRect(p0, p1) && canvasWindowHovered;
@@ -4438,7 +4460,12 @@ inline void Draw(EditorState& ed, bool* open) {
         } else {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
-        text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), title.c_str());
+        {   // a title longer than the widest node is cut with "..." (the full name is in the node's help)
+            const float titleRoom = NODE_W - PAD * 2.0f - (ImGui::CalcTextSize("Missing").x + 10.0f * z + PAD * 0.5f);
+            const std::string shownTitle = oked::scriptui::ElideToWidth(title, titleRoom,
+                [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; });
+            text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), shownTitle.c_str());
+        }
         {
             const char* help = VsNodeHelp(d->type);
             std::string hint = help ? help : (d->paramHint ? std::string("Needs: ") + d->paramHint : std::string());
@@ -4594,7 +4621,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5 * z, 3 * z));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4 * z);
                 const float boxH = fs + 6 * z;
-                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
+                ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + dm.pinLabelGap * z, pp.y - boxH * 0.5f));
                 const okay::vs::VsRefKind rk = VsPinKind(n.type, i, pt, d->dataIn[i]);
                 std::string& dv = n.pinDefault[i];
                 if (rk != okay::vs::VsRefKind::None) {
@@ -4816,7 +4843,7 @@ inline void Draw(EditorState& ed, bool* open) {
         auto pinButton = [&](long long key, int kind, int side, int idx) {
             auto it = pinPos.find(key); if (it == pinPos.end()) return;
             ImVec2 pp = it->second;
-            const float hit = std::max(26.0f, 32.0f * z);
+            const float hit = oked::scriptui::PinHitSize(dm, z);
             ImGui::SetCursorScreenPos(ImVec2(pp.x - hit * 0.5f, pp.y - hit * 0.5f));
             char id[24]; std::snprintf(id, sizeof(id), "p%d%d%d", kind, side, idx);
             ImGui::InvisibleButton(id, ImVec2(hit, hit));
@@ -5246,7 +5273,11 @@ inline void Draw(EditorState& ed, bool* open) {
         addFromPalette(*pconn.def);
         st.linkPending = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
+    {   // wide enough for the topic list (it follows the Density) + the node list + the details, and never bigger than the screen
+        const oked::scriptui::Metrics pdm = oked::scriptui::Current();
+        const ImVec2 vp = ImGui::GetMainViewport()->Size;
+        ImGui::SetNextWindowSize(ImVec2(std::min(pdm.paletteSideW + 360.0f + 560.0f + 60.0f, vp.x - 40.0f), std::min(780.0f, vp.y - 60.0f)), ImGuiCond_Always);
+    }
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();

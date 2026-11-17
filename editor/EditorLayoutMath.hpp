@@ -405,6 +405,7 @@ struct ViewPrefs {
     bool showNames = true;          // names beside the selected object, cameras and lights
     bool toolbarLabels = false;     // Scene view toolbar: icon + text
     int density = (int)Density::Comfortable;
+    int scriptDensity = 1;          // Visual Script + Script editor spacing: 0 Compact, 1 Comfortable, 2 Spacious (ScriptingDensity.hpp)
     int layoutPreset = 0;           // the built-in layout on screen when the editor closed (-1 = a saved or custom arrangement)
 
     /// One "key value" line of the settings file. False when the key is not one of these.
@@ -417,6 +418,7 @@ struct ViewPrefs {
         if (k == "shownames")          { showNames = v != 0; return true; }
         if (k == "toolbarlabels")      { toolbarLabels = v != 0; return true; }
         if (k == "density")            { density = ClampDensity(v); return true; }
+        if (k == "scriptdensity")      { scriptDensity = v <= 0 ? 0 : (v >= 2 ? 2 : v); return true; }
         if (k == "layoutpreset")       { layoutPreset = v < -1 ? -1 : (v > 99 ? 99 : v); return true; }
         return false;
     }
@@ -431,6 +433,7 @@ struct ViewPrefs {
           << "shownames " << (showNames ? 1 : 0) << "\n"
           << "toolbarlabels " << (toolbarLabels ? 1 : 0) << "\n"
           << "density " << density << "\n"
+          << "scriptdensity " << scriptDensity << "\n"
           << "layoutpreset " << layoutPreset << "\n";
         return o.str();
     }

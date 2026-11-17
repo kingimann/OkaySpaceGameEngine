@@ -675,7 +675,7 @@ What the ported screens do differently or not at all:
 - **Layering.** OkayUI draws on top of every ImGui window. Popups are handled (5.3), but a floating ImGui window that is not a popup (a panel dragged over the Console, a tooltip) is painted over by the hosted rectangle.
 - **One frame of latency** for who owns the mouse (5.2), so the first frame after a window moves or a popup closes can send a click to ImGui.
 - **Single-key editor shortcuts** are kept away from a focused OkayUI field by telling ImGui the keyboard is taken (`WantTextInput`), the way an ImGui field does it. That path was run once in the real editor (typing "stop" and Ctrl+A, Backspace in the search field changed nothing in the scene); it is not covered by a test, because it needs ImGui's context.
-- **Only one hosted rectangle per app is tracked** (`Region` holds one). A second hosted panel in the same frame would need a list.
+- **Only one hosted rectangle per app is tracked** (`Region` holds one). A second hosted panel in the same frame would need a list. (Fixed in section 8.2: up to eight.)
 - **Not done at all:** the other launcher pages and editor panels; the Stats panel (the other candidate: it needs `PlotLines` styling and the editor's frame history, so it was not ported); the player (it has no Dear ImGui UI to replace); Windows and macOS (neither was built or run); a real GPU (every run below used the software renderer under Xvfb); high-DPI (OkayUI draws in window pixels like the existing overlay; the editor scales text with its UI scale, the launcher with its own); the Direct3D 11 backend (it ignores clip spans, section 4.4, so a hosted screen would not clip there: the hosts use the SDL_Renderer path only).
 - **Dear ImGui is still the default** in every build, and in a normal run (no `OKAY_DEV`, no `OKAY_UI_BACKEND`) the only UI, whatever a settings file says. Flipping the build default (`-DOKAY_UI_DEFAULT_BACKEND=okayui`) is possible and untested in a shipped build.
 
@@ -834,3 +834,184 @@ What this says: the interface itself is cheap (validating 400,000 indices costs 
 - **Texture size.** The front end refuses above 16384; the OpenGL backend does not query `GL_MAX_TEXTURE_SIZE` (a larger texture than the driver takes is a GL error and a blank texture), Direct3D 11 refuses above 8192. There is no packer for host images (one texture each).
 - **Missing:** Metal, Vulkan, WebGL / OpenGL ES 2, Direct3D 12 backends; a window or swap chain (the host owns those: this is where `okay::platform` and the editor and launcher port come in); multi-viewport rendering; premultiplied-alpha targets; a GPU timer.
 - **Not wired anywhere.** No editor, launcher or player code calls any of this, and Dear ImGui is not removed. What remains for dropping it: an own platform backend for input and windows (the SDL2 row of the roadmap), porting editor and launcher panels to OkayUI, then deleting the `okay_imgui` library.
+
+## 8. Three more launcher screens: Downloads, Notifications, Achievements
+
+Same pattern as sections 5 and 6: each screen is a plain function in `okayui/screens/OkayUILauncherPages.*` that takes the data
+and a rectangle, draws with OkayUI, and returns what the person did; `launcher/main.cpp` builds the data from its own state and
+runs the same actions as the Dear ImGui version. The Dear ImGui versions stay and are the default. The OkayUI ones are used only
+with the developer switch (`OKAY_UI_BACKEND=okayui`, or Settings > Appearance > UI backend with `OKAY_DEV=1`), and a screen falls
+back to its Dear ImGui version for any frame an ImGui popup covers it. Written from what the launcher's own Dear ImGui pages show
+and do; no code from any other project.
+
+### 8.1 Screens ported
+
+| Screen | Where in the launcher | Dear ImGui calls in its Dear ImGui version |
+|---|---|---:|
+| **Downloads** page | `tab == 10`; `okayuiscreens::DrawDownloads` | 41 |
+| **Notifications** panel (the bell flyout) | the panel block before the pages; `okayuiscreens::DrawNotifications` | 115 (plus 4 host calls) |
+| **Achievements** page | `tab == 5` (signed in, or with `OKAY_UI_DEMO_USER`); `okayuiscreens::DrawAchievements` | 115 |
+
+Same data and actions as the Dear ImGui versions:
+
+- **Downloads.** Open downloads folder, Clear finished (disabled until something finished), each download's title, a progress bar
+  with "received / total" (or just the bytes), its status in its colour, and the buttons its state has: Cancel (queued,
+  downloading), Open folder and Install to Community (completed `.zip`), Remove (finished, failed, canceled). The empty state with
+  Browse Marketplace. The actions are the launcher's own (cancel request, remove and clear under the downloads lock, `ExtractZip`
+  into Community, the toasts). With `OKAY_UI_DEMO_USER` set the page starts with four sample downloads (new: a screenshot and
+  try-it hook, also seen by the Dear ImGui page; nothing is fetched).
+- **Notifications.** Title with "N new", Mark all read and Clear (each disabled when there is nothing to do), the close button,
+  the six filter chips (Unread with its count, wrapping on a narrow panel), the feed newest first under Today, Yesterday and
+  Earlier, each row with its kind's icon, title, two body lines, the age or (on hover) a dismiss button, the unread dot. A click
+  on a row marks it read and goes to its page (crash notifications open Settings > Crash reports); dismiss hides it for good. The
+  empty states and their words per filter. The Dear ImGui window stays as the panel's frame and shadow and keeps closing it on
+  Escape and on a click outside.
+- **Achievements.** The header card (three newest medals, the count, the latest unlock, the level ring with its tooltip, points,
+  this month, View my profile), the All, This month and Showcased chips with counts, the sort (Newest first, Oldest first, A to Z)
+  and the search, the tile grid (medal, name, points pill, date, NEW for the last two days, the showcase star and outline, the
+  tooltip), the right-click menu (Add to showcase while fewer than six, Remove from showcase, Copy id) and the empty states with
+  Browse games. The data is now read by one function, `AchPageDataRefresh`, that both versions use.
+
+### 8.2 What was added to OkayUI
+
+- `Button(label, size)` and `PrimaryButton(label, size)`: ImGui-style sizes (0 keeps the automatic side, junk falls back).
+- `BeginPopupContextItem` now opens only where a left click on the item would land: not on the part scrolled out of its child,
+  not under a window in front, not while disabled (before, a right click anywhere on the item's rectangle opened it).
+- `okayuihost::Region` (`shared/OkayUIHost.hpp`) keeps up to eight hosted rectangles per frame instead of one, so the
+  Notifications panel can be OkayUI while the page under it is OkayUI too (section 5.5 listed this gap).
+- Speed (section 8.5): rounded-rectangle corners and filled circles use unit-circle points worked out once (the same float angles
+  as before, so the pictures are unchanged and every existing golden image still passes) and share their vertices; the font atlas
+  finds ASCII glyphs with a table instead of a binary search.
+
+### 8.3 Tests
+
+- `okayui_launcher_pages` (`okayui/tests/test_okayui_launcher_pages.cpp`, 120 checks, headless): the sized buttons; the
+  right-click menu under a window in front and scrolled out of a child; the helpers (byte and age texts, status words, `.zip`
+  test, filters, sorting, empty texts, pretty ids, the ellipsis on UTF-8); Downloads (every button in every state reports its own
+  download once, Clear finished disabled when nothing finished, 120 downloads scrolled with the wheel to the last one); 
+  Notifications (chips filter, Mark all read and Clear and close, a row click, the dismiss button is not also a row click, the
+  disabled states, a narrow panel wraps its chips, an 80-item feed scrolls, and the panel in front of a hosted page takes the
+  clicks in either call order and is drawn on top); Achievements (chips, typing in the search, the sort combo, the right-click
+  menu's three entries and the full showcase, the empty states, 2 and 4 columns, 306 tiles scrolled); hostile text. Six golden
+  images in `okayui/tests/golden/`: `downloads_empty`, `downloads_list`, `notifications_feed`, `notifications_empty`,
+  `achievements_grid`, `achievements_empty`.
+- `okayui_host`: the several-rectangles Region.
+- All the other OkayUI suites, `ui_backend` and the launcher suites (`launcher_join`, `launcher_versions`, `self_update`,
+  `update_signature`, `dev_channel`) pass.
+- In the real launcher (Linux, Release, Xvfb 1440x900, software OpenGL), driven with `xdotool`: each screen with Dear ImGui and
+  with OkayUI; on OkayUI, Remove on a download removed it, the This month chip and typing "owl" in the search filtered the
+  achievements to one, the Unread chip filtered the notifications and a click on a notification closed the panel and opened
+  Friends. Screenshots: `scratchpad/shots/okayui-<screen>-{imgui,okayui}.png` and the `-okayui-*` ones after each action, in
+  the session that made this step (not committed).
+
+### 8.4 Differences from the Dear ImGui versions (blunt)
+
+Section 8.6 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the frame of
+mouse latency). What is left:
+
+- **All three.** Edges: OkayUI draws shapes without Dear ImGui's anti-aliased fringe, so rounded corners, circles and the
+  hexagon outlines differ by a pixel of shading. Text is the same font at the same whole-pixel sizes, but it is rasterised by our
+  own TrueType code, so single glyph pixels differ in shade. No hover cursor change outside OkayUI's own cursor state.
+- **Achievements.** The sort list that opens under the combo and the right-click menu are OkayUI's popups (their own look);
+  the search field shows no hover tint.
+- **Notifications.** The scrollbar thumb is OkayUI's (same place and width, slightly different length).
+- **Not done:** the other launcher pages (Settings, Friends, Servers and the rest); Windows was not built or run.
+
+### 8.5 Speed
+
+Measured with `OKAY_UI_TIMING=1` (new, developer only: the launcher times each ported screen's code on whichever backend drew it,
+plus the frame's render work, and after 300 frames prints and toasts the medians). "Build" is the screen's own CPU time per frame
+(for OkayUI including the host code that builds the data); "build + render" adds ImGui's render and OkayUI's `EndFrame` for the
+whole frame. Linux, Release, Xvfb with Mesa's software OpenGL, a shared and busy machine: each figure is the median of 7 or 8
+runs of 300 frames, run alternately. Before the fixes in 8.2 OkayUI was slower on all three (for example Achievements build 165
+against 105 microseconds); the profile (callgrind) showed rounded-corner sines and cosines and glyph lookups.
+
+| Screen | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |
+|---|---:|---:|---:|---:|---|
+| Downloads | 53 us | 41 us | 159 us | 137 us | met (14% less) |
+| Notifications | 105 us | 94 us | 341 us | 294 us | met (14% less) |
+| Achievements | 123 us | 92 us | 306 us | 262 us | met (14% less) |
+
+Headless (`okayui_launcher_pages`, no window, OkayUI only, 300 frames): Downloads 13 us, Notifications 18 us, Achievements 29 us
+per frame. The Dear ImGui pages live inside the launcher's `main()`, so there is no headless Dear ImGui figure to set against them.
+The runs vary by about 20% on this machine; the gains are larger than the spread in the medians but were not measured on Windows or
+on a real GPU.
+
+### 8.6 Matching the Dear ImGui pages pixel for pixel
+
+The owner's rule is "we only switch when it's faster and up to par". Section 8 made the three screens faster; this step makes
+them look like their Dear ImGui versions. Written from the launcher's own Dear ImGui code (its style values in `DarkTheme` and
+`shared/OkayTheme.hpp`, the page code, `DrawNavIcon`, `DrawAchMedal`) and from screenshots of what Dear ImGui draws; no Dear ImGui
+code was copied.
+
+**What changed in the pages** (`okayui/screens/OkayUILauncherPages.cpp`): every position is the one the Dear ImGui page gets: a
+17 px font (16 px times 17/16; scaled text rounded to whole pixels as the launcher's is), frames padded 10 x 7, items 9 x 8 apart,
+positions cut to whole pixels after each item. Each page draws the launcher's page header (1.34x title, accent bar, subtitle,
+faint divider line). Downloads: bordered 98 px rows, the launcher's yellow progress bar with its text just right of the fill,
+small buttons. Notifications: the launcher's own line icons (friends, chat, refresh, bell) drawn again with OkayUI, its 16 x 14
+padding and 6 px scrollbar. Achievements: the header card padded 18 x 16 with 12 px corners, the medal shaded from 62% to 30% of
+its colour top to bottom, the pill search field with its magnifier, the pill sort combo with an arrow button, the tooltip 25 px
+right of and 10 px below the mouse, padded 14 x 12.
+
+**What was added to OkayUI** (tested in `okayui_launcher_pages`, "the gaps closed" block, and `okayui_host`):
+
+- `PushStyleVar(StyleVar_FramePadding)`: a frame row is the text height plus twice y; text fields and combos inset their text x.
+- `StyleVar_ChildPadding` (new) and `StyleVar_ScrollbarSize`: a child with no padding whose scrollbar takes room only while the
+  content overflows, with the thumb inset in the bar.
+- `Theme::comboArrowBox`: the combo box drawn as a frame-coloured box with a button-coloured arrow square.
+- Theme tooltip fields: offset from the mouse, padding, line gap, corner radius, fill. The defaults draw exactly as before.
+- `DrawList::AddConvexPolyFilledMultiColor`: one colour per point (the medal gradient).
+- `Theme::ascentRoundsUp` and `Theme::snapAdvances`: text placed and stepped the way Dear ImGui places it (the baseline one pixel
+  lower when the ascent's fraction is under a half; whole-pixel advances). Off by default.
+- The font atlas bakes 14, 17, 18, 21, 23 and 25 px as well (12 sizes), so the pages' text is crisp at the launcher's sizes. The
+  What's New and Tips goldens changed because their 1.12x text now uses the 18 px bake (looked at: the same text, a little crisper).
+- `SetInputBlocked` / `IsInputBlocked` and `okayuihost::Region::OwnsThisFrame`: the launcher's `OkayUIOffer` unblocks OkayUI's mouse
+  as soon as a hosted screen under the mouse is offered, so a click in the same frame as the move onto the screen reaches it (the
+  "one frame of latency" of section 5.2 is gone for hosted screens).
+- Fix: `End()` no longer lets a window that began inside a `PushTextScale` keep that scale into the next frame (it grew every frame).
+
+**Launcher changes** (`launcher/main.cpp`): the OkayUI Downloads and Achievements areas end 46 px above the bottom, where the Dear
+ImGui lists end. The **Dear ImGui Downloads rows** are now as tall as their three lines (98 px at the default size; they were 80 px,
+which cut the buttons off and gave each row a scrollbar): a bug fix in the default page. The OkayUI Downloads page reads and
+changes the list through `DlSnapshot` and `DlApply`, written next to the download manager. They use the same SDL mutex
+(`SDL_LockMutex(g_dlMutex)`) and SDL thread join (`SDL_WaitThread`) as the rest of the download manager on main, which still runs
+its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshot` (one lock), `DlApply` (one lock, one join per removed
+download) and the demo seed `SeedDemoDownloads` (one lock).
+
+**Pixel difference** (real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, `OKAY_UI_DEMO_USER=demo`, the same demo data
+on both backends; the page area x 374 to 1290, y 76 to 785, and for Notifications the panel x 383 to 861, y 175 to 813; "mean" is
+the mean absolute difference per colour channel, 0 to 255; "clearly different" is the share of pixels where some channel differs by
+more than 32):
+
+| Screen | Before: mean | Before: clearly different | After: mean | After: clearly different |
+|---|---:|---:|---:|---:|
+| Downloads | 12.29 | 5.43% | 0.10 | 0.02% |
+| Notifications (over Friends) | 10.06 | 10.59% | 0.89 | 0.85% |
+| Achievements (mouse on a tile, tooltip showing) | 12.48 | 10.59% | 0.56 | 0.70% |
+| Achievements (mouse away) | 12.09 | 10.50% | 0.55 | 0.74% |
+
+"Before" is the branch as section 8 left it against the Dear ImGui page of that time; "after" is against the Dear ImGui page of
+this step. For Downloads the Dear ImGui page itself changed (the row fix); the old OkayUI page against the new Dear ImGui page is
+mean 12.52, 5.53%. Screenshots: `scratchpad/shots/opp/a6-<screen>-{imgui,okayui}.png` and `diff-a6-<screen>.png` (red: clearly
+different) in the session that made this step (not committed).
+
+**Checked in the real launcher with `xdotool`** (OkayUI backend): Remove on a download removed it; a move and a click sent in one
+`xdotool` command (from outside the page) removed a second download, picked the Unread chip and opened Friends from a notification
+row (the latency fix); the This month chip, typing "owl" in the search and picking A to Z in the sort combo all did what they do
+on the Dear ImGui page.
+
+
+**Speed after matching** (`OKAY_UI_TIMING=1`, same machine and setup as 8.5, each screen run 4 times per backend, alternating;
+each figure is the median of the 19 or 20 medians of 300 frames; a shared, busy machine, so about 20% run-to-run spread):
+
+| Screen | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |
+|---|---:|---:|---:|---:|---|
+| Downloads | 40 us | 37 us | 125 us | 124 us | a tie (within the spread) |
+| Notifications | 78 us | 82 us | 265 us | 262 us | a tie (build 5% slower, build + render 1% less) |
+| Achievements | 88 us | 64 us | 239 us | 219 us | met (8% less) |
+
+Matching the look cost most of the lead section 8.5 measured for Downloads and Notifications: more text at more sizes, the
+launcher's line icons (stroked paths) and the faux-bold titles. The speed fixes in this step (rounded-rectangle corner points
+from a table, an inline `floor` in the text path, re-wrapping a notification only when it changes, cheaper row outlines) won
+back part of it. The owner's rule needs "faster": Achievements is; Downloads and Notifications are now level, not faster.
+Headless (`okayui_launcher_pages`) figures are printed by the test and vary too much on this machine to quote.

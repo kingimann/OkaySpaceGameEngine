@@ -107,6 +107,21 @@ struct Theme {
     float windowPadding  = 10.0f;  // inside a window, around its content
     bool  windowShadow   = false;  // soft drop shadow under windows
     bool  caretBlink     = true;   // text caret blinks (off: always visible, for tests and screenshots)
+    // Tooltips (SetTooltip, Tooltip): the box's top-left sits this far right of and below the mouse (flipped to the left / above
+    // when it would leave the display), with this padding, gap between lines, corner radius and fill. A negative padding or
+    // radius, or a fill with alpha 0, means "the look's own" (8 px padding and a 7 px radius with the launcher look).
+    float tooltipOffsetX = 14.0f, tooltipOffsetY = 14.0f;
+    float tooltipPadX = -1.0f, tooltipPadY = -1.0f, tooltipLineGap = 2.0f, tooltipRounding = -1.0f;
+    unsigned char tooltipBg[4] = {0, 0, 0, 0};
+    // Combo boxes: false draws a chevron on the box; true draws the box in the frame colour with a button-coloured square at its
+    // right end holding a solid down triangle (the launcher's Dear ImGui combo).
+    bool  comboArrowBox = false;
+    // Text drawn at a baked size: false puts the baseline at the font's ascent rounded to the nearest pixel, true rounds the
+    // ascent up (Dear ImGui's way; up to one pixel lower), so a port can sit its text exactly where the Dear ImGui page did.
+    bool  ascentRoundsUp = false;
+    // Text drawn at a baked size steps from glyph to glyph by whole pixels (Dear ImGui's pixel-snapped advance), and
+    // CalcTextSize measures it the same way. False keeps the exact fractional steps.
+    bool  snapAdvances = false;
     // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
     // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
     unsigned char      colors[64][4] = {};
@@ -125,6 +140,11 @@ Theme SlateTheme();
 
 /// Latch this frame's input and reset the geometry batch.
 void BeginFrame(const Input& in);
+/// Change Input::blocked for the rest of this frame (the press and release edges stay as BeginFrame latched them). A host that
+/// learns only part-way through its frame whether the mouse is over its OkayUI area (it asks its other UI layer while laying it
+/// out) calls this before drawing the OkayUI screens, so a click in the same frame as the move onto them is not lost.
+void SetInputBlocked(bool blocked);
+bool IsInputBlocked();
 
 /// Static text at (x, y), top-left aligned, in the theme's text color.
 void Label(float x, float y, const char* text);
@@ -386,6 +406,9 @@ void SeparatorText(const char* label);
 // hashed from the label). The explicit-coordinate versions above still work for
 // free-form placement.
 bool Button(const char* label);
+/// A button of a given size (ImGui's Button(label, size)): a size.x or size.y of 0 or less keeps the automatic width or
+/// height, so Vec2{200, 0} is a 200-pixel wide button of the normal row height. Non-finite sizes fall back to automatic.
+bool Button(const char* label, Vec2 size);
 /// A compact button (tight padding, no full-line height) — for inline actions.
 bool SmallButton(const char* label);
 /// A row of tabs: clicking a tab sets *current to its index. Draw the selected
@@ -630,7 +653,8 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 si
 /// Request the named popup to open at the cursor (call once on the triggering event).
 void OpenPopup(const char* id);
 /// Open a popup when the LAST widget is right-clicked; returns true while it's open
-/// (then add items; clicking one should call CloseCurrentPopup()).
+/// (then add items; clicking one should call CloseCurrentPopup()). The right click counts only where a left click on that
+/// widget would: not on the part scrolled out of its child or clipped away, not under a window in front, not while disabled.
 bool BeginPopupContextItem(const char* id);
 /// Returns true while the named popup (opened via OpenPopup) is showing.
 bool BeginPopup(const char* id);
@@ -765,6 +789,8 @@ void Caption(const char* text, unsigned char r = 115, unsigned char g = 209, uns
 void TextWrapped(const char* text);
 /// An accent-filled call-to-action button (Play, Join, Confirm).
 bool PrimaryButton(const char* label);
+/// The same at a given size (0 or less in either axis: automatic, as for Button(label, size)); the label stays centred.
+bool PrimaryButton(const char* label, Vec2 size);
 /// A rounded pill with short text (counts, tags, "NEW"). r=g=b=0: the accent colour.
 void Badge(const char* text, unsigned char r = 0, unsigned char g = 0, unsigned char b = 0);
 /// A circle with the name's initial, coloured per name. size 0 = one row tall.
@@ -941,6 +967,8 @@ struct DrawList {
     void AddPolyline(const Vec2* points, int count, Color32 col, bool closed, float thickness = 1.0f) const;
     /// A convex polygon (a triangle fan; concave shapes draw wrongly: no ear clipping yet), 3 to 256 points.
     void AddConvexPolyFilled(const Vec2* points, int count, Color32 col) const;
+    /// The same with one colour per point, blended across the polygon (a gradient over any convex shape), 3 to 256 points.
+    void AddConvexPolyFilledMultiColor(const Vec2* points, const Color32* colors, int count) const;
     /// A cubic Bezier curve flattened to `segments` lines (0 = 24, at most 255).
     void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
     /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
@@ -1027,12 +1055,15 @@ bool IsKeyPressed(KeyId key, bool repeat = true);
 bool IsKeyReleased(KeyId key);
 /// Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
 /// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x), FrameRounding and ChildRounding (corner radius),
-/// WindowRounding, BorderSize (all three ImGui border sizes). The others are accepted and do nothing, so ported code compiles:
-/// FramePadding, ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, ScrollbarSize, Alpha.
+/// WindowRounding, BorderSize (all three ImGui border sizes), FramePadding (a frame row is the text height plus twice y; text
+/// fields and combo boxes start their text x in), ScrollbarSize (a child's scrollbar width) and ChildPadding (x: the space inside
+/// a child around its content; a pushed ChildPadding also makes the child keep room for its scrollbar only while its content
+/// overflowed last frame, and draws the thumb inset in the bar, the way Dear ImGui children do). The others are accepted and do
+/// nothing, so ported code compiles: ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, Alpha.
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_ChildPadding, StyleVar_COUNT
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);

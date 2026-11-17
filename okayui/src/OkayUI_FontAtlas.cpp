@@ -36,7 +36,7 @@ bool  g_wantLargeCode = false, g_growFailed = false;   // code was asked for lar
 struct FaceBake {
     okay::ttf::Face face;
     int cps[256] = {}, ids[256] = {}, n = 0;
-    float scales[kCodeSizes] = {};
+    float scales[kUiSizes > kCodeSizes ? kUiSizes : kCodeSizes] = {};
     std::vector<okay::ttf::BakedGlyph> baked;
     bool Prepare(const std::vector<unsigned char>& bytes, const float* sizes, int nsizes) {
         if (bytes.empty() || !face.Load(bytes.data(), bytes.size(), 0)) return false;
@@ -93,7 +93,9 @@ FaceBake g_uiBake;
 
 // The sizes baked. The UI font: the launcher look's text sizes. The code font: the same, then larger ones so the script editor's
 // biggest code (16 px x UI scale 2 x zoom 3 = 96 px) is still drawn from a bake at least as large.
-const float kUiPx[kUiSizes] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
+// 17 px is the launcher's Dear ImGui font size, and 14, 18, 21, 23 and 25 px its scaled text (rounded to whole pixels):
+// its OkayUI pages draw their text at those sizes, crisp (docs/own_ui_toolkit.md section 8).
+const float kUiPx[kUiSizes] = {13.0f, 14.0f, 16.0f, 17.0f, 18.0f, 20.0f, 21.0f, 23.0f, 25.0f, 26.0f, 34.0f, 46.0f};
 const float kCodePx[kCodeSizes] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f, 62.0f, 80.0f, 96.0f};
 
 void BuildAtlas(Atlas& a, int startH, int maxH, int codeSizes) {

@@ -35,7 +35,7 @@ struct Size {
 /// zoom (0.7 to 3), so 7.8 to 96 px, and text should only be drawn from a bake at least as large (a downscale, never a blurry
 /// upscale). The first atlas has the UI font's six sizes for both fonts (what every program needs); the first time code is
 /// drawn larger than the largest of them, the atlas grows (between two frames) to the code font's nine sizes.
-constexpr int kUiSizes = 6, kCodeSizes = 9, kBaseCodeSizes = 6;
+constexpr int kUiSizes = 12, kCodeSizes = 9, kBaseCodeSizes = 6;   // UI: the launcher look plus the Dear ImGui-matched page sizes
 
 struct Atlas {
     bool ok = false;

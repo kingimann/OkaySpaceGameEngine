@@ -22,6 +22,8 @@ if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
     # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release_channels.md "Test builds").
     add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
+    # scripts/sdl_inventory.py (docs/sdl_inventory.md): the counting rules, on made-up sources.
+    add_test(NAME sdl_inventory_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_sdl_inventory.py)
     # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -573,6 +575,16 @@ add_test(NAME net COMMAND test_net)
 add_executable(test_net_guard test_net_guard.cpp)
 target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
 add_test(NAME net_guard COMMAND test_net_guard)
+
+# Our own threads, mutexes, conditions and atomics (engine/src/Core/CoreThreads.hpp) and the launcher's opaque layer over
+# them (launcher/LauncherThreads.cpp, in place of SDL's): exclusion under contention, a woken waiter, exact atomic adds,
+# join, detach, names. Std / Win32 only: no engine, no SDL.
+find_package(Threads REQUIRED)
+add_executable(test_core_threads test_core_threads.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)
+target_compile_features(test_core_threads PRIVATE cxx_std_17)
+target_include_directories(test_core_threads PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+target_link_libraries(test_core_threads PRIVATE Threads::Threads)
+add_test(NAME core_threads COMMAND test_core_threads)
 
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
@@ -2419,7 +2431,7 @@ add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
 # The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
 if(SDL2_FOUND)
-    add_executable(test_voice_races test_voice_races.cpp)
+    add_executable(test_voice_races test_voice_races.cpp ${PROJECT_SOURCE_DIR}/launcher/LauncherThreads.cpp)   # VoiceChat.hpp uses the launcher's own threads
     target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME voice_races COMMAND test_voice_races)
@@ -3065,10 +3077,129 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME ST
     set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
+# The launcher's own Dear ImGui renderer (shared/ImGuiOwnRenderer.cpp, OKAY_LAUNCHER_RENDERER=own) against a reference software
+# rasterisation of the same draw data: headless on the software painter, and under Xvfb on our OpenGL painter
+# (engine/src/Platform/GlPainter.cpp) on an sdl2 and an own window. Own code, off by default; the tests only check it.
+if(TARGET launcher_imgui AND TARGET okay_ui_soft)
+    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp
+        ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
+    target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_launcher_imgui_renderer PRIVATE launcher_imgui okay_ui_soft)
+    add_test(NAME launcher_imgui_renderer COMMAND test_launcher_imgui_renderer)
+    if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME launcher_imgui_renderer_gl
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_launcher_imgui_renderer> --gl)
+        set_tests_properties(launcher_imgui_renderer_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
+endif()
+
+# The editor's platform seam (editor/EditorPlatform.*, OKAY_EDITOR_PLATFORM=own, docs/sdl_removal_plan.md stage E1) without the
+# editor: the main window, the views' GL context (3.2 compatibility) handed back to SDL_Renderer, ImGui fed through the seam,
+# clipboard, cursor shape and a dropped file, for the sdl and own sides; and the shared ImGui glue (shared/ImGuiOwnPlatform.*)
+# against ImGui's SDL2 backend on the same SDL events. Under Xvfb; the _own entry makes the GL window with our own X11 / GLX code.
+# Own code, off by default; the test only checks it. Needs Dear ImGui with its SDL2 backends (the editor's or the launcher's).
+set(_okay_ep_imgui "")
+if(TARGET okay_imgui)
+    set(_okay_ep_imgui okay_imgui)
+elseif(TARGET launcher_imgui)
+    set(_okay_ep_imgui launcher_imgui)
+endif()
+if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_editor_platform test_editor_platform.cpp ${PROJECT_SOURCE_DIR}/editor/EditorPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorPlatformSdl.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
+    target_include_directories(test_editor_platform PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_platform PRIVATE ${_okay_ep_imgui} okay::platform SDL2::SDL2)
+    add_test(NAME editor_platform
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform>)
+    add_test(NAME editor_platform_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform>)
+    set_tests_properties(editor_platform editor_platform_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    set_tests_properties(editor_platform PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
+    set_tests_properties(editor_platform_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+endif()
+
+# The editor's drawing seam (editor/EditorGfx.*, OKAY_EDITOR_RENDERER=own, docs/sdl_removal_plan.md stage E2) without the editor:
+# the same editor-like frame (ImGui shapes, clip, text, a thumbnail, a 3D view rendered in the views' hidden GL context and read
+# back, a texture with blending off, a texture made again) through the sdl side (SDL_Renderer, ImGui's SDL_Renderer backend) and
+# the own side (our GL painter on the main window's GL context, our ImGui renderer, shared/ImGuiOwnRenderer.*), checked at known
+# pixels and against each other; the switch; the cost of the views' copy at 1920 x 1080. Under Xvfb; the _own entry makes the
+# views' GL window and context with our own X11 / GLX code. Own code, off by default; the test only checks it.
+if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_editor_gfx test_editor_gfx.cpp ${PROJECT_SOURCE_DIR}/editor/EditorGfx.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorGfxSdl.cpp ${PROJECT_SOURCE_DIR}/editor/EditorPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorPlatformSdl.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp)
+    target_include_directories(test_editor_gfx PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_gfx PRIVATE ${_okay_ep_imgui} okay::engine okay::platform SDL2::SDL2)   # okay::engine: the GL painter
+    add_test(NAME editor_gfx
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_gfx>)
+    add_test(NAME editor_gfx_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_gfx>)
+    set_tests_properties(editor_gfx editor_gfx_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    set_tests_properties(editor_gfx PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
+    set_tests_properties(editor_gfx_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+endif()
+
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Window state, focus and pointer queries (Window::IsMinimized / IsVisible / HasMouseFocus / SetInputFocus, Backend::KeyboardFocusWindowId /
+# MouseFocusWindowId / IsRelativeMouse / GlobalMouseState / PumpEvents) and WrapSdl2Window, on both backends under Xvfb with xdotool.
+# platform_fakewm.cpp plays the window manager (Xvfb has none) through dlopen'd libX11, so no X library is linked.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_state test_platform_state.cpp platform_fakewm.cpp)
+    target_link_libraries(test_platform_state PRIVATE okay::platform ${CMAKE_DL_LIBS})
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_state PRIVATE SDL2::SDL2)   # raw SDL windows for WrapSdl2Window, SDL_GetWindowFlags to compare with
+    endif()
+    target_include_directories(test_platform_state PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_state_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_state> ${_okay_pb})
+        set_tests_properties(platform_state_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+endif()
+
+# The okay::platform calls added for the editor's stage E3 (docs/sdl_removal_plan.md): XDND file drops, the refresh rate and the
+# message box of our X11 backend (this test plays the drag source and closes the box itself, libX11 by dlopen), and the editor's
+# display-settings and clipboard helpers on okay::platform (shared/PlatformDisplays.hpp, shared/PlatformClipboard.hpp).
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_editor_calls test_platform_editor_calls.cpp)
+    target_link_libraries(test_platform_editor_calls PRIVATE okay::engine okay::platform ${CMAKE_DL_LIBS})
+    target_include_directories(test_platform_editor_calls PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    add_test(NAME platform_editor_calls COMMAND test_platform_editor_calls unit)
+    add_test(NAME platform_editor_calls_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_editor_calls> own)
+    set_tests_properties(platform_editor_calls_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+endif()
+
+# The display list (Backend::Displays: monitors, usable area, DPI scale, primary) and the launcher's keep-on-screen rule:
+# the rule and the parsing alone, then our X11 backend under Xvfb with a work area, Xft.dpi and two RandR 1.5 monitors
+# that the test sets itself (tests/platform_fakedisplay.cpp, libX11 / libXrandr by dlopen), sdl2 against own on one
+# screen, and two Xvfb screens joined by Xinerama.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_display test_platform_display.cpp platform_fakedisplay.cpp)
+    target_link_libraries(test_platform_display PRIVATE okay::platform ${CMAKE_DL_LIBS})
+    target_include_directories(test_platform_display PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_display COMMAND test_platform_display unit)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_display_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> ${_okay_pb})
+        set_tests_properties(platform_display_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}")
+    endforeach()
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_display_modes_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> modes-${_okay_pb})
+        set_tests_properties(platform_display_modes_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+    add_test(NAME platform_display_own_xinerama
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> own-xinerama 2)
+    set_tests_properties(platform_display_own_xinerama PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                         ENVIRONMENT "OKAY_XVFB_SCREENS=+xinerama -screen 0 800x600x24 -screen 1 640x480x24")
+endif()
 
 # Safety nets for library code that previously had no test naming it.
 add_executable(test_lightmap test_lightmap.cpp)
@@ -3630,6 +3761,22 @@ if(SDL2_FOUND)
     else()
         target_link_libraries(bench_wav_decoder PRIVATE ${SDL2_LIBRARIES})
     endif()
+endif()
+
+# The launcher off SDL for WAV reading and window calls (stage A): launcher/VoiceClipLoad.hpp (our decoder) against SDL_LoadWAV plus
+# the launcher's old conversion on every WAV in the repository and a few edge files, every truncation of a small file, and
+# okay::platform::WrapSdl2Window against the SDL window calls the launcher used to make (SDL's dummy video driver, headless).
+if(SDL2_FOUND)
+    add_executable(test_launcher_wav_window test_launcher_wav_window.cpp)
+    target_link_libraries(test_launcher_wav_window PRIVATE okay::engine)
+    target_include_directories(test_launcher_wav_window PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
+    target_compile_definitions(test_launcher_wav_window PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_launcher_wav_window PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(test_launcher_wav_window PRIVATE ${SDL2_LIBRARIES})
+    endif()
+    add_test(NAME launcher_wav_window COMMAND test_launcher_wav_window)
 endif()
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}

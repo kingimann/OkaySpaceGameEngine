@@ -1,6 +1,7 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
 #include "Internal.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <cstdio>
@@ -74,6 +75,24 @@ Backend* Get(BackendKind k) {
 Backend* Default() {
     if (Backend* b = Get(DefaultKind())) return b;
     return Get(DefaultKind() == BackendKind::Own ? BackendKind::Sdl2 : BackendKind::Own);
+}
+
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return sdlWindow ? WrapSdl2WindowImpl(sdlWindow) : nullptr;
+#else
+    (void)sdlWindow;
+    return nullptr;
+#endif
+}
+
+bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return sdlEvent ? TranslateSdl2EventImpl(sdlEvent, out) : false;
+#else
+    (void)sdlEvent; (void)out;
+    return false;
+#endif
 }
 
 // ---- Backend defaults (shared by both backends) ----------------------------------
@@ -215,6 +234,89 @@ uint64_t PerfFrequency() {
 void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+std::vector<DisplayInfo> Displays() {
+    Backend* b = Default();
+    return b ? b->Displays() : std::vector<DisplayInfo>();
+}
+
+bool WindowReachable(const std::vector<DisplayInfo>& displays, int x, int y, int w, int h) {
+    for (const DisplayInfo& d : displays) {
+        const DisplayRect& b = d.usable.w > 0 && d.usable.h > 0 ? d.usable : d.bounds;
+        if (b.w <= 0 || b.h <= 0) continue;
+        const int ix = std::min(x + w, b.x + b.w) - std::max(x, b.x);
+        const int iy = std::min(y + h, b.y + b.h) - std::max(y, b.y);
+        if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return true;
+    }
+    return false;
+}
+
+DisplayRect CenterOnDisplay(const DisplayInfo& d, int w, int h) {
+    const DisplayRect& b = d.usable.w > 0 && d.usable.h > 0 ? d.usable : d.bounds;
+    DisplayRect r;
+    r.w = std::max(1, std::min(w, b.w - 40));
+    r.h = std::max(1, std::min(h, b.h - 40));
+    r.x = b.x + (b.w - r.w) / 2;
+    r.y = b.y + (b.h - r.h) / 2;
+    return r;
+}
+
+// ---- Display modes (written from the interface's own rules in Platform.hpp) ----
+std::vector<VideoMode> SortedVideoModes(std::vector<VideoMode> modes) {
+    modes.erase(std::remove_if(modes.begin(), modes.end(), [](const VideoMode& m) { return m.width <= 0 || m.height <= 0; }), modes.end());
+    for (VideoMode& m : modes) if (m.refreshHz < 0) m.refreshHz = 0;
+    std::sort(modes.begin(), modes.end(), [](const VideoMode& a, const VideoMode& b) {
+        if (a.width != b.width) return a.width > b.width;
+        if (a.height != b.height) return a.height > b.height;
+        return a.refreshHz > b.refreshHz;
+    });
+    modes.erase(std::unique(modes.begin(), modes.end()), modes.end());
+    return modes;
+}
+
+VideoMode ClosestVideoMode(const std::vector<VideoMode>& modes, const VideoMode& want) {
+    const VideoMode* best = nullptr;
+    // 1. The same size: the nearest refresh rate (the lower one on a tie), or the highest when any rate will do.
+    for (const VideoMode& m : modes) {
+        if (m.width != want.width || m.height != want.height) continue;
+        if (!best) { best = &m; continue; }
+        if (want.refreshHz <= 0) { if (m.refreshHz > best->refreshHz) best = &m; continue; }
+        const int dm = std::abs(m.refreshHz - want.refreshHz), db = std::abs(best->refreshHz - want.refreshHz);
+        if (dm < db || (dm == db && m.refreshHz < best->refreshHz)) best = &m;
+    }
+    if (best) return *best;
+    // 2. The smallest mode that holds the wanted size (by area, then the nearest refresh rate).
+    auto area = [](const VideoMode& m) { return (long long)m.width * m.height; };
+    auto rateCloser = [&](const VideoMode& m, const VideoMode& b) {
+        if (want.refreshHz <= 0) return m.refreshHz > b.refreshHz;
+        return std::abs(m.refreshHz - want.refreshHz) < std::abs(b.refreshHz - want.refreshHz);
+    };
+    for (const VideoMode& m : modes) {
+        if (m.width < want.width || m.height < want.height) continue;
+        if (!best || area(m) < area(*best) || (area(m) == area(*best) && rateCloser(m, *best))) best = &m;
+    }
+    if (best) return *best;
+    // 3. Nothing is that large: the largest mode there is.
+    for (const VideoMode& m : modes)
+        if (!best || area(m) > area(*best) || (area(m) == area(*best) && rateCloser(m, *best))) best = &m;
+    return best ? *best : VideoMode();
+}
+
+int DisplayIndexForRect(const std::vector<DisplayInfo>& displays, int x, int y, int w, int h) {
+    const int cx = x + w / 2, cy = y + h / 2;
+    for (size_t i = 0; i < displays.size(); ++i) {
+        const DisplayRect& b = displays[i].bounds;
+        if (cx >= b.x && cy >= b.y && cx < b.x + b.w && cy < b.y + b.h) return (int)i;
+    }
+    long long bestArea = 0; int best = -1;
+    for (size_t i = 0; i < displays.size(); ++i) {
+        const DisplayRect& b = displays[i].bounds;
+        const long long ix = std::min(x + w, b.x + b.w) - std::max(x, b.x);
+        const long long iy = std::min(y + h, b.y + b.h) - std::max(y, b.y);
+        if (ix > 0 && iy > 0 && ix * iy > bestArea) { bestArea = ix * iy; best = (int)i; }
+    }
+    return best;
 }
 
 void Log(const std::string& line) {

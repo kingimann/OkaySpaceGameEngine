@@ -5,16 +5,17 @@
 // With no argument it loads "game.okayscene" next to the executable. The editor's
 // "Build Game" writes that file and copies this player beside it, so a shipped
 // game is just <Game>.exe + game.okayscene (+ any assets).
-#define SDL_MAIN_HANDLED
-#include <SDL.h>
 #include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
-#include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"     // OS clipboard for games, through okay::platform (on sdl2: the same SDL calls)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
-#include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+#include "SdlDisplays.hpp"             // monitor list and display modes on an sdl2 window (SDL directly, as before)
+#endif
+#include "PlatformDisplays.hpp"        // ...and on a window of our own backend (okay::platform's display list and modes)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
@@ -47,7 +48,7 @@
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/TooltipPlace.hpp"
-#include "okay/UI/UIPainterSDL.hpp"     // (the SDL colour/rect conversions; the painter itself is okay::platform::Painter)
+#include "okay/UI/UIPainter.hpp"        // the 2D types (ui2d::Rect, RGBA, Vertex) and drawing helpers
 #include "okay/Platform/Painter.hpp"    // ...drawn through the platform painter
 #include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
@@ -88,52 +89,52 @@ extern "C" {
 
 using namespace okay;
 
-static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int h) {
-    return SDL_Point{(int)(w * 0.5f + (p.x - camPos.x) * scale),
+static ui2d::Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int h) {
+    return ui2d::Point{(int)(w * 0.5f + (p.x - camPos.x) * scale),
                      (int)(h * 0.5f - (p.y - camPos.y) * scale)};
 }
 
 // UI drawing helpers. The implementations live in the engine (okay::ui2d in
 // UIRenderer.hpp, shared with the in-game UI pass); these keep the player's own
 // overlays (inventory, crafting, loading screen, effects) on the platform painter.
-static void FillUIShape(okay::platform::Painter* ren, const SDL_Rect& r, UIShape shape, float radius,
+static void FillUIShape(okay::platform::Painter* ren, const ui2d::Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
                         float op, int diag = 0, int cornerMask = UICornerAll) {
-    ui2d::FillUIShape(*ren, ui2d::FromSDL(r), shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
+    ui2d::FillUIShape(*ren, r, shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
-static SDL_Color TileColor(int id) {
+static ui2d::RGBA TileColor(int id) {
     unsigned h = (unsigned)id * 2654435761u;
-    return SDL_Color{(Uint8)(80 + (h & 0x7F)), (Uint8)(80 + ((h >> 8) & 0x7F)),
-                     (Uint8)(80 + ((h >> 16) & 0x7F)), 255};
+    return ui2d::RGBA{(std::uint8_t)(80 + (h & 0x7F)), (std::uint8_t)(80 + ((h >> 8) & 0x7F)),
+                     (std::uint8_t)(80 + ((h >> 16) & 0x7F)), 255};
 }
 
 // Draw a world-space axis-aligned quad (used for tiles and particles).
 static void FillWorldQuad(okay::platform::Painter* r, const Vec3& center, float wWorld, float hWorld,
-                          const Vec3& camPos, float scale, int w, int h, SDL_Color col) {
-    SDL_Point c = W2S(center, camPos, scale, w, h);
+                          const Vec3& camPos, float scale, int w, int h, ui2d::RGBA col) {
+    ui2d::Point c = W2S(center, camPos, scale, w, h);
     int hw = (int)(wWorld * 0.5f * scale), hh = (int)(hWorld * 0.5f * scale);
-    SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
+    ui2d::Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
     r->SetDrawColor(col.r, col.g, col.b, col.a);
     r->FillRect((const ui2d::Rect*)&rect);
 }
 
-static void MMFillCircle(okay::platform::Painter* r, int cx, int cy, int rad, SDL_Color col) {
-    ui2d::MMFillCircle(*r, cx, cy, rad, ui2d::FromSDL(col));
+static void MMFillCircle(okay::platform::Painter* r, int cx, int cy, int rad, ui2d::RGBA col) {
+    ui2d::MMFillCircle(*r, cx, cy, rad, col);
 }
-static void MMThickLine(okay::platform::Painter* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
-    ui2d::MMThickLine(*r, x0, y0, x1, y1, width, ui2d::FromSDL(col));
+static void MMThickLine(okay::platform::Painter* r, float x0, float y0, float x1, float y1, float width, ui2d::RGBA col) {
+    ui2d::MMThickLine(*r, x0, y0, x1, y1, width, col);
 }
 // Width of `text` in screen pixels at font-pixel size `px` (the scene's UI font while
 // one is set, else the 8x8 bitmap font).
 static float UITextW(const std::string& text, float px) { return ui2d::UITextW(text, px); }
 static void DrawText(okay::platform::Painter* r, const std::string& text, float ox, float oy,
-                     float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
-                     bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
+                     float px, ui2d::RGBA col, float letterSp = 0.0f, float lineSp = 0.0f,
+                     bool italic = false, bool gradient = false, ui2d::RGBA col2 = ui2d::RGBA{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
-    ui2d::DrawUIText(*r, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
-                   ui2d::FromSDL(col2), ttf);
+    ui2d::DrawUIText(*r, text, ox, oy, px, col, letterSp, lineSp, italic, gradient,
+                   col2, ttf);
 }
 // Load (and cache) a sprite texture; nullptr if the image can't be read (callers fall
 // back to a flat colored quad).
@@ -146,10 +147,10 @@ static ui2d::Tex GetTexture(okay::platform::Painter* r, const std::string& path)
 static void DrawLineDraws(okay::platform::Painter* r, const Scene& scene, const Mat4& vp, const Vec3& eye, float vx, float vy,
                           float vw, float vh, const GameObject* ignore, int cullingMask, LineOcclusionFn occluded) {
     static std::vector<LineDraw> draws;
-    static std::vector<SDL_Vertex> verts;
+    static std::vector<ui2d::Vertex> verts;
     CollectLineDraws(scene, vp, eye, vx, vy, vw, vh, draws, ignore, cullingMask, occluded);
     if (draws.empty()) return;
-    auto byte = [](float c) { return (Uint8)(c <= 0.0f ? 0 : c >= 1.0f ? 255 : (int)(c * 255.0f + 0.5f)); };
+    auto byte = [](float c) { return (std::uint8_t)(c <= 0.0f ? 0 : c >= 1.0f ? 255 : (int)(c * 255.0f + 0.5f)); };
     r->SetBlendMode(okay::platform::BlendMode::Blend);
     for (const LineDraw& d : draws) {
         ui2d::Tex tex = d.texture.empty() ? nullptr : GetTexture(r, d.texture);
@@ -160,8 +161,8 @@ static void DrawLineDraws(okay::platform::Painter* r, const Scene& scene, const 
         }
         verts.clear();
         for (const LineDrawVertex& q : d.tris)
-            verts.push_back(SDL_Vertex{SDL_FPoint{q.x, q.y}, SDL_Color{byte(q.color.r), byte(q.color.g), byte(q.color.b), byte(q.color.a)},
-                                       SDL_FPoint{q.u, q.v}});
+            verts.push_back(ui2d::Vertex{ui2d::FPoint{q.x, q.y}, ui2d::RGBA{byte(q.color.r), byte(q.color.g), byte(q.color.b), byte(q.color.a)},
+                                       ui2d::FPoint{q.u, q.v}});
         r->Geometry(tex, (const ui2d::Vertex*)verts.data(), (int)verts.size(), nullptr, 0);
     }
 }
@@ -177,9 +178,9 @@ static void DrawItemIcon(okay::platform::Painter* r, const std::string& folder, 
                          float x, float y, float w, float h) {
     const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
     if (ui2d::Tex tex = IconTexture(r, ref.path)) {
-        SDL_Rect dst{(int)x, (int)y, (int)w, (int)h};
-        SDL_Rect src{};
-        SDL_Rect* sp = nullptr;
+        ui2d::Rect dst{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect src{};
+        ui2d::Rect* sp = nullptr;
         if (ref.atlas) {
             int tw = 0, th = 0;
             r->QueryTexture(tex, &tw, &th);
@@ -194,14 +195,14 @@ static void DrawItemIcon(okay::platform::Painter* r, const std::string& folder, 
         return;
     }
     const okay::ItemGlyph g = okay::GlyphFor(item);
-    SDL_Rect tile{(int)x, (int)y, (int)w, (int)h};
+    ui2d::Rect tile{(int)x, (int)y, (int)w, (int)h};
     FillUIShape(r, tile, UIShape::Rounded, 3.0f, g.bg, g.bg, false, false, 1.0f);
     if (g.letters.empty()) return;
     float px = h / ((Font8x8::Height + 1) * (g.letters.size() > 1 ? 2.4f : 1.8f));
     if (px < 1.0f) px = 1.0f;
     const float tw = UITextW(g.letters, px);
     DrawText(r, g.letters, x + (w - tw) * 0.5f, y + (h - Font8x8::Height * px) * 0.5f, px,
-             SDL_Color{(Uint8)(g.fg.r * 255), (Uint8)(g.fg.g * 255), (Uint8)(g.fg.b * 255), 255});
+             ui2d::RGBA{(std::uint8_t)(g.fg.r * 255), (std::uint8_t)(g.fg.g * 255), (std::uint8_t)(g.fg.b * 255), 255});
 }
 
 static void DrawItemTip(okay::platform::Painter* r, const okay::ItemTip& tip, float mx, float my, float px,
@@ -214,12 +215,12 @@ static void DrawItemTip(okay::platform::Painter* r, const okay::ItemTip& tip, fl
     const float bw = maxW + pad * 2, bh = lineH * (float)tip.lines.size() + pad * 2;
     const okay::TooltipBox tipBox = okay::PlaceTooltip(mx, my, bw, bh, 0.0f, 0.0f, (float)W, (float)H);
     const float x = tipBox.x, y = tipBox.y;
-    SDL_Rect box{(int)x, (int)y, (int)tipBox.w, (int)tipBox.h};
+    ui2d::Rect box{(int)x, (int)y, (int)tipBox.w, (int)tipBox.h};
     FillUIShape(r, box, UIShape::Rounded, 4.0f, bg, bg, false, false, 1.0f);
     for (std::size_t i = 0; i < tip.lines.size(); ++i) {
         const Color c = tip.lines[i].useTint ? tip.lines[i].tint : text;
         DrawText(r, tip.lines[i].text, x + pad, y + pad + lineH * (float)i, px,
-                 SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255});
+                 ui2d::RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), 255});
     }
 }
 
@@ -241,13 +242,13 @@ static void DrawVignette(okay::platform::Painter* r, float strength) {
         float t = (float)i / (float)(steps - 1);            // 0 at edge .. 1 inward
         int inset = (int)(t * maxInset);
         if (w - 2 * inset <= 0 || h - 2 * inset <= 0) break;
-        Uint8 a = (Uint8)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
+        std::uint8_t a = (std::uint8_t)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
         if (a == 0) continue;
         r->SetDrawColor(0, 0, 0, a);
-        SDL_Rect top{inset, inset, w - 2 * inset, 1};
-        SDL_Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
-        SDL_Rect lft{inset, inset, 1, h - 2 * inset};
-        SDL_Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
+        ui2d::Rect top{inset, inset, w - 2 * inset, 1};
+        ui2d::Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
+        ui2d::Rect lft{inset, inset, 1, h - 2 * inset};
+        ui2d::Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
         r->FillRect((const ui2d::Rect*)&top); r->FillRect((const ui2d::Rect*)&bot);
         r->FillRect((const ui2d::Rect*)&lft); r->FillRect((const ui2d::Rect*)&rgt);
     }
@@ -259,12 +260,12 @@ static void DrawVignette(okay::platform::Painter* r, float strength) {
 static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::LoadingDrawCmd>& cmds) {
     r->SetBlendMode(okay::platform::BlendMode::Blend);
     auto sc = [](const Color& c, float a) {
-        return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
-                         (Uint8)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
+        return ui2d::RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255),
+                         (std::uint8_t)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
     };
     using K = okay::LoadingDrawCmd::Kind;
     for (const okay::LoadingDrawCmd& d : cmds) {
-        SDL_Rect box{(int)std::lround(d.x), (int)std::lround(d.y), (int)std::lround(d.w), (int)std::lround(d.h)};
+        ui2d::Rect box{(int)std::lround(d.x), (int)std::lround(d.y), (int)std::lround(d.w), (int)std::lround(d.h)};
         switch (d.kind) {
         case K::Rect: {
             UIShape shp = d.radius > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
@@ -275,7 +276,7 @@ static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::
             FillUIShape(r, box, UIShape::Rectangle, 0.0f, d.color, d.color2, true, false, d.alpha);
             break;
         case K::Outline: {
-            SDL_Color c = sc(d.color, d.alpha);
+            ui2d::RGBA c = sc(d.color, d.alpha);
             r->SetDrawColor(c.r, c.g, c.b, c.a);
             r->DrawRect((const ui2d::Rect*)&box);
             break;
@@ -284,8 +285,8 @@ static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::
             ui2d::Tex tex = GetTexture(r, d.text);
             if (!tex) break;
             int tw = 0, th = 0; r->QueryTexture(tex, &tw, &th);
-            SDL_Rect src{(int)(d.u0 * tw), (int)(d.v0 * th), (int)((d.u1 - d.u0) * tw), (int)((d.v1 - d.v0) * th)};
-            r->SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
+            ui2d::Rect src{(int)(d.u0 * tw), (int)(d.v0 * th), (int)((d.u1 - d.u0) * tw), (int)((d.v1 - d.v0) * th)};
+            r->SetTextureAlphaMod(tex, (std::uint8_t)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
             r->Copy(tex, (const ui2d::Rect*)&src, (const ui2d::Rect*)&box);
             break;
         }
@@ -303,7 +304,7 @@ static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::
             MMThickLine(r, d.x, d.y, d.w, d.h, d.radius, sc(d.color, d.alpha));
             break;
         case K::Arc: {   // exact pixel spans of the ring, so a see-through track has no seams
-            SDL_Color c = sc(d.color, d.alpha);
+            ui2d::RGBA c = sc(d.color, d.alpha);
             r->SetDrawColor(c.r, c.g, c.b, c.a);
             const float ro = d.w + d.radius * 0.5f, ri = std::max(0.0f, d.w - d.radius * 0.5f);
             const float span = d.u1 - d.u0;
@@ -384,7 +385,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, okay::platform::Window* 
     static bool notFull = false, noPassword = false;
     static std::string status;
     static okay::NetworkManager* joining = nullptr;
-    static Uint32 lastClick = 0; static int lastClickRow = -1;
+    static std::uint32_t lastClick = 0; static int lastClickRow = -1;
     static bool cursorWasShown = true;
     if (!sb.windowOpen) {
         if (wasOpen) { wasOpen = false; okay::platform::Default()->ShowCursor(cursorWasShown); }
@@ -459,7 +460,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, okay::platform::Window* 
                     OkayUI::PushID(i);
                     const std::string label = fit(std::string(e.info.password ? "(locked) " : "") + (e.info.name.empty() ? e.info.Address() : e.info.name), nameW);
                     if (OkayUI::Selectable(label.c_str(), sel == i)) {
-                        const Uint32 now = okay::platform::TicksMs32();
+                        const std::uint32_t now = okay::platform::TicksMs32();
                         if (lastClickRow == i && now - lastClick < 400 && !e.info.password) joinLink(e.Link());   // double-click joins
                         lastClick = now; lastClickRow = i; sel = i;
                     }
@@ -553,11 +554,11 @@ static void DrawServerBrowserWindow(okay::Scene& scene, okay::platform::Window* 
 static void DrawMatchmakingBanner(okay::platform::Window* window) {
     okay::Matchmaker& mm = okay::Matchmaker::Shared();
     const auto st = mm.GetState();
-    static Uint32 foundAt = 0, failedAt = 0;
+    static std::uint32_t foundAt = 0, failedAt = 0;
     if (st != okay::Matchmaker::State::Found) foundAt = 0;
     if (st != okay::Matchmaker::State::Failed) failedAt = 0;
     if (st == okay::Matchmaker::State::Idle) return;
-    const Uint32 now = okay::platform::TicksMs32();
+    const std::uint32_t now = okay::platform::TicksMs32();
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
     int ww = 960, wh = 600; window->GetSize(ww, wh);
@@ -602,7 +603,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
     const int n = L.hotbar, total = L.total, bpRows = L.rows;
     const float uiScale = L.scale, sz = L.sz, gap = L.gap, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
-        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(a < 0 ? c.a * 255 : a));
     };
     r->SetBlendMode(okay::platform::BlendMode::Blend);
     const float cr = ui.cornerRadius;
@@ -615,13 +616,13 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
             S = sz * ui.selectedScale; X = x - (S - sz) * 0.5f; Y = y - (S - sz) * 0.5f;
         }
         float b = (ui.borderWidth < 0 ? 0 : ui.borderWidth) + (sel ? 1.0f : 0.0f);
-        SDL_Rect outer{(int)X, (int)Y, (int)S, (int)S};
+        ui2d::Rect outer{(int)X, (int)Y, (int)S, (int)S};
         Color bc = sel ? ui.selectedColor : ui.slotBorder;
         bool empty = !(inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty());
         if (!sel && !empty)
             if (const Color* rc = ui.RarityOf(inv->slots[idx].item)) bc = *rc;   // rarity tint
         FillUIShape(r, outer, shp, cr, bc, bc, false, false, 1.0f);
-        SDL_Rect inner{(int)(X + b), (int)(Y + b), (int)(S - 2 * b), (int)(S - 2 * b)};
+        ui2d::Rect inner{(int)(X + b), (int)(Y + b), (int)(S - 2 * b), (int)(S - 2 * b)};
         float ir = cr > 0.5f ? (cr - b < 0 ? 0 : cr - b) : 0.0f;
         Color fillc = empty ? ui.emptySlotColor : (idx < n ? ui.hotbarColor : ui.slotColor);
         FillUIShape(r, inner, ir > 0.5f ? UIShape::Rounded : UIShape::Rectangle, ir, fillc, fillc, false, false, 1.0f);
@@ -639,7 +640,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
                 float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
                 float tw = UITextW(cs, px);
                 DrawText(r, cs, X + S - tw - 3, Y + S - (Font8x8::Height + 1) * px - 3, px,
-                         SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
+                         ui2d::RGBA{(std::uint8_t)(ui.countColor.r*255),(std::uint8_t)(ui.countColor.g*255),(std::uint8_t)(ui.countColor.b*255),255});
             }
         }
     };
@@ -647,7 +648,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
     const float rowW = L.rowW, hx = L.hx, hy = L.hy;
     auto bpY = [&](int row) { return L.RowY(row); };
     auto panel = [&](float x, float y, float w, float h) {
-        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect rc{(int)x, (int)y, (int)w, (int)h};
         UIShape psh = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
         FillUIShape(r, rc, psh, cr + 2.0f, ui.panelColor, ui.panelColor, false, false, 1.0f);
         // Optional outline (alpha 0 = off): a few inset frames approximate a border.
@@ -655,14 +656,14 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
             int bw = (int)(ui.panelBorderWidth * uiScale); if (bw < 1) bw = 1;
             setc(ui.panelBorder);
             for (int k = 0; k < bw; ++k) {
-                SDL_Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
+                ui2d::Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
                 if (fr.w > 0 && fr.h > 0) r->DrawRect((const ui2d::Rect*)&fr);
             }
         }
     };
     // Backpack (when open): darken, then the grid.
     if (ui.open && bpRows > 0) {
-        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
+        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); ui2d::Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
         if (ui.showPanel) {
             float t = bpY(0), b = bpY(bpRows - 1);
             float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
@@ -676,7 +677,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
             float tw = UITextW(ui.backpackTitle, px);
             DrawText(r, ui.backpackTitle, hx + rowW * 0.5f - tw * 0.5f,
                      top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
-                     SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
+                     ui2d::RGBA{(std::uint8_t)(ui.titleColor.r*255),(std::uint8_t)(ui.titleColor.g*255),(std::uint8_t)(ui.titleColor.b*255),255});
         }
         for (int row = 0; row < bpRows; ++row)
             for (int c = 0; c < n && n + row * n + c < total; ++c)
@@ -695,10 +696,10 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
         for (int e = 0; e < L.equipN; ++e) {
             float x, y; L.EquipXY(e, x, y);
             const std::string& it = L.equip->ItemIn(e);
-            SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+            ui2d::Rect outer{(int)x, (int)y, (int)sz, (int)sz};
             FillUIShape(r, outer, shp, cr, ui.slotBorder, ui.slotBorder, false, false, 1.0f);
             float b = ui.borderWidth < 0 ? 0 : ui.borderWidth;
-            SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+            ui2d::Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
             const Color fc = it.empty() ? ui.emptySlotColor : ui.slotColor;
             FillUIShape(r, inner, shp, cr, fc, fc, false, false, 1.0f);
             if (!it.empty() && e != ui.equipDrag) equipIcon(it, x, y);
@@ -707,7 +708,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
                 float px = (sz - 6.0f) / ((float)(nm.size() < 4 ? 4 : nm.size()) * (Font8x8::Width + 1));
                 if (px < 1.0f) px = 1.0f;
                 DrawText(r, nm, x + 3, y + sz * 0.5f - Font8x8::Height * px * 0.5f, px,
-                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),110});
+                         ui2d::RGBA{(std::uint8_t)(ui.textColor.r*255),(std::uint8_t)(ui.textColor.g*255),(std::uint8_t)(ui.textColor.b*255),110});
             }
         }
     }
@@ -716,13 +717,13 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
         for (int i = 0; i < n && i < 9; ++i)
             DrawText(r, std::to_string(i + 1), hx + i * (sz + gap) + 3, hy + 2, px,
-                     SDL_Color{(Uint8)(ui.numberColor.r*255),(Uint8)(ui.numberColor.g*255),(Uint8)(ui.numberColor.b*255),255});
+                     ui2d::RGBA{(std::uint8_t)(ui.numberColor.r*255),(std::uint8_t)(ui.numberColor.g*255),(std::uint8_t)(ui.numberColor.b*255),255});
     }
     // Keyboard / gamepad cursor: an outline on the slot A will pick up or drop into.
     if (ui.open && ui.navSlot >= 0 && ui.navSlot < total) {
         float sx, sy; L.SlotXY(ui.navSlot, sx, sy);
         setc(ui.selectedColor);
-        SDL_Rect nr{(int)sx - 2, (int)sy - 2, (int)sz + 4, (int)sz + 4};
+        ui2d::Rect nr{(int)sx - 2, (int)sy - 2, (int)sz + 4, (int)sz + 4};
         r->DrawRect((const ui2d::Rect*)&nr);
     }
     // Tooltip: the item's definition, and a compare against whatever is worn in that slot.
@@ -751,7 +752,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
             float tw = UITextW(nm, px);
             float ty = ui.anchorTop ? hy + sz + panelPad + 4.0f : hy - (Font8x8::Height + 1) * px - panelPad - 4.0f;
             DrawText(r, nm, hx + rowW * 0.5f - tw * 0.5f, ty, px,
-                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+                     ui2d::RGBA{(std::uint8_t)(ui.textColor.r*255),(std::uint8_t)(ui.textColor.g*255),(std::uint8_t)(ui.textColor.b*255),255});
         }
     }
 
@@ -761,12 +762,12 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
     if (!ui.open || !ui.dragItems || !inv) return;
     auto hilite = [&](int idx, const Color& c) {
         if (idx < 0) return; float sx, sy; L.SlotXY(idx, sx, sy);
-        SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
+        ui2d::Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
     };
     if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor: highlight + what's worn
         float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
-        SDL_Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
+        ui2d::Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
         const std::string& it = L.equip->ItemIn(fr.equipHover);
         if (it.empty()) {
@@ -797,7 +798,7 @@ static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
             float px = sz * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
             float tw = UITextW(ccs, px);
             DrawText(r, ccs, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 3, px,
-                     SDL_Color{(Uint8)(ui.countColor.r*255),(Uint8)(ui.countColor.g*255),(Uint8)(ui.countColor.b*255),255});
+                     ui2d::RGBA{(std::uint8_t)(ui.countColor.r*255),(std::uint8_t)(ui.countColor.g*255),(std::uint8_t)(ui.countColor.b*255),255});
         }
     }
 }
@@ -816,15 +817,15 @@ static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI&
     const float cs = GL.cs, gp = GL.gp;
     const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
-        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(a < 0 ? c.a * 255 : a));
     };
-    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
+    auto sc = [&](const Color& c) { return ui2d::RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), 255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
-        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect rc{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     auto fillG = [&](float x, float y, float w, float h, const Color& a, const Color& b, float rad) {
-        SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect rc{(int)x, (int)y, (int)w, (int)h};
         if (ui.useGradients) FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, b, true, false, 1.0f);
         else                 FillUIShape(r, rc, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, a, a, false, false, 1.0f);
     };
@@ -832,7 +833,7 @@ static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI&
     auto darken  = [&](Color c, float f) { return Color{c.r * (1 - f), c.g * (1 - f), c.b * (1 - f), c.a}; };
     auto shadow  = [&](float x, float y, float w, float h, float rad) { if (ui.dropShadows) fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
     auto stroke  = [&](float x, float y, float w, float h, const Color& c, int a) {
-        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; r->DrawRect((const ui2d::Rect*)&bx);
+        setc(c, a); ui2d::Rect bx{(int)x, (int)y, (int)w, (int)h}; r->DrawRect((const ui2d::Rect*)&bx);
     };
 
     const std::vector<okay::GridInventory*>& equipped = GL.equipped;
@@ -842,7 +843,7 @@ static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI&
     const bool hasNear = GL.hasNear;
 
     r->SetBlendMode(okay::platform::BlendMode::Blend);
-    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
+    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); ui2d::Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
     // Backing panels (drop shadow + soft vertical gradient + hairline rim) per column.
     auto backing = [&](float x, float y, float w, float h) {
         shadow(x, y, w, h, cr + 3);
@@ -888,14 +889,14 @@ static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI&
         fillG(px0, py0, w, h, top, bot, cr);
         if (u.useGradients) fill(px0 + 2, py0 + 2, w - 4, 2, Color{1, 1, 1, ghost ? 0.10f : 0.18f}, 0);   // top sheen
         if (u.accentBars) fill(px0, py0, 3, h, accent, 0);                            // rarity/category bar
-        SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
+        ui2d::Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
         if (ui2d::Tex icon = IconTexture(r, okay::ItemIconOf(u.iconFolder, it.name).path)) {
             r->SetTextureAlphaMod(icon, ghost ? 160 : 255);
             const okay::ItemIconRef ref = okay::ItemIconOf(u.iconFolder, it.name);
-            SDL_Rect src{}, d{box.x + 6, box.y + 6, box.w - 12, box.h - 12};
-            SDL_Rect* sp = nullptr;
+            ui2d::Rect src{}, d{box.x + 6, box.y + 6, box.w - 12, box.h - 12};
+            ui2d::Rect* sp = nullptr;
             if (ref.atlas) {
                 int tw = 0, th = 0; r->QueryTexture(icon, &tw, &th);
                 if (tw > 0 && th > 0) {
@@ -921,7 +922,7 @@ static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI&
             float tw = UITextW(cstr, px), ph = Font8x8::Height * px;
             float pwid = tw + 7, phgt = ph + 5;
             fill(box.x + box.w - pwid - 2, box.y + box.h - phgt - 2, pwid, phgt, Color::FromBytes(10, 12, 18, 225), 3);
-            DrawText(r, cstr, box.x + box.w - tw - 5, box.y + box.h - ph - 4, px, SDL_Color{255, 255, 255, 255});
+            DrawText(r, cstr, box.x + box.w - tw - 5, box.y + box.h - ph - 4, px, ui2d::RGBA{255, 255, 255, 255});
         }
     };
 
@@ -994,9 +995,9 @@ static void DrawCrafting(okay::platform::Painter* r, okay::CraftingStation& cs) 
     int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     const float cr = cs.cornerRadius;
-    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    auto sc = [&](const Color& c) { return ui2d::RGBA{(std::uint8_t)(c.r*255),(std::uint8_t)(c.g*255),(std::uint8_t)(c.b*255),255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
-        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect rc2{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     r->SetBlendMode(okay::platform::BlendMode::Blend);
@@ -1045,10 +1046,10 @@ static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
     if (!L.chest) return;
     const float cr = ch.cornerRadius;
     r->SetBlendMode(okay::platform::BlendMode::Blend);
-    if (ch.darkenWhenOpen) { r->SetDrawColor(0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&f); }
-    auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
+    if (ch.darkenWhenOpen) { r->SetDrawColor(0, 0, 0, 150); ui2d::Rect f{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&f); }
+    auto sc = [&](const Color& c) { return ui2d::RGBA{(std::uint8_t)(c.r*255),(std::uint8_t)(c.g*255),(std::uint8_t)(c.b*255),255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
-        SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
+        ui2d::Rect rc2{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     okay::Vec2 mp = okay::Input::MousePosition();
@@ -1067,7 +1068,7 @@ static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
         DrawItemIcon(r, ch.iconFolder, it.item, x + 4, y + 4, sz - 8, sz - 8);
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
-            DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+            DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, ui2d::RGBA{255,255,255,255}); }
     };
     auto grid = [&](int side) {
         okay::Inventory* inv = L.Inv(side);
@@ -1082,7 +1083,7 @@ static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
         }
     };
     if (L.scrolling) {
-        SDL_Rect clip{(int)(L.panelX - 12), (int)L.viewY, (int)(L.panelW + 24), (int)L.viewH};
+        ui2d::Rect clip{(int)(L.panelX - 12), (int)L.viewY, (int)(L.panelW + 24), (int)L.viewH};
         r->SetClipRect((const ui2d::Rect*)&clip);
     }
     grid(0);
@@ -1288,10 +1289,23 @@ int main(int argc, char** argv) {
         pb->Log("SDL_Init failed: " + pb->LastError());
         return 1;
     }
-    // Games copy and paste through SDL. The memory clipboard stays the default
-    // everywhere else (tests, a headless run), so this does not turn okay::platform on.
-    static okay::SdlClipboard s_osClipboard;
+    // Games copy and paste through the OS clipboard of the backend (SDL_GetClipboardText / SDL_SetClipboardText on sdl2,
+    // as before; our X11 / Win32 code on own). The memory clipboard stays the default everywhere else (tests, a headless run).
+    static okay::PlatformClipboard s_osClipboard(pb);
     okay::InstallGameClipboard(&s_osClipboard);
+#ifdef OKAY_HAVE_OKAYUI
+    // OkayUI's own text fields: SDL's clipboard by default (unchanged on sdl2); on our own backend the backend's.
+    if (pb->Kind() != okay::platform::BackendKind::Sdl2) {
+        OkayUI::SetSystemClipboard(
+            [](const char* text) { if (okay::platform::Backend* b = okay::platform::Default()) b->SetClipboardText(text ? text : ""); },
+            []() -> const char* {
+                static std::string s_clip;   // valid until the next call (OkayUI copies it at once)
+                okay::platform::Backend* b = okay::platform::Default();
+                s_clip = b ? b->GetClipboardText() : std::string();
+                return s_clip.c_str();
+            });
+    }
+#endif
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
@@ -1601,7 +1615,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
     okay::platform::Window* window = windowOwner.get();
     if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
-        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Log(std::string("could not create the game window: ") + pb->LastError());
         pb->Shutdown();
         return 1;
     }
@@ -1613,16 +1627,25 @@ int main(int argc, char** argv) {
         if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon))
             window->SetIcon((const uint8_t*)ico.Data(), ico.Width(), ico.Height());
     }
-    // Monitors and the saved display choice. SDL lists the modes; the own platform backend is not used.
+    // Monitors and the saved display choice. On an sdl2 window SDL lists the modes and switches them (shared/SdlDisplays, as
+    // before); on a window of our own backend okay::platform does (its display list and modes: X11 RandR, Win32
+    // EnumDisplaySettingsW / ChangeDisplaySettingsExW; shared/PlatformDisplays.hpp).
     auto applyDisplay = [&]() {
         if (!window) return;
-        if (window->Kind() == okay::platform::BackendKind::Sdl2)
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+        if (window->Kind() == okay::platform::BackendKind::Sdl2) {
             okay::sdldisplay::Apply(static_cast<SDL_Window*>(window->NativeHandle()), okay::DisplaySettings::CurrentApply());
-        else
-            window->SetFullscreen(okay::DisplaySettings::Fullscreen());
+            return;
+        }
+#endif
+        okay::platdisplay::Apply(*window, okay::DisplaySettings::CurrentApply());
     };
-    if (window && window->Kind() == okay::platform::BackendKind::Sdl2) {
-        okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+    if (window) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+        if (window->Kind() == okay::platform::BackendKind::Sdl2) okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+        else
+#endif
+        okay::DisplaySettings::SetMonitors(okay::platdisplay::ListMonitors(*pb));
         okay::DisplaySettings::ResolveSaved();
     }
     applyDisplay();
@@ -1659,9 +1682,9 @@ int main(int argc, char** argv) {
     if (renderer && window) {
         okay::SplashStyle st;
         if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
-        auto C = [](const float* c) -> SDL_Color {
-            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
-            return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
+        auto C = [](const float* c) -> ui2d::RGBA {
+            auto u = [](float v){ return (std::uint8_t)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            return ui2d::RGBA{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(cfg.bootBgTop); st.bgBottom = C(cfg.bootBgBot); st.showProgress = cfg.bootBar;
         if (!cfg.bootLogo.empty()) {
             okay::Image img;
@@ -1845,11 +1868,11 @@ int main(int argc, char** argv) {
         okay::MatchRequest r; r.mode = "ranked"; r.players = 4;
         okay::Matchmaker::Shared().Start(r);
     }
-    Uint32 presenceAt = 0, presenceWritten = 0;
+    std::uint32_t presenceAt = 0, presenceWritten = 0;
     std::string presenceLast;
-    std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
+    std::map<std::string, std::uint32_t> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         if (now - presenceAt < 1000) return;
         presenceAt = now;
         okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
@@ -1898,13 +1921,13 @@ int main(int argc, char** argv) {
         }
     };
 #endif
-    Uint64 last = okay::platform::PerfCounter();
+    std::uint64_t last = okay::platform::PerfCounter();
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
     okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
-        Uint64 fStart = okay::platform::PerfCounter();
+        std::uint64_t fStart = okay::platform::PerfCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
@@ -1917,6 +1940,9 @@ int main(int argc, char** argv) {
             // The wheel as the OS user set it up (natural scrolling flips it), as SDL reported it.
             const float osWheelY = e.wheelFlipped ? -e.wheelY : e.wheelY;
             if (e.type == ET::Quit) running = false;
+            // The game window's close button. SDL (and our backends) send Quit only when the LAST window closes, and the GPU
+            // renderer keeps a hidden helper window open, so with it the close button did nothing: end here as for Quit.
+            if (e.type == ET::WindowClose && window && e.windowId == window->Id()) running = false;
 #ifdef OKAY_HAVE_OKAYUI
             if (keyDown && e.key == PK::F1 && devPanels) g_testUI = !g_testUI;
             if (keyDown && e.key == PK::F3) {   // off -> frame page -> systems page -> off
@@ -2071,7 +2097,7 @@ int main(int argc, char** argv) {
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the
         // controllers' look deltas keep working with a hidden, centred cursor.
-        int mx, my; Uint32 mb;
+        int mx, my; std::uint32_t mb;
         if (locked) {
             int rx, ry; mb = pb->RelativeMouseState(&rx, &ry);
             s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
@@ -2105,13 +2131,9 @@ int main(int argc, char** argv) {
             int ow = 0, oh = 0;
             renderer->OutputSize(&ow, &oh);
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
-            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            if (pb->TouchDeviceCount() > 0) Input::SetTouchScreen(true);   // SDL_GetNumTouchDevices on sdl2; 0 on own (no finger events)
             TouchControls::Sample(scene);
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);   // SDL_GetTicks64 on sdl2
         }
         InputActions::Tick();   // after every device is fed, including the on-screen controls
 
@@ -2119,7 +2141,7 @@ int main(int argc, char** argv) {
         // The confirm clock is ticked with this frame's time, just before the scene,
         // so a revert is on the window before the Settings screen draws.
 
-        Uint64 now = okay::platform::PerfCounter();
+        std::uint64_t now = okay::platform::PerfCounter();
         const float measuredDt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
         if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
@@ -2176,7 +2198,7 @@ int main(int argc, char** argv) {
         // (via the installed ScriptUIBridge) draw into this frame. Flushed after the
         // game is rendered (see EndFrame near the present), so UI sits on top.
         {
-            int mx, my; Uint32 mb = pb->MouseState(&mx, &my);
+            int mx, my; std::uint32_t mb = pb->MouseState(&mx, &my);
             OkayUI::Input ui;
             ui.mouseX = (float)mx; ui.mouseY = (float)my;
             ui.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
@@ -2289,7 +2311,7 @@ int main(int argc, char** argv) {
         int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;
         Color bg = cam ? cam->backgroundColor : Color::Black;
-        renderer->SetDrawColor((Uint8)(bg.r * 255), (Uint8)(bg.g * 255), (Uint8)(bg.b * 255), 255);
+        renderer->SetDrawColor((std::uint8_t)(bg.r * 255), (std::uint8_t)(bg.g * 255), (std::uint8_t)(bg.b * 255), 255);
         renderer->Clear();
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
@@ -2336,10 +2358,10 @@ int main(int argc, char** argv) {
                                std::fmin(skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
                     c = lerp(c, haze, hz * 0.5f);
                 }
-                renderer->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255);
+                renderer->SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
                 int y1 = (int)((float)(s + 1) / strips * h);
-                SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
+                ui2d::Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
                 renderer->FillRect((const ui2d::Rect*)&rrect);
             }
             // Optional star field in the upper sky (above the horizon band). The
@@ -2351,7 +2373,7 @@ int main(int argc, char** argv) {
                                                      rs.skyStarDensity, rs.skyStarBright)) {
                     renderer->SetDrawColor(255, 255, 255, st.a);
                     int r = (int)(st.r + 0.5f); if (r < 1) r = 1;
-                    SDL_Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
+                    ui2d::Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
                     renderer->FillRect((const ui2d::Rect*)&sq);
                 }
                 renderer->SetBlendMode(okay::platform::BlendMode::None);
@@ -2361,13 +2383,13 @@ int main(int argc, char** argv) {
                 int cx = (int)(rs.skySunX * w), cy = (int)(rs.skySunY * h);
                 int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
                 const Color& sk = rs.skySunColor;
-                Uint8 sr = (Uint8)(sk.r * 255), sg = (Uint8)(sk.g * 255), sb = (Uint8)(sk.b * 255);
+                std::uint8_t sr = (std::uint8_t)(sk.r * 255), sg = (std::uint8_t)(sk.g * 255), sb = (std::uint8_t)(sk.b * 255);
                 renderer->SetBlendMode(okay::platform::BlendMode::Blend);
-                auto fillDisc = [&](int r, Uint8 a) {
+                auto fillDisc = [&](int r, std::uint8_t a) {
                     renderer->SetDrawColor(sr, sg, sb, a);
                     for (int dy = -r; dy <= r; ++dy) {
                         int dx = (int)std::sqrt((double)(r * r - dy * dy));
-                        SDL_Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
+                        ui2d::Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
                         renderer->FillRect((const ui2d::Rect*)&row);
                     }
                 };
@@ -2377,9 +2399,9 @@ int main(int argc, char** argv) {
                 for (int i = 12; i >= 1; --i) {
                     float fr = (float)i / 12.0f;
                     int a = (int)(34.0f * (1.0f - fr) * (1.0f - fr));
-                    if (a > 0) fillDisc((int)(glowR * fr), (Uint8)a);
+                    if (a > 0) fillDisc((int)(glowR * fr), (std::uint8_t)a);
                 }
-                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(40 - g * 6));
+                for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (std::uint8_t)(40 - g * 6));
                 fillDisc(rad, 255);
                 renderer->SetBlendMode(okay::platform::BlendMode::None);
             }
@@ -2514,10 +2536,10 @@ int main(int argc, char** argv) {
                     if (fullView) renderer->Copy(mesh3DTex, nullptr, nullptr);
                     else {   // outside the camera's rect stays black, like an empty screen area
                         renderer->SetDrawColor(0, 0, 0, 255);
-                        const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
+                        const ui2d::Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
                                                   {0, vy, vx, vh}, {vx + vw, vy, w - vx - vw, vh}};
-                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) renderer->FillRect((const ui2d::Rect*)&b);
-                        const SDL_Rect dst{vx, vy, vw, vh};
+                        for (const ui2d::Rect& b : bars) if (b.w > 0 && b.h > 0) renderer->FillRect((const ui2d::Rect*)&b);
+                        const ui2d::Rect dst{vx, vy, vw, vh};
                         renderer->Copy(mesh3DTex, nullptr, (const ui2d::Rect*)&dst);
                     }
                 }
@@ -2541,7 +2563,7 @@ int main(int argc, char** argv) {
                 // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
                 {
                     // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
-                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; ui2d::Tex tex; bool stretch; };
+                    struct PP { float depth, sx, sy, len, wid, ang; ui2d::RGBA col; ui2d::Tex tex; bool stretch; };
                     std::vector<PP> pp;
                     for (const auto& up : scene.Objects()) {
                         auto* ps = up->GetComponent<ParticleSystem>();
@@ -2558,8 +2580,8 @@ int main(int argc, char** argv) {
                             if (ParticleOccluded(sx / w, sy / h, c.w)) continue;  // hidden behind geometry
                             float rad = p.size * 0.5f / c.w * w * 0.5f;
                             if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
-                            SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
-                                          (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
+                            ui2d::RGBA col{(std::uint8_t)(p.color.r*255), (std::uint8_t)(p.color.g*255),
+                                          (std::uint8_t)(p.color.b*255), (std::uint8_t)(p.color.a*255)};
                             float len = rad, ang = p.rotation; bool stretched = false;
                             float speed = std::sqrt(p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z);
                             if (stretchMode && speed > 1e-3f) {
@@ -2586,14 +2608,14 @@ int main(int argc, char** argv) {
                             renderer->SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
                             renderer->SetTextureAlphaMod(q.tex, q.col.a);
                             renderer->SetTextureBlendMode(q.tex, okay::platform::BlendMode::Blend);
-                            SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
+                            ui2d::FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
                             renderer->CopyExF(q.tex, nullptr, (const ui2d::FRect*)&dst, q.ang, nullptr, ui2d::FlipNone);
                         } else if (q.stretch) {
                             // Untextured streak: a thick line along the velocity.
                             float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
                             MMThickLine(renderer, q.sx - cx, q.sy - cy, q.sx + cx, q.sy + cy, q.wid * 2.0f, q.col);
                         } else {
-                            SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
+                            ui2d::RGBA halo = q.col; halo.a = (std::uint8_t)(q.col.a / 3);   // soft outer glow
                             MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.wid * 1.6f), halo);
                             MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.wid, q.col);  // bright core
                         }
@@ -2624,8 +2646,8 @@ int main(int argc, char** argv) {
                 Mat4 model = obj->transform->LocalToWorldMatrix();
                 float hx = sr->size.x * 0.5f, hy = sr->size.y * 0.5f;
                 Vec3 corners[4] = {{-hx, -hy, 0}, {hx, -hy, 0}, {hx, hy, 0}, {-hx, hy, 0}};
-                SDL_Color col{(Uint8)(sr->color.r * 255), (Uint8)(sr->color.g * 255),
-                              (Uint8)(sr->color.b * 255), (Uint8)(sr->color.a * 255)};
+                ui2d::RGBA col{(std::uint8_t)(sr->color.r * 255), (std::uint8_t)(sr->color.g * 255),
+                              (std::uint8_t)(sr->color.b * 255), (std::uint8_t)(sr->color.a * 255)};
                 // Texture coords map the image upright onto the quad corners
                 // (corner 3 = top-left in world = texture uvMin). Honors the
                 // sprite's uv sub-region so sprite sheets / atlases work.
@@ -2634,12 +2656,12 @@ int main(int argc, char** argv) {
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
                 if (sr->flipX) std::swap(u0, u1);
                 if (sr->flipY) std::swap(v0, v1);
-                const SDL_FPoint uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
-                SDL_Vertex vtx[4];
+                const ui2d::FPoint uv[4] = {{u0, v1}, {u1, v1}, {u1, v0}, {u0, v0}};
+                ui2d::Vertex vtx[4];
                 for (int k = 0; k < 4; ++k) {
                     Vec3 wpos = model.MultiplyPoint(corners[k]);
-                    SDL_Point s = W2S(wpos, camPos, scale, w, h);
-                    vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, uv[k]};
+                    ui2d::Point s = W2S(wpos, camPos, scale, w, h);
+                    vtx[k] = ui2d::Vertex{{(float)s.x, (float)s.y}, col, uv[k]};
                 }
                 const int idx[6] = {0, 1, 2, 0, 2, 3};
                 renderer->Geometry(tex, (const ui2d::Vertex*)vtx, 4, idx, 6);
@@ -2654,7 +2676,7 @@ int main(int argc, char** argv) {
                 Vec3 ls = up->transform->LossyScale();
                 FillWorldQuad(renderer, up->transform->Position(),
                               sr->size.x * ls.x, sr->size.y * ls.y,
-                              camPos, scale, w, h, SDL_Color{255, 255, 255, 70});
+                              camPos, scale, w, h, ui2d::RGBA{255, 255, 255, 70});
             }
 
             // Tilemaps: draw each non-empty cell as a colored quad.
@@ -2677,8 +2699,8 @@ int main(int argc, char** argv) {
                 if (!ps || !up->active || UIHidden(up.get())) continue;
                 for (const auto& p : ps->Particles()) {
                     if (!p.alive) continue;
-                    SDL_Color col{(Uint8)(p.color.r * 255), (Uint8)(p.color.g * 255),
-                                  (Uint8)(p.color.b * 255), (Uint8)(p.color.a * 255)};
+                    ui2d::RGBA col{(std::uint8_t)(p.color.r * 255), (std::uint8_t)(p.color.g * 255),
+                                  (std::uint8_t)(p.color.b * 255), (std::uint8_t)(p.color.a * 255)};
                     FillWorldQuad(renderer, p.position, p.size, p.size,
                                   camPos, scale, w, h, col);
                 }
@@ -2701,7 +2723,7 @@ int main(int argc, char** argv) {
                 // Shadow, outline, bold, italic and (with Rich Text on) the colour / bold / italic / size tags: the
                 // engine's shared world-text drawing (okay/UI/UIRenderer.hpp).
                 const float op = UIOpacity(up.get());   // canvas master fade
-                const SDL_Point o = W2S(up->transform->Position(), camPos, scale, w, h);
+                const ui2d::Point o = W2S(up->transform->Position(), camPos, scale, w, h);
                 ui2d::DrawWorldText(*renderer, *tr, (float)o.x, (float)o.y, tr->EffectivePixelSize() * scale, op);
             }
         }
@@ -2744,19 +2766,19 @@ int main(int argc, char** argv) {
             const char* buf = fpsText.c_str();
             float px = 2.0f;
             float tw = UITextW(buf, px);
-            SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            ui2d::Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
             renderer->SetDrawColor(0, 0, 0, 160);
             renderer->FillRect((const ui2d::Rect*)&bg);
-            DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
+            DrawText(renderer, buf, 8, 8, px, ui2d::RGBA{80, 255, 120, 255});
         }
         if (devPanels) {   // a development build says so on screen, with which build it is (release builds draw nothing)
             const std::string badge = "DEV  " + cfg.title + (cfg.version.empty() ? std::string() : "  v" + cfg.version + " build " + std::to_string(cfg.buildNumber));
             const float px = 2.0f;
             const float tw = UITextW(badge.c_str(), px);
-            SDL_Rect bg{4, h - (int)(Font8x8::Height * px + 8) - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            ui2d::Rect bg{4, h - (int)(Font8x8::Height * px + 8) - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
             renderer->SetDrawColor(0, 0, 0, 160);
             renderer->FillRect((const ui2d::Rect*)&bg);
-            DrawText(renderer, badge.c_str(), 8, bg.y + 4, px, SDL_Color{255, 200, 80, 255});
+            DrawText(renderer, badge.c_str(), 8, bg.y + 4, px, ui2d::RGBA{255, 200, 80, 255});
         }
         if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
             const char* hint = cursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
@@ -2765,10 +2787,10 @@ int main(int argc, char** argv) {
             int x = (int)(w * 0.5f - tw * 0.5f);
             int y = h - (int)(Font8x8::Height * px) - 12;
             if (x < 8) x = 8;
-            SDL_Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            ui2d::Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
             renderer->SetDrawColor(0, 0, 0, 140);
             renderer->FillRect((const ui2d::Rect*)&bg);
-            DrawText(renderer, hint, (float)x, (float)y, px, SDL_Color{230, 245, 230, 230});
+            DrawText(renderer, hint, (float)x, (float)y, px, ui2d::RGBA{230, 245, 230, 230});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
 #ifdef OKAY_HAVE_OKAYUI
@@ -2813,9 +2835,12 @@ int main(int argc, char** argv) {
             int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
             OkayUI::EndFrameData(uw, uh);
             uiFrame->Draw(OkayUI::GetDrawData());
-        } else {
-            OkayUI::EndFrame((SDL_Renderer*)renderer->NativeRenderer());
         }
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+        else {
+            OkayUI::EndFrame((SDL_Renderer*)renderer->NativeRenderer());   // the sdl2 painter: OkayUI draws on its SDL_Renderer
+        }
+#endif
         pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         okay::Prof().End();   // UI.Draw
@@ -2874,7 +2899,7 @@ int main(int argc, char** argv) {
             double freq = (double)okay::platform::PerfFrequency();
             double elapsed = (okay::platform::PerfCounter() - fStart) / freq;
             double remain = budget - elapsed;
-            if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
+            if (remain > 0.0015) okay::platform::DelayMs((std::uint32_t)((remain - 0.0005) * 1000.0));
         }
     };
 
@@ -2889,7 +2914,7 @@ int main(int argc, char** argv) {
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
         if (ui2d::Tex stex = GetTexture(renderer, cfg.splash)) {
-            Uint64 t0 = okay::platform::PerfCounter();
+            std::uint64_t t0 = okay::platform::PerfCounter();
             const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
             const double fade = std::min(0.5, dur * 0.3);
             bool done = false;
@@ -2907,15 +2932,15 @@ int main(int argc, char** argv) {
                 else if (el > dur - fade) a = (dur - el) / fade;
                 if (a < 0) a = 0; if (a > 1) a = 1;
                 int w = 0, h = 0; renderer->OutputSize(&w, &h);
-                renderer->SetDrawColor((Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
+                renderer->SetDrawColor((std::uint8_t)cfg.splashBg[0], (std::uint8_t)cfg.splashBg[1], (std::uint8_t)cfg.splashBg[2], 255);
                 renderer->Clear();
                 int iw = 0, ih = 0; renderer->QueryTexture(stex, &iw, &ih);
                 if (iw > 0 && ih > 0) {
                     double fit = std::min((double)w / iw, (double)h / ih) * 0.55;  // 55% of the window
                     int dw = (int)(iw * fit), dh = (int)(ih * fit);
-                    SDL_Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
+                    ui2d::Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
                     renderer->SetTextureBlendMode(stex, okay::platform::BlendMode::Blend);
-                    renderer->SetTextureAlphaMod(stex, (Uint8)(a * 255));
+                    renderer->SetTextureAlphaMod(stex, (std::uint8_t)(a * 255));
                     renderer->Copy(stex, nullptr, (const ui2d::Rect*)&dst);
                 }
                 renderer->Present();

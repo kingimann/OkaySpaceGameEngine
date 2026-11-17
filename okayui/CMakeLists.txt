@@ -4,15 +4,19 @@
 #
 # Built only when SDL2 dev libraries are present; otherwise quietly skipped so a
 # headless engine-only build is unaffected.
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    return()
-endif()
-
-if(TARGET SDL2::SDL2)
-    set(_okayui_sdl SDL2::SDL2)
-else()
-    set(_okayui_sdl ${SDL2_LIBRARIES})
+# With -DOKAY_WITH_SDL=OFF it is built with no SDL: its SDL_Renderer path (EndFrame(SDL_Renderer*)) and SDL clipboard are
+# compiled out, and hosts draw its draw data with the render interface (okayui/render) or the software painter.
+set(_okayui_sdl "")
+if(OKAY_WITH_SDL)
+    find_package(SDL2 QUIET)
+    if(NOT SDL2_FOUND)
+        return()
+    endif()
+    if(TARGET SDL2::SDL2)
+        set(_okayui_sdl SDL2::SDL2)
+    else()
+        set(_okayui_sdl ${SDL2_LIBRARIES})
+    endif()
 endif()
 
 # The Direct3D 11 backend (src/OkayUI_D3D11.cpp) is guarded by #if defined(_WIN32),
@@ -22,7 +26,7 @@ target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
 target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
-if(NOT TARGET SDL2::SDL2)
+if(OKAY_WITH_SDL AND NOT TARGET SDL2::SDL2)
     target_include_directories(okay_ui PUBLIC ${SDL2_INCLUDE_DIRS})
 endif()
 # okay::engine provides the 8x8 bitmap font used for button labels.

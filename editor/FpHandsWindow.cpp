@@ -2,14 +2,14 @@
 #include "okay/Components/FpHandsPreview.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Platform/Painter.hpp"
 #include "imgui.h"
-#include <SDL.h>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
 
-namespace oked { extern SDL_Renderer* g_sdlRenderer; }
+namespace oked { okay::platform::Painter* EditorPainter(); }   // the painter that draws the editor (main.cpp, EditorGfx)
 
 namespace okay::editor {
 namespace {
@@ -18,8 +18,8 @@ bool g_open = false;
 std::string g_object;
 int g_example = 0;
 FpHandsPreview g_preview;
-SDL_Texture* g_playerTex = nullptr;
-SDL_Texture* g_otherTex = nullptr;
+okay::ui2d::Tex g_playerTex = nullptr;   // textures of the editor's painter
+okay::ui2d::Tex g_otherTex = nullptr;
 
 void Help(const char* text) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
@@ -450,15 +450,16 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         g_preview.Step(48);
         auto player = g_preview.Render(true, W, H);
         auto other = g_preview.Render(false, W, H);
-        if (oked::g_sdlRenderer) {
-            auto up = [&](SDL_Texture*& slot, const std::vector<std::uint32_t>& px) {
-                if (slot && (texW != W || texH != H)) { SDL_DestroyTexture(slot); slot = nullptr; }
+        if (okay::platform::Painter* painter = oked::EditorPainter()) {
+            auto up = [&](okay::ui2d::Tex& slot, const std::vector<std::uint32_t>& px) {
+                if (slot && (texW != W || texH != H)) { painter->DestroyTexture(slot); slot = nullptr; }
                 if (!slot) {
-                    slot = SDL_CreateTexture(oked::g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                             SDL_TEXTUREACCESS_STATIC, W, H);
-                    if (slot) SDL_SetTextureBlendMode(slot, SDL_BLENDMODE_NONE);
+                    okay::platform::TextureDesc d;
+                    d.width = W; d.height = H;
+                    d.blend = okay::platform::BlendMode::None;   // the preview is opaque: no blending
+                    slot = painter->CreateTexture(d, nullptr);
                 }
-                if (slot) SDL_UpdateTexture(slot, nullptr, px.data(), W * 4);
+                if (slot) painter->UpdateTexture(slot, nullptr, px.data(), W * 4);
                 return slot;
             };
             up(g_playerTex, player);

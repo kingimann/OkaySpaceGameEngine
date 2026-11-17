@@ -25,6 +25,12 @@ public:
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
+    virtual uint32_t KeyboardFocusWindowId() = 0;
+    virtual uint32_t MouseFocusWindowId() = 0;
+    virtual bool IsRelativeMouse() = 0;
+    virtual uint32_t GlobalMouseState(int* x, int* y) = 0;
+    /// Read the events the server has sent into the queue, without taking one (PollEvent returns them).
+    virtual void PumpEvents() = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual void ShowCursor(bool show) = 0;
@@ -32,11 +38,31 @@ public:
     virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;
     virtual Key KeyForChar(char c) = 0;
     virtual bool IsCursorShown() = 0;
+    virtual bool SetSystemCursor(SystemCursor c) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.
     virtual bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) = 0;
+    /// The monitors, primary first: RandR 1.5 monitors (libXrandr.so.2, dlopen), else Xinerama (libXinerama.so.1), else the
+    /// root window. Usable area from _NET_WORKAREA, scale from Xft.dpi in the root's RESOURCE_MANAGER (read fresh each call).
+    virtual std::vector<DisplayInfo> Displays() = 0;
+    /// Display modes (Backend::DisplayModes / CurrentDisplayMode): the RandR modes of the outputs of the CRTC that shows the display.
+    virtual std::vector<VideoMode> DisplayModes(int display) = 0;
+    virtual bool CurrentDisplayMode(int display, VideoMode& out) = 0;
 };
+
+/// The local file paths in a text/uri-list (RFC 2483: one URI per line, CR LF or LF, '#' lines are comments), what an XDND
+/// drop carries: each "file:" URI on this machine (no host, "localhost" or this machine's name), percent-decoded. Other URIs
+/// and other hosts are left out.
+std::vector<std::string> PathsFromUriList(const std::string& list);
+/// A modal message box (title, text, an OK button) on its own X connection, for when no window is up (or the backend was
+/// never started). Waits until OK, Return, Escape or the close button. False (with `err`) when X cannot be reached.
+bool X11MessageBox(const std::string& title, const std::string& text, std::string& err);
+
+/// "Xft.dpi: 144" in an X resource string (the RESOURCE_MANAGER property) -> 1.5; 1.0 when absent or not a sane number.
+float ScaleFromXResources(const std::string& resources);
+/// The part of `bounds` inside `work` (an EWMH work area); `bounds` itself when they do not overlap or `work` is empty.
+DisplayRect ClipToWorkArea(const DisplayRect& bounds, const DisplayRect& work);
 
 // ---- ALSA, loaded with dlopen ----------------------------------------------------
 /// `device` null = $OKAY_ALSA_DEVICE or "default". Null result: `err` says why.

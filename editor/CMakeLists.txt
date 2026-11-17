@@ -4,10 +4,15 @@
 # Dear ImGui. Enable from the top level with -DOKAY_BUILD_EDITOR=ON.
 include(FetchContent)
 
+# -DOKAY_WITH_SDL=OFF: no SDL2 at all. The editor then runs on our own platform glue and renderer (OKAY_EDITOR_PLATFORM=own,
+# OKAY_EDITOR_RENDERER=own) on our own platform backend; Dear ImGui's SDL backends and the *Sdl.cpp sides are left out.
+set(OKAY_SDL_LIB "")
+if(OKAY_WITH_SDL)
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     message(WARNING "okay-editor needs SDL2 dev libraries; skipping.")
     return()
+endif()
 endif()
 
 # The editor renders the ImGui UI through SDL's 2D renderer (Direct3D on
@@ -16,7 +21,9 @@ endif()
 # SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
 # the editor ships as a single self-contained .exe (no SDL2.dll alongside).
 option(OKAY_EDITOR_STATIC_SDL "Statically link SDL2 into the editor" OFF)
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
+if(NOT OKAY_WITH_SDL)
+    # nothing to link
+elseif(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
     set(OKAY_SDL_LIB SDL2::SDL2-static)
 elseif(TARGET SDL2::SDL2)
     set(OKAY_SDL_LIB SDL2::SDL2)
@@ -37,13 +44,15 @@ FetchContent_Declare(imgui
 FetchContent_MakeAvailable(imgui)
 
 # Dear ImGui ships no CMake; build the core + SDL2 backends ourselves.
-add_library(okay_imgui STATIC
+set(_okay_imgui_srcs
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+if(OKAY_WITH_SDL)   # Dear ImGui's own SDL2 backends: only the sdl platform glue and the sdl renderer use them
+    list(APPEND _okay_imgui_srcs ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+endif()
+add_library(okay_imgui STATIC ${_okay_imgui_srcs})
 target_include_directories(okay_imgui SYSTEM PUBLIC
     ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
@@ -84,10 +93,19 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
-    VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
-    ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
+    EditorPlatform.cpp                                                 # the platform seam: OKAY_EDITOR_PLATFORM=own (our ImGui glue, viewport GL via okay::platform) / sdl
+    EditorGfx.cpp                                                      # the drawing seam: OKAY_EDITOR_RENDERER=own (our GL painter, our ImGui renderer) / sdl (SDL_Renderer)
+    ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp                    # our own ImGui platform glue over okay::platform (shared with the launcher)
+    ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp                    # our own ImGui renderer on an okay::platform::Painter (shared with the launcher)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
+if(OKAY_WITH_SDL)   # the SDL sides (left out with -DOKAY_WITH_SDL=OFF)
+    target_sources(okay-editor PRIVATE
+        VsGraphShot.cpp                                                # --vs-shot: screenshots of example graphs (SDL software renderer)
+        EditorPlatformSdl.cpp                                          # the platform seam's sdl side
+        EditorGfxSdl.cpp                                               # the drawing seam's sdl side
+        ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)                    # monitor list and display-mode changes (SDL, shared with the player)
+endif()
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
 target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
@@ -114,6 +132,11 @@ endif()
 if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+# OkayUI's render interface (okayui/render): with OKAY_EDITOR_RENDERER=own (no SDL_Renderer) OkayUI draws on the editor's painter.
+if(TARGET okay_ui AND TARGET okay_ui_render)
+    target_link_libraries(okay-editor PRIVATE okay_ui_render)
+    target_compile_definitions(okay-editor PRIVATE OKAY_EDITOR_HAVE_OKAYUI_RENDER=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)

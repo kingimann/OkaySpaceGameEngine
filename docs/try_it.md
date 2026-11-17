@@ -90,6 +90,11 @@ release job or the installer build for this change.
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
+| 11b | Launcher drawn by our own renderer (off by default) | `OKAY_LAUNCHER_RENDERER=own`, then `OkaySpace.exe` (section "Launcher: drawing with our own renderer") | Footer says "own renderer"; the chat opens in its own window and the OkayUI preview works with it too; Linux/Xvfb only, unverified on Windows |
+| 11c | Launcher with no SDL at all (off by default) | `OKAY_LAUNCHER_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `OkaySpace.exe` (section "Launcher with no SDL at all") | Log says `launcher: no SDL`; voice calls and voice notes use our own audio (waveOut / waveIn); Linux/Xvfb only, unverified on Windows |
+| 11d | Editor input and 3D-view OpenGL through our own code (off by default) | `OKAY_EDITOR_PLATFORM=own` (optionally also `OKAY_PLATFORM_BACKEND=own`), then `Tools\OkayEngine.exe` (section "Editor: input and the 3D views' OpenGL through our own code") | Console's first lines say `editor: platform own (...)`; the editor works as usual except that panels cannot be dragged out into their own windows; untested in a real editor run and on Windows |
+| 11e | Editor drawn by our own renderer (off by default) | `OKAY_EDITOR_PLATFORM=own` and `OKAY_EDITOR_RENDERER=own`, then `Tools\OkayEngine.exe` (section "Editor: drawing with our own renderer") | Console's first lines say `editor: renderer own (opengl painter ...)`; no multi-window panels; **untested in a real editor run and on Windows** |
+| 11f | Editor with no SDL at all (off by default) | `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe` (section "Editor with no SDL at all") | Log and Console say `editor: no SDL ...`; drag a file onto the window to import it; Linux/Xvfb only (the whole editor, with an SDL trap), **unverified on Windows** |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 
@@ -1575,8 +1580,11 @@ its test programs (`own_http`, `own_http_net`).
 Win32 version has only ever run under wine, never on real Windows, and the editor and launcher still open their windows
 through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) would change. If you want to try the player:
 `set OKAY_PLATFORM_BACKEND=own` then `Tools\OkaySpacePlayer.exe` on an exported game. The startup line says
-`platform=own` when it took effect; if this release was not built with the own backend it stays `platform=sdl2`.
+`platform=own` when it took effect; if this release was not built with the own backend it stays `platform=sdl2`. With it the player makes no SDL call at all and its
+resolution list is our own (section "Player with no SDL, game resolutions on our own code").
 **Unverified, not ready**, expect problems. Never ship with it.
+The editor has its own switch for its input and the 3D views' OpenGL context: `OKAY_EDITOR_PLATFORM=own` (section "Editor: input and
+the 3D views' OpenGL through our own code"); with `OKAY_PLATFORM_BACKEND=own` as well, that OpenGL context is our own WGL code.
 
 ### 12. OkayUI
 
@@ -1683,6 +1691,285 @@ already made from them still open and play, and the scene builders stay in the e
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## Launcher: threads on our own code (branch `claude2/launcher-own-threads`, not merged or released yet)
+
+What changed: the launcher's background work (news, downloads, the update check, chat, voice, the Git buttons, every
+"working..." job) used SDL's threads, locks and counters. It now uses our own (`launcher/LauncherThreads.hpp` over
+`engine/src/Core/CoreThreads.hpp`). Nothing should look different. This is a check that it still behaves the same.
+
+1. Start `OkaySpace.exe`. The start-up update check runs and the launcher opens. Expect the same as before (no hang on
+   "Checking for updates").
+2. **Home / What's New**: the news and link previews load. **Account**: sign in; your avatar loads.
+3. **Versions**: install an editor version. The progress bar moves; **Cancel** stops it; installing again finishes.
+4. Click the version number at the bottom of the left bar (tooltip "Check for updates"). The Software Update window
+   answers ("up to date" or offers the update) and the launcher does not freeze.
+5. **Create** page: right-click a project that is a Git folder and pick **Git: Pull**, or use **Commit & Push**, or
+   **Clone** a repository. A message says it worked or failed, as before.
+6. Chat: send a message and an image; start a voice call and the mic test; hang up.
+7. Quit the launcher while a download runs. It closes within a few seconds and does not crash.
+
+If any step hangs or crashes where the last release did not, that is this change: report the step.
+
+**Status.** Tested on Linux only: `test_core_threads` (mutex under contention, recursive lock, a woken waiter, exact atomic
+adds, join, detach, names; also clean under ThreadSanitizer), the launcher built natively, and `launcher/main.cpp` passed a
+MinGW (Windows) syntax check. Not run on Windows: the steps above are unverified until you run them.
+
+## Launcher: window calls through our platform layer, voice clips on our own decoder as an option (branch `claude2/launcher-own-wav-window`, not merged or released yet)
+
+What changed (SDL removal, stage A):
+
+* **Voice messages.** By default the launcher still reads a voice message's WAV file with SDL (`SDL_LoadWAV`), as
+  before. To try our own WAV decoder instead (`launcher/VoiceClipLoad.hpp` over `okay::wav`), start the launcher from a
+  Command Prompt after `set OKAY_OWN_WAV=1` (`set OKAY_OWN_WAV=0`, or no variable, is SDL). Playback itself is unchanged
+  either way.
+* **Window calls.** Showing, raising, restoring, the minimised / hidden / focused checks, size, position, window id and
+  minimum size of the launcher window and the separate chat window now go through `okay::platform` (a
+  `WrapSdl2Window` view over the same SDL window). The window is still made by SDL, so nothing should look different.
+
+Steps:
+
+1. Start `OkaySpace.exe`. The splash shows, then the launcher. Try to make the window smaller than about 720 x 480: it
+   stops there, as before.
+2. Sign in. Open a chat, record a voice message (hold the mic button), send it. Press play on it: you hear it, the
+   waveform bars show its loudness (not even bars), the time counts, and **1.5x / 2x** speed it up without a higher
+   voice. Play a voice message someone else sent, too.
+2a. Our own decoder: close the launcher, open a Command Prompt in its folder, run `set OKAY_OWN_WAV=1` and then
+   `OkaySpace.exe`. Play the same voice messages: they should sound and look exactly the same as in step 2.
+3. Set chat to open in its own window (chat settings), open it. It cannot be made smaller than about 520 x 380. Close
+   and reopen the launcher: the chat window comes back where you left it.
+4. Minimise the launcher with the chat window open: the chat window keeps working. Restore the launcher from the
+   taskbar.
+5. In a game, press **Shift+Tab** (Invite friends): the launcher comes to the front, restored if it was minimised.
+6. With the launcher minimised or in the background, let an update hint or an incoming call arrive: the taskbar
+   button flashes.
+7. Close the launcher and start it again: it opens at the size you left it.
+
+If a voice message does not play or plays as noise with `OKAY_OWN_WAV=1` only, that is our decoder; if a window step
+behaves differently from the last release, that is the window change: report the step.
+
+**Status.** Tested on Linux only: `test_launcher_wav_window` (every WAV in the repository and five made-up ones read by
+SDL and by our reader give the same format and length; the launcher picks SDL by default and with `OKAY_OWN_WAV=0`
+and ours with `OKAY_OWN_WAV=1`, and the SDL path gives exactly what the launcher played before and byte-for-byte the same samples, except 8-bit and 24-bit files,
+which are within 2 steps of 32,768 because the old launcher code truncated where ours rounds; every truncation of a file fails or reads less; the
+window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
+dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
+syntax check. Not run on Windows: the steps above are unverified until you run them.
+
+## Launcher: drawing with our own renderer as an option (branch `claude2/sdl-launcher-painter`, not merged or released yet)
+
+What changed (SDL removal, stage B): the launcher can draw without `SDL_Renderer` and without Dear ImGui's SDL backends. It is
+**off by default**: with no variable the launcher draws exactly as before.
+
+* **Switch.** `OKAY_LAUNCHER_RENDERER=own` (anything else, or no variable, is the old SDL path).
+* **How you can tell it is on.** The footer at the bottom of every page reads `OkaySpace v... (own renderer: opengl)`.
+
+Steps:
+
+1. Open a Command Prompt in the folder of `OkaySpace.exe`, run `set OKAY_LAUNCHER_RENDERER=own`, then `OkaySpace.exe`.
+2. The splash shows, then the Create page. The footer says `(own renderer: opengl)`. The page should look the same as without the
+   variable: fonts, colours, rounded corners, icons.
+3. Click into the **Search** box next to "Recent projects" and type a few letters, including Backspace, arrows, Ctrl+A, Ctrl+C and
+   Ctrl+V. The mouse pointer turns into a text cursor over the box.
+4. Click **Play**, **Friends**, **Settings** in the sidebar; scroll a long page with the mouse wheel; resize the window and make it small.
+5. Sign in and open a chat: avatars and images show. With the setting **Open chat in its own window** on (Settings, the default), the chat opens
+   in its own window ("OkaySpace Chat"), drawn by our renderer too: type in it, scroll it, drag a file onto it, move and resize it,
+   close it with its X and open it again. Minimise the launcher: the chat window keeps going.
+5a. Settings > Appearance > UI backend: **OkayUI (preview)**, then open **What's New**: the page is drawn by OkayUI on our renderer.
+   Click "Check for updates" and scroll. (Before, `own` switched OkayUI off.)
+5b. With a language that uses an input method (Japanese, Chinese, Korean): click into a text box and start typing; the input
+   method's candidate list opens next to the text cursor, not in a corner of the screen.
+5c. Leave the launcher in the background while a call rings or an update is found: its taskbar button flashes (the chat window's
+   button for a call while the chat window is open).
+6. Move the launcher to a monitor with 125% or 150% scaling: the text stays sharp and clicks land where you click.
+7. Close the window with the X: the "Exit or Minimize" question appears; Minimize, then restore from the taskbar.
+8. Close the launcher, start it again **without** the variable: the footer no longer mentions the renderer.
+
+If something looks different, is missing or does not react only with the variable set, that is our renderer: report the step and,
+if you can, a screenshot of both. If `own` cannot start (no OpenGL), the launcher falls back to SDL by itself and draws as before.
+
+**Status.** Tested on Linux only, under Xvfb with Mesa's software OpenGL (no real GPU): `launcher_imgui_renderer` (our ImGui renderer
+against a reference rasteriser, software painter; the OkayUI host fed from our events gives the same input as from SDL's),
+`launcher_imgui_renderer_gl` (the same on our OpenGL painter, sdl2 and own windows; two painters on two windows drawn in turn; the IME
+caret), `platform_state` (the taskbar-flash hint read back from the X server), and `scripts/launcher_renderer_check.sh` (screenshots
+with both renderers, typing, a click on Play, the chat window and the OkayUI page with both renderers, frame time). The launcher, the
+seam, the OpenGL painter and the Win32 flash, IME and message-hook code passed a MinGW (Windows) syntax check only. **Not run on
+Windows: every step above is unverified until you run it** (on Linux the tray is not used and the flash is the urgency hint).
+
+## Launcher with no SDL at all (branch `claude2/sdl-launcher-no-sdl`, not merged or released yet)
+
+What changed (SDL removal, step 2d): with **both** switches below the launcher does not call SDL at all: its window, events,
+drawing, monitor list and sound all come from our own code. It is **off by default**: with no variables nothing changes.
+
+* **Switches.** `OKAY_LAUNCHER_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own` (both; one alone still uses SDL for part of the work).
+* **How you can tell it is on.** The footer says `(own renderer: opengl)`; started from a Command Prompt, the launcher prints
+  `launcher: no SDL (own renderer, own platform backend)`.
+
+Steps (Windows, `OkaySpace.exe` from the release zip):
+
+1. Open a Command Prompt in the folder of `OkaySpace.exe` and run:
+   `set OKAY_LAUNCHER_RENDERER=own`, `set OKAY_PLATFORM_BACKEND=own`, then `OkaySpace.exe`.
+2. Expect the splash, then the Create page, as without the variables, and the line `launcher: no SDL ...` in the Command Prompt.
+   On a 125% or 150% display the text should be sharp (per-monitor DPI awareness from our own code).
+3. Monitors: open the chat in its own window, move it onto a second monitor, close the launcher, unplug (or switch off) that
+   monitor, start the launcher again the same way and open the chat: it comes back in the middle of the main monitor, not off screen.
+4. Sound, our own Windows audio (waveOut / waveIn): Settings > Voice: the microphone and speaker lists show your devices; the mic
+   test shows the level moving when you talk. Record a voice note in a chat and play it back; play a voice note someone sent you.
+   Start a voice call: the other side hears you and you hear them.
+5. Everything from "Launcher: drawing with our own renderer" (typing, chat window, OkayUI page, taskbar flash) should work the same.
+6. Close the launcher with the X and choose Exit: it closes with no error.
+
+If the launcher cannot start this way (no OpenGL), it falls back to SDL by itself and says so in the Command Prompt. If a step
+fails only with both variables set, that is our code: report the step.
+
+**Status.** Tested on Linux only, under Xvfb (software OpenGL, ALSA's `null` audio device): `scripts/launcher_no_sdl_check.sh`
+puts a trap in front of every SDL function (839) and shows that the launcher with both switches calls none of them, from start to
+exit, while it shows the chat window (moved back on screen by the new monitor list), plays a voice note and holds a voice call;
+`platform_display*` tests check the monitor list (one screen, a panel, a 150% setting, two monitors, two screens with Xinerama).
+The Windows monitor list, DPI awareness and waveOut / waveIn sound passed a MinGW syntax check only. **Not run on Windows: steps
+2 to 6 are unverified until you run them.**
+
+## Editor: input and the 3D views' OpenGL through our own code (branch `claude2/sdl-editor-seam`, not merged or released yet)
+
+What changed (SDL removal, editor stage E1): with the switch below, the editor's Dear ImGui gets its mouse, keyboard, typed text,
+clipboard and cursor shapes from **our own code** (the same code the launcher uses with `OKAY_LAUNCHER_RENDERER=own`), and the hidden
+OpenGL context the Scene and Game views render into is made through our platform layer. SDL still draws the editor's window and
+still reads the events from Windows; only what happens with them changed. It is **off by default**: with no variable nothing changes.
+
+* **Switch.** `OKAY_EDITOR_PLATFORM=own` (anything else, or no variable, is the old SDL path). Adding `OKAY_PLATFORM_BACKEND=own` also
+  makes the 3D views' OpenGL context with our own Windows code (WGL) instead of SDL's.
+* **How you can tell it is on.** The Console's first lines say `editor: platform own (ImGui glue on okay::platform; viewport GL on sdl2; ...)`
+  (`... on own` with both variables). Without the variable it says `editor: platform sdl (...)`.
+
+Steps (Windows, from the release):
+
+1. Open a Command Prompt and run:
+   `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_EDITOR_PLATFORM=own`, then `Tools\OkayEngine.exe`.
+2. Expect the editor as usual. Open the Console: the first lines name the platform (above).
+3. Mouse: click menus, drag a panel's tab to dock it somewhere else, drag a splitter, scroll the Hierarchy with the wheel and with a
+   touchpad (small, smooth steps should scroll a little, not jump). The cursor should change to arrows over splitters and to a text
+   bar over text fields.
+4. Keyboard: rename an object in the Inspector (type letters with accents too, for example "é"), use Backspace, the arrows, Home / End,
+   Ctrl+A, Ctrl+C, Ctrl+V; paste text copied from Notepad, and copy text out to Notepad.
+5. 3D views: the Scene and Game views draw as usual (View > GPU renderer: the OpenGL one). Repeat with `set OKAY_PLATFORM_BACKEND=own`
+   added before starting: the Console then says `viewport GL on own`, and the views must still draw.
+6. Play: press Play in a 3D template, walk with WASD, look with the mouse, press Esc, type into a game text field if the template has one.
+7. Drop a picture from Explorer onto the editor window: it is imported into the Assets folder.
+8. Close the editor with the X: it closes normally.
+
+Known differences with the switch on (on purpose, for now): panels cannot be dragged out of the editor into their own windows (View >
+multi-window does nothing); ImGui's own Ctrl shortcuts in text fields follow the key's place on the keyboard, so on an AZERTY keyboard
+Ctrl+A is the key where Q is; a slider or splitter drag stops at the window's edge. If anything else behaves differently only with the
+switch on, that is our code: report the step.
+
+**Status.** Tested on Linux only, under Xvfb, **without the editor itself** (the full editor is too big to build on the test machine):
+`editor_platform` and `editor_platform_own` check the window, the 3D views' OpenGL context (3.2 compatibility, depth, and SDL's own
+context given back so the UI still draws), mouse, wheel, keys, typed text, clipboard, cursor shape and a dropped file through the
+switch, and that our ImGui input code gives ImGui exactly what ImGui's SDL code gives it for the same events (27 frames, all
+identical). `editor/main.cpp` passes a compile check with the change. **Never run in a real editor session and never on Windows:
+steps 2 to 8 are unverified until you run them.**
+
+## Editor: drawing with our own renderer (branch `claude2/sdl-editor-gfx`, not merged or released yet)
+
+What changed (SDL removal, editor stage E2): with the switches below, the editor's whole window (every panel, the Scene and Game views,
+thumbnails, icons, previews, the loading screen) is drawn by **our own OpenGL painter and our own Dear ImGui renderer** (the same code
+the launcher uses with `OKAY_LAUNCHER_RENDERER=own`) instead of SDL's renderer. It is **off by default**: with no variable nothing changes.
+
+* **Switch.** `OKAY_EDITOR_RENDERER=own`, and it **only works together with `OKAY_EDITOR_PLATFORM=own`** (section "Editor: input and the
+  3D views' OpenGL through our own code"). With `OKAY_EDITOR_RENDERER=own` alone the editor draws as before and the Console says
+  `... (OKAY_EDITOR_RENDERER=own could not start: it needs OKAY_EDITOR_PLATFORM=own as well)`.
+* **How you can tell it is on.** The Console's first lines say `editor: renderer own (opengl painter on a sdl2 window, own ImGui renderer)`.
+  Without it they say `editor: renderer sdl (SDL_Renderer direct3d11, ...)`.
+
+Steps (Windows, from the release, once this branch is in one):
+
+1. Open a Command Prompt and run: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_EDITOR_PLATFORM=own`, `set OKAY_EDITOR_RENDERER=own`, then
+   `Tools\OkayEngine.exe`.
+2. Expect the loading screen, then the editor as usual. Open the Console: the first lines name the renderer (above).
+3. Look at every kind of picture: the Scene and Game views (move the camera, resize the panels), the Project panel's thumbnails, a
+   material or model preview, the Modeling panel's primitive tiles, the Sprite Editor (paint a few pixels: they must stay sharp), a UI
+   Image in the Inspector ("Set Native Size" shows the picture's size), a text in a TTF font in the Game view, the first-person hands
+   preview. Each must look as it does without the variables.
+4. View > VSync on and off; take a screenshot with the diagnostics shot if you use it.
+5. Press Play in a 3D template; if it shows OkayUI widgets (or Tools > Test UI), they must draw on top.
+6. Close the editor with the X: it closes normally.
+
+Known differences with the switch on (on purpose, for now): panels cannot be dragged out into their own windows (as with
+`OKAY_EDITOR_PLATFORM=own`); on Windows the Direct3D 11 views do not draw straight into the window's textures, they are copied (read
+back and uploaded) like the OpenGL ones, which may be slower on big views.
+
+**Status.** Tested on Linux only, under Xvfb with software OpenGL, **without the editor itself** (the full editor is too big to build on
+the test machine): `editor_gfx` and `editor_gfx_own` draw the same editor-like frame (shapes, clipping, text, a thumbnail, a 3D view
+rendered in the views' own OpenGL context, a texture with blending off, a texture made again) through SDL's renderer and through ours and
+find them identical pixel for pixel. `editor/main.cpp` passes a compile check (Linux and MinGW) with the change. **Never run in a real
+editor session and never on Windows: steps 2 to 6 are unverified until you run them.**
+
+## Editor with no SDL at all (branch `claude2/sdl-editor-no-sdl`, not merged or released yet)
+
+What changed (SDL removal, editor stage E3): with the three switches below the editor's main window, its keyboard, mouse, cursor, file
+drops, window title, game display settings, clipboard and message box all come from **our own platform code**, and the editor makes no
+call into SDL at all (it does not even start SDL). It is **off by default**: with no variable nothing changes. With only the first two
+switches the window and events go through okay::platform's SDL backend (SDL still runs underneath).
+
+* **Switches.** `OKAY_EDITOR_PLATFORM=own`, `OKAY_EDITOR_RENDERER=own` and `OKAY_PLATFORM_BACKEND=own`, all three.
+* **How you can tell it is on.** The log (and the Console's first lines) say `editor: no SDL (own platform, own renderer, own platform
+  backend)` and `editor: platform own (...; main window and events on own)`.
+
+Steps (Windows, from the release, once this branch is in one):
+
+1. Open a Command Prompt and run: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_EDITOR_PLATFORM=own`, `set OKAY_EDITOR_RENDERER=own`,
+   `set OKAY_PLATFORM_BACKEND=own`, then `Tools\OkayEngine.exe`.
+2. Expect the loading screen, then the editor. Open a project (for example the physics example). Check the Console lines above.
+3. Click around: a Hierarchy row, the Hierarchy search box (type a few letters), a Scene view object. Switch the view to 3D and fly with
+   the right mouse button held and W / A / S / D.
+4. Drag a picture or a model from Explorer onto the editor window: it is imported into the Project panel's folder.
+5. Press Ctrl+P (Play). In the Game view tick "Capture mouse", move the mouse (the pointer is hidden and held), press Esc (it comes
+   back in the middle of the Game view), then Ctrl+P again (Stop).
+6. In Play, copy and paste in a game text field (if the scene has one), and open the game's display settings (if it has them):
+   windowed, borderless and fullscreen switch the window (fullscreen is the desktop size here: no resolution change yet).
+7. Close the editor with the X: it closes normally.
+
+Known differences with the switches on (on purpose, for now): no multi-window panels; the game's resolution list shows only the
+desktop size and "fullscreen" does not change the monitor's resolution; no touch-screen input.
+
+**Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor, with a trap that stops the program on any SDL call
+(`scripts/editor_no_sdl_check.sh`): start, clicks, typing, a right-mouse fly, Play, mouse capture, Esc, Stop and closing the window
+made no SDL call, and the screens match the default editor's except for frame-rate numbers and the text caret. File drops, the
+refresh rate and the message box of our Linux code are tested on their own (`platform_editor_calls_own`). **Never run on Windows:
+steps 2 to 7 are unverified there until you run them.**
+
+## Player with no SDL, game resolutions on our own code (branch `claude2/sdl-player-no-sdl`, not merged or released yet)
+
+What changed (SDL removal, `docs/sdl_removal_plan.md`, "Player, display modes and a build with no SDL"): with
+`OKAY_PLATFORM_BACKEND=own` the game player makes **no call into SDL at all**, from start to exit. Our own platform code now also lists
+a monitor's **display modes** (resolutions and refresh rates) and switches the monitor to one for **exclusive fullscreen**. It is
+**off by default**: with no variable nothing changes. One fix is on for everyone: the player's window **close button** (X) now ends the
+game; before, it did nothing while the GPU renderer was on.
+
+* **Switch.** `OKAY_PLATFORM_BACKEND=own` (the player only needs this one).
+* **How you can tell it is on.** The first log line says `platform=own`, then `2D painter: software`.
+
+Steps (Windows, from the release, once this branch is in one):
+
+1. Open a Command Prompt and run: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_PLATFORM_BACKEND=own`, then
+   `Tools\OkaySpacePlayer.exe examples\vehicle\vehicle_test.okayscene`.
+2. Expect the loading screen, then the road scene. Walk with **W A S D**, hold **Shift** to run, move the mouse to look, press
+   **Space** and the mouse buttons. Press **F3**: the performance panel opens; F3 again closes it.
+3. Press **F11**: the game goes fullscreen; F11 again: back to a window.
+4. Resolutions: in the editor add **GameObject > UI > Prebuilt Screens > Settings** to a scene, save it, and run that scene the same
+   way. In the Settings panel the **Resolution** and **Refresh rate** lists show your monitor's real modes (before, our own code
+   offered only the desktop size). Pick **Fullscreen** and a smaller resolution, **Apply**: the monitor switches to it. **Done**, then
+   switch back to **Windowed**: the monitor's normal resolution comes back. Closing the game also puts it back.
+5. Close the game with the **X** of its window: it closes (the fix above; also without the variable).
+
+The editor's Play gets the same resolution list with its three switches (section "Editor with no SDL at all").
+
+**Status.** Run on Linux only, under Xvfb with software rendering, with a trap that stops the program on any SDL call
+(`scripts/player_no_sdl_check.sh`: 15 seconds of keys and mouse, F3, F11, then the close button: no SDL call, exit 0). The display
+modes were tested under Xvfb with modes the test adds (`platform_display_modes_own`). The Windows parts (`EnumDisplaySettingsW`,
+`ChangeDisplaySettingsExW`) were only compiled: **steps 1 to 5 are unverified on Windows until you run them.** Not possible yet: a
+build of the editor, launcher and player with no SDL at all exists (`-DOKAY_WITH_SDL=OFF`, built and run on Linux) but it is a
+developer build, never a release, so there is nothing to try in the Windows release for it.
 
 ## WAV decoder speed and memory (developer bench, not part of the Windows release)
 

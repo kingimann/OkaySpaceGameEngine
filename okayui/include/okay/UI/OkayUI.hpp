@@ -180,8 +180,11 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 
 /// Flush the batched geometry to the renderer. Call AFTER ImGui has rendered so
 /// OkayUI draws on top; the renderer's blend mode is saved and restored so nothing
-/// else is disturbed.
+/// else is disturbed. Only in a build with SDL (OKAY_PLATFORM_HAVE_SDL2; not with -DOKAY_WITH_SDL=OFF): other hosts use
+/// EndFrameData() and GetDrawData() with a render backend.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 void EndFrame(SDL_Renderer* renderer);
+#endif
 
 // ---- Custom backends (e.g. Direct3D 11, the software rasteriser) --------------
 // The frame's geometry as plain data, valid after the frame's widget calls (call
@@ -827,6 +830,10 @@ bool WantsTextInput();
 /// GetClipboardText() is valid until the next call. Text fields copy (Input::copy), cut (Input::cut) and paste (Input::paste) with it.
 void SetClipboardText(const char* text);
 const char* GetClipboardText();
+/// Where the system clipboard is when it is not SDL's: a host that makes no SDL call (the editor's no-SDL mode,
+/// docs/sdl_removal_plan.md stage E3) passes its own two functions. `get` returns text that stays valid until its next call, or
+/// null. Both null (the default) = SDL's clipboard, as before.
+void SetSystemClipboard(void (*set)(const char* text), const char* (*get)());
 /// Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
 /// gives the keyboard to the widget with this id (the GetItemID() of its InvisibleButton) and marks this frame's click as taken, so
 /// the click does not drop the focus again; 0 releases it.

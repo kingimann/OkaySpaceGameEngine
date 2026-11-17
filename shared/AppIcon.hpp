@@ -1,5 +1,10 @@
 #pragma once
+#ifdef OKAY_PLATFORM_HAVE_SDL2   // SetAppIcon(SDL_Window*) only; a build with -DOKAY_WITH_SDL=OFF has SetAppIconOn alone
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
+#endif
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -10,8 +15,11 @@ namespace okay {
 // image file: a rounded dark-navy tile with a cyan ringed planet and a few
 // stars — the "OkaySpace" space theme. Set as the window icon for the editor
 // and the launcher. Replace with real art later by loading a PNG instead.
-inline void SetAppIcon(SDL_Window* window) {
+// The logo's pixels: N x N (64), each pixel one uint32 with R in the low byte, then G, B, A (RGBA bytes in memory on a
+// little-endian machine).
+inline std::vector<std::uint32_t> AppIconPixels(int& n) {
     const int N = 64;
+    n = N;
     std::vector<std::uint32_t> px(N * N);
 
     auto put = [&](int x, int y, std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
@@ -83,12 +91,36 @@ inline void SetAppIcon(SDL_Window* window) {
             blend(x, y, 0.95f, 0.85f, 0.55f, band * 0.9f);
         }
 
+    return px;
+}
+
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+inline void SetAppIcon(SDL_Window* window) {
+    int N = 0;
+    std::vector<std::uint32_t> px = AppIconPixels(N);
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
         px.data(), N, N, 32, N * 4, SDL_PIXELFORMAT_RGBA32);
     if (surf) {
         SDL_SetWindowIcon(window, surf);
         SDL_FreeSurface(surf);
     }
+}
+#endif // OKAY_PLATFORM_HAVE_SDL2
+
+// The same logo on any okay::platform::Window (Window::SetIcon takes R, G, B, A bytes): no SDL. A template so this header
+// does not need the platform header. False when the window cannot take an icon.
+template <class PlatformWindow>
+inline bool SetAppIconOn(PlatformWindow& window) {
+    int N = 0;
+    const std::vector<std::uint32_t> px = AppIconPixels(N);
+    std::vector<std::uint8_t> rgba((std::size_t)N * (std::size_t)N * 4);
+    for (std::size_t i = 0; i < px.size(); ++i) {
+        rgba[i * 4 + 0] = (std::uint8_t)(px[i] & 0xFF);
+        rgba[i * 4 + 1] = (std::uint8_t)((px[i] >> 8) & 0xFF);
+        rgba[i * 4 + 2] = (std::uint8_t)((px[i] >> 16) & 0xFF);
+        rgba[i * 4 + 3] = (std::uint8_t)((px[i] >> 24) & 0xFF);
+    }
+    return window.SetIcon(rgba.data(), N, N);
 }
 
 } // namespace okay

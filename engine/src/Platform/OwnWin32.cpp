@@ -2,8 +2,8 @@
 // the Win32 clipboard, QueryPerformanceCounter timers and XInput controllers.
 //
 // STATUS: COMPILES, UNTESTED. This file is only syntax-checked with MinGW on a Linux
-// machine; it has never been run on Windows. Audio devices are not written yet
-// (OpenAudio returns null). Treat every behaviour here as a first draft.
+// machine; it has never been run on Windows. Audio devices are only syntax-checked too
+// (audio: waveOut / waveIn in OwnWin32Audio.cpp, also never run). Treat every behaviour here as a first draft.
 #ifdef _WIN32
 #include "Internal.hpp"
 #ifndef NOMINMAX
@@ -15,6 +15,8 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <xinput.h>
+#include <imm.h>      // COMPOSITIONFORM, CANDIDATEFORM (imm32.dll is loaded at run time, not linked)
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -78,6 +80,58 @@ uint32_t CurrentMods() {
 class WinBackend;
 WinBackend* g_backend = nullptr;   // the window procedure has no user pointer before WM_NCCREATE
 
+// The input method's window placement (imm32.dll), loaded on first use so nothing extra is linked. Written from the Win32
+// documentation of ImmGetContext, ImmSetCompositionWindow, ImmSetCandidateWindow and ImmReleaseContext.
+struct ImmApi {
+    typedef HIMC (WINAPI *GetContextFn)(HWND);
+    typedef BOOL (WINAPI *ReleaseContextFn)(HWND, HIMC);
+    typedef BOOL (WINAPI *SetCompositionWindowFn)(HIMC, LPCOMPOSITIONFORM);
+    typedef BOOL (WINAPI *SetCandidateWindowFn)(HIMC, LPCANDIDATEFORM);
+    GetContextFn getContext = nullptr;
+    ReleaseContextFn releaseContext = nullptr;
+    SetCompositionWindowFn setComposition = nullptr;
+    SetCandidateWindowFn setCandidate = nullptr;
+    bool tried = false;
+    bool Load() {
+        if (tried) return getContext != nullptr;
+        tried = true;
+        HMODULE m = LoadLibraryA("imm32.dll");
+        if (!m) return false;
+        getContext = (GetContextFn)(void*)GetProcAddress(m, "ImmGetContext");
+        releaseContext = (ReleaseContextFn)(void*)GetProcAddress(m, "ImmReleaseContext");
+        setComposition = (SetCompositionWindowFn)(void*)GetProcAddress(m, "ImmSetCompositionWindow");
+        setCandidate = (SetCandidateWindowFn)(void*)GetProcAddress(m, "ImmSetCandidateWindow");
+        if (!getContext || !releaseContext || !setComposition || !setCandidate) { getContext = nullptr; return false; }
+        return true;
+    }
+};
+ImmApi g_imm;
+
+// ---- Display modes (Microsoft's documentation of EnumDisplaySettingsW, ChangeDisplaySettingsExW and DEVMODEW) ----
+/// Every mode a display device (\\.\DISPLAY1, the szDevice of MONITORINFOEXW) lists: EnumDisplaySettingsW with mode numbers
+/// 0, 1, 2 ... until it fails. Windows lists each size once per colour depth and per rate; the caller sorts and drops repeats.
+/// A rate of 0 or 1 means "the hardware's default" (unknown here: 0). Modes below 16 bits per pixel are left out.
+std::vector<VideoMode> ModesOfDevice(const wchar_t* device) {
+    std::vector<VideoMode> out;
+    DEVMODEW dm;
+    for (DWORD k = 0;; ++k) {
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(device, k, &dm)) break;
+        if (dm.dmBitsPerPel != 0 && dm.dmBitsPerPel < 16) continue;
+        out.push_back(VideoMode{(int)dm.dmPelsWidth, (int)dm.dmPelsHeight, dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0});
+    }
+    return out;
+}
+/// The device name of the monitor that holds most of `hwnd`.
+std::wstring DeviceOfWindow(HWND hwnd) {
+    MONITORINFOEXW mi;
+    ZeroMemory(&mi, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO*)&mi)) return std::wstring();
+    return std::wstring(mi.szDevice);
+}
+
 class WinWindow final : public Window {
 public:
     WinWindow(WinBackend* b, HWND h) : m_b(b), m_hwnd(h) {}
@@ -107,8 +161,16 @@ public:
     void Minimize() override { ShowWindow(m_hwnd, SW_MINIMIZE); }
     void Restore() override { ShowWindow(m_hwnd, SW_RESTORE); }
     bool IsFullscreen() const override { return m_full; }
+    int DisplayIndex() const override;
+    bool SetFullscreenMode(const VideoMode& mode) override;
+    VideoMode FullscreenMode() const override { return m_mode; }
+    void LeaveFullscreenMode();   // ChangeDisplaySettingsExW(device, null): the registry's (desktop) mode comes back
     void SetFullscreen(bool on) override {
-        if (on == m_full) return;
+        LeaveFullscreenMode();   // from an exclusive mode to desktop fullscreen or a window: the display's own mode first
+        if (on == m_full) {
+            if (on) CoverMonitor();   // the monitor is back at its desktop size: cover it again
+            return;
+        }
         if (on) {
             m_style = GetWindowLongW(m_hwnd, GWL_STYLE);
             GetWindowRect(m_hwnd, &m_rect);
@@ -178,8 +240,82 @@ public:
     bool m_full = false;
     LONG m_style = 0;
     RECT m_rect = {0, 0, 0, 0};
+    VideoMode m_mode;          // SetFullscreenMode: the mode switched to ({0,0,0} = none)
+    std::wstring m_modeDevice; // ...and the display device it was switched on
+    /// Put the (already borderless) window over the whole monitor it is on.
+    void CoverMonitor() {
+        MONITORINFO mi; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
+        SetWindowPos(m_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
     wchar_t m_highSurrogate = 0;
     std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
+
+    // Window state queries (Window::IsMinimized / IsVisible / HasMouseFocus / SetInputFocus; docs/platform_layer.md, stage 4).
+    // Kept after the members so they sit clear of the other platform edits.
+    bool IsMinimized() const override { return IsIconic(m_hwnd) != 0; }
+    bool IsVisible() const override { return IsWindowVisible(m_hwnd) != 0; }   // a minimised window keeps WS_VISIBLE, as the seam wants
+    bool HasMouseFocus() const override {
+        POINT p;
+        if (!GetCursorPos(&p)) return false;
+        HWND under = WindowFromPoint(p);
+        return under == m_hwnd || (under && IsChild(m_hwnd, under));
+    }
+    bool SetInputFocus() override {
+        SetForegroundWindow(m_hwnd);
+        SetFocus(m_hwnd);                 // its return value is the PREVIOUS focus window (NULL is not a failure): ask who has it now
+        return GetFocus() == m_hwnd;
+    }
+    bool Flash(FlashMode m) override {
+        // FLASHWINFO: FLASHW_ALL flashes the caption and the task-bar button; FLASHW_TIMERNOFG keeps flashing until the
+        // window comes to the foreground; FLASHW_STOP puts it back. FlashWindowEx returns the window's state before the
+        // call, not success, so there is nothing to report but "asked".
+        FLASHWINFO fi;
+        ZeroMemory(&fi, sizeof(fi));
+        fi.cbSize = sizeof(fi);
+        fi.hwnd = m_hwnd;
+        if (m == FlashMode::Cancel) fi.dwFlags = FLASHW_STOP;
+        else if (m == FlashMode::Briefly) { fi.dwFlags = FLASHW_ALL; fi.uCount = 1; }
+        else fi.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        FlashWindowEx(&fi);
+        return true;
+    }
+    // The refresh rate of the monitor the window is on: its device name from GetMonitorInfoW, then the current mode of that
+    // device (EnumDisplaySettingsW with ENUM_CURRENT_SETTINGS, dmDisplayFrequency). Windows reports 0 or 1 for "the hardware's
+    // default rate": that is unknown here (0).
+    int RefreshRateHz() const override {
+        MONITORINFOEXW mi;
+        ZeroMemory(&mi, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO*)&mi)) return 0;
+        DEVMODEW dm;
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0;
+        return dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0;
+    }
+    bool SetTextInputArea(int x, int y, int w, int h) override {
+        if (!g_imm.Load()) return false;
+        HIMC c = g_imm.getContext(m_hwnd);
+        if (!c) return false;   // no input method on this window (e.g. an English keyboard without one)
+        // The composition string starts at the caret (client coordinates); the candidate list must not cover the line
+        // being typed, so it gets the caret as its position and the line as the rectangle to stay out of.
+        COMPOSITIONFORM cf;
+        ZeroMemory(&cf, sizeof(cf));
+        cf.dwStyle = CFS_FORCE_POSITION;
+        cf.ptCurrentPos.x = x; cf.ptCurrentPos.y = y;
+        CANDIDATEFORM cand;
+        ZeroMemory(&cand, sizeof(cand));
+        cand.dwIndex = 0;
+        cand.dwStyle = CFS_EXCLUDE;
+        cand.ptCurrentPos.x = x; cand.ptCurrentPos.y = y;
+        cand.rcArea.left = x; cand.rcArea.top = y; cand.rcArea.right = x + (w > 0 ? w : 1); cand.rcArea.bottom = y + (h > 0 ? h : 1);
+        const BOOL ok1 = g_imm.setComposition(c, &cf);
+        const BOOL ok2 = g_imm.setCandidate(c, &cand);
+        g_imm.releaseContext(m_hwnd, c);
+        return ok1 && ok2;
+    }
 };
 
 class WinPad final : public Gamepad {
@@ -198,7 +334,7 @@ private:
 class WinBackend final : public Backend {
 public:
     WinBackend() { g_backend = this; QueryPerformanceFrequency(&m_freq); QueryPerformanceCounter(&m_t0); }
-    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_xinput) FreeLibrary(m_xinput); }
+    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_xinput) FreeLibrary(m_xinput); if (m_shcore) FreeLibrary(m_shcore); }
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags&) override {
@@ -293,6 +429,41 @@ public:
         if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
         return m;
     }
+    uint32_t KeyboardFocusWindowId() override {
+        HWND f = GetFocus();
+        return f && m_wins.count(f) ? (uint32_t)(uintptr_t)f : 0;
+    }
+    uint32_t MouseFocusWindowId() override {
+        POINT p;
+        if (!GetCursorPos(&p)) return 0;
+        HWND under = WindowFromPoint(p);
+        HWND top = under ? GetAncestor(under, GA_ROOT) : nullptr;
+        return top && m_wins.count(top) ? (uint32_t)(uintptr_t)top : 0;
+    }
+    bool IsRelativeMouse() override { return m_relative; }
+    uint32_t GlobalMouseState(int* x, int* y) override {
+        POINT p = {0, 0};
+        GetCursorPos(&p);                 // screen coordinates
+        if (x) *x = p.x;
+        if (y) *y = p.y;
+        // GetAsyncKeyState reads the PHYSICAL buttons; with "swap mouse buttons" on, the logical left button is the physical right one.
+        const bool swapped = GetSystemMetrics(SM_SWAPBUTTON) != 0;
+        uint32_t m = 0;
+        if (GetAsyncKeyState(swapped ? VK_RBUTTON : VK_LBUTTON) & 0x8000) m |= MouseMask(MouseLeft);
+        if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) m |= MouseMask(MouseMiddle);
+        if (GetAsyncKeyState(swapped ? VK_LBUTTON : VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
+        return m;
+    }
+    void PumpEvents() override {          // the message loop of PollEvent, without taking an event
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            // WM_QUIT only comes when no other message is waiting. Put it back for PollEvent, which turns it into the Quit
+            // event, so no event is lost and this function does not touch the pending-event queue itself.
+            if (msg.message == WM_QUIT) { PostQuitMessage((int)msg.wParam); break; }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
     bool SetRelativeMouse(bool on) override {
         m_relative = on;
         if (on) { ::ShowCursor(FALSE); CenterCursor(); } else { ::ShowCursor(TRUE); ClipCursor(nullptr); }
@@ -316,7 +487,19 @@ public:
         return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
                            MB_OK | MB_ICONERROR) != 0;
     }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override { m_hook = hook; m_hookUser = user; return true; }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
+    bool SetSystemCursor(SystemCursor c) override {
+        static const LPCTSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_HAND, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW,
+                                       IDC_SIZENWSE, IDC_NO, IDC_WAIT};
+        const int i = (int)c;
+        if (i < 0 || i >= (int)(sizeof(kIds) / sizeof(kIds[0]))) return false;
+        HCURSOR h = LoadCursor(nullptr, kIds[i]);   // shared system cursor: never destroyed (TCHAR form: IDC_* follow UNICODE)
+        if (!h) return false;
+        m_shape = h;
+        if (m_cursorShown && !m_relative) ::SetCursor(h);
+        return true;
+    }
     void WarpMouse(Window* w, int x, int y) override {
         HWND h = w ? (HWND)w->NativeHandle() : GetForegroundWindow();
         POINT p = {x, y};
@@ -348,12 +531,62 @@ public:
         return out;
     }
 
-    // Audio: not written for Windows yet.
-    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec&, bool, const char*, AudioSpec*) override {
-        m_err = "the own Win32 backend has no audio device yet"; return nullptr;
+    // Audio: waveOut / waveIn (winmm.dll loaded at run time), OwnWin32Audio.cpp.
+    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* name, AudioSpec* got) override {
+        std::string err;
+        auto d = OpenWinmmAudio(want, capture, name, got, err);
+        if (!d) m_err = err;
+        return d;
     }
-    int AudioDeviceCount(bool) override { return 0; }
-    std::string AudioDeviceName(int, bool) override { return std::string(); }
+    int AudioDeviceCount(bool capture) override { return WinmmDeviceCount(capture); }
+    std::string AudioDeviceName(int i, bool capture) override { return WinmmDeviceName(i, capture); }
+
+    // Displays: EnumDisplayMonitors + GetMonitorInfoW (user32), the DPI from GetDpiForMonitor (shcore.dll, Windows 8.1+,
+    // loaded at run time; the system DPI from GetDeviceCaps before that).
+    struct MonCtx { std::vector<DisplayInfo> out; HRESULT (WINAPI* getDpi)(HMONITOR, int, UINT*, UINT*); int sysDpi; };
+    std::vector<DisplayInfo> Displays() override {
+        MonCtx c; c.getDpi = nullptr; c.sysDpi = 96;
+        if (!m_shcoreTried) {
+            m_shcoreTried = true;
+            m_shcore = LoadLibraryW(L"shcore.dll");
+        }
+        if (m_shcore) c.getDpi = (HRESULT (WINAPI*)(HMONITOR, int, UINT*, UINT*))(void*)GetProcAddress(m_shcore, "GetDpiForMonitor");
+        if (HDC dc = GetDC(nullptr)) { c.sysDpi = GetDeviceCaps(dc, LOGPIXELSX); ReleaseDC(nullptr, dc); }
+        EnumDisplayMonitors(nullptr, nullptr, &WinBackend::MonitorProc, (LPARAM)&c);
+        std::stable_sort(c.out.begin(), c.out.end(), [](const DisplayInfo& a, const DisplayInfo& b) { return a.primary && !b.primary; });
+        return c.out;
+    }
+    std::vector<VideoMode> DisplayModes(int display) override {
+        const std::vector<DisplayInfo> ds = Displays();
+        if (display < 0 || display >= (int)ds.size()) return {};
+        return SortedVideoModes(ModesOfDevice(Wide(ds[(size_t)display].name).c_str()));
+    }
+    bool CurrentDisplayMode(int display, VideoMode& out) override {
+        const std::vector<DisplayInfo> ds = Displays();
+        if (display < 0 || display >= (int)ds.size()) return false;
+        DEVMODEW dm;
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(Wide(ds[(size_t)display].name).c_str(), ENUM_CURRENT_SETTINGS, &dm)) return false;
+        out = VideoMode{(int)dm.dmPelsWidth, (int)dm.dmPelsHeight, dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0};
+        return true;
+    }
+    static BOOL CALLBACK MonitorProc(HMONITOR mon, HDC, LPRECT, LPARAM lp) {
+        MonCtx& c = *(MonCtx*)lp;
+        MONITORINFOEXW mi; std::memset(&mi, 0, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(mon, (MONITORINFO*)&mi)) return TRUE;
+        DisplayInfo d;
+        d.bounds = DisplayRect{mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top};
+        d.usable = DisplayRect{mi.rcWork.left, mi.rcWork.top, mi.rcWork.right - mi.rcWork.left, mi.rcWork.bottom - mi.rcWork.top};
+        d.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+        d.name = Utf8(mi.szDevice, (int)wcslen(mi.szDevice));
+        UINT dx = 0, dy = 0;
+        if (c.getDpi && c.getDpi(mon, 0 /* MDT_EFFECTIVE_DPI */, &dx, &dy) == S_OK && dx > 0) d.scale = (float)dx / 96.0f;
+        else if (c.sysDpi > 0) d.scale = (float)c.sysDpi / 96.0f;
+        c.out.push_back(d);
+        return TRUE;
+    }
 
     // Controllers: XInput, four slots, loaded on first use.
     int GamepadDeviceCount() override {
@@ -378,6 +611,7 @@ public:
     static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         WinBackend* b = g_backend;
         if (!b) return DefWindowProcW(h, m, wp, lp);
+        if (b->m_hook) b->m_hook(b->m_hookUser, h, m, (uint64_t)wp, (int64_t)lp);   // SetNativeMessageHook: sent and posted messages
         auto it = b->m_wins.find(h);
         WinWindow* win = it == b->m_wins.end() ? nullptr : it->second;
         if (!win) return DefWindowProcW(h, m, wp, lp);   // messages during creation
@@ -472,6 +706,7 @@ public:
         }
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT && b->m_shape) { SetCursor(b->m_shape); return TRUE; }   // SetSystemCursor's shape
             break;
         default: break;
         }
@@ -490,6 +725,9 @@ public:
     std::map<HWND, WinWindow*> m_wins;
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
+    HCURSOR m_shape = nullptr;   // SetSystemCursor (null = the class cursor, the arrow)
+    NativeMessageHook m_hook = nullptr;   // SetNativeMessageHook
+    void* m_hookUser = nullptr;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
     std::string m_err;
@@ -514,11 +752,55 @@ private:
     typedef DWORD (WINAPI *SetStateFn)(DWORD, XINPUT_VIBRATION*);
     LARGE_INTEGER m_freq, m_t0;
     HMODULE m_xinput = nullptr;
+    HMODULE m_shcore = nullptr;   // GetDpiForMonitor, loaded on the first Displays()
+    bool m_shcoreTried = false;
     GetStateFn m_getState = nullptr;
     SetStateFn m_setState = nullptr;
 };
 
+int WinWindow::DisplayIndex() const {
+    const std::wstring dev = DeviceOfWindow(m_hwnd);
+    if (dev.empty()) return -1;
+    const std::string name = Utf8(dev.c_str(), (int)dev.size());
+    const std::vector<DisplayInfo> ds = m_b->Displays();
+    for (size_t i = 0; i < ds.size(); ++i) if (ds[i].name == name) return (int)i;
+    return -1;
+}
+bool WinWindow::SetFullscreenMode(const VideoMode& want) {
+    const std::wstring dev = m_modeDevice.empty() ? DeviceOfWindow(m_hwnd) : m_modeDevice;
+    if (dev.empty()) return false;
+    const VideoMode pick = ClosestVideoMode(SortedVideoModes(ModesOfDevice(dev.c_str())), want);
+    if (pick.width <= 0) return false;
+    DEVMODEW dm;
+    ZeroMemory(&dm, sizeof(dm));
+    dm.dmSize = sizeof(dm);
+    dm.dmPelsWidth = (DWORD)pick.width;
+    dm.dmPelsHeight = (DWORD)pick.height;
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    if (pick.refreshHz > 0) { dm.dmDisplayFrequency = (DWORD)pick.refreshHz; dm.dmFields |= DM_DISPLAYFREQUENCY; }
+    // CDS_FULLSCREEN: a temporary change, not written to the registry; Windows puts the registry's mode back when this
+    // process ends, and ChangeDisplaySettingsExW(device, null) does it now.
+    if (ChangeDisplaySettingsExW(dev.c_str(), &dm, nullptr, CDS_FULLSCREEN, nullptr) != DISP_CHANGE_SUCCESSFUL) return false;
+    m_modeDevice = dev;
+    m_mode = pick;
+    if (!m_full) {   // borderless over the monitor, as desktop fullscreen (SetFullscreen's own steps, without leaving the mode)
+        m_style = GetWindowLongW(m_hwnd, GWL_STYLE);
+        GetWindowRect(m_hwnd, &m_rect);
+        SetWindowLongW(m_hwnd, GWL_STYLE, (LONG)((m_style & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP));
+        m_full = true;
+    }
+    CoverMonitor();   // the monitor's rectangle is the new mode's size now
+    return true;
+}
+void WinWindow::LeaveFullscreenMode() {
+    if (m_modeDevice.empty()) return;
+    ChangeDisplaySettingsExW(m_modeDevice.c_str(), nullptr, nullptr, 0, nullptr);
+    m_modeDevice.clear();
+    m_mode = VideoMode();
+}
+
 WinWindow::~WinWindow() {
+    LeaveFullscreenMode();
     DestroyGLContext();
     m_b->Unregister(m_hwnd);
     DestroyWindow(m_hwnd);

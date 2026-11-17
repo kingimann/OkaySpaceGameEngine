@@ -65,6 +65,12 @@ constexpr int kKeyCount = 512;
 
 enum Mod : uint32_t { ModShift = 1, ModCtrl = 2, ModAlt = 4, ModGui = 8, ModCaps = 16, ModNum = 32 };
 
+/// The pointer shapes an app can ask for (Backend::SetSystemCursor): the OS's own cursors, no images of ours.
+enum class SystemCursor { Arrow, TextInput, Hand, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, NotAllowed, Wait };
+
+/// How Window::Flash asks for attention: stop asking, flash once, or keep asking until the window has the focus.
+enum class FlashMode { Cancel, Briefly, UntilFocused };
+
 enum MouseButton : int { MouseLeft = 1, MouseMiddle = 2, MouseRight = 3, MouseX1 = 4, MouseX2 = 5 };
 /// Bit for a MouseButton in the mask returned by Backend::MouseState.
 constexpr uint32_t MouseMask(int button) { return 1u << (button - 1); }
@@ -106,6 +112,18 @@ struct Event {
     int deviceId = 0;
     std::string text;
 };
+
+// ---- Display modes -------------------------------------------------------------
+/// One mode a display can show: its size in pixels and refresh rate (Hz; 0 = the OS did not say).
+struct VideoMode {
+    int width = 0, height = 0, refreshHz = 0;
+    bool operator==(const VideoMode& o) const { return width == o.width && height == o.height && refreshHz == o.refreshHz; }
+    bool operator!=(const VideoMode& o) const { return !(*this == o); }
+};
+/// The mode of `modes` closest to `want`: the same size if listed (with the nearest refresh rate, the lower one on a tie;
+/// want.refreshHz 0 = the highest rate listed for that size), otherwise the smallest listed mode at least as large as `want`
+/// in both directions, otherwise the largest one. {0, 0, 0} when `modes` is empty. What SetFullscreenMode picks with.
+VideoMode ClosestVideoMode(const std::vector<VideoMode>& modes, const VideoMode& want);
 
 // ---- Windows and the OpenGL context -----------------------------------------
 constexpr int kCentered = 0x2FFF0000;   // x / y: let the window manager centre it
@@ -163,6 +181,19 @@ public:
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Which display the window is on: its index in Backend::Displays() (the display that holds the window's centre, else
+    /// the one it overlaps most). -1 = unknown (no display list, or the window is off every display).
+    /// sdl2: SDL_GetWindowDisplayIndex; X11: the RandR monitors; Win32: MonitorFromWindow.
+    virtual int DisplayIndex() const { return -1; }
+    /// Exclusive fullscreen: switch the display the window is on to the listed mode closest to `mode` (Backend::DisplayModes;
+    /// same size first, then the nearest refresh rate; a refresh of 0 = any) and cover that display with the window.
+    /// SetFullscreen(false) leaves it and puts the display's own mode back (so does destroying the window).
+    /// sdl2: SDL_GetClosestDisplayMode + SDL_SetWindowDisplayMode + SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN);
+    /// X11: RandR XRRSetCrtcConfig on the CRTC that shows the display; Win32: ChangeDisplaySettingsExW(CDS_FULLSCREEN).
+    /// False = no such mode, the switch was refused, or not supported here (the window is then left as it was).
+    virtual bool SetFullscreenMode(const VideoMode& mode) { (void)mode; return false; }
+    /// The mode SetFullscreenMode switched to while it is in effect; {0, 0, 0} otherwise.
+    virtual VideoMode FullscreenMode() const { return VideoMode(); }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -176,7 +207,64 @@ public:
     virtual void SwapBuffers() = 0;
     virtual bool SetSwapInterval(int interval) = 0;   // 0 = off, 1 = vsync
     virtual void GetDrawableSize(int& w, int& h) const = 0;
+
+    // ---- State queries and focus: what the apps asked SDL_GetWindowFlags and SDL_SetWindowInputFocus ----
+    // Whatever the window manager decides (minimised, which window is under the pointer) is current only after the app has
+    // read its events (Backend::PollEvent or Backend::PumpEvents), as with SDL.
+    /// True while the window is minimised (iconified).
+    virtual bool IsMinimized() const { return false; }
+    /// False after Hide() and for a window created hidden; true after Show(). What a window that a window manager has minimised
+    /// reports is not promised: the own backends say visible, SDL on X11 sets its HIDDEN flag as well (ask IsMinimized()).
+    virtual bool IsVisible() const { return true; }
+    /// True while the mouse pointer is over this window.
+    virtual bool HasMouseFocus() const { return false; }
+    /// Give this window the keyboard focus. False = refused (a hidden window cannot take it) or not supported here.
+    virtual bool SetInputFocus() { return false; }
+
+    // ---- Attention and the input method (the launcher asked SDL_FlashWindow and SDL_SetTextInputRect) ----
+    /// Ask for the user's attention without taking the focus: the task-bar button flashes (Win32 FlashWindowEx), the
+    /// window manager marks the window urgent (X11 urgency hint; Briefly clears it again after about a second, UntilFocused
+    /// when the window gets the focus). False = not supported here.
+    virtual bool Flash(FlashMode m) { (void)m; return false; }
+    /// Where the text being typed is, in window pixels (the caret's top-left corner and the line's size): the input method's
+    /// composition and candidate windows open there (Win32 ImmSetCompositionWindow / ImmSetCandidateWindow, X11 the XIM
+    /// spot location when the input method draws next to the caret). False = not supported here, or the input method of
+    /// this window does not place its windows.
+    virtual bool SetTextInputArea(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; return false; }
 };
+
+/// A non-owning Window over an SDL_Window* that the app made itself with SDL_CreateWindow, so the Window methods (and the state
+/// queries above) work on it while the app still creates its windows. `sdlWindow` is an SDL_Window*. Destroying the wrapper does
+/// not destroy the SDL window; a GL context made through the wrapper is the wrapper's own. Null when `sdlWindow` is null or the sdl2
+/// backend is not compiled in. Transitional: it goes away when the apps create their windows with Backend::MakeWindow.
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
+
+/// One SDL_Event the app read itself with SDL_PollEvent (`sdlEvent` is a const SDL_Event*), as the sdl2 backend's PollEvent would have
+/// returned it: the same fields, the same event kinds (others give false), with two differences: a dropped file's path is copied
+/// and SDL's string is NOT freed (the app still owns the event and frees it), and the wheel carries SDL's fractional amounts
+/// (preciseX / preciseY, touchpads) rather than whole notches, as ImGui's SDL2 backend reads them. False when the event has no okay::platform form or the sdl2 backend is not
+/// compiled in. Transitional, like WrapSdl2Window: the editor's ImGui glue reads SDL's queue this way while SDL_Renderer still draws
+/// its window (OKAY_EDITOR_PLATFORM=own, docs/sdl_removal_plan.md stage E1).
+bool TranslateSdl2Event(const void* sdlEvent, Event& out);
+
+// ---- Displays -----------------------------------------------------------------
+/// A rectangle on the desktop, in the same coordinates as Window::GetPosition.
+struct DisplayRect { int x = 0, y = 0, w = 0, h = 0; };
+/// One monitor. `usable` is `bounds` minus task bars and panels (the OS's work area; equal to `bounds` when the OS
+/// says nothing). `scale` is the DPI scale the OS asks for: 1.0 = 96 DPI, 1.5 = 144 DPI.
+struct DisplayInfo {
+    std::string name;
+    DisplayRect bounds, usable;
+    float scale = 1.0f;
+    bool primary = false;
+};
+/// The displays of the default backend, the primary one first (empty when the backend has no video, or none is up).
+std::vector<DisplayInfo> Displays();
+/// Whether a window at (x, y) of size w x h can be reached: at least 160 x 80 of it on one display's usable area and its
+/// top edge (the title bar) inside that area, give or take 8 pixels above and 40 below. The launcher's "keep on screen" rule.
+bool WindowReachable(const std::vector<DisplayInfo>& displays, int x, int y, int w, int h);
+/// A window of w x h moved to the middle of the usable area of `d`, shrunk to leave a 20 pixel margin on each side.
+DisplayRect CenterOnDisplay(const DisplayInfo& d, int w, int h);
 
 // ---- Audio -------------------------------------------------------------------
 enum class SampleFormat { S16, F32 };   // native-endian, interleaved
@@ -268,6 +356,9 @@ public:
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// The pointer shape over this app's windows (the OS's own cursor for `c`). False when the backend cannot change it.
+    /// ShowCursor(false) still hides it; the shape comes back with ShowCursor(true).
+    virtual bool SetSystemCursor(SystemCursor c) { (void)c; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
@@ -316,6 +407,48 @@ public:
     virtual int GamepadDeviceCount() = 0;                  // device indices 0..n-1
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
+
+    // ---- Focus, pointer and event pump (the launcher and editor asked SDL for these directly) ----
+    /// Window::Id() of the window that has the keyboard focus; 0 when none of ours has it (SDL_GetKeyboardFocus).
+    virtual uint32_t KeyboardFocusWindowId() { return 0; }
+    /// Window::Id() of the window the mouse pointer is over; 0 when none of ours (SDL_GetMouseFocus).
+    virtual uint32_t MouseFocusWindowId() { return 0; }
+    /// Whether relative mouse mode is on: what SetRelativeMouse last set successfully (SDL_GetRelativeMouseMode).
+    virtual bool IsRelativeMouse() { return false; }
+    /// The pointer position on the whole desktop (not relative to a window; either pointer may be null) and the MouseMask
+    /// bits of the buttons held (SDL_GetGlobalMouseState). The own backends ask the OS. The sdl2 backend answers with SDL's call,
+    /// which under X11 follows the pointer only while SDL sees it (over SDL's windows) and only after events were read
+    /// (PollEvent or PumpEvents): measured under Xvfb.
+    virtual uint32_t GlobalMouseState(int* x, int* y) { if (x) *x = 0; if (y) *y = 0; return 0; }
+    /// Read the OS events that are waiting without taking one: window state and focus are current afterwards, and PollEvent still
+    /// returns every event (SDL_PumpEvents).
+    virtual void PumpEvents() {}
+    /// How many touch screens / touch pads deliver finger events (FingerDown / FingerMotion / FingerUp) through this backend
+    /// (SDL_GetNumTouchDevices on sdl2). The own X11 and Win32 backends deliver no finger events (touch comes as the mouse there),
+    /// so they say 0 and a game's touch controls stay off.
+    virtual int TouchDeviceCount() { return 0; }
+
+    /// Windows only: a function called with every window message (HWND, message, wParam, lParam) of this backend's windows,
+    /// before the backend handles it (SDL_SetWindowsMessageHook): the launcher reads its tray icon's clicks and the message a
+    /// second launcher sends this way. The own backend calls it from its window procedure, so it sees sent and posted
+    /// messages; the sdl2 backend hands it to SDL. Null removes it. False = not supported here (every other platform).
+    using NativeMessageHook = void (*)(void* user, void* hwnd, unsigned int msg, uint64_t wParam, int64_t lParam);
+    virtual bool SetNativeMessageHook(NativeMessageHook hook, void* user) { (void)hook; (void)user; return false; }
+
+    /// The monitors, the primary one first (SDL_GetNumVideoDisplays / SDL_GetDisplayBounds / SDL_GetDisplayUsableBounds /
+    /// SDL_GetDisplayDPI). The own backends ask the OS: X11 RandR 1.5 monitors (libXrandr loaded at run time), else Xinerama,
+    /// else the root window, with _NET_WORKAREA as the usable area and Xft.dpi as the scale; Win32 EnumDisplayMonitors /
+    /// GetMonitorInfoW and GetDpiForMonitor (shcore.dll loaded at run time). Empty when video is not up.
+    virtual std::vector<DisplayInfo> Displays() { return {}; }
+    /// Every mode display `display` (an index into Displays()) can show, largest first (by width, then height, then refresh
+    /// rate), without repeats. Empty when the index is out of range, video is not up or the backend cannot list modes.
+    /// sdl2: SDL_GetNumDisplayModes / SDL_GetDisplayMode; X11: the RandR modes of the outputs of the display's CRTC (libXrandr
+    /// loaded at run time); Win32: EnumDisplaySettingsW on the display's device.
+    virtual std::vector<VideoMode> DisplayModes(int display) { (void)display; return {}; }
+    /// The mode display `display` shows right now (the desktop mode; while a window holds a SetFullscreenMode, that mode).
+    /// False when it cannot be read. sdl2: SDL_GetCurrentDisplayMode; X11: the mode of the display's CRTC; Win32:
+    /// EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS).
+    virtual bool CurrentDisplayMode(int display, VideoMode& out) { (void)display; (void)out; return false; }
 };
 
 // ---- Free functions on the default backend ------------------------------------

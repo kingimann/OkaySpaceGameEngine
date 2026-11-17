@@ -10,8 +10,8 @@ namespace oked {
 
 using namespace okay::ui2d;
 
-UIPreviewPainter::UIPreviewPainter(ImDrawList* dl, ImVec2 origin, SDL_Renderer* renderer, TextureLoader loader)
-    : m_dl(dl), m_origin(origin), m_renderer(renderer), m_loader(loader) {}
+UIPreviewPainter::UIPreviewPainter(ImDrawList* dl, ImVec2 origin, okay::platform::Painter* painter, TextureLoader loader)
+    : m_dl(dl), m_origin(origin), m_painter(painter), m_loader(loader) {}
 
 UIPreviewPainter::~UIPreviewPainter() {
     if (m_clipPushed) m_dl->PopClipRect();
@@ -71,22 +71,22 @@ void UIPreviewPainter::GetClipRect(okay::ui2d::Rect* r) {
 void UIPreviewPainter::SetScale(float sx, float) { m_scale = sx > 0.0f ? sx : 1.0f; }
 
 Tex UIPreviewPainter::LoadTexture(const std::string& path) {
-    return (m_loader && !path.empty()) ? (Tex)m_loader(path) : nullptr;
+    return (m_loader && !path.empty()) ? m_loader(path) : nullptr;
 }
 
 Tex UIPreviewPainter::FontAtlas(okay::TtfFont* font) {
-    return (Tex)PreviewFontAtlas(m_renderer, font);
+    return PreviewFontAtlas(m_painter, font);
 }
 
-SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
+Tex PreviewFontAtlas(okay::platform::Painter* r, okay::TtfFont* f) {
     if (!r || !f || !f->Valid()) return nullptr;
-    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+    struct Up { Tex tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
     static std::unordered_map<okay::TtfFont*, Up> cache;
-    static std::vector<std::pair<SDL_Texture*, int>> retired;   // texture, the frame it was replaced in
+    static std::vector<std::pair<Tex, int>> retired;   // texture, the frame it was replaced in
     const int frame = ImGui::GetFrameCount();
     for (std::size_t i = 0; i < retired.size();) {
         if (frame - retired[i].second < 2) { ++i; continue; }
-        SDL_DestroyTexture(retired[i].first);
+        r->DestroyTexture(retired[i].first);
         retired[i] = retired.back();
         retired.pop_back();
     }
@@ -95,21 +95,23 @@ SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
     const okay::Image& a = f->Atlas();
     if (u.tex && (u.w != a.Width() || u.h != a.Height())) { retired.push_back({u.tex, frame}); u.tex = nullptr; }
     if (!u.tex) {
-        u.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+        okay::platform::TextureDesc d;
+        d.width = a.Width(); d.height = a.Height();
+        d.blend = okay::platform::BlendMode::Blend;
+        d.scale = okay::platform::ScaleMode::Linear;
+        u.tex = r->CreateTexture(d, nullptr);
         if (!u.tex) return nullptr;
-        SDL_SetTextureBlendMode(u.tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(u.tex, SDL_ScaleModeLinear);
         u.w = a.Width();
         u.h = a.Height();
     }
-    SDL_UpdateTexture(u.tex, nullptr, a.Data(), a.Width() * 4);   // glyphs only get added: queued text stays right
+    r->UpdateTexture(u.tex, nullptr, a.Data(), a.Width() * 4);   // glyphs only get added: queued text stays right
     u.gen = f->Generation();
     return u.tex;
 }
 
 void UIPreviewPainter::QueryTexture(Tex t, int* w, int* h) {
     int tw = 0, th = 0;
-    if (t) SDL_QueryTexture((SDL_Texture*)t, nullptr, nullptr, &tw, &th);
+    if (t && m_painter) m_painter->QueryTexture(t, &tw, &th);
     if (w) *w = tw;
     if (h) *h = th;
 }

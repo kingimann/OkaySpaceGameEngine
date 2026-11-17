@@ -1,6 +1,8 @@
 # okay_platform: the seam between the engine and SDL2 / the OS (engine/include/okay/Platform).
 #
 #   -DOKAY_PLATFORM_BACKEND=sdl2   (default) okay::platform::Default() is the SDL2 backend.
+#   -DOKAY_WITH_SDL=OFF            no sdl2 backend at all (SdlBackend.cpp is left out, SDL2 is not looked for);
+#                                  Default() is our own backend whatever OKAY_PLATFORM_BACKEND says.
 #   -DOKAY_PLATFORM_BACKEND=own    Default() is our own backend (Linux X11/ALSA/evdev through
 #                                  dlopen, Windows Win32). SDL2 is NOT removed: the editor,
 #                                  launcher and player still draw through SDL_Renderer and
@@ -15,7 +17,10 @@ if(NOT OKAY_PLATFORM_BACKEND STREQUAL "sdl2" AND NOT OKAY_PLATFORM_BACKEND STREQ
 endif()
 
 function(okay_add_platform_library)
-    set(_srcs src/Platform/Platform.cpp src/Platform/SdlBackend.cpp)
+    set(_srcs src/Platform/Platform.cpp)
+    if(OKAY_WITH_SDL OR EMSCRIPTEN)
+        list(APPEND _srcs src/Platform/SdlBackend.cpp)
+    endif()
     set(_defs "")
     set(_libs "")
     set(_incs "")
@@ -24,6 +29,8 @@ function(okay_add_platform_library)
     if(EMSCRIPTEN)
         list(APPEND _defs OKAY_PLATFORM_HAVE_SDL2)
         set(_sdl_opts "-sUSE_SDL=2")
+    elseif(NOT OKAY_WITH_SDL)
+        set(_sdl_opts "")   # OKAY_WITH_SDL=OFF: SDL2 is not looked for
     else()
         find_package(SDL2 QUIET)
         set(_sdl_opts "")
@@ -42,7 +49,7 @@ function(okay_add_platform_library)
 
     # --- own backend ----------------------------------------------------------------
     if(WIN32)
-        list(APPEND _srcs src/Platform/OwnWin32.cpp)
+        list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
         list(APPEND _libs user32 gdi32 opengl32 shell32)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -80,7 +87,7 @@ function(okay_add_platform_library)
         target_compile_options(okay_platform PRIVATE ${_sdl_opts})
     endif()
     # OKAY_OWN_STACK=ON (docs/own_stack_rollout.md) makes own the default on Linux only: the Win32 backend has never run on real Windows.
-    if(OKAY_PLATFORM_BACKEND STREQUAL "own" OR (OKAY_OWN_STACK AND CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    if(OKAY_PLATFORM_BACKEND STREQUAL "own" OR (OKAY_OWN_STACK AND CMAKE_SYSTEM_NAME STREQUAL "Linux") OR NOT OKAY_WITH_SDL)
         target_compile_definitions(okay_platform PRIVATE OKAY_PLATFORM_DEFAULT_OWN)
     endif()
     # PUBLIC: the test programs and apps ask which backends exist.

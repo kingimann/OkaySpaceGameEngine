@@ -96,9 +96,13 @@ struct CondBlock {
     string opt, equals; bool hasEquals = false; int line = 0;
     vector<string> flags, linkFlags, defines;
 };
+struct PackageDecl {
+    string name, path, version; int line = 0;
+    vector<std::pair<string, string>> depends;
+};
 struct Manifest {
     Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
-    vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds;
+    vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -136,7 +140,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -182,6 +186,11 @@ static Manifest parseManifest(const string& file) {
                 m.hasBuildfile = true; m.buildLine = ln; mode = BUILDFILE; continue;
             }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
+            if (t[0] == "package") {
+                if (t.size() != 2) throw err("expected: package NAME");
+                for (auto& p : m.packages) if (p.name == t[1]) throw err("duplicate package '" + t[1] + "'");
+                PackageDecl p; p.name = t[1]; p.line = ln; m.packages.push_back(p); mode = PACKAGE; continue;
+            }
             if (t[0] == "target") {
                 if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
@@ -215,7 +224,7 @@ static Manifest parseManifest(const string& file) {
                 CondBlock c; c.opt = t[1]; c.line = ln; if (t.size() == 4) { c.hasEquals = true; c.equals = t[3]; }
                 m.conds.push_back(c); mode = COND; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target, config, option, if, pool, action, buildfile or outdir)");
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, package, config, option, if, pool, action, buildfile or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
@@ -266,7 +275,13 @@ static Manifest parseManifest(const string& file) {
                 m.configs.back().optimize = n;
             } else if (mode == CONFIG && k == "debug") {
                 m.configs.back().debug = oneFlag(v, "debug") ? 1 : 0;
-            } else throw err(string("unknown ") + (mode == CONFIG ? "config" : "if") + " key '" + k + "'");
+            }             else throw err(string("unknown ") + (mode == CONFIG ? "config" : "if") + " key '" + k + "'");
+        } else if (mode == PACKAGE) {
+            PackageDecl& p = m.packages.back();
+            if (k == "path") { if (v.size() != 1) throw err("path takes one value"); p.path = v[0]; }
+            else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); p.version = v[0]; }
+            else if (k == "depend") { if (v.size() != 2) throw err("depend takes a package name and a version"); p.depends.push_back({v[0], v[1]}); }
+            else throw err("unknown package key '" + k + "'");
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
@@ -286,6 +301,10 @@ static Manifest parseManifest(const string& file) {
     }
     if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
     for (auto& t : m.targets) if (t.isTest && t.isLib) throw Fail(file + ":" + std::to_string(t.line) + ": test target '" + t.name + "' is a library");
+    for (auto& p : m.packages) {
+        if (p.path.empty()) throw Fail(file + ":" + std::to_string(p.line) + ": package '" + p.name + "' has no path");
+        if (p.version.empty()) throw Fail(file + ":" + std::to_string(p.line) + ": package '" + p.name + "' has no version");
+    }
     return m;
 }
 
@@ -2139,6 +2158,52 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
     return 0;
 }
 
+static int syncLock(const Manifest& m, bool writeMissing) {
+    if (m.packages.empty()) return 0;
+    std::map<string, const PackageDecl*> by;
+    for (auto& p : m.packages) {
+        if (by.count(p.name)) throw Fail("duplicate package '" + p.name + "'");
+        by[p.name] = &p;
+    }
+    for (auto& p : m.packages) for (auto& d : p.depends) {
+        auto it = by.find(d.first);
+        if (it == by.end()) throw Fail("package '" + p.name + "' depends on unknown package '" + d.first + "'");
+        if (it->second->version != d.second)
+            throw Fail("package '" + p.name + "' needs " + d.first + " " + d.second + " but " + d.first + " is " + it->second->version);
+    }
+    vector<string> want;
+    for (auto& p : m.packages) want.push_back(p.name + "\t" + p.version + "\t" + p.path);
+    std::sort(want.begin(), want.end());
+    string path = "okay.lock";
+    if (!fs::exists(path)) {
+        if (!writeMissing) throw Fail("okay.lock is missing");
+        std::ofstream f(path, std::ios::trunc); f << "okay-lock 1\n";
+        for (auto& l : want) f << l << "\n";
+        printf("okay-build lock: wrote %zu package(s) to okay.lock\n", want.size());
+        return 0;
+    }
+    std::ifstream in(path); string l;
+    if (!std::getline(in, l) || l != "okay-lock 1") throw Fail("okay.lock is not from this okay-build");
+    std::map<string, string> got;
+    while (std::getline(in, l)) {
+        if (l.empty()) continue;
+        auto a = l.find('\t'); auto b = a == string::npos ? string::npos : l.find('\t', a + 1);
+        if (a == string::npos || b == string::npos) throw Fail("okay.lock has a broken line");
+        got[l.substr(0, a)] = l.substr(a + 1, b - a - 1);
+        string recordedPath = l.substr(b + 1);
+        string name = l.substr(0, a);
+        auto it = by.find(name);
+        if (it == by.end()) throw Fail("okay.lock lists '" + name + "', which the manifest does not");
+        if (it->second->path != recordedPath) throw Fail("okay.lock has " + name + " at " + recordedPath + " but the manifest says " + it->second->path);
+    }
+    for (auto& p : m.packages) {
+        auto it = got.find(p.name);
+        if (it == got.end()) throw Fail("okay.lock has no entry for '" + p.name + "'");
+        if (it->second != p.version) throw Fail("okay.lock has " + p.name + " " + it->second + " but the manifest resolves " + p.name + " " + p.version);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleCtrlHandler(onCtrl, TRUE);
@@ -2188,7 +2253,7 @@ int main(int argc, char** argv) {
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock") cmd = a;
             else if (a == "-h" || a == "--help") {
                 puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
@@ -2212,7 +2277,9 @@ int main(int argc, char** argv) {
         if (!configFileSet) configFile = "config.okay";
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
+        if (cmd == "lock") return syncLock(m, true);
         if (cmd == "report") return showReport();
+        if (cmd == "build" || cmd == "test") syncLock(m, true);
         if (cmd == "test") return cmdTest(m, o);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);

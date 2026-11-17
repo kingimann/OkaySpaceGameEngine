@@ -670,6 +670,37 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testPackages() {
+    printf("test: local packages resolve into okay.lock and conflicts are errors\n");
+    fresh("pkg");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("vendor/foo/README", "foo\n");
+    write("vendor/bar/README", "bar\n");
+    write("build.okay",
+          "package foo\n path = vendor/foo\n version = 1.2\nend\n"
+          "package bar\n path = vendor/bar\n version = 2.0\n depend = foo 1.2\nend\n"
+          "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "a build with packages exits 0", o);
+    string lock = readFile(gRoot / "okay.lock");
+    check(lock.find("okay-lock 1") != string::npos && lock.find("foo\t1.2\tvendor/foo") != string::npos && lock.find("bar\t2.0\tvendor/bar") != string::npos, "okay.lock records name, version and path", lock);
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) == 0, "the same lock builds again", o);
+    write("build.okay",
+          "package foo\n path = vendor/foo\n version = 1.3\nend\n"
+          "package bar\n path = vendor/bar\n version = 2.0\n depend = foo 1.3\nend\n"
+          "target app exe\n sources = a.cpp\nend\n");
+    o = sh("-j1", &rc);
+    check(rc == 2 && o.find("1.2") != string::npos && o.find("1.3") != string::npos, "a changed version disagrees with the lock", o);
+    write("build.okay",
+          "package foo\n path = vendor/foo\n version = 1.2\nend\n"
+          "package bar\n path = vendor/bar\n version = 2.0\n depend = foo 9\nend\n"
+          "target app exe\n sources = a.cpp\nend\n");
+    fs::remove(gRoot / "okay.lock");
+    o = sh("-j1", &rc);
+    check(rc == 2 && o.find("needs foo 9") != string::npos && o.find("foo is 1.2") != string::npos, "a dependency on another version is a conflict", o);
+}
+
 static void testCacheLimit() {
     printf("test: cache size limit evicts the least recently used entry\n");
     fresh("cmax");
@@ -840,6 +871,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

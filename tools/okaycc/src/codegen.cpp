@@ -263,7 +263,10 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             s += kArgReg[i];
             s += "\n";
         }
-        if (in.func == "write") {
+        if (in.func.empty()) {
+            load(s, in.a, "%rax");
+            s += "  call *%rax\n";
+        } else if (in.func == "write") {
             // Linux write syscall. rax = 1, arguments already in rdi, rsi, rdx.
             s += "  movq $1, %rax\n  syscall\n";
         } else {

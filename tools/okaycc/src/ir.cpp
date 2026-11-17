@@ -74,7 +74,7 @@ std::string printModule(const Module& m) {
                     s += "call ";
                     s += in.dst >= 0 ? "v" + std::to_string(in.dst) : "_";
                     s += ", ";
-                    s += in.func;
+                    s += in.func.empty() ? ("*" + opnd(in.a)) : in.func;
                     s += "(";
                     for (std::size_t i = 0; i < in.args.size(); ++i) {
                         if (i) s += ", ";

@@ -443,7 +443,11 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             loadRax(im, in.args[static_cast<std::size_t>(i)]);
             movReg(im, kArg[i], Rax);
         }
-        if (in.func == "write") {
+        if (in.func.empty()) {
+            loadRax(im, in.a);
+            u8(im, 0xFF);
+            u8(im, 0xD0);
+        } else if (in.func == "write") {
             movImm(im, Rax, 1);
             u8(im, 0x0F);
             u8(im, 0x05);

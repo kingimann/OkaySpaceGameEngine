@@ -1933,6 +1933,8 @@ public:
 
     Module run(Tu& tu) {
         for (auto& d : tu.decls)
+            if (d && d->function) noteFunc(*d);
+        for (auto& d : tu.decls)
             if (d && !d->function) addGlobal(*d);
         for (auto& d : tu.decls)
             if (d && d->function && d->body) lowerFunc(*d);
@@ -1974,6 +1976,7 @@ private:
         bool agg = false;
         bool mem = false;
         bool zext = false;
+        bool func = false;
         std::string gname;
         int width = 8;
         int step = 0;
@@ -2310,6 +2313,16 @@ private:
         for (int i = 0; i < n; ++i) b.push_back(static_cast<unsigned char>((u >> (8 * i)) & 0xffu));
     }
 
+    void noteFunc(Decl& d) {
+        if (d.name.empty()) return;
+        Sym s;
+        s.func = true;
+        s.global = true;
+        s.gname = d.name;
+        s.width = 8;
+        globals_[d.name] = s;
+    }
+
     void addGlobal(Decl& d) {
         if (!d.type) return;
         Sym s;
@@ -2347,6 +2360,15 @@ private:
         if (!s) {
             err(line, col, "not lowered: " + name);
             return {};
+        }
+        if (s->func) {
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::LeaSym;
+            in.dst = dst;
+            in.func = s->gname;
+            emit(in);
+            return Val{Operand::vreg(dst), 0, 0};
         }
         if (s->mem) return loadMem(s->reg, s->width, s->zext);
         if (s->array || s->agg) {
@@ -3001,10 +3023,21 @@ private:
     }
 
     Val lowerCall(Expr& e) {
-        if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
+        if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
         }
+        bool direct = false;
+        std::string fname;
+        Operand target;
+        if (e.kids[0]->kind == Expr::Kind::Name) {
+            Sym* s = find(e.kids[0]->text);
+            if (!s || s->func) {
+                direct = true;
+                fname = e.kids[0]->text;
+            }
+        }
+        if (!direct) target = lowerExpr(*e.kids[0]).op;
         std::vector<Operand> args;
         for (std::size_t i = 1; i < e.kids.size(); ++i) {
             if (!e.kids[i]) continue;
@@ -3021,10 +3054,18 @@ private:
         Inst in;
         in.op = Inst::Op::Call;
         in.dst = dst;
-        in.func = e.kids[0]->text;
+        if (direct) in.func = fname;
+        else in.a = target;
         in.args = std::move(args);
         emit(in);
-        return Val{Operand::vreg(dst), 0, 0};
+        Val out{Operand::vreg(dst), 0, 0};
+        if (e.checked && e.checked->kind == Type::Kind::Pointer) {
+            out.step = valueStep(e.checked.get());
+            out.inner = innerOf(e.checked.get());
+            if (e.checked->inner && e.checked->inner->kind == Type::Kind::Struct)
+                out.fields = layoutOf(e.checked->inner.get());
+        }
+        return out;
     }
 
     void lowerStmt(Stmt& s) {

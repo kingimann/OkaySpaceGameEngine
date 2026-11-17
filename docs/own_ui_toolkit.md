@@ -267,7 +267,7 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 
 | # | Family | Call sites | Status | What is there, what is missing | Difficulty |
 |---|---|---|---|---|---|
-| 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. `IsItemFocused`, `IsItemVisible`, `GetItemID`, `IsAnyItemActive` (step 6). Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemEdited`, `IsItemDeactivatedAfterEdit` (17) | S |
+| 1 | Item and hover queries, tooltips | 3,274 | PARTIAL (step 32) | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. `IsItemFocused`, `IsItemVisible`, `GetItemID`, `IsAnyItemActive` (step 6). Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemEdited`, `IsItemDeactivatedAfterEdit` (17); hover flags (disabled, popup, held item, overlapped, rect only, any window, delays, stationary), `BeginTooltip` blocks with widgets, `IsItemEdited`, `IsItemDeactivatedAfterEdit` (step 32, section 4.36). Still missing: `GetStateStorage`, `SetItemKeyOwner`. | S |
 | 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. `BeginGroup`/`EndGroup` and `NewLine` (steps 3 and 7). Missing: `GetContentRegionMax` (25), `CalcItemWidth` | S |
 | 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. `PushTextWrapPos`/`PopTextWrapPos` (step 5; takes a width, not an x position). Missing: printf-style formatting (callers format first) | S |
 | 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
@@ -275,20 +275,20 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 | 6 | Style and colours | 1,896 | PARTIAL (step 29) | `Style()`, `PushTextScale`, `GetColorU32`, `PushStyleVar`/`PopStyleVar` (step 20), and now the full colour set: 58 `Col_*` ids (the 8 originals and the Dear ImGui set) with theme-derived defaults, `PushStyleColor` (bytes, packed or float), `SetStyleColor`/`ResetStyleColor`, `GetStyleColorVec4`, `GetStyleColorName`, colour converters. Most ids are drawn by the widgets that use them (section 4.33 lists them). Missing: `PushFont`/`PopFont` of arbitrary fonts; ids nothing draws with yet (the navigation highlights, `BorderShadow`, the unfocused tab colours, the hovered and active separator) | M |
 | 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL (step 2) | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`, and now `DragFloat2/3/4`, `DragInt2/3/4` and `DragFloatRange2` (several drag cells in one row sharing a label; each cell scrubs alone, clamps, range cells never cross). Missing: `DragIntRange2`, format strings, typing into the single-value `DragFloat`/`SliderFloat` (the multi-cell ones can, step 10), a drag-speed modifier key | M |
 | 8 | Window, child, scroll | 1,074 | PARTIAL (step 28) | `Begin`/`End`, `BeginChild`, resize grip, pin, `SetNextWindow*`, window queries, and now z-order with click to front, input occlusion between overlapping windows and over docked content, and the flags `NoScrollbar`, `NoBackground`, `NoCollapse`, `AlwaysAutoResize`, `NoFocusOnAppearing`, `NoBringToFront` (section 4.32). Windows begun with `Begin(title, p_open, flags)` scroll when their content overflows. Missing: `SetNextWindowSizeConstraints`, `GetScrollY`/`SetScrollY`/`SetScrollHereY` for windows, no scroll with mouse, saved window settings | M |
-| 9 | Popups | 1,038 | PARTIAL | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) | M |
+| 9 | Popups | 1,038 | PARTIAL (steps 12, 32) | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) [Update: modal popups were step 12; now also `BeginPopupContextWindow`, `BeginPopupContextItem(id, flags)`, `IsPopupOpen(id, flags)` with `AnyPopupId` (step 32). Still missing: `GetMousePosOnOpeningCurrentPopup`, `BeginPopupEx`.] | M |
 | 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. shortcut text, checked and enabled state, `MenuSeparator` (step 11). Missing: nested sub-menus, `Shortcut` handling (the text is display only) | M |
-| 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
+| 11 | Mouse, keys, IO | 901 | PARTIAL (step 32) | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92); now the middle button, `GetMouseDragDelta`, `ResetMouseDragDelta`, `MouseButton_*`, `Key_*` names, `KeyId_Slash` (step 32). | M |
 | 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
 | 13 | Combo and selectable | 618 | HAVE (step 30) | `Combo(items)`, `Selectable`, `ListBox`, `BeginCombo`/`EndCombo` (step 9), and `Selectable` with a size, a pointer overload and flags (disabled, close the popup, span all columns, double click only; section 4.34) | done |
 | 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8, and now IME composition (`Input::composition`, `compositionCaret`, `commit`; underlined preedit, commit, cancel, caret rectangle for a host's candidate window; step 27). `InputTextWithHint` and `SetKeyboardFocusHere` (step 4). A separate multi-line code editor widget, `OkayUI::CodeEdit` (step 25, `docs/own_ui_code_editor.md`; not `InputTextMultiline` itself). `InputTextMultiline` (step 30, on `CodeEdit` without the gutter; section 4.34). Missing: password, callbacks, `InputText` flags beyond read only, enter-returns-true and select-all, a word-wrapping multi-line box | M |
 | 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
-| 16 | Tables | 233 | PARTIAL (steps 14, 31) | `BeginTable` with headers, weights, drag-resizable columns, `Columns`, `TableSetColumnIndex`, flags, and now sorting (header clicks, multi-key, tristate, default sort, the sort specs API), scrolling boxes (`Table_ScrollX`/`Table_ScrollY`, wheel, bars, `TableSetupScrollFreeze` for frozen rows and columns), full-height row bands and `TableSetBgColor` (section 4.35). Missing: column reordering and hiding, `TableSetupColumn` flags beyond fixed width and sorting, per-column header tooltips, context menu on the header, `TableGetHoveredColumn`, nested tables, auto-fit columns, a scrolling table inside a collapsed parent clipped by `BeginChild` gets no special care | M |
+| 16 | Tables | 233 | PARTIAL (steps 14, 31, 33) | `BeginTable` with headers, weights, drag-resizable columns, `Columns`, `TableSetColumnIndex`, flags, and now sorting (header clicks, multi-key, tristate, default sort, the sort specs API), scrolling boxes (`Table_ScrollX`/`Table_ScrollY`, wheel, bars, `TableSetupScrollFreeze` for frozen rows and columns), full-height row bands and `TableSetBgColor` (section 4.35). Missing: column reordering and hiding, `TableSetupColumn` flags beyond fixed width and sorting, per-column header tooltips, context menu on the header, `TableGetHoveredColumn`, nested tables, auto-fit columns, a scrolling table inside a collapsed parent clipped by `BeginChild` gets no special care; step 33 (section 4.37): hiding columns (`Col_DefaultHide`, `Col_NoHide`, the header menu with `Table_Hideable`, `TableSetColumnEnabled`), `Col_NoResize`, `Col_NoHeaderLabel`, `TableGetHoveredColumn`, name and flag queries. Column reordering is still a GAP. | M |
 | 17 | Tree nodes | 201 | HAVE (step 30) | `TreeNode`, `CollapsingHeader`, `TreeNodeEx` (default open, leaf, selected, open on arrow, open on double click, bullet, span full width, no tree push, framed), `SetNextItemOpen`, `IsItemToggledOpen` | done |
 | 18 | Colour editors | 168 | HAVE (step 29) | `ColorEdit3`/`ColorEdit4` with flags (no alpha, hex, no inputs, no picker, no label), a click on the swatch opens a picker popup, `ColorButton`, `ColorPicker3`/`ColorPicker4` (saturation / value square, hue bar, alpha bar, current and original preview, hex field, R G B A cells), hex helpers. Missing: HSV input mode, a float display mode, the picker's wheel layout, copy and paste of a colour by right click | done |
 | 19 | Drag and drop | 123 | PARTIAL | `DragSource(int)`, `DropTarget(int*)`. Missing: typed payloads, a preview while dragging, drop on custom rectangles | M |
-| 20 | Tabs | 55 | PARTIAL | `TabBar(labels)`. Missing: `BeginTabBar`/`BeginTabItem` with content, closable and reorderable tabs, `TabItemButton` | M |
+| 20 | Tabs | 55 | PARTIAL (steps 17, 33) | `TabBar(labels)`, `BeginTabBar` / `BeginTabItem` with bodies, closable tabs, `TabItemButton`, trailing tabs (step 17), and now `BeginTabBar(id, flags)` with `Reorderable` (drag a tab along the bar), `AutoSelectNewTabs`, middle click closes a closable tab, an unsaved-document dot (section 4.37). Missing: an overflow strip or tab-list popup (tabs past the bar are cut off), tab tooltips | M |
 | 21 | Clipboard | 52 | GAP | none. Needs the clipboard in `okay::platform`, and copy, cut and paste in the text field | S |
-| 22 | Docking and viewports | 36 + 6 mentions of viewport flags | PARTIAL (step 26) | `DockSpace`, `DockBegin`/`DockEnd`, dock into the left, right, top, bottom or centre of a node, splitters with minimum sizes, tabs (reorder, close, tear off), drag a title bar or tab onto drop targets with a preview, layout save and load as text, repair of damaged layouts (`okayui/include/okay/UI/OkayUIDock.hpp`, section 4.30). Floating windows now stack and take clicks in order, and docked content sits below them (step 28, section 4.32). Missing: multi-viewports (OS windows from `okay::platform`), the `DockBuilder*` call shapes, central node and node flags | L |
+| 22 | Docking and viewports | 36 + 6 mentions of viewport flags | PARTIAL (steps 26, 34) | `DockSpace`, `DockBegin`/`DockEnd`, dock into the left, right, top, bottom or centre of a node, splitters with minimum sizes, tabs (reorder, close, tear off), drag a title bar or tab onto drop targets with a preview, layout save and load as text, repair of damaged layouts (`okayui/include/okay/UI/OkayUIDock.hpp`, section 4.30). Floating windows now stack and take clicks in order, and docked content sits below them (step 28, section 4.32). Missing: multi-viewports (OS windows from `okay::platform`), the `DockBuilder*` call shapes, central node and node flags; dock layouts written as code: `DockBuilderAddNode`, `SplitNode`, `DockWindow`, `Finish` and a pure `DockBuilderTree` that builds into the dock model (step 34, section 4.38). Still missing: `SetNextWindowDockID`, `GetWindowDockNode`, undock by id, ini save in memory, multi-viewports. | L |
 | 23 | Fonts, IME, emoji | 150 `SetWindowFontScale`, 7 `PushFont`, 26 IME mentions | PARTIAL | the 8x8 font, a bold variant, the launcher look's Roboto atlas with engine TrueType fallback. IME composition input and the caret rectangle for the candidate window (API only; step 27, section 4.31). Missing: arbitrary fonts and a monospace code font, merged icon fonts, the operating-system side of IME (no host code anywhere sends `Input::composition` yet), wide-character cells, colour emoji | L |
 | 24 | Images, plots, progress | 3 plots, 16 images | HAVE (step 30) | `PlotLines`, `PlotHistogram` (and with options: ring offset, overlay, size, getter, hover highlight and tooltip), `Image`, `ProgressBar` (and with a size and an indeterminate bar). The software test backend does not draw textures | done |
 | 25 | Backends | not counted | PARTIAL | SDL_Renderer, Direct3D 11 (ignores clip spans and textures), CPU software. No OpenGL, no Direct3D 12 | M |
@@ -606,6 +606,71 @@ Row clipper (a later change to step 31): a table row wholly outside what can be 
 
 Not done: column reordering, hiding and the header context menu, auto-fit by double click on a border, `TableSetColumnEnabled`, `TableGetHoveredColumn`, outer and inner vertical borders as flags, sizing policies beyond fixed and weighted, nested tables, row selection helpers, keyboard navigation, a horizontal bar for a ScrollY-only table; a frozen-column set wider than 90% of the box is dropped; the row-height memory holds the first 256 rows (later rows get a one-row band); `Selectable_SpanAllColumns` in a scrolling table is limited by the cell's clip; not run in a real window or on Windows.
 
+### 4.36 Gap-closing step 32: the ImGui-shaped names (families 1, 11, 8, 9, 16, 20, and the type coverage of section 6)
+
+Goal: a panel written for an immediate-mode toolkit with ImGui-shaped calls should port with its structure unchanged. Section 6.1 measured the types, flags and enums as the real blocker (75.7% of their uses had an OkayUI name). This step adds the names and the calls that take them. Written from how the calls are used in our own editor and from general knowledge of how such toolkits behave; nothing is copied or ported from Dear ImGui or any other project (CLAUDE.md rule 19a).
+
+New header `okayui/include/okay/UI/OkayUIImCompat.hpp`, definitions in `okayui/src/OkayUI.cpp` (they need the context's private state). Each enum says in the header which flags are really honoured and which are only accepted so the call compiles.
+
+- **Mouse.** `Input::middleDown` (the host calls `OkayUIHost::Build` and the editor copies only some fields of its result, so NO real window forwards the middle button yet: it works in the headless tests only; the editor and launcher call sites still need a `middleDown` argument), `MouseButton_Left/Right/Middle`; `IsMouseDown`, `IsMouseClicked`, `IsMouseReleased`, `IsMouseDragging` and `IsItemClicked` now take the middle button too; `GetMouseDragDelta(button, threshold)` and `ResetMouseDragDelta`.
+- **Hover and focus flags.** `IsItemHovered(flags)`, `IsWindowHovered(flags)`, `IsWindowFocused(flags)`, `IsAnyItemHovered`. Honoured: `AllowWhenDisabled`, `AllowWhenBlockedByPopup`, `AllowWhenBlockedByActiveItem`, `AllowWhenOverlapped`, `RectOnly`, `AnyWindow`, `Stationary`, `DelayShort` (0.15 s), `DelayNormal` (0.4 s), `ForTooltip`. `ChildWindows` / `RootWindow` are the same as none because a child region is part of its window here. The flagged calls are false while another item is held, as in toolkits of this kind; the plain `IsItemHovered()` is unchanged.
+- **Child windows.** `BeginChild(id, Vec2 size, childFlags, windowFlags)`: `Borders` (the panel behind it; without it there is none), `AutoResizeY` (last frame's content height plus the padding), `FrameStyle`, negative sizes. `AlwaysUseWindowPadding`, `ResizeX/Y`, `AutoResizeX`, `NavFlattened` are accepted and do nothing.
+- **Edit marks.** `IsItemEdited`, `IsItemDeactivatedAfterEdit` (slider, drag, check box, radio, combo, number and text fields, colour editors): every value widget reports its change through one small function, and the mark lives until the item is let go (or, for a text field, loses the keyboard).
+- **Item width.** `CalcItemWidth` (what is left, or `SetNextItemWidth` / `PushItemWidth`).
+- **Tooltips with widgets in them.** `BeginTooltip` / `EndTooltip` / `BeginItemTooltip`: an overlay box that follows the pointer, flips to stay in the display, is sized from last frame's content, and never takes the pointer (it registers no blocking overlay, so the item under the pointer stays hovered).
+- **Popups.** `BeginPopupContextWindow(id, popupFlags)`, `BeginPopupContextItem(id, popupFlags)` (left, right or middle button, `NoOpenOverItems`), `IsPopupOpen(id, flags)` with `AnyPopupId`.
+- **Draw flags.** `DrawList::AddRect(min, max, col, rounding, drawFlags, thickness)` and `AddRectFilled(..., rounding, drawFlags)` with `RoundCornersTop / Bottom / Left / Right / the four single corners / None` (the corners are drawn as a path), `AddNgon`, `AddNgonFilled`; `DrawFlags_Closed`.
+- **Names only.** `Key_*` (spelled as ImGui code spells them, on `KeyId`), `Dir_*`, `ID`, `TextureID`, `PopupFlags`, `ButtonFlags`, `FocusedFlags`, plus a `KeyId_Slash` (so the code editor's Ctrl+/ has a key).
+
+What the usage report says after this step (`python3 scripts/imgui_usage_report.py`, by name, so generous): types, flags and enums 80.4% (the figure on this branch's base; section 6.1 had 75.7% before other work) to 97.3% of their uses; `ImGui::` calls 98.8% to 99.1%; draw-list methods 98.7% to 99.1%. The report script now also maps `ImVec4`, `ImTextureID`, `ImDrawFlags_*` and OkayUI's short spellings `Col_*`, `Table_*`, `Tab_*` for the table and tab flag families, which it did not before. What is still missing is listed in the report: it is now mostly Dear ImGui's own internal types (`ImGuiWindow`, `ImGuiPayload`, `ImRect`, `ImFont`, `ImGuiContext`, `ImGuiDockNode`), `GetStyle` (87 uses of a struct OkayUI does not mirror), the context and viewport calls, `SetNextWindowDockID` / `GetWindowDockNode` (the editor's own dock bookkeeping), and a handful of flags (`InputTextFlags_Password` and the callbacks, `SliderFlags_Logarithmic`, `ListClipper`).
+
+Two behaviours worth knowing: a child begun through the new `BeginChild(id, size, childFlags)` does not count the gap after its last item as content (the one-call `BeginChild` still does, so existing screens and goldens are unchanged), which keeps a child that just fits from growing a scroll bar; and `PlotLines` / `PlotHistogram` now hide everything after `##` in their label, as every other widget does (the Stats port found it: the label `##fps` was being drawn next to the plot).
+
+Tested: `okayui/tests/test_okayui_imcompat.cpp` (114 checks, headless, synthetic input, three golden pictures): the names and their relations, the middle button, drag deltas with the threshold and the reset, every honoured hover flag (disabled, held item, delay and stationary timing in frames, leaving resets the delay), window hover and focus flags, child borders / auto resize / negative sizes / hostile numbers, edit marks for a slider, a check box, a drag field that was not moved, and a text field (typing, then losing the keyboard), `CalcItemWidth` with and without overrides, a tooltip with widgets (drawn near the pointer, not nestable, harmless unbalanced end), context popups (right and left button, `NoOpenOverItems`, closing by a click away) and the rounded-corner and n-gon pixels.
+
+### 4.37 Gap-closing step 33: tabs and tables, the rest of what the editor calls (families 20 and 16)
+
+Tabs (`OkayUI.cpp`, next to `BeginTabBar`): `BeginTabBar(id, flags)` with `TabBarFlags_Reorderable` (drag a tab along the bar and it swaps with the tab under the pointer; the order and the widths are remembered per bar, so tabs are placed from last frame's widths, one frame late for a new tab), `AutoSelectNewTabs` (a tab that appears after the bar's first frame becomes the chosen one), `NoCloseWithMiddleMouseButton`; a closable tab closes with a middle click; `TabItem_UnsavedDocument` draws a dot; the other flags are accepted. Tabs that disappear leave no gap. The ordering rule is a small public pure function, `TabDragTarget(widths, n, from, left, gap, mouseX)`, tested alone and through a bar.
+
+Tables (flag-style tables, `BeginTable(id, n, flags)` + `TableSetupColumn`): column flags `Col_NoResize` (the borders on either side cannot be dragged), `Col_DefaultHide`, `Col_NoHide`, `Col_NoHeaderLabel`, `Col_WidthStretch` (the default, accepted); `Table_Hideable` (a right click on the header row opens a menu with a check box per column; a `NoHide` column and the last visible one are locked); `TableSetColumnEnabled`, `TableGetColumnIsEnabled`, `TableGetColumnCount`, `TableGetColumnName`, `TableGetColumnFlags`, `TableGetHoveredColumn`. The hidden set is remembered per table. A hidden column has no width, header or border, the resize handle next to it works on the nearest visible column, `TableNextColumn` / `TableSetColumnIndex` return false for it, and anything drawn in its cell lands far off screen (so it is never seen or hit). Accepted and doing nothing: `Table_Resizable` (columns are resizable unless `Table_NoResize`, the reverse of the usual default), `Table_Reorderable`, the border and sizing-policy flags, `Col_NoReorder`, `Col_NoClip`, `Col_IndentEnable`.
+
+Tested in `test_okayui_imcompat.cpp` (and the fuzz, see below): hide from code and show again (the layout comes back to the pixel), the third column taking the hidden one's place, a locked column refusing, hiding every column refused, a column that starts hidden, the header menu opening on a right click, `NoResize` against a normal border drag, hostile column numbers.
+
+Not done: column reordering by dragging a header (the flag is accepted), auto-fit by double click on a border, tab overflow (a scroll strip or a tab-list popup: tabs past the bar's width are cut off), tab tooltips.
+
+### 4.38 Gap-closing step 34: dock layouts written as code (family 22)
+
+`okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUIDockBuilder.cpp`. The editor builds its layout presets with a builder: make a root node, split it, name the new parts, dock windows into them (`BuildLayoutPreset` in `editor/main.cpp`). OkayUI's dock had no such way in. Written from that usage and from OkayUI's own `DockLayout`:
+
+- `DockBuilderTree` (pure, no drawing): `AddNode`, `RemoveNode`, `SetNodeSize`, `SplitNode(node, dir, ratio, &side, &opposite)`, `DockWindow`, `GetNode`, `Validate`, and `Build(root, DockLayout&)` which turns the tree into the dock model: windows of a leaf in tab order with the first chosen, splits with their sides and ratios, parts with no windows dropped (the model has no empty leaves), and the result passes `DockLayout::Validate`.
+- The same calls over one tree in the context under the usual names: `DockBuilderAddNode`, `DockBuilderRemoveNode`, `DockBuilderSetNodeSize`, `DockBuilderSplitNode`, `DockBuilderDockWindow`, `DockBuilderGetNode`, `DockBuilderFinish(root)` (builds into `GetDockLayout()`, so the next `DockSpace` shows it).
+
+How it differs, plainly: node ids are plain integers (`GetID("name")` is the usual way to pick the root's); `SplitNode` makes two new leaves and moves what the node held into the opposite one, so the id you split stays the container (the common `split(from, dir, ratio)` helper that writes the opposite id back into `from` works as it does elsewhere); node sizes are kept but do not change the result (ratios do the work); there are no dock node flags; the editor's own dock bookkeeping (`SetNextWindowDockID`, `GetWindowDockNode`, undocking by id, ini save in memory) is NOT covered. Save and restore of a layout was already there (`DockSaveLayout`, `DockLoadLayout`; section 4.30).
+
+Tested in `okayui/tests/test_okayui_dockbuilder.cpp` (52 checks, one golden picture, `docs/images/okayui/dockbuilder_tall_preset.png`): the tree (split a leaf, split a split, windows moving, removing a leaf collapses its parent, bad arguments, NaN and out-of-range ratios), building (sides, ratios checked against the computed geometry, tab order and the chosen tab, an empty side dropped, an empty tree, an unknown root leaving the target alone, a Save and Load round trip with no repairs), a preset in the shape of the editor's "Tall" layout written with the context calls and drawn through `DockSpace` / `DockBegin` (the chosen tabs answer true, the content areas are where the preset says), and a fuzz of 40 seeds of random operations that must keep the tree and the built layout valid.
+
+### 4.39 Gap-closing step 35: code editor line commands (family 14)
+
+`OkayUI::CodeEdit` already covered everything the script editor asks of its old widget (`docs/own_ui_code_editor.md`). Three editing commands that code editors have and the "NOT DONE" list named were added: `ToggleLineComment(prefix)` (comment or uncomment the lines the selection touches, at the smallest indent, blank lines left alone, the caret stays on the same text), `MoveLines(down)` and `DuplicateLines()`; each is one undo step. Keys, only while the widget has the keyboard: Ctrl+/ toggles, Alt+Up / Alt+Down move, Ctrl+Shift+D duplicates (`KeyId_Slash` is new, and `shared/OkayUIHost.hpp` maps SDL's slash key to it). Tested in `test_okayui_codeedit.cpp` (`LineCommandTests`; the file now has 445 checks): comment and uncomment round trips, mixed lines, a selection ending at a line start, read only, moving a block, the first and last line, duplicating, undo and redo of each, and the keys through `Draw`. Not done: moved lines do not take breakpoints with them; word wrap, folding, multiple cursors, auto-close brackets stay on the list in `docs/own_ui_code_editor.md`.
+
+### 4.40 Gap-closing step 36: the Stats window, ported (tables, plots, check boxes, tooltips)
+
+The editor's Stats window (View menu, `DrawStats` in `editor/main.cpp`) is now also drawn by OkayUI behind the developer-only opt-in backend (section 5): the big frame-rate readout coloured by band, the frame time and average / minimum, an auto-scaled plot of the last 120 frames with a 60 fps guide, the scene counts in a four-column grid, and the culling and batching switches with their hover help. Dear ImGui is still the default and still draws it unless the switch is on.
+
+- `okayui/screens/OkayUIPanels.{hpp,cpp}`: `okayuiscreens::DrawStats(StatsModel, x, y, w, h)` plus pure helpers `FpsBand`, `HistoryStats`, `PlotScale`, `FormatCount`. Written from what the editor's window shows (its fields, thresholds and colours), using OkayUI's plot with a ring offset, a table, check boxes and the new `BeginTooltip` and hover delay flags.
+- `editor/OkayPanels.{hpp,cpp}`: `DrawStatsOkayUI` hosts it exactly like the Crash Log and the Audio Mixer (the ImGui window stays as the dock tab and the close box; OkayUI gets the free area as one rectangle; with an ImGui popup over the window the ImGui version is drawn that frame).
+- `editor/main.cpp`: `CollectStatRows` now builds the count rows once for both versions, so they cannot drift; `DrawStats` calls the OkayUI one first when the backend is on. Nothing else in the ImGui window changed.
+
+Differences from the ImGui window, measured on the side-by-side picture: the rows of the count grid are about 31 pixels apart against 19 in the ImGui window (OkayUI's table cells are one full widget row high), so the OkayUI window needs about 40 pixels more height before the switches are on screen, and it scrolls when it is shorter; the readout is OkayUI's 2x text, not a separate heading font; the plot is OkayUI's (hover highlight and a tooltip on a point, which the ImGui plot does not have); the two hover helps use a tooltip box that appears after a short delay instead of at once; the "moved to the Lighting tab" line is not tinted. Tested: `test_okayui_panels.cpp` now has 103 checks (was 74): the pure helpers (bands, history statistics, plot scale, count format, with NaN and infinity), the layout, each switch editing only its own value, the hover help appearing after the delay and not before, the three frame-rate bands, an empty history and no switches, hostile numbers, a short window that scrolls, and two goldens (`stats_default`, `stats_tooltip`). Not verified: a real editor window (nothing here ran the editor; `editor/OkayPanels.cpp` and `editor/main.cpp` were only compiled with `-fsyntax-only` against the real headers); Windows.
+
+How the comparison picture was made: `tools/okayui_stats_compare.cpp` draws the SAME ImGui calls (copied there with fixed data, in ImGui's default dark style and built-in font, not the editor's skin) and the real OkayUI screen side by side, both headless. Pictures: `docs/images/okayui/stats_side_by_side.png` (ImGui left, OkayUI right), `stats_okayui.png`, `stats_okayui_tooltip.png`. These are headless renders, not screenshots of the editor. The other pictures of this step are `tabs_reordered.png`, `table_hide_menu.png`, `children_tooltip_shapes.png` and `dockbuilder_tall_preset.png` (the goldens of the tests, launcher look, headless).
+
+### 4.41 Test results and how close Dear ImGui is to removal (steps 32 to 36)
+
+Run on Linux, Release, GCC, headless (`SDL_VIDEODRIVER=dummy`), after this step: the 22 OkayUI test programs that were built (`soft`, `behaviour`, `golden`, `drawlist`, `painter`, `values`, `codeedit`, `dock`, `compose`, `windows`, `color`, `widgets`, `tables`, `render`, `screens`, `host`, `compat`, `panels`, `imcompat`, `dockbuilder`, `script_adapter` and `fuzz`) all pass with 0 failures. The long ones: `compose` 26,370 checks, `tables` 19,486, `widgets` 14,484, `color` 9,514, `render` 8,566. `dock_fuzz` (318,334 checks), `windows_fuzz` (155,198), `codeedit_fuzz` (36) and `render_gl` (272, on a software GL) also pass. The fuzz test gained four operations that call the new API with hostile flags and sizes; they found one real crash in this step's own code (`TableGetHoveredColumn` before the table's columns were set up), now fixed. Under AddressSanitizer and UndefinedBehaviorSanitizer (the OkayUI sources and three test programs compiled with `-fsanitize=address,undefined`, linked with the normal engine library, run by hand, not by CI) `fuzz` (four seeds, up to 1,500 iterations), `imcompat`, `dockbuilder` and `codeedit` are clean. Not run: the Windows build, the Direct3D 11 check, the web build, the editor and the launcher (only `-fsyntax-only` of `editor/main.cpp` and `editor/OkayPanels.cpp` with `OKAY_HAVE_OKAYUI`), `render_bench`.
+
+How close is Dear ImGui to removal? Not close. By name, the editor, launcher and shared code now find an OkayUI name for 99.1% of their `ImGui::` call sites and 97.3% of the types, flags and enums they use (`docs/imgui_port_report.md`; the report counts names, not behaviour, and several of the new flags are accepted and do nothing, each said in its header). That measures what a port would have to rename, not how much runs. What runs on OkayUI today, behind the developer switch: four editor windows (Console, Crash Log, Audio Mixer, Stats), the launcher pages What's New and Tips, and the script editor's code widget. The four editor windows hold 232 of about 27,300 `ImGui::` call sites (0.8%). Dear ImGui still draws everything else, still owns the windows, the editor's docking, the viewports, the fonts and the platform backend (SDL2), and is the default in every build. Between here and removal: port the other ~220 editor screens (the Inspector alone is more than a fifth of the call sites), the editor's own dock bookkeeping, `GetStyle`, internals such as `ImRect` and `ImGuiPayload`, host-side IME, a code font, multi-viewports, column reordering and tab overflow; then own window and platform code to replace SDL2; then a long run in real windows on Windows. This step moved that by one screen and removed some of the reasons a port would fail to compile.
+
 ## 5. Wiring OkayUI into the real apps (opt-in second backend)
 
 **Developer-only.** Owner rule: no own-code replacement is turned on until it is declared ready and bug free. So this switch is not offered to users. In a normal run Dear ImGui is the only UI: the settings rows below are not shown, and a stale `ui_backend=okayui` (launcher.cfg) or `uibackend 1` (okay_settings.txt) left in a saved file is ignored. The rows appear, and the saved value is honoured, only with the developer flag `OKAY_DEV` set (the switch the editor already uses for its launcher gate and its "Test UI" menu entry; the launcher reads the same variable). `OKAY_UI_BACKEND` (an explicit developer act, also used by the tests) and the CMake option `OKAY_UI_DEFAULT_BACKEND` keep working without it.
@@ -906,15 +971,15 @@ Same data and actions as the Dear ImGui versions:
 
 ### 8.4 Differences from the Dear ImGui versions (blunt)
 
-Section 8.6 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the frame of
-mouse latency). What is left:
+Sections 8.6 and 8.7 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the
+frame of mouse latency, anti-aliased edges, the search field's hover tint, the scrollbar thumb length, the sort list and the
+right-click menu). What is left:
 
-- **All three.** Edges: OkayUI draws shapes without Dear ImGui's anti-aliased fringe, so rounded corners, circles and the
-  hexagon outlines differ by a pixel of shading. Text is the same font at the same whole-pixel sizes, but it is rasterised by our
-  own TrueType code, so single glyph pixels differ in shade. No hover cursor change outside OkayUI's own cursor state.
-- **Achievements.** The sort list that opens under the combo and the right-click menu are OkayUI's popups (their own look);
-  the search field shows no hover tint.
-- **Notifications.** The scrollbar thumb is OkayUI's (same place and width, slightly different length).
+- **All three.** Text is the same font at the same whole-pixel sizes, but it is rasterised by our own TrueType code, so single
+  glyph pixels differ in shade; text at sizes the atlas does not bake (the 0.74x "POINTS" labels, the NEW pill) is scaled from
+  the nearest bake. No hover cursor change outside OkayUI's own cursor state.
+- **Achievements.** The right-click menu is about 30 px narrower than Dear ImGui's (it fits its widest entry plus the padding;
+  Dear ImGui's is wider for a reason not found). The showcased tile's right edge differs by a pixel where the list is clipped.
 - **Not done:** the other launcher pages (Settings, Friends, Servers and the rest); Windows was not built or run.
 
 ### 8.5 Speed
@@ -973,9 +1038,9 @@ right of and 10 px below the mouse, padded 14 x 12.
 **Launcher changes** (`launcher/main.cpp`): the OkayUI Downloads and Achievements areas end 46 px above the bottom, where the Dear
 ImGui lists end. The **Dear ImGui Downloads rows** are now as tall as their three lines (98 px at the default size; they were 80 px,
 which cut the buttons off and gave each row a scrollbar): a bug fix in the default page. The OkayUI Downloads page reads and
-changes the list through `DlSnapshot` and `DlApply`, written next to the download manager. They use the same SDL mutex
+changes the list through `DlSnapshotInto` (section 8.7: it was `DlSnapshot`) and `DlApply`, written next to the download manager. They use the same SDL mutex
 (`SDL_LockMutex(g_dlMutex)`) and SDL thread join (`SDL_WaitThread`) as the rest of the download manager on main, which still runs
-its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshot` (one lock), `DlApply` (one lock, one join per removed
+its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshotInto` (one lock), `DlApply` (one lock, one join per removed
 download) and the demo seed `SeedDemoDownloads` (one lock).
 
 **Pixel difference** (real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, `OKAY_UI_DEMO_USER=demo`, the same demo data
@@ -1015,6 +1080,92 @@ launcher's line icons (stroked paths) and the faux-bold titles. The speed fixes 
 from a table, an inline `floor` in the text path, re-wrapping a notification only when it changes, cheaper row outlines) won
 back part of it. The owner's rule needs "faster": Achievements is; Downloads and Notifications are now level, not faster.
 Headless (`okayui_launcher_pages`) figures are printed by the test and vary too much on this machine to quote.
+
+### 8.7 Anti-aliased edges, and a clear speed lead
+
+The owner's rule is "we only switch when it's faster and up to par". After 8.6 the pages looked almost the same but Downloads and
+Notifications were only level on speed, and OkayUI drew shapes without the soft one-pixel edge Dear ImGui gives them.
+
+**Anti-aliased edges** (`Theme::antiAliased`, off by default, turned on by the launcher pages). Written for OkayUI from the
+general idea of edge fringes, no other project's code: a shape is drawn with its edge pulled in by half a pixel at full colour,
+plus a ring one pixel wide whose outer rim, half a pixel outside the true edge, has alpha 0, so the rasteriser fades the edge.
+Strokes get a fringe on both sides of a core `thickness - 1` wide (a stroke under one pixel has no core and fades by its
+thickness). Covered: filled and stroked convex polygons (one colour or one per point), lines, polylines and paths, circles and
+rings, rounded rectangles and their outlines, triangles; plain axis-aligned rectangles, and horizontal or vertical lines whose
+sides fall on pixel edges, stay plain bars (the fringe would add nothing). Circles and rounded corners take their normals from
+the unit-circle and corner tables; rounded corners on this path use as few steps as keep within 0.3 px of the arc (radius 6:
+3 steps, 12: 4).
+
+**Why the speed needed more than the fringe.** The renderer's work (SDL's geometry queue) grows with the number of triangle
+indices, and the fringe doubled them (Achievements 8,682 to 21,084 indices a frame). So, with anti-aliasing on:
+
+- The launcher atlas also holds, below the glyphs (which stay where they were), a disc and a one-pixel ring for every whole
+  radius 2 to 48, with the same one-pixel edge ramp. A filled circle with enough segments is one textured quad (6 indices
+  instead of about 280); a filled rounded rectangle is four corner quads and up to three bands (42 indices; a side off the
+  pixel grid gets its own one-pixel fade quad, up to 66); a one-pixel rounded outline on whole pixels is four ring corners
+  and four bars (48 indices instead of about 190). The Downloads rows now draw their outline this way.
+- `DrawList::Cached(key, origin, draw, user)` (new): a drawing made once and copied after that, moved by whole pixels (the
+  same pixels up to a colour level of float rounding). The Achievements medals and the Notifications line icons use it. A
+  fixed store (128 shapes, 32,768 vertices), emptied when full, on a look or anti-aliasing change and on `ResetState`.
+- `EndFrame` hands SDL only the vertices each draw call uses: SDL's cost grows with the vertex count it is handed as well (a
+  small SDL program on the same setup: 19,000 extra vertices cost about 28 us per call), and every span used to get the whole
+  batch.
+- Smaller things: ASCII decoded and looked up inline in the text loops and the fallback-font check skipped for ASCII text; a
+  stroke's segment normals worked out once with `std::sqrt`; the host code keeps the Downloads and Notifications models between
+  frames (strings reused), works out where today and yesterday begin once a minute instead of a `localtime` per row, and the
+  Downloads "12.0 MB / 48.0 MB" text is formatted again only when the numbers change.
+
+**The other differences closed:** text fields and combo boxes tint under the mouse and while typing (the Slate theme's
+`FrameBgHovered` and `FrameBgActive`); a child scrollbar with the Dear ImGui look moves its thumb along a track inset at both
+ends and draws it at full length (Dear ImGui's thumb length); popups and combo lists the Dear ImGui way (`Theme::imguiPopups`,
+on for the pages): 14 x 12 padding, 8 px corners, a hairline edge, sized to the widest item, Selectables one text line tall and
+8 px apart with the highlight reaching the padding, the combo's current item marked and its arrow button lit while open. Also:
+with `ascentRoundsUp` a text position is cut down to whole pixels (Dear ImGui's placement; it was rounded), which also makes the
+faux-bold notification titles draw as the launcher's do.
+
+**Pixel difference** (as in 8.6: real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, the same demo data on both
+backends; "clearly different" is the share of pixels where a channel differs by more than 32):
+
+| Screen | Before (8.6): mean | Before: clearly different | After: mean | After: clearly different |
+|---|---:|---:|---:|---:|
+| Downloads | 0.10 | 0.02% | 0.09 | 0.00% |
+| Notifications (over Friends) | 0.89 | 0.85% | 0.24 | 0.02% |
+| Achievements (mouse on a tile, tooltip showing) | 0.56 | 0.70% | 0.31 | 0.15% |
+| Achievements (mouse away) | 0.55 | 0.74% | 0.29 | 0.13% |
+| Sort list open (its area) | 8.08 | 8.40% | 1.20 | 0.16% |
+| Right-click menu open (its area) | 7.76 | 3.82% | 3.55 | 4.37% (the menu is narrower) |
+
+The "before" rows were measured again on this branch's starting point and match 8.6 exactly.
+
+**Speed** (`OKAY_UI_TIMING=1`, same setup, each screen 4 times per backend in alternation, each figure the median of the medians
+of 300 frames; two separate sessions of 4 rounds on a shared, busy machine, so the absolute numbers move between sessions; the
+lead is measured within a session; anti-aliasing on). The timing line now also prints each backend's index count.
+
+| Screen | Before (8.6): build + render, Dear ImGui vs OkayUI | Session 1: Dear ImGui vs OkayUI | Session 2 | Faster? |
+|---|---|---|---|---|
+| Downloads | 125 vs 124 us (tie) | 122 vs 100 us (18% less) | 140 vs 122 us (13% less) | met |
+| Notifications | 265 vs 262 us (tie) | 272 vs 228 us (16% less) | 319 vs 280 us (12% less) | met |
+| Achievements | 239 vs 219 us (8% less) | 230 vs 198 us (14% less) | 278 vs 240 us (14% less) | met |
+
+Build alone (session 2): Downloads 49 vs 36 us, Notifications 98 vs 72 us, Achievements 106 vs 83 us. OkayUI's own render work
+(session 2): 16, 49 and 80 us. Indices per frame in the launcher: Downloads 2,418 (the Dear ImGui page about 3,840),
+Notifications 7,179 (about 11,600), Achievements 14,148 (about 19,500).
+
+Instruction counts (callgrind, `okayui_launcher_pages` with `OKAYUI_BENCH_ONLY=1`, the page build over 330 frames), from the
+first anti-aliased version to now: Downloads 63.7M to 38.0M, Notifications 86.0M to 49.4M, Achievements 145.4M to 72.4M.
+Indices per frame headless: Downloads 4,566 before anti-aliasing, 8,502 with the plain fringe, 3,606 now; Notifications 6,462,
+12,738, 7,200; Achievements 8,682, 21,084, 12,360.
+
+**Tests:** `okayui_drawlist` checks anti-aliasing by area (a red shape on black: the sum of red is its area) for rounded
+rectangles on and off the pixel grid, discs, a hexagon, a disc larger than any bake, lines, a half-pixel line, outlines of 1 and
+2 px, a ring, polygons (one colour and per point, which draw the same), that plain rectangles and pixel-edge lines are unchanged,
+that a translucent rounded rectangle never blends twice, and the index counts; and `Cached` (copies match drawing again within
+a level, one run per key and fraction of a pixel, a drawing that changes the clip is not kept, junk ignored). The six
+launcher-page goldens were updated after looking at each (smooth edges, a pixel of text placement, the panel colour). No other
+golden changed (anti-aliasing and the popup look are off by default), so the editor-panel goldens on other branches are not
+affected by this step. In the real launcher with `xdotool`: Remove on a download, A to Z in the sort list, Copy id in the
+right-click menu (its toast), typing "owl" in the search, the Unread chip and a click on a notification (the panel closed and
+Friends opened) all worked. Not run on Windows or on a real GPU.
 
 ### 8.8 Three more launcher pages: Friends, Community, Versions
 

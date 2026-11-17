@@ -25,6 +25,8 @@ struct Size {
     Glyph glyphs[256];
     short ascii[128] = {};   // index into glyphs + 1 for code points below 128 (0 = not baked): text is mostly ASCII
     const Glyph* Find(unsigned cp) const;   // the ASCII table, else a binary search; nullptr if not baked
+    /// Find with the ASCII table inline (the text paths call this once per character).
+    const Glyph* FindFast(unsigned cp) const { return cp < 128 ? (ascii[cp] > 0 ? &glyphs[ascii[cp] - 1] : nullptr) : Find(cp); }
 };
 
 struct Atlas {
@@ -34,6 +36,18 @@ struct Atlas {
     float whiteU = 0, whiteV = 0;    // a fully opaque texel
     int   nsizes = 0;
     Size  sizes[12];
+    // Anti-aliased discs (Theme::antiAliased): for each whole radius T from 2 to discMax, a white disc of radius T whose alpha
+    // falls from 1 to 0 across its edge (1 half a texel inside, 0 half a texel outside, as the shapes' fringe does), centred
+    // at texel corner (discCx[T], discCy[T]) with kDiscPad clear texels around it. A circle or a rounded corner of radius r
+    // (T - 1 < r <= T) is then one textured quad instead of a fan and a fringe. discMax 0: none baked (no room).
+    static constexpr int kDiscMaxR = 48, kDiscPad = 3;
+    int   discMax = 0;
+    float discCx[kDiscMaxR + 1] = {}, discCy[kDiscMaxR + 1] = {};
+    // The same for one-pixel rings: for each whole radius T up to ringMax, a circle line one pixel wide whose centre runs at
+    // radius T - 0.5 (alpha 1 there, falling to 0 one pixel either side): the corner of a one-pixel rounded outline drawn inside
+    // its box. ringMax 0: none baked.
+    int   ringMax = 0;
+    float ringCx[kDiscMaxR + 1] = {}, ringCy[kDiscMaxR + 1] = {};
     /// The baked size to draw `pixelHeight` text with (the smallest that's >= it,
     /// else the largest).
     const Size& Pick(float pixelHeight) const;
@@ -44,6 +58,12 @@ const Atlas& Get();
 
 /// Next code point from UTF-8 (advances *s; returns 0 at the end).
 unsigned NextCodepoint(const char** s);
+/// The same with ASCII decoded inline (most text is ASCII).
+inline unsigned NextCp(const char** s) {
+    const unsigned char c = (unsigned char)**s;
+    if (c != 0 && c < 0x80) { ++*s; return c; }
+    return NextCodepoint(s);
+}
 
 /// A string with characters the atlas lacks (Cyrillic, Greek, CJK...) is drawn with
 /// the engine font okay::FontForText picks for it (the language's font, the built-in

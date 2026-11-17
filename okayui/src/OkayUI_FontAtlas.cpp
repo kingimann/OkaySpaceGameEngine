@@ -4,6 +4,7 @@
 #include "okay/UI/UIPainterSDL.hpp"    // SDLFontAtlas
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -68,6 +69,31 @@ void Build() {
         if (!okay::ttf::BakeGlyph(face, glyphIds[it.k], scales[it.s], packer, alpha.data(), baked[(std::size_t)it.s * n + it.k])) {
             ok = false; break;
         }
+    // The discs go on shelves below the glyphs (so every glyph stays where it was), as many radii as there is room for.
+    // Then the one-pixel rings the same way.
+    int discMax = 0, ringMax = 0;
+    int discX[Atlas::kDiscMaxR + 1] = {}, discY[Atlas::kDiscMaxR + 1] = {}, ringX[Atlas::kDiscMaxR + 1] = {}, ringY[Atlas::kDiscMaxR + 1] = {};
+    if (ok) {
+        int used = 0;
+        for (const okay::ttf::BakedGlyph& b : baked) used = std::max(used, b.y1);
+        int sx = 0, sy = used + 2, shelfH = 0;
+        for (int ring = 0; ring < 2; ++ring) {
+            for (int T = 2; T <= Atlas::kDiscMaxR; ++T) {
+                const int side = 2 * (T + Atlas::kDiscPad);
+                if (sx + side > W) { sx = 0; sy += shelfH; shelfH = 0; }
+                if (sy + side > packH) break;
+                (ring ? ringX : discX)[T] = sx; (ring ? ringY : discY)[T] = sy;
+                for (int y = 0; y < side; ++y)
+                    for (int x = 0; x < side; ++x) {
+                        const float dx = (float)x + 0.5f - (float)(T + Atlas::kDiscPad), dy = (float)y + 0.5f - (float)(T + Atlas::kDiscPad);
+                        const float d = std::sqrt(dx * dx + dy * dy);
+                        const float cov = std::max(0.0f, std::min(1.0f, ring ? 1.0f - std::fabs(d - ((float)T - 0.5f)) : (float)T + 0.5f - d));
+                        alpha[(std::size_t)(sy + y) * W + (std::size_t)(sx + x)] = (unsigned char)(cov * 255.0f + 0.5f);
+                    }
+                sx += side; shelfH = std::max(shelfH, side); (ring ? ringMax : discMax) = T;
+            }
+        }
+    }
     if (ok) {
         for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
         int asc = 0, desc = 0, gap = 0;
@@ -75,6 +101,10 @@ void Build() {
         Atlas& a = g_atlas;
         a.w = W; a.h = H; a.nsizes = nsizes;
         a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
+        a.discMax = discMax;
+        for (int T = 2; T <= discMax; ++T) { a.discCx[T] = (float)(discX[T] + T + Atlas::kDiscPad); a.discCy[T] = (float)(discY[T] + T + Atlas::kDiscPad); }
+        a.ringMax = ringMax;
+        for (int T = 2; T <= ringMax; ++T) { a.ringCx[T] = (float)(ringX[T] + T + Atlas::kDiscPad); a.ringCy[T] = (float)(ringY[T] + T + Atlas::kDiscPad); }
         for (int s = 0; s < nsizes; ++s) {
             Size& sz = a.sizes[s];
             sz.px = sizes[s];
@@ -126,9 +156,12 @@ const Atlas& Get() {
 okay::TtfFont* FallbackFont(const char* s) {
     const Atlas& a = Get();
     if (!a.ok || !s) return nullptr;
+    const char* q = s;
+    while (*q && (unsigned char)*q < 0x80) ++q;   // plain ASCII: the atlas has every character
+    if (!*q) return nullptr;
     const Size& z = a.Pick(16.0f);
     bool lacks = false;
-    for (const char* p = s; *p && !lacks;) {
+    for (const char* p = q; *p && !lacks;) {
         const unsigned cp = NextCodepoint(&p);
         lacks = cp >= 0x80 && !z.Find(cp);
     }

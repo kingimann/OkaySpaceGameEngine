@@ -598,6 +598,150 @@ void LabTests() {
     }
 }
 
+// Theme::antiAliased: shapes get a one-pixel edge ramp (the fringe, or a baked disc or ring from the launcher atlas). Drawn in
+// red on black, a pixel's red value is how much of it the shape covers, so the sum of red / 255 is the shape's area.
+Bitmap RenderAA(Sim& sim, bool aa, const std::function<void()>& f, int* indices = nullptr) {
+    Reset();
+    UI::UseLauncherLook(true);
+    UI::Style().antiAliased = aa;
+    sim.Frame(f);
+    if (indices) *indices = UI::GetDrawData().indexCount;
+    const Bitmap b = sim.Draw(0, 0, 0);
+    UI::UseLauncherLook(false);
+    return b;
+}
+double Coverage(const Bitmap& b) {
+    double s = 0.0;
+    for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) s += (double)(PixelAt(b, x, y) >> 24) / 255.0;
+    return s;
+}
+int Partial(const Bitmap& b) {   // pixels neither black nor full red
+    int n = 0;
+    for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) { const unsigned r = PixelAt(b, x, y) >> 24; if (r > 0 && r < 255) ++n; }
+    return n;
+}
+
+void AntiAliasTests() {
+    Sim sim(160, 120);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    const double kPi = 3.14159265358979;
+    {   // a plain rectangle on whole pixels is the same with or without it
+        const auto f = [&] { dl.AddRectFilled({10, 10}, {50, 40}, kRed); };
+        CHECK(RenderAA(sim, true, f).rgba == RenderAA(sim, false, f).rgba);
+        const auto g = [&] { dl.AddLine({10, 50}, {50, 50}, kRed, 2.0f); dl.AddLine({80.5f, 10}, {80.5f, 60}, kRed, 1.0f); };
+        CHECK(RenderAA(sim, true, g).rgba == RenderAA(sim, false, g).rgba);   // lines along pixel edges stay crisp bars
+        // a one-pixel line between two pixel columns covers both by half
+        const Bitmap h = RenderAA(sim, true, [&] { dl.AddLine({70, 10}, {70, 60}, kRed, 1.0f); });
+        CHECK(std::fabs(Coverage(h) - 50.0) < 1.0 && (PixelAt(h, 69, 30) >> 24) > 115 && (PixelAt(h, 69, 30) >> 24) < 140 && (PixelAt(h, 70, 30) >> 24) > 115);
+    }
+    {   // a rounded rectangle: smooth corners, the right area, far fewer indices than a fan and fringe
+        int idx = 0;
+        const Bitmap a = RenderAA(sim, true, [&] { dl.AddRectFilled({10, 10}, {50, 40}, kRed, 8.0f); }, &idx);
+        const Bitmap n = RenderAA(sim, false, [&] { dl.AddRectFilled({10, 10}, {50, 40}, kRed, 8.0f); });
+        const double area = 40.0 * 30.0 - (4.0 - kPi) * 64.0;
+        CHECK(std::fabs(Coverage(a) - area) < 4.0);
+        CHECK(Partial(a) > 16 && Partial(n) == 0);
+        CHECK(PixelAt(a, 10, 10) == kBlack && PixelAt(a, 30, 10) == kPixRed && PixelAt(a, 10, 25) == kPixRed && PixelAt(a, 30, 25) == kPixRed);
+        CHECK(PixelAt(a, 30, 9) == kBlack && PixelAt(a, 9, 25) == kBlack);   // nothing spills past a side on whole pixels
+        CHECK(idx > 0 && idx <= 42);
+        // off the pixel grid: the sides fade too, and the area is still right
+        const Bitmap f = RenderAA(sim, true, [&] { dl.AddRectFilled({10.5f, 10.25f}, {50.5f, 40.25f}, kRed, 8.0f); }, &idx);
+        CHECK(std::fabs(Coverage(f) - area) < 4.0);
+        CHECK((PixelAt(f, 30, 10) >> 24) > 150 && (PixelAt(f, 30, 10) >> 24) < 230);   // three quarters of that row
+        CHECK((PixelAt(f, 10, 25) >> 24) > 100 && (PixelAt(f, 10, 25) >> 24) < 155);   // half of that column
+        CHECK(idx <= 66);
+        // a translucent one does not double up where its pieces meet
+        const Bitmap t = RenderAA(sim, true, [&] { dl.AddRectFilled({10, 10}, {50, 40}, UI::RGBA(255, 0, 0, 128), 8.0f); });
+        int over = 0;
+        for (int y = 0; y < t.h; ++y) for (int x = 0; x < t.w; ++x) if ((PixelAt(t, x, y) >> 24) > 130) ++over;
+        CHECK(over == 0);
+    }
+    {   // circles: the disc's area; a hexagon asked for with 6 segments stays a hexagon
+        int idx = 0;
+        const Bitmap c = RenderAA(sim, true, [&] { dl.AddCircleFilled({60, 60}, 20.0f, kRed, 64); }, &idx);
+        CHECK(std::fabs(Coverage(c) - kPi * 400.0) < 6.0 && Partial(c) > 40 && idx == 6);
+        CHECK(PixelAt(c, 60, 60) == kPixRed && PixelAt(c, 60, 39) == kBlack && PixelAt(c, 60, 41) == kPixRed);
+        const Bitmap h = RenderAA(sim, true, [&] { dl.AddCircleFilled({60, 60}, 20.0f, kRed, 6); });
+        CHECK(std::fabs(Coverage(h) - 1.5 * std::sqrt(3.0) * 400.0) < 6.0 && Partial(h) > 20);
+        const Bitmap big = RenderAA(sim, true, [&] { dl.AddCircleFilled({80, 60}, 55.0f, kRed, 128); });   // larger than any baked disc
+        CHECK(std::fabs(Coverage(big) - kPi * 55.0 * 55.0) < 20.0);
+    }
+    {   // lines and outlines: the stroke's area, soft edges
+        const Bitmap d = RenderAA(sim, true, [&] { dl.AddLine({10, 10}, {60, 60}, kRed, 2.0f); });
+        CHECK(std::fabs(Coverage(d) - 2.0 * std::sqrt(2.0) * 50.0) < 4.0 && Partial(d) > 50);
+        const Bitmap thin = RenderAA(sim, true, [&] { dl.AddLine({10, 10}, {60, 40}, kRed, 0.5f); });
+        CHECK(std::fabs(Coverage(thin) - 0.5 * std::sqrt(50.0 * 50.0 + 30.0 * 30.0)) < 3.0);
+        int idx = 0;
+        const Bitmap o = RenderAA(sim, true, [&] { dl.AddRect({10, 10}, {50, 40}, kRed, 8.0f, 1.0f); }, &idx);   // a baked ring at each corner
+        const double perim = 2.0 * (39.0 + 29.0) - 8.0 * 7.5 + 2.0 * kPi * 7.5;
+        CHECK(std::fabs(Coverage(o) - perim) < 4.0 && idx <= 48);
+        CHECK(PixelAt(o, 30, 10) == kPixRed && PixelAt(o, 30, 11) == kBlack && PixelAt(o, 30, 9) == kBlack);
+        const Bitmap o2 = RenderAA(sim, true, [&] { dl.AddRect({10, 10}, {50, 40}, kRed, 8.0f, 2.0f); });
+        const double perim2 = 2.0 * (38.0 + 28.0) - 8.0 * 7.0 + 2.0 * kPi * 7.0;
+        CHECK(std::fabs(Coverage(o2) - 2.0 * perim2) < 6.0);
+        const Bitmap r = RenderAA(sim, true, [&] { dl.AddCircle({60, 60}, 20.0f, kRed, 64, 2.0f); });
+        CHECK(std::fabs(Coverage(r) - kPi * (400.0 - 324.0)) < 6.0);
+    }
+    {   // convex polygons, one colour or one per point: the area, and an edge that fades
+        const Vec2 tri[3] = {{10, 10}, {70, 20}, {30, 70}};
+        const double area = 0.5 * std::fabs((70.0 - 10) * (70.0 - 10) - (30.0 - 10) * (20.0 - 10));
+        const Bitmap a = RenderAA(sim, true, [&] { dl.AddConvexPolyFilled(tri, 3, kRed); });
+        CHECK(std::fabs(Coverage(a) - area) < 4.0 && Partial(a) > 40);
+        const UI::Color32 cols[3] = {kRed, kRed, kRed};
+        const Bitmap m = RenderAA(sim, true, [&] { dl.AddConvexPolyFilledMultiColor(tri, cols, 3); });
+        CHECK(m.rgba == a.rgba);
+        const Bitmap t = RenderAA(sim, true, [&] { dl.AddTriangleFilled(tri[0], tri[1], tri[2], kRed); });
+        CHECK(t.rgba == a.rgba);
+    }
+    CHECK(!UI::Style().antiAliased);   // off by default
+}
+
+// DrawList::Cached: kept geometry copied to a new place draws the same pixels as drawing it there; the drawing runs once.
+struct CacheArgs { const UI::DrawList* dl; Vec2 c; int* runs; };
+void CachedShape(void* u) {
+    const CacheArgs& a = *(const CacheArgs*)u;
+    ++*a.runs;
+    a.dl->AddCircleFilled(a.c, 9.0f, kRed, 32);
+    a.dl->AddLine({a.c.x - 8, a.c.y + 3}, {a.c.x + 8, a.c.y - 5}, kGreen, 1.6f);
+    const Vec2 tri[3] = {{a.c.x - 4, a.c.y}, {a.c.x + 4, a.c.y}, {a.c.x, a.c.y + 7.5f}};
+    a.dl->AddConvexPolyFilled(tri, 3, kBlue);
+}
+void CachedTests() {
+    Sim sim(160, 120);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    for (int aa = 0; aa < 2; ++aa) {
+        int runs = 0;
+        const Vec2 at[3] = {{30.25f, 30.5f}, {70.25f, 45.5f}, {110.25f, 90.5f}};   // the same fraction of a pixel
+        const Bitmap kept = RenderAA(sim, aa != 0, [&] {
+            for (const Vec2& p : at) { CacheArgs a{&dl, p, &runs}; dl.Cached(42, p, CachedShape, &a); }
+        });
+        int fresh = 0;
+        const Bitmap direct = RenderAA(sim, aa != 0, [&] { for (const Vec2& p : at) { CacheArgs a{&dl, p, &fresh}; CachedShape(&a); } });
+        int differ = 0, maxd = 0;
+        for (std::size_t i = 0; i < kept.rgba.size(); ++i) { const int d = std::abs((int)kept.rgba[i] - (int)direct.rgba[i]); if (d) ++differ; if (d > maxd) maxd = d; }
+        CHECK(runs == 1 && maxd <= 2 && differ < 40);   // the same pixels up to float rounding (a level here and there)
+        // another fraction of a pixel is drawn afresh (and kept as its own entry)
+        int runs2 = 0;
+        RenderAA(sim, aa != 0, [&] {
+            const Vec2 p{30.0f, 30.0f}, q{30.75f, 30.0f};
+            CacheArgs a{&dl, p, &runs2}; dl.Cached(42, p, CachedShape, &a);
+            CacheArgs b{&dl, q, &runs2}; dl.Cached(42, q, CachedShape, &b);
+            CacheArgs c{&dl, Vec2{50.0f, 60.0f}, &runs2}; dl.Cached(42, c.c, CachedShape, &c);
+        });
+        CHECK(runs2 == 2);
+    }
+    {   // a drawing that changes the clip is not kept; junk is ignored
+        int runs = 0;
+        struct ClipArgs { const UI::DrawList* dl; int* runs; } a{&dl, &runs};
+        auto clipped = [](void* u) {
+            const ClipArgs& c = *(const ClipArgs*)u; ++*c.runs;
+            c.dl->PushClipRect({0, 0}, {20, 20}); c.dl->AddRectFilled({0, 0}, {40, 40}, kRed); c.dl->PopClipRect();
+        };
+        RenderAA(sim, false, [&] { dl.Cached(7, {0, 0}, clipped, &a); dl.Cached(7, {0, 0}, clipped, &a); dl.Cached(8, {NAN, 0}, clipped, &a); dl.Cached(9, {0, 0}, nullptr, nullptr); });
+        CHECK(runs == 2);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -617,5 +761,7 @@ int main() {
     MouseQueryTests();
     DisabledTests();
     LabTests();
+    AntiAliasTests();
+    CachedTests();
     TEST_MAIN_RESULT();
 }

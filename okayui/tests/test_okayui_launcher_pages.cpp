@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 using namespace okayuitest;
@@ -91,6 +92,9 @@ static double MedianUs(std::vector<double> v) { std::sort(v.begin(), v.end()); r
 
 int main() {
     RUN_SUITE("okayui launcher pages");
+    // OKAYUI_BENCH_ONLY=1: only the speed block, without the software raster (for profiling the build with callgrind).
+    const bool benchOnly = std::getenv("OKAYUI_BENCH_ONLY") != nullptr;
+    if (!benchOnly) {
 
     // ================= OkayUI additions =================
     {   // Button(label, size) and PrimaryButton(label, size): the size is used, 0 keeps the automatic one, junk falls back
@@ -599,9 +603,11 @@ int main() {
         CHECK(cut.size() >= 3 && cut.compare(cut.size() - 3, 3, "\xE2\x80\xA6") == 0);
     }
 
+    }   // !benchOnly
+
     // ================= Speed: per-frame CPU time of each screen (headless; information, not a check) =================
     {
-        auto bench = [](const char* name, float W, float H, const std::function<void()>& ui) {
+        auto bench = [benchOnly](const char* name, float W, float H, const std::function<void()>& ui) {
             Reset(); UI::UseLauncherLook(true);
             Sim sim(W, H);
             sim.Move(W * 0.5f, H * 0.5f);
@@ -611,7 +617,7 @@ int main() {
                 sim.Frame(ui);
                 const auto t1 = std::chrono::steady_clock::now();
                 if (i >= 30) build.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
-                if (i >= 30 && i % 10 == 0) {   // the software raster is slow and not what the launcher uses: sampled
+                if (!benchOnly && i >= 30 && i % 10 == 0) {   // the software raster is slow and not what the launcher uses: sampled
                     const auto r0 = std::chrono::steady_clock::now();
                     sim.Draw(28, 30, 36);
                     raster.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - r0).count());

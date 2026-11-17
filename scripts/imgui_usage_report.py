@@ -51,6 +51,7 @@ PORTED = [
     ("Console", "editor/ConsolePanel.cpp", "DrawConsole"),
     ("Crash Log", "editor/main.cpp", "DrawCrashLog"),
     ("Audio Mixer", "editor/main.cpp", "DrawAudioMixer"),
+    ("Stats", "editor/main.cpp", "DrawStats"),
     ("What's New", "launcher/main.cpp", (r"\} else if \(tab == 12\) \{", r"\} else if \(tab == 13 ")),
     ("Tips", "launcher/main.cpp", (r"\} else if \(tab == 13\) \{", r"\} else if \(tab == 1\) \{")),
     ("Downloads", "launcher/main.cpp", (r"\} else if \(tab == 10\) \{", r"\} else if \(tab == 15\) \{")),
@@ -140,7 +141,11 @@ KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "si
 def type_covered(name, idents):
     """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
     if name in ("ImVec2", "ImVec4"):
-        return "Vec2" in idents if name == "ImVec2" else False
+        return "Vec2" in idents if name == "ImVec2" else "Vec4" in idents
+    if name == "ImTextureID":
+        return "TextureID" in idents
+    if name.startswith("ImDrawFlags_"):
+        return "DrawFlags_" + name[len("ImDrawFlags_"):] in idents
     if name == "ImU32":
         return "Color32" in idents
     if name in ("ImDrawList",):
@@ -148,6 +153,9 @@ def type_covered(name, idents):
     if name.startswith("ImGui"):
         base = name[5:]
         cands = [base, base.replace("Flags_", "_"), base.replace("Flags", ""), re.sub(r"Flags_", "_", base)]
+        # OkayUI's own short prefixes for three flag families (OkayUI.hpp): Table_, Col_ (table columns) and Tab_ (tab items)
+        for long, short in (("TableColumnFlags_", "Col_"), ("TableFlags_", "Table_"), ("TabItemFlags_", "Tab_"), ("TabBarFlags_", "TabBarFlags_")):
+            if base.startswith(long): cands.append(short + base[len(long):])
         m = re.match(r"([A-Z][a-z]+)Flags_(\w+)", base)
         if m:
             cands += [m.group(1) + "_" + m.group(2), m.group(1) + "Flags"]

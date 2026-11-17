@@ -3783,9 +3783,19 @@ Node* statement_value(Node* node) {
     return node;
 }
 
+void kill_assigned(const Node& node, std::map<std::string, uint64_t>* known) {
+    if (node.kind == Node::Assign && !node.kids.empty() && node.kids[0].kind == Node::Name) known->erase(node.kids[0].text);
+    for (const Node& kid : node.kids) kill_assigned(kid, known);
+}
+
 void prop_node(Node* node, std::map<std::string, uint64_t>* known, const std::set<std::string>* shadowed) {
-    if (node->kind == Node::Block || node->kind == Node::If || node->kind == Node::While || node->kind == Node::For ||
-        node->kind == Node::Do || node->kind == Node::Label) {
+    if (node->kind == Node::If || node->kind == Node::While || node->kind == Node::For || node->kind == Node::Do) {
+        std::map<std::string, uint64_t> inner = *known;
+        for (Node& kid : node->kids) prop_node(&kid, &inner, shadowed);
+        kill_assigned(*node, known);
+        return;
+    }
+    if (node->kind == Node::Block || node->kind == Node::Label) {
         if (node->kind == Node::Block) {
             for (size_t i = 0; i + 1 < node->kids.size(); ++i) {
                 Node* cur = statement_value(&node->kids[i]);
@@ -3893,6 +3903,135 @@ void inline_node(Node* node, const std::vector<FuncDecl>& funcs) {
     for (Node& kid : node->kids) inline_node(&kid, funcs);
 }
 
+bool no_loop(const Node& node) {
+    if (node.kind == Node::While || node.kind == Node::For || node.kind == Node::Do || node.kind == Node::Switch)
+        return false;
+    for (const Node& kid : node.kids)
+        if (!no_loop(kid)) return false;
+    return true;
+}
+
+void rename_names(Node* node, const std::map<std::string, std::string>& ren) {
+    if (node->kind == Node::Name) {
+        const auto found = ren.find(node->text);
+        if (found != ren.end()) node->text = found->second;
+    }
+    for (Node& kid : node->kids) rename_names(&kid, ren);
+}
+
+void place_extra(FuncDecl* fn, Local local, const Gen& gen) {
+    const int used = fn->locals.empty() ? 0 : -fn->locals.back().offset;
+    int size = std::max(1, gen.size_of(local.type));
+    int align = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+    const int aligned = (used + align - 1) & ~(align - 1);
+    local.offset = -(aligned + size);
+    local.scope = 0;
+    local.reg = 0;
+    fn->locals.push_back(local);
+}
+
+Node assign_name(const std::string& dest, Node rhs) {
+    Node as;
+    as.kind = Node::Assign;
+    Node lhs;
+    lhs.kind = Node::Name;
+    lhs.text = dest;
+    as.kids.push_back(std::move(lhs));
+    as.kids.push_back(std::move(rhs));
+    Node stmt;
+    stmt.kind = Node::ExprStmt;
+    stmt.kids.push_back(std::move(as));
+    return stmt;
+}
+
+bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& funcs, Gen& gen, int* seq) {
+    Node* call = nullptr;
+    std::string dest;
+    bool is_return = false;
+    bool drop = false;
+    if (stmt->kind == Node::Return && stmt->kids.size() == 1 && stmt->kids[0].kind == Node::Call) {
+        call = &stmt->kids[0];
+        is_return = true;
+    } else if (stmt->kind == Node::ExprStmt && !stmt->kids.empty() && stmt->kids[0].kind == Node::Assign &&
+               stmt->kids[0].kids.size() == 2 && stmt->kids[0].kids[1].kind == Node::Call &&
+               stmt->kids[0].kids[0].kind == Node::Name) {
+        call = &stmt->kids[0].kids[1];
+        dest = stmt->kids[0].kids[0].text;
+    } else if (stmt->kind == Node::ExprStmt && !stmt->kids.empty() && stmt->kids[0].kind == Node::Call) {
+        call = &stmt->kids[0];
+        drop = true;
+    } else {
+        return false;
+    }
+    if (call->text.empty() || call->text == caller->name) return false;
+    const FuncDecl* fn = nullptr;
+    for (const FuncDecl& item : funcs)
+        if (item.name == call->text && item.defined) fn = &item;
+    if (fn == nullptr || fn->vararg || fn->sret || static_cast<int>(call->kids.size()) != fn->nparams) return false;
+    if (!no_loop(fn->body) || contains_call(fn->body)) return false;
+    std::map<std::string, std::string> ren;
+    Node block;
+    block.kind = Node::Block;
+    for (int i = 0; i < fn->nparams; ++i) {
+        const std::string tmp = "_arg" + std::to_string((*seq)++);
+        Local local;
+        local.name = tmp;
+        local.type = fn->params[static_cast<size_t>(i)];
+        place_extra(caller, local, gen);
+        block.kids.push_back(assign_name(tmp, call->kids[static_cast<size_t>(i)]));
+        if (i < static_cast<int>(fn->param_names.size())) ren[fn->param_names[static_cast<size_t>(i)]] = tmp;
+    }
+    for (const Local& local : fn->locals) {
+        bool param = false;
+        for (const std::string& pn : fn->param_names)
+            if (pn == local.name) param = true;
+        if (param || local.name.empty() || local.name[0] == '_') continue;
+        const std::string tmp = "_loc" + std::to_string((*seq)++);
+        Local copy = local;
+        copy.name = tmp;
+        copy.is_static = false;
+        copy.symbol.clear();
+        place_extra(caller, copy, gen);
+        ren[local.name] = tmp;
+    }
+    const std::function<void(const Node&)> copy_stmts = [&](const Node& node) {
+        if (node.kind == Node::Block) {
+            for (const Node& kid : node.kids) copy_stmts(kid);
+            return;
+        }
+        if (node.kind == Node::Return) {
+            if (drop || node.kids.empty()) return;
+            Node expr = node.kids[0];
+            rename_names(&expr, ren);
+            if (is_return) {
+                Node ret;
+                ret.kind = Node::Return;
+                ret.kids.push_back(std::move(expr));
+                block.kids.push_back(std::move(ret));
+            } else {
+                block.kids.push_back(assign_name(dest, std::move(expr)));
+            }
+            return;
+        }
+        Node cloned = node;
+        rename_names(&cloned, ren);
+        block.kids.push_back(std::move(cloned));
+    };
+    copy_stmts(fn->body);
+    *stmt = std::move(block);
+    return true;
+}
+
+void walk_inline(Node* node, FuncDecl* caller, const std::vector<FuncDecl>& funcs, Gen& gen, int* seq) {
+    if (node->kind != Node::Block && node->kind != Node::If && node->kind != Node::While && node->kind != Node::For &&
+        node->kind != Node::Do && node->kind != Node::Label)
+        return;
+    for (size_t i = 0; i < node->kids.size(); ++i) {
+        if (!try_inline_stmt(&node->kids[i], caller, funcs, gen, seq)) walk_inline(&node->kids[i], caller, funcs, gen, seq);
+        else walk_inline(&node->kids[i], caller, funcs, gen, seq);
+    }
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
                     int opt_level, std::string* error, CompileOutput* out) {
@@ -3911,7 +4050,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     std::vector<PlacedFn> placed;
     std::vector<uint32_t> unwind_offs;
     if (opt_level >= 2) {
+        int seq = 0;
         for (int pass = 0; pass < 4; ++pass) {
+            for (FuncDecl& fn : funcs)
+                if (fn.defined) walk_inline(&fn.body, &fn, funcs, gen, &seq);
             for (FuncDecl& fn : funcs)
                 if (fn.defined) inline_node(&fn.body, funcs);
         }

@@ -74,8 +74,44 @@ static void test_inline(Tally& tally) {
     if (code != 42) std::fprintf(stderr, "  wine %d\n", code);
 }
 
+static void test_inline_once(Tally& tally) {
+    std::printf("test_inline_once\n");
+    okayms::CompileInput in;
+    in.opt_level = 2;
+    in.optimize = true;
+    in.source =
+        "int g;\n"
+        "int next(void) { g = g + 1; return g; }\n"
+        "int add(int a, int b) {\n"
+        "  int s;\n"
+        "  s = a + b;\n"
+        "  if (s < 0) s = 0;\n"
+        "  return s;\n"
+        "}\n"
+        "int entry(void) {\n"
+        "  int n;\n"
+        "  g = 0;\n"
+        "  n = add(next(), next());\n"
+        "  return n * 10 + g;\n"
+        "}\n";
+    const auto compiled = okayms::compile_c(in);
+    CHECK(tally, compiled.ok());
+    if (!compiled.ok()) {
+        std::fprintf(stderr, "  %s\n", compiled.error.c_str());
+        return;
+    }
+    CHECK(tally, relocs_to(compiled.value.object, "add") == 0);
+    const auto linked = okayms::link_executable({compiled.value.object}, {});
+    CHECK(tally, linked.ok());
+    if (!linked.ok()) return;
+    const int code = wine_image(linked.value);
+    CHECK(tally, code == 32);
+    if (code != 32) std::fprintf(stderr, "  wine %d\n", code);
+}
+
 int main() {
     Tally tally;
     test_inline(tally);
-    return tally.finish(1);
+    test_inline_once(tally);
+    return tally.finish(2);
 }

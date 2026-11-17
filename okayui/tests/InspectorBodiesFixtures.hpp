@@ -23,11 +23,15 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   // a UI Input Field, a UI Layout Group (flex), a Nav Mesh Agent, a Terrain (its layers and scatter sections) and a
                   // Particle System with a gradient and two curves
                   BodyText, BodyCanvas, BodyButton, BodyImage, BodySlider, BodyToggle, BodyInput, BodyLayout, BodyNavAgent, BodyTerrain,
-                  BodyCurves, BodyCount };
+                  BodyCurves,
+                  // stage 5 (section 18): Procedural Object Holding, Holdable Object, Character, First-person settings, View toggle and the
+                  // Animator state machine (two states, the first one's transitions open)
+                  BodyObjHolding, BodyHoldable, BodyCharacter, BodyFirstPerson, BodyPlayerView, BodyAnimSM, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
-                                                  "navagent", "terrain", "curves"};
+                                                  "navagent", "terrain", "curves",
+                                                  "objholding", "holdable", "character", "firstperson", "playerview", "animsm"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -126,6 +130,31 @@ struct Values {
     int gCount = 3, gSel = 1; float gCol[4] = {1.0f, 0.3f, 0.1f, 0.8f}, gTime = 0.5f;
     float cKeys[8 * 2] = {0.0f, 1.0f,  0.4f, 1.6f,  1.0f, 0.2f}; int cCount = 3, cSel = 1; bool cSmooth = true; float cKey[2] = {0.4f, 1.6f};
     float sKeys[8 * 2] = {0.0f, 1.0f,  1.0f, 0.25f}; int sCount = 2, sSel = 0; bool sSmooth = false; float sKey[2] = {0.0f, 1.0f};
+
+    // stage 5: Procedural Object Holding
+    int ohHand = 1, ohStyle = 0, ohCarry = 0, ohMouse = 1, ohPad = -1; bool ohIK = true, ohBody = true; float ohTrans = 0.25f;
+    std::string ohKey = "f"; float ohCharge = 0.8f, ohMin = 4.0f, ohMax = 14.0f, ohRange = 2.0f;
+    // Holdable Object (Automatic: the resolved style shown)
+    int hoStyle = 0; bool hoSupport = false, hoTwo = false, hoLeft = true, hoRight = false; float hoWeight = 2.0f; std::string hoSocket;
+    float hoOff[3] = {0.2f, -0.1f, 0.4f}, hoRot[3] = {0, 0, 0}, hoScale = 1.0f, hoFpOff[3] = {0, 0, 0}, hoFpRot[3] = {0, 0, 0}, hoFpScale = 1.0f;
+    float hoTpOff[3] = {0, 0, 0}, hoTpRot[3] = {0, 0, 0}, hoGripPos[3] = {-0.1f, 0.0f, 0.0f}, hoGripRot[3] = {0, 90, 0};
+    // Character (no custom model, two clips)
+    float chHeight = 1.2f, chBlend = 0.2f, chAnimSpeed = 1.0f, chTurn = 8.0f; int chIdle = 1, chWalk = 0, chRun = 2, chShirt = 1, chLegs = 0, chHair = 0, chBeard = 0;
+    int chGlasses = 0, chAnim = 0; bool chParts = false, chBelt = true, chJacket = false, chGloves = false, chHasHair = true, chHat = false, chMask = false;
+    bool chScarf = false, chPads = false, chPack = false, chCape = false, chLook = false; std::string chLookAt;
+    float chSkin[3] = {0.9f, 0.7f, 0.55f}, chShirtC[3] = {0.2f, 0.4f, 0.8f}, chPants[3] = {0.2f, 0.2f, 0.25f}, chShoes[3] = {0.1f, 0.1f, 0.1f};
+    float chHairC[3] = {0.3f, 0.2f, 0.1f}, chEyes[3] = {0.1f, 0.3f, 0.6f};
+    float chJump = 0.12f, chBend = 20.0f, chStepA = 60.0f, chStepT = 0.25f, chLift = 30.0f, chStill = 0.8f, chLean = 1.0f, chLeanMax = 8.0f;
+    // First-person settings (owned by a Player Controller: no model tools, no natural-speeds button)
+    float fpWalk = 1.4f, fpRun = 5.5f, fpJump = 5.0f, fpWalkA = 22.0f, fpRunA = 30.0f, fpDecel = 35.0f, fpTurn = 90.0f, fpAir = 0.2f, fpCoyote = 0.08f;
+    float fpBuffer = 0.1f, fpSens = 0.15f, fpCapSens = 0.05f, fpCap = 40.0f; bool fpInvY = false, fpCanJump = true, fpDrive = true, fpFootIK = true, fpLock = true;
+    int fpMaxJumps = 1, fpSprint = 1, fpCrouch = 3, fpProne = 4, fpPad = 0; bool fpToggleRun = false, fpToggleStance = false, fpAllowProne = true, fpResize = true;
+    float fpCrouchS = 2.0f, fpProneS = 1.0f, fpCrouchH = 0.6f, fpProneH = 0.3f, fpHold = 0.4f, fpEyeS = 1.6f, fpEyeC = 1.0f, fpEyeP = 0.4f, fpEase = 10.0f;
+    // View toggle (owned)
+    bool pvAllow = true, pvSnap = false; int pvView = 1, pvKey = 6, pvPad = 0, pvEase = 1; float pvBlend = 0.35f, pvEye[3] = {0, 0, 0}, pvDist = -1.0f, pvShoulder = 0.0f;
+    // the Animator state machine
+    std::string smS0 = "Idle", smS1 = "Walk", smParam = "speed"; int smEntry = 0, smClip0 = 0, smClip1 = 1, smTo = 1, smCond = 1; bool smLoop0 = true, smLoop1 = true;
+    float smSpd0 = 1.0f, smSpd1 = 1.0f, smVal = 0.1f, smBlendT = 0.2f, smSC = 0.3f, smCP = 0.5f, smPS = 0.8f, smIW = 0.2f, smWR = 0.2f, smGA = 0.1f, smAG = 0.1f;
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -838,6 +867,218 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Curve("psspeed", v.sKeys, &v.sCount, 8, &v.sSmooth, &v.sSel);
         if (v.sSel >= 0 && v.sSel < v.sCount) { v.sKey[0] = v.sKeys[v.sSel * 2]; v.sKey[1] = v.sKeys[v.sSel * 2 + 1]; L.Drag("Key (time, x)##sp", v.sKey, 2, 0.01f, 0.0f, 100.0f); }
         L.Check("Smooth##sp", &v.sSmooth); L.SameLine(); L.Note("2 / 8 keys");
+        break;
+    }
+
+    case BodyObjHolding: {
+        static const char* const kH[] = {"Left", "Right", "Both"};
+        static const char* const kS[] = {"Automatic", "Custom"};
+        static const char* const kM[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+        L.Note("Hold objects with the hands: IK onto each object's grips.");
+        L.Combo("Primary Hand##poh", &v.ohHand, kH, 3);
+        L.Combo("Holding Style##poh", &v.ohStyle, kS, 2);
+        L.Check("Arm IK##poh", &v.ohIK);
+        L.Drag("Transition (s)##poh", &v.ohTrans, 1, 0.01f, 0.0f, 2.0f);
+        L.Check("Body Adjustment##poh", &v.ohBody);
+        L.Combo("Carry Animations##poh", &v.ohCarry, kS, 2);
+        L.Section("Throw");
+        L.Text("Throw Key##poh", &v.ohKey);
+        L.Combo("Throw Mouse##poh", &v.ohMouse, kM, 4);
+        L.DragInt("Throw Pad Button##poh", &v.ohPad, 0.1f, -1, 11);
+        L.Drag("Charge Time##poh", &v.ohCharge, 1, 0.01f, 0.05f, 3.0f);
+        L.Drag("Min Speed##poh", &v.ohMin, 1, 0.1f, 0.0f, 40.0f);
+        L.Drag("Max Speed##poh", &v.ohMax, 1, 0.1f, 0.0f, 60.0f);
+        L.Drag("Pickup Range##poh", &v.ohRange, 1, 0.05f, 0.0f, 8.0f);
+        L.SmallButton("Remove##poh");
+        break;
+    }
+    case BodyHoldable: {
+        static const char* const kSt[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+                                          "One hand right", "One hand left", "Two handed", "Carry in front", "Over the shoulder"};
+        L.Note("A character's Procedural Object Holding can pick this up.");
+        L.Combo("Style##hold", &v.hoStyle, kSt, 14);
+        L.SmallButton("Preset: block##hold"); L.SameLine(); L.SmallButton("Preset: crate##hold");
+        L.Note("  -> Box");
+        L.Check("Support Hand##hold", &v.hoSupport);
+        L.Check("Two Handed##hold", &v.hoTwo);
+        L.Drag("Weight (kg)##hold", &v.hoWeight, 1, 0.1f, 0.0f, 500.0f);
+        L.Text("Socket##hold", &v.hoSocket);
+        L.Drag("Hold Offset##hold", v.hoOff, 3, 0.01f);
+        L.Drag("Hold Rotation##hold", v.hoRot, 3, 1.0f);
+        L.Drag("In-hand scale##hold", &v.hoScale, 1, 0.01f, 0.1f, 3.0f);
+        L.Drag("FP offset##hold", v.hoFpOff, 3, 0.005f);
+        L.Drag("FP rotation##hold", v.hoFpRot, 3, 1.0f);
+        L.Drag("FP scale##hold", &v.hoFpScale, 1, 0.01f, 0.1f, 3.0f);
+        L.Drag("TP offset##hold", v.hoTpOff, 3, 0.005f);
+        L.Drag("TP rotation##hold", v.hoTpRot, 3, 1.0f);
+        L.Check("Left Grip", &v.hoLeft);
+        if (v.hoLeft) { L.Drag("Position##grip", v.hoGripPos, 3, 0.005f); L.Drag("Rotation##grip", v.hoGripRot, 3, 1.0f); }
+        L.Check("Right Grip", &v.hoRight);
+        L.Note("Grip rotation 0 = palm down, the hand points along -Z.");
+        L.SmallButton("Remove##hold");
+        break;
+    }
+    case BodyCharacter: {
+        static const char* const kClips[] = {"(built-in)", "Idle Loop", "Sprint"};
+        static const char* const kShirts[] = {"Tank (bare arms)", "Short sleeve", "Long sleeve"};
+        static const char* const kLegs[] = {"Trousers", "Shorts"};
+        static const char* const kHairs[] = {"Short", "Long", "Mohawk", "Bun", "Spiky", "Afro", "Ponytail", "Buzz"};
+        static const char* const kBeards[] = {"None", "Full", "Goatee", "Mustache"};
+        static const char* const kGl[] = {"None", "Glasses", "Sunglasses"};
+        static const char* const kAn[] = {"None", "Idle", "Walk", "Run", "Wave"};
+        L.Button("Set Character Model...##char");
+        L.ColorText(P::HierCol(242, 191, 89), "No character model.");
+        L.Label("Set Character Model, or right-click a model file and choose Make Playable Character. A new player starts in third person. V switches to the eyes. Player Controller, View, changes that.");
+        L.Last().wrap = true;
+        L.Button("Wire animation and IK##char"); L.SameLine(); L.Button("Open Animator##char");
+        L.Slider("Height##char", &v.chHeight, 0.6f, 1.8f);
+        L.Section("Rig");
+        L.Check("Separate Into Parts (editable rig)##char", &v.chParts);
+        L.Section("Movement animations");
+        L.Note("Play YOUR authored clips as the character moves (no scripting).");
+        L.Combo("Idle##charstate", &v.chIdle, kClips, 3); L.Last().width = 150.0f;
+        L.Combo("Walk##charstate", &v.chWalk, kClips, 3); L.Last().width = 150.0f;
+        L.Combo("Run##charstate", &v.chRun, kClips, 3); L.Last().width = 150.0f;
+        L.Slider("Blend (s)##charblend", &v.chBlend, 0.0f, 0.6f, "%.2f"); L.Last().width = 150.0f;
+        L.Section("Clothing");
+        L.Combo("Shirt##char", &v.chShirt, kShirts, 3); L.Last().width = 150.0f;
+        L.Combo("Legs##char", &v.chLegs, kLegs, 2); L.Last().width = 150.0f;
+        L.Check("Belt##char", &v.chBelt); L.SameLine(); L.Check("Jacket##char", &v.chJacket); L.SameLine(); L.Check("Gloves##char", &v.chGloves);
+        L.Section("Hair");
+        L.Check("Hair##char", &v.chHasHair); L.SameLine(); L.Combo("##hairstyle", &v.chHair, kHairs, 8); L.Last().width = 120.0f;
+        L.Combo("Beard##char", &v.chBeard, kBeards, 4); L.Last().width = 150.0f;
+        L.Section("Accessories");
+        L.Check("Hat##char", &v.chHat);
+        L.Combo("Eyewear##char", &v.chGlasses, kGl, 3); L.Last().width = 150.0f;
+        L.Check("Mask##char", &v.chMask); L.SameLine(); L.Check("Scarf##char", &v.chScarf);
+        L.Check("Shoulder Pads##char", &v.chPads);
+        L.Check("Backpack##char", &v.chPack); L.SameLine(); L.Check("Cape##char", &v.chCape);
+        L.Section("Colors");
+        L.Color("Skin##char", v.chSkin, 3); L.Color("Shirt##char", v.chShirtC, 3); L.Color("Pants##char", v.chPants, 3);
+        L.Color("Shoes##char", v.chShoes, 3); L.Color("Hair##char", v.chHairC, 3); L.Color("Eyes##char", v.chEyes, 3);
+        L.Section("Animation (plays in Play mode)");
+        L.Combo("Animation##char", &v.chAnim, kAn, 5); L.Last().width = 150.0f;
+        L.Tree("Clips (2)##charprev");
+        L.Label("Idle Loop"); L.SameLine(); L.SmallButton("Preview##apcl");
+        L.Label("Sprint"); L.SameLine(); L.SmallButton("Preview##apcl");
+        L.TreeEnd();
+        L.Section("Head look");
+        L.Check("Look at Camera##char", &v.chLook);
+        L.Text("Look at Object##char", &v.chLookAt);
+        L.Slider("Head Turn Speed##char", &v.chTurn, 0.0f, 20.0f);
+        L.Section("Feel");
+        L.Slider("Jump Crouch (s)##char", &v.chJump, 0.0f, 0.4f, "%.2f");
+        L.Slider("Jump Crouch Bend##char", &v.chBend, 0.0f, 60.0f, "%.0f deg");
+        L.Slider("Turn Step Angle##char", &v.chStepA, 0.0f, 120.0f, "%.0f deg");
+        L.Slider("Turn Step Time##char", &v.chStepT, 0.05f, 0.6f, "%.2f");
+        L.Slider("Turn Step Lift##char", &v.chLift, 0.0f, 70.0f, "%.0f deg");
+        L.Slider("Turn Still Speed##char", &v.chStill, 0.0f, 2.0f, "%.2f");
+        L.Slider("Motion Lean##char", &v.chLean, 0.0f, 2.0f, "%.2f");
+        L.Slider("Motion Lean Max##char", &v.chLeanMax, 0.0f, 15.0f, "%.0f deg");
+        break;
+    }
+    case BodyFirstPerson: {
+        static const char* const kPad[] = {"None", "A", "B", "X", "Y", "Back", "Start", "L", "R", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right"};
+        L.Note("Feel:");
+        L.SameLine(); L.SmallButton("Tactical"); L.SameLine(4.0f); L.SmallButton("Arcade"); L.SameLine(4.0f); L.SmallButton("Floaty");
+        L.Drag("Walk Speed##fp", &v.fpWalk, 1, 0.1f, 0.0f, 50.0f);
+        L.Drag("Run Speed##fp", &v.fpRun, 1, 0.1f, 0.0f, 50.0f);
+        L.Drag("Jump Force##fp", &v.fpJump, 1, 0.1f, 0.0f, 50.0f);
+        L.Drag("Walk Accel##fp", &v.fpWalkA, 1, 1.0f, 1.0f, 300.0f);
+        L.Drag("Run Accel##fp", &v.fpRunA, 1, 1.0f, 1.0f, 300.0f);
+        L.Drag("Decel##fp", &v.fpDecel, 1, 1.0f, 1.0f, 300.0f);
+        L.Drag("Turn Rate##fp", &v.fpTurn, 1, 1.0f, 1.0f, 600.0f);
+        L.Drag("Air Control##fp", &v.fpAir, 1, 0.01f, 0.0f, 1.0f);
+        L.Drag("Coyote Time##fp", &v.fpCoyote, 1, 0.005f, 0.0f, 0.5f, "%.3f s");
+        L.Drag("Jump Buffer##fp", &v.fpBuffer, 1, 0.005f, 0.0f, 0.5f, "%.3f s");
+        L.Drag("Mouse Sensitivity##fp", &v.fpSens, 1, 0.01f, 0.0f, 2.0f);
+        L.Drag("Captured Sensitivity##fp", &v.fpCapSens, 1, 0.005f, 0.0f, 1.0f);
+        L.Drag("Captured Pixel Cap##fp", &v.fpCap, 1, 1.0f, 4.0f, 120.0f, "%.0f px");
+        L.Check("Invert Y##fp", &v.fpInvY);
+        L.Check("Can Jump##fp", &v.fpCanJump); L.SameLine(); L.DragInt("Max Jumps##fp", &v.fpMaxJumps, 0.1f, 1, 5); L.Last().width = 90.0f;
+        L.Check("Drive Animation##fp", &v.fpDrive);
+        L.Check("Foot IK##fp", &v.fpFootIK);
+        L.Check("Lock + Hide Cursor##fp", &v.fpLock);
+        L.Section("Run / Stance");
+        L.Combo("Sprint Key##fp", &v.fpSprint, kKeys, 9); L.Last().width = 96.0f;
+        L.SameLine(); L.Check("Toggle Run##fp", &v.fpToggleRun);
+        L.Combo("Crouch Key##fp", &v.fpCrouch, kKeys, 9); L.Last().width = 96.0f;
+        L.SameLine(); L.Combo("Prone Key##fp", &v.fpProne, kKeys, 9); L.Last().width = 96.0f;
+        L.Check("Toggle Stance##fp", &v.fpToggleStance);
+        L.Drag("Crouch Speed##fp", &v.fpCrouchS, 1, 0.1f, 0.0f, 20.0f);
+        L.Drag("Prone Speed##fp", &v.fpProneS, 1, 0.1f, 0.0f, 20.0f);
+        L.Check("Allow Prone##fp", &v.fpAllowProne); L.SameLine(); L.Check("Resize Body##fp", &v.fpResize);
+        L.Slider("Crouch Height##fp", &v.fpCrouchH, 0.3f, 1.0f, "%.2f x standing");
+        L.Slider("Prone Height##fp", &v.fpProneH, 0.15f, 0.8f, "%.2f x standing");
+        L.Combo("Stance Pad Button##fp", &v.fpPad, kPad, 13); L.Last().width = 130.0f;
+        L.SameLineOrWrap(); L.Drag("Hold For Prone##fp", &v.fpHold, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f;
+        L.Drag("Stand Eye Height##fp", &v.fpEyeS, 1, 0.05f, 0.0f, 3.0f);
+        L.Drag("Crouch Eye Height##fp", &v.fpEyeC, 1, 0.05f, 0.0f, 3.0f);
+        L.Drag("Prone Eye Height##fp", &v.fpEyeP, 1, 0.05f, 0.0f, 3.0f);
+        L.Drag("Stance Ease##fp", &v.fpEase, 1, 0.5f, 0.0f, 40.0f);
+        break;
+    }
+    case BodyPlayerView: {
+        static const char* const kViews[] = {"First person", "Third person"};
+        static const char* const kPad[] = {"None", "A", "B", "X", "Y", "Back", "Start", "L", "R", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right"};
+        static const char* const kE[] = {"Linear", "Smooth", "Ease In", "Ease Out"};
+        L.Check("Allow Toggle##pv", &v.pvAllow);
+        L.Combo("Default View##pv", &v.pvView, kViews, 2);
+        L.Combo("Toggle Key##pv", &v.pvKey, kKeys, 9); L.Last().width = 96.0f;
+        L.Combo("Toggle Pad Button##pv", &v.pvPad, kPad, 13); L.Last().width = 130.0f;
+        L.Drag("Switch Blend Time##pv", &v.pvBlend, 1, 0.01f, 0.0f, 3.0f, "%.2f s");
+        L.Combo("Easing##pv", &v.pvEase, kE, 4);
+        L.Check("Snap##pv", &v.pvSnap);
+        L.Drag("Eye Offset##pv", v.pvEye, 3, 0.01f);
+        L.Drag("Third Person Distance##pv", &v.pvDist, 1, 0.05f, -1.0f, 40.0f);
+        L.Drag("Shoulder Offset##pv", &v.pvShoulder, 1, 0.01f, -3.0f, 3.0f);
+        L.Note("V eases between the eyes and the orbit.");
+        break;
+    }
+    case BodyAnimSM: {
+        static const char* const kEntry[] = {"(first state)", "Idle", "Walk"};
+        static const char* const kStates[] = {"Idle", "Walk"};
+        static const char* const kSmClips[] = {"Idle", "Walk", "Run", "Jump"};
+        static const char* const kConds[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
+        L.Button("Open Animator Graph##asm");
+        L.SameLineOrWrap(); L.Button("Reset to default##asm");
+        L.SameLineOrWrap(); L.Button("Add built-in actions##asm");
+        L.Combo("Entry##asm", &v.smEntry, kEntry, 3); L.Last().width = 200.0f;
+        L.Tree("Stance changes##asm");
+        L.Drag("Stand <-> crouch##asm", &v.smSC, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        L.Drag("Crouch <-> prone##asm", &v.smCP, 1, 0.01f, 0.05f, 3.0f, "%.2fs");
+        L.Drag("Prone -> stand##asm", &v.smPS, 1, 0.01f, 0.05f, 4.0f, "%.2fs");
+        L.TreeEnd();
+        L.Tree("Gait crossfades##asm");
+        L.TreeEnd();
+        std::string* names[2] = {&v.smS0, &v.smS1};
+        int* clips[2] = {&v.smClip0, &v.smClip1};
+        float* spd[2] = {&v.smSpd0, &v.smSpd1};
+        bool* loops[2] = {&v.smLoop0, &v.smLoop1};
+        for (int si = 0; si < 2; ++si) {
+            L.Separator();
+            L.Text("State##asm", names[si]); L.Last().width = 140.0f;
+            L.SameLineOrWrap(); L.Combo("##asmclip", clips[si], kSmClips, 4); L.Last().width = 150.0f;
+            L.SameLineOrWrap(); L.Drag("##asmspd", spd[si], 1, 0.02f, 0.05f, 5.0f, "x%.2f"); L.Last().width = 70.0f;
+            L.SameLineOrWrap(); L.Check("loop##asm", loops[si]);
+            L.SameLineOrWrap(); L.SmallButton("x##asmst");
+            L.SmallButton("Preview##apst"); L.SameLine(); L.SmallButton("Edit clip##asm");
+            L.Tree(si == 0 ? "1 transition(s)###asmtr0" : "0 transition(s)###asmtr1"); if (si == 0) L.Last().on = true;
+            if (si == 0) {
+                L.Note("  ->"); L.SameLine();
+                L.Combo("##trto", &v.smTo, kStates, 2); L.Last().width = 120.0f;
+                L.SameLineOrWrap(); L.Combo("##trcond", &v.smCond, kConds, 6); L.Last().width = 110.0f;
+                L.SameLineOrWrap(); L.Text("##trparam", &v.smParam, "param"); L.Last().width = 90.0f;
+                L.SameLineOrWrap(); L.Drag("##trval", &v.smVal, 1, 0.05f); L.Last().width = 60.0f;
+                L.SameLineOrWrap(); L.Drag("##trblend", &v.smBlendT, 1, 0.01f, 0.0f, 2.0f, "%.2fs"); L.Last().width = 60.0f;
+                L.SameLineOrWrap(); L.SmallButton("x##tr");
+            }
+            L.SmallButton("+ Transition##asm");
+            L.TreeEnd();
+        }
+        L.Separator();
+        L.SmallButton("+ Add State##asm");
+        L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.", false, true);
         break;
     }
     default: break;

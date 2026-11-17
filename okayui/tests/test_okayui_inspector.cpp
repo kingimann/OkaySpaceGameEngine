@@ -1013,5 +1013,59 @@ int main() {
         }
     }
 
+
+    // ================= stage 5 (section 18): the Player Controller's parts, Character, holding, the Animator state machine =================
+    {   // the state machine: the first state's transitions open; a fold keyed by "###" stays open when its count changes
+        BRig r(inspbody::BodyAnimSM, 460.0f, 1300.0f);
+        r.Frames(3);
+        Check("inspector_animsm", r.Draw());
+        const UI::Rect to = r.R("##trto");
+        CHECK(to.w > 100.0f && to.w < 130.0f);
+        for (const char* lb : {"x##tr", "##trblend", "##trparam", "Add built-in actions##asm", "x##asmst"}) {   // nothing runs out: the rest wraps
+            const UI::Rect b = r.R(lb);
+            CHECK(b.w > 0.0f && b.x + b.w <= 16.0f + 428.0f + 0.5f);
+        }
+        r.Click(to.x + 40.0f, CY(to));
+        CHECK(r.res.listRows.size() == 2);
+        r.Click(r.res.listRows[0]);
+        CHECK(r.v.smTo == 0);
+    }
+    {   // the Character: the clip previews sit on their clip's line; the colours are swatch-and-cells rows
+        BRig r(inspbody::BodyCharacter, 460.0f, 2300.0f);
+        r.Frames(3);
+        Check("inspector_character", r.Draw());
+        const UI::Rect cl = r.R("Clips (2)##charprev");
+        r.Click(cl.x + 30.0f, CY(cl));
+        const UI::Rect lab = r.R("Sprint"), pv = r.res.rows[(std::size_t)r.Row("Sprint") + 1];
+        CHECK(pv.w > 0.0f && pv.x > lab.x + lab.w && std::fabs(CY(pv) - CY(lab)) < 4.0f);
+        const UI::Rect hb = r.R("##hairstyle");
+        CHECK(std::fabs(hb.w - 120.0f) < 0.5f);
+    }
+    {   // First-person settings: Max Jumps on Can Jump's line, 90 wide; a key list is 96 wide and a pick sets it
+        BRig r(inspbody::BodyFirstPerson, 460.0f, 1800.0f);
+        r.Frames(3);
+        Check("inspector_firstperson", r.Draw());
+        const UI::Rect cj = r.R("Can Jump##fp"), mj = r.R("Max Jumps##fp");
+        CHECK(std::fabs(CY(cj) - CY(mj)) < 3.0f && mj.x > cj.x + 60.0f);
+        const UI::Rect sk = r.R("Sprint Key##fp");
+        r.Click(sk.x + 30.0f, CY(sk));
+        CHECK(r.res.listRows.size() == 9);
+        r.Click(r.res.listRows[2]);
+        CHECK(r.v.fpSprint == 2);
+    }
+    {   // Holdable Object and Object Holding: a pick in the 14-item style list; the throw key field
+        BRig r(inspbody::BodyHoldable, 460.0f, 1400.0f);
+        r.Frames(3);
+        const UI::Rect st = r.R("Style##hold");
+        r.Click(st.x + 40.0f, CY(st));
+        CHECK(r.res.listRows.size() == 14);
+        BRig o(inspbody::BodyObjHolding);
+        o.Frames(3);
+        CHECK(o.res.contentHeight > 400.0f);
+        BRig p(inspbody::BodyPlayerView);
+        p.Frames(3);
+        CHECK(p.R("Toggle Key##pv").w > 90.0f && p.R("Toggle Key##pv").w < 200.0f);
+    }
+
     TEST_MAIN_RESULT();
 }

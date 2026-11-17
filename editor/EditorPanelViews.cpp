@@ -1412,6 +1412,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
                 float nextW = tw + st.FramePadding.x * 2.0f;
                 if (r.kind == InspRowCheck) nextW = ImGui::GetFrameHeight() + (vl ? st.ItemInnerSpacing.x + tw : 0.0f);
                 else if (r.kind == InspRowLabel || r.kind == InspRowNote) nextW = tw;
+                else if (r.width > 0.0f) nextW = r.width + (vl ? st.ItemInnerSpacing.x + tw : 0.0f);
                 const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
                 fits = right - (ImGui::GetItemRectMax().x + (r.sameLineGap >= 0.0f ? r.sameLineGap : st.ItemSpacing.x)) >= nextW;
             }

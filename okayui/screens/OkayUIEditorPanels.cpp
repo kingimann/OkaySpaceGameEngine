@@ -2570,6 +2570,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     float nextW = tw + 2.0f * g_metrics.framePadding.x;                        // a button
                     if (r.kind == InspRowCheck) nextW = fh + (vis.empty() ? 0.0f : g_metrics.innerSpacing.x + tw);
                     else if (r.kind == InspRowLabel || r.kind == InspRowNote) nextW = tw;
+                    else if (r.width > 0.0f) nextW = r.width + (vis.empty() ? 0.0f : g_metrics.innerSpacing.x + tw);   // a field of its own width, its label
                     const UI::Rect pr = UI::GetItemRect();
                     fits = regionX + w - (pr.x + pr.w + gap) >= nextW;
                 }

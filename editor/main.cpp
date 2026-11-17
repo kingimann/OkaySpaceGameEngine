@@ -27146,6 +27146,13 @@ static bool SameLineOrWrap(float nextW) {
 static float ButtonW(const char* label) {
     return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
+// A field `w` wide with its label after it (the inner spacing and the label's visible text), for SameLineOrWrap.
+static float FieldW(float w, const char* label) {
+    const float tw = ImGui::CalcTextSize(label, nullptr, true).x;
+    return w + (tw > 0.0f ? ImGui::GetStyle().ItemInnerSpacing.x + tw : 0.0f);
+}
+// A check box with its label, for SameLineOrWrap.
+static float CheckW(const char* label) { return FieldW(ImGui::GetFrameHeight(), label); }
 
 // One header bar per component: fold arrow, enable box and a type
 // glyph inside the bar, the name, and a "..." menu on the right (move up / down,
@@ -33137,7 +33144,7 @@ static bool DrawFirstPersonWithOkayUI(EditorState& ed, GameObject* go, FirstPers
     }
     PadRow pad;
     AddPadRow(L, "Stance Pad Button##fp", fp->stanceGamepadButton, pad); L.Tip("Gamepad: tap to crouch / stand up, hold to go prone.");
-    if (fp->allowProne) { L.SameLine(); L.Drag("Hold For Prone##fp", &fp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
+    if (fp->allowProne) { L.SameLineOrWrap(); L.Drag("Hold For Prone##fp", &fp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
     L.Drag("Stand Eye Height##fp", &fp->standEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
     L.Drag("Crouch Eye Height##fp", &fp->crouchEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
     L.Drag("Prone Eye Height##fp", &fp->proneEyeHeight, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
@@ -33153,7 +33160,7 @@ static bool DrawFirstPersonWithOkayUI(EditorState& ed, GameObject* go, FirstPers
     L.Drag("Sprint FOV Boost##fp", &fp->sprintFovBoost, 1, 0.2f, 0.0f, 30.0f, "%.1f deg"); L.TipLookup();
     L.Check("Right-mouse Zoom##fp", &fp->zoomWithRightMouse); L.TipLookup();
     if (fp->zoomWithRightMouse) {
-        L.SameLine(); L.Drag("FOV##fpz", &fp->zoomFov, 1, 0.5f, 5.0f, 90.0f, "%.0f"); L.Last().width = 70.0f; L.TipLookup();
+        L.SameLineOrWrap(); L.Drag("FOV##fpz", &fp->zoomFov, 1, 0.5f, 5.0f, 90.0f, "%.0f"); L.Last().width = 70.0f; L.TipLookup();
         L.Drag("Zoom Sensitivity##fp", &fp->zoomSensitivity, 1, 0.01f, 0.05f, 1.0f); L.TipLookup();
     }
     L.Drag("Landing Dip##fp", &fp->landDip, 1, 0.005f, 0.0f, 0.5f); L.TipLookup();
@@ -33307,7 +33314,7 @@ static bool DrawThirdPersonWithOkayUI(EditorState& ed, GameObject* go, ThirdPers
     }
     PadRow pad;
     AddPadRow(L, "Stance Pad Button##tp", tp->stanceGamepadButton, pad); L.Tip("Gamepad: tap to crouch / stand up, hold to go prone.");
-    if (tp->allowProne) { L.SameLine(); L.Drag("Hold For Prone##tp", &tp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
+    if (tp->allowProne) { L.SameLineOrWrap(); L.Drag("Hold For Prone##tp", &tp->proneHoldTime, 1, 0.02f, 0.1f, 2.0f, "%.2fs"); L.Last().width = 90.0f; L.TipLookup(); }
     L.Drag("Crouch Drop##tp", &tp->crouchHeightDrop, 1, 0.05f, 0.0f, 3.0f); L.Tip("How far the camera's look target lowers when crouched");
     L.Drag("Prone Drop##tp", &tp->proneHeightDrop, 1, 0.05f, 0.0f, 3.0f); L.TipLookup();
     L.Drag("Stance Ease##tp", &tp->stanceLerp, 1, 0.5f, 0.0f, 40.0f); L.TipLookup();
@@ -33400,9 +33407,9 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
     if (!ma && !body) L.ColorText(RowCol(0.95f, 0.7f, 0.4f), "Needs a Model Animator (import a model here) or a Character on this object.");
     int kReset = -1, kActions = -1;
     if (body && sm->layer == 0) {
-        L.SameLine(); kReset = L.Button("Reset to default##asm");
+        L.SameLineOrWrap(); kReset = L.Button("Reset to default##asm");
         L.Tip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\nProne, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
-        L.SameLine(); kActions = L.Button("Add built-in actions##asm");
+        L.SameLineOrWrap(); kActions = L.Button("Add built-in actions##asm");
         L.Tip("Add any built-in action states this graph is missing (Death, and later\nones). States you already edited are left as they are.");
     }
     auto shownClip = [](const AnimStateMachine::State& st) -> std::string {   // as the Dear ImGui body: a blend tree's middle motion
@@ -33461,7 +33468,7 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
         StRow& s = sr[si];
         L.Separator();
         s.name = L.Text("State##asm", &st.name); L.Last().width = 140.0f; L.TipLookup();
-        L.SameLine();
+        L.SameLineOrWrap();
         if (st.blendTree) { L.Note(T("blend tree, " + std::to_string((int)st.motions.size()) + " clips")); L.Tip("Open Animator Graph to edit its motions."); }
         else if (ma || body) {
             s.clipIdx = -1;
@@ -33469,9 +33476,9 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
             s.clip = L.Combo("##asmclip", &s.clipIdx, clipItems.data(), (int)clipItems.size()); L.Last().width = 150.0f;
             L.Last().preview = st.clip.empty() ? "(clip)" : st.clip.c_str();
         }
-        L.SameLine(); L.Drag("##asmspd", &st.speed, 1, 0.02f, 0.05f, 5.0f, "x%.2f"); L.Last().width = 70.0f; L.TipLookup();
-        L.SameLine(); L.Check("loop##asm", &st.loop); L.TipLookup();
-        L.SameLine(); s.del = L.SmallButton("x##asmst"); L.Tip("Remove");
+        L.SameLineOrWrap(); L.Drag("##asmspd", &st.speed, 1, 0.02f, 0.05f, 5.0f, "x%.2f"); L.Last().width = 70.0f; L.TipLookup();
+        L.SameLineOrWrap(); L.Check("loop##asm", &st.loop); L.TipLookup();
+        L.SameLineOrWrap(); s.del = L.SmallButton("x##asmst"); L.Tip("Remove");
         s.shown = body ? shownClip(st) : std::string();
         if (body && BodyClip(body, s.shown)) {
             const bool on = apv::IsState(body->gameObject, st.name);
@@ -33493,24 +33500,24 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
             for (std::size_t i = 0; i < sm->states.size(); ++i) if (sm->states[i].name == tr.to) r.toIdx = (int)i;
             r.to = L.Combo("##trto", &r.toIdx, stateItems.data(), (int)stateItems.size()); L.Last().width = 120.0f;
             L.Last().preview = tr.to.empty() ? "(state)" : tr.to.c_str();
-            L.SameLine();
+            L.SameLineOrWrap();
             r.condIdx = (int)tr.cond;
             r.cond = L.Combo("##trcond", &r.condIdx, kCondNames, 6); L.Last().width = 110.0f; L.TipLookup();
             if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
-                L.SameLine(); r.paramRow = L.Text("##trparam", &tr.param, "param"); L.Last().width = 90.0f; L.TipLookup();
+                L.SameLineOrWrap(); r.paramRow = L.Text("##trparam", &tr.param, "param"); L.Last().width = 90.0f; L.TipLookup();
             }
             if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
-                L.SameLine(); L.Drag("##trval", &tr.value, 1, 0.05f); L.Last().width = 60.0f; L.TipLookup();
+                L.SameLineOrWrap(); L.Drag("##trval", &tr.value, 1, 0.05f); L.Last().width = 60.0f; L.TipLookup();
             }
-            L.SameLine(); L.Drag("##trblend", &tr.blend, 1, 0.01f, 0.0f, 2.0f, "%.2fs"); L.Last().width = 60.0f; L.TipLookup();
-            L.SameLine(); r.del = L.SmallButton("x##tr"); L.Tip("Remove");
+            L.SameLineOrWrap(); L.Drag("##trblend", &tr.blend, 1, 0.01f, 0.0f, 2.0f, "%.2fs"); L.Last().width = 60.0f; L.TipLookup();
+            L.SameLineOrWrap(); r.del = L.SmallButton("x##tr"); L.Tip("Remove");
         }
         s.addTr = L.SmallButton("+ Transition##asm");
         L.TreeEnd();
     }
     L.Separator();
     const int kAdd = L.SmallButton("+ Add State##asm");
-    L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.");
+    L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.", false, true);
     if (!DrawRowsOkayUI(sm, "##okayui_animsm", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
     if (L[kGraph].clicked) g_showAnimatorGraph = true;
@@ -35533,7 +35540,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
                                    "Needs a Model Animator (import a model here) or a Character on this object.");
             if (body && sm->layer == 0) {
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Reset to default##asm"));   // wraps in a narrow Inspector (it ran out of it, stage 5 pictures)
                 if (ImGui::Button("Reset to default##asm")) {
                     ed.PushUndo();
                     HumanoidLibrary::DefaultGraph(*sm, body);
@@ -35542,7 +35549,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\n"
                                       "Prone, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Add built-in actions##asm"));
                 if (ImGui::Button("Add built-in actions##asm")) {
                     ed.PushUndo();
                     HumanoidActions::MergeMissing(*sm, body, true);
@@ -35622,7 +35629,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
                 oked::FieldTip("State##asm");
-                ImGui::SameLine();
+                SameLineOrWrap(st.blendTree ? ImGui::CalcTextSize("blend tree, 00 clips").x : FieldW(150.0f, "##asmclip"));
                 // Clip picker (from the Model Animator's or the Character's clips); a
                 // blend tree is edited in the graph.
                 ImGui::SetNextItemWidth(150);
@@ -35634,14 +35641,14 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
                     ImGui::EndCombo();
                 }
-                ImGui::SameLine();
+                SameLineOrWrap(70.0f);
                 ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("##asmspd", &st.speed, 0.02f, 0.05f, 5.0f, "x%.2f")) ed.dirty = true;
                 oked::FieldTip("##asmspd");
-                ImGui::SameLine();
+                SameLineOrWrap(CheckW("loop##asm"));
                 if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
                 oked::FieldTip("loop##asm");
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("x##asmst"));
                 if (oked::TipSmallButton("Remove", "x##asmst")) delState = si;
                 // On a Character: watch the state's clip in the Scene view, or open
                 // a copy of it in the Animation tab (Apply there makes it this body's).
@@ -35683,29 +35690,29 @@ void DrawInspector(EditorState& ed) {
                             if (ImGui::Selectable(st2.name.c_str(), tr.to == st2.name)) { tr.to = st2.name; ed.dirty = true; }
                         ImGui::EndCombo();
                     }
-                    ImGui::SameLine();
+                    SameLineOrWrap(110.0f);
                     int cd = (int)tr.cond;
                     ImGui::SetNextItemWidth(110);
                     if (ImGui::Combo("##trcond", &cd, kCondNames, 6)) { tr.cond = (okay::AnimStateMachine::Cond)cd; ed.dirty = true; }
                     oked::FieldTip("##trcond");
                     if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
-                        ImGui::SameLine();
+                        SameLineOrWrap(90.0f);
                         char pb[32]; std::snprintf(pb, sizeof(pb), "%s", tr.param.c_str());
                         ImGui::SetNextItemWidth(90);
                         if (ImGui::InputTextWithHint("##trparam", "param", pb, sizeof(pb))) { tr.param = pb; ed.dirty = true; }
                         oked::FieldTip("##trparam");
                     }
                     if (tr.cond == AnimStateMachine::Cond::FloatGreater || tr.cond == AnimStateMachine::Cond::FloatLess) {
-                        ImGui::SameLine();
+                        SameLineOrWrap(60.0f);
                         ImGui::SetNextItemWidth(60);
                         if (ImGui::DragFloat("##trval", &tr.value, 0.05f)) ed.dirty = true;
                         oked::FieldTip("##trval");
                     }
-                    ImGui::SameLine();
+                    SameLineOrWrap(60.0f);
                     ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("##trblend", &tr.blend, 0.01f, 0.0f, 2.0f, "%.2fs")) ed.dirty = true;
                     oked::FieldTip("##trblend");
-                    ImGui::SameLine();
+                    SameLineOrWrap(ButtonW("x##tr"));
                     if (oked::TipSmallButton("Remove", "x##tr")) delTr = ti;
                     ImGui::PopID();
                 }
@@ -35730,8 +35737,10 @@ void DrawInspector(EditorState& ed) {
                 sm->states.push_back(std::move(st));
                 ed.dirty = true;
             }
+            ImGui::PushTextWrapPos(0.0f);   // wrapped: its lines ran out of the docked Inspector
             ImGui::TextDisabled("Set parameters from a script: anim_set_float(\"speed\", v),\n"
                                 "anim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.");
+            ImGui::PopTextWrapPos();
         }
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
@@ -40651,7 +40660,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Stance Pad Button##fp", &sel, padBtns, IM_ARRAYSIZE(padBtns))) { fp->stanceGamepadButton = sel - 1; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: tap to crouch / stand up, hold to go prone.");
                 if (fp->allowProne) {
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    SameLineOrWrap(FieldW(90.0f, "Hold For Prone##fp")); ImGui::SetNextItemWidth(90);   // wraps: it ran out of the Inspector
                     if (ImGui::DragFloat("Hold For Prone##fp", &fp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
                     oked::FieldTip("Hold For Prone##fp");
                 }
@@ -40682,7 +40691,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Right-mouse Zoom##fp", &fp->zoomWithRightMouse)) ed.dirty = true;
             oked::FieldTip("Right-mouse Zoom##fp");
             if (fp->zoomWithRightMouse) {
-                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                SameLineOrWrap(FieldW(70.0f, "FOV##fpz")); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("FOV##fpz", &fp->zoomFov, 0.5f, 5.0f, 90.0f, "%.0f")) ed.dirty = true;
                 oked::FieldTip("FOV##fpz");
                 if (ImGui::DragFloat("Zoom Sensitivity##fp", &fp->zoomSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
@@ -40940,7 +40949,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Stance Pad Button##tp", &sel, padBtns, IM_ARRAYSIZE(padBtns))) { tp->stanceGamepadButton = sel - 1; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: tap to crouch / stand up, hold to go prone.");
                 if (tp->allowProne) {
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    SameLineOrWrap(FieldW(90.0f, "Hold For Prone##tp")); ImGui::SetNextItemWidth(90);   // wraps: it ran out of the Inspector
                     if (ImGui::DragFloat("Hold For Prone##tp", &tp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
                     oked::FieldTip("Hold For Prone##tp");
                 }

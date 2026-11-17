@@ -1,0 +1,275 @@
+name: Fast release
+
+# ONE dispatch makes a release, with no version-bump pull request and no second hour of CI (docs/fast_release.md).
+#
+#   gh workflow run fast-release.yml --ref main -f dry_run=true     # first: prints what it would do, builds nothing
+#   gh workflow run fast-release.yml --ref main                      # the real thing (needs the repository variable FAST_RELEASE_ENABLED=1)
+#
+# What it does, in order (the old way, a bump PR and then release.yml by hand, still works unchanged):
+#   1. plan: the commit must be the head of main AND already have a finished, fully green CI run from main's own push (CLAUDE.md rule 6:
+#      the gate is the CI run the commit already had; there is no second one). The next version is worked out from what is published
+#      (rule 12: never a version that exists). The release notes are put together from the small files in dist/changelog.d/.
+#   2. release: calls release.yml for exactly that commit. The version is put into the build (CMakeLists.txt in the runner's copy only),
+#      the programs, VERSION.txt, versions.json and the tag all carry it. Signing, checksums, the Supabase publish and the "make latest"
+#      job are release.yml's own, unchanged.
+#   3. after: checks by itself what the owner used to check by hand (the release, the three SHA-256 in versions.json, the tag, "latest").
+# Nothing here writes to main. dry_run does steps 1 only and prints the plan.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = work out the version, check CI and prepare the notes, print them, and stop (nothing is built or published)"
+        type: boolean
+        default: false
+      bump:
+        description: "minor = next build (2.880.0 -> 2.881.0, the usual); patch = 2.880.0 -> 2.880.1"
+        type: choice
+        options: [minor, patch]
+        default: minor
+      version:
+        description: "Optional: release exactly this version (x.y.z; must be new and newer than every release). Empty = work it out."
+        type: string
+        default: ""
+      allow_empty:
+        description: "Release even though no new changelog entry exists (players then see 'Small fixes and improvements')"
+        type: boolean
+        default: false
+
+# One fast release at a time, never cancelled midway (a half-published release is worse than a waiting one). The group name is not
+# release.yml's own "release" group: a called workflow must not share its caller's group.
+concurrency:
+  group: fast-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan (version, CI gate, notes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read        # to read main's CI run for this commit
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      latest: ${{ steps.version.outputs.latest }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
+      REF: ${{ github.ref }}
+      REPO: ${{ github.repository }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      BUMP: ${{ inputs.bump }}
+      WANT_VERSION: ${{ inputs.version }}
+      ALLOW_EMPTY: ${{ inputs.allow_empty }}
+      ENABLED: ${{ vars.FAST_RELEASE_ENABLED }}
+      SUPABASE_URL_VAR: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0       # tags and history: which entries the last release already had
+
+      - name: Check where this was started and that the fast path is switched on
+        run: |
+          fail() { echo "::error title=Fast release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          [ "$REF" = "refs/heads/main" ] || fail "Start this on main (ref $REF). It releases the commit main points at, which is the one CI has checked."
+          git fetch -q origin main
+          [ "$(git rev-parse origin/main)" = "$SHA" ] || fail "main moved since this was started ($SHA is not main's head any more). Dispatch again."
+          if [ "$DRY_RUN" != "true" ] && [ "$ENABLED" != "1" ]; then
+            fail "The fast release path is switched off. Set the repository variable FAST_RELEASE_ENABLED to 1 (Settings > Secrets and variables > Actions > Variables) to release this way, or run it with dry_run=true first."
+          fi
+
+      - name: Collect what is already released
+        run: |
+          fail() { echo "::error title=Fast release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          . scripts/public-account.sh
+          URL="${SUPABASE_URL_VAR:-$(okay_public_account url)}"
+          [ -n "$URL" ] || fail "No update server address (config/public-account.json or the OKAY_DEFAULT_ACCOUNT_URL variable)."
+          git tag -l 'v*' > tags.txt
+          # Drafts have no tag, so ask for the releases themselves too.
+          gh release list --repo "$REPO" --limit 300 --json tagName > releases.json || fail "Could not list the GitHub releases, so no version can be chosen safely."
+          if ! curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "${URL%/}/storage/v1/object/public/releases/versions.json?nocache=$(date +%s)" -o index.json; then
+            fail "Could not read versions.json from the update server, so no version can be chosen safely. Try again."
+          fi
+          echo "tags: $(wc -l < tags.txt), releases: $(python3 -c 'import json;print(len(json.load(open("releases.json"))))')"
+
+      - name: Work out the version
+        id: version
+        run: |
+          fail() { echo "::error title=Fast release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          out="$(python3 -I scripts/fast_release.py next-version --tags tags.txt --releases releases.json --index index.json \
+                   --cmake CMakeLists.txt --bump "$BUMP" --version "$WANT_VERSION" 2>err.txt)" || fail "$(cat err.txt)"
+          echo "$out"
+          VER="$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')"
+          LATEST="$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["latest"])')"
+          WHY="$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["why"])')"
+          [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "The version came out as '$VER'."
+          # Rule 12, asked of GitHub directly as well (a release made a moment ago may not be in the lists yet).
+          if gh release view "v$VER" --repo "$REPO" >/dev/null 2>&1; then fail "GitHub already has a release for v$VER (rule 12)."; fi
+          if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null; then fail "The tag v$VER already exists (rule 12)."; fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "why=$WHY" >> "$GITHUB_OUTPUT"
+
+      - name: Check that CI already passed for this commit (rule 6)
+        run: |
+          fail() { echo "::error title=CI gate: release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=30" > runs.json || fail "Could not read CI runs from GitHub."
+          set +e
+          dec="$(python3 -I scripts/fast_release.py ci-run --runs runs.json --sha "$SHA")"; rc=$?
+          set -e
+          echo "$dec"
+          msg="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["message"])')"
+          [ "$rc" -eq 0 ] || fail "$msg"
+          RID="$(printf '%s' "$dec" | python3 -c 'import sys,json;print(json.load(sys.stdin)["run_id"])')"
+          # The run says "success", but a job that was allowed to fail would not show there: every job must be success or skipped.
+          gh api --paginate "repos/$REPO/actions/runs/$RID/jobs?per_page=100" --jq '.jobs[] | {name, status, conclusion}' > jobs.json || fail "Could not read the jobs of CI run $RID."
+          set +e
+          jd="$(python3 -I scripts/fast_release.py ci-jobs --jobs jobs.json)"; rc=$?
+          set -e
+          echo "$jd"
+          [ "$rc" -eq 0 ] || fail "CI run $RID for this commit has jobs that did not pass: $(printf '%s' "$jd" | python3 -c 'import sys,json;print("; ".join(json.load(sys.stdin)["bad"]))')"
+          echo "CI_RUN_URL=https://github.com/$REPO/actions/runs/$RID" >> "$GITHUB_ENV"
+          echo "CI_JOBS=$(printf '%s' "$jd" | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])')" >> "$GITHUB_ENV"
+
+      - name: Prepare the release notes from dist/changelog.d
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          LATEST: ${{ steps.version.outputs.latest }}
+        run: |
+          fail() { echo "::error title=Fast release refused::$*"; echo "**Refused:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          if [ -n "$LATEST" ]; then
+            git rev-parse -q --verify "refs/tags/v$LATEST" >/dev/null || fail "The newest release v$LATEST has no tag in git, so it cannot be told which changelog entries it already had."
+            [ "$(git rev-parse "v$LATEST^{commit}")" != "$SHA" ] || fail "This commit is already released as v$LATEST. There is nothing new to release."
+            git ls-tree --name-only "refs/tags/v$LATEST" dist/changelog.d/ 2>/dev/null | sed 's#.*/##' > released.txt || true
+            if ! gh release download "v$LATEST" --repo "$REPO" -p CHANGELOG.txt -O base-changelog.txt 2>/dev/null; then
+              echo "::warning::v$LATEST has no CHANGELOG.txt asset; building on the repository's dist/CHANGELOG.txt instead."
+              cp dist/CHANGELOG.txt base-changelog.txt
+            fi
+          else
+            : > released.txt
+            cp dist/CHANGELOG.txt base-changelog.txt
+          fi
+          extra=()
+          [ "$ALLOW_EMPTY" = "true" ] && extra+=(--allow-empty)
+          python3 -I scripts/fast_release.py notes --entries-dir dist/changelog.d --released-list released.txt \
+              --base base-changelog.txt --version "$VER" --out-dir release-notes "${extra[@]}" 2>err.txt || fail "$(cat err.txt)"
+          cat >> release-notes/body.md <<EOF
+
+          Built from commit \`$SHA\`, after [CI run]($CI_RUN_URL) passed ($CI_JOBS jobs).
+          EOF
+          printf '{"version":"%s","previous":"%s","sha":"%s","ci_run":"%s"}\n' "$VER" "$LATEST" "$SHA" "$CI_RUN_URL" > release-notes/plan.json
+
+      - name: Print the plan
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          WHY: ${{ steps.version.outputs.why }}
+        run: |
+          {
+            if [ "$DRY_RUN" = "true" ]; then echo "## Fast release DRY RUN: nothing was built or published"; else echo "## Fast release plan"; fi
+            echo
+            echo "| | |"; echo "|---|---|"
+            echo "| Version | **v$VER** ($WHY; after v${LATEST:-none}) |"
+            echo "| Commit | \`$SHA\` (the head of main) |"
+            echo "| CI gate | passed: [run]($CI_RUN_URL), $CI_JOBS jobs all success or skipped |"
+            echo "| Changelog entries | $(wc -l < release-notes/entries.txt) new |"
+            echo
+            echo "### Would run next"
+            echo "1. release.yml on this commit with the version stamped to $VER (build, sign, zip, installer, GitHub release, Supabase publish, Linux server, make latest)."
+            echo "2. an after-check of the release, the tag, VERSION.txt, versions.json and its three SHA-256."
+            echo
+            echo "### ROADMAP.md row (for the catch-up PR, see docs/fast_release.md)"
+            echo '```'; cat release-notes/ROADMAP_ROW.txt; echo '```'
+            echo "### Update card (NOTES.txt)"
+            echo '```'; cat release-notes/NOTES.txt; echo '```'
+            echo "### dist/CHANGELOG.txt (top)"
+            echo '```'; sed -n 1,40p release-notes/CHANGELOG.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat release-notes/block.txt
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-notes
+          path: release-notes
+          retention-days: 30
+
+  release:
+    name: Build and publish (release.yml)
+    needs: plan
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      channel: latest
+      stamp_version: ${{ needs.plan.outputs.version }}
+    secrets: inherit
+
+  after:
+    name: Check the release
+    needs: [plan, release]
+    if: ${{ always() && !inputs.dry_run && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VER: ${{ needs.plan.outputs.version }}
+      SHA: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+      SUPABASE_URL_VAR: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+      TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: The release workflow must have finished green
+        run: |
+          if [ "$RELEASE_RESULT" != "success" ]; then
+            msg="The release job ended as '$RELEASE_RESULT' for v$VER. The release is hidden from launchers unless the last job (Make the release visible) ran: look at that job, then at https://github.com/$REPO/releases (a hidden release shows there as 'Pre-release'/not latest). Fix the cause on main and run a NEW fast release: never re-run a version that exists (rule 12). docs/fast_release.md, \"When it goes wrong\"."
+            echo "::error title=Release did not finish::$msg"; echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+
+      - name: Check the release (release, tag, latest, update server, checksums)
+        run: |
+          fail() { echo "::error title=Release check failed::$*"; echo "**Release check failed:** $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          . scripts/public-account.sh
+          URL="${SUPABASE_URL_VAR:-$(okay_public_account url)}"
+          B="${URL%/}/storage/v1/object/public/releases"
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            gh api "repos/$REPO/releases/tags/v$VER" > release.json 2>/dev/null || true
+            gh api "repos/$REPO/releases/latest" --jq .tag_name > latest-tag.txt 2>/dev/null || echo none > latest-tag.txt
+            curl -fsS -H 'Cache-Control: no-cache' "$B/VERSION.txt?nocache=$(date +%s)" -o supabase-version.txt || : > supabase-version.txt
+            curl -fsS -H 'Cache-Control: no-cache' "$B/versions.json?nocache=$(date +%s)" -o index.json || echo '{}' > index.json
+            sigflag=(--sig-present no)
+            if curl -fsS -H 'Cache-Control: no-cache' "$B/versions.json.sig?nocache=$(date +%s)" -o index.sig 2>/dev/null; then
+              sigflag=(--sig-present yes --sig-ok no)
+              if [ -n "$TRUSTED_KEYS" ]; then
+                for k in ${TRUSTED_KEYS//,/ }; do
+                  if python3 scripts/sign_index.py verify --file index.json --sig index.sig --pub "$k" >/dev/null 2>&1; then sigflag=(--sig-present yes --sig-ok yes); break; fi
+                done
+              else
+                sigflag=(--sig-present yes)
+              fi
+            fi
+            tk=(); [ -n "$TRUSTED_KEYS" ] && tk=(--trusted-keys)
+            if python3 -I scripts/fast_release.py verify --version "$VER" --sha "$SHA" --release release.json --latest-tag "$(cat latest-tag.txt)" \
+                 --supabase-version "$(head -n1 supabase-version.txt | tr -d '\r ')" --index index.json "${sigflag[@]}" "${tk[@]}" > verify.txt 2>verify-err.txt; then ok=1; break; fi
+            echo "check not satisfied yet (attempt $i); the update server's cache can lag a little"; sleep 20
+          done
+          { echo "## Release check for v$VER"; echo '```'; cat verify.txt verify-err.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat verify.txt verify-err.txt
+          if [ "$ok" != 1 ]; then
+            fail "At least one check failed for v$VER (see the summary). Do NOT re-run. To take it back from launchers: gh release edit v$VER --prerelease and set the previous release latest (docs/fast_release.md, \"Roll back or hide a release\")."
+          fi
+          echo "v$VER passed every after-check." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Catch-up reminder
+        run: |
+          echo "Optional, whenever convenient: a docs-only catch-up PR puts v$VER's ROADMAP row, changelog section and CMakeLists.txt version into the repository (artifact release-notes of this run; python3 scripts/fast_release.py sync-docs --version $VER --notes-dir <the artifact>). docs/fast_release.md." >> "$GITHUB_STEP_SUMMARY"

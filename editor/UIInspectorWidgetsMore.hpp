@@ -1,7 +1,7 @@
 #pragma once
 // Inspectors and GameObject > UI entries for the extra widgets: search bar,
 // date and time, file picker, accordion, breadcrumbs, pagination, skeleton
-// and bottom sheet.
+// and bottom sheet, plus the range slider, aspect-ratio container and input validation.
 #include "UIInspectorLayout.hpp"
 
 namespace oked {
@@ -17,5 +17,8 @@ void BuildUIBreadcrumbs(okay::GameObject* g);
 void BuildUIPagination(okay::GameObject* g);
 void BuildUISkeleton(okay::GameObject* g);
 void BuildUIBottomSheet(okay::GameObject* g);
+void BuildUIRangeSlider(okay::GameObject* g);
+void BuildUIAspectRatio(okay::GameObject* g);
+void BuildUIInputValidation(okay::GameObject* g);
 
 } // namespace oked

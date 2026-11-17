@@ -18,13 +18,12 @@ starting scene already created. Templates include:
 
 - **2D Scene** / **3D Scene** — a camera + a starter object.
 - **Platformer** / **Top-Down** — playable, component-wired starters.
-- **Coin Collector (full game)** — a complete game you can dissect: a WASD
-  player, a follow camera, spinning coins that score on pickup, and a HUD.
-- **Snake** and **Brick Breaker** — two more complete games written in
-  OkayScript (a tilemap snake, and a paddle that clears a wall of bricks).
+- **Main Menu** — a title screen with buttons.
 
-Pick **Coin Collector** to see everything working, or **2D Scene** to build from
-scratch. Press the green **▶ Play** in the toolbar to run it; **■ Stop** restores
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer
+offered when you create a project (removed 2026-11-16). Projects already made
+from them still open and play. Pick **Platformer** to see a working game, or
+**2D Scene** to build from scratch. Press the green **▶ Play** in the toolbar to run it; **■ Stop** restores
 the exact pre-play state.
 
 ## 3. Build a scene from scratch
@@ -155,6 +154,14 @@ share these movement niceties:
   down. 0 disables.
 - **Fall Reset Y** (default -100): falling below this world height teleports
   the player back to spawn (with a console hint about missing colliders).
+
+**Slopes, steps and the player numbers.** Select the player and open the Player Controller panel: **Slope Limit** is the steepest
+ground (degrees, 50 by default) the body may stand on and climb (box, mesh and heightmap ground all count; steeper ground slides it
+back; 0 = no limit) and **Step Offset** is the highest step it climbs by itself (0.35 m; 0 = off). Both are saved with the scene. A
+body standing still on ground it may stand on is held still, walking down stairs keeps it on the treads, a jump off a moving platform
+keeps the platform's speed, and walking into a wall at an angle slides you along it. Press **F3** in the player (or open the Game view
+stats in the editor) to see grounded or in the air, the slope, speed and what you stand on. `OKAY_OLD_PLAYER=1` brings the old
+behaviour back for comparing. Details and numbers: `docs/player_audit.md`; the course to walk: `examples/player`.
 
 ## Crouch and prone
 

@@ -22,6 +22,7 @@
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <d3dcompiler.h>
+#include <array>
 #include <cstring>
 #include <cmath>
 #include <vector>
@@ -836,7 +837,19 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
 
         // Build the triangle-list vertices (same as the D3D11 backend).
         p->verts.clear(); p->verts.reserve(T.size() * 14);
-        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+        // Material slots: triangles are written grouped by slot so each slot can be drawn with its own picture.
+        std::vector<std::array<int, 3>> slotRanges;   // {slot, first vertex, vertex count}
+        std::vector<int> slotOrder;
+        const bool bySlot = mesh.HasSlots();
+        if (bySlot) slotOrder = mesh.GroupBySlot().order;
+        const std::size_t triCount = T.size() / 3;
+        for (std::size_t oi = 0; oi < triCount; ++oi) {
+            const std::size_t i = (bySlot ? (std::size_t)slotOrder[oi] : oi) * 3;
+            if (bySlot) {
+                const int slot = mesh.triSlot[i / 3];
+                const int firstVert = (int)(p->verts.size() / 14);
+                if (slotRanges.empty() || slotRanges.back()[0] != slot) slotRanges.push_back({slot, firstVert, 0});
+            }
             int a = T[i], b = T[i+1], cc = T[i+2];
             if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue;
             Vec3 fn = Vec3::Cross(Vv[b] - Vv[a], Vv[cc] - Vv[a]);
@@ -865,12 +878,14 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
                 p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
                 p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
                 p->verts.push_back(uu[k]); p->verts.push_back(vvv[k]);
-                p->verts.push_back(cr); p->verts.push_back(cg); p->verts.push_back(cb);
+                { float vr = 1, vg = 1, vb = 1; if (mesh.HasVertexColors()) { const Color& vc = mesh.vertexColors[idx[k]]; vr = vc.r; vg = vc.g; vb = vc.b; }
+                  p->verts.push_back(cr * vr); p->verts.push_back(cg * vg); p->verts.push_back(cb * vb); }
                 p->verts.push_back(tan.x); p->verts.push_back(tan.y); p->verts.push_back(tan.z);
             }
         }
         const int vcount = (int)(p->verts.size() / 14);
         if (vcount == 0) continue;
+        for (std::size_t r = 0; r < slotRanges.size(); ++r) slotRanges[r][2] = (r + 1 < slotRanges.size() ? slotRanges[r + 1][1] : vcount) - slotRanges[r][1];
         const UINT bytes = (UINT)(p->verts.size() * sizeof(float));
 
         // Append the verts into the per-frame upload buffer (grow if needed).
@@ -945,8 +960,13 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;
         cb.shadowP[2] = (float)p->shadowSize; cb.shadowP[3] = 0.0f;
 
+        // Bind this draw's constants and pictures. A slot with its own picture calls this again with that picture.
+        auto bindPicture = [&](const std::string& pic) {
+        CB pcb = cb;
+        pcb.useTex = pic.empty() ? 0.0f : 1.0f;
+        pcb.tiling[0] = pic.empty() ? 1.0f : mr->tiling.x; pcb.tiling[1] = pic.empty() ? 1.0f : mr->tiling.y;
         UINT cbOff = p->cbNext;
-        std::memcpy(p->cbPtr + cbOff, &cb, sizeof(cb));
+        std::memcpy(p->cbPtr + cbOff, &pcb, sizeof(pcb));
         p->cbNext += p->cbStride;
         p->list->SetGraphicsRootConstantBufferView(0, cbBase + cbOff);
 
@@ -954,7 +974,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         if (p->srvRingNext + 7 > p->srvRingCap) p->srvRingNext = 0;   // wrap (frame-local)
         UINT ringStart = p->srvRingNext; p->srvRingNext += 7;
         D3D12_CPU_DESCRIPTOR_HANDLE src[7] = {
-            p->TextureFor(baseTex),
+            p->TextureFor(pic),
             mr->normalMap.empty()   ? p->whiteSrv : p->TextureFor(mr->normalMap),
             mr->specularMap.empty() ? p->whiteSrv : p->TextureFor(mr->specularMap),
             mr->aoMap.empty()       ? p->whiteSrv : p->TextureFor(mr->aoMap),
@@ -968,8 +988,26 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         D3D12_GPU_DESCRIPTOR_HANDLE tableGpu = srvGpu0; tableGpu.ptr += (UINT64)ringStart * p->srvInc;
         p->list->SetGraphicsRootDescriptorTable(1, tableGpu);
+        };
+        bindPicture(baseTex);
 
         p->list->SetPipelineState(mr->color.a < 0.999f ? p->psoBlend : p->psoOpaque);
+        bool slotDraw = false;
+        if (!slotRanges.empty()) for (const std::string& st : mr->slotTextures) if (!st.empty()) slotDraw = true;
+        if (slotDraw) {
+            // One draw per slot range, each with its own picture (the object's own picture where the slot has none).
+            // Each extra picture takes another constant buffer slot; when the ring is full the rest use the base picture.
+            std::string bound = baseTex;
+            for (const auto& rg : slotRanges) {
+                if (rg[2] <= 0) continue;
+                std::string want = baseTex;
+                if (rg[0] >= 0 && rg[0] < (int)mr->slotTextures.size() && !mr->slotTextures[rg[0]].empty() &&
+                    p->cbNext + p->cbStride <= p->cbCap) want = mr->slotTextures[rg[0]];
+                if (want != bound) { bindPicture(want); bound = want; }
+                p->list->DrawInstanced((UINT)rg[2], 1, (UINT)rg[1], 0);
+            }
+            if (bound != baseTex && p->cbNext + p->cbStride <= p->cbCap) bindPicture(baseTex);   // the shadow pass below expects it
+        } else
         p->list->DrawInstanced((UINT)vcount, 1, 0, 0);
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground

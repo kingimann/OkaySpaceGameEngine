@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -490,7 +491,8 @@ public:
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
                        const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
-                       bool receiveShadows = true) {
+                       bool receiveShadows = true,
+                       const float* vcol = nullptr) {   // vcol: r g b of each corner's vertex colour (9 floats), or null
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -659,6 +661,7 @@ public:
                     }
                 }
                 float br = base.r, bg = base.g, bb2 = base.b;
+                if (vcol) { br *= a0 * vcol[0] + a1 * vcol[3] + a2 * vcol[6]; bg *= a0 * vcol[1] + a1 * vcol[4] + a2 * vcol[7]; bb2 *= a0 * vcol[2] + a1 * vcol[5] + a2 * vcol[8]; }
                 if (textured && triplanar) {
                     // Triplanar: blend three world-axis projections by |normal|, so the
                     // texture wraps cliffs/terrain with no UV seams or stretching.
@@ -922,6 +925,10 @@ inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by 
 /// default. Turn off to get the faster per-vertex path back (it draws no shadows).
 inline bool& ShadowsUsePerPixel() { static bool v = true; return v; }
 inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
+/// The software renderer never builds a cascade larger than this many texels a side, whatever ShadowMapResolution() says (the GPU
+/// renderers do not use this). Three 2048 x 2048 cascades took about 200 ms a frame on the CPU, which is the whole frame of a machine that
+/// fell back to the software renderer; 1024 is about four times cheaper and still reads as a shadow. Set 4096 to get the old sharpness back.
+inline int&  SoftwareShadowCap()  { static int s = [] { const char* e = std::getenv("OKAY_SOFTWARE_SHADOW_CAP"); const int v = e ? std::atoi(e) : 0; return v >= 64 ? v : 1024; }(); return s; }
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
 /// cascade hugs a small slice of this so its shadows stay crisp no matter how big
@@ -1060,7 +1067,7 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     if (!any) { sm.enabled = false; return; }
 
     Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
-    const int S = ShadowMapResolution();
+    const int S = std::min(ShadowMapResolution(), std::max(64, SoftwareShadowCap()));
     // Depth padding = the scene's vertical extent, so a caster anywhere above a
     // cascade region is still inside the light frustum's depth range.
     float depthPad = (hi.y - lo.y) + (hi.x - lo.x) + (hi.z - lo.z);
@@ -1922,6 +1929,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!vis.Visible(go.get())) { swCulled.insert(go.get()); continue; }
         ++swDrawn;
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
+        for (const std::string& st : mr->slotTextures) if (!st.empty()) GetCachedMips(st);   // per-slot pictures (loaded here, read by the bands)
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
         if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
@@ -1954,6 +1962,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const bool hasUV = drawMesh.uvs.size() == v.size();
         const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
         const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        // Per-slot pictures: triangles whose material slot has a texture use it instead of the object's own.
+        std::vector<const MipChain*> slotTex;
+        if (drawMesh.HasSlots() && !mr->slotTextures.empty())
+            for (const std::string& st : mr->slotTextures) slotTex.push_back(st.empty() ? nullptr : GetCachedMips(st));
+        bool anySlotTex = false;
+        for (const MipChain* m : slotTex) if (m && !m->empty()) anySlotTex = true;
         const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
@@ -1966,7 +1980,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // Lit, untextured meshes shade via the smooth (Gouraud) path even without
         // per-vertex normals — they use the face normal, interpolated per vertex, so
         // there are no flat-shading facet lines (only truly unlit meshes stay flat).
-        const bool smooth = useMatcap || (!tex && !unlit);
+        const bool smooth = useMatcap || (!tex && !anySlotTex && !unlit);
         // Normal matrix = inverse-transpose of the model's linear part. Using the
         // model matrix directly SKEWS normals under non-uniform scale (e.g. a ground
         // scaled {40,1,40} or a stretched sphere) — lighting then "acts up" as the
@@ -2028,7 +2042,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // A clip-space vertex carrying its (unprojected) UV, for near-plane
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
-        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp; };
+        struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp, vr, vg, vb; };   // vr/vg/vb: the vertex colour (white without one)
         // Once per mesh. Doing this inside the triangle loop made a plain scene
         // about twice as slow (every band, every triangle, a component lookup).
         float lodR = 1, lodG = 1, lodB = 1;
@@ -2037,6 +2051,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
+            // This triangle's picture: its slot's texture if it has one, else the object's.
+            const MipChain* triTex = tex;
+            if (anySlotTex) {
+                const int sl = drawMesh.triSlot[i / 3];
+                if (sl >= 0 && sl < (int)slotTex.size() && slotTex[sl] && !slotTex[sl]->empty()) triTex = slotTex[sl];
+            }
             Vec3 wp[3];
             for (int k = 0; k < 3; ++k) wp[k] = model.MultiplyPoint(v[idx[k]]);
             Vec3 normal = Vec3::Cross(wp[1] - wp[0], wp[2] - wp[0]).Normalized();
@@ -2148,8 +2168,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float nh = Vec3::Dot(nk, hv);
                     if (nh > 0.0f) spk = std::pow(nh, faceShine) * faceSpec;
                 }
+                const Color vcc = drawMesh.HasVertexColors() ? drawMesh.vertexColors[idx[k]] : Color{1, 1, 1, 1};
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
-                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
+                         lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk, vcc.r, vcc.g, vcc.b};
             }
 
             // Per-triangle world-space tangent (from edges + UV deltas) for normal
@@ -2191,7 +2212,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                   A.nx + (B.nx - A.nx) * tt, A.ny + (B.ny - A.ny) * tt,
                                   A.nz + (B.nz - A.nz) * tt, A.wx + (B.wx - A.wx) * tt,
                                   A.wy + (B.wy - A.wy) * tt, A.wz + (B.wz - A.wz) * tt,
-                                  A.fo + (B.fo - A.fo) * tt, A.sp + (B.sp - A.sp) * tt};
+                                  A.fo + (B.fo - A.fo) * tt, A.sp + (B.sp - A.sp) * tt,
+                                  A.vr + (B.vr - A.vr) * tt, A.vg + (B.vg - A.vg) * tt, A.vb + (B.vb - A.vb) * tt};
                 }
             }
             if (pn < 3) continue;   // entirely behind the camera
@@ -2213,9 +2235,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // outfit / hair); otherwise the renderer's albedo, including LOD tint.
             const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
             const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
-            float cr = base.r * lit.x * metalK + spec + faceEr;
-            float cg = base.g * lit.y * metalK + spec + faceEg;
-            float cb = base.b * lit.z * metalK + spec + faceEb;
+            // (the flat path only: smooth, textured and per-pixel paths blend the vertex colours across the face)
+            const float vAvgR = (in[0].vr + in[1].vr + in[2].vr) * (1.0f / 3.0f), vAvgG = (in[0].vg + in[1].vg + in[2].vg) * (1.0f / 3.0f), vAvgB = (in[0].vb + in[1].vb + in[2].vb) * (1.0f / 3.0f);
+            float cr = base.r * vAvgR * lit.x * metalK + spec + faceEr;
+            float cg = base.g * vAvgG * lit.y * metalK + spec + faceEg;
+            float cb = base.b * vAvgB * lit.z * metalK + spec + faceEb;
             // Distance fog: blend the color toward the fog color by how far the
             // triangle is, between fogStart and fogEnd (per-tri factor).
             float fogF = 0.0f;
@@ -2274,8 +2298,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float wx[3] = {tri[0]->wx, tri[1]->wx, tri[2]->wx};
                     float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
                     float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
+                    const float vc9[9] = {tri[0]->vr, tri[0]->vg, tri[0]->vb, tri[1]->vr, tri[1]->vg, tri[1]->vb, tri[2]->vr, tri[2]->vg, tri[2]->vb};
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
-                                    tex, base, shaded, eye, faceShine, faceSpec,
+                                    triTex, base, shaded, eye, faceShine, faceSpec,
                                     faceEr, faceEg, faceEb,
                                     fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
@@ -2285,18 +2310,19 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
-                                    aoMips, mr->aoStrength, mr->receiveShadows);
-                } else if (tex) {
-                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
-                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
-                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, shaded, lr, lg, lb, sp3,
+                                    aoMips, mr->aoStrength, mr->receiveShadows,
+                                    drawMesh.HasVertexColors() ? vc9 : nullptr);
+                } else if (triTex) {
+                    float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
+                    float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};
+                    float lb[3] = {tri[0]->lb * tri[0]->vb, tri[1]->lb * tri[1]->vb, tri[2]->lb * tri[2]->vb};
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *triTex, shaded, lr, lg, lb, sp3,
                                   faceEr, faceEg, faceEb,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
-                    float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
-                    float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
-                    float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
+                    float lr[3] = {tri[0]->lr * tri[0]->vr, tri[1]->lr * tri[1]->vr, tri[2]->lr * tri[2]->vr};
+                    float lg[3] = {tri[0]->lg * tri[0]->vg, tri[1]->lg * tri[1]->vg, tri[2]->lg * tri[2]->vg};
+                    float lb[3] = {tri[0]->lb * tri[0]->vb, tri[1]->lb * tri[1]->vb, tri[2]->lb * tri[2]->vb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, sp3,
                                      faceEr, faceEg, faceEb,
                                      fo, fogR, fogG, fogB, bandY0, bandY1);
@@ -2385,7 +2411,13 @@ inline void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
                                int w, int h, const GameObject* ignore = nullptr) {
     const CullCounters saved = LastCullCounters();
     const bool vigSaved = PostVignetteHandled();   // this pass is never shown: it must not change who paints the vignette
+    // Only the depth is wanted: shadow maps (three 2048 x 2048 cascades) were about 90 percent of this pass and change no depth.
+    const bool shadowsSaved = ShadowsEnabled(), aaSaved = FXAAEnabled(), ssaoSaved = SSAOEnabled(), bloomSaved = BloomEnabled(),
+               toneSaved = ToneMapEnabled(), gradeSaved = ColorGradeEnabled();
+    ShadowsEnabled() = false; FXAAEnabled() = false; SSAOEnabled() = false; BloomEnabled() = false; ToneMapEnabled() = false; ColorGradeEnabled() = false;
     RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
+    ShadowsEnabled() = shadowsSaved; FXAAEnabled() = aaSaved; SSAOEnabled() = ssaoSaved; BloomEnabled() = bloomSaved;
+    ToneMapEnabled() = toneSaved; ColorGradeEnabled() = gradeSaved;
     LastCullCounters() = saved;
     PostVignetteHandled() = vigSaved;
 }

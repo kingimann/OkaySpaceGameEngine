@@ -135,9 +135,10 @@ int main() {
         const State s;
         std::vector<Entry> all;
         for (const auto& m : AllMenus(s)) for (const Entry& e : m.second) all.push_back(e);
-        for (const char* once : {"Examples", "Layout", "Build Settings...", "Items, Loot & Recipes", "Check for Updates...", "Panels",
+        for (const char* once : {"Layout", "Build Settings...", "Items, Loot & Recipes", "Check for Updates...", "Panels",
                                  "Editors & Tools", "Scene Overlays", "Camera Bookmarks", "Rendering & Performance", "Project Settings..."})
             CHECK(CountLabel(all, once) == 1);
+        CHECK(CountLabel(all, "Examples") == 0);   // removed on the owner's request (2026-11-16)
         CHECK(CountLabel(all, "Reset Layout") == 0);   // it is inside the Layout menu (drawn there), not beside it
         CHECK(CountLabel(all, "Engine") == 0);
         // Edit holds the clipboard and delete commands; GameObject no longer repeats them.
@@ -150,7 +151,7 @@ int main() {
     {   // File: new / open / recent / examples, save, project, import, autosave + build, exit.
         State s; s.recentCount = 2;
         CHECK((Ids(FileMenu(s)) == std::vector<std::string>{
-            "file.new2d", "file.new3d", "file.open", "file.recent", "file.examples", "---",
+            "file.new2d", "file.new3d", "file.open", "file.recent", "---",
             "file.save", "file.saveas", "file.saveproject", "---",
             "file.newproject", "file.openproject", "file.upgrade", "---",
             "file.import", "file.merge", "---", "file.autosave", "file.build", "---", "file.exit"}));
@@ -296,7 +297,6 @@ int main() {
         const Moved moved[] = {
             {"File", "New Project...", "file.newproject"}, {"File", "Open Project Folder...", "file.openproject"},
             {"File", "Project Upgrade...", "file.upgrade"}, {"File", "New 2D Scene", "file.new2d"}, {"File", "New 3D Scene", "file.new3d"},
-            {"File", "Examples", "file.examples"},   // three submenus became one
             {"File", "Import Model...", "file.import"}, {"File", "Open...", "file.open"}, {"File", "Open Recent", "file.recent"},
             {"File", "Save Scene", "file.save"}, {"File", "Save Scene As...", "file.saveas"}, {"File", "Save Project", "file.saveproject"},
             {"File", "Merge Scene into Current...", "file.merge"}, {"File", "Autosave", "file.autosave"},

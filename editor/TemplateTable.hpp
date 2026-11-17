@@ -48,12 +48,7 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
         {"Vehicle (2D)",               &E::NewVehicle2D},
         {"Sandbox",                    &E::NewVoxelSandbox},
         {"Multiplayer",                &E::NewMultiplayer},
-        {"Coin Collector",             &E::NewCoinCollector},
-        {"Snake",                      &E::NewSnake},
-        {"Brick Breaker",              &E::NewBrickBreaker},
         {"Main Menu",                  &E::NewMainMenu},
-        {"Inventory",                  &E::NewInventory},
-        {"Humanoid",                   &E::NewHumanoid},
     };
     return t;
 }

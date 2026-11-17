@@ -14,6 +14,7 @@
 //
 // No <mutex> / <thread>: this header is reachable from the Windows editor.
 #include "okay/Modeling/PolyMesh.hpp"
+#include <array>
 #include <functional>
 #include <map>
 #include <set>
@@ -106,11 +107,17 @@ struct Recipe {
 struct Template {
     std::string id, name, description, category;   ///< category: Architecture, Vehicles, Characters, Environment, Props
     int version = 1;
+    bool usesPath = false;   ///< follows Recipe::path when it has two or more points (fence, wall)
     std::vector<ParamDef> params;
     std::vector<SlotDef> slots;
     std::vector<StartDesign> starts;
     /// Build every part for a recipe whose params are already filled in and clamped.
     std::function<void(const Recipe&, std::vector<GeneratedPart>&)> generate;
+    /// Optional compatibility rule applied after a random change (for example: no wing spoiler on a pickup).
+    std::function<void(Recipe&)> constrain;
+    /// Slots whose parts are not subdivided again at Ultra (their outline is already smoothed by the template, and Catmull-Clark would
+    /// shrink and round away sharp features such as wheel arches).
+    std::vector<std::string> noSubdivisionSlots;
 };
 
 class Registry {
@@ -137,7 +144,43 @@ std::vector<GeneratedPart> Generate(const Recipe& r, std::string* error = nullpt
 /// Every part joined into one PolyMesh (what Create gives the object).
 PolyMesh Assemble(const std::vector<GeneratedPart>& parts);
 /// Generate + Assemble.
+/// What the last builds cost: Generate() / Create() calls answered from the cache (hits) or built (misses), parts reused by instancing,
+/// and the milliseconds of the last real build. Counters only grow; the panel shows them.
+struct GenStats { long hits = 0, misses = 0, instanced = 0; double lastBuildMs = 0; };
+const GenStats& Stats();
+/// Forget every cached build (tests; after registering a changed template).
+void ClearCache();
 PolyMesh Create(const Recipe& r, std::string* error = nullptr);
+
+// ---- Validation and variation ----------------------------------------------------------------------------------
+
+/// What is wrong, if anything, with a generated model.
+struct ValidationReport {
+    int parts = 0;
+    int components = 0;        ///< groups of parts that touch or overlap (1 = one connected object)
+    int nonFinite = 0, degenerate = 0, openParts = 0, invertedParts = 0, badIndices = 0;
+    std::vector<std::string> problems;
+    bool Ok() const { return nonFinite == 0 && degenerate == 0 && openParts == 0 && badIndices == 0; }
+};
+/// Checks every part: finite positions, no degenerate faces, closed (watertight), outward faces (positive volume), valid indices;
+/// and counts the connected groups of parts (bounding boxes that touch). `checkVolume` is off for subdivided (Ultra) models.
+ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVolume = true);
+
+/// A repeatable variation of `base` (the start design's recipe): every setting moves within +-`strength` of its range (default 15 percent),
+/// some parts get another design, then the template's compatibility rule runs. Same seed, same result.
+Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength = 0.15f);
+
+// ---- Skeleton for animation (humans only) ------------------------------------------------------------------------------
+/// One bone of the humanoid skeleton made for a human recipe, in the model's own space (bind pose). `tail` is where the bone ends
+/// (the next joint, or past the hand, foot or head); the bones are in the engine's 15-bone humanoid order and use plain names
+/// (pelvis, spine_01, head, upperarm_l, lowerarm_l, hand_l, ..., thigh_l, calf_l, foot_l, ...) that the humanoid retarget maps.
+/// The model faces +Z; "_l" is on +X.
+struct RigJoint { std::string name; int parent = -1; Vec3 pos, tail; };
+/// The skeleton that fits this human's proportions. False for templates without one (only "human" has it).
+bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out);
+/// Skin weights by distance to the bones: every vertex is bound to its three nearest bones (4 slots, sum 1).
+void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
+                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt);
 
 // ---- Analysis and regeneration ----------------------------------------------------------------------------
 
@@ -173,6 +216,13 @@ struct RegenResult {
 };
 /// Change a model from `stored` to `next`. `current` is the mesh as it is now (with the user's edits).
 RegenResult Regenerate(const PolyMesh& current, const Recipe& stored, const Recipe& next, const RegenOptions& opt = {});
+/// The analysis of a mesh that is exactly the recipe's design (every part intact), without building or reading any mesh.
+Analysis UntouchedAnalysis(const Recipe& r);
+/// True when an analysis found nothing of the user's: every part intact, none edited or removed, no faces of their own.
+bool IsUntouched(const Analysis& a);
+/// What Regenerate() gives for an untouched model, without reading the mesh back or matching faces (needs only the recipes).
+/// The editor uses it when its cached analysis says IsUntouched, so a setting change stays cheap on a big model.
+RegenResult RegenerateUntouched(const Recipe& stored, const Recipe& next);
 /// One part stops following the recipe; the mesh is untouched. False if the id is not a part of the recipe.
 bool DetachPart(Recipe& r, const std::string& partId);
 
@@ -198,7 +248,11 @@ std::vector<UserPart> LoadUserParts(const std::string& dir);
 
 // ---- Undo for guided steps ---------------------------------------------------------------------------------
 
-struct GuidedState { PolyMesh mesh; Recipe recipe; bool guided = true; };
+/// One undo state. A model nobody touched is exactly its recipe's design, so only the recipe is kept (`fromRecipe`, `mesh` empty) and the
+/// mesh is built again when the state is restored: a state costs bytes, not a copy of 100,000 polygons.
+struct GuidedState { PolyMesh mesh; Recipe recipe; bool guided = true; bool fromRecipe = false; };
+/// The mesh of a state: the stored one, or the design built again for a `fromRecipe` state.
+PolyMesh StateMesh(const GuidedState& s);
 class GuidedHistory {
 public:
     void Push(const GuidedState& before);          ///< call with the state BEFORE a step; clears redo
@@ -211,9 +265,43 @@ private:
     std::vector<GuidedState> undo_, redo_;
 };
 
+/// Number of triangles a mesh turns into (a face with n corners makes n - 2).
+int TriangleCount(const PolyMesh& m);
+/// The core "Detail" setting every template gets: Low, Medium, High, Ultra (Medium when a recipe has none).
+extern const char* const kDetailParam;
+inline float DetailOf(const Recipe& r) { return (float)r.Param("detail", 1); }
+
+// ---- Live preview while a slider is dragged ------------------------------------------------------------------------
+/// The detail a drag preview is built at: never finer than Medium, so a model set to High or Ultra still follows the slider
+/// at once and is rebuilt at its real detail when the slider is let go.
+inline float PreviewDetail(float detail) { return detail < 1.0f ? detail : 1.0f; }
+/// Decides when a drag preview may be rebuilt: not more often than `minInterval` seconds, and never so often that rebuilding
+/// takes more than `maxShare` of the time (a preview that costs 100 ms is rebuilt about every 0.4 s, one that costs 1 ms every
+/// `minInterval`). Times are in seconds from any clock; the caller reports each rebuild's cost in milliseconds.
+class PreviewThrottle {
+public:
+    explicit PreviewThrottle(double minInterval = 0.08, double maxShare = 0.25) : minInterval_(minInterval), maxShare_(maxShare) {}
+    bool Ready(double now) const { return now >= next_; }
+    void Done(double now, double costMs) {
+        const double wait = maxShare_ > 0 ? costMs / 1000.0 / maxShare_ : 0;
+        next_ = now + (wait > minInterval_ ? wait : minInterval_);
+    }
+    void Reset() { next_ = 0; }
+private:
+    double minInterval_, maxShare_, next_ = 0;
+};
+
 // ---- Shape helpers (also used by templates in other files) --------------------------------------------------
 
 namespace shapes {
+/// The detail the parts being generated are built at, 0 to 3 continuous: 0 Low (blocky, few segments), 1 Medium (rounded),
+/// 2 High (smooth, fine detail parts), 3 Ultra (subdivided, finest detail). Detail() is the nearest whole level.
+/// Set for the duration of Generate() from the recipe's "detail" setting; the shape helpers below follow it
+/// (fewer or more segments on curves, bevelled edges from High up). Templates can read it for extra detail parts.
+int Detail();
+float DetailF();
+/// `base` segments at Medium: half at Low, double at High, four times at Ultra (never below `minimum`).
+int Scale(int base, int minimum = 3);
 /// A box filling the frame: 6 quads, outward.
 PolyMesh Box(const Frame& f);
 /// A prism with `sides` corners along the frame's up axis, fitted to the frame (cx, cz radius = size/2).
@@ -225,6 +313,11 @@ PolyMesh Ball(const Frame& f, int rings, int sectors);
 /// A flat profile (counter-clockwise corners in a,b = along t and up, within the frame's box) pushed through the frame's n size.
 PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile);
 void Append(PolyMesh& dst, const PolyMesh& src);
+/// A closed solid: `profile` (counter-clockwise in the a,b plane, positions o + a*pa + b*pb) pushed along `nrm`
+/// from -depth/2 to +depth/2. Faces are wound outward whatever the handedness of (a, b, nrm).
+PolyMesh ExtrudeAxes(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& profile, float depth);
+/// Flip faces whose normal points toward `centre` (right for convex shapes only).
+void OrientOutward(PolyMesh& m, const Vec3& centre);
 void Paint(PolyMesh& m, int material, const Color& color);
 }
 

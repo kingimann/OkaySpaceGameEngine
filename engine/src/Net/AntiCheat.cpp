@@ -118,6 +118,12 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
         else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
         else if (key == "hitsNeedMoveCheck") { if (!ParseBool(val, s.hitsNeedMoveCheck)) return fail("hitsNeedMoveCheck needs true or false"); }
+        else if (key == "maxPacketsPerSecond") { if (!ParseInt(val, s.maxPacketsPerSecond)) return fail("maxPacketsPerSecond needs a whole number >= 0 (0 = unlimited)"); }
+        else if (key == "banFile") { s.banFile = val; }
+        else if (key == "auditLog") { s.auditLog = val; }
+        else if (key == "banAfterKicks") { if (!ParseInt(val, s.banAfterKicks)) return fail("banAfterKicks needs a whole number >= 0"); }
+        else if (key == "banHours") { if (!ParseFloat(val, s.banHours)) return fail("banHours needs a number of hours >= 0 (0 = until removed)"); }
+        else if (key == "banOnRequest") { if (!ParseBool(val, s.banOnRequest)) return fail("banOnRequest needs true or false"); }
         else if (key.rfind("detect.", 0) == 0) {
             std::string e;
             if (!s.detect.ParseLine(key.substr(7), val, &e)) return fail(e);
@@ -170,6 +176,15 @@ std::string AntiCheatSettings::ToText() const {
     o << "maxRpcsPerSecond " << maxRpcsPerSecond << "\n";
     o << "maxRpcBytes " << maxRpcBytes << "\n";
     if (maxClockDrift > 0.0f) o << "maxClockDrift " << maxClockDrift << "\n";
+    {   // bans and the audit log, when they aren't the default
+        const AntiCheatSettings bd;
+        if (maxPacketsPerSecond != bd.maxPacketsPerSecond) o << "maxPacketsPerSecond " << maxPacketsPerSecond << "\n";
+        if (!banFile.empty()) o << "banFile " << banFile << "\n";
+        if (!auditLog.empty()) o << "auditLog " << auditLog << "\n";
+        if (banAfterKicks != bd.banAfterKicks) o << "banAfterKicks " << banAfterKicks << "\n";
+        if (banHours != bd.banHours) o << "banHours " << banHours << "\n";
+        if (banOnRequest != bd.banOnRequest) o << "banOnRequest " << (banOnRequest ? "true" : "false") << "\n";
+    }
     const AntiCheatSettings d;   // the hit-claim tuning, when it isn't the default
     if (hitOriginTolerance != d.hitOriginTolerance) o << "hitOriginTolerance " << hitOriginTolerance << "\n";
     if (hitTolerance != d.hitTolerance) o << "hitTolerance " << hitTolerance << "\n";
@@ -197,7 +212,7 @@ void AntiCheat::ApplyDetectSettings() {
     detector.settings = settings.detect;
     if (detector.settings.maxSpeed <= 0.0f && settings.maxSyncSpeed > 0.0f) detector.settings.maxSpeed = settings.maxSyncSpeed;
     m_detectApplied = true;
-    detector.onResponse = [this](const DetectResponse& r) { if (onDetectResponse) onDetectResponse(r); };
+    detector.onResponse = [this](const DetectResponse& r) { if (onDetectAudit) onDetectAudit(r); if (onDetectResponse) onDetectResponse(r); };
 }
 void AntiCheat::EnsureDetect() { if (!m_detectApplied) ApplyDetectSettings(); }
 

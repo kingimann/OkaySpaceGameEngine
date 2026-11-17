@@ -783,6 +783,16 @@ add_executable(test_ui_widgets_more test_ui_widgets_more.cpp)
 target_link_libraries(test_ui_widgets_more PRIVATE okay::engine)
 add_test(NAME ui_widgets_more COMMAND test_ui_widgets_more)
 
+add_executable(test_ui_library test_ui_library.cpp)
+target_link_libraries(test_ui_library PRIVATE okay::engine)
+add_test(NAME ui_library COMMAND test_ui_library)
+
+# The shipped sample scene examples/ui_library/ui_library_1.okayscene, loaded and played
+add_executable(test_ui_library_example test_ui_library_example.cpp)
+target_link_libraries(test_ui_library_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library_example COMMAND test_ui_library_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -972,6 +982,17 @@ add_test(NAME jump COMMAND test_jump)
 add_executable(test_fp_hand test_fp_hand.cpp)
 target_link_libraries(test_fp_hand PRIVATE okay::engine)
 add_test(NAME fp_hand COMMAND test_fp_hand)
+
+add_executable(test_fp_hand_normal test_fp_hand_normal.cpp)
+target_link_libraries(test_fp_hand_normal PRIVATE okay::engine)
+add_test(NAME fp_hand_normal COMMAND test_fp_hand_normal)
+
+# Headless pictures of the first-person hand (a tool, not a test). docs/try_it.md 7z.
+add_executable(fp_hand_shot fp_hand_shot.cpp)
+target_link_libraries(fp_hand_shot PRIVATE okay::engine)
+if(FP_SHOT_BEFORE)
+    target_compile_definitions(fp_hand_shot PRIVATE FPSHOT_BEFORE)
+endif()
 
 add_executable(test_run_feel test_run_feel.cpp)
 target_link_libraries(test_run_feel PRIVATE okay::engine)
@@ -1185,6 +1206,12 @@ add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
 add_executable(bench_voxel_real bench_voxel_real.cpp)
 target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+add_executable(test_voxel_overlay_depth test_voxel_overlay_depth.cpp)
+target_link_libraries(test_voxel_overlay_depth PRIVATE okay::engine)
+add_test(NAME voxel_overlay_depth COMMAND test_voxel_overlay_depth)
+
+add_executable(bench_voxel_frame bench_voxel_frame.cpp)
+target_link_libraries(bench_voxel_frame PRIVATE okay::engine)
 
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)
@@ -1214,6 +1241,24 @@ add_test(NAME camera_cine COMMAND test_camera_cine)
 add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
+
+# The player deep audit (docs/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
+add_executable(test_player_deep test_player_deep.cpp)
+target_link_libraries(test_player_deep PRIVATE okay::engine)
+add_test(NAME player_deep COMMAND test_player_deep)
+
+# The shipped obstacle course scene (examples/player): the file is what the code writes; a player walks its stations.
+add_executable(test_player_course test_player_course.cpp)
+target_link_libraries(test_player_course PRIVATE okay::engine)
+target_compile_definitions(test_player_course PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_course COMMAND test_player_course)
+add_executable(test_player_feel test_player_feel.cpp)
+target_link_libraries(test_player_feel PRIVATE okay::engine)
+add_test(NAME player_feel COMMAND test_player_feel)
+add_executable(test_player_feel_lab test_player_feel_lab.cpp)
+target_link_libraries(test_player_feel_lab PRIVATE okay::engine)
+target_compile_definitions(test_player_feel_lab PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_feel_lab COMMAND test_player_feel_lab)
 
 add_executable(test_terrain_ops test_terrain_ops.cpp)
 target_link_libraries(test_terrain_ops PRIVATE okay::engine)
@@ -1756,6 +1801,11 @@ add_executable(test_anticheat_sim test_anticheat_sim.cpp)
 target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
 add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
 
+# Anti-cheat hardening follow-up: ban list file, audit log, packet ceiling, input regularity, cheat simulator, hostile-field fuzz
+add_executable(test_anticheat_hard test_anticheat_hard.cpp)
+target_link_libraries(test_anticheat_hard PRIVATE okay::engine)
+add_test(NAME anticheat_hard COMMAND test_anticheat_hard)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
@@ -1961,6 +2011,10 @@ if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
     add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
     set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
+    # The one-dispatch fast release (scripts/fast_release.py, .github/workflows/fast-release.yml): version, CI gate, changelog entries, stamp,
+    # after-check with fake data, the workflows read as YAML, and every real entry in dist/changelog.d checked.
+    add_test(NAME fast_release_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fast_release.py)
+    set_tests_properties(fast_release_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -2191,6 +2245,39 @@ add_test(NAME polymesh COMMAND test_polymesh)
 add_executable(test_guided test_guided.cpp)
 target_link_libraries(test_guided PRIVATE okay::engine)
 add_test(NAME guided_modeling COMMAND test_guided)
+add_executable(test_guided_architecture test_guided_architecture.cpp)
+target_link_libraries(test_guided_architecture PRIVATE okay::engine)
+add_test(NAME guided_architecture COMMAND test_guided_architecture)
+add_executable(test_guided_vehicles test_guided_vehicles.cpp)
+target_link_libraries(test_guided_vehicles PRIVATE okay::engine)
+add_test(NAME guided_vehicles COMMAND test_guided_vehicles)
+add_executable(test_guided_detail test_guided_detail.cpp)
+target_link_libraries(test_guided_detail PRIVATE okay::engine)
+add_test(NAME guided_detail COMMAND test_guided_detail)
+add_executable(test_guided_quality test_guided_quality.cpp)
+target_link_libraries(test_guided_quality PRIVATE okay::engine)
+add_test(NAME guided_quality COMMAND test_guided_quality)
+add_executable(test_guided_animation test_guided_animation.cpp)
+target_link_libraries(test_guided_animation PRIVATE okay::engine)
+add_test(NAME guided_animation COMMAND test_guided_animation)
+add_test(NAME guided_roundtrip COMMAND test_guided_quality)
+add_executable(test_guided_characters test_guided_characters.cpp)
+target_link_libraries(test_guided_characters PRIVATE okay::engine)
+add_test(NAME guided_characters COMMAND test_guided_characters)
+add_executable(test_guided_environment test_guided_environment.cpp)
+target_link_libraries(test_guided_environment PRIVATE okay::engine)
+add_test(NAME guided_environment COMMAND test_guided_environment)
+
+# Modeling "more": per-face material slots, dissolve fixes (docs/modeling_audit.md)
+add_executable(test_modeling_more test_modeling_more.cpp)
+target_link_libraries(test_modeling_more PRIVATE okay::engine)
+add_test(NAME modeling_more COMMAND test_modeling_more)
+add_executable(test_modeling_more_scene test_modeling_more_scene.cpp)
+target_link_libraries(test_modeling_more_scene PRIVATE okay::engine)
+add_test(NAME modeling_more_scene COMMAND test_modeling_more_scene)
+add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
+target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
+add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
@@ -2253,6 +2340,12 @@ if(SDL2_FOUND)
     target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
     target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
+
+    add_executable(test_ui_library_shots test_ui_library_shots.cpp)
+    target_link_libraries(test_ui_library_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
@@ -3787,3 +3880,17 @@ add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
 target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
 add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+add_executable(test_guided_perf test_guided_perf.cpp)
+target_link_libraries(test_guided_perf PRIVATE okay::engine)
+add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
+# a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
+# reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
+# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/automated_testing.md "CI speed").
+foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
+                     launcher_download_own launcher_versions native_fetch playfab_own)
+    if(TEST ${_serial_test})
+        set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
+    endif()
+endforeach()

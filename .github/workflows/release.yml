@@ -18,9 +18,26 @@ on:
         type: choice
         options: [latest, lts]
         default: latest
+  # Called by fast-release.yml (docs/fast_release.md). stamp_version is the version to build; it is empty on every other kind of run,
+  # and every step marked "fast release" below is skipped then, so the old path is exactly what it was.
+  workflow_call:
+    inputs:
+      channel:
+        type: string
+        default: latest
+      stamp_version:
+        type: string
+        default: ''
 
 permissions:
   contents: write          # needed to attach assets to a Release
+
+# Only one release run at a time (CLAUDE.md rules 12 and 13): a second run for the same or another version waits for the first
+# to finish instead of racing it for the tag, the assets, versions.json and the "latest" mark. Never cancelled midway: a
+# half-published release is worse than a waiting one.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   windows-exe:
@@ -45,8 +62,53 @@ jobs:
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
       # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
       OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+      # The account/update server baked into the programs comes from config/public-account.json (docs/accounts.md); these
+      # optional repository variables override it (empty = use the file).
+      # OKAY_REQUIRE_ACCOUNT=1 makes build-windows-dist.sh stop if neither the file nor the variables give both values, so a release never ships offline.
+      OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+      OKAY_DEFAULT_ACCOUNT_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
+      OKAY_REQUIRE_ACCOUNT: "1"
     steps:
       - uses: actions/checkout@v6
+
+      # FAST RELEASE ONLY (skipped unless fast-release.yml passes stamp_version). The version is put into THIS runner's copy of
+      # CMakeLists.txt (never committed), so the programs, VERSION.txt, the zip name, the tag and versions.json all carry it. The
+      # assembled changelog replaces dist/CHANGELOG.txt, which this workflow attaches to the release.
+      - name: Fast release - fetch the prepared release notes
+        if: inputs.stamp_version
+        uses: actions/download-artifact@v6
+        with:
+          name: release-notes
+          path: release-notes
+      - name: Fast release - put the new version and changelog into this build
+        if: inputs.stamp_version
+        env:
+          STAMP_VERSION: ${{ inputs.stamp_version }}
+        run: |
+          python3 -I scripts/fast_release.py stamp --version "$STAMP_VERSION"
+          cp release-notes/CHANGELOG.txt dist/CHANGELOG.txt
+          echo "NOTES_FILE=$PWD/release-notes/NOTES.txt" >> "$GITHUB_ENV"
+          git diff --stat
+      # A version is released once (CLAUDE.md rule 12): running this again for a version that already has a GitHub release would
+      # rebuild the programs and change their checksums. Stop here, before anything is built, if v<version> already has a release.
+      # The version is read the same way build-windows-dist.sh reads it. If GitHub cannot be asked, this fails (it does not guess).
+      - name: Refuse a version that is already released
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+          if [ -z "$VER" ]; then echo "::error::could not read the version from CMakeLists.txt"; exit 1; fi
+          rc=0
+          out="$(gh release view "v$VER" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft 2>&1)" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error title=v$VER is already released::GitHub already has a release for v$VER ($out). Never re-run the release for a version that exists: it rebuilds the programs and changes their checksums. Bump the version in CMakeLists.txt instead."
+            exit 1
+          fi
+          if ! printf '%s' "$out" | grep -qi "release not found"; then
+            echo "::error title=Could not check for an existing release::gh said: $out"
+            exit 1
+          fi
+          echo "v$VER has no release yet: continuing."
 
       # Without keys the launcher can't tell the official game's signed build
       # from an edited one: its anti-cheat checks are only telemetry. A warning
@@ -203,6 +265,24 @@ jobs:
           name: ${{ steps.pkg.outputs.name }}
           path: ${{ steps.pkg.outputs.zip }}
 
+      # FAST RELEASE ONLY: the programs must really carry the stamped version (the same check dev-build.yml makes), and the update
+      # server's changelog for this version is the assembled one (publish-supabase.sh uploads build-win-dist/CHANGELOG.txt). Added
+      # after the zip and installer are made, so neither of them changes.
+      - name: Fast release - check the programs carry the version, add the changelog
+        if: inputs.stamp_version
+        env:
+          STAMP_VERSION: ${{ inputs.stamp_version }}
+          PKG_VER: ${{ steps.pkg.outputs.ver }}
+        run: |
+          [ "$PKG_VER" = "$STAMP_VERSION" ] || { echo "::error::the build says v$PKG_VER but v$STAMP_VERSION was asked for"; exit 1; }
+          for f in build-win-dist/VERSION.txt build-win-dist/Tools/VERSION.txt; do
+            [ "$(tr -d '\r\n ' < "$f")" = "$STAMP_VERSION" ] || { echo "::error::$f does not say $STAMP_VERSION"; exit 1; }
+          done
+          for f in build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe; do
+            LC_ALL=C grep -aqF -- "$STAMP_VERSION" "$f" || { echo "::error::$f does not contain $STAMP_VERSION, so it would fail its own start-up check"; exit 1; }
+          done
+          cp dist/CHANGELOG.txt build-win-dist/CHANGELOG.txt
+
       # On a tag push, release that tag. On a manual run, create/refresh a
       # release for the version in dist/VERSION.txt (the runner's GITHUB_TOKEN
       # can push the tag).
@@ -232,6 +312,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: OkaySpace v${{ steps.pkg.outputs.ver }}
           generate_release_notes: true
+          # Fast release only: the notes players read come from the changelog entries (empty = none, as before).
+          body_path: ${{ inputs.stamp_version && 'release-notes/body.md' || '' }}
           # An LTS patch must not become GitHub's "latest" release: the in-app
           # updater downloads releases/latest/download/<name> on the latest channel.
           # Never "latest" here. A launcher that reads releases/latest sees the version the moment it is "latest", and
@@ -245,6 +327,7 @@ jobs:
       - name: Publish to Supabase
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
           CHANNEL: ${{ inputs.channel || 'latest' }}
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
@@ -305,7 +388,9 @@ jobs:
   finalize:
     name: Make the release visible (latest)
     needs: [windows-exe, linux-server]
-    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' }}
+    # Only when BOTH jobs succeeded: a failed or cancelled Linux server build leaves the release hidden (not "latest"), because the
+    # editor's Dedicated Server export downloads okay-server-linux-x64 from the latest release and it would be missing.
+    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -314,17 +399,21 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VER: ${{ needs.windows-exe.outputs.ver }}
       HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
       CHANNEL: ${{ inputs.channel || 'latest' }}
     steps:
+      - uses: actions/checkout@v6   # for config/public-account.json (the project address)
       - name: Check the checksums are published, then mark the release latest
         run: |
+          . scripts/public-account.sh
+          SUPABASE_URL="${SUPABASE_URL:-$(okay_public_account url)}"
           if [ "$HAVE_KEY" != "true" ]; then
             msg="v$VER was built and attached to its GitHub release, but its checksums were NOT published (no SUPABASE_SERVICE_KEY secret), so launchers would refuse it. It is not marked latest. Run scripts/publish-supabase.sh with a key (or scripts/release-local.sh), then: gh release edit v$VER --latest"
             echo "::error title=Release not visible to launchers::$msg"
             echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          B=https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
+          B="${SUPABASE_URL%/}/storage/v1/object/public/releases"
           # The checksum list must really contain this version with a checksum for each program, not just exist.
           for i in 1 2 3 4 5 6; do
             if curl -fsS "$B/versions.json" | python3 -c "

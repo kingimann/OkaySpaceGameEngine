@@ -13,6 +13,7 @@
 // the solved positions instead. The bone lengths are read from the animated pose
 // every frame (a height change, a new model or a rescale just works).
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -91,6 +92,7 @@ public:
     // Animators lazily, which puts them late in the Update order).
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.IK");
         m_restore.Restore();
         const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         if (w <= 0.0f || !upper || !lower || !end) { m_goal.Reset(); return; }

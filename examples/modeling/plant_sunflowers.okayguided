@@ -1,0 +1,13 @@
+okayguided 1
+template plant 1
+param count 5
+param detail 1
+param seed 3
+param size 0.80000000000000004
+param spread 1.2
+slot plant sunflower
+slot pot none
+color plant 0.899999976 0.75 0.100000001 1
+color pot 0.699999988 0.400000006 0.280000001 1
+material plant 0
+material pot 1

@@ -225,6 +225,9 @@ public:
         Vec2  start;
         Vec2  delta;
         Phase phase = Phase::Began;
+        /// The finger was lifted in the same frame it touched down (a tap shorter than one frame): it stays Began this
+        /// frame and is Ended the next, so buttons see a press and a release (#888 finding 132).
+        bool endsNextFrame = false;
     };
     /// Fingers touching the screen this frame (a lifted finger stays one frame, Ended).
     static int TouchCount();

@@ -1376,6 +1376,27 @@ modes were tested under Xvfb with modes the test adds (`platform_display_modes_o
 build of the editor, launcher and player with no SDL at all exists (`-DOKAY_WITH_SDL=OFF`, built and run on Linux) but it is a
 developer build, never a release, so there is nothing to try in the Windows release for it.
 
+## Touch on our own platform code, and quick taps on touch buttons (branch `claude2/sdl-touch-tests`, not merged or released yet)
+
+What changed (`docs/platform_layer.md`, "Touch"): with `OKAY_PLATFORM_BACKEND=own` a touch screen now gives real finger events
+(several fingers, the on-screen stick, D-pad and buttons), as SDL does; before, our own code saw a touch screen only as a mouse.
+And a fix for everyone (#888 finding 132): a **quick tap** on an on-screen button (finger down and up within one frame) used to be
+lost; now it presses the button for one frame and lets go the next.
+
+Steps (Windows, on a touch screen, from the release once this branch is in one):
+
+1. Quick taps (the fix, no variable needed): run `Tools\OkaySpacePlayer.exe examples\touch_controls\touch_controls.okayscene`
+   (or open that scene in the editor and press Play). Tap the **Jump** button as quickly as you can, many times: every tap jumps.
+   Before, quick taps, especially at a low frame rate, often did nothing.
+2. Touch on our own code: `set OKAY_PLATFORM_BACKEND=own`, then run the same scene. Expect the on-screen controls to show (the player
+   found a touch screen) and to work with two fingers at once: the stick with one thumb while tapping Jump with the other.
+   A single finger in menus still works as the mouse. Without a touch screen nothing changes.
+
+**Status.** Quick taps: tested headless (`touch_controls`: 10 taps within one frame each, 0 presses before the fix, 10 after). Touch on
+our own code: on Linux the X11 code was tested with made-up XInput events and under Xvfb (which has no touch device; the test proves
+our window asks the X server for touch). **The Windows touch code (`WM_POINTER`, and `WM_TOUCH` on Windows 7) was only compiled:
+step 2 is unverified until you run it on a Windows touch screen.**
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

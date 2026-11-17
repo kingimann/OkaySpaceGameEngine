@@ -553,5 +553,55 @@ int main() {
         UICanvas::Set(1280, 720);
     }
 
+    {
+        // #888 finding 132: a tap shorter than one frame (down and up between the same two frames) must still press the
+        // button for one frame and release it the next, and the touch API must show it Began, then Ended.
+        RUN_SUITE("touch_controls: a tap within one frame");
+        EndTouches();
+        Scene scene("quick taps");
+        scene.physicsEnabled = false;
+        auto* button = scene.CreateGameObject("Jump")->AddComponent<TouchButton>();
+        button->onlyOnTouch = true;
+        int downs = 0, ups = 0;
+        bool beganSeen = true, endedSeen = true;
+        double t = 10.0;
+        Input::ClearTypedText();
+        Frame(scene, t);   // settle: no finger, so the action starts released
+        std::cout << "  before the taps: Jump held " << (InputActions::Get("Jump") ? 1 : 0) << "\n";
+        Input::ClearTypedText();
+        Frame(scene, t += 0.016);
+        for (int i = 0; i < 10; ++i) {
+            Input::ClearTypedText();
+            Input::FeedTouch(100 + i, 0, {1180, 620});
+            Input::FeedTouch(100 + i, 2, {1180, 620});
+            beganSeen = beganSeen && Input::TouchCount() == 1 && Input::GetTouch(0).phase == Input::Touch::Phase::Began;
+            Frame(scene, t += 0.016);
+            if (InputActions::Down("Jump")) ++downs; else std::cout << "  tap " << i << ": no press\n";
+            Input::ClearTypedText();
+            endedSeen = endedSeen && Input::TouchCount() == 1 && Input::GetTouch(0).phase == Input::Touch::Phase::Ended;
+            Frame(scene, t += 0.016);
+            ups += InputActions::Up("Jump") ? 1 : 0;
+            Input::ClearTypedText();
+            Frame(scene, t += 0.016);
+        }
+        std::cout << "  quick taps: Down(Jump) " << downs << " of 10, Up(Jump) " << ups << " of 10\n";
+        CHECK(downs == 10);
+        CHECK(ups == 10);
+        CHECK(beganSeen);
+        CHECK(endedSeen);
+        CHECK(Input::TouchCount() == 0);
+        // A tap whose up comes after a move in the same frame is a tap too.
+        Input::ClearTypedText();
+        Input::FeedTouch(7, 0, {1180, 620});
+        Input::FeedTouch(7, 1, {1182, 621});
+        Input::FeedTouch(7, 2, {1182, 621});
+        Frame(scene, t += 0.016);
+        CHECK(InputActions::Down("Jump"));
+        Input::ClearTypedText();
+        Frame(scene, t += 0.016);
+        CHECK(InputActions::Up("Jump"));
+        EndTouches();
+    }
+
     TEST_MAIN_RESULT();
 }

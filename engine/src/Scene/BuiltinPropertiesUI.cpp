@@ -20,6 +20,9 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UIRating.hpp"
+#include "okay/Components/UIRangeSlider.hpp"
+#include "okay/Components/UIAspectRatio.hpp"
+#include "okay/Components/UIInputValidator.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -683,6 +686,52 @@ void RegisterMoreWidgets() {
          .AddBool("interactable", &UIBottomSheet::interactable).Tooltip("When off, the handle does nothing")
          .AddBool("focusable", &UIBottomSheet::focusable).Tooltip("A gamepad can move to this")
          .AddColor("background", &UIBottomSheet::background).Range(0, 1, 0.01).Tooltip("Colour of the sheet");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIRangeSlider> b("UIRangeSlider", "uirange", "UI");
+        b.AddVec2("position", &UIRangeSlider::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIRangeSlider::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIRangeSlider::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddFloat("minValue", &UIRangeSlider::minValue).Range(-kBig, kBig, 0.1).Tooltip("Lowest value on the track")
+         .AddFloat("maxValue", &UIRangeSlider::maxValue).Range(-kBig, kBig, 0.1).Tooltip("Highest value on the track")
+         .AddFloat("low", &UIRangeSlider::low).Range(-kBig, kBig, 0.1).Tooltip("Value of the left handle")
+         .AddFloat("high", &UIRangeSlider::high).Range(-kBig, kBig, 0.1).Tooltip("Value of the right handle")
+         .AddFloat("step", &UIRangeSlider::step).Range(0, kBig, 0.05).Tooltip("Handles snap to multiples of this (0 = smooth)")
+         .AddBool("wholeNumbers", &UIRangeSlider::wholeNumbers).Tooltip("Round to whole numbers")
+         .AddFloat("minGap", &UIRangeSlider::minGap).Range(0, kBig, 0.1).Tooltip("Smallest distance between the two handles")
+         .AddBool("showValue", &UIRangeSlider::showValue).Tooltip("Show the two numbers above the track")
+         .AddString("valueFormat", &UIRangeSlider::valueFormat).Tooltip("Text for the numbers; {lo} and {hi} are replaced (empty = {lo} - {hi})")
+         .AddBool("interactable", &UIRangeSlider::interactable).Tooltip("When off, the handles do not move")
+         .AddBool("focusable", &UIRangeSlider::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("fill", &UIRangeSlider::fill).Range(0, 1, 0.01).Tooltip("Colour between the handles")
+         .AddColor("background", &UIRangeSlider::background).Range(0, 1, 0.01).Tooltip("Colour of the track");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIAspectRatio> b("UIAspectRatio", "uiaspect", "UI");
+        b.AddFloat("ratio", &UIAspectRatio::ratio).Range(0.05, 20, 0.01).Tooltip("Width divided by height (16:9 = 1.78, square = 1)")
+         .AddEnum("mode", &UIAspectRatio::mode, {"Fit", "Fill", "Width controls", "Height controls"}).Tooltip("Fit keeps the whole box inside; Fill covers the space; the others follow one side")
+         .AddFloat("alignX", &UIAspectRatio::alignX).Range(0, 1, 0.01).Tooltip("Where spare room goes sideways (0 left, 0.5 centre, 1 right)")
+         .AddFloat("alignY", &UIAspectRatio::alignY).Range(0, 1, 0.01).Tooltip("Where spare room goes up and down (0 top, 0.5 centre, 1 bottom)")
+         .AddFloat("padding", &UIAspectRatio::padding).Range(0, kBig, 0.5).Tooltip("Empty space kept around the box, in pixels");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIInputValidator> b("UIInputValidator", "uivalidate", "UI");
+        b.AddEnum("kind", &UIInputValidator::kind, {"Any", "Email", "Whole number", "Number", "Letters", "Letters and digits"}).Tooltip("What the text must look like")
+         .AddBool("required", &UIInputValidator::required).Tooltip("An empty field is an error")
+         .AddInt("minLength", &UIInputValidator::minLength).Range(0, 1000, 1).Tooltip("Fewest characters allowed")
+         .AddInt("maxLength", &UIInputValidator::maxLength).Range(0, 1000, 1).Tooltip("Most characters allowed (0 = no limit)")
+         .AddBool("useRange", &UIInputValidator::useRange).Tooltip("Check numbers against the lowest and highest below")
+         .AddFloat("minNumber", &UIInputValidator::minNumber).Range(-kBig, kBig, 0.1).Tooltip("Lowest number allowed")
+         .AddFloat("maxNumber", &UIInputValidator::maxNumber).Range(-kBig, kBig, 0.1).Tooltip("Highest number allowed")
+         .AddString("mustMatch", &UIInputValidator::mustMatch).Tooltip("Name of another input field this one must equal (repeat password)")
+         .AddString("message", &UIInputValidator::message).Tooltip("Your own error sentence (empty = a built-in one)")
+         .AddBool("quietUntilTouched", &UIInputValidator::quietUntilTouched).Tooltip("Show nothing until the player has typed")
+         .AddBool("showMessage", &UIInputValidator::showMessage).Tooltip("Show the error sentence under the field")
+         .AddBool("showOk", &UIInputValidator::showOk).Tooltip("Show a green ring when the text is fine")
+         .AddColor("errorColor", &UIInputValidator::errorColor).Range(0, 1, 0.01).Tooltip("Colour of the ring and message");
         b.Commit();
     }
 }

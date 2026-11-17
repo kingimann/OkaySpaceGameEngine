@@ -6,6 +6,7 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -328,10 +329,7 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
         const std::string scenePath = VsBareAsset(scene);
         if (!s || scenePath.empty()) return 0;
-        if (!Save::IsSafeRelative(scenePath)) {   // graphs are game content: stay in the game's folders
-            OKAY_ERROR("[visual script] Load Scene: refusing '", scenePath, "' (absolute paths and '..' aren't allowed)");
-            return 0;
-        }
+        if (!ScriptPathOk(scenePath, "visual script Load Scene")) return 0;   // graphs are game content: stay in the game's folders
         if (scenePath.find(".okayscene") != std::string::npos) s->RequestLoad(scenePath);
         else if (!SceneManager::LoadSceneByName(*s, scenePath)) s->RequestLoad(scenePath + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain

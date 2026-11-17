@@ -51,7 +51,7 @@ struct Expr {
 };
 
 struct Type {
-    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct } kind = Kind::Int;
+    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union } kind = Kind::Int;
     std::string tag;
     bool unsign = false;
     std::unique_ptr<Type> inner;
@@ -183,6 +183,8 @@ std::string typeStr(const Type& t) {
     }
     case Type::Kind::Struct:
         return t.tag.empty() ? "(struct)" : "(struct " + t.tag + ")";
+    case Type::Kind::Union:
+        return t.tag.empty() ? "(union)" : "(union " + t.tag + ")";
     case Type::Kind::Function: {
         std::string s = "(fn " + typeStr(*t.inner);
         for (const Param& p : t.params) {
@@ -424,6 +426,8 @@ private:
     std::size_t i_ = 0;
     bool reported_ = false;
     std::map<std::string, std::unique_ptr<Type>> structs_;
+    std::map<std::string, std::int64_t> enums_;
+    bool enumDef_ = false;
     std::vector<std::map<std::string, std::unique_ptr<Type>>> tscopes_;
 
     const Type* findTypedef(const std::string& name) const {
@@ -463,7 +467,8 @@ private:
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
-            isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
+            isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
+            isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
             isKwTok(t, "typedef"))
             return true;
         return t.kind == Tok::Ident && findTypedef(t.text) != nullptr;
@@ -529,7 +534,8 @@ private:
     }
 
     std::unique_ptr<Type> parseBase() {
-        if (isKw("struct")) return parseStructType();
+        if (isKw("struct") || isKw("union")) return parseStructType();
+        if (isKw("enum")) return parseEnum();
         int longs = 0;
         int shorts = 0;
         bool sawInt = false;
@@ -604,8 +610,38 @@ private:
         return ty(Type::Kind::Int);
     }
 
+    std::unique_ptr<Type> parseEnum() {
+        advance();
+        if (!atEnd() && cur().kind == Tok::Ident) advance();
+        if (!eatP("{")) return ty(Type::Kind::Int);
+        std::int64_t next = 0;
+        while (!atEnd() && !isP("}")) {
+            if (cur().kind != Tok::Ident) {
+                err("expected an enumerator");
+                break;
+            }
+            std::string name = cur().text;
+            advance();
+            if (eatP("=")) {
+                auto e = parseAssign();
+                if (e && e->kind == Expr::Kind::Int) next = static_cast<std::int64_t>(e->ival);
+                else if (e && e->kind == Expr::Kind::Unary && e->text == "-" && !e->kids.empty() && e->kids[0] &&
+                         e->kids[0]->kind == Expr::Kind::Int)
+                    next = -static_cast<std::int64_t>(e->kids[0]->ival);
+                else err("enumerator is not a constant");
+            }
+            enums_[name] = next;
+            ++next;
+            if (!eatP(",")) break;
+        }
+        expectP("}", "}");
+        enumDef_ = true;
+        return ty(Type::Kind::Int);
+    }
+
     std::unique_ptr<Type> parseStructType() {
         Token at = cur();
+        bool isUnion = at.text == "union";
         advance();
         std::string tag;
         if (!atEnd() && cur().kind == Tok::Ident) {
@@ -624,11 +660,11 @@ private:
             }
             return cloneType(*it->second);
         }
-        auto t = ty(Type::Kind::Struct);
+        auto t = ty(isUnion ? Type::Kind::Union : Type::Kind::Struct);
         t->tag = tag;
         bool completing = false;
         if (!tag.empty() && !structs_.count(tag)) {
-            auto inc = ty(Type::Kind::Struct);
+            auto inc = ty(isUnion ? Type::Kind::Union : Type::Kind::Struct);
             inc->tag = tag;
             structs_[tag] = std::move(inc);
             completing = true;
@@ -790,10 +826,16 @@ private:
     void parseExternal(Tu& tu) {
         bool td = eatKw("typedef");
         auto base = parseBase();
-        if (base && base->kind == Type::Kind::Struct && isP(";")) {
+        if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
             advance();
             return;
         }
+        if (enumDef_ && isP(";")) {
+            enumDef_ = false;
+            advance();
+            return;
+        }
+        enumDef_ = false;
         if (atEnd()) {
             err("expected a declarator");
             return;
@@ -835,11 +877,18 @@ private:
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
         bool td = eatKw("typedef");
         auto base = parseBase();
-        if (base && base->kind == Type::Kind::Struct && isP(";")) {
+        if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
             advance();
             (void)forInit;
             return;
         }
+        if (enumDef_ && isP(";")) {
+            enumDef_ = false;
+            advance();
+            (void)forInit;
+            return;
+        }
+        enumDef_ = false;
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
         if (type && type->kind == Type::Kind::Function && isP("{")) {
@@ -1269,6 +1318,13 @@ private:
             return zeroAt();
         }
         if (cur().kind == Tok::Ident) {
+            auto it = enums_.find(cur().text);
+            if (it != enums_.end()) {
+                auto e = ex(Expr::Kind::Int, cur());
+                e->ival = static_cast<std::uint64_t>(it->second);
+                advance();
+                return e;
+            }
             auto e = leafName(cur());
             advance();
             return e;
@@ -1659,12 +1715,13 @@ private:
             if (obj.bad || !obj.type) return bad(e.line, e.col);
             const Type* st = obj.type.get();
             if (e.text == "->") {
-                if (!isPtr(*obj.type) || !obj.type->inner || obj.type->inner->kind != Type::Kind::Struct) {
+                if (!isPtr(*obj.type) || !obj.type->inner ||
+                    (obj.type->inner->kind != Type::Kind::Struct && obj.type->inner->kind != Type::Kind::Union)) {
                     err(e.line, e.col, "operand of '->' is not a pointer to a struct");
                     return bad(e.line, e.col);
                 }
                 st = obj.type->inner.get();
-            } else if (st->kind != Type::Kind::Struct) {
+            } else if (st->kind != Type::Kind::Struct && st->kind != Type::Kind::Union) {
                 err(e.line, e.col, "operand of '.' is not a struct");
                 return bad(e.line, e.col);
             }
@@ -1808,7 +1865,12 @@ private:
             (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind == Type::Kind::Void)) {
             err(d.line, d.col, "variable has type void");
         }
-        if (d.init) {
+        if (d.init && d.init->kind == Expr::Kind::Brace) {
+            for (auto& k : d.init->kids)
+                if (k) checkExpr(*k);
+        } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
+            checkExpr(*d.init);
+        } else if (d.init) {
             ET src = decay(checkExpr(*d.init));
             if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
             else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
@@ -2040,7 +2102,8 @@ private:
         case Type::Kind::Long:
         case Type::Kind::Pointer: return 8;
         case Type::Kind::Array: return alignOf(t->inner.get());
-        case Type::Kind::Struct: {
+        case Type::Kind::Struct:
+        case Type::Kind::Union: {
             int a = 1;
             for (const Param& p : t->params) {
                 int fa = alignOf(p.type.get());
@@ -2074,6 +2137,15 @@ private:
             if (off == 0) return 0;
             return alignUp(off, alignOf(t));
         }
+        case Type::Kind::Union: {
+            int sz = 0;
+            for (const Param& p : t->params) {
+                int n = sizeOf(p.type.get());
+                if (n > sz) sz = n;
+            }
+            if (sz == 0) return 0;
+            return alignUp(sz, alignOf(t));
+        }
         default: return 4;
         }
     }
@@ -2090,7 +2162,23 @@ private:
 
     static std::vector<FieldOff> layoutOf(const Type* t) {
         std::vector<FieldOff> out;
-        if (!t || t->kind != Type::Kind::Struct) return out;
+        if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union)) return out;
+        if (t->kind == Type::Kind::Union) {
+            for (const Param& p : t->params) {
+                FieldOff f;
+                f.name = p.name;
+                f.offset = 0;
+                f.width = sizeOf(p.type.get());
+                f.step = valueStep(p.type.get());
+                f.inner = innerOf(p.type.get());
+                f.agg = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union ||
+                                   p.type->kind == Type::Kind::Array);
+                if (p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union))
+                    f.fields = layoutOf(p.type.get());
+                out.push_back(std::move(f));
+            }
+            return out;
+        }
         int off = 0;
         for (const Param& p : t->params) {
             off = alignUp(off, alignOf(p.type.get()));
@@ -2145,10 +2233,11 @@ private:
         s.objSize = sizeOf(t);
         s.zext = t->unsign;
         if (t->kind == Type::Kind::Array && t->inner) s.zext = t->inner->unsign;
-        if (t->kind == Type::Kind::Struct) {
+        if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
             s.agg = true;
             s.fields = layoutOf(t);
-        } else if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Struct) {
+        } else if (t->kind == Type::Kind::Pointer && t->inner &&
+                   (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
             s.fields = layoutOf(t->inner.get());
         }
     }
@@ -2332,15 +2421,77 @@ private:
         globals_[d.name] = s;
     }
 
+    void putAt(std::vector<unsigned char>& b, int off, std::int64_t v, int n) {
+        if (n < 1) return;
+        if (static_cast<int>(b.size()) < off + n) b.resize(static_cast<std::size_t>(off + n));
+        auto u = static_cast<std::uint64_t>(v);
+        for (int i = 0; i < n; ++i) b[static_cast<std::size_t>(off + i)] = static_cast<unsigned char>((u >> (8 * i)) & 0xffu);
+    }
+    void fillInit(const Type* t, const Expr* init, std::vector<unsigned char>& b, int off) {
+        if (!t || !init) return;
+        if (t->kind == Type::Kind::Array && init->kind == Expr::Kind::Brace && t->inner) {
+            int es = sizeOf(t->inner.get());
+            for (std::size_t i = 0; i < init->kids.size(); ++i)
+                if (init->kids[i]) fillInit(t->inner.get(), init->kids[i].get(), b, off + static_cast<int>(i) * es);
+            return;
+        }
+        if ((t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) && init->kind == Expr::Kind::Brace) {
+            auto fields = layoutOf(t);
+            for (std::size_t i = 0; i < init->kids.size() && i < fields.size() && i < t->params.size(); ++i)
+                if (init->kids[i] && t->params[i].type)
+                    fillInit(t->params[i].type.get(), init->kids[i].get(), b, off + fields[i].offset);
+            return;
+        }
+        if (t->kind == Type::Kind::Array && t->inner && t->inner->kind == Type::Kind::Char &&
+            init->kind == Expr::Kind::String) {
+            for (std::size_t i = 0; i < init->text.size(); ++i)
+                putAt(b, off + static_cast<int>(i), static_cast<unsigned char>(init->text[i]), 1);
+            putAt(b, off + static_cast<int>(init->text.size()), 0, 1);
+            return;
+        }
+        std::int64_t val = 0;
+        if (init->kind == Expr::Kind::Int || init->kind == Expr::Kind::Char) val = static_cast<std::int64_t>(init->ival);
+        else if (init->kind == Expr::Kind::Unary && init->text == "-" && !init->kids.empty() && init->kids[0] &&
+                 init->kids[0]->kind == Expr::Kind::Int)
+            val = -static_cast<std::int64_t>(init->kids[0]->ival);
+        else {
+            err(init->line, init->col, "global initializer is not supported");
+            return;
+        }
+        putAt(b, off, val, sizeOf(t));
+    }
+    void inferBound(Decl& d) {
+        if (!d.type || d.type->kind != Type::Kind::Array || !d.type->unsized || !d.init || !d.type->inner) return;
+        int n = 0;
+        if (d.init->kind == Expr::Kind::Brace) n = static_cast<int>(d.init->kids.size());
+        else if (d.init->kind == Expr::Kind::String && d.type->inner->kind == Type::Kind::Char)
+            n = static_cast<int>(d.init->text.size()) + 1;
+        if (n <= 0) return;
+        auto b = std::make_unique<Expr>();
+        b->kind = Expr::Kind::Int;
+        b->ival = static_cast<std::uint64_t>(n);
+        d.type->bound = std::move(b);
+        d.type->unsized = false;
+    }
+
     void addGlobal(Decl& d) {
         if (!d.type) return;
+        inferBound(d);
         Sym s;
         s.global = true;
         s.gname = d.name;
         describe(s, d.type.get());
         Global g;
         g.name = d.name;
-        if (s.array || s.agg) {
+        bool brace = d.init && d.init->kind == Expr::Kind::Brace;
+        bool strArr = d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array;
+        if ((s.array || s.agg) && (brace || strArr)) {
+            g.size = sizeOf(d.type.get());
+            if (g.size < 0) g.size = 0;
+            g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            fillInit(d.type.get(), d.init.get(), g.bytes, 0);
+            if (static_cast<int>(g.bytes.size()) < g.size) g.bytes.resize(static_cast<std::size_t>(g.size));
+        } else if (s.array || s.agg) {
             g.size = sizeOf(d.type.get());
             if (g.size <= 0) err(d.line, d.col, "array length is not a constant");
             if (d.init) err(d.line, d.col, "global initializer is not supported");
@@ -2627,9 +2778,10 @@ private:
     }
     static int structPieces(const Type* t, int& sz, bool& memClass) {
         sz = t ? sizeOf(t) : 8;
-        memClass = t && t->kind == Type::Kind::Struct && sz > 16;
+        bool rec = t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union);
+        memClass = rec && sz > 16;
         if (memClass) return 0;
-        if (t && t->kind == Type::Kind::Struct && sz > 8) return 2;
+        if (rec && sz > 8) return 2;
         return 1;
     }
 
@@ -3106,10 +3258,11 @@ private:
         }
         if (!direct) target = lowerExpr(*e.kids[0]).op;
         int reg = 0;
-        bool retMem = e.checked && e.checked->kind == Type::Kind::Struct && sizeOf(e.checked.get()) > 16;
-        bool retPair = e.checked && e.checked->kind == Type::Kind::Struct && sizeOf(e.checked.get()) > 8 &&
-                       sizeOf(e.checked.get()) <= 16;
-        int retSz = e.checked && e.checked->kind == Type::Kind::Struct ? sizeOf(e.checked.get()) : 0;
+        bool retRec = e.checked &&
+                      (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union);
+        bool retMem = retRec && sizeOf(e.checked.get()) > 16;
+        bool retPair = retRec && sizeOf(e.checked.get()) > 8 && sizeOf(e.checked.get()) <= 16;
+        int retSz = retRec ? sizeOf(e.checked.get()) : 0;
         std::vector<Operand> regs;
         std::vector<Operand> stack;
         Operand retSlot;
@@ -3135,7 +3288,7 @@ private:
             int sz = 0;
             bool memClass = false;
             int nreg = structPieces(t, sz, memClass);
-            bool isStruct = t && t->kind == Type::Kind::Struct;
+            bool isStruct = t && (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union);
             if (!isStruct) {
                 bool decay = t && (t->kind == Type::Kind::Array || t->kind == Type::Kind::Function);
                 int w = !t || decay ? 8 : sizeOf(t);
@@ -3312,7 +3465,8 @@ private:
         if (!d.type) return;
         Sym s;
         describe(s, d.type.get());
-        if (d.type->kind == Type::Kind::Array || d.type->kind == Type::Kind::Struct) {
+        if (d.type->kind == Type::Kind::Array || d.type->kind == Type::Kind::Struct ||
+            d.type->kind == Type::Kind::Union) {
             int bytes = sizeOf(d.type.get());
             if (bytes <= 0) {
                 err(d.line, d.col, "array length is not a constant");
@@ -3500,7 +3654,7 @@ private:
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
                 r->kind == Type::Kind::Long)
                 retWidth_ = sizeOf(r);
-            if (r->kind == Type::Kind::Struct) {
+            if (r->kind == Type::Kind::Struct || r->kind == Type::Kind::Union) {
                 retStruct_ = true;
                 retWidth_ = sizeOf(r);
             }
@@ -3526,7 +3680,7 @@ private:
                 PPlan plan;
                 bool memClass = false;
                 plan.nreg = structPieces(p.type.get(), plan.size, memClass);
-                plan.isStruct = p.type && p.type->kind == Type::Kind::Struct;
+                plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
                 if (memClass || reg + plan.nreg > 6) {
                     plan.memory = true;
                     plan.nreg = 0;

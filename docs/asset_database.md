@@ -150,7 +150,7 @@ Queries:
 | texture | `sRGB` | `srgb` | 1 / 0 (1) |
 | | `filter` | `filter` | `point`, `bilinear`, `trilinear` (`trilinear`) |
 | | `wrap` | `wrap` | `repeat`, `clamp`, `mirror` (`repeat`) |
-| | `maxSize` | `maxSize` | 0 (no limit) or 32..16384 (2048) |
+| | `maxSize` | `maxSize` | 0 (no limit) or 32..16384 (0: a texture loads at full size until you pick a limit, the same as with no meta, so writing a meta for a tag never shrinks it) |
 | | `mipmaps` | `mipmaps` | 1 / 0 (1) |
 | | `compress` | `compress` | 1 / 0 (0), asks the renderer for a compressed format |
 | model | `scale` | `scale` | 0.0001..10000 (1) |

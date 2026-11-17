@@ -114,12 +114,14 @@ int main() {
         std::atomic<bool> stop{false};
         std::atomic<int> torn{0}, snapshots{0};
         std::thread reader([&] {
-            while (!stop.load()) {
+            // Always take at least one snapshot, even if the drawers finish before this thread is first scheduled.
+            do {
                 const Random::State s = Random::Shared().GetState();
                 if (valid.find(key(s)) == valid.end()) ++torn;
                 ++snapshots;
-            }
+            } while (!stop.load());
         });
+        while (snapshots.load() == 0) std::this_thread::yield();   // reader is running before the drawers start
         std::vector<std::vector<std::uint64_t>> drawn((std::size_t)kThreads);
         std::vector<std::thread> ts;
         for (int t = 0; t < kThreads; ++t)

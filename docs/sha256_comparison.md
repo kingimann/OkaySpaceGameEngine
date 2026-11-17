@@ -55,6 +55,15 @@ Length counter: the byte count is 64 bits and the bit count is that times 8, so 
 
 Which is better: the algorithm in copy 2's PBKDF2 (pad states computed once, two compressions per round) is the right one and nothing in `okay::crypto` had a PBKDF2 or an HMAC at all, so it was **moved** into `okay::crypto` (not deleted) and generalised (any output length, streaming HMAC, wiping), with the RFC vectors added. The account service's cost is `kPasswordRounds = 600000` (a stored record may claim 1,000 to 20,000,000; older records are the 50,000-step SHA-256 chain, `HashPassword`, and are upgraded on the next sign-in). The anti-cheat HMAC is called once per tagged message (clock challenge, hardware tag, relay).
 
+## Speed-up, 2026-11-16 (branch `claude2/own-http-sha-fast`)
+
+The own HTTP client hashes downloads while they arrive, and at loopback speed this SHA-256 was the limit. Only the speed changed; every digest is the same.
+
+- Portable C++: the 64 rounds are written out in full, the message schedule is computed on the fly in the sixteen-word ring, `Maj` reuses the `a ^ b` of the round before, and `Update` hands all whole blocks of a large buffer to the block function in one call (the state stays in registers). About 9 % faster than before in a repeated 4 MB test (300 to 305 against 330 MB/s; g++ and clang the same).
+- x86 SHA extensions (`SHA256RNDS2`, `SHA256MSG1`, `SHA256MSG2`), written from Intel's public description of the instructions, compiled through a function target attribute (no build flag, MinGW compiles it), used only when CPUID says the CPU has them. 700 to 1,500 MB/s here, depending on the load. MSVC and other CPUs use the portable function. `OKAY_SHA256_PORTABLE=1` forces the portable one.
+- 1 GiB in 64 KB pieces (`tests/sha256_compare gb`), shared machine with a load average of 6 to 10: before 137 to 186 MB/s; portable 124 to 169 MB/s under the same load (the load hides the 9 %); SHA extensions 694 to 1,249 MB/s. All runs give the same digest.
+- Checked: FIPS 180-4 vectors through both block functions, 2,000 random messages and 2,000 random word blocks through both (`test_sha256_unify`), `scripts/sha256_fast_check.py` (100,000 random lengths 0 to 10,000, each fed in random pieces, against Python hashlib, both block functions), `scripts/sha256_python_diff.py` (2,000 digests, HMACs, PBKDF2 against hashlib and hmac), the `crypto*` suites including the libsodium cross-checks, and both test programs under ASan and UBSan.
+
 ## Choice
 
 Copy 1 was the base as expected, and it was verified (it is correct and it is the one with the KATs and libsodium cross-checks), then made faster and header-only, and extended with HMAC and PBKDF2 from copy 2's ideas. Copy 2 and copy 3 became thin wrappers:
@@ -83,6 +92,7 @@ Nothing looks different on screen; the point is that nothing breaks and updates 
 3. **Anti-cheat checked server**: join one; the file manifest and the clock tag must still be accepted. Tests only (`anticheat_integrity`, `anticheat_checks`, `anticheat_golden`, `anticheat_backend`).
 4. **Voice room**: join the same room from two launchers; they must hear each other (the room key is `SHA-256("okayspace-voice-v1|" + key)`, so both sides must agree). `voice_races` compiles it; the key itself has no direct test. Not tried.
 5. **The checks themselves** (a developer machine): build `test_sha256_unify` and `sha256_compare` (`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`, then `ninja test_sha256_unify sha256_compare`), run `ctest -R sha256_unify` (expect "0 failures"), `python3 scripts/sha256_python_diff.py build/tests/sha256_compare` (expect "0 mismatches"), `build/tests/sha256_compare bench` (speed table) and `build/tests/sha256_compare big` (a 4.3 GB stream, 45 s).
+6. **The speed-up** (a developer machine, same build): `build/tests/sha256_compare gb` prints MB/s for 1 GiB and which block function ran (`sha-ni` or `portable`); `OKAY_SHA256_PORTABLE=1 build/tests/sha256_compare gb` runs the portable one. Expect the same digest from both and several times the speed with `sha-ni`. `python3 scripts/sha256_fast_check.py build/tests/sha256_compare` checks 100,000 random messages in random pieces against Python hashlib with both functions (expect "0 mismatches" twice and "PASS"; about 15 s). On the Windows release there is nothing to click: launcher update checks and anti-cheat manifests just hash faster on a CPU with the SHA extensions.
 
 ## Guards added after review
 
@@ -92,7 +102,7 @@ Nothing looks different on screen; the point is that nothing breaks and updates 
 
 ## Not verified
 
-- Windows / MinGW: not built here. The header uses only standard C++17, no intrinsics, no `<mutex>`/`<thread>`. A first CI run on Windows is the check.
+- Windows / MinGW: since the speed-up the header uses x86 intrinsics behind a function target attribute (GCC and Clang only; MSVC gets the portable function). MinGW (`x86_64-w64-mingw32-g++-win32`) compiles it here (`-fsyntax-only` and a real `-c` build whose object holds the `sha256rnds2` instructions), but it was not run on Windows. A first CI run on Windows is the check. Still no `<mutex>`/`<thread>`; the one static is the function-local constant that records the CPU check (thread-safe initialisation in C++11).
 - Real account files from real users: tested with records made by the old code, not with anyone's actual file.
 - `okayspace-launcher`, the editor and the player were not rebuilt here (only the headers they include changed; `test_voice_races` compiles `VoiceChat.hpp`).
 - Speed on other compilers and CPUs: measured with g++ and clang++ (-O2, -O3) on one x86-64 machine; clang gave the same order. MinGW and ARM were not measured.

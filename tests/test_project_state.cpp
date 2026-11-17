@@ -116,7 +116,7 @@ int main() {
         Put(a.version, "3.14.15-beta");
         a.defaultWidth = 1920; a.defaultHeight = 1080;
         a.gravity2D[0] = 1.5f; a.gravity2D[1] = -20.25f;
-        a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 123456.789f;
+        a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 1234.5678f;   // many digits, inside the -10000..10000 range the loader keeps
         a.physicsHz = 30.0f;
         a.smoothPhysics = false;
         a.ambient = 0.123456789f;
@@ -196,7 +196,7 @@ int main() {
         ProjectSettings q;
         ParseProjectSettings(q, "company=Win Co\r\nfuture_setting=7\r\nthis is not a setting\r\nwidth=abc\r\nheight=480\r\nambient=0.5\r\n");
         CHECK(std::string(q.company) == "Win Co" && q.defaultHeight == 480 && q.ambient == 0.5f);
-        CHECK(q.defaultWidth == 0);   // atoi("abc"): what the editor always did
+        CHECK(q.defaultWidth == 1280);   // "abc" is not a number: the default is kept (it used to become 0)
         // A value longer than its box is cut, not overrun.
         ProjectSettings r;
         ParseProjectSettings(r, "company=" + std::string(500, 'x') + "\nversion=" + std::string(100, 'v') + "\n");

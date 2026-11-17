@@ -35,6 +35,7 @@ add_library(okay_engine
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
     src/Core/SaveFile.cpp
+    src/Core/TolerantNumbers.cpp
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp

@@ -196,7 +196,8 @@ ConsoleResult DrawConsole(okay::ConsoleModel& model, ConsoleViewState& st, const
         UI::SameLine();
         const float comboW = 150.0f + 8.0f + UI::CalcTextSize("Category").x;
         UI::SetNextItemWidth(std::max(140.0f, UI::GetContentRegionAvail().x - comboW - 12.0f));
-        UI::InputText("Search", st.filter, (int)sizeof(st.filter));
+        // "Search" is the empty box's hint: as a label after the box it read as part of the category combo next to it.
+        UI::InputTextWithHint("##search", "Search", st.filter, (int)sizeof(st.filter));
         res.searchField = UI::GetItemRect();
         UI::SameLine();
         UI::SetNextItemWidth(comboW);
@@ -204,38 +205,47 @@ ConsoleResult DrawConsole(okay::ConsoleModel& model, ConsoleViewState& st, const
         res.categoryCombo = UI::GetItemRect();
 
         // ---- row 2: what to show (with counts) ----
+        // An item that does not fit after the previous one starts a new line instead of running off the right edge
+        // (a narrow Console cut "Auto-scroll" to "Auto-scro").
+        auto nextOrWrap = [](float need) {
+            const UI::Vec2 newLine = UI::GetCursorScreenPos();   // where the next line starts
+            UI::SameLine();
+            if (UI::GetContentRegionAvail().x < need) UI::SetCursorScreenPos(newLine);
+        };
+        auto checkW = [](const char* label) { return UI::GetTextLineHeight() + 14.0f + UI::CalcTextSize(label).x; };   // box + gap + label (UI::Checkbox)
+        auto buttonW = [](const char* label) { return UI::CalcTextSize(label).x + 24.0f; };                         // UI::Button
         char b[48];
         std::snprintf(b, sizeof(b), "Messages %zu", counts.info + counts.trace);
         UI::Checkbox(b, &st.showInfo);
-        UI::SameLine();
         std::snprintf(b, sizeof(b), "Warnings %zu", counts.warning);
+        nextOrWrap(checkW(b));
         UI::Checkbox(b, &st.showWarn);
         res.warnToggle = UI::GetItemRect();
-        UI::SameLine();
         std::snprintf(b, sizeof(b), "Errors %zu", counts.error);
+        nextOrWrap(checkW(b));
         UI::Checkbox(b, &st.showError);
         res.errorToggle = UI::GetItemRect();
-        UI::SameLine();
+        nextOrWrap(checkW("Collapse duplicates"));
         UI::Checkbox("Collapse duplicates", &st.collapse);
         res.collapseToggle = UI::GetItemRect();
-        UI::SameLine();
+        nextOrWrap(checkW("Auto-scroll"));
         UI::Checkbox("Auto-scroll", &st.autoScroll);
         res.autoScrollToggle = UI::GetItemRect();
         // ---- row 3: host options and the two actions ----
         bool any = false;
         if (host.clearOnPlay) { UI::Checkbox("Clear on Play", host.clearOnPlay); res.clearOnPlayToggle = UI::GetItemRect(); any = true; }
         if (host.pauseOnError) {
-            if (any) UI::SameLine();
+            if (any) nextOrWrap(checkW("Pause on error"));
             UI::Checkbox("Pause on error", host.pauseOnError);
             res.pauseOnErrorToggle = UI::GetItemRect();
             any = true;
         }
-        if (any) UI::SameLine();
+        if (any) nextOrWrap(buttonW("Copy all"));
         UI::BeginDisabled(!host.copyText);
         if (UI::Button("Copy all") && host.copyText) host.copyText(model.CopyAll());
         res.copyAllButton = UI::GetItemRect();
         UI::EndDisabled();
-        UI::SameLine();
+        nextOrWrap(buttonW("Save to console_log.txt"));
         UI::BeginDisabled(!host.saveLog);
         if (UI::Button("Save to console_log.txt") && host.saveLog) host.saveLog(model.CopyAll(false));
         res.saveButton = UI::GetItemRect();

@@ -71,6 +71,22 @@ int main() {
             "func main\n"
             "entry:\n"
             "  ret 42\n");
+    checkIr("copy",
+            "int id(int x){int a; a=x; return a;}\n",
+            "func id\n"
+            "entry:\n"
+            "  ret v0\n");
+    checkIr("join",
+            "int both(int x){int a; if (x) a=7; else a=7; return a;}\n",
+            "func both\n"
+            "entry:\n"
+            "  br v0, if0_then, if0_else\n"
+            "if0_then:\n"
+            "  jmp if0_end\n"
+            "if0_else:\n"
+            "  jmp if0_end\n"
+            "if0_end:\n"
+            "  ret 7\n");
 
     checkIr("pointer", "int main(){int x; int *p; x=7; p=&x; *p=9; return x;}\n",
             "func main\n"
@@ -78,8 +94,7 @@ int main() {
             "  lea v2, v0\n"
             "  store v2, 7, 4\n"
             "  lea v3, v0\n"
-            "  mov v1, v3\n"
-            "  store v1, 9, 4\n"
+            "  store v3, 9, 4\n"
             "  lea v4, v0\n"
             "  load v5, v4, 4\n"
             "  ret v5\n");

@@ -280,32 +280,208 @@ std::string printModule(const Module& m) {
     return s;
 }
 
-void optimizeModule(Module& m) {
-    for (Function& f : m.funcs) {
-        for (Block& b : f.blocks) {
-            std::map<int, std::int64_t> known;
-            for (Inst& in : b.code) {
-                rewrite(in.a, known);
-                rewrite(in.b, known);
-                for (Operand& arg : in.args) rewrite(arg, known);
-                for (Operand& word : in.stack) rewrite(word, known);
-                for (Operand& x : in.xmm) rewrite(x, known);
-                std::int64_t folded = 0;
-                if (in.dst >= 0 && foldInst(in, folded)) {
-                    in.op = Inst::Op::Mov;
-                    in.a = Operand::number(folded);
-                    in.b = Operand::none();
-                    in.extra = 8;
-                    in.uns = false;
-                    in.args.clear();
-                    in.stack.clear();
-                    in.func.clear();
-                    known[in.dst] = folded;
-                } else if (in.dst >= 0) {
-                    known.erase(in.dst);
-                }
+namespace {
+
+struct Cell {
+    int kind = 0;  // 0 unknown, 1 constant, 2 copy of src, 3 many values
+    std::int64_t n = 0;
+    int src = -1;
+};
+
+Cell joinCell(Cell a, Cell b) {
+    if (a.kind == 0) return b;
+    if (b.kind == 0) return a;
+    if (a.kind == 3 || b.kind == 3) return Cell{3, 0, -1};
+    if (a.kind == 1 && b.kind == 1 && a.n == b.n) return a;
+    if (a.kind == 2 && b.kind == 2 && a.src == b.src) return a;
+    return Cell{3, 0, -1};
+}
+
+void joinState(std::vector<Cell>& dst, const std::vector<Cell>& src) {
+    if (dst.size() < src.size()) dst.resize(src.size());
+    for (std::size_t i = 0; i < dst.size(); ++i) {
+        Cell s = i < src.size() ? src[i] : Cell{};
+        dst[i] = joinCell(dst[i], s);
+    }
+}
+
+bool sameState(const std::vector<Cell>& a, const std::vector<Cell>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].kind != b[i].kind || a[i].n != b[i].n || a[i].src != b[i].src) return false;
+    return true;
+}
+
+void defReg(std::vector<Cell>& st, int r, Cell now) {
+    if (r < 0) return;
+    if (r >= static_cast<int>(st.size())) st.resize(static_cast<std::size_t>(r + 1));
+    for (Cell& c : st) {
+        if (c.kind == 2 && c.src == r) c = Cell{3, 0, -1};
+    }
+    if (now.kind == 2 && now.src == r) now = Cell{3, 0, -1};
+    st[static_cast<std::size_t>(r)] = now;
+}
+
+void transfer(const Inst& in, std::vector<Cell>& st) {
+    if (in.dst < 0) return;
+    if (in.fp) {
+        defReg(st, in.dst, Cell{3, 0, -1});
+        return;
+    }
+    if (in.op == Inst::Op::Mov && in.a.kind == Operand::Kind::Imm) {
+        defReg(st, in.dst, Cell{1, in.a.imm, -1});
+        return;
+    }
+    if (in.op == Inst::Op::Mov && in.a.kind == Operand::Kind::Reg) {
+        Cell now{2, 0, in.a.reg};
+        if (in.a.reg >= 0 && in.a.reg < static_cast<int>(st.size())) {
+            const Cell& s = st[static_cast<std::size_t>(in.a.reg)];
+            if (s.kind == 1) now = Cell{1, s.n, -1};
+            else if (s.kind == 2 && s.src >= 0) now = Cell{2, 0, s.src};
+        }
+        defReg(st, in.dst, now);
+        return;
+    }
+    defReg(st, in.dst, Cell{3, 0, -1});
+}
+
+void applyCell(Operand& o, const std::vector<Cell>& st, bool asValue) {
+    if (o.kind != Operand::Kind::Reg || o.reg < 0 || o.reg >= static_cast<int>(st.size())) return;
+    const Cell& c = st[static_cast<std::size_t>(o.reg)];
+    if (asValue && c.kind == 1) {
+        o = Operand::number(c.n);
+        return;
+    }
+    if (c.kind == 2 && c.src >= 0 && c.src != o.reg) o.reg = c.src;
+}
+
+void rewriteUses(Inst& in, const std::vector<Cell>& st) {
+    if (in.fp || in.op == Inst::Op::Lea) return;
+    bool addrA = in.op == Inst::Op::Load || in.op == Inst::Op::Store ||
+                 (in.op == Inst::Op::Call && in.func.empty());
+    applyCell(in.a, st, !addrA);
+    applyCell(in.b, st, true);
+    for (Operand& arg : in.args) applyCell(arg, st, true);
+    for (Operand& word : in.stack) applyCell(word, st, true);
+    for (Operand& x : in.xmm) applyCell(x, st, true);
+}
+
+void propagateFunction(Function& f) {
+    const int n = static_cast<int>(f.blocks.size());
+    std::map<std::string, int> id;
+    for (int i = 0; i < n; ++i) id[f.blocks[static_cast<std::size_t>(i)].name] = i;
+    std::vector<std::vector<int>> preds(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const Block& b = f.blocks[static_cast<std::size_t>(i)];
+        bool term = false;
+        auto edge = [&](const std::string& name) {
+            auto it = id.find(name);
+            if (it != id.end()) preds[static_cast<std::size_t>(it->second)].push_back(i);
+        };
+        for (const Inst& in : b.code) {
+            if (in.op == Inst::Op::Jmp) {
+                edge(in.label);
+                term = true;
+                break;
+            }
+            if (in.op == Inst::Op::Br) {
+                edge(in.label);
+                edge(in.label2);
+                term = true;
+                break;
+            }
+            if (in.op == Inst::Op::Ret) {
+                term = true;
+                break;
             }
         }
+        if (!term && i + 1 < n) preds[static_cast<std::size_t>(i + 1)].push_back(i);
+    }
+
+    std::vector<std::vector<Cell>> inS(static_cast<std::size_t>(n));
+    std::vector<std::vector<Cell>> outS(static_cast<std::size_t>(n));
+    std::vector<char> ready(static_cast<std::size_t>(n), 0);
+    int guard = n * n + 4;
+    bool changed = true;
+    while (changed && guard-- > 0) {
+        changed = false;
+        for (int i = 0; i < n; ++i) {
+            std::vector<Cell> joined;
+            bool any = false;
+            if (i == 0) {
+                joined.assign(static_cast<std::size_t>(f.params), Cell{3, 0, -1});
+                any = true;
+            }
+            for (int p : preds[static_cast<std::size_t>(i)]) {
+                if (!ready[static_cast<std::size_t>(p)]) continue;
+                if (!any) {
+                    joined = outS[static_cast<std::size_t>(p)];
+                    any = true;
+                } else {
+                    joinState(joined, outS[static_cast<std::size_t>(p)]);
+                }
+            }
+            std::vector<Cell> st = joined;
+            for (const Inst& in : f.blocks[static_cast<std::size_t>(i)].code) {
+                transfer(in, st);
+                if (in.op == Inst::Op::Jmp || in.op == Inst::Op::Br || in.op == Inst::Op::Ret) break;
+            }
+            if (!sameState(joined, inS[static_cast<std::size_t>(i)]) ||
+                !sameState(st, outS[static_cast<std::size_t>(i)])) {
+                inS[static_cast<std::size_t>(i)] = std::move(joined);
+                outS[static_cast<std::size_t>(i)] = std::move(st);
+                ready[static_cast<std::size_t>(i)] = 1;
+                changed = true;
+            } else {
+                ready[static_cast<std::size_t>(i)] = 1;
+            }
+        }
+    }
+
+    for (int i = 0; i < n; ++i) {
+        std::vector<Cell> st = inS[static_cast<std::size_t>(i)];
+        for (Inst& in : f.blocks[static_cast<std::size_t>(i)].code) {
+            rewriteUses(in, st);
+            transfer(in, st);
+            if (in.op == Inst::Op::Jmp || in.op == Inst::Op::Br || in.op == Inst::Op::Ret) break;
+        }
+    }
+}
+
+void foldFunction(Function& f) {
+    for (Block& b : f.blocks) {
+        std::map<int, std::int64_t> known;
+        for (Inst& in : b.code) {
+            rewrite(in.a, known);
+            rewrite(in.b, known);
+            for (Operand& arg : in.args) rewrite(arg, known);
+            for (Operand& word : in.stack) rewrite(word, known);
+            for (Operand& x : in.xmm) rewrite(x, known);
+            std::int64_t folded = 0;
+            if (in.dst >= 0 && foldInst(in, folded)) {
+                in.op = Inst::Op::Mov;
+                in.a = Operand::number(folded);
+                in.b = Operand::none();
+                in.extra = 8;
+                in.uns = false;
+                in.args.clear();
+                in.stack.clear();
+                in.func.clear();
+                known[in.dst] = folded;
+            } else if (in.dst >= 0) {
+                known.erase(in.dst);
+            }
+        }
+    }
+}
+
+}  // namespace
+
+void optimizeModule(Module& m) {
+    for (Function& f : m.funcs) {
+        foldFunction(f);
+        propagateFunction(f);
+        foldFunction(f);
         std::map<int, int> uses;
         auto add = [&](const Operand& o) {
             if (o.kind == Operand::Kind::Reg) uses[o.reg] += 1;

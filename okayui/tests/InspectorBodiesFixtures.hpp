@@ -1158,7 +1158,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
     }
     case BodyFpHand: {
         static const char* const kSides[] = {"Right arm", "Left arm"};
-        L.Note("Shows your character's OWN arm in first person. Your body is\nhidden from your camera only (others see all of it) and never\nduplicated. Click to punch.");
+        L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
         L.SliderInt("Attack Button##fh", &v.fhBtn, 0, 2); L.Check("Swing while held##fh", &v.fhHold);
         L.Combo("Arm side##fh", &v.fhSide, kSides, 2); L.Check("Follow camera look##fh", &v.fhFollow); L.Check("Bobbing##fh", &v.fhBob);
         L.Check("Steady arm (ignore lean/crouch/prone)##fh", &v.fhSteady); L.Check("Show While Running##fh", &v.fhRun);

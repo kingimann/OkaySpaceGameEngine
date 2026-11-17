@@ -2648,7 +2648,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 int picked = -1;
                 const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (c >= 0 && r.items ? r.items[c] : "");
                 // the closed text cut before the arrow with "...", and tinted when the host asks (an unknown item id)
-                const std::string fitted = InspFitText(preview, frameW - fh - 2.0f * g_metrics.framePadding.x, [](const char* t) { return UI::CalcTextWidth(t); });
+                const std::string fitted = InspFitText(preview, frameW - fh - g_metrics.framePadding.x, [](const char* t) { return UI::CalcTextWidth(t); });
                 if (r.color) UI::PushStyleColor(UI::Col_Text, r.color | 0xff000000u);
                 const bool open = UI::BeginCombo(r.label, fitted.c_str());
                 if (r.color) UI::PopStyleColor();

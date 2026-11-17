@@ -1400,7 +1400,7 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
     std::string preview = cur && !cur->loose ? cur->DisplayName() : id;
     if (unknown) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.3f, 1.0f));
     ImGui::SetNextItemWidth(width);
-    const std::string fitted = okaypanels::InspFitText(preview.c_str(), width - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+    const std::string fitted = okaypanels::InspFitText(preview.c_str(), width - ImGui::GetFrameHeight() - ImGui::GetStyle().FramePadding.x,
                                                        [](const char* t) { return ImGui::CalcTextSize(t).x; });   // cut before the arrow
     const bool open = ImGui::BeginCombo(label, fitted.c_str(), ImGuiComboFlags_HeightLarge);
     if (unknown) ImGui::PopStyleColor();
@@ -27156,7 +27156,7 @@ static float FieldW(float w, const char* label) {
 }
 // A combo's closed text for a box `boxW` wide: cut before the arrow with "..." (stage 6: long names ran under the arrow).
 static std::string FitPreview(const char* text, float boxW) {
-    return okaypanels::InspFitText(text, boxW - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+    return okaypanels::InspFitText(text, boxW - ImGui::GetFrameHeight() - ImGui::GetStyle().FramePadding.x,
                                    [](const char* t) { return ImGui::CalcTextSize(t).x; });
 }
 // A grey note wrapped at the Inspector's edge (stage 6: notes of the Item Pickup, Hold Prompt and others ran past it).
@@ -33210,7 +33210,7 @@ static bool DrawFirstPersonWithOkayUI(EditorState& ed, GameObject* go, FirstPers
     std::string dodgeKey; int kDodgeKey = -1;
     AddDodgeRows(L, fp, "fp", dodgeKey, kDodgeKey, T, true);
     AddTraversalRows(L, fp, "fp", T);
-    L.Note("Mouse look + WASD. Put a Camera as a child (eye height).");
+    L.Note("Mouse look + WASD. Put a Camera as a child (eye height).", false, true);
     const int kRemove = owned ? -1 : L.SmallButton("Remove##fp");
     if (!DrawRowsOkayUI(fp, "##okayui_firstperson", L)) return false;
     if (L.AnyChanged()) ed.dirty = true;
@@ -33752,7 +33752,7 @@ static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, 
     static const char* const kSides[] = {"Right arm", "Left arm"};
     InspFieldList L;
     L.rows.reserve(16);
-    L.Note("Shows your character's OWN arm in first person. Your body is\nhidden from your camera only (others see all of it) and never\nduplicated. Click to punch.");
+    L.Note("Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.", false, true);
     L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
     L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
     int si = fh->showLeftArm ? 1 : 0;
@@ -36182,9 +36182,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
         if (CompHeader("Hand (legacy)", fh, &toRemove) && !(UseOkayUIBackend() && DrawFirstPersonHandWithOkayUI(ed, fh, toRemove))) {   // OkayUI's with the preview switch (section 19)
-            ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
-                                "hidden from your camera only (others see all of it) and never\n"
-                                "duplicated. Click to punch.");
+            WrappedNote("%s", "Shows your character's OWN arm in first person. Your body is hidden from your camera only (others see all of it) and never duplicated. Click to punch.");   // wraps at the panel edge (its hard line breaks ran out of a narrow Inspector)
             if (ImGui::SliderInt("Attack Button##fh", &fh->attackButton, 0, 2)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
             if (ImGui::Checkbox("Swing while held##fh", &fh->holdToSwing)) ed.dirty = true;
@@ -41209,7 +41207,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Full Body IK looks with camera##fp", &fp->ikLook)) ed.dirty = true;
             oked::FieldTip("Full Body IK looks with camera##fp");
 
-            ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
+            WrappedNote("%s", "Mouse look + WASD. Put a Camera as a child (eye height).");
             if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }

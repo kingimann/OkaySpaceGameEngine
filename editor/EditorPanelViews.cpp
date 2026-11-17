@@ -1489,7 +1489,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowCombo: {
             int* cur = r.I();
             const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
-            const std::string fitted = InspFitText(preview, ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+            const std::string fitted = InspFitText(preview, ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().FramePadding.x,
                                                    [](const char* t) { return ImGui::CalcTextSize(t).x; });
             if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
             const bool comboOpen = ImGui::BeginCombo(r.label, fitted.c_str());

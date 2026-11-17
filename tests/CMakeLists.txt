@@ -3769,6 +3769,15 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(test_own_http_net PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
     add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
     set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+    # Retries, downloads to a file (temporary file, SHA-256 while streaming, resume with Range, atomic rename) against a
+    # local server written in the test: redirects, chunked, gzip, drops, stalls, 5xx/429 with Retry-After, wrong
+    # checksum, a 200 MB file with flat memory, plain and CONNECT proxies (https to openssl s_server; SKIP without it).
+    # Also the server and client for scripts/own_http_bench.py (--serve, --get).
+    add_executable(test_own_http_download test_own_http_download.cpp)
+    target_include_directories(test_own_http_download PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_own_http_download PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+    add_test(NAME own_http_download COMMAND test_own_http_download ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh)
+    set_tests_properties(own_http_download PROPERTIES TIMEOUT 300 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()
 
 add_executable(test_editor_play_input test_editor_play_input.cpp)

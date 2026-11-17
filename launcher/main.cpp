@@ -361,12 +361,24 @@ bool Download(const std::string& url, const fs::path& out) {
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
     const std::string outUtf = okay::restart::Utf8(out);
-    // Native first (no curl process per file; pooled TLS connections).
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    // Own client (opt-in): temporary file renamed when complete, resume after a drop, retries with backoff.
+    // A clear refusal (404, full disk, too big) ends it like curl -f; an unclear answer falls through to curl below.
+    if (okay::http::NativeAvailable()) {
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, outUtf, sp);
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
+    }
+#else
+    // Native first (no curl process per file; pooled TLS connections). Windows: WinHTTP.
     if (okay::http::NativeAvailable()) {
         okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out.string());
         if (r.reached && r.status >= 200 && r.status < 300 && fs::exists(out, ec)) return true;
         fs::remove(out, ec);
     }
+#endif
     // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
     const std::vector<std::string> curl = {
         "curl", "-L", "-s", "-f", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",   // (a stalled transfer ends by itself)
@@ -531,7 +543,7 @@ int DlWorker(void* data) {
 #if defined(OKAY_OWN_HTTP_ACTIVE)
     if (okay::http::NativeAvailable()) {   // own client first (opt-in); anything unclear falls through to curl below
         okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes;
+        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2;   // a drop resumes with Range
         sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
         sp.cancelled = [&] { bool c; SDL_LockMutex(g_dlMutex); c = d->cancelReq; SDL_UnlockMutex(g_dlMutex); return c; };
         const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);

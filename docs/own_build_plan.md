@@ -327,3 +327,26 @@ Written from general knowledge only (a content-addressed store, write-to-temp-th
 - Cache: `--cache-dir DIR` or `OKAY_CACHE_DIR`. The key leaves out the values of `-o`, `-MF`, `-MT` and `/Fo`, `/Fd`, so a second build tree with the same sources hits. The key is still FNV-1a 64 bit: not cryptographic, not collision-safe, a speed-up only. Entry format `okaybuild-cache 2` (key, object size, depfile size); old format-1 entries are refused and rebuilt.
 - `okay-build report json`; `report` ends with totals by step kind; `report diff A B` prints `cache: STEP miss -> hit`.
 - `okay-build test [NAME...] [--timeout SECONDS]`. A timeout kills the test's process group (POSIX) or the process (Windows, `TerminateProcess`), exit code shown as 124. The Windows timeout code is only cross-compiled, never run.
+
+## Round 6 on claude/okaybuild-3: engine library and `test_math` from a native manifest (2026-11-17)
+Written from general knowledge only; no other tool's code was read. Linux only: nothing here was run on Windows.
+
+How to try it (Linux, g++, SDL2 and libsodium dev headers, about 2 GB of disk for the tree):
+`g++ -std=c++17 -O2 -pthread tools/okaybuild/okay-build.cpp -o /tmp/okay-build` then
+`sh tools/okaybuild/examples/native_test_math.sh /tmp/okay-build /tmp/okb-tree 2`.
+It runs `okay-build native` (writes a manifest from the source tree), builds `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math` (340 steps, Debug `-O0 -g0`) with no CMake or Ninja, and runs `test_math`. You should see `15 checks, 0 failures`. Delete the tree afterwards.
+
+What this found and fixed:
+- The generated manifest missed the `shared/` include directory (`AntiCheatChecks.hpp`, `RobotoFontOwn.h`), so `Net/RelayServer.cpp` did not compile. `native` now adds `shared` to the include list when the folder exists. (CMake adds it per file; we add it for the whole engine target, which is a small difference in include paths and no difference in the result.)
+- After a build that restored objects from the cache, every later no-op re-read those object files (the saved size+mtime no longer matched), about 300 ms for 52 objects. The saved stamps are now refreshed when the bytes still match (`refreshStamps`), also on a no-op run.
+
+Result: the okay-build `test_math` printed `15 checks, 0 failures`, the same as the CMake/Ninja `test_math` built from the same tree. Not compared: object files byte for byte (the two builds use different flag sets, for example CMake adds `-DOKAY_DEFAULT_ACCOUNT_*` and per-file options), so only the final run result was compared.
+
+Timings, this machine (4 cores, `-j2`, Debug `-O0 -g0`, g++, one run each for the long ones, same source tree, CMake 339 steps vs okay-build 340; not Windows):
+| | okay-build | Ninja |
+|---|---|---|
+| cold build (cache on, 0 hits) | 8 min 40 s | 9 min 09 s |
+| one header edit (`Core/Time.hpp`, 52 compiles + archive + link), cache on, all misses | 4 min 59 s | 4 min 01 s |
+| same edit, `--no-cache` | 3 min 28 s | 4 min 01 s |
+| no-op, median of 15 | 12 ms | 34 ms |
+So with the compiler cache on, a miss costs one extra preprocess run per file (that is the 20% on the edit). The cache earns it back only on a hit: the same header edit as a comment only (same preprocessed text) took 7 s because all 52 compiles were hits. A cold build is compiler-bound in both tools, so the two cold numbers are close and one run each does not show a real difference. The first okay-build cold attempt (not counted) was disturbed by other work on the machine.

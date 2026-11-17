@@ -775,10 +775,12 @@ static void testNativeManifest() {
     write("engine/src/Core/Core.cpp", "int core(){return 3;}\n");
     write("engine/third_party/ufbx/ufbx.c", "int ufbx_add(){return 4;}\n");
     write("engine/include/okay/Math/Math.hpp", "#pragma once\n");
+    write("shared/Shared.hpp", "#pragma once\n");
     write("tests/test_math.cpp", "extern \"C\" int ufbx_add(); int crypto(); int plat(); int core(); int main(){return crypto()+plat()+core()+ufbx_add()==10?0:1;}\n");
     int rc; string o = sh("native . -o build.okay", &rc);
     check(rc == 0 && o.find("test_math") != string::npos, "native writes a manifest", o);
     string man = readFile(gRoot / "build.okay");
+    check(man.find(" engine/third_party/ufbx shared /usr/include/SDL2") != string::npos, "the shared/ header directory is an include path", man);
     check(man.find("target okay_engine lib") != string::npos && man.find("target okay_crypto lib") != string::npos, "engine and crypto targets", man);
     check(man.find("ModelImportAssimp") == string::npos && man.find("OwnWin32") == string::npos, "optional files are left out", man);
     check(man.find("tests/test_math.cpp") != string::npos && man.find("ufbx.c") != string::npos, "test_math and ufbx are included", man);
@@ -787,6 +789,14 @@ static void testNativeManifest() {
     check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
 }
 
+static void testRestoredObjectsStayTrusted() {
+    printf("test: objects restored from the cache do not make every later no-op re-read them\n"); fresh("restore"); basicProject();
+    sh("-j2");
+    write("inc/util.h", "#pragma once\nint util();\n// a comment: same preprocessed text, so the compiles are cache hits\n");
+    int rc; string o = sh("-j2", &rc); check(rc == 0 && o.find("cache hit") != string::npos, "the comment edit is served from the cache", o);
+    o = sh("-v", &rc); check(o.find("hashed 0 input file(s)") != string::npos, "the next no-op reads no file again", o);
+    o = sh("-v", &rc); check(ran(o) == 0 && o.find("hashed 0 input file(s)") != string::npos, "and neither does the one after", o);
+}
 static void testBinaryState() {
     printf("test: compact binary state, with the old text format still accepted\n");
     fresh("bstate");
@@ -1170,5 +1180,6 @@ int main(int argc, char** argv) {
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
+    testRestoredObjectsStayTrusted();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -774,6 +774,16 @@ static void loadState() {
     std::ifstream j(journalPath(), std::ios::binary); string l; Rec* cur = nullptr;
     while (std::getline(j, l)) ingestStateLine(l, cur);
 }
+// A file whose bytes still match its record but whose size or mtime moved (an object restored from the cache, a touch)
+// gets its new stamp written back, so the next run trusts size+mtime and does not read the file again.
+static int refreshStamps() {
+    int n = 0;
+    for (auto& [o, r] : gState) for (auto& [p, sg] : r.inputs) {
+        auto it = gCache.find(string(p));
+        if (it != gCache.end() && it->second.hash == sg.hash && (it->second.mtime != sg.mtime || it->second.size != sg.size)) { sg = it->second; ++n; }
+    }
+    return n;
+}
 static void saveState() {
     fs::create_directories(under(".okaybuild"));
     std::unordered_map<string, uint32_t> id;
@@ -1803,6 +1813,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
             if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
@@ -1914,7 +1925,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         noteStep(a.kind, a.desc, nowNs() - (L.began ? L.began : L.started), L.cacheTag.empty() ? "-" : L.cacheTag);
         done(L.id, ok, out, true);
     }
-    if (!o.dry) saveState();
+    if (!o.dry) { refreshStamps(); saveState(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -1955,6 +1966,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
             if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
@@ -2053,7 +2065,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     };
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
-    if (!o.dry) saveState();
+    if (!o.dry) { refreshStamps(); saveState(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -2756,9 +2768,11 @@ static int writeNative(const string& root, const string& outFile) {
         for (auto& s : srcs) out << " " << qtok(s);
         out << "\n" << extra << "end\n";
     };
+    // shared/ holds headers the network and font files include (AntiCheatChecks.hpp, RobotoFontOwn.h); the CMake build adds it per file
+    string sharedDir = fs::is_directory(fs::path(root) / "shared") ? " shared" : "";
     string inc =
         "  flags = -std=c++17 -O0 -g0\n"
-        "  include = engine/include engine/third_party/stb engine/third_party/ufbx /usr/include/SDL2\n"
+        "  include = engine/include engine/third_party/stb engine/third_party/ufbx" + sharedDir + " /usr/include/SDL2\n"
         "  define = OKAY_HAVE_SODIUM OKAY_NET_CRYPTO OKAY_PLATFORM_HAVE_SDL2 OKAY_PLATFORM_HAVE_OWN OKAY_PLATFORM_X11_HEADERS\n";
     block("okay_crypto", "lib", crypto, "  flags = -std=c++17 -O0 -g0\n  export_include = engine/include\n");
     if (!plat.empty()) block("okay_platform", "lib", plat, inc + "  export_include = engine/include\n");

@@ -90,6 +90,7 @@
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#include "QuitPromptState.hpp"          // the quit prompt's per-frame state (ImGui-free, tested)
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
@@ -13015,11 +13016,17 @@ void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) 
 // discards changes.
 static bool ScriptTabDirty(okay::ScriptComponent* t);
 void DrawQuitPrompt(EditorState& ed, bool& running) {
-    static bool open = false;
-    if (g_quitRequested && !open) {
-        if (!AnyUnsavedWork(ed)) { running = false; g_quitRequested = false; return; }
-        ImGui::OpenPopup("Unsaved Changes");
-        open = true;
+    // A quit that arrives while another modal is up waits for it to close, and a prompt that another
+    // modal knocked down is opened again, so Exit and the close button never stop working (#888 finding 142).
+    static oked::QuitPromptState quit;
+    const bool showing = ImGui::IsPopupOpen("Unsaved Changes");
+    ImGuiWindow* topModal = ImGui::GetTopMostPopupModal();
+    const bool otherModal = topModal && !showing;
+    const bool unsaved = g_quitRequested && AnyUnsavedWork(ed);
+    switch (oked::StepQuitPrompt(quit, g_quitRequested, unsaved, showing, otherModal)) {
+        case oked::QuitStep::QuitNow: running = false; g_quitRequested = false; return;
+        case oked::QuitStep::OpenPrompt: ImGui::OpenPopup("Unsaved Changes"); break;
+        case oked::QuitStep::None: break;
     }
     ImVec2 c = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -13038,19 +13045,19 @@ void DrawQuitPrompt(EditorState& ed, bool& running) {
         ImGui::Separator();
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             const bool ok = SaveProject(ed, false);
-            g_quitRequested = false; open = false;
+            g_quitRequested = false; oked::QuitPromptAnswered(quit);
             if (ok) running = false;   // something failed: stay open so nothing is lost
             ImGui::CloseCurrentPopup();
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            g_quitRequested = false; open = false;
+            g_quitRequested = false; oked::QuitPromptAnswered(quit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
-            running = false; g_quitRequested = false; open = false;
+            running = false; g_quitRequested = false; oked::QuitPromptAnswered(quit);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

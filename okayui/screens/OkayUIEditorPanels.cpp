@@ -1189,7 +1189,8 @@ void DrawPanelMenu(const std::vector<PanelMenuEntry>& es, std::string& chosen, s
             if (top) Divider(); else UI::MenuSeparator();
             break;
         case PanelMenuHeading:
-            if (top) UI::TextDisabled(e.label.c_str());
+            if (top && e.color) UI::TextColored((unsigned char)(e.color & 0xff), (unsigned char)((e.color >> 8) & 0xff), (unsigned char)((e.color >> 16) & 0xff), e.label.c_str());
+            else if (top) UI::TextDisabled(e.label.c_str());
             else UI::MenuItem(e.label.c_str(), nullptr, false, false);
             break;
         case PanelMenuSub:
@@ -1692,6 +1693,25 @@ bool InspColorEdit(const char* label, float* c, int n, UI::Rect* rowRect = nullp
     UI::SameLine(inner);
     float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
     if (UI::ColorButton("##swatch", rgba, UI::ColorEdit_NoAlpha, fh)) UI::OpenPopup("##picker");
+    if (n == 4 && rgba[3] < 1.0f) {   // Dear ImGui's swatch of a see-through colour: the colour over a light and dark grey check, cells a third of it
+        const UI::Rect b = UI::GetItemRect();
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        auto blend = [&](float g) {
+            auto ch = [&](float v) { return ColorByte(g + (v - g) * rgba[3]); };
+            return UI::RGBA(ch(rgba[0]), ch(rgba[1]), ch(rgba[2]), 255);
+        };
+        const UI::Color32 light = blend(204.0f / 255.0f), dark = blend(128.0f / 255.0f);
+        const float step = std::min(b.w, b.h) / 2.99f;
+        dl.PushClipRect(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h});
+        dl.AddRectFilled(UI::Vec2{b.x, b.y}, UI::Vec2{b.x + b.w, b.y + b.h}, light, 6.0f);   // the corner cells are light: the frame's rounding
+        int yi = 0;
+        for (float yy = b.y; yy < b.y + b.h; yy += step, ++yi) {
+            int xi = 0;
+            for (float xx = b.x; xx < b.x + b.w; xx += step, ++xi)
+                if ((xi + yi) & 1) dl.AddRectFilled(UI::Vec2{xx, yy}, UI::Vec2{std::min(xx + step, b.x + b.w), std::min(yy + step, b.y + b.h)}, dark, 0.0f);
+        }
+        dl.PopClipRect();
+    }
     {
         MenuLook look_(220.0f);
         if (UI::BeginPopup("##picker")) {
@@ -2461,6 +2481,23 @@ void FieldExtras(const char* label, const UI::Rect& row, float regionX, bool ove
     UI::PopID();
 }
 
+// Text with line breaks, as Dear ImGui's Text draws it: one item, each line one text line (the font size) below the one before.
+void LinesText(const char* t, UI::Color32 col) {
+    const UI::Vec2 p = UI::GetCursorScreenPos();
+    const float fs = UI::GetFontSize();
+    std::vector<std::string> lines;
+    for (const char* a = t;;) {
+        const char* e = std::strchr(a, '\n');
+        lines.emplace_back(a, e ? (std::size_t)(e - a) : std::strlen(a));
+        if (!e) break;
+        a = e + 1;
+    }
+    float wmax = 1.0f;
+    for (const std::string& l : lines) wmax = std::max(wmax, UI::CalcTextWidth(l.c_str()));
+    UI::Dummy(wmax, fs * (float)lines.size());
+    for (std::size_t i = 0; i < lines.size(); ++i) UI::GetWindowDrawList().AddText(UI::Vec2{p.x, p.y + fs * (float)i}, col, lines[i].c_str());
+}
+
 // The small cross of a clear button in a frame-tall square (the editor's ClearButton).
 void DrawCross(const UI::Rect& b) {
     const float cx = b.x + b.w * 0.5f, cy = b.y + b.h * 0.5f, r = b.h * 0.17f;
@@ -2578,7 +2615,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const int c = *cur >= 0 && *cur < r.count ? *cur : -1;
                 const float bx = UI::GetCursorScreenPos().x;
                 int picked = -1;
-                const char* preview = r.mixed ? "Mixed" : (c >= 0 && r.items ? r.items[c] : "");
+                const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (c >= 0 && r.items ? r.items[c] : "");
                 const bool open = UI::BeginCombo(r.label, preview);
                 const UI::Rect box = UI::GetItemRect();
                 if (open) {
@@ -2689,6 +2726,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 break;
             }
             case InspRowNote:
+                if (!r.wrap && std::strchr(r.Text(), '\n')) { LinesText(r.Text(), UI::GetColorU32(UI::Col_TextDisabled)); break; }
                 if (r.wrap) UI::PushTextWrapPos(0.0f);
                 UI::TextDisabled(r.Text());
                 if (r.wrap) UI::PopTextWrapPos();
@@ -2700,6 +2738,10 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     UI::Dummy(UI::CalcTextWidth(r.Text()), fh);
                     const UI::Rect b = UI::GetItemRect();
                     UI::GetWindowDrawList().AddText(UI::Vec2{b.x, b.y + g_metrics.framePadding.y}, c, r.Text());
+                    break;
+                }
+                if (!r.wrap && std::strchr(r.Text(), '\n')) {
+                    LinesText(r.Text(), (r.kind == InspRowColorText || r.color) ? (r.color | 0xff000000u) : UI::GetColorU32(UI::Col_Text));
                     break;
                 }
                 if (r.wrap) UI::PushTextWrapPos(0.0f);
@@ -2810,7 +2852,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 if (*bits != ~0 && *bits != 0) fetch();
                 const std::string preview = InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
                 MenuLook look_(0.0f);
-                UI::PushStyleVar(UI::StyleVar_PopupWidth, frameW);
+                // the list is as wide as its widest line, as Dear ImGui's grows to its content: the rename note is wider than a narrow
+                // box (seen in the real editor: the note ran out of the list over the Inspector)
+                const bool renameNote = list.hooks.renameLayer && list.hooks.layerName;
+                const float listW = renameNote ? std::max(frameW, UI::CalcTextWidth("Right-click a layer to rename it") + 34.0f) : frameW;
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
                 UI::SetNextItemWidth(WithLabel(frameW, r.label));
                 if (UI::BeginCombo(r.label, preview.c_str())) {
                     fetch();
@@ -2818,10 +2864,14 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     if (ListRow("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
                     if (ListRow("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
                     Divider();
+                    // the editor's LayerRenameMenu (stage 3): a right-click on a layer renames it, as in the Dear ImGui list
+                    const bool rename = list.hooks.renameLayer && list.hooks.layerName;
+                    if (rename) UI::TextDisabled("Right-click a layer to rename it");
                     const float rowH = fh + g_metrics.itemSpacing.y;
                     // as many check box rows as fit in Dear ImGui's list height (eight text rows) after Everything, Nothing and the rule
-                    const int shown = std::max(4, (int)std::floor(((float)kListRows - 2.0f) * (fs + g_metrics.itemSpacing.y) / rowH));
+                    const int shown = std::max(4, (int)std::floor(((float)kListRows - 2.0f - (rename ? 1.0f : 0.0f)) * (fs + g_metrics.itemSpacing.y) / rowH));
                     res.listRows.assign(32, UI::Rect{});
+                    UI::Rect renameRect{};
                     ScrollRows("##maskrows", 32, shown, rowH, 0, [&](int i) {
                         bool on = (*bits & (1 << i)) != 0;
                         UI::PushID(i);
@@ -2830,10 +2880,45 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                             r.changed = true;
                         }
                         res.listRows[(std::size_t)i] = UI::GetItemRect();
+                        if (rename) {
+                            MenuLook look_(152.0f - fs);   // the popup 186 wide: the 170-pixel name field and the padding
+                            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{8.0f, 8.0f});
+                            if (UI::BeginPopupContextItem("##layerctx")) {
+                                static char buf[128] = "";
+                                static std::string err, hint, def;
+                                static int s_layer = -1, s_frame = -10;
+                                if (s_layer != i || UI::GetFrameCount() > s_frame + 1) {   // the menu opened: the name to edit
+                                    std::string text;
+                                    list.hooks.layerName(i, text, hint, def);
+                                    std::snprintf(buf, sizeof buf, "%s", text.c_str());
+                                    err.clear();
+                                }
+                                s_layer = i; s_frame = UI::GetFrameCount();
+                                const UI::Vec2 mp = UI::GetCursorScreenPos();
+                                char head[32]; std::snprintf(head, sizeof head, "Layer %d name", i);
+                                UI::TextDisabled(head);
+                                UI::SetNextItemWidth(170.0f);
+                                if (UI::InputTextWithHint("##layername", hint.c_str(), buf, (int)sizeof buf, UI::InputText_EnterReturnsTrue))
+                                    if (list.hooks.renameLayer(i, buf, err)) { r.changed = true; UI::CloseCurrentPopup(); }
+                                if (InspSmallButton("Reset to default"))
+                                    if (list.hooks.renameLayer(i, def, err)) { r.changed = true; UI::CloseCurrentPopup(); }
+                                if (!err.empty()) UI::TextColored(242, 115, 102, err.c_str());
+                                const UI::Vec2 me = UI::GetCursorScreenPos();
+                                renameRect = UI::Rect{mp.x - 8.0f, mp.y - 8.0f, 186.0f, me.y - mp.y + 16.0f};
+                                UI::EndPopup();
+                            }
+                            UI::PopStyleVar();
+                        }
                         UI::PopID();
                     });
                     const UI::Vec2 le = UI::GetCursorScreenPos();
-                    setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, le.y - lp.y + 8.0f});
+                    UI::Rect lr{lp.x - 10.0f, lp.y - 8.0f, listW, le.y - lp.y + 8.0f};
+                    if (renameRect.w > 0.0f) {   // the host keeps both the list and the rename menu (one rectangle round both)
+                        const float x0 = std::min(lr.x, renameRect.x), y0 = std::min(lr.y, renameRect.y);
+                        const float x1 = std::max(lr.x + lr.w, renameRect.x + renameRect.w), y1 = std::max(lr.y + lr.h, renameRect.y + renameRect.h);
+                        lr = UI::Rect{x0, y0, x1 - x0, y1 - y0};
+                    }
+                    setPopup(lr);
                     UI::EndCombo();
                 }
                 UI::PopStyleVar();
@@ -2844,7 +2929,9 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const std::string vis = Visible(r.label);
                 const float tw = fs + g_metrics.framePadding.x * 2.0f + UI::CalcTextWidth(vis.c_str());
                 const UI::Vec2 p = UI::GetCursorScreenPos();
-                if (UI::InvisibleButton("##tree", std::max(tw, UI::GetContentRegionAvail().x), fs)) open = !open;
+                // the item is the arrow and the label, as Dear ImGui's TreeNode: a row put on its line (SameLine: Auto Fit beside a closed
+                // Physics Material) goes after the label; it used to be the whole width, so such a row was drawn past the right edge
+                if (UI::InvisibleButton("##tree", tw, fs)) open = !open;
                 const bool hov = UI::IsItemHovered();
                 if (hov) {
                     const UI::Rect b = UI::GetItemRect();
@@ -2864,6 +2951,22 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             case InspRowSpacing:
                 UI::Dummy(1.0f, 0.0f);
                 break;
+            case InspRowSeparator: {   // Dear ImGui's Separator: one pixel from the cursor to the region's right edge, then the item spacing
+                const UI::Vec2 q = UI::GetCursorScreenPos();
+                UI::Dummy(std::max(1.0f, regionX + w - q.x), 1.0f);
+                UI::GetWindowDrawList().AddLine(UI::Vec2{q.x, q.y + 0.5f}, UI::Vec2{regionX + w, q.y + 0.5f}, UI::GetColorU32(UI::Col_Separator), 1.0f);
+                hoverTip = false;
+                break;
+            }
+            case InspRowBullet: {   // Dear ImGui's BulletText: a dot in a text-line square, the text after it and the frame padding
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                const float tw = UI::CalcTextWidth(r.Text());
+                UI::Dummy(fs + (tw > 0.0f ? tw + 2.0f * g_metrics.framePadding.x : 0.0f), fs);
+                const UI::DrawList& dl = UI::GetWindowDrawList();
+                dl.AddCircleFilled(UI::Vec2{p.x + g_metrics.framePadding.x + fs * 0.5f, p.y + fs * 0.5f}, fs * 0.20f, UI::GetColorU32(UI::Col_Text), 12);
+                dl.AddText(UI::Vec2{p.x + fs + 2.0f * g_metrics.framePadding.x, p.y}, UI::GetColorU32(UI::Col_Text), r.Text());
+                break;
+            }
             }
             const UI::Rect rr = whole.w > 0.0f ? whole : UI::GetItemRect();
             res.rows[k] = rr;

@@ -10,7 +10,8 @@
 // the row (changed, clicked); the host then does what the Dear ImGui code does for that field.
 //
 // Two ways a body is built: by hand in the editor for a component with its own Inspector (Light, Camera, Rigidbody 3D, the 3D
-// colliders, the Script component, the rest of the Mesh Renderer), and from the property registry for every other component
+// colliders, the Script component, the rest of the Mesh Renderer; stage 3: the 2D physics, Sprite Renderer, Audio Source, Particle
+// System, the character controllers, the animators, Nav Mesh Agent, docs/own_ui_toolkit.md section 16), and from the property registry for every other component
 // (InspectorPanel.cpp: the generic card), so those come at once.
 //
 // Written from the editor's own component code (editor/main.cpp DrawInspector, editor/InspectorPanel.cpp PropertyField); no code from
@@ -50,6 +51,8 @@ enum InspRowKind : std::uint8_t {
     InspRowTree,          ///< a fold-out (Dear ImGui's TreeNode): the rows up to its InspRowTreeEnd show while it is open
     InspRowTreeEnd,
     InspRowSpacing,       ///< Dear ImGui's Spacing()
+    InspRowSeparator,     ///< Dear ImGui's Separator(): a one-pixel rule across the region (stage 3)
+    InspRowBullet,        ///< Dear ImGui's BulletText: a bullet and the text (stage 3: the Animator's tracks)
 };
 
 /// What a click on a row opens (a small button, an asset field): a list with a search field, or a grid of thumbnails. The chosen
@@ -90,6 +93,7 @@ struct InspRow {
     bool bv = false;
     std::string sv;                      ///< the row's own text (a note's text; a field's value when s is null)
     const char* const* items = nullptr;  ///< InspRowCombo
+    const char* preview = nullptr;       ///< InspRowCombo: the closed list's text instead of the chosen item's ("Choose a preset...")
     int count = 0;
     std::uint32_t color = 0;             ///< text colour (0: the usual one)
     void* texture = nullptr;             ///< InspRowImage: the host's texture (an SDL_Texture), drawn texW x texH
@@ -121,6 +125,11 @@ struct InspFieldHooks {
     /// What a picker lists for a row (only while it is open): the values (written into the row's *s), the names shown, and for a grid
     /// the thumbnails (the host's textures, or null).
     std::function<void(const InspRow& row, std::vector<std::string>& values, std::vector<std::string>& names, std::vector<void*>& thumbs)> choices;
+    /// A layer mask's right-click on a layer (the editor's LayerRenameMenu, stage 3): `layerName(i, text, hint)` gives the name to edit
+    /// ("" for an unnamed layer) and the grey hint; `renameLayer(i, name, err)` renames it (the default name for "Reset to default")
+    /// and false with `err` set when the name is refused. Null: no rename (the note is not shown either).
+    std::function<void(int layer, std::string& text, std::string& hint, std::string& defaultName)> layerName;
+    std::function<bool(int layer, const std::string& name, std::string& err)> renameLayer;
 };
 
 /// The prefab menu's ids.
@@ -237,6 +246,12 @@ struct InspFieldList {
     int Tree(const char* label) { return Add(InspRowTree, label); }
     int TreeEnd() { return Add(InspRowTreeEnd, ""); }
     int Spacing() { return Add(InspRowSpacing, ""); }
+    int Separator() { return Add(InspRowSeparator, ""); }
+    int Bullet(const char* text, bool copy = false) {
+        const int k = Add(InspRowBullet, copy ? "" : text);
+        if (copy) rows.back().sv = text ? text : "";
+        return k;
+    }
 
 private:
     bool pendingSame_ = false, pendingWrap_ = false;

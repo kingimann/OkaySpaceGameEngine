@@ -14,8 +14,13 @@ namespace inspbody {
 
 namespace P = okaypanels;
 
-enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, BodyScript, BodyMeshRest, BodyGeneric, BodyCount };
-inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic"};
+// stage 3 (section 16): a Sprite Renderer, an Audio Source (3D, with its rule), a Box Collider 2D, an Edge Collider 2D (the rule and the
+// point list), a Particle System (the preset list's own text), a Character Controller 3D (the crouch fold-out's 96-wide key lists) and an
+// Animator (the tracks as bullets)
+enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, BodyScript, BodyMeshRest, BodyGeneric,
+                  BodySprite, BodyAudio, BodyBox2D, BodyEdge2D, BodyParticles, BodyController3D, BodyAnimator, BodyCount };
+inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
+                                                  "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -47,8 +52,29 @@ struct Values {
     bool playOnAwake = true, loop = false; float volume = 0.8f; int priority = 128; float pos3[3] = {0.0f, 1.0f, 0.0f};
     float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f}; int rolloff = 1; std::string note = "footsteps";
 
+    // stage 3: a Sprite Renderer
+    float spColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}, spSize[2] = {1.0f, 1.0f}; std::string spTex = "Assets/hero.png";
+    int spLayer = 0, spOrder = 0; bool spFlipX = false, spFlipY = false; int spFilter = 1;
+    // an Audio Source (3D)
+    float auVol = 0.8f, auPitch = 1.0f, auPan = 0.0f; int auGroup = 0; float auLowPass = 22000.0f; bool auLoop = true, auAwake = true, auStream = false;
+    std::string auPath = "Assets/Audio/wind.ogg"; bool auSpatial = true; float auMin = 1.0f, auMax = 30.0f; int auRoll = 1;
+    bool auDoppler = false, auOcclude = true; float auOccVol = 0.4f, auOccLp = 900.0f; bool auDistLp = false;
+    // a Box Collider 2D and an Edge Collider 2D
+    float b2Size[2] = {1.0f, 1.0f}, b2Off[2] = {0.0f, 0.0f}; bool b2Trigger = false; int b2Layer = 0; bool b2OwnF = false, b2OwnB = false, b2Auto = true;
+    float e2Off[2] = {0.0f, 0.0f}; bool e2OneWay = true; float e2Normal[2] = {0.0f, 1.0f}; float e2Pts[3][2] = {{-2.0f, 0.0f}, {0.0f, 0.5f}, {2.0f, 0.0f}};
+    // a Particle System
+    int psPreset = -1; bool psPlaying = true; float psRate = 20.0f; int psMax = 500, psShape = 4; float psAngle = 25.0f, psLife = 2.0f, psSize = 0.3f;
+    float psStartCol[4] = {1.0f, 0.6f, 0.2f, 1.0f}, psVel[3] = {0.0f, 2.0f, 0.0f}; bool psFade = true, psColLife = true; int psCMode = 0;
+    float psEndCol[4] = {0.3f, 0.3f, 0.3f, 0.0f}; int psSeed = 7;
+    // a Character Controller 3D (its crouch fold-out open)
+    int c3Crouch = 2, c3Prone = 3; bool c3Toggle = false, c3Prone2 = true, c3Resize = true; float c3CrouchSpeed = 2.0f, c3CrouchH = 0.6f;
+    float c3Speed = 5.0f; bool c3Jump = true; float c3JumpF = 6.0f;
+    // an Animator
+    std::string anClip = "Bounce"; bool anLoop = true, anPlaying = false; float anSpeed = 1.0f, anTime = 0.25f;
+
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
+    int renamedLayer = -1; std::string renamed;   // a layer renamed from the mask's right-click menu
     std::vector<std::string> clicked;   // the buttons pressed, by label
 };
 
@@ -61,6 +87,12 @@ inline const char* const kBodyTypes[] = {"Dynamic", "Kinematic", "Static"};
 inline const char* const kModes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
 inline const char* const kFilters[] = {"Smooth", "Pixel"};
 inline const char* const kRolloffs[] = {"Linear", "Logarithmic", "None"};
+inline const char* const kGroups[] = {"SFX", "Music", "UI", "Voice"};
+inline const char* const kRolls3[] = {"Linear", "Inverse", "Logarithmic"};
+inline const char* const kPresets[] = {"Fire", "Smoke", "Sparks", "Explosion", "Rain", "Snow", "Magic", "Dust"};
+inline const char* const kShapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
+inline const char* const kCModes[] = {"Start -> End", "Gradient"};
+inline const char* const kKeys[] = {"(none)", "Shift", "Ctrl", "C", "Z", "X", "V", "F", "B"};
 inline const char* const kBgIds[] = {"##bgp0", "##bgp1", "##bgp2", "##bgp3", "##bgp4"};
 inline const float kBgCols[5][3] = {{0.36f, 0.58f, 0.85f}, {0.16f, 0.12f, 0.24f}, {0.02f, 0.03f, 0.07f}, {1, 1, 1}, {0, 0, 0}};
 
@@ -70,7 +102,8 @@ inline P::InspFieldHooks Hooks(Values& v) {
     h.tipFor = [&v](const char* label) { ++v.tipAsked; return std::string("Tip for ") + std::string(label, P::InspVisibleLen(label)); };
     h.prefabMenu = [&v](const char* label, std::vector<P::PanelMenuEntry>& out) {
         ++v.prefabMenuAsked;
-        P::PanelMenuEntry e; e.kind = P::PanelMenuHeading; e.label = "Overridden from Crate.okayprefab"; out.push_back(e);
+        P::PanelMenuEntry e; e.kind = P::PanelMenuHeading; e.label = "Overridden from Crate.okayprefab"; e.color = P::HierCol(115, 179, 255); out.push_back(e);
+        e.color = 0;
         e.label = std::string(label, P::InspVisibleLen(label)) + ": 1 -> 2"; out.push_back(e);
         P::PanelMenuEntry sep; sep.kind = P::PanelMenuSeparator; out.push_back(sep);
         P::PanelMenuEntry r; r.id = P::kInspPrefabRevert; r.label = "Revert Property"; out.push_back(r);
@@ -92,6 +125,17 @@ inline P::InspFieldHooks Hooks(Values& v) {
                 values.push_back(f); names.push_back(std::string(f).substr(7));
             }
         }
+    };
+    h.layerName = [](int i, std::string& text, std::string& hint, std::string& def) {
+        const char* named[] = {"Default", "TransparentFX", "Ignore Raycast", "", "Water", "UI"};
+        def = i < 6 ? named[i] : "";
+        text = def;
+        hint = def.empty() ? "Layer " + std::to_string(i) : def;
+    };
+    h.renameLayer = [&v](int i, const std::string& name, std::string& err) {
+        if (name.find('!') != std::string::npos) { err = "Use letters, digits and spaces."; return false; }
+        v.renamedLayer = i; v.renamed = name;
+        return true;
     };
     return h;
 }
@@ -261,6 +305,142 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Combo("Rolloff##rolloff", &v.rolloff, kRolloffs, 3); L.TipLookup();
         L.Asset("Follow##follow", &v.follow, "object", "object");
         L.Text("Note##note", &v.note); L.TipLookup();
+        break;
+    }
+    case BodySprite: {
+        L.Color("Color##sprite", v.spColor, 4);
+        L.Drag("Size", v.spSize, 2, 0.05f, 0.0f, 1000.0f);
+        L.Text("##spritetex", &v.spTex); L.Last().pick = P::InspPickList; L.Last().dropKind = ""; L.Last().width = 210.0f; L.TipLookup();
+        L.SameLine(4.0f); L.Button("...##spritetexbrowse");
+        L.SameLine(4.0f); L.Label("Texture");
+        L.DragInt("Sorting Layer##sprite", &v.spLayer, 0.05f, -100, 100); L.TipLookup();
+        L.DragInt("Sort Order##sprite", &v.spOrder, 0.1f, -1000, 1000); L.TipLookup();
+        L.Check("Flip X##sprite", &v.spFlipX); L.SameLine(); L.Check("Flip Y##sprite", &v.spFlipY);
+        L.Combo("Filter##sprite", &v.spFilter, kFilters, 2);
+        L.Note("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order", false, true);
+        L.SmallButton("Remove##sprite");
+        break;
+    }
+    case BodyAudio: {
+        L.Drag("Volume", &v.auVol, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+        L.Drag("Pitch##audio", &v.auPitch, 1, 0.01f, 0.1f, 3.0f);
+        L.Slider("Pan##audio", &v.auPan, -1.0f, 1.0f, "%.2f");
+        L.Combo("Group##audio", &v.auGroup, kGroups, 4);
+        L.Slider("Low Pass##audio", &v.auLowPass, 200.0f, 22000.0f, "%.0f Hz", true);
+        L.Check("Loop", &v.auLoop); L.SameLine(); L.Check("Play On Awake", &v.auAwake); L.SameLine(); L.Check("Stream##audio", &v.auStream);
+        L.Button("Beep"); L.SameLine(); L.Button("Noise"); L.SameLine(); L.Button("Play"); L.SameLine(); L.Button("Stop##audio");
+        L.Text("##audiowav", &v.auPath); L.Last().pick = P::InspPickList; L.Last().dropKind = ""; L.Last().width = 210.0f;
+        L.SameLine(4.0f); L.Button("...##audiobrowse"); L.SameLine(4.0f); L.Label("Audio File");
+        L.SameLine(); L.SmallButton("Load##audiowavload");
+        L.Note("WAV, OGG, MP3 or FLAC; loads on Play and in the built game; 12.50s clip, stereo", false, true);
+        L.Check("3D (spatial)", &v.auSpatial);
+        L.Drag("Min Distance##audio", &v.auMin, 1, 0.1f, 0.0f, 1000.0f);
+        L.Drag("Max Distance##audio", &v.auMax, 1, 0.1f, 0.0f, 5000.0f);
+        L.Combo("Rolloff##audio", &v.auRoll, kRolls3, 3);
+        L.Separator();
+        L.Check("Pitch follows speed", &v.auDoppler);
+        L.Check("Quieter behind walls", &v.auOcclude);
+        if (v.auOcclude) {
+            L.Slider("Loudness behind a wall", &v.auOccVol, 0.0f, 1.0f, "%.2f");
+            L.Slider("Muffle behind a wall", &v.auOccLp, 80.0f, 8000.0f, "%.0f Hz", true);
+        }
+        L.Check("Muffle with distance", &v.auDistLp);
+        L.SmallButton("Remove##audio");
+        break;
+    }
+    case BodyBox2D: {
+        L.Drag("Size##bc", v.b2Size, 2, 0.05f, 0.0f, 1000.0f);
+        L.Drag("Offset##bc", v.b2Off, 2, 0.05f);
+        L.Check("Trigger##bc", &v.b2Trigger); L.SameLine(); L.DragInt("Layer##bc", &v.b2Layer, 0.1f, 0, 31); L.Last().width = 80.0f;
+        L.Tree("Physics Material##pmbc");
+        L.Check("Own Friction##pmbc", &v.b2OwnF);
+        L.Check("Own Bounciness##pmbc", &v.b2OwnB);
+        L.TreeEnd();
+        L.SmallButton("Fit to Object##bc"); L.SameLine(); L.Check("Auto Fit##bc", &v.b2Auto); L.TipLookup();
+        L.SmallButton("Remove##bc");
+        break;
+    }
+    case BodyEdge2D: {
+        L.Note("Open polyline: ground, slopes, walls. Local-space points.");
+        L.Drag("Offset##ec2", v.e2Off, 2, 0.05f);
+        L.Check("Trigger##ec2", &v.trigger); L.SameLine(); L.DragInt("Layer##ec2", &v.layer, 0.1f, 0, 31); L.Last().width = 80.0f;
+        L.Tree("Physics Material##pmec2");
+        L.Check("Own Friction##pmec2", &v.b2OwnF);
+        L.Check("Own Bounciness##pmec2", &v.b2OwnB);
+        L.TreeEnd();
+        if (v.trigger) {
+            L.Text("Only Tag##tfec2", &v.onlyTag, "any tag (e.g. Player)");
+            L.Text("Only Layers##tfec2", &v.onlyLayers, "all layers");
+        }
+        L.Check("One-Way##ec2", &v.e2OneWay);
+        if (v.e2OneWay) L.Drag("Block Normal##ec2", v.e2Normal, 2, 0.05f);
+        L.Separator();
+        L.Label("Points (3)");
+        for (int i = 0; i < 3; ++i) { L.Drag("##pt", v.e2Pts[i], 2, 0.05f); L.SameLine(); L.SmallButton("x"); }
+        L.SmallButton("+ Point##ec2");
+        L.SmallButton("Remove##ec2");
+        break;
+    }
+    case BodyParticles: {
+        L.Section("Presets");
+        L.Combo("Preset##ps", &v.psPreset, kPresets, 8); L.Last().preview = "Choose a preset...";
+        L.Note("Starting points \xE2\x80\x94 every value below stays editable.");
+        L.Section("Emission");
+        L.Check("Playing##ps", &v.psPlaying); L.SameLine(); L.Note("(37 live)");
+        L.Drag("Rate / sec##ps", &v.psRate, 1, 0.5f, 0.0f, 10000.0f);
+        L.DragInt("Max Particles##ps", &v.psMax, 1.0f, 0, 100000);
+        L.Section("Shape");
+        L.Combo("Shape##ps", &v.psShape, kShapes, 6);
+        if (v.psShape == 4) L.Slider("Cone Angle##ps", &v.psAngle, 0.0f, 180.0f);
+        L.Section("Start");
+        L.Drag("Lifetime##ps", &v.psLife, 1, 0.05f, 0.01f, 1000.0f);
+        L.Drag("Size##ps", &v.psSize, 1, 0.01f, 0.0f, 1000.0f);
+        L.Color("Start Color##ps", v.psStartCol, 4);
+        L.Drag("Velocity##ps", v.psVel, 3, 0.05f);
+        L.Section("Over Lifetime");
+        L.Check("Fade Out##ps", &v.psFade);
+        L.Check("Color Over Life##ps", &v.psColLife);
+        if (v.psColLife) { L.Combo("Color Mode##ps", &v.psCMode, kCModes, 2); L.Color("End Color##ps", v.psEndCol, 4); }
+        L.Section("Bursts & Duration");
+        L.Check("Loop##ps", &v.loop); L.SameLine(); L.SmallButton("Restart##ps"); L.SameLine(); L.SmallButton("Burst##ps");
+        L.DragInt("Seed##ps", &v.psSeed, 1.0f, 0, 2000000000);
+        L.SmallButton("Remove##ps");
+        break;
+    }
+    case BodyController3D: {
+        L.Tree("Crouch / prone##cc3"); L.Last().on = true;
+        L.Combo("Crouch Key##stcc3", &v.c3Crouch, kKeys, 9); L.Last().width = 96.0f;
+        L.Combo("Prone Key##stcc3", &v.c3Prone, kKeys, 9); L.Last().width = 96.0f;
+        L.Check("Toggle (vs hold)##stcc3", &v.c3Toggle);
+        L.Check("Allow Prone##stcc3", &v.c3Prone2);
+        L.Check("Resize Body##stcc3", &v.c3Resize);
+        L.Drag("Crouch Speed##stcc3", &v.c3CrouchSpeed, 1, 0.05f, 0.0f, 20.0f);
+        L.Slider("Crouch Height##stcc3", &v.c3CrouchH, 0.2f, 1.0f, "%.2f");
+        L.Note("Scripts: SetStance(0 stand / 1 crouch / 2 prone).", false, true);
+        L.Note("How long changes take: the Animator's Stance changes.", false, true);
+        L.Note("Line one.\nLine two (a note with a line break).");
+        L.TreeEnd();
+        L.Drag("Speed##cc3", &v.c3Speed, 1, 0.1f, 0.0f, 200.0f);
+        L.Check("Can Jump##cc3", &v.c3Jump);
+        if (v.c3Jump) L.Drag("Jump Force##cc3", &v.c3JumpF, 1, 0.1f, 0.0f, 200.0f);
+        L.Note("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
+        L.SmallButton("Remove##cc3");
+        break;
+    }
+    case BodyAnimator: {
+        L.Text("Clip##anm", &v.anClip);
+        L.Check("Loop##anm", &v.anLoop); L.SameLine(); L.Check("Playing##anm", &v.anPlaying);
+        L.Drag("Speed##anm", &v.anSpeed, 1, 0.02f, -4.0f, 4.0f);
+        L.Slider("Time##anm", &v.anTime, 0.0f, 1.0f, "%.2fs"); L.Last().width = -165.0f;   // the editor's AnimTimeRoom at this face
+        L.SameLine(); L.SmallButton(v.anPlaying ? "Pause" : "Play"); L.SameLine(); L.SmallButton("|<");
+        L.Section("Keyframes");
+        L.Note("Scrub to a time, pose the object, then Record.");
+        L.Button("Record Key (transform @ time)");
+        L.Bullet("position.x  (3 keys)"); L.SameLine(); L.SmallButton("Clear");
+        L.Bullet("position.y  (3 keys)"); L.SameLine(); L.SmallButton("Clear");
+        L.Bullet("rotation.z  (2 keys)"); L.SameLine(); L.SmallButton("Clear");
+        L.Spacing();
+        L.SmallButton("Remove##anm-comp");
         break;
     }
     default: break;

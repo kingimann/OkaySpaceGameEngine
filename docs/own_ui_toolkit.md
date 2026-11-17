@@ -1973,3 +1973,139 @@ editing through the generic card in the real editor.
 
 The totals grew because the field-row Dear ImGui body (`DrawFieldListBodyImGui`) sits next to the editor's own bodies, which stay the
 default; the seven component bodies ported here are inside `DrawInspector` and are not counted (15.10).
+
+## 16. The Inspector, stage 3: the 2D physics, Sprite Renderer, Audio Source, Particle System, the character controllers, the animators
+
+Thirteen more component bodies as field rows (section 15), behind the same developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`);
+Dear ImGui stays the default and the fallback. Written from the editor's own Dear ImGui bodies (`editor/main.cpp` DrawInspector,
+PhysicsMaterialFields, TriggerFilterFields, StanceControlFields, KeyBindCombo, LayerRenameMenu), Dear ImGui's documented widget behaviour
+as the editor uses it, and measurements of both pictures; no code from any other project.
+
+### 16.1 What is ported
+
+| Component | Builder (`editor/main.cpp`) | Notes |
+|---|---|---|
+| Sprite Renderer | `DrawSpriteRendererWithOkayUI` | Color, Size, the 210-wide path field (picker arrow, drop from the Project panel), "...", Texture, the thumbnail, Sorting Layer, Sort Order, Flip X / Y, Filter, the note (now wrapped in both), Remove |
+| Rigidbody 2D | `DrawRigidbody2DWithOkayUI` | every row, as the Dear ImGui body (it edits the object's first Rigidbody 2D, as before) |
+| Box, Circle, Capsule Collider 2D | `Draw*Collider2DWithOkayUI` | their own rows, then the 3D colliders' shared rows (`AddColliderRows`: Trigger and Layer, the Physics Material fold-out, the trigger filter), Fit to Object (with a Sprite Renderer) and Auto Fit |
+| Edge, Polygon Collider 2D | `DrawPointCollider2DWithOkayUI` | the note, Offset, the shared rows, One-Way and Block Normal (Edge), a rule, "Points (N)" / "Vertices (N)", each point's two cells and "x", + Point / + Vertex |
+| Audio Source | `DrawAudioSourceWithOkayUI` | Volume to Low Pass (logarithmic), Loop / Play On Awake / Stream, Beep Noise Play Stop, the path field, "...", Load, the clip note (wrapped), 3D (spatial) and its rows with the rule, the occlusion and distance-muffle rows |
+| Particle System | `DrawParticleSystemWithOkayUI` | every section (Presets: the list shows "Choose a preset..."; Emission with the live count; Shape; Start; Appearance with the Sprite path; Over Lifetime; Forces; Motion; Collision; Bursts & Duration). **Not** while a colour gradient, a size curve or a speed curve is on: their editors are not field rows yet, so the body is Dear ImGui's then |
+| Character Controller 2D | `DrawCharacterController2DWithOkayUI` | Mode, Movement (Sprint Key as a one-letter field), Jump with the three feel presets |
+| Character Controller 3D | `DrawCharacterController3DWithOkayUI` | the "Crouch / prone" fold-out (`AddStanceRows`: the two 96-wide key lists, toggles, speeds, heights, the note), Speed, Can Jump, Jump Force |
+| Sprite Animator | `DrawSpriteAnimatorWithOkayUI` | FPS, Loop, Playing, the atlas rows, the frame list (path and "X"), Add Frame, the clips (Name, X, Row, FPS, Loop, Frames), Add Clip |
+| Animator | `DrawAnimatorWithOkayUI` | Clip, Loop, Playing, Speed, the Time slider with Play / Pause and "\|<", Keyframes: Record Key, one bullet per track with Clear |
+
+New row kinds (`shared/InspectorFieldsModel.hpp`): `InspRowSeparator` (Dear ImGui's Separator), `InspRowBullet` (BulletText), a combo's own
+closed text (`InspRow::preview`), and two hooks for the layer mask's rename (`layerName`, `renameLayer`).
+
+**Counts.** `DrawInspector` has 187 component header calls (hand-written bodies, the Script and the Action List among them) and about 36
+more sit in other editor files (Navigation, splines, UI inspectors, level and volume tools): about 223 hand-written bodies. **Ported to
+field rows: 22** (stage 1 and 2: Transform aside, Mesh Renderer, Light, Camera, Rigidbody 3D, Box / Sphere / Capsule / Mesh Collider 3D,
+Script; stage 3: the 13 above, the Particle System only without curves). **Generic card: 8** in this build (every registered component
+without a hand-written body: Cylinder Collider 3D, Debris Emitter, Network Object, Network Transform, Sync Var, Touch Button, Touch DPad,
+Virtual Joystick) plus any a plugin registers. **Still Dear ImGui: about 201**, among them Text and the UI components (they use the
+editor's own helpers UIStyleBar, LocalizedTextField, AnchorCombo and AssetSlot, not yet rows), Terrain (brush tools), Nav Mesh Agent (its
+area mask has preset buttons inside the list, a kind of row that does not exist yet), Audio Listener (no body of its own was found), the
+2D Animator state machine and Model Animator.
+
+**The generic card instead of hand-written bodies.** Looked at, not done: a hand-written body shows its own labels, ranges, tooltips,
+buttons and notes; the registry card shows the property names. For none of the bodies above would the card look the same, so they were
+ported by hand.
+
+### 16.2 Stage-2 gaps closed
+
+- **The Capsule's Radius has a prefab mark.** The prefab differences named the fields of records without a schema "arg0", "arg1"... The
+  records of the 3D colliders (box, mesh, sphere, capsule, cylinder) and of the Capsule, Edge and Polygon Collider 2D now have their
+  field names (`engine/src/Scene/PrefabTools.cpp` Schema), so "radius: 0.5 -> 2.5" matches the Radius row. The Dear ImGui collider bodies
+  now call FieldTip on Size, Offset, Radius, Height and Axis (they had no tooltip and no mark at all). A variant file that stored an
+  override by the old name ("arg0") would no longer find it (none is known; not checked on real projects).
+- **The prefab menu's first line is blue** ("Overridden from X", PrefabBlue), as Dear ImGui's: `PanelMenuEntry::color`.
+- **Culling Mask: right-click a layer to rename it**, with the note, the name field (Enter), Reset to default and the reason when a name
+  is refused, as LayerRenameMenu. The list is as wide as the note (it ran out of the list over the Inspector in the first picture).
+- **Drag and drop onto OkayUI rows in the real editor**: a picture dragged from the Project panel onto the Audio Source's path field (the
+  Inspector locked, since a press in the Project panel selects the file): the blue outline while over it, the path set on release, Load
+  appears, Ctrl+Z empties it, the same in both (`<scratchpad>/shots/oi3/steps-drop-file.png`). An object dragged from the Hierarchy onto
+  an object field was **not** tried (the test scene has no object field).
+- **Multi-object editing through the generic card in the real editor**: two Debris Emitters (Count 12 and 20): "Different on the selected
+  objects: Count", "Editing 2 selected objects", Count shows "-"; a drag on Interval sets 3.5 on both (`steps-multi.png`).
+
+### 16.3 Found and fixed while porting (seen in the pictures)
+
+- **OkayUI: a closed fold-out's item was the whole width**, so a row put on its line (Auto Fit after a closed Physics Material, in every
+  collider without a Sprite or Mesh Renderer) was drawn past the right edge and could not be seen (`side-11-edge.png`). The item is now the
+  arrow and the label, as Dear ImGui's TreeNode.
+- **OkayUI: a combo under an open popup took the click.** Revert Property in a prefab menu lying over the Capsule's Axis list opened the
+  list instead, and the menu stayed (`ok-58.png`). `BeginCombo` now takes a press only when nothing lies over its box (`hit()`), and still
+  closes its own list.
+- **OkayUI: text with a line break** in a note showed a "?" for the break; it is now drawn line under line as Dear ImGui draws it.
+- **OkayUI: a see-through colour's swatch** was flat; it is now Dear ImGui's light and dark check under the colour.
+- **Both versions: text that ran out of the docked Inspector**: the Sprite Renderer's and the Audio Source's notes, the crouch note (now
+  wrapped), and the Animator's Play and "|<" buttons after the Time slider (its width now leaves room for them, `AnimTimeRoom`).
+- **Dear ImGui: the Particle System's Radius tooltip** sat outside its `if` and showed on the Shape list.
+
+### 16.4 Tests
+
+- `okayui_inspector` (218 checks; 7 new golden images: `inspector_sprite`, `_audio`, `_box2d`, `_edge2d`, `_particles`,
+  `_controller3d`, `_animator`): the path field's width and its "..." and label on one line; the rule's place and size, a check box hiding
+  two rows, the logarithmic Low Pass; the closed fold-out; a drag on one point cell; the preset list's text and a pick; the 96-wide key
+  list and a pick; the bullets with Clear beside them and the Time slider leaving room for its buttons; the Culling Mask rename (a refused
+  name keeps the menu open, Enter renames); the prefab menu's blue first line (pixels); a prefab menu lying over a combo (the click is the
+  menu's: this check fails without the `BeginCombo` fix).
+- `okayui_inspector_imgui` (36 checks): the 14 bodies drawn by both versions; tables below.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector"`: see 16.7.
+
+### 16.5 Speed and pixels
+
+Instructions (callgrind, 200 frames, per frame): Audio Source 228,966 against 166,471 (27% fewer), Particle System 268,000 against
+202,900 (24% fewer), Sprite Renderer 141,800 against 101,200 (29% fewer). Wall time (median of 150 frames):
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Sprite Renderer | 106.6 us | 41.6 us | 58.2 ms | 5.4 ms | 0.72% |
+| Audio Source (3D) | 116.1 us | 65.0 us | 62.1 ms | 11.3 ms | 1.56% |
+| Box Collider 2D | 84.6 us | 26.7 us | 52.7 ms | 2.8 ms | 0.36% |
+| Edge Collider 2D | 101.8 us | 42.4 us | 50.1 ms | 6.1 ms | 0.96% |
+| Particle System | 125.0 us | 68.5 us | 54.1 ms | 10.5 ms | 1.62% |
+| Character Controller 3D | 105.1 us | 41.6 us | 51.1 ms | 5.5 ms | 1.36% |
+| Animator | 100.2 us | 35.3 us | 46.4 ms | 4.8 ms | 0.81% |
+
+The stage 1 and 2 pictures are unchanged (1.90%, 2.21%, 0.91% and 0.37% to 1.69%). The gate is 12%; every picture is under 2.3%.
+
+### 16.6 In the real editor
+
+Built (Linux, the editor tree) and run under Xvfb at 1920 x 1200, both toolkits side by side, on the physics playground with the stage 2
+objects and seven more (`<scratchpad>/oi3-logs/drive/extra3.okayscene`: a sprite with a Rigidbody 2D, a Box Collider 2D and a Sprite
+Animator; a Circle and an Edge Collider 2D; an Audio Source; a Particle System; a Character Controller 3D with an Animator; a Character
+Controller 2D; a second Debris Emitter). Pictures in `<scratchpad>/shots/oi3/` (`side-*`: the two Inspectors next to each other,
+`steps-*`: a sequence). Done and looked at:
+
+- **U Sprite** (`side-01-sprite.png`, `side-02-sprite-down.png`): Sprite Renderer, Rigidbody 2D, Box Collider 2D row for row the same.
+  A 40-pixel drag on Mass (1 to 3), Trigger on (Only Tag appears), Ctrl+Z twice: back in both (`steps-rb2d.png`). A double click on
+  Gravity Scale, 2.5, Enter, Ctrl+Z (`steps-typing2.png`). With Ctrl+A typed by xdotool just before the digits OkayUI lost the first
+  digit (0.5 instead of 2.5, `steps-typing.png`); not looked into further.
+- **U Edge** (`side-11-edge.png`): the missing Auto Fit (16.3); a drag on a point, + Point, Ctrl+Z twice, the same in both
+  (`steps-edge.png`).
+- **U Audio**: Quieter behind walls (two sliders appear), a drag on Low Pass (470 Hz in both), Ctrl+Z twice (`steps-audio.png`); the drop
+  from the Project panel (16.2).
+- **U Particles**: the preset list, Fire (every value changes the same way), Ctrl+Z (`side-31-fire-down.png`, `side-32-fire-undo.png`).
+  Dear ImGui's list opens left of the Inspector under Xvfb (section 15.2).
+- **U Controller**: Record Key (seven tracks as bullets), Clear on rotation.z, Ctrl+Z (`steps-anim-clear.png`); the Crouch / prone
+  fold-out (`side-34-record-crouch.png`: its second note line was cut in both, now wrapped).
+- **Main Camera**: Culling Mask, right-click Ignore Raycast, rename it to "Raycast Off" (`side-42-rename-menu.png`, `side-43-renamed.png`).
+- **Prefab instances**: the Debris Emitter (generic card) and T Capsule saved as prefabs; a drag on Count and on Radius gives the blue bar;
+  the menu's first line is blue, "radius: 0.5 -> 2.5" (`ok-52c.png`, `ok-56c.png`); Revert Property puts it back (`ok-53c.png`).
+
+Seen in the pictures and not changed: the Lock Inspector box after an undo: the Inspector can show another object (the pinned object's
+address is reused when the undo rebuilds the scene; Dear ImGui and OkayUI share that code). The fold-out arrow is smaller in OkayUI.
+
+### 16.7 Tests run at the end
+
+`ctest -R "okayui|ui_backend|hierarchy|inspector"`: 41 of 41 pass (33 in a Release tree; the 8 that need the engine — `okayui`, `ui_backend`, `inspector_model`, `scene_hierarchy_search`, `deep_hierarchy`, `hierarchy_context_model`, `hierarchy_row_model`, `okayui_script_adapter` — in the editor's tree). The six prefab suites (`ctest -R prefab`, for the Schema change) pass. `editor/main.cpp` compiled in the editor build with `OKAY_HAVE_OKAYUI` and passes the syntax-only check without it; `OkayPanels.cpp` both ways; `InspectorPanel.cpp`, `EditorPanelViews.cpp` and `NavigationWindow.cpp` without it.
+
+### 16.8 Not verified
+
+Windows; other UI scales and the Compact density; an object dragged from the Hierarchy onto an OkayUI object field; the Particle System
+with curves (Dear ImGui's body is drawn then, not checked in the real editor); the Character Controller 2D, the Polygon and Capsule
+Collider 2D and the Sprite Animator's frame and clip lists in the real editor (headless and in the comparison only, or not at all for the
+Character Controller 2D's platformer rows); Browse... file dialogs.

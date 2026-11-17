@@ -4599,7 +4599,11 @@ bool BeginCombo(const char* label, const char* preview) {
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
     PopupSlot* ps = popupSlot(id ^ 0x77ca, true);
+    // A press counts only when nothing lies over the box (hit()): a popup over it (an Inspector field's prefab menu over the Axis list
+    // below the field) takes the click; the box used to open its list under the menu and the menu's row never got it (seen in the real
+    // editor). The hover look stays the pointer in the box, as before.
     const bool insideBox = hitOverlay(x, y, boxW, h) && inClip();
+    const bool takesPress = insideBox && ((ps && ps->open) || hit(x, y, boxW, h));   // its own open list may lie over it: it still closes it
     g_lastId = id; if (insideBox) g_hot = id;
     if (g_active == id) {
         if (g_released) {
@@ -4612,7 +4616,7 @@ bool BeginCombo(const char* label, const char* preview) {
             }
             g_comboCloseId = 0; g_active = 0;
         }
-    } else if (insideBox && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
+    } else if (takesPress && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
     const bool open = ps && ps->open;
     if (g_framedWidgets) framedComboBox(x, y, boxW, h, insideBox, preview);
     else {

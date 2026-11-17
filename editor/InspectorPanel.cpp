@@ -900,7 +900,9 @@ okaypanels::InspFieldHooks FieldHooksFor(const okay::Component* comp) {
         okaypanels::PanelMenuEntry e;
         e.kind = okaypanels::PanelMenuHeading;
         e.label = "Overridden from " + std::filesystem::path(s_changesRoot->prefabSource).filename().string();
+        e.color = okaypanels::HierCol(115, 179, 255);   // PrefabBlue, as the Dear ImGui menu's first line
         out.push_back(e);
+        e.color = 0;   // the differences: grey
         for (const std::string& f : fields)
             for (const PrefabFieldDiff& d : ch->fields)
                 if (d.name == f) { e.label = f + ": " + d.prefabValue + " -> " + d.instanceValue; out.push_back(e); }

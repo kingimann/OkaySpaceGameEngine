@@ -27871,7 +27871,10 @@ static bool StanceControlFields(StanceControl& sc, const char* id) {
     ch |= ImGui::DragFloat(L("Prone Speed"), &sc.proneSpeed, 0.05f, 0.0f, 20.0f);
     ch |= ImGui::SliderFloat(L("Crouch Height"), &sc.crouchHeight, 0.2f, 1.0f, "%.2f");
     ch |= ImGui::SliderFloat(L("Prone Height"), &sc.proneHeight, 0.1f, 1.0f, "%.2f");
-    ImGui::TextDisabled("Scripts: SetStance(0 stand / 1 crouch / 2 prone).\nHow long changes take: the Animator's Stance changes.");
+    ImGui::PushTextWrapPos(0.0f);   // two wrapped lines: the second ran out of the docked Inspector (seen in the stage 3 pictures)
+    ImGui::TextDisabled("Scripts: SetStance(0 stand / 1 crouch / 2 prone).");
+    ImGui::TextDisabled("How long changes take: the Animator's Stance changes.");
+    ImGui::PopTextWrapPos();
     ImGui::TreePop();
     return ch;
 }
@@ -30236,6 +30239,13 @@ static std::uint32_t RowCol(float r, float g, float b) {
 // pickers; runs a chosen prefab menu row. `proc`: the Mesh Renderer's procedural textures for a grid picker.
 static bool DrawRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L, bool proc = false) {
     L.hooks = oked::FieldHooksFor(comp);
+    // a layer mask's right-click rename (the Camera's Culling Mask; stage 3): LayerRenameMenu's name, hint and TryRenameLayer
+    L.hooks.layerName = [](int i, std::string& text, std::string& hint, std::string& def) {
+        text = okay::Layers::IsNamed(i) ? okay::Layers::Name(i) : std::string();
+        def = okay::Layers::DefaultName(i);
+        hint = !def.empty() ? def : "Layer " + std::to_string(i);
+    };
+    L.hooks.renameLayer = [](int i, const std::string& name, std::string& err) { return TryRenameLayer(i, name, err); };
     if (proc) {
         auto files = L.hooks.choices;
         L.hooks.choices = [files](const okaypanels::InspRow& row, std::vector<std::string>& values, std::vector<std::string>& names, std::vector<void*>& thumbs) {
@@ -30555,8 +30565,8 @@ static bool DrawBoxCollider3DWithOkayUI(EditorState& ed, GameObject* go, BoxColl
     InspFieldList L;
     L.rows.reserve(32);
     float sz[3] = {bc->size.x, bc->size.y, bc->size.z}, off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
-    const int kSize = L.Drag("Size##bc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
-    const int kOff = L.Drag("Offset##bc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    const int kSize = L.Drag("Size##bc3", sz, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
+    const int kOff = L.Drag("Offset##bc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
     ColliderRowsState st;
     AddColliderRows(L, bc, "bc3", st);
     int kFit = -1;
@@ -30587,9 +30597,9 @@ static bool DrawSphereCollider3DWithOkayUI(EditorState& ed, GameObject* go, Sphe
     using namespace okaypanels;
     InspFieldList L;
     L.rows.reserve(24);
-    L.Drag("Radius##sc3", &sc->radius, 1, 0.05f, 0.0f, 1000.0f);
+    L.Drag("Radius##sc3", &sc->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
     float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
-    const int kOff = L.Drag("Offset##sc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    const int kOff = L.Drag("Offset##sc3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
     ColliderRowsState st;
     AddColliderRows(L, sc, "sc3", st);
     int kFit = -1;
@@ -30613,11 +30623,11 @@ static bool DrawCapsuleCollider3DWithOkayUI(EditorState& ed, GameObject* go, Cap
     static const char* const kAxes[] = {"X", "Y", "Z"};
     InspFieldList L;
     L.rows.reserve(26);
-    L.Drag("Radius##cap3", &cap->radius, 1, 0.05f, 0.0f, 1000.0f);
-    L.Drag("Height##cap3", &cap->height, 1, 0.05f, 0.0f, 1000.0f);
-    L.Combo("Axis##cap3", &cap->axis, kAxes, 3);
+    L.Drag("Radius##cap3", &cap->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    L.Drag("Height##cap3", &cap->height, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    L.Combo("Axis##cap3", &cap->axis, kAxes, 3); L.TipLookup();
     float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
-    const int kOff = L.Drag("Offset##cap3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true;
+    const int kOff = L.Drag("Offset##cap3", off, 3, 0.05f, 0.0f, 0.0f, "%.3f"); L.Last().axisBars = true; L.TipLookup();
     ColliderRowsState st;
     AddColliderRows(L, cap, "cap3", st);
     int kFit = -1;
@@ -30928,6 +30938,711 @@ static bool DrawMeshRendererRestWithOkayUI(EditorState& ed, GameObject* go, Mesh
     if (kPhys >= 0 && L[kPhys].clicked) sPendingMeshPhysics = go;
     return true;
 }
+
+// ---- The Inspector's OkayUI parts, stage 3 (docs/own_ui_toolkit.md section 16) --------------------------------------------------------
+// More component bodies as field rows, written the way the stage 2 builders above are: the rows of the Dear ImGui body in its order,
+// with its labels, ranges, formats and tooltips; after the frame the builder does what the Dear ImGui code does after each widget.
+// False: not drawn this frame (the caller draws the Dear ImGui body).
+
+// A path field as AcceptAssetPathField draws it (the picker arrow, the menu, a drop from the Project panel): `w` its width (0 the
+// value column).
+static int PathFieldRow(okaypanels::InspFieldList& L, const char* label, std::string* v, float w = 0.0f) {
+    const int k = L.Text(label, v);
+    L.Last().pick = okaypanels::InspPickList; L.Last().dropKind = ""; L.Last().width = w;
+    return k;
+}
+// TexFieldThumb as a row (only when a thumbnail exists): its index, or -1.
+static int ThumbRow(okaypanels::InspFieldList& L, const std::string& path) {
+    if (path.empty()) return -1;
+    SDL_Texture* t = GetThumb(path);
+    if (!t) return -1;
+    const int k = L.Image("##thumb", t, 40.0f, 40.0f);
+    L.Last().sv = path;
+    return k;
+}
+static void ShowThumbInProject(okaypanels::InspFieldList& L, int k) {
+    if (k >= 0 && L[k].clicked) { g_pingAsset = L[k].sv; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+}
+
+static bool DrawSpriteRendererWithOkayUI(EditorState& ed, SpriteRenderer* sr, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kFilters[] = {"Smooth", "Pixel"};
+    InspFieldList L;
+    L.rows.reserve(20);
+    float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
+    const int kCol = L.Color("Color##sprite", col, 4);
+    float size[2] = {sr->size.x, sr->size.y};
+    const int kSize = L.Drag("Size", size, 2, 0.05f, 0.0f, 1000.0f);
+    const int kTex = PathFieldRow(L, "##spritetex", &sr->texture, 210.0f); L.TipLookup();
+    L.SameLine(4.0f); const int kBrowse = L.Button("...##spritetexbrowse");
+    L.SameLine(4.0f); L.Label("Texture");
+    const int kThumb = ThumbRow(L, sr->texture);
+    L.DragInt("Sorting Layer##sprite", &sr->sortingLayer, 0.05f, -100, 100); L.TipLookup();
+    L.DragInt("Sort Order##sprite", &sr->sortOrder, 0.1f, -1000, 1000); L.TipLookup();
+    L.Check("Flip X##sprite", &sr->flipX); L.TipLookup();
+    L.SameLine(); L.Check("Flip Y##sprite", &sr->flipY); L.TipLookup();
+    int fi = (int)sr->texFilter;
+    const int kFilt = L.Combo("Filter##sprite", &fi, kFilters, 2);
+    L.Tip("Smooth = bilinear (photos/hi-res). Pixel = nearest-neighbour (crisp pixel-art, no blur).");
+    L.Note("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order", false, true);
+    const int kRemove = L.SmallButton("Remove##sprite");
+    if (!DrawRowsOkayUI(sr, "##okayui_sprite", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kCol].changed) sr->color = {col[0], col[1], col[2], col[3]};
+    if (L[kSize].changed) sr->size = {size[0], size[1]};
+    (void)kTex;
+    if (L[kBrowse].clicked) {
+        EditorState* edp = &ed; auto* srp = sr;
+        okay::filedialog::OpenOne("Choose a sprite image", "", okay::filedialog::Filters("Image", {"*.png", "*.jpg", "*.bmp"}),
+                                  [edp, srp](const std::string& p) { srp->texture = p; edp->dirty = true; });
+    }
+    ShowThumbInProject(L, kThumb);
+    if (L[kFilt].changed) sr->texFilter = (SpriteRenderer::TexFilter)fi;
+    if (L[kRemove].clicked) toRemove = sr;
+    return true;
+}
+
+static bool DrawRigidbody2DWithOkayUI(EditorState& ed, Rigidbody2D* rb, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kTypes[] = {"Dynamic", "Kinematic", "Static"};
+    InspFieldList L;
+    L.rows.reserve(16);
+    int bt = (int)rb->bodyType;
+    const int kType = L.Combo("Body Type", &bt, kTypes, 3); L.TipLookup();
+    L.Drag("Gravity Scale", &rb->gravityScale, 1, 0.05f);
+    L.Drag("Mass", &rb->mass, 1, 0.05f, 0.01f, 1000.0f);
+    L.Drag("Drag", &rb->drag, 1, 0.01f, 0.0f, 100.0f);
+    L.Drag("Bounciness", &rb->bounciness, 1, 0.01f, 0.0f, 1.0f);
+    L.Drag("Friction", &rb->friction, 1, 0.01f, 0.0f, 2.0f);
+    L.Tip("Coulomb friction at contacts (0 = ice). Combined with the other body as sqrt(a*b).");
+    L.Check("Freeze Rotation (Z)", &rb->freezeRotation);
+    L.Tip("On = classic no-spin body. Off = torque and off-center hits rotate it (tipping, tumbling, wheels).");
+    if (!rb->freezeRotation) L.Drag("Angular Drag", &rb->angularDrag, 1, 0.01f, 0.0f, 10.0f);
+    L.Check("Allow Sleep", &rb->allowSleep);
+    L.Tip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
+    L.Check("Continuous Collision", &rb->continuousCollision);
+    L.Tip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+    L.Drag("Rolling Resistance##rb", &rb->rollingResistance, 1, 0.005f, 0.0f, 1.0f, "%.3f");
+    L.Tip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+    const int kRemove = L.SmallButton("Remove##rb");
+    if (!DrawRowsOkayUI(rb, "##okayui_rb2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kType].changed) rb->bodyType = (Rigidbody2D::BodyType)bt;
+    if (L[kRemove].clicked) toRemove = rb;
+    return true;
+}
+
+// The 2D colliders: their own rows, then the shared ones (AddColliderRows: Trigger and Layer, the Physics Material fold-out, the trigger
+// filter), then Fit to Object and Auto Fit (a Box, Circle or Capsule) or the point list (an Edge or Polygon).
+template <class Col>
+static void AddFitRows2D(okaypanels::InspFieldList& L, GameObject* go, Col* c, const char* id, std::deque<std::string>& text, int& kFit, int& kAuto) {
+    kFit = -1;
+    text.push_back(std::string("Fit to Object##") + id);
+    if (go->GetComponent<SpriteRenderer>()) kFit = L.SmallButton(text.back().c_str());
+    L.SameLine();
+    text.push_back(std::string("Auto Fit##") + id);
+    kAuto = L.Check(text.back().c_str(), &c->autoFit); L.TipLookup();
+}
+template <class Col>
+static void ApplyFitRows2D(EditorState& ed, okaypanels::InspFieldList& L, GameObject* go, Col* c, int kFit, int kAuto) {
+    if (kFit >= 0 && L[kFit].clicked) { FitColliders(go); ed.dirty = true; }
+    if (L[kAuto].changed && c->autoFit) FitColliders(go);
+    if (c->autoFit) FitColliders(go, true);   // keep matched while editing
+}
+
+static bool DrawBoxCollider2DWithOkayUI(EditorState& ed, GameObject* go, BoxCollider2D* bc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    float sz[2] = {bc->size.x, bc->size.y}, off[2] = {bc->offset.x, bc->offset.y};
+    const int kSize = L.Drag("Size##bc", sz, 2, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    const int kOff = L.Drag("Offset##bc", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, bc, "bc", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, bc, "bc", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##bc");
+    if (!DrawRowsOkayUI(bc, "##okayui_bc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) bc->size = {sz[0], sz[1]};
+    if (L[kOff].changed) bc->offset = {off[0], off[1]};
+    ApplyColliderRows(L, bc, st);
+    ApplyFitRows2D(ed, L, go, bc, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = bc;
+    return true;
+}
+
+static bool DrawCircleCollider2DWithOkayUI(EditorState& ed, GameObject* go, CircleCollider2D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    L.Drag("Radius##cc", &cc->radius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    float off[2] = {cc->offset.x, cc->offset.y};
+    const int kOff = L.Drag("Offset##cc", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, cc, "cc", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, cc, "cc", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##cc");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) cc->offset = {off[0], off[1]};
+    ApplyColliderRows(L, cc, st);
+    ApplyFitRows2D(ed, L, go, cc, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+static bool DrawCapsuleCollider2DWithOkayUI(EditorState& ed, GameObject* go, CapsuleCollider2D* cap, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kDirs[] = {"Vertical", "Horizontal"};
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::deque<std::string> text;
+    float sz[2] = {cap->size.x, cap->size.y}, off[2] = {cap->offset.x, cap->offset.y};
+    const int kSize = L.Drag("Size##cap2", sz, 2, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    int dir = (int)cap->direction;
+    const int kDir = L.Combo("Direction##cap2", &dir, kDirs, 2); L.TipLookup();
+    const int kOff = L.Drag("Offset##cap2", off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, cap, "cap2", st);
+    int kFit = -1, kAuto = -1;
+    AddFitRows2D(L, go, cap, "cap2", text, kFit, kAuto);
+    const int kRemove = L.SmallButton("Remove##cap2");
+    if (!DrawRowsOkayUI(cap, "##okayui_cap2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSize].changed) cap->size = {sz[0], sz[1]};
+    if (L[kDir].changed) cap->direction = (CapsuleCollider2D::Direction)dir;
+    if (L[kOff].changed) cap->offset = {off[0], off[1]};
+    ApplyColliderRows(L, cap, st);
+    ApplyFitRows2D(ed, L, go, cap, kFit, kAuto);
+    if (L[kRemove].clicked) toRemove = cap;
+    return true;
+}
+
+// The Edge and Polygon Collider 2D: the note, Offset, the shared rows, (the Edge's One-Way and its normal), a rule, the point list (each
+// point's two cells and "x"), "+ Point" / "+ Vertex", Remove.
+template <class Col>
+static bool DrawPointCollider2DWithOkayUI(EditorState& ed, Col* c, bool edge, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    const char* id = edge ? "ec2" : "pc2";
+    InspFieldList L;
+    L.rows.reserve(24 + c->points.size() * 2);
+    std::deque<std::string> text;
+    auto lbl = [&](const char* base) { text.push_back(std::string(base) + "##" + id); return text.back().c_str(); };
+    L.Note(edge ? "Open polyline: ground, slopes, walls. Local-space points." : "Closed loop (convex works best). Local-space vertices.");
+    float off[2] = {c->offset.x, c->offset.y};
+    const int kOff = L.Drag(lbl("Offset"), off, 2, 0.05f); L.TipLookup();
+    ColliderRowsState st;
+    AddColliderRows(L, c, id, st);
+    int kOneWay = -1, kNormal = -1;
+    float nrm[2] = {0, 0};
+    if constexpr (std::is_same_v<Col, EdgeCollider2D>) {
+        kOneWay = L.Check(lbl("One-Way"), &c->oneWay);
+        L.Tip("Only blocks bodies from the normal side \xE2\x80\x94 jump up through it, land on top.");
+        if (c->oneWay) {
+            nrm[0] = c->oneWayNormal.x; nrm[1] = c->oneWayNormal.y;
+            kNormal = L.Drag(lbl("Block Normal"), nrm, 2, 0.05f); L.TipLookup();
+        }
+    }
+    L.Separator();
+    char head[48];
+    std::snprintf(head, sizeof head, edge ? "Points (%d)" : "Vertices (%d)", (int)c->points.size());
+    L.Label(head, 0, false, true);
+    std::vector<std::array<float, 2>> pts(c->points.size());
+    std::vector<int> kPt(c->points.size()), kX(c->points.size());
+    for (std::size_t i = 0; i < c->points.size(); ++i) {
+        pts[i] = {c->points[i].x, c->points[i].y};
+        kPt[i] = L.Drag(edge ? "##pt" : "##v", pts[i].data(), 2, 0.05f); L.TipLookup();
+        L.SameLine(); kX[i] = L.SmallButton("x"); L.Tip("Remove");
+    }
+    const int kAdd = L.SmallButton(edge ? "+ Point##ec2" : "+ Vertex##pc2");
+    const int kRemove = L.SmallButton(edge ? "Remove##ec2" : "Remove##pc2");
+    if (!DrawRowsOkayUI(c, edge ? "##okayui_ec2" : "##okayui_pc2", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kOff].changed) c->offset = {off[0], off[1]};
+    ApplyColliderRows(L, c, st);
+    (void)kOneWay;
+    if constexpr (std::is_same_v<Col, EdgeCollider2D>) { if (kNormal >= 0 && L[kNormal].changed) c->oneWayNormal = {nrm[0], nrm[1]}; }
+    for (std::size_t i = 0; i < pts.size() && i < c->points.size(); ++i) if (L[kPt[i]].changed) c->points[i] = {pts[i][0], pts[i][1]};
+    const std::size_t keep = edge ? 2u : 3u;   // an edge keeps two points, a polygon three
+    for (std::size_t i = 0; i < kX.size(); ++i)
+        if (L[kX[i]].clicked && c->points.size() > keep && i < c->points.size()) { c->points.erase(c->points.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAdd].clicked) {
+        const Vec2 last = c->points.empty() ? Vec2{0, 0} : c->points.back();
+        c->points.push_back(edge ? Vec2{last.x + 1.0f, last.y} : Vec2{last.x, last.y + 0.5f}); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = c;
+    return true;
+}
+
+static bool DrawAudioSourceWithOkayUI(EditorState& ed, AudioSource* a, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kGroups[] = {"SFX", "Music", "UI", "Voice"};
+    static const char* const kRolls[] = {"Linear", "Inverse", "Logarithmic"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    L.Drag("Volume", &a->volume, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+    L.Drag("Pitch##audio", &a->pitch, 1, 0.01f, 0.1f, 3.0f); L.Tip("Speed and pitch together: 2 is an octave up and twice as fast");
+    L.Slider("Pan##audio", &a->pan, -1.0f, 1.0f, "%.2f"); L.Tip("-1 left, 0 centre, 1 right (adds to the 3D pan)");
+    int g = (int)a->group;
+    const int kGroup = L.Combo("Group##audio", &g, kGroups, 4); L.Tip("Mixer group: its volume and mute apply on top of the master");
+    L.Slider("Low Pass##audio", &a->lowPass, 200.0f, AudioSource::kLowPassOff, "%.0f Hz", true);
+    L.Tip("Lower muffles the sound (behind a wall, underwater). All the way right is off.");
+    L.Check("Loop", &a->loop);
+    L.SameLine(); L.Check("Play On Awake", &a->playOnAwake);
+    L.SameLine(); L.Check("Stream##audio", &a->stream);
+    L.Tip("Play the file in small pieces as it plays instead of loading it whole.\n"
+          "Use it for long music and ambience: it takes a fixed small amount of memory\n"
+          "however long the file is. Takes effect when the file loads (Play, or Load here).\n"
+          "A file set to \"Read it while it plays\" in its import settings does that\n"
+          "even when this box is off.");
+    const int kBeep = L.Button("Beep");
+    L.SameLine(); const int kNoise = L.Button("Noise");
+    L.SameLine(); const int kPlay = L.Button("Play");
+    L.SameLine(); const int kStop = L.Button("Stop##audio");
+    PathFieldRow(L, "##audiowav", &a->clipPath, 210.0f); L.TipLookup();
+    L.SameLine(4.0f); const int kBrowse = L.Button("...##audiobrowse"); L.Tip("Browse...");
+    L.SameLine(4.0f); L.Label("Audio File");
+    int kLoad = -1;
+    if (!a->clipPath.empty()) { L.SameLine(); kLoad = L.SmallButton("Load##audiowavload"); L.Tip("Load this file now to hear it with the Play button here"); }
+    char note[192];
+    std::snprintf(note, sizeof note, "WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
+                  a->IsStreaming() ? "stream" : "clip", a->Clip().channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
+    L.Note(note, true, true);
+    L.Check("3D (spatial)", &a->spatial); L.TipLookup();
+    int r = (int)a->rolloff, kRoll = -1;
+    if (a->spatial) {
+        L.Drag("Min Distance##audio", &a->minDistance, 1, 0.1f, 0.0f, 1000.0f); L.TipLookup();
+        L.Drag("Max Distance##audio", &a->maxDistance, 1, 0.1f, 0.0f, 5000.0f); L.TipLookup();
+        kRoll = L.Combo("Rolloff##audio", &r, kRolls, 3);
+        L.Tip("Linear: straight fade. Inverse: like real sound, loud up close.\nLogarithmic: loud up close with a long quiet tail.");
+        L.Separator();
+        L.Check("Pitch follows speed", &a->doppler);
+        L.Tip("Raises the pitch when this sound or the listener is moving closer,\nand lowers it when they move apart. Off leaves the pitch as set above.");
+        if (a->doppler) { L.Slider("Speed amount", &a->dopplerScale, 0.0f, 5.0f, "%.2f"); L.Tip("1 matches real speed. 0 is no shift. Higher exaggerates it."); }
+        L.Check("Quieter behind walls", &a->occlude);
+        L.Tip("A solid wall between this and the listener lowers the volume and muffles it.\nTriggers are ignored. Off leaves the sound as if nothing is in the way.");
+        if (a->occlude) {
+            L.Slider("Loudness behind a wall", &a->occlusionVolume, 0.0f, 1.0f, "%.2f"); L.Tip("How loud it stays when blocked. 1 is no quieter, 0 is silent.");
+            L.Slider("Muffle behind a wall", &a->occlusionLowPass, 80.0f, 8000.0f, "%.0f Hz", true); L.Tip("Cutoff while blocked, in Hz. Lower is duller.");
+        }
+        L.Check("Muffle with distance", &a->distanceLowPass);
+        L.Tip("The sound stays bright up close and gets duller toward Max Distance.\nOff keeps the tone the same at every distance.");
+        if (a->distanceLowPass) {
+            L.Slider("Muffle at the far edge", &a->distanceLowPassHz, 80.0f, 8000.0f, "%.0f Hz", true);
+            L.Tip("Cutoff at Max Distance. The fade follows a curve, so the middle\nstays brighter than a straight line.");
+        }
+    }
+    const int kRemove = L.SmallButton("Remove##audio");
+    if (!DrawRowsOkayUI(a, "##okayui_audio", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kGroup].changed) a->group = (AudioGroup)g;
+    if (kRoll >= 0 && L[kRoll].changed) a->rolloff = (AudioRolloff)r;
+    if (L[kBeep].clicked) a->clip = AudioClip::Sine(440.0f, 0.3f);
+    if (L[kNoise].clicked) a->clip = AudioClip::Noise(0.3f);
+    if (L[kPlay].clicked) a->Play();
+    if (L[kStop].clicked) a->Stop();
+    if (L[kBrowse].clicked) {
+        EditorState* edp = &ed; auto* ap = a;
+        okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3, FLAC)", {"*.wav", "*.ogg", "*.mp3", "*.flac"}), [edp, ap](const std::string& p) {
+            ap->clipPath = p; edp->dirty = true;
+            std::string werr;
+            const okay::AudioAttach how = okay::AttachAudioFile(*ap, p, &werr);
+            if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+            else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + p);
+        });
+    }
+    if (kLoad >= 0 && L[kLoad].clicked) {
+        std::string werr;
+        const okay::AudioAttach how = okay::AttachAudioFile(*a, a->clipPath, &werr);
+        if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+        else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + a->clipPath);
+    }
+    if (L[kRemove].clicked) toRemove = a;
+    return true;
+}
+
+// The Particle System without its gradient and curve editors: with a colour gradient, a size curve or a speed curve on, the Dear ImGui
+// body is drawn (those editors are not field rows yet).
+static bool DrawParticleSystemWithOkayUI(EditorState& ed, ParticleSystem* ps, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    if ((ps->colorOverLife && ps->colorGradient.Active()) || (ps->sizeOverLife && ps->sizeCurve.Active()) ||
+        (ps->speedOverLife && ps->speedCurve.Active()))
+        return false;
+    static const char* const kShapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
+    static const char* const kRModes[] = {"Billboard", "Stretch"};
+    static const char* const kCModes[] = {"Start -> End", "Gradient"};
+    static const char* const kSModes[] = {"End Size", "Curve"};
+    static const char* const kSpaces[] = {"World", "Local"};
+    static std::vector<const char*> s_presets;
+    if (s_presets.empty()) for (int pi = 0; pi < (int)ParticleSystem::Preset::Count; ++pi) s_presets.push_back(ParticleSystem::PresetName((ParticleSystem::Preset)pi));
+    InspFieldList L;
+    L.rows.reserve(96);
+    L.Section("Presets");
+    int preset = -1;
+    const int kPreset = L.Combo("Preset##ps", &preset, s_presets.data(), (int)s_presets.size());
+    L.Last().preview = "Choose a preset...";
+    L.Note("Starting points \xE2\x80\x94 every value below stays editable.");
+    L.Section("Emission");
+    L.Check("Playing##ps", &ps->playing); L.TipLookup();
+    char live[32]; std::snprintf(live, sizeof live, "(%d live)", ps->AliveCount());
+    L.SameLine(); L.Note(live, true);
+    L.Drag("Rate / sec##ps", &ps->emissionRate, 1, 0.5f, 0.0f, 10000.0f); L.TipLookup();
+    L.DragInt("Max Particles##ps", &ps->maxParticles, 1.0f, 0, 100000); L.TipLookup();
+    L.Section("Shape");
+    int shp = (int)ps->shape;
+    const int kShape = L.Combo("Shape##ps", &shp, kShapes, 6); L.TipLookup();
+    if (ps->shape == ParticleSystem::Shape::Circle || ps->shape == ParticleSystem::Shape::Sphere || ps->shape == ParticleSystem::Shape::Edge) {
+        L.Drag("Radius##ps", &ps->shapeRadius, 1, 0.05f, 0.0f, 1000.0f); L.TipLookup();
+    }
+    if (ps->shape == ParticleSystem::Shape::Cone) { L.Slider("Cone Angle##ps", &ps->shapeAngle, 0.0f, 180.0f); L.TipLookup(); }
+    float bs[3] = {ps->boxSize.x, ps->boxSize.y, ps->boxSize.z};
+    int kBox = -1;
+    if (ps->shape == ParticleSystem::Shape::Box) { kBox = L.Drag("Box Size##ps", bs, 3, 0.05f, 0.0f, 1000.0f); L.TipLookup(); }
+    L.Section("Start");
+    L.Drag("Lifetime##ps", &ps->startLifetime, 1, 0.05f, 0.01f, 1000.0f); L.TipLookup();
+    L.Drag("Lifetime +/-##ps", &ps->startLifetimeRandom, 1, 0.02f, 0.0f, 1000.0f); L.TipLookup();
+    L.Drag("Size##ps", &ps->startSize, 1, 0.01f, 0.0f, 1000.0f); L.TipLookup();
+    L.Drag("Size +/-##ps", &ps->startSizeRandom, 1, 0.01f, 0.0f, 1000.0f); L.TipLookup();
+    float sc[4] = {ps->startColor.r, ps->startColor.g, ps->startColor.b, ps->startColor.a};
+    const int kSc = L.Color("Start Color##ps", sc, 4); L.TipLookup();
+    float sv[3] = {ps->startVelocity.x, ps->startVelocity.y, ps->startVelocity.z};
+    const int kSv = L.Drag("Velocity##ps", sv, 3, 0.05f); L.TipLookup();
+    L.Drag("Velocity +/-##ps", &ps->velocityRandom, 1, 0.02f, 0.0f, 1000.0f); L.TipLookup();
+    L.Drag("Speed +/- %##ps", &ps->speedRandom, 1, 0.01f, 0.0f, 1.0f); L.TipLookup();
+    L.Section("Appearance");
+    int rmi = (int)ps->renderMode;
+    const int kRm = L.Combo("Render##ps", &rmi, kRModes, 2);
+    L.Tip("Billboard = upright camera-facing quad. Stretch = elongated along velocity (rain/sparks/tracers).");
+    if (ps->renderMode == ParticleSystem::RenderMode::Stretch) { L.Drag("Stretch##ps", &ps->stretchScale, 1, 0.01f, 0.0f, 10.0f); L.TipLookup(); }
+    PathFieldRow(L, "Sprite##ps", &ps->texture);
+    L.Tip("Optional particle texture (smoke/spark/flare PNG). Empty = a soft round puff.");
+    int kClearTex = -1;
+    if (!ps->texture.empty()) { L.SameLine(); kClearTex = L.SmallButton("Clear##ptex"); }
+    L.Drag("Rotation##ps", &ps->startRotation, 1, 1.0f); L.TipLookup();
+    L.Drag("Rotation +/-##ps", &ps->startRotationRandom, 1, 1.0f, 0.0f, 360.0f); L.TipLookup();
+    L.Drag("Spin / sec##ps", &ps->rotationSpeed, 1, 1.0f); L.TipLookup();
+    L.Drag("Spin +/-##ps", &ps->rotationSpeedRandom, 1, 1.0f, 0.0f, 720.0f); L.TipLookup();
+    L.Section("Over Lifetime");
+    L.Check("Fade Out##ps", &ps->fadeOverLife); L.TipLookup();
+    L.Check("Color Over Life##ps", &ps->colorOverLife); L.TipLookup();
+    int cm = 0, kCm = -1, kEc = -1;
+    float ec[4] = {ps->endColor.r, ps->endColor.g, ps->endColor.b, ps->endColor.a};
+    if (ps->colorOverLife) {
+        kCm = L.Combo("Color Mode##ps", &cm, kCModes, 2);
+        kEc = L.Color("End Color##ps", ec, 4); L.TipLookup();
+    }
+    L.Check("Size Over Life##ps", &ps->sizeOverLife); L.TipLookup();
+    int sm = 0, kSm = -1;
+    if (ps->sizeOverLife) {
+        kSm = L.Combo("Size Mode##ps", &sm, kSModes, 2);
+        L.Drag("End Size##ps", &ps->endSize, 1, 0.01f, 0.0f, 1000.0f);
+    }
+    const int kSpeedLife = L.Check("Speed Over Life##ps", &ps->speedOverLife);
+    L.Tip("Scale how fast particles move as they age (1 = unchanged).");
+    L.Section("Forces");
+    float gv[3] = {ps->gravity.x, ps->gravity.y, ps->gravity.z};
+    const int kGv = L.Drag("Gravity##ps", gv, 3, 0.05f); L.TipLookup();
+    L.Drag("Gravity Mult##ps", &ps->gravityModifier, 1, 0.02f, -10.0f, 10.0f); L.TipLookup();
+    L.Drag("Damping / sec##ps", &ps->damping, 1, 0.02f, 0.0f, 20.0f); L.TipLookup();
+    L.Section("Motion");
+    int spi = (int)ps->simulationSpace;
+    const int kSpace = L.Combo("Space##ps", &spi, kSpaces, 2);
+    L.Tip("World = particles stay put when the object moves (trails). Local = they move and turn with it (torch flame).");
+    L.Drag("Inherit Velocity##ps", &ps->inheritVelocity, 1, 0.01f, 0.0f, 5.0f); L.Tip("Fraction of the object's own speed given to each new particle.");
+    L.Drag("Noise Strength##ps", &ps->noiseStrength, 1, 0.02f, 0.0f, 100.0f); L.Tip("Turbulence: a smooth swirling noise field (units/second). 0 = off.");
+    if (ps->noiseStrength > 0.0f) {
+        L.Drag("Noise Frequency##ps", &ps->noiseFrequency, 1, 0.01f, 0.01f, 50.0f); L.TipLookup();
+        L.Drag("Noise Scroll##ps", &ps->noiseScroll, 1, 0.01f, 0.0f, 50.0f); L.TipLookup();
+    }
+    L.Drag("Orbit / sec##ps", &ps->orbitSpeed, 1, 1.0f, -3600.0f, 3600.0f); L.Tip("Spin particles around the axis through the object, in degrees per second.");
+    L.Drag("Vortex##ps", &ps->vortexStrength, 1, 0.05f, -1000.0f, 1000.0f); L.Tip("Whirlwind: push particles sideways around the axis (acceleration).");
+    L.Drag("Vortex Pull##ps", &ps->vortexPull, 1, 0.05f, -1000.0f, 1000.0f); L.Tip("Pull particles towards the axis (negative pushes them out).");
+    float oa[3] = {ps->orbitAxis.x, ps->orbitAxis.y, ps->orbitAxis.z};
+    int kOa = -1;
+    if (ps->orbitSpeed != 0.0f || ps->vortexStrength != 0.0f || ps->vortexPull != 0.0f) { kOa = L.Drag("Axis##ps", oa, 3, 0.02f); L.TipLookup(); }
+    L.Section("Collision");
+    L.Check("Collide w/ Ground##ps", &ps->collision); L.Tip("Bounce particles off a horizontal plane at the height below (sparks/debris/rain).");
+    if (ps->collision) {
+        L.Drag("Ground Y##ps", &ps->collisionY, 1, 0.05f); L.TipLookup();
+        L.Slider("Bounce##ps", &ps->bounce, 0.0f, 1.0f); L.TipLookup();
+        L.Slider("Friction##ps", &ps->collisionFriction, 0.0f, 1.0f); L.TipLookup();
+        L.Slider("Life Loss##ps", &ps->collisionLifeLoss, 0.0f, 1.0f); L.TipLookup();
+    }
+    L.Section("Bursts & Duration");
+    L.DragInt("Burst Count##ps", &ps->burstCount, 1.0f, 0, 100000); L.TipLookup();
+    if (ps->burstCount > 0) { L.Drag("Burst Time##ps", &ps->burstTime, 1, 0.02f, 0.0f, 1000.0f); L.TipLookup(); }
+    L.Drag("Duration##ps", &ps->duration, 1, 0.05f, 0.0f, 10000.0f); L.TipLookup();
+    L.SameLine(); L.Note("(0 = forever)");
+    L.Check("Loop##ps", &ps->loop); L.TipLookup();
+    L.SameLine(); const int kRestart = L.SmallButton("Restart##ps");
+    L.SameLine(); const int kBurst = L.SmallButton("Burst##ps");
+    int seedI = (int)ps->seed;
+    const int kSeed = L.DragInt("Seed##ps", &seedI, 1.0f, 0, 2000000000); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##ps");
+    if (!DrawRowsOkayUI(ps, "##okayui_particles", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kPreset].changed && preset >= 0) { ed.PushUndo(); ps->ApplyPreset((ParticleSystem::Preset)preset); ps->playing = true; ed.dirty = true; }
+    if (L[kShape].changed) ps->shape = (ParticleSystem::Shape)shp;
+    if (kBox >= 0 && L[kBox].changed) ps->boxSize = {bs[0], bs[1], bs[2]};
+    if (L[kSc].changed) ps->startColor = {sc[0], sc[1], sc[2], sc[3]};
+    if (L[kSv].changed) ps->startVelocity = {sv[0], sv[1], sv[2]};
+    if (L[kRm].changed) ps->renderMode = (ParticleSystem::RenderMode)rmi;
+    if (kClearTex >= 0 && L[kClearTex].clicked) { ps->texture.clear(); ed.dirty = true; }
+    if (kCm >= 0 && L[kCm].changed && cm == 1) { ed.PushUndo(); ps->colorGradient.SetTwo(ps->startColor, ps->endColor); ed.dirty = true; }   // seed from the old fields
+    if (kEc >= 0 && L[kEc].changed) ps->endColor = {ec[0], ec[1], ec[2], ec[3]};
+    if (kSm >= 0 && L[kSm].changed && sm == 1) { ed.PushUndo(); ps->sizeCurve.SetLinear(1.0f, ps->startSize > 1e-4f ? ps->endSize / ps->startSize : 0.0f); ed.dirty = true; }
+    if (L[kSpeedLife].changed && ps->speedOverLife && !ps->speedCurve.Active()) ps->speedCurve.SetLinear(1.0f, 0.25f);
+    if (L[kGv].changed) ps->gravity = {gv[0], gv[1], gv[2]};
+    if (L[kSpace].changed) ps->simulationSpace = (ParticleSystem::SimulationSpace)spi;
+    if (kOa >= 0 && L[kOa].changed) ps->orbitAxis = {oa[0], oa[1], oa[2]};
+    if (L[kRestart].clicked) ps->Restart();
+    if (L[kBurst].clicked) ps->Emit(ps->burstCount > 0 ? ps->burstCount : 16);
+    if (L[kSeed].changed) ps->seed = (std::uint64_t)seedI;
+    if (L[kRemove].clicked) toRemove = ps;
+    return true;
+}
+
+static bool DrawCharacterController2DWithOkayUI(EditorState& ed, CharacterController2D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Top-Down", "Platformer"};
+    static const char* const kJFeel[3] = {"Classic", "Precise", "Bouncy"};
+    InspFieldList L;
+    L.rows.reserve(40);
+    int m = (int)cc->mode;
+    const int kMode = L.Combo("Mode##cc2", &m, kModes, 2); L.TipLookup();
+    L.Section("Movement");
+    L.Drag("Speed##cc2", &cc->speed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    L.Drag("Run Speed##cc2", &cc->runSpeed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    std::string sk(1, cc->sprintKey ? cc->sprintKey : ' ');
+    const int kSprint = L.Text("Sprint Key##cc2", &sk); L.Tip("Hold to run (blank = disabled)");
+    L.Drag("Acceleration##cc2", &cc->acceleration, 1, 0.5f, 0.0f, 500.0f); L.Tip("0 = instant; higher = snappier ramp-up");
+    L.Drag("Deceleration##cc2", &cc->deceleration, 1, 0.5f, 0.0f, 500.0f); L.TipLookup();
+    L.Check("Use Gamepad##cc2", &cc->useGamepad); L.TipLookup();
+    L.SameLine(); L.Check("Flip Sprite##cc2", &cc->flipSprite); L.TipLookup();
+    if (cc->mode == CharacterController2D::Mode::TopDown) { L.Check("Normalize Diagonal##cc2", &cc->normalizeDiagonal); L.TipLookup(); }
+    int kFeel[3] = {-1, -1, -1};
+    if (cc->mode == CharacterController2D::Mode::Platformer) {
+        L.Section("Jump");
+        L.Note("Feel:");
+        for (int ji = 0; ji < 3; ++ji) { L.SameLine(ji ? 4.0f : -1.0f); kFeel[ji] = L.SmallButton(kJFeel[ji]); }
+        L.Drag("Jump Force##cc2", &cc->jumpForce, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+        L.DragInt("Max Jumps##cc2", &cc->maxJumps, 0.05f, 1, 5); L.Tip("2 = double jump (ground counts as one)");
+        L.Check("Variable Jump##cc2", &cc->variableJump); L.TipLookup();
+        if (cc->variableJump) { L.Drag("Jump Cut##cc2", &cc->jumpCutMultiplier, 1, 0.01f, 0.0f, 1.0f); L.TipLookup(); }
+        L.Drag("Coyote Time##cc2", &cc->coyoteTime, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+        L.Drag("Jump Buffer##cc2", &cc->jumpBuffer, 1, 0.005f, 0.0f, 0.5f, "%.3f s"); L.TipLookup();
+        L.Drag("Air Control##cc2", &cc->airControl, 1, 0.02f, 0.0f, 1.0f); L.TipLookup();
+        L.Drag("Max Fall Speed##cc2", &cc->maxFallSpeed, 1, 0.5f, 0.0f, 200.0f); L.TipLookup();
+        L.Drag("Extra Fall Gravity##cc2", &cc->extraFallGravity, 1, 0.5f, 0.0f, 200.0f); L.TipLookup();
+        L.Check("Wall Slide + Jump##cc2", &cc->wallJump); L.Tip("Slide slowly down walls and jump off them (needs side colliders).");
+        if (cc->wallJump) {
+            L.Drag("Wall Slide Speed##cc2", &cc->wallSlideSpeed, 1, 0.1f, 0.0f, 50.0f); L.TipLookup();
+            L.Drag("Wall Jump Up##cc2", &cc->wallJumpForce, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+            L.Drag("Wall Jump Push##cc2", &cc->wallJumpPush, 1, 0.1f, 0.0f, 100.0f); L.TipLookup();
+        }
+    }
+    L.Note("WASD / arrows / stick. Uses a Rigidbody2D if present.");
+    const int kRemove = L.SmallButton("Remove##cc2");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc2ctl", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) cc->mode = (CharacterController2D::Mode)m;
+    if (L[kSprint].changed) cc->sprintKey = (sk.empty() || sk[0] == ' ') ? 0 : sk[0];
+    for (int ji = 0; ji < 3; ++ji) {
+        if (kFeel[ji] < 0 || !L[kFeel[ji]].clicked) continue;
+        ed.PushUndo();
+        CharacterController2D& C = *cc;
+        switch (ji) {   // the jump-feel presets, as the Dear ImGui body sets them
+            case 0: C.jumpForce = 11.0f; C.maxJumps = 1; C.variableJump = true; C.jumpCutMultiplier = 0.45f; C.coyoteTime = 0.10f; C.jumpBuffer = 0.10f;
+                    C.airControl = 0.85f; C.maxFallSpeed = 18.0f; C.extraFallGravity = 12.0f; break;
+            case 1: C.jumpForce = 9.5f; C.maxJumps = 1; C.variableJump = true; C.jumpCutMultiplier = 0.30f; C.coyoteTime = 0.06f; C.jumpBuffer = 0.08f;
+                    C.airControl = 1.0f; C.maxFallSpeed = 22.0f; C.extraFallGravity = 18.0f; break;
+            default: C.jumpForce = 10.0f; C.maxJumps = 2; C.variableJump = true; C.jumpCutMultiplier = 0.55f; C.coyoteTime = 0.14f; C.jumpBuffer = 0.14f;
+                     C.airControl = 0.9f; C.maxFallSpeed = 14.0f; C.extraFallGravity = 6.0f; break;
+        }
+        ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+// StanceControlFields as rows: the "Crouch / prone" fold-out with its two key lists (KeyBindCombo: 96 wide), the toggles, speeds and
+// heights, and the note. `keys` holds the lists' indexes; ApplyStanceRows writes the keys back.
+struct StanceRowsState { int crouch = 0, prone = 0, kCrouch = -1, kProne = -1; std::deque<std::string> text; };
+static const struct { const char* name; char code; } kStanceKeys[] = {
+    {"(none)", 0}, {"Shift", Input::KeyShift}, {"Ctrl", Input::KeyCtrl}, {"C", 'c'}, {"Z", 'z'}, {"X", 'x'}, {"V", 'v'}, {"F", 'f'}, {"B", 'b'}};
+static const char* const* StanceKeyNames() {
+    static const char* names[sizeof kStanceKeys / sizeof kStanceKeys[0]];
+    for (std::size_t i = 0; i < sizeof kStanceKeys / sizeof kStanceKeys[0]; ++i) names[i] = kStanceKeys[i].name;
+    return names;
+}
+static void AddStanceRows(okaypanels::InspFieldList& L, StanceControl& sc, const char* id, StanceRowsState& st) {
+    const int n = (int)(sizeof kStanceKeys / sizeof kStanceKeys[0]);
+    auto lbl = [&](const char* name, const char* pre) { st.text.push_back(std::string(name) + pre + id); return st.text.back().c_str(); };
+    auto idx = [&](char key) { for (int i = 0; i < n; ++i) if (kStanceKeys[i].code == key) return i; return 0; };
+    L.Tree(lbl("Crouch / prone", "##"));
+    st.crouch = idx(sc.crouchKey); st.prone = idx(sc.proneKey);
+    st.kCrouch = L.Combo(lbl("Crouch Key", "##st"), &st.crouch, StanceKeyNames(), n); L.Last().width = 96.0f;
+    st.kProne = L.Combo(lbl("Prone Key", "##st"), &st.prone, StanceKeyNames(), n); L.Last().width = 96.0f;
+    L.Check(lbl("Toggle (vs hold)", "##st"), &sc.toggle);
+    L.Check(lbl("Allow Prone", "##st"), &sc.allowProne);
+    L.Check(lbl("Resize Body", "##st"), &sc.resizeBody);
+    L.Tip("Crouching / prone shrink the collider (fit under low things);\nstanding up waits for headroom.");
+    L.Drag(lbl("Crouch Speed", "##st"), &sc.crouchSpeed, 1, 0.05f, 0.0f, 20.0f);
+    L.Drag(lbl("Prone Speed", "##st"), &sc.proneSpeed, 1, 0.05f, 0.0f, 20.0f);
+    L.Slider(lbl("Crouch Height", "##st"), &sc.crouchHeight, 0.2f, 1.0f, "%.2f");
+    L.Slider(lbl("Prone Height", "##st"), &sc.proneHeight, 0.1f, 1.0f, "%.2f");
+    L.Note("Scripts: SetStance(0 stand / 1 crouch / 2 prone).", false, true);
+    L.Note("How long changes take: the Animator's Stance changes.", false, true);
+    L.TreeEnd();
+}
+static void ApplyStanceRows(okaypanels::InspFieldList& L, StanceControl& sc, const StanceRowsState& st) {
+    if (st.kCrouch >= 0 && L[st.kCrouch].changed) sc.crouchKey = kStanceKeys[st.crouch].code;
+    if (st.kProne >= 0 && L[st.kProne].changed) sc.proneKey = kStanceKeys[st.prone].code;
+}
+
+static bool DrawCharacterController3DWithOkayUI(EditorState& ed, CharacterController3D* cc, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    StanceRowsState st;
+    AddStanceRows(L, cc->stanceControl, "cc3", st);
+    L.Drag("Speed##cc3", &cc->speed, 1, 0.1f, 0.0f, 200.0f); L.TipLookup();
+    L.Check("Can Jump##cc3", &cc->canJump); L.TipLookup();
+    if (cc->canJump) { L.Drag("Jump Force##cc3", &cc->jumpForce, 1, 0.1f, 0.0f, 200.0f); L.TipLookup(); }
+    L.Note("WASD / arrows on XZ. Uses a Rigidbody3D if present.");
+    const int kRemove = L.SmallButton("Remove##cc3");
+    if (!DrawRowsOkayUI(cc, "##okayui_cc3ctl", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    ApplyStanceRows(L, cc->stanceControl, st);
+    if (L[kRemove].clicked) toRemove = cc;
+    return true;
+}
+
+static bool DrawSpriteAnimatorWithOkayUI(EditorState& ed, SpriteAnimator* an, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24 + an->frames.size() * 2 + an->clips.size() * 7);
+    L.Drag("FPS##anim", &an->fps, 1, 0.25f, 0.0f, 120.0f); L.TipLookup();
+    L.Check("Loop##anim", &an->loop); L.TipLookup();
+    L.SameLine(); L.Check("Playing##anim", &an->playing); L.TipLookup();
+    L.Spacing();
+    L.Note("Atlas mode (sprite sheet on the SpriteRenderer texture):");
+    L.DragInt("Columns##anim", &an->atlasColumns, 0.1f, 0, 64); L.TipLookup();
+    L.DragInt("Rows##anim", &an->atlasRows, 0.1f, 1, 64); L.TipLookup();
+    L.DragInt("Count 0=all##anim", &an->atlasCount, 0.1f, 0, 4096); L.TipLookup();
+    if (an->atlasColumns > 0) L.Note("Using atlas cells; frame list ignored.");
+    L.Spacing();
+    L.Note("Frames (image paths, used when Columns = 0):");
+    std::vector<int> kFrameX(an->frames.size());
+    for (std::size_t i = 0; i < an->frames.size(); ++i) {
+        L.Text("##frame", &an->frames[i]); L.TipLookup();
+        L.SameLine(); kFrameX[i] = L.SmallButton("X");
+    }
+    const int kAddFrame = L.SmallButton("Add Frame");
+    L.Spacing();
+    L.Note("Clips (idle / run / jump / fall are picked by 2D controllers):");
+    struct ClipRows { std::string frames; int kX = -1, kFrames = -1; };
+    std::vector<ClipRows> cr(an->clips.size());
+    for (std::size_t i = 0; i < an->clips.size(); ++i) {
+        SpriteClip& cl = an->clips[i];
+        L.Text("Name##clip", &cl.name); L.TipLookup();
+        L.SameLine(); cr[i].kX = L.SmallButton("X");
+        L.DragInt("Row##clip", &cl.row, 0.1f, 0, 63); L.TipLookup();
+        L.Drag("FPS##clip", &cl.fps, 1, 0.25f, 0.0f, 120.0f); L.TipLookup();
+        L.Check("Loop##clip", &cl.loop); L.TipLookup();
+        for (const auto& f : cl.frames) cr[i].frames += (cr[i].frames.empty() ? "" : ", ") + f;   // "a.png, b.png" (empty = the atlas row)
+        cr[i].kFrames = L.Text("Frames##clip", &cr[i].frames);
+    }
+    const int kAddClip = L.SmallButton("Add Clip");
+    L.SameLine(); const int kRemove = L.SmallButton("Remove##anim");
+    if (!DrawRowsOkayUI(an, "##okayui_spriteanim", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    for (std::size_t i = 0; i < cr.size() && i < an->clips.size(); ++i) {
+        if (!L[cr[i].kFrames].changed) continue;
+        SpriteClip& cl = an->clips[i];
+        cl.frames.clear();
+        std::stringstream ss(cr[i].frames); std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            tok.erase(0, tok.find_first_not_of(' '));
+            tok.erase(tok.find_last_not_of(' ') + 1);
+            if (!tok.empty()) cl.frames.push_back(tok);
+        }
+    }
+    for (std::size_t i = 0; i < kFrameX.size(); ++i)
+        if (L[kFrameX[i]].clicked && i < an->frames.size()) { an->frames.erase(an->frames.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAddFrame].clicked) { an->frames.push_back("frame.png"); ed.dirty = true; }
+    for (std::size_t i = 0; i < cr.size(); ++i)
+        if (L[cr[i].kX].clicked && i < an->clips.size()) { an->clips.erase(an->clips.begin() + (std::ptrdiff_t)i); ed.dirty = true; break; }
+    if (L[kAddClip].clicked) {
+        SpriteClip cl; cl.name = "clip" + std::to_string(an->clips.size()); cl.fps = an->fps;
+        an->clips.push_back(cl); ed.dirty = true;
+    }
+    if (L[kRemove].clicked) toRemove = an;
+    return true;
+}
+
+// The room the Animator's Time slider leaves on its line: its label, then Pause and |< (small buttons), with the spacing.
+static float AnimTimeRoom() {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    return ImGui::CalcTextSize("Time").x + st.ItemInnerSpacing.x + 2.0f * st.ItemSpacing.x + ImGui::CalcTextSize("Pause").x +
+           ImGui::CalcTextSize("|<").x + 4.0f * st.FramePadding.x + 2.0f;
+}
+static bool DrawAnimatorWithOkayUI(EditorState& ed, GameObject* go, Animator* anm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(24);
+    std::string clipName = anm->clip.name;
+    const int kClip = L.Text("Clip##anm", &clipName); L.TipLookup();
+    const int kLoop = L.Check("Loop##anm", &anm->clip.loop); L.TipLookup();
+    L.SameLine(); L.Check("Playing##anm", &anm->playing); L.TipLookup();
+    L.Drag("Speed##anm", &anm->speed, 1, 0.02f, -4.0f, 4.0f); L.TipLookup();
+    const float len = anm->clip.Length();
+    float t = anm->Time();
+    const int kTime = L.Slider("Time##anm", &t, 0.0f, len > 0 ? len : 1.0f, "%.2fs"); L.Last().width = -AnimTimeRoom();
+    L.SameLine(); const int kPlay = L.SmallButton(anm->playing ? "Pause" : "Play");
+    L.SameLine(); const int kRestart = L.SmallButton("|<");
+    L.Section("Keyframes");
+    L.Note("Scrub to a time, pose the object, then Record.");
+    const int kRecord = L.Button("Record Key (transform @ time)");
+    std::vector<std::string> tracks;
+    for (auto& tr : anm->clip.Tracks()) tracks.push_back(tr.first);
+    std::sort(tracks.begin(), tracks.end());
+    std::vector<int> kClear(tracks.size());
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        AnimationCurve* c = anm->clip.Track(tracks[i]);
+        char b[160]; std::snprintf(b, sizeof b, "%s  (%d keys)", tracks[i].c_str(), c ? (int)c->Count() : 0);
+        L.Bullet(b, true);
+        L.SameLine(); kClear[i] = L.SmallButton("Clear");
+    }
+    if (tracks.empty()) L.Note("(no tracks yet \xE2\x80\x94 Record a key)");
+    L.Spacing();
+    const int kRemove = L.SmallButton("Remove##anm-comp");
+    if (!DrawRowsOkayUI(anm, "##okayui_animator", L)) return false;
+    if (L[kClip].changed) { anm->clip.name = clipName; ed.dirty = true; }
+    if (L[kLoop].changed) { anm->clip.Recompute(); ed.dirty = true; }
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kTime].changed) anm->SetTime(t);
+    if (L[kPlay].clicked) anm->playing = !anm->playing;
+    if (L[kRestart].clicked) anm->Restart();
+    if (L[kRecord].clicked) {
+        const float kt = anm->Time();
+        const Vec3 p = go->transform->localPosition, s = go->transform->localScale;
+        const Quat q = go->transform->localRotation;   // the Z angle for the rotation.z track
+        const float zdeg = 2.0f * std::atan2(q.z, q.w) * Mathf::Rad2Deg;
+        anm->clip.AddKey("position.x", kt, p.x); anm->clip.AddKey("position.y", kt, p.y); anm->clip.AddKey("position.z", kt, p.z);
+        anm->clip.AddKey("scale.x", kt, s.x); anm->clip.AddKey("scale.y", kt, s.y); anm->clip.AddKey("scale.z", kt, s.z);
+        anm->clip.AddKey("rotation.z", kt, zdeg);
+        ed.dirty = true; ConsoleLog("Recorded keyframe at " + std::to_string(kt) + "s");
+    }
+    for (std::size_t i = 0; i < tracks.size(); ++i) if (L[kClear[i]].clicked) { anm->clip.RemoveTrack(tracks[i]); ed.dirty = true; break; }
+    if (L[kRemove].clicked) toRemove = anm;
+    return true;
+}
+
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
@@ -31482,7 +32197,7 @@ void DrawInspector(EditorState& ed) {
         // With several objects selected, what a drawer changes on this component goes to the others too.
         const oked::ComponentEdit multiEdit = oked::BeginComponentEdit(ed.MultiSelection(), go, *curComp);
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
-        if (CompHeader("Sprite Renderer", sr, &toRemove)) {
+        if (CompHeader("Sprite Renderer", sr, &toRemove) && !(UseOkayUIBackend() && DrawSpriteRendererWithOkayUI(ed, sr, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
             if (ImGui::ColorEdit4("Color##sprite", col)) {
                 sr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true;
@@ -31520,12 +32235,14 @@ void DrawInspector(EditorState& ed) {
             int sfi = (int)sr->texFilter;
             if (ImGui::Combo("Filter##sprite", &sfi, sfilters, 2)) { sr->texFilter = (SpriteRenderer::TexFilter)sfi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth = bilinear (photos/hi-res). Pixel = nearest-neighbour (crisp pixel-art, no blur).");
+            ImGui::PushTextWrapPos(0.0f);   // wrapped: it ran out of the docked Inspector (seen in the stage 3 pictures)
             ImGui::TextDisabled("image file (PNG/JPG); higher Sorting Layer always on top, then Sort Order");
+            ImGui::PopTextWrapPos();
             if (ImGui::SmallButton("Remove##sprite")) toRemove = sr;
         }
     }
     if (auto* ps = dynamic_cast<ParticleSystem*>(curComp)) {
-        if (CompHeader("Particle System", ps, &toRemove)) {
+        if (CompHeader("Particle System", ps, &toRemove) && !(UseOkayUIBackend() && DrawParticleSystemWithOkayUI(ed, ps, toRemove))) {   // OkayUI's with the preview switch (section 16)
             // ---- Presets: one-click classic effects (then tweak from there) ----
             SectionHeader("Presets");
             {
@@ -31563,9 +32280,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Combo("Shape##ps", &shp, shapes, 6)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
             oked::FieldTip("Shape##ps");
             if (ps->shape == ParticleSystem::Shape::Circle || ps->shape == ParticleSystem::Shape::Sphere ||
-                ps->shape == ParticleSystem::Shape::Edge)
+                ps->shape == ParticleSystem::Shape::Edge) {   // (the tooltip used to sit outside this if: the Shape list showed Radius's)
                 if (ImGui::DragFloat("Radius##ps", &ps->shapeRadius, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
                 oked::FieldTip("Radius##ps");
+            }
             if (ps->shape == ParticleSystem::Shape::Cone) {
                 if (ImGui::SliderFloat("Cone Angle##ps", &ps->shapeAngle, 0.0f, 180.0f)) ed.dirty = true;
                 oked::FieldTip("Cone Angle##ps");
@@ -34293,7 +35011,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
-        if (CompHeader("Rigidbody2D", rb2, &toRemove)) {
+        if (CompHeader("Rigidbody2D", rb2, &toRemove) && !(UseOkayUIBackend() && DrawRigidbody2DWithOkayUI(ed, go->GetComponent<Rigidbody2D>(), toRemove))) {   // OkayUI's with the preview switch (section 16)
             auto* rb = go->GetComponent<Rigidbody2D>();
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
@@ -34317,7 +35035,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
-        if (CompHeader("Box Collider 2D", bc, &toRemove)) {
+        if (CompHeader("Box Collider 2D", bc, &toRemove) && !(UseOkayUIBackend() && DrawBoxCollider2DWithOkayUI(ed, go, bc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float sz[2] = {bc->size.x, bc->size.y};
             if (ImGui::DragFloat2("Size##bc", sz, 0.05f, 0.0f, 1000.0f)) { bc->size = {sz[0], sz[1]}; ed.dirty = true; }
             oked::FieldTip("Size##bc");
@@ -34338,8 +35056,9 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = dynamic_cast<CircleCollider2D*>(curComp)) {
-        if (CompHeader("Circle Collider 2D", cc, &toRemove)) {
+        if (CompHeader("Circle Collider 2D", cc, &toRemove) && !(UseOkayUIBackend() && DrawCircleCollider2DWithOkayUI(ed, go, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::DragFloat("Radius##cc", &cc->radius, 0.05f, 0.0f, 1000.0f);
+            oked::FieldTip("Radius##cc");
             float off[2] = {cc->offset.x, cc->offset.y};
             if (ImGui::DragFloat2("Offset##cc", off, 0.05f)) { cc->offset = {off[0], off[1]}; ed.dirty = true; }
             oked::FieldTip("Offset##cc");
@@ -34357,7 +35076,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cap = dynamic_cast<CapsuleCollider2D*>(curComp)) {
-        if (CompHeader("Capsule Collider 2D", cap, &toRemove)) {
+        if (CompHeader("Capsule Collider 2D", cap, &toRemove) && !(UseOkayUIBackend() && DrawCapsuleCollider2DWithOkayUI(ed, go, cap, toRemove))) {   // OkayUI's with the preview switch (section 16)
             float sz[2] = {cap->size.x, cap->size.y};
             if (ImGui::DragFloat2("Size##cap2", sz, 0.05f, 0.0f, 1000.0f)) { cap->size = {sz[0], sz[1]}; ed.dirty = true; }
             oked::FieldTip("Size##cap2");
@@ -34382,7 +35101,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* ec = dynamic_cast<EdgeCollider2D*>(curComp)) {
-        if (CompHeader("Edge Collider 2D", ec, &toRemove)) {
+        if (CompHeader("Edge Collider 2D", ec, &toRemove) && !(UseOkayUIBackend() && DrawPointCollider2DWithOkayUI(ed, ec, true, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::TextDisabled("Open polyline: ground, slopes, walls. Local-space points.");
             float off[2] = {ec->offset.x, ec->offset.y};
             if (ImGui::DragFloat2("Offset##ec2", off, 0.05f)) { ec->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -34418,7 +35137,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pc = dynamic_cast<PolygonCollider2D*>(curComp)) {
-        if (CompHeader("Polygon Collider 2D", pc, &toRemove)) {
+        if (CompHeader("Polygon Collider 2D", pc, &toRemove) && !(UseOkayUIBackend() && DrawPointCollider2DWithOkayUI(ed, pc, false, toRemove))) {   // OkayUI's with the preview switch (section 16)
             ImGui::TextDisabled("Closed loop (convex works best). Local-space vertices.");
             float off[2] = {pc->offset.x, pc->offset.y};
             if (ImGui::DragFloat2("Offset##pc2", off, 0.05f)) { pc->offset = {off[0], off[1]}; ed.dirty = true; }
@@ -35357,8 +36076,10 @@ void DrawInspector(EditorState& ed) {
             if (!(UseOkayUIBackend() && DrawBoxCollider3DWithOkayUI(ed, go, bc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             float sz[3] = {bc->size.x, bc->size.y, bc->size.z};
             if (DragVec3Axis("Size##bc3", sz, 0.05f)) { bc->size = {sz[0], sz[1], sz[2]}; ed.dirty = true; }
+            oked::FieldTip("Size##bc3");   // the tooltip and the prefab mark (stage 3: the collider rows had neither)
             float off[3] = {bc->offset.x, bc->offset.y, bc->offset.z};
             if (DragVec3Axis("Offset##bc3", off, 0.05f)) { bc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            oked::FieldTip("Offset##bc3");
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
@@ -35389,8 +36110,10 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Sphere Collider 3D", sc, &toRemove)) {
             if (!(UseOkayUIBackend() && DrawSphereCollider3DWithOkayUI(ed, go, sc, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##sc3", &sc->radius, 0.05f, 0.0f, 1000.0f);
+            oked::FieldTip("Radius##sc3");
             float off[3] = {sc->offset.x, sc->offset.y, sc->offset.z};
             if (DragVec3Axis("Offset##sc3", off, 0.05f)) { sc->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            oked::FieldTip("Offset##sc3");
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
@@ -35411,11 +36134,15 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Capsule Collider 3D", cap, &toRemove)) {
             if (!(UseOkayUIBackend() && DrawCapsuleCollider3DWithOkayUI(ed, go, cap, toRemove))) {   // the body is OkayUI's with the preview switch (docs/own_ui_toolkit.md section 15)
             ImGui::DragFloat("Radius##cap3", &cap->radius, 0.05f, 0.0f, 1000.0f);
+            oked::FieldTip("Radius##cap3");   // the prefab mark: the record's fields have names now (PrefabTools Schema)
             ImGui::DragFloat("Height##cap3", &cap->height, 0.05f, 0.0f, 1000.0f);
+            oked::FieldTip("Height##cap3");
             const char* axes[] = {"X", "Y", "Z"};
             ImGui::Combo("Axis##cap3", &cap->axis, axes, 3);
+            oked::FieldTip("Axis##cap3");
             float off[3] = {cap->offset.x, cap->offset.y, cap->offset.z};
             if (DragVec3Axis("Offset##cap3", off, 0.05f)) { cap->offset = {off[0], off[1], off[2]}; ed.dirty = true; }
+            oked::FieldTip("Offset##cap3");
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
@@ -35558,7 +36285,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::PopID();
     }
     if (auto* cc = dynamic_cast<CharacterController2D*>(curComp)) {
-        if (CompHeader("Character Controller 2D", cc, &toRemove)) {
+        if (CompHeader("Character Controller 2D", cc, &toRemove) && !(UseOkayUIBackend() && DrawCharacterController2DWithOkayUI(ed, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             int m = (int)cc->mode;
             const char* modes[] = {"Top-Down", "Platformer"};
             if (ImGui::Combo("Mode##cc2", &m, modes, 2)) { cc->mode = (CharacterController2D::Mode)m; ed.dirty = true; }
@@ -35656,7 +36383,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* cc = dynamic_cast<CharacterController3D*>(curComp)) {
-        if (CompHeader("Character Controller 3D", cc, &toRemove)) {
+        if (CompHeader("Character Controller 3D", cc, &toRemove) && !(UseOkayUIBackend() && DrawCharacterController3DWithOkayUI(ed, cc, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (StanceControlFields(cc->stanceControl, "cc3")) ed.dirty = true;
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             oked::FieldTip("Speed##cc3");
@@ -39335,7 +40062,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::PopID();
     }
     if (auto* a = dynamic_cast<AudioSource*>(curComp)) {
-        if (CompHeader("Audio Source", a, &toRemove)) {
+        if (CompHeader("Audio Source", a, &toRemove) && !(UseOkayUIBackend() && DrawAudioSourceWithOkayUI(ed, a, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             oked::FieldTip("Volume");
             if (ImGui::DragFloat("Pitch##audio", &a->pitch, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
@@ -39398,8 +40125,10 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
+            ImGui::PushTextWrapPos(0.0f);   // wrapped: it ran out of the docked Inspector (seen in the stage 3 pictures)
             ImGui::TextDisabled("WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
                                 a->IsStreaming() ? "stream" : "clip", a->Clip().channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
+            ImGui::PopTextWrapPos();
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             oked::FieldTip("3D (spatial)");
             if (a->spatial) {
@@ -42277,7 +43006,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* an = dynamic_cast<SpriteAnimator*>(curComp)) {
-        if (CompHeader("Sprite Animator", an, &toRemove)) {
+        if (CompHeader("Sprite Animator", an, &toRemove) && !(UseOkayUIBackend() && DrawSpriteAnimatorWithOkayUI(ed, an, toRemove))) {   // OkayUI's with the preview switch (section 16)
             if (ImGui::DragFloat("FPS##anim", &an->fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
             oked::FieldTip("FPS##anim");
             if (ImGui::Checkbox("Loop##anim", &an->loop)) ed.dirty = true;
@@ -42352,7 +43081,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* anm = dynamic_cast<Animator*>(curComp)) {
-        if (CompHeader("Animator", anm, &toRemove)) {
+        if (CompHeader("Animator", anm, &toRemove) && !(UseOkayUIBackend() && DrawAnimatorWithOkayUI(ed, go, anm, toRemove))) {   // OkayUI's with the preview switch (section 16)
             char cn[64]; std::strncpy(cn, anm->clip.name.c_str(), sizeof(cn) - 1); cn[sizeof(cn)-1] = '\0';
             if (ImGui::InputText("Clip##anm", cn, sizeof(cn))) { anm->clip.name = cn; ed.dirty = true; }
             oked::FieldTip("Clip##anm");
@@ -42367,7 +43096,7 @@ void DrawInspector(EditorState& ed) {
             // Playback scrubber: drag to preview the clip at any time.
             float len = anm->clip.Length();
             float t = anm->Time();
-            ImGui::SetNextItemWidth(-90);
+            ImGui::SetNextItemWidth(-AnimTimeRoom());   // the label and the two buttons fit after it (-90 ran them out of a docked Inspector)
             if (ImGui::SliderFloat("Time##anm", &t, 0.0f, len > 0 ? len : 1.0f, "%.2fs")) {
                 anm->SetTime(t); ed.dirty = true;
             }

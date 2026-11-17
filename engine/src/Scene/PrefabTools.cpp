@@ -938,6 +938,16 @@ const std::vector<const char*>* Schema(const std::string& rec) {
                          "freezeRotation", "allowSleep", "continuousCollision"}},
         {"boxcollider2d", {"size.x", "size.y", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
         {"circlecollider2d", {"radius", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
+        // the other colliders' records (SceneSerializer): their fields by name, so an Inspector row (Radius, Size, Offset ...) finds its
+        // difference from the prefab (they were "arg0", "arg1" ... before, and no row matched them)
+        {"capsulecollider2d", {"size.x", "size.y", "direction", "offset.x", "offset.y", "isTrigger", "layer", "autoFit"}},
+        {"edgecollider2d", {"offset.x", "offset.y", "isTrigger", "layer", "oneWay", "oneWayNormal.x", "oneWayNormal.y"}},
+        {"polygoncollider2d", {"offset.x", "offset.y", "isTrigger", "layer"}},
+        {"boxcollider3d", {"size.x", "size.y", "size.z", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"meshcollider3d", {"size.x", "size.y", "size.z", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"spherecollider3d", {"radius", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"capsulecollider3d", {"radius", "height", "axis", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
+        {"cylindercollider3d", {"radius", "height", "axis", "offset.x", "offset.y", "offset.z", "isTrigger", "layer", "autoFit"}},
         {"tag", {"value"}}, {"active", {"value"}}, {"layer", {"value"}}, {"static", {"value"}}, {"uiorder", {"value"}},
     };
     auto it = s.find(rec);

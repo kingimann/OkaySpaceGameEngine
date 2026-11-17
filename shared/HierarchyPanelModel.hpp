@@ -90,6 +90,7 @@ struct PanelMenuEntry {
     int kind = PanelMenuItem;
     std::string id, label, shortcut, tip, reason;   ///< reason: why it is greyed out
     bool enabled = true, checked = false;
+    std::uint32_t color = 0;                        ///< PanelMenuHeading: its text colour (0: grey, Dear ImGui's TextDisabled)
     std::vector<PanelMenuEntry> children;           ///< PanelMenuSub only
 };
 

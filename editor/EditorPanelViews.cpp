@@ -699,7 +699,10 @@ void HierMenuEntries(const std::vector<PanelMenuEntry>& es, std::string& chosen)
     for (const PanelMenuEntry& e : es) {
         switch (e.kind) {
         case PanelMenuSeparator: ImGui::Separator(); break;
-        case PanelMenuHeading: ImGui::TextDisabled("%s", e.label.c_str()); break;
+        case PanelMenuHeading:
+            if (e.color) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(e.color | 0xff000000u), "%s", e.label.c_str());
+            else ImGui::TextDisabled("%s", e.label.c_str());
+            break;
         case PanelMenuSub: {
             const bool open = ImGui::BeginMenu(e.label.c_str(), e.enabled);
             if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1484,7 +1487,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             break;
         case InspRowCombo: {
             int* cur = r.I();
-            const char* preview = r.mixed ? "Mixed" : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
+            const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
             if (ImGui::BeginCombo(r.label, preview)) {
                 for (int q = 0; q < r.count; ++q)
                     if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
@@ -1596,10 +1599,30 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
                 if (ImGui::Selectable("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
                 if (ImGui::Selectable("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
                 ImGui::Separator();
+                const bool rename = list.hooks.renameLayer && list.hooks.layerName;
+                if (rename) ImGui::TextDisabled("Right-click a layer to rename it");
                 for (int i = 0; i < 32; ++i) {
                     bool on = (*bits & (1 << i)) != 0;
                     ImGui::PushID(i);
                     if (ImGui::Checkbox(names[(std::size_t)i].c_str(), &on)) { if (on) *bits |= (1 << i); else *bits &= ~(1 << i); r.changed = true; }
+                    if (rename && ImGui::BeginPopupContextItem("##layerctx")) {   // the editor's LayerRenameMenu
+                        static char buf[128] = "";
+                        static std::string err, hint, def;
+                        if (ImGui::IsWindowAppearing()) {
+                            std::string text;
+                            list.hooks.layerName(i, text, hint, def);
+                            std::snprintf(buf, sizeof buf, "%s", text.c_str());
+                            err.clear();
+                        }
+                        ImGui::TextDisabled("Layer %d name", i);
+                        ImGui::SetNextItemWidth(170);
+                        if (ImGui::InputTextWithHint("##layername", hint.c_str(), buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue))
+                            if (list.hooks.renameLayer(i, buf, err)) ImGui::CloseCurrentPopup();
+                        if (ImGui::SmallButton("Reset to default"))
+                            if (list.hooks.renameLayer(i, def, err)) ImGui::CloseCurrentPopup();
+                        if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+                        ImGui::EndPopup();
+                    }
                     ImGui::PopID();
                 }
                 ImGui::EndCombo();
@@ -1615,6 +1638,8 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         }
         case InspRowTreeEnd: ImGui::TreePop(); break;
         case InspRowSpacing: ImGui::Spacing(); break;
+        case InspRowSeparator: ImGui::Separator(); hoverTip = false; break;
+        case InspRowBullet: ImGui::BulletText("%s", r.Text()); break;
         }
         if (hoverTip && (r.tip || r.tipLookup) && ImGui::IsItemHovered()) {
             if (r.tip && *r.tip) ImGui::SetTooltip("%s", r.tip);

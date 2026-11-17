@@ -664,6 +664,183 @@ int main() {
         place(190.0f, 300.0f, 200.0f, box, pop);
         CHECK(std::fabs(pop.x - (box.x + 100.0f - 200.0f)) < 0.5f && pop.y < box.y);                     // above, toward the left
     }
+    // ================= stage 3: more bodies (section 16) =================
+    {   // the Sprite Renderer: the 210-wide path field with "..." and its label on one line, Flip Y beside Flip X
+        BRig r(inspbody::BodySprite);
+        r.Frames(3);
+        Check("inspector_sprite", r.Draw());
+        const UI::Rect tex = r.R("##spritetex"), dots = r.R("...##spritetexbrowse"), lab = r.R("Texture");
+        CHECK(std::fabs(tex.w - 210.0f) < 1.0f && std::fabs(dots.x - (tex.x + tex.w + 4.0f)) < 1.0f && lab.x > dots.x + dots.w);
+        CHECK(std::fabs(r.R("Flip Y").y - r.R("Flip X").y) < 1.0f);
+        const UI::Rect fx = r.R("Flip X");
+        r.Click(fx.x + 11.0f, CY(fx));
+        CHECK(r.v.spFlipX);
+    }
+    {   // the Audio Source: the rule under Rolloff, the occlusion box hiding its two sliders, a logarithmic slider's middle
+        BRig r(inspbody::BodyAudio);
+        r.Frames(3);
+        Check("inspector_audio", r.Draw());
+        const UI::Rect ro = r.R("Rolloff##audio"), sep = r.res.rows[(std::size_t)r.Row("Rolloff##audio") + 1], dp = r.R("Pitch follows speed");
+        CHECK(r.L[r.Row("Rolloff##audio") + 1].kind == P::InspRowSeparator);
+        CHECK(sep.y > ro.y + ro.h && sep.y < dp.y && sep.h <= 1.5f && sep.w > 400.0f);   // one pixel across the region, between the two
+        CHECK(r.Row("Muffle behind a wall") >= 0);
+        const UI::Rect oc = r.R("Quieter behind walls");
+        r.Click(oc.x + 11.0f, CY(oc));
+        CHECK(!r.v.auOcclude && r.Row("Muffle behind a wall") < 0);
+        const UI::Rect lp = r.R("Low Pass##audio");
+        r.Click(lp.x + inspfix::InspectorItemWidth(428.0f) * 0.5f, CY(lp));   // the middle of 200 to 22000 on a log scale is about 2098
+        CHECK(r.v.auLowPass > 1800.0f && r.v.auLowPass < 2400.0f);
+    }
+    {   // the Box Collider 2D: the fold-out starts closed (its rows are not drawn), Auto Fit beside Fit to Object
+        BRig r(inspbody::BodyBox2D);
+        r.Frames(3);
+        Check("inspector_box2d", r.Draw());
+        CHECK(r.R("Own Friction").w == 0.0f && r.R("Physics Material").w > 0.0f);
+        CHECK(std::fabs(r.R("Auto Fit").y - r.R("Fit to Object").y) < 1.0f);
+        r.Click(r.R("Physics Material"));
+        CHECK(r.R("Own Friction").w > 0.0f);
+    }
+    {   // the Edge Collider 2D: the rule, the points' cells with their "x" on the same line, + Point under them
+        BRig r(inspbody::BodyEdge2D);
+        r.Frames(3);
+        Check("inspector_edge2d", r.Draw());
+        const int p0 = r.Row("##pt");
+        CHECK(p0 > 0 && r.L[p0 - 2].kind == P::InspRowSeparator);
+        const UI::Rect c0 = r.res.rows[(std::size_t)p0], x0 = r.res.rows[(std::size_t)p0 + 1], c1 = r.res.rows[(std::size_t)p0 + 2];
+        CHECK(std::fabs(x0.y - c0.y) < 10.0f && x0.x > c0.x + c0.w && c1.y > c0.y + c0.h);
+        r.Drag(c0.x + 20.0f, CY(c0), 10.0f);                                 // 10 pixels on the first cell, 0.05 a pixel
+        CHECK(r.v.e2Pts[0][0] > -1.7f && r.v.e2Pts[0][0] < -1.45f && r.v.e2Pts[0][1] == 0.0f);   // only the first part moved
+    }
+    {   // the Particle System: the preset list shows its own text, and a pick reports the preset
+        BRig r(inspbody::BodyParticles, 460.0f, 1300.0f);
+        r.Frames(3);
+        Check("inspector_particles", r.Draw());
+        const UI::Rect pr = r.R("Preset##ps");
+        r.Click(pr.x + 30.0f, CY(pr));
+        CHECK(r.res.listRows.size() == 8 && r.res.popup.w > 0.0f);
+        r.Click(r.res.listRows[1]);                                          // Smoke
+        CHECK(r.v.psPreset == 1);
+        CHECK(std::fabs(r.R("(37 live)").y - r.R("Playing").y) < 10.0f);    // the live count beside Playing
+    }
+    {   // the Character Controller 3D: the crouch fold-out's key lists are 96 wide; a pick changes the key
+        BRig r(inspbody::BodyController3D);
+        r.Frames(3);
+        Check("inspector_controller3d", r.Draw());
+        const UI::Rect ck = r.R("Crouch Key");
+        CHECK(ck.x > 16.0f + 10.0f);                                         // inside the fold-out: indented
+        r.Click(ck.x + 30.0f, CY(ck));
+        CHECK(r.res.listRows.size() == 9);
+        r.Click(r.res.listRows[4]);                                          // Z
+        CHECK(r.v.c3Crouch == 4);
+        const UI::Rect sp = r.R("Crouch Speed");
+        CHECK(sp.w > 96.0f);                                                 // the other rows keep the value column
+    }
+    {   // the Animator: the tracks as bullets with Clear beside each, the Time slider the region less 90
+        BRig r(inspbody::BodyAnimator);
+        r.Frames(3);
+        Check("inspector_animator", r.Draw());
+        const UI::Rect b0 = r.R("position.x  (3 keys)"), c0 = r.res.rows[(std::size_t)r.Row("position.x  (3 keys)") + 1];
+        CHECK(b0.w > 100.0f && std::fabs(c0.y - b0.y) < 6.0f && c0.x > b0.x + b0.w);
+        const UI::Rect tm = r.R("Time##anm");
+        CHECK(tm.w > 200.0f);
+        const UI::Rect rs = r.R("|<");
+        CHECK(rs.w > 0.0f && rs.x + rs.w <= 16.0f + 428.0f + 0.5f && std::fabs(rs.y - tm.y) < 10.0f);   // the buttons fit on the slider's line
+        r.Click(c0);
+        CHECK(r.Clicked("Clear"));
+    }
+    {   // the Culling Mask: a right-click on a layer opens its rename menu; Enter renames it; a refused name shows why
+        BRig r(inspbody::BodyCamera, 460.0f, 1500.0f);
+        r.Frames(3);
+        const UI::Rect ly = r.R("Layers");
+        r.Click(ly.x + 30.0f, CY(ly));
+        CHECK(r.res.listRows.size() == 32 && r.res.listRows[3].w > 0.0f);
+        const UI::Rect l3 = r.res.listRows[3];
+        const UI::Rect listPop = r.res.popup;
+        r.RightClick(l3.x + 40.0f, CY(l3)); r.Frame();
+        CHECK(r.res.popup.w > listPop.w || r.res.popup.h > listPop.h || r.res.popup.x < listPop.x);   // the rename menu is in the host's rectangle
+        // the name field (as in Dear ImGui's menu, a click puts the keyboard in it): 67 pixels above the menu's bottom
+        r.Click(l3.x + 80.0f, r.res.popup.y + r.res.popup.h - 67.0f);
+        r.sim.Type("Enemies!"); r.Frame();
+        r.sim.Press(Key_Enter); r.Frame();
+        CHECK(r.v.renamedLayer < 0 && r.res.popup.w > 0.0f);                // refused: the menu stays open (with the reason)
+        r.sim.Press(Key_Backspace); r.Frame();
+        r.sim.Press(Key_Enter); r.Frame();
+        r.Frames(2);
+        CHECK(r.v.renamedLayer == 3 && r.v.renamed == "Enemies");
+    }
+    {   // the prefab menu's first line is blue, as Dear ImGui's ("Overridden from ..." in PrefabBlue)
+        BRig r(inspbody::BodyRigidbody);
+        auto frame = [&] {
+            r.sim.Frame([&] {
+                const inspfix::InspectorMetrics im;
+                S::EditorMetrics em;
+                em.itemSpacing = UI::Vec2{im.itemX, im.itemY}; em.framePadding = UI::Vec2{im.frameX, im.frameY}; em.innerSpacing = UI::Vec2{im.innerX, im.innerY};
+                em.itemWidth = inspfix::InspectorItemWidth(r.sim.W - 32.0f);
+                S::SetEditorMetrics(em);
+                UI::PushTextScale(S::kEditorTextScale);
+                r.L = inspbody::Rows(r.body, r.v);
+                r.L[r.Row("Mass")].overridden = true;
+                r.res = S::DrawFieldList(r.L, "Body##okayui", 16.0f, 12.0f, r.sim.W - 32.0f, r.sim.H - 24.0f);
+                UI::PopTextScale();
+                S::SetEditorMetrics(S::EditorMetrics{});
+            });
+        };
+        for (int i = 0; i < 3; ++i) frame();
+        const UI::Rect ms = r.R("Mass");
+        r.sim.Move(CX(ms), CY(ms)); frame(); r.sim.rdown = true; frame(); r.sim.rdown = false; frame(); frame();
+        CHECK(r.res.popup.w > 0.0f);
+        const UI::Rect pop = r.res.popup;
+        const Bitmap& pic = r.Draw();
+        int blue = 0, grey = 0;
+        for (int yy = (int)pop.y + 12; yy < (int)pop.y + 12 + 18; ++yy)       // the heading's line
+            for (int xx = (int)pop.x + 16; xx < (int)(pop.x + pop.w) - 16; ++xx) {
+                const unsigned px = PixelAt(pic, xx, yy);
+                const unsigned rr = px >> 24, gg = (px >> 16) & 0xffu, bb = (px >> 8) & 0xffu;
+                if (bb > 180 && rr < 150 && bb > rr + 60) ++blue;
+                else if (rr > 110 && std::abs((int)rr - (int)bb) < 20 && std::abs((int)rr - (int)gg) < 20) ++grey;
+            }
+        CHECK(blue > 20 && blue > grey);
+    }
+    {   // a prefab menu lying over a combo below its field: a click on its rows (Revert / Apply Property) is the menu's, it does not open
+        // the combo under it
+        BRig r(inspbody::BodyAudio);
+        auto frame = [&] {
+            r.sim.Frame([&] {
+                const inspfix::InspectorMetrics im;
+                S::EditorMetrics em;
+                em.itemSpacing = UI::Vec2{im.itemX, im.itemY}; em.framePadding = UI::Vec2{im.frameX, im.frameY}; em.innerSpacing = UI::Vec2{im.innerX, im.innerY};
+                em.itemWidth = inspfix::InspectorItemWidth(r.sim.W - 32.0f);
+                S::SetEditorMetrics(em);
+                UI::PushTextScale(S::kEditorTextScale);
+                r.L = inspbody::Rows(r.body, r.v);
+                r.L[r.Row("Pitch##audio")].overridden = true;
+                r.res = S::DrawFieldList(r.L, "Body##okayui", 16.0f, 12.0f, r.sim.W - 32.0f, r.sim.H - 24.0f);
+                UI::PopTextScale();
+                S::SetEditorMetrics(S::EditorMetrics{});
+            });
+        };
+        for (int i = 0; i < 3; ++i) frame();
+        const UI::Rect pan = r.R("Pitch##audio"), grp = r.R("Group##audio");
+        const float mx = pan.x + 150.0f;
+        r.sim.Move(mx, CY(pan)); frame(); r.sim.rdown = true; frame(); r.sim.rdown = false; frame(); frame();
+        const UI::Rect pop = r.res.popup;
+        const float cx = pop.x + 40.0f;   // inside the menu's rows (past its padding) and over the Group box below
+        CHECK(pop.w > 0.0f && pop.y < grp.y && pop.y + pop.h > grp.y + 8.0f && cx < grp.x + grp.w);   // the menu lies over the Group box
+        // its rows: the heading, the difference, a rule, Revert Property, Apply Property; Revert is the fourth line
+        bool reverted = false, comboOpened = false, revertOverGroup = false;
+        for (float yy = grp.y + 3.0f; yy < std::min(grp.y + grp.h, pop.y + pop.h - 12.0f) && !reverted; yy += 4.0f) {   // only over the box
+            r.sim.Move(cx, yy); frame(); r.sim.Down(); frame();
+            for (int f = 0; f < 3; ++f) {   // the choice is in the list of the frame that took it (the rows are rebuilt every frame)
+                if (f == 0) r.sim.Up();
+                frame();
+                if (!r.L.prefabChosen.empty()) { reverted = true; revertOverGroup = yy >= grp.y && yy <= grp.y + grp.h; }
+                if (r.res.listRows.size() == 4) comboOpened = true;   // the Group list (SFX, Music, UI, Voice)
+            }
+            if (r.res.popup.w <= 0.0f && !reverted) { r.sim.Move(mx, CY(pan)); frame(); r.sim.rdown = true; frame(); r.sim.rdown = false; frame(); frame(); }
+        }
+        CHECK(!comboOpened);
+        CHECK(reverted && revertOverGroup);   // the first menu row that took a click lay over the Group box
+    }
     // ================= toolkit pieces this needed =================
     {
         // a popup opened from a row of an open popup keeps that popup open while it is used (OkayUI's EndPopup)

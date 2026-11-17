@@ -244,7 +244,9 @@ void Input::ClearTypedText() {
     std::size_t n = 0;
     for (auto& t : s_touches) {
         if (t.phase == Touch::Phase::Ended) continue;
-        t.phase = Touch::Phase::Stationary;
+        // A tap that began and ended in the frame just over: it was shown as Began; now it is Ended for one frame.
+        t.phase = t.endsNextFrame ? Touch::Phase::Ended : Touch::Phase::Stationary;
+        t.endsNextFrame = false;
         t.delta = {0.0f, 0.0f};
         s_touches[n++] = t;
     }
@@ -271,10 +273,12 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
         *t = Touch{id, position, position, {0.0f, 0.0f}, Touch::Phase::Began};
         return;
     }
-    if (!t) return;
+    if (!t || t->endsNextFrame) return;   // nothing more for a finger already lifted this frame
     t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
     t->position = position;
-    if (state == 2) t->phase = Touch::Phase::Ended;
+    // Lifted in the frame it began: keep Began for this frame so it is seen as a press, end it at the next frame.
+    if (state == 2 && t->phase == Touch::Phase::Began) t->endsNextFrame = true;
+    else if (state == 2) t->phase = Touch::Phase::Ended;
     else if (t->phase != Touch::Phase::Began) t->phase = Touch::Phase::Moved;
 }
 

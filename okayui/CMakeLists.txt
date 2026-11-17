@@ -84,7 +84,11 @@ target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_panels okayui_launcher_pages okayui_hierarchy okayui_editor_panels okayui_imcompat okayui_launcher_more_pages okayui_dockbuilder)
+    set(_okayui_tests okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_panels okayui_launcher_pages okayui_hierarchy okayui_editor_panels okayui_imcompat okayui_launcher_more_pages okayui_dockbuilder)
+    if(NOT OKAY_WITH_SDL)
+        list(REMOVE_ITEM _okayui_tests okayui_host)   # it feeds plain SDL_Event structs to the host's SDL feed (OkayUIHost.hpp)
+    endif()
+    foreach(t ${_okayui_tests})
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)

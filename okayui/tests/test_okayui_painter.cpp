@@ -418,19 +418,27 @@ double DiffShare(const Bitmap& a, const Bitmap& b, int tol) {
 
 } // namespace
 
+// A build with -DOKAY_WITH_SDL=OFF has no sdl2 painter (CreateSdl2SurfacePainter returns null): only the software one is checked.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+constexpr bool kHaveSdl = true;
+#else
+constexpr bool kHaveSdl = false;
+#endif
+
 int main() {
     RUN_SUITE("okayui painter");
+    if (!kHaveSdl) std::cout << "  (no SDL in this build: the sdl2 painter comparisons are skipped)\n";
     {
         auto sw = UI::soft::CreateBitmapPainter(64, 48);
         CHECK(sw != nullptr);
         if (sw) Suite(*sw, "software (own)", true);
         auto sd = plat::CreateSdl2SurfacePainter(64, 48);
-        CHECK(sd != nullptr);
+        CHECK(sd != nullptr || !kHaveSdl);
         if (sd) Suite(*sd, "sdl2 (SDL software renderer on a surface)", false);
     }
     CHECK(UI::soft::CreateBitmapPainter(0, 10) == nullptr && UI::soft::CreateBitmapPainter(10, 100000) == nullptr);
     {   // the shared cache and font atlas upload, on both painters
-        for (int which = 0; which < 2; ++which) {
+        for (int which = 0; which < (kHaveSdl ? 2 : 1); ++which) {
             auto p = which == 0 ? UI::soft::CreateBitmapPainter(16, 16) : plat::CreateSdl2SurfacePainter(16, 16);
             if (!p) { CHECK(false); continue; }
             CHECK(p->LoadTexture("") == nullptr);
@@ -445,17 +453,17 @@ int main() {
         okayuidemo::RunScript(sim, st);
         auto sw = UI::soft::CreateBitmapPainter(800, 780);
         auto sd = plat::CreateSdl2SurfacePainter(800, 780);
-        CHECK(sw && sd);
-        if (sw && sd) {
+        CHECK(sw && (sd || !kHaveSdl));
+        if (sw) {
             const Bitmap viaSoft = ViaPainter(*sw, 800, 780);
-            const Bitmap viaSdl = ViaPainter(*sd, 800, 780);
+            const Bitmap viaSdl = sd ? ViaPainter(*sd, 800, 780) : viaSoft;
             GoldenCheck("demo_window", viaSoft);                         // golden image
             const Bitmap ref = sim.Draw(12, 14, 20);
             const double d = DiffShare(viaSoft, ref, 0);
             std::cout << "  classic: software painter vs draw-list rasteriser, differing pixels " << d * 100 << " %\n";
             CHECK(d == 0.0);                                             // the same rasteriser: identical
             const double ds = DiffShare(viaSdl, viaSoft, 2);
-            std::cout << "  classic: sdl2 painter vs software painter, differing pixels (> 2 levels) " << ds * 100 << " %\n";
+            if (sd) std::cout << "  classic: sdl2 painter vs software painter, differing pixels (> 2 levels) " << ds * 100 << " %\n";
             CHECK(ds < 0.002);
         }
     }
@@ -467,16 +475,16 @@ int main() {
         okayuidemo::RunScript(sim, st);
         auto sw = UI::soft::CreateBitmapPainter(800, 780);
         auto sd = plat::CreateSdl2SurfacePainter(800, 780);
-        CHECK(sw && sd);
-        if (sw && sd) {
+        CHECK(sw && (sd || !kHaveSdl));
+        if (sw) {
             const Bitmap viaSoft = ViaPainter(*sw, 800, 780);
-            const Bitmap viaSdl = ViaPainter(*sd, 800, 780);
+            const Bitmap viaSdl = sd ? ViaPainter(*sd, 800, 780) : viaSoft;
             const Bitmap ref = sim.Draw(12, 14, 20);        // nearest-sampled atlas
             const double d = DiffShare(viaSoft, ref, 8);
             std::cout << "  launcher look: software painter (linear) vs golden-style rasteriser (nearest), differing > 8 levels " << d * 100 << " %\n";
             CHECK(d < 0.03);                                // glyph edges only
             const double ds = DiffShare(viaSdl, viaSoft, 8);
-            std::cout << "  launcher look: sdl2 painter vs software painter, differing > 8 levels " << ds * 100 << " %\n";
+            if (sd) std::cout << "  launcher look: sdl2 painter vs software painter, differing > 8 levels " << ds * 100 << " %\n";
             CHECK(ds < 0.03);
         }
         UI::UseLauncherLook(false);

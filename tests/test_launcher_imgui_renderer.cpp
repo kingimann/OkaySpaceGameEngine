@@ -341,6 +341,7 @@ void KeyTable() {
     CHECK(seen.size() >= 100);
 }
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2   // compares with the host's SDL feed; a build with -DOKAY_WITH_SDL=OFF has none
 // The OkayUI host fed from okay::platform events (the own renderer) builds the same OkayUI input as the SDL feed (the sdl
 // renderer) for the same keys, text, clicks and wheel.
 void OkayUIHostFeeds() {
@@ -410,6 +411,7 @@ void OkayUIHostFeeds() {
     CHECK(okayuihost::KeyIdOfPlatform(plat::Key::Unknown) == OkayUI::KeyId_None);
     CHECK(okayuihost::KeyIdOfPlatform(plat::Key::F12) == OkayUI::KeyId_F12);
 }
+#endif
 
 // The glue tells the window where ImGui's text caret is while a text field has the keyboard (Platform_SetImeDataFn ->
 // Window::SetTextInputArea): the input method's candidate window opens there.
@@ -536,7 +538,11 @@ int RunGl() {
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--gl") == 0) return RunGl();
     KeyTable();
+#ifdef OKAY_PLATFORM_HAVE_SDL2
     OkayUIHostFeeds();
+#else
+    std::printf("(no SDL in this build: the OkayUI host SDL-vs-platform comparison is skipped)\n");
+#endif
     std::unique_ptr<plat::Painter> soft = OkayUI::soft::CreateBitmapPainter(kW, kH);
     CHECK(soft != nullptr);
     if (soft) RunCases(*soft, "software", 2, 0.0);

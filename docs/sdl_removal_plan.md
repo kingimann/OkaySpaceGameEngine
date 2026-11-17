@@ -612,8 +612,44 @@ switch keeps its SDL default). With `OFF`:
   without (`OKAY_PLATFORM_HAVE_SDL2` undefined), including `editor/main.cpp` and `launcher/main.cpp`.
 * **What blocks dropping SDL for real** (not done here, and the reason it stays a developer build): nothing of it has run on Windows
   (the Win32 backend's windows, WGL, input, audio, display modes); the own renderers have not been compared with SDL's on a real GPU
-  ("faster and up to par" is unmeasured where it matters); no multi-window panels on own (E4); no touch input on the own backends;
-  the web build has no own backend (`OKAY_WITH_SDL=OFF` refuses Emscripten); the tests are SDL-based.
+  ("faster and up to par" is unmeasured where it matters); no multi-window panels on own (E4); the web build has no own backend
+  (`OKAY_WITH_SDL=OFF` refuses Emscripten). (Touch on the own backends and the tests without SDL: done on `claude2/sdl-touch-tests`,
+  next section; touch on Windows and on a real touch screen is unverified.)
+
+### Touch on the own backends and tests without SDL (branch `claude2/sdl-touch-tests`, on top of this one)
+
+**Status (2026-11-17): built and run on Linux (Xvfb); not merged; the Windows part compiled only (MinGW syntax check).**
+
+* **Touch** (`docs/platform_layer.md`, "Touch"): both own backends now give `FingerDown` / `FingerMotion` / `FingerUp` in the sdl2
+  backend's shape (finger id, 0..1 position, and a new `pressure`), and `TouchDeviceCount` is real. X11: XInput 2.2 touch events
+  (libXi loaded at run time), the first finger also drives the mouse as SDL does (`Event::fromTouch` marks those mouse events);
+  `OKAY_X11_TOUCH=0` turns it off. Win32: `WM_POINTER*` for touch pointers, `WM_TOUCH` on Windows 7, `GetPointerDevices` for the
+  count. Tested: the shared translator and the XI2 translation with built events (`platform_touch`), and under Xvfb that the backend
+  really holds the window's touch selection and that the mouse still works (`platform_touch_x11`, `_off`). **Not tested: a real touch
+  event from an X server (Xvfb has no touch device), a touch screen, Windows.**
+* **A tap shorter than one frame** (#888 finding 132, all backends): `Input::FeedTouch` keeps it `Began` for that frame and `Ended`
+  the next, so on-screen buttons see it (`touch_controls`: 0 of 10 quick taps pressed the button before, 10 of 10 after).
+* **Tests with `OKAY_WITH_SDL=OFF`.** The configure error that forced `OKAY_BUILD_TESTS=OFF` is gone. What needed SDL and why:
+  * the platform tests' own copies of SDL headers were found with `__has_include(<SDL.h>)`; they now also need
+    `OKAY_PLATFORM_HAVE_SDL2`, so with OFF they build without their sdl2 parts;
+  * `tests/CMakeLists.txt` no longer looks for SDL2 with OFF, and runs the `platform_*` entries only for the backends that exist;
+  * three tests had an SDL-only part inside an otherwise SDL-free test: `okayui_painter` (the sdl2 painter comparison),
+    `launcher_imgui_renderer` (the OkayUI host's SDL feed against its platform feed) and `own_stack` (the default backend is `own`
+    with OFF). Those parts are now compiled only with SDL; the rest runs.
+  * **Left out with OFF, because they exist to drive or compare with SDL (19):** the golden images drawn on SDL's software renderer
+    (`ui_renderer_golden`, `ui_widgets_more_shots`, `ui_text_shots`, `ui_focus_render`, `accessibility_render`, `display_screen`);
+    OkayUI's `SDL_Renderer` test (`okayui`) and the OkayUI host's SDL event feed (`okayui_host`); `voice_races` (the launcher's voice
+    session header is SDL); `launcher_wav_window` (compares with `SDL_LoadWAV` and SDL windows); `editor_platform`, `editor_platform_own`,
+    `editor_gfx`, `editor_gfx_own` (one binary that holds the editor's SDL side and ImGui's SDL2 backends next to ours); and the sdl2
+    entries of the platform tests (`platform_default_env_sdl2`, `platform_window_sdl2`, `platform_state_sdl2`, `platform_display_sdl2`,
+    `platform_display_modes_sdl2`).
+  * **Run (2026-11-17, Linux, Xvfb; `-DOKAY_WITH_SDL=OFF -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_PLAYER=ON`, built in groups of ten with
+    `ninja -j1` and each group deleted after its tests, since disk was short):** 788 tests, **782 passed, 0 failed, 6 skipped**. The
+    skipped six need things this machine does not have, not SDL: five SQL checks (`anticheat_sql`, `blocks_sql`, `chat_receipts_sql`,
+    `member_moderation_sql`, `reports_sql`: no PostgreSQL) and `sign_windows` (Windows signing tools). Every one of the 758 programs
+    built; `ldd` found no SDL library in any of them. On the way: three tests (`ssao_math`, `d3d_post_hlsl`, `project_state`) failed
+    only because ccache's base-directory setting made `__FILE__` relative (they read source files next to themselves); built
+    without it they pass.
 
 ### Counts (`scripts/sdl_inventory.py`, calls / words)
 

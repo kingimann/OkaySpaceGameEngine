@@ -224,11 +224,11 @@ int main() {
         Proj p(td.path);
         const Tree before = Snap(p.root);
         UpgradeJob job(p.Opts(""));
-        CHECK(job.progress().phase == Phase::Scanning && !job.Finished());
+        CHECK(job.progress().phase == okayup::Phase::Scanning && !job.Finished());
         job.Run();
         const Result& r = job.result();
         if (!r.ok) std::cerr << "  upgrade failed: " << r.error << "\n";
-        CHECK(r.ok && job.Finished() && r.error.empty() && !r.cancelled && job.progress().phase == Phase::Done);
+        CHECK(r.ok && job.Finished() && r.error.empty() && !r.cancelled && job.progress().phase == okayup::Phase::Done);
         CHECK(r.scenes == 4 && r.prefabs == 2);                                  // every scene and prefab was loaded
         CHECK(r.rewritten == 3);                                                 // ... and only the ones that had to change were written
         CHECK(r.changed == (std::vector<std::string>{kChanged1, kChanged2, kChanged3, "project.okayproj"}) ||
@@ -351,7 +351,7 @@ int main() {
             UpgradeJob j(fo);
             j.Run();
             const Result& r = j.result();
-            const bool bad = r.ok || Snap(p.root) != before || !NoPartial(p.base) || r.error.empty() || r.restoreNote.empty() || !r.rolledBack || j.progress().phase != Phase::Failed;
+            const bool bad = r.ok || Snap(p.root) != before || !NoPartial(p.base) || r.error.empty() || r.restoreNote.empty() || !r.rolledBack || j.progress().phase != okayup::Phase::Failed;
             if (bad) std::cerr << "  injected failure #" << i << " at " << calls[i].first << " " << calls[i].second << ": ok=" << r.ok << " error='" << r.error
                                << "' rolledBack=" << r.rolledBack << " tree-equal=" << (Snap(p.root) == before) << " partial-free=" << NoPartial(p.base) << "\n";
             CHECK(!bad);                                                          // the project is exactly as it was, and the reason is given
@@ -543,7 +543,7 @@ int main() {
             ++steps;
         }
         CHECK(j.result().ok && monotone && countsOk && steps > 20);                  // many small steps: the UI is never held for a big file
-        CHECK(j.progress().fraction > 0.999 && j.progress().phase == Phase::Done);
+        CHECK(j.progress().fraction > 0.999 && j.progress().phase == okayup::Phase::Done);
         CHECK(WithoutManifest(Snap(j.result().backupDir)) == Kept(before));         // the 3 MB binary file arrived whole, in chunks
         CHECK(!j.Step(std::chrono::milliseconds(5)));                                // finished jobs stay finished
 
@@ -552,7 +552,7 @@ int main() {
         const Tree b2 = Snap(q.root);
         UpgradeJob c(q.Opts("2.850.0"));
         for (int i = 0; i < 16; ++i) c.Step(std::chrono::milliseconds(0));          // into the middle of the copy
-        CHECK(!c.Finished() && c.progress().phase == Phase::Backup && c.progress().done > 0 && c.progress().total > 0);
+        CHECK(!c.Finished() && c.progress().phase == okayup::Phase::Backup && c.progress().done > 0 && c.progress().total > 0);
         CHECK(fs::exists(fs::path(c.result().backupDir.empty() ? (q.base / "My Game \xC3\xBC (backup v2.850.0).partial").string() : c.result().backupDir)));
         c.Cancel();
         c.Run();

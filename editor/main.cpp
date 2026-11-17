@@ -2272,6 +2272,17 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+// The Project Settings sections (Player, Physics, Rendering, Tags and Layers) stay on Dear ImGui by default even though the other
+// ported panels are OkayUI by default: their OkayUI ports still draw stray letters and overlaps (owner report 2026-11-17; fix on
+// claude2/okayui-ps-overdraw). They are OkayUI only when asked for by name: OKAY_UI_BACKEND=okayui or OKAY_UI_PROJECT_SETTINGS=okayui.
+bool UseOkayUIProjectSettings() {
+    if (!UseOkayUIBackend()) return false;
+    okayuibackend::Backend b = okayuibackend::Backend::ImGui;
+    if (const char* e = std::getenv("OKAY_UI_PROJECT_SETTINGS"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    b = okayuibackend::Backend::ImGui;
+    if (const char* e = std::getenv("OKAY_UI_BACKEND"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    return false;
+}
 // The script editor's code widget (editor/CodeEditorChoice.hpp): OKAY_CODE_EDITOR=own picks our own OkayUI::CodeEdit.
 const codeeditorchoice::Choice g_codeEditorChoice = codeeditorchoice::Parse(std::getenv("OKAY_CODE_EDITOR"));
 #ifdef OKAY_HAVE_OKAYUI
@@ -19766,7 +19777,7 @@ static void DrawTagsAndLayersSettings(EditorState& ed) {
         m.layers[(std::size_t)i].defaultName = okay::Layers::DefaultName(i);
     }
     okaypanels::TagsLayersIntent in;
-    if (!(UseOkayUIBackend() && DrawTagsLayersOkayUI(m, st, in)))   // the opt-in OkayUI port (editor/OkayPanels.cpp)
+    if (!(UseOkayUIProjectSettings() && DrawTagsLayersOkayUI(m, st, in)))   // the opt-in OkayUI port (editor/OkayPanels.cpp)
         in = DrawTagsLayersBodyImGui(m, st, PanelViewHooks());       // editor/EditorPanelViews.cpp
     if (in.strict >= 0) { okay::Tags::Strict() = in.strict == 1; SaveProjectSettings(); }
     if (in.addUnlisted) {
@@ -19831,7 +19842,7 @@ void DrawProjectSettings(EditorState& ed) {
             plm.version = g_project.version; plm.versionSize = sizeof(g_project.version);
             plm.width = &g_project.defaultWidth; plm.height = &g_project.defaultHeight;
             okaypanels::PlayerSettingsIntent plin;
-            if (!(UseOkayUIBackend() && DrawPlayerSettingsOkayUI(plm, plin))) plin = DrawPlayerSettingsBodyImGui(plm, PanelViewHooks());
+            if (!(UseOkayUIProjectSettings() && DrawPlayerSettingsOkayUI(plm, plin))) plin = DrawPlayerSettingsBodyImGui(plm, PanelViewHooks());
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Drawn from a model (shared/EditorPanelModels.hpp) by the Dear ImGui body (editor/EditorPanelViews.cpp) or, with the
@@ -19844,7 +19855,7 @@ void DrawProjectSettings(EditorState& ed) {
             pm.solverIterations = p3.solverIterations;
             pm.autoContinuous = p3.autoContinuous;
             okaypanels::PhysicsSettingsIntent pin;
-            if (!(UseOkayUIBackend() && DrawPhysicsSettingsOkayUI(pm, pin))) pin = DrawPhysicsSettingsBodyImGui(pm, PanelViewHooks());
+            if (!(UseOkayUIProjectSettings() && DrawPhysicsSettingsOkayUI(pm, pin))) pin = DrawPhysicsSettingsBodyImGui(pm, PanelViewHooks());
             if (pin.rateChanged) {
                 g_project.physicsHz = okaypanels::ClampStepsPerSecond(g_project.physicsHz);
                 okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
@@ -19880,7 +19891,7 @@ void DrawProjectSettings(EditorState& ed) {
             okaypanels::RenderingSettingsModel rm;
             rm.ambient = &g_project.ambient; rm.skybox = &g_project.skybox;
             okaypanels::RenderingSettingsIntent rin;
-            if (!(UseOkayUIBackend() && DrawRenderingSettingsOkayUI(rm, rin))) rin = DrawRenderingSettingsBodyImGui(rm, PanelViewHooks());
+            if (!(UseOkayUIProjectSettings() && DrawRenderingSettingsOkayUI(rm, rin))) rin = DrawRenderingSettingsBodyImGui(rm, PanelViewHooks());
             if (rin.apply) {
                 ed.scene().renderSettings.ambient = g_project.ambient;
                 ed.scene().renderSettings.skybox = g_project.skybox;

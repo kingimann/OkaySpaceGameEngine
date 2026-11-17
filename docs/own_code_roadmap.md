@@ -25,6 +25,7 @@ or renderer cannot start, the program starts on SDL by itself. Each program writ
 | Font rasteriser inside Dear ImGui's atlas (`shared/OwnImGuiFontLoader.hpp`) | own | `OKAY_OWN_FONT_RASTER=0` | 2026-11-17 |
 | Script code editor (`OkayUI::CodeEdit` instead of ImGuiColorTextEdit) | own | `OKAY_CODE_EDITOR=imgui` | 2026-11-17 |
 | Ported launcher pages and editor panels on OkayUI instead of Dear ImGui (CMake `OKAY_UI_DEFAULT_BACKEND=okayui`) | OkayUI | `OKAY_UI_BACKEND=imgui` | 2026-11-17 |
+| Project Settings sections on OkayUI (Player, Physics, Rendering, Tags and Layers) | **Dear ImGui** (stray letters and overlaps seen by the owner; fix on `claude2/okayui-ps-overdraw`) | opt in: `OKAY_UI_PROJECT_SETTINGS=okayui` or `OKAY_UI_BACKEND=okayui` | held back |
 | libsodium / `okay::crypto` | **libsodium** (unchanged, rule 18) | none | not approved, on purpose |
 | Model readers (ufbx, Assimp) | unchanged here; handled by `claude2/own-readers-integration` | `OKAY_OWN_<FMT>` | not part of this change |
 

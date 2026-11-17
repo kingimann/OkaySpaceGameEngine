@@ -12,7 +12,7 @@ static int Words(const std::string& s) { int n = 0; bool in = false; for (char c
 int main() {
     // Catalogue shape.
     std::set<std::string> ids;
-    static const char* verbs[] = {"Add", "Move", "Make", "Turn", "Squash", "Smooth", "Copy", "Cut", "Round", "Push", "Delete", "Paint", "Fix", "Put", "Save"};
+    static const char* verbs[] = {"Add", "Move", "Make", "Turn", "Squash", "Smooth", "Copy", "Cut", "Round", "Push", "Delete", "Paint", "Fix", "Put", "Save", "Pick"};
     for (const Tool& t : Tools()) {
         CHECK(ids.insert(t.id).second);
         const int w = Words(t.name);

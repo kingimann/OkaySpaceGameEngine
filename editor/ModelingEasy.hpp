@@ -14,7 +14,7 @@
 namespace oked::easymodel {
 
 // ---- Tabs -------------------------------------------------------------------------------------------------------------
-enum class Tab { Shape, Reshape, Details, Colour, Finish, Advanced };
+enum class Tab { Shape, Reshape, Details, Colour, Finish, Pick, Advanced };   // Pick = the buttons of the "Pick parts" row, not a tab
 constexpr int kBeginnerTabCount = 5;   // Advanced is a switch, not a tab, so a beginner never sees more than five
 inline const char* TabName(Tab t) {
     switch (t) {
@@ -29,6 +29,7 @@ inline const char* TabHelp(Tab t) {
         case Tab::Details: return "Cut it in half, add detail, round the edges, make it hollow, push faces out.";
         case Tab::Colour:  return "Paint the whole model or just the faces you picked.";
         case Tab::Finish:  return "Fix problems, put it on the ground, give it a solid body and save it.";
+        case Tab::Pick:    return "Pick the whole part, or everything that looks the same.";
         default:           return "The full toolset for people who know 3D modeling.";
     }
 }
@@ -74,6 +75,9 @@ inline const std::vector<Tool>& Tools() {
         // Colour
         {"paint.faces","Paint faces", "Colours only the faces you picked.",               "Paint one wall red.",                  Tab::Colour, Needs::Faces, ""},
         {"paint.all", "Paint all",    "Colours the whole model.",                         "Make the whole car blue.",             Tab::Colour, Needs::Model, ""},
+        // Pick parts row
+        {"select.part",    "Pick whole part", "Picks everything that is joined to what you picked.", "Click one wheel face, get the whole wheel.", Tab::Pick, Needs::Parts, "Double-click"},
+        {"select.similar", "Pick similar",    "Picks every face that looks the same way as the ones you picked.", "Pick every wall that faces the front.", Tab::Pick, Needs::Faces, ""},
         // Finish
         {"fix.problems","Fix problems","Closes holes and joins loose corners, then says what it did.", "Fix a model that shows gaps.", Tab::Finish, Needs::Model, ""},
         {"on.ground", "Put on ground","Moves the model so it sits on the ground.",        "Stop a tree from floating.",           Tab::Finish, Needs::Model, ""},

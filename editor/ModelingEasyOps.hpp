@@ -4,7 +4,9 @@
 // algorithm: this is only the mapping from a plain tool id to those calls, so it can be tested without a window.
 // Tools that need the editor (add a shape, set the gizmo, collision, save) are not here; the window runs them.
 #include "ModelingEasy.hpp"
+#include "okay/Modeling/SelectOps.hpp"
 #include "okay/Render/Mesh.hpp"
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,5 +61,52 @@ inline ToolResult RunMeshTool(okay::Mesh& m, const std::string& id, const ToolAr
     else r.handled = false;
     return r;
 }
+
+/// The pick tools ("Pick whole part", "Pick similar"): they change what is picked, never the mesh.
+struct PickResult { bool handled = false, ok = false; std::vector<int> faces, corners; std::string message; };
+inline PickResult RunPickTool(const okay::Mesh& m, const std::string& id, const ToolArgs& a) {
+    PickResult r;
+    if (id != "select.part" && id != "select.similar") return r;
+    r.handled = true;
+    const int tris = m.TriangleCount();
+    const int nv = (int)m.vertices.size();
+    if (id == "select.part") {
+        int seed = -1;
+        if (!a.faces.empty() && a.faces[0] >= 0 && a.faces[0] < tris) seed = m.triangles[(std::size_t)a.faces[0] * 3];
+        else if (!a.corners.empty()) seed = a.corners[0];
+        if (seed < 0 || seed >= nv) { r.message = "Pick something first."; return r; }
+        const std::vector<int> link = m.LinkedVertices(seed);
+        const std::set<int> in(link.begin(), link.end());
+        if (!a.faces.empty()) {
+            for (int t = 0; t < tris; ++t)
+                if (in.count(m.triangles[(std::size_t)t * 3]) && in.count(m.triangles[(std::size_t)t * 3 + 1]) && in.count(m.triangles[(std::size_t)t * 3 + 2])) r.faces.push_back(t);
+        } else r.corners = link;
+        r.ok = true;
+    } else {
+        if (a.faces.empty()) { r.message = "Select at least one face first."; return r; }
+        for (int f : a.faces) if (f < 0 || f >= tris) { r.message = "Select at least one face first."; return r; }
+        r.faces = okay::modeling::SelectSimilar(m, a.faces, okay::modeling::SimilarKind::Normal, 5.0f);
+        r.ok = true;
+    }
+    return r;
+}
+
+/// Tools whose result depends on the "How much" slider (they can be previewed while it is dragged).
+inline bool UsesStrength(const std::string& id) { return id == "squash" || id == "smooth" || id == "round.it" || id == "round.corners"; }
+
+/// Live preview for the "How much" slider. While the slider moves, the tool is run on a copy of the model as it was when the drag
+/// started (so the preview never piles up); when the slider is let go, End() puts the model back exactly and the caller runs the tool
+/// once for real (one undo step). Cost while dragging: one copy of the mesh plus one run of the tool per moved frame, nothing when idle.
+struct StrengthPreview {
+    bool active = false;
+    okay::Mesh before;
+    void Update(okay::Mesh& m, const std::string& id, const ToolArgs& a) {
+        if (!active) { before = m; active = true; }
+        m = before;
+        RunMeshTool(m, id, a);
+    }
+    /// True when a preview was on screen (the mesh is back to what it was).
+    bool End(okay::Mesh& m) { if (!active) return false; m = before; before = okay::Mesh(); active = false; return true; }
+};
 
 } // namespace oked::easymodel

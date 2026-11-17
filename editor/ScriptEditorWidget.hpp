@@ -1,8 +1,9 @@
 #pragma once
 // ScriptEditorWidget: the script editor's code widget. It owns BOTH an ImGuiColorTextEdit (the default, the one people use)
 // and an OkayUI::CodeEdit behind the adapter (editor/ScriptEditorCodeEdit.hpp), and forwards every call the script editor
-// makes to the one that is active. The active one follows the UI backend: OkayUI only when the developer-only switch picked it
-// (oked::UseOkayUIBackend(), see docs/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as before.
+// makes to the one that is active. The active one is OkayUI when oked::UseOwnCodeEditor() says so: OKAY_CODE_EDITOR=own, or
+// (unset) the developer-only OkayUI backend (docs/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as
+// before. See editor/CodeEditorChoice.hpp.
 // When the backend changes while a script is open, the text, caret and selection move to the newly active editor.
 //
 // It speaks TextEditor's vocabulary (TextEditor::Coordinates, 1-based error markers and breakpoints, GetText ending in a
@@ -13,13 +14,19 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
+#include "OkayUIInImGui.hpp"
+namespace oked { extern SDL_Renderer* g_sdlRenderer; }   // main.cpp: the renderer ImGui and OkayUI draw with (null on the own renderer)
+namespace oked { okay::platform::Painter* EditorPainter(); }   // main.cpp: the own renderer's painter (null on sdl / before start)
 #endif
 
 class ScriptEditorWidget {
@@ -33,12 +40,30 @@ public:
     scripteditor::ScriptEditorCodeEdit& okay() { return okay_; }
 
     // ---- one-time configuration (the ImGui editor's look; the OkayUI editor has its own palette) ----
-    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) { imgui_.SetLanguageDefinition(d); }
-    void SetPalette(const TextEditor::Palette& p) { imgui_.SetPalette(p); }
+    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) {
+        imgui_.SetLanguageDefinition(d);
+        // the same words for our own editor: keywords, type names, built-ins (with their hover help)
+        std::unordered_set<std::string> kw(d.mKeywords.begin(), d.mKeywords.end()), types(d.mTypeNames.begin(), d.mTypeNames.end()), known;
+        std::unordered_map<std::string, std::string> info;
+        for (const auto& id : d.mIdentifiers) {
+            if (!types.count(id.first)) known.insert(id.first);
+            if (!id.second.mDeclaration.empty()) info[id.first] = id.second.mDeclaration;
+        }
+        okay_.SetLanguageWords(kw, types, known, std::move(info));
+    }
+    void SetPalette(const TextEditor::Palette& p) {
+        imgui_.SetPalette(p);
+        std::uint32_t c[(int)TextEditor::PaletteIndex::Max];
+        for (int i = 0; i < (int)TextEditor::PaletteIndex::Max; ++i) c[i] = (std::uint32_t)p[(size_t)i];
+        okay_.SetPalette(c, (int)TextEditor::PaletteIndex::Max);
+    }
+    void SetReadOnly(bool on) { imgui_.SetReadOnly(on); okay_.SetReadOnly(on); }
+    /// The script editor's zoom (Ctrl+wheel); the ImGui editor gets it through the pushed code font, ours through the text scale.
+    void SetZoom(float z) { zoom_ = (z > 0.25f && z < 8.0f) ? z : 1.0f; }
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
-    void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); }
+    void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); okay_.SetLeftMargin(m); }
 
     // ---- text ----
     void SetText(const std::string& t) { if (Okay()) okay_.SetText(t); else imgui_.SetText(t); }
@@ -82,8 +107,14 @@ public:
     /// window; the OkayUI one reports its own focus (call after Render).
     bool OkayHasKeyboard() const { return okayFocused_; }
     bool UsingOkayUI() { return Okay(); }
+    /// The script editor used this frame's typed character for something else (stepping over a closing bracket, Alt+1): the
+    /// ImGui editor never sees it because the character was taken out of ImGui's queue; ours gets its text from SDL, so it is
+    /// told to drop it. Call before Render.
+    void DropTypedText() { if (Okay()) okay_.Edit().DropTypedText(); }
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
+    /// Ours is drawn INTO this ImGui window's draw list (okayimgui::DrawOkayUIHere), at ImGui's layer, so the autocomplete
+    /// list, the hover help and any ImGui popup or window opened over the code later in the frame are drawn on top of it.
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {
         if (!Okay()) { imgui_.Render(id, size, border); return; }
 #ifdef OKAY_HAVE_OKAYUI
@@ -93,21 +124,51 @@ public:
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
+        const ImGuiID item = ImGui::GetItemID();
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+        // The keyboard is the code's only while this ImGui window is focused, as the ImGui editor's is only while its child window
+        // is: a popup, another window (Ctrl+Tab, a click) or the find box takes it, and it comes back with the window's focus.
+        const bool hostFocused = ImGui::IsWindowFocused();
+        if (!hostFocused) okay_.SetHandleKeyboardInputs(false);
+        okay_.Edit().SetHostDrawsTooltip(true);                 // the hover help goes into ImGui's tooltip layer (below)
+        {   // the wheel scrolls as an ImGui child window does: 5 font heights down, 2 sideways, at most 2/3 of the view
+            const float fs = ImGui::GetFontSize();
+            okay_.Edit().SetWheelStep(std::floor(std::min(5.0f * fs, a.y * 0.67f)), std::floor(std::min(2.0f * fs, a.x * 0.67f)));
+        }
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        OkayUI::PushTextScale(oked::g_uiScale);
-        OkayUI::BareNextWindow();
-        if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
-        OkayUI::End();
+        okayimgui::StyleLikeImGuiChild(okay_.Edit(), ImGui::GetStyle());   // sits in the rectangle as the ImGui editor's child does
+        OkayUI::PushTextScale(oked::g_uiScale * zoom_);         // 16 px code at 100 %, the ImGui editor's kCodeFontDispPx x zoom
+        OkayUI::MouseCursor cursor = OkayUI::MouseCursor_Arrow;   // the I-beam over the text, as the ImGui editor shows it
+        okayimgui::DrawOkayUIHere(id, p, a, [&] { cursor = okayimgui::CursorOf([&] { okay_.Edit().Draw("##codeedit", a.x, a.y); }); },
+                                  CodeTextures(), geo_);
+        okayimgui::SetImGuiCursor(cursor);
         OkayUI::PopTextScale();
-        okayFocused_ = okay_.Edit().Focused();
+        if (border) {                                           // the child window's border the ImGui editor has
+            const ImGuiStyle& st = ImGui::GetStyle();
+            ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
+                                                st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
+        }
+        okayFocused_ = okay_.Edit().Focused() && hostFocused;
+        if (!hostFocused) okay_.SetHandleKeyboardInputs(true);  // (the script editor sets it again before the next Render)
+        if (okayFocused_) okayimgui::ClaimKeyboardForCode(item);
+        okayimgui::ShowCodeHover(okay_.Edit().Hover());
 #endif
     }
 
 private:
+#ifdef OKAY_HAVE_OKAYUI
+    // OkayUI's textures as ImGui texture ids: SDL_Renderer textures on the sdl renderer, painter textures on the own one
+    // (OKAY_EDITOR_RENDERER=own, the default), where there is no SDL_Renderer.
+    static std::function<ImTextureID(const void*)> CodeTextures() {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+        if (oked::g_sdlRenderer) return okayimgui::SdlRendererTextures(oked::g_sdlRenderer);
+#endif
+        return okayimgui::PainterTextures(&oked::EditorPainter);
+    }
+#endif
     bool Okay() {
 #ifdef OKAY_HAVE_OKAYUI
-        const bool want = oked::UseOkayUIBackend();
+        const bool want = oked::UseOwnCodeEditor();
 #else
         const bool want = false;
 #endif
@@ -140,4 +201,8 @@ private:
     scripteditor::ScriptEditorCodeEdit okay_;
     bool lastOkay_ = false;
     bool okayFocused_ = false;
+    float zoom_ = 1.0f;
+#ifdef OKAY_HAVE_OKAYUI
+    OkayUI::CapturedGeometry geo_;   // the code area's geometry of this frame, on its way into ImGui's draw list
+#endif
 };

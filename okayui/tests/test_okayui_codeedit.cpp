@@ -4,8 +4,11 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
+#include <iostream>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -962,6 +965,9 @@ void ExtraTests() {
 // ---------------------------------------------------------------------------------------------
 // What is drawn
 // ---------------------------------------------------------------------------------------------
+int ChR(unsigned c) { return (int)(c >> 24); }
+int ChG(unsigned c) { return (int)((c >> 16) & 255); }
+int ChB(unsigned c) { return (int)((c >> 8) & 255); }
 unsigned C32(UI::Color32 c) { return Rgba((int)(c & 255), (int)((c >> 8) & 255), (int)((c >> 16) & 255), (int)((c >> 24) & 255)); }
 
 const char* kSample =
@@ -982,7 +988,7 @@ void DrawTests() {
     r.ce.SetLanguage(UI::OkayScriptLanguage());
     r.ce.SetText(kSample);
     r.ce.SetBreakpoints({2});
-    r.ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}});
+    r.ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}, UI::CodeMarker{8, 0, -1, "extra brace", 0}});
     r.ce.SetFind("speed");
     r.Frames(2);
     ClickPos(r, P(5, 12));                                                      // in the "{" of the if: caret next to a bracket
@@ -995,13 +1001,30 @@ void DrawTests() {
     const UI::Rect it = r.ce.ItemRect(), vr = r.ce.ViewRect();
     const float lh = r.ce.LineHeight();
     auto rowY = [&](int l) { return r.ce.PosToScreen(P(l, 0)).y; };
-    // breakpoint dot: centre pixel is exactly the palette colour
-    CHECK(PixelAt(bmp, (int)(it.x + lh * 0.5f), (int)(rowY(2) + lh * 0.5f)) == C32(pal.breakpoint));
-    CHECK(PixelAt(bmp, (int)(it.x + lh * 0.5f), (int)(rowY(1) + lh * 0.5f)) == C32(pal.gutter));
-    // the error mark in the gutter, and the wash over the line
-    CHECK(PixelAt(bmp, (int)(vr.x - 2), (int)(rowY(4) + 4)) == C32(pal.errorUnderline));
-    CHECK(PixelAt(bmp, (int)(vr.x - 2), (int)(rowY(5) + 4)) == C32(pal.gutter));
+    // a breakpoint washes its whole row, the gutter included (as ImGuiColorTextEdit fills the line); no dot
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(2) + lh * 0.5f)) != C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(1) + lh * 0.5f)) == C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(2) + 1)) != PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(1) + 1)));
+    // an error washes its whole row too, gutter included
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(4) + 2)) != C32(pal.gutter));
+    CHECK(PixelAt(bmp, (int)(it.x + 2), (int)(rowY(5) + 2)) == C32(pal.gutter));
     CHECK(PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(4) + 2)) != PixelAt(bmp, (int)(vr.x + vr.w - 3), (int)(rowY(6) + 2)));
+    {   // the error's message is written after the end of the line, four characters on, in the error colour (clipped to the view)
+        const float mx0 = r.ce.PosToScreen(P(8, (int)r.ce.Line(8).size())).x + 4.0f * r.ce.CharWidth();
+        int red = 0, before = 0;
+        for (int y = (int)rowY(8); y < (int)(rowY(8) + lh); ++y) {
+            for (int x = (int)mx0; x < (int)(vr.x + vr.w); ++x) {
+                const unsigned c = PixelAt(bmp, x, y);
+                if (ChR(c) > ChG(c) + 40) ++red;
+            }
+            for (int x = (int)(mx0 - 3.0f * r.ce.CharWidth()); x < (int)mx0 - 1; ++x) {
+                const unsigned c = PixelAt(bmp, x, y);
+                if (ChR(c) > ChG(c) + 40) ++before;
+            }
+        }
+        CHECK(red > 10);
+        CHECK(before == 0);   // nothing between the end of the code and the message
+    }
     // line numbers are drawn
     CHECK(CountNot(bmp, (int)(it.x + lh), (int)rowY(0), (int)vr.x - 4, (int)(rowY(0) + lh), C32(pal.gutter)) > 5);
     // the selection tints empty space after the end of line 2 (the newline is selected) but not after line 1... (line 1 is not selected)
@@ -1132,6 +1155,490 @@ void PerfTests() {
     CHECK(tUndo < 3000 * slack);
 }
 
+
+// The code font (launcher look): JetBrains Mono, the font the script editor's ImGui widget uses. Every character advances the
+// same whole number of pixels, the text is drawn in runs (no per-character centring), each glyph lies in its own column, and
+// the row is the font height times the spacing without rounding (as ImGuiColorTextEdit). At 16 px JetBrains Mono's advance
+// (600 of 1320 units of ascent minus descent) is 7.27 px, drawn as 7: the same 7 px ImGui draws with PixelSnapH.
+void CodeFontTests() {
+    Rig r;
+    UI::UseLauncherLook(true);
+    r.ce.SetHighlighter(nullptr);
+    r.ce.SetLineSpacing(1.55f);
+    r.ce.SetText("iiiiWWWW\nmlmlmlml\n0123456789");
+    r.Frame();
+    CHECK(r.ce.MonospaceFont());
+    CHECK(r.ce.CharWidth() == 7.0f);                                  // 16 px text (launcher look's text scale 2 x 8)
+    CHECK(std::fabs(r.ce.LineHeight() - 16.0f * 1.55f) < 1e-4f);      // 24.8, not rounded
+    UI::PushCodeFont();
+    CHECK(UI::CodeFontActive());
+    CHECK(UI::CalcTextSize("iiiiWWWW").x == UI::CalcTextSize("mlmlmlml").x);   // fixed width while pushed
+    UI::PopCodeFont();
+    CHECK(!UI::CodeFontActive());
+    CHECK(UI::CalcTextSize("iiii").x != UI::CalcTextSize("WWWW").x);           // the UI font again
+    const UI::DrawData data = UI::GetDrawData();
+    const auto* v = static_cast<const UI::DrawVertex*>(data.vertices);
+    const float top = r.ce.PosToScreen(P(0, 0)).y, x0 = r.ce.PosToScreen(P(0, 0)).x, cw = r.ce.CharWidth(), lh = r.ce.LineHeight();
+    for (int line = 0; line < 3; ++line) {
+        std::vector<float> centres;
+        const float y0 = top + line * lh, y1 = y0 + lh;
+        for (int c = 0; c < data.cmdCount; ++c) {
+            const UI::DrawCmd& cmd = data.cmds[c];
+            if (cmd.texture != data.atlasTexture) continue;
+            for (int i = cmd.idxOffset; i + 5 < cmd.idxOffset + cmd.idxCount; i += 6) {
+                float mnx = 1e9f, mxx = -1e9f, mny = 1e9f, mxy = -1e9f;
+                for (int k = 0; k < 6; ++k) {
+                    const UI::DrawVertex& q = v[data.indices[i + k]];
+                    mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y);
+                }
+                const float cy = (mny + mxy) * 0.5f;
+                const bool glyph = mxx - mnx >= 2.0f && mxx - mnx < cw * 2.0f && mnx < x0 + 20.0f * cw;   // not the row's 1 px box
+                if (glyph && cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
+            }
+        }
+        std::sort(centres.begin(), centres.end());
+        const size_t want = line == 2 ? 10 : 8;
+        CHECK(centres.size() == want);
+        bool inCells = centres.size() == want;
+        for (size_t k = 0; k < centres.size() && k < want; ++k)
+            if (!(centres[k] >= x0 + (float)k * cw && centres[k] < x0 + (float)(k + 1) * cw)) inCells = false;
+        CHECK(inCells);
+    }
+    // the gutter: " N " in characters plus the margin (one row tall with breakpoints shown); the numbers end two characters left of the text
+    CHECK(std::fabs(r.ce.GutterWidth() - (std::floor(lh + 0.5f) + 3.0f * cw)) < 1e-3f);
+    r.ce.SetLeftMargin(22.0f);
+    r.ce.SetPadding(8.0f, 8.0f);
+    r.Frame();
+    CHECK(std::fabs(r.ce.GutterWidth() - (8.0f + 22.0f + 3.0f * cw)) < 1e-3f);
+    CHECK(r.ce.ViewRect().y == r.ce.ItemRect().y + 8.0f);
+    CHECK(r.ce.PosToScreen(P(0, 0)).x == r.ce.ViewRect().x);
+    // no code font: the UI font as before (rounded rows)
+    r.ce.SetUseCodeFont(false);
+    r.Frame();
+    CHECK(!r.ce.MonospaceFont());
+    CHECK(r.ce.LineHeight() == std::floor(r.ce.LineHeight()));
+    UI::UseLauncherLook(false);
+    r.Frame();
+    CHECK(r.ce.MonospaceFont());
+    CHECK(r.ce.LineHeight() == std::floor(r.ce.LineHeight()));        // the 8x8 font: whole pixels
+}
+
+// The current line: a fill and a 1 px box across the whole row (gutter included) whenever there is no selection, dimmer
+// without the keyboard; a warning marker uses the warning colours and has no underline.
+void RowLookTests() {
+    Rig r(560, 340);
+    r.w = 520; r.h = 300;
+    UI::CodePalette pal = UI::DefaultCodePalette();
+    pal.currentLine = UI::RGBA(255, 255, 255, 40); pal.currentLineInactive = UI::RGBA(255, 255, 255, 20);
+    pal.currentLineEdge = UI::RGBA(255, 0, 255, 255);
+    r.ce.SetPalette(pal);
+    r.ce.SetHighlighter(nullptr);
+    r.ce.SetText("one\ntwo\nthree\nfour");
+    UI::CodeMarker warn; warn.line = 3; warn.message = "careful"; warn.warning = true; warn.underline = false;
+    r.ce.SetMarkers({warn});
+    r.Frame();
+    ClickPos(r, P(1, 1));
+    const UI::Rect it = r.ce.ItemRect();
+    const float y1 = r.ce.PosToScreen(P(1, 0)).y, lh = r.ce.LineHeight();
+    const unsigned edge = C32(pal.currentLineEdge);
+    unsigned focusedFill = 0;
+    {
+        const Bitmap& bmp = r.sim.Draw(12, 14, 20);
+        int edgeTop = 0;
+        for (int x = (int)it.x; x < (int)(it.x + 40); ++x) if (PixelAt(bmp, x, (int)y1) == edge) ++edgeTop;
+        CHECK(edgeTop > 30);                                          // the box runs through the gutter
+        CHECK(PixelAt(bmp, (int)(it.x + 3), (int)(y1 + lh * 0.5f)) != PixelAt(bmp, (int)(it.x + 3), (int)(r.ce.PosToScreen(P(2, 0)).y + lh * 0.5f)));
+        focusedFill = PixelAt(bmp, (int)(it.x + 5), (int)(y1 + lh * 0.5f));
+    }
+    ClickAt(r, 5, 330);                                               // away: no keyboard
+    {
+        const Bitmap& b2 = r.sim.Draw(12, 14, 20);
+        CHECK(PixelAt(b2, (int)it.x + 3, (int)y1) == edge);           // still boxed
+        CHECK(PixelAt(b2, (int)(it.x + 5), (int)(y1 + lh * 0.5f)) != focusedFill);   // a dimmer fill
+    }
+    // a selection: no current-line box
+    r.ce.SetSelection(P(0, 0), P(1, 2));
+    r.Frame();
+    const Bitmap& b3 = r.sim.Draw(12, 14, 20);
+    CHECK(PixelAt(b3, (int)it.x + 3, (int)y1) != edge);
+    // the warning: an amber message after the line
+    const float y3 = r.ce.PosToScreen(P(3, 0)).y;
+    const float mx0 = r.ce.PosToScreen(P(3, 4)).x + 4.0f * r.ce.CharWidth();
+    int amber = 0, red = 0;
+    for (int y = (int)y3; y < (int)(y3 + lh); ++y) for (int x = (int)mx0; x < (int)(mx0 + 60); ++x) {
+        const unsigned c = PixelAt(b3, x, y);
+        const int R = ChR(c), G = ChG(c), B = ChB(c);
+        if (R > B + 40 && G > B + 20) ++amber;
+        if (R > G + 60) ++red;
+    }
+    CHECK(amber > 10);
+    CHECK(red == 0);
+    // no underline under the warning's text
+    int under = 0;
+    const float x3 = r.ce.PosToScreen(P(3, 0)).x;
+    for (int y = (int)(y3 + lh - 4); y < (int)(y3 + lh); ++y) for (int x = (int)x3; x < (int)(x3 + 4 * r.ce.CharWidth()); ++x) {
+        const unsigned c = PixelAt(b3, x, y);
+        if (ChR(c) > ChG(c) + 60) ++under;
+    }
+    CHECK(under == 0);
+}
+
+
+// Geometry capture (OkayUI::BeginGeometryCapture / EndGeometryCapture): what a CodeEdit draws is taken out of the frame whole.
+// Drawn back from the capture it gives the same pixels as the frame drawn normally; the frame keeps what came before and after.
+void CaptureTests() {
+    for (int look = 0; look < 2; ++look) {
+        Reset();
+        if (look == 1) UI::UseLauncherLook(true);
+        Sim sim(500, 300);
+        CodeEdit ce;
+        ce.SetLanguage(UI::OkayScriptLanguage());
+        ce.SetText(kSample);
+        ce.SetMarkers({UI::CodeMarker{4, 0, -1, "unknown name", 0}});
+        UI::CapturedGeometry geo;
+        bool capture = false;
+        auto ui = [&] {
+            UI::BareNextWindow();                                                        // a window before, in the main batch
+            if (UI::Begin("before", 0, 0, 10, 10)) UI::GetWindowDrawList().AddRectFilled(UI::Vec2{0, 0}, UI::Vec2{8, 8}, UI::RGBA(255, 0, 0));
+            UI::End();
+            if (capture) UI::BeginGeometryCapture();
+            UI::BareNextWindow();
+            if (UI::Begin("code", 20, 20, 460, 260)) ce.Draw("ed", 460, 260);
+            UI::End();
+            if (capture) UI::EndGeometryCapture(geo);
+            UI::BareNextWindow();                                                        // and one after
+            if (UI::Begin("after", 490, 290, 10, 10)) UI::GetWindowDrawList().AddRectFilled(UI::Vec2{492, 292}, UI::Vec2{500, 300}, UI::RGBA(0, 255, 0));
+            UI::End();
+        };
+        sim.Frames(2, ui);
+        const Bitmap normal = sim.Draw(0, 0, 0);
+        const int fullIdx = UI::GetDrawData().indexCount;
+        capture = true;
+        sim.Frame(ui);
+        const UI::DrawData left = UI::GetDrawData();
+        CHECK(!geo.indices.empty() && !geo.cmds.empty());
+        CHECK(left.indexCount + (int)geo.indices.size() == fullIdx);   // moved out, nothing lost or doubled
+        int sum = 0; bool inRange = true;
+        for (const UI::DrawCmd& c : geo.cmds) { sum += c.idxCount; if (c.idxOffset < 0 || c.idxOffset + c.idxCount > (int)geo.indices.size()) inRange = false; }
+        for (int ix : geo.indices) if (ix < 0 || ix >= (int)geo.vertices.size()) inRange = false;
+        CHECK(sum == (int)geo.indices.size() && inRange);
+        if (look == 1) {   // the launcher look's text samples the atlas
+            bool atlas = false;
+            for (const UI::DrawCmd& c : geo.cmds) if (c.texture && c.texture == left.atlasTexture) atlas = true;
+            CHECK(atlas);
+        }
+        // what is left: the two corner squares, and no code
+        Bitmap rest(500, 300); rest.Clear(0, 0, 0);
+        UI::soft::Render(left, rest);
+        CHECK(PixelAt(rest, 2, 2) == Rgba(255, 0, 0) && PixelAt(rest, 497, 297) == Rgba(0, 255, 0));
+        CHECK(CountNot(rest, 20, 20, 480, 280, Rgba(0, 0, 0)) == 0);
+        // the capture drawn after what was left gives the normal frame's pixels inside the code's rectangle
+        UI::DrawData cd = left;
+        cd.vertices = geo.vertices.data(); cd.vertexCount = (int)geo.vertices.size();
+        cd.indices = geo.indices.data(); cd.indexCount = (int)geo.indices.size();
+        cd.cmds = geo.cmds.data(); cd.cmdCount = (int)geo.cmds.size();
+        UI::soft::Render(cd, rest);
+        int differ = 0;
+        for (int y = 20; y < 280; ++y) for (int x = 20; x < 480; ++x) if (PixelAt(rest, x, y) != PixelAt(normal, x, y)) ++differ;
+        CHECK(differ == 0);
+        // input still reaches the editor while it is captured: a click focuses it
+        sim.Click(200, 100, ui);
+        CHECK(ce.Focused());
+        // an EndGeometryCapture without a Begin gives nothing and takes nothing
+        capture = false;
+        sim.Frame([&] { ui(); UI::EndGeometryCapture(geo); });
+        CHECK(geo.indices.empty() && UI::GetDrawData().indexCount > 0);
+        UI::UseLauncherLook(false);
+    }
+}
+
+// A proportional font (the launcher look's Roboto): every glyph lands in its own cell, so the caret and selection line up.
+// Also overwrite mode's caret and the hover help on the bare widget.
+void ProportionalAndOverwriteTests() {
+    {
+        Rig r;
+        UI::UseLauncherLook(true);
+        r.ce.SetUseCodeFont(false);                   // the launcher look's own Roboto, not the code font
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("iiiiWWWW\nmlmlmlml");
+        r.Frame();
+        CHECK(!r.ce.MonospaceFont());
+        CHECK(r.ce.CharWidth() >= UI::CalcTextSize("0").x);
+        const UI::DrawData data = UI::GetDrawData();
+        const UI::DrawData* dd = &data;
+        const auto* v = static_cast<const UI::DrawVertex*>(dd->vertices);
+        const float top = r.ce.PosToScreen(P(0, 0)).y, x0 = r.ce.PosToScreen(P(0, 0)).x, cw = r.ce.CharWidth();
+        for (int line = 0; line < 2; ++line) {
+            // the glyph quads of this line: textured triangles inside its row and right of the gutter
+            std::vector<float> centres;
+            const float y0 = top + line * r.ce.LineHeight(), y1 = y0 + r.ce.LineHeight();
+            for (int c = 0; c < dd->cmdCount; ++c) {
+                const UI::DrawCmd& cmd = dd->cmds[c];
+                if (!cmd.texture || cmd.texture != dd->atlasTexture) continue;
+                for (int i = cmd.idxOffset; i + 5 < cmd.idxOffset + cmd.idxCount; i += 6) {   // two triangles per glyph
+                    float mnx = 1e9f, mxx = -1e9f, mny = 1e9f, mxy = -1e9f;
+                    for (int k = 0; k < 6; ++k) {
+                        const UI::DrawVertex& q = v[dd->indices[i + k]];
+                        mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y);
+                    }
+                    const float cy = (mny + mxy) * 0.5f;
+                    const bool glyph = mxx - mnx >= 2.0f && mxx - mnx < cw * 2.0f && mnx < x0 + 20.0f * cw;   // not the row's 1 px box
+                    if (glyph && cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
+                }
+            }
+            std::sort(centres.begin(), centres.end());
+            CHECK(centres.size() == 8);
+            bool inCells = centres.size() == 8;
+            for (size_t k = 0; k < centres.size() && k < 8; ++k)
+                if (!(centres[k] >= x0 + (float)k * cw && centres[k] < x0 + (float)(k + 1) * cw)) inCells = false;
+            CHECK(inCells);
+        }
+        UI::UseLauncherLook(false);
+        r.Frame();
+        CHECK(r.ce.MonospaceFont());                  // the classic 8x8 font
+        CHECK(r.ce.CharWidth() == UI::CalcTextSize("0").x);
+    }
+    {   // overwrite caret: a block one cell wide instead of the 2-pixel bar
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("abc");
+        r.Frame();                                    // the geometry the click needs
+        ClickPos(r, P(0, 1));
+        CHECK(r.ce.Focused() && At(r.ce, 0, 1));
+        r.Frame();
+        const Bitmap bar = r.sim.Draw();
+        r.ce.SetOverwrite(true);
+        r.Frame();
+        const Bitmap block = r.sim.Draw();
+        const int cx = (int)r.X(P(0, 1)), cy = (int)r.Y(P(0, 1));
+        // 4 pixels right of the caret's left edge: part of the block, not of the bar
+        const int fx = cx + (int)(r.ce.CharWidth() * 0.6f);
+        int changed = 0;
+        for (int y = cy - 3; y <= cy + 3; ++y) if (PixelAt(bar, fx, y) != PixelAt(block, fx, y)) ++changed;
+        CHECK(changed >= 5);
+        CHECK(r.ce.TypeText("X") && r.ce.Line(0) == "aXc");
+        r.ce.SetReadOnly(true);
+        CHECK(!r.ce.TypeText("Y") && r.ce.Line(0) == "aXc");
+    }
+    {   // hover help on the bare widget: no tooltip while dragging or over an error message's line
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetWordInfo({{"foo", "foo() does a thing"}});
+        r.ce.SetText("foo bar\nfoo");
+        r.Frame();
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 1)) + 1.0f, r.Y(P(0, 1))) == "foo");
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 5)) + 1.0f, r.Y(P(0, 5))) == "bar");
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))) == "");
+        CHECK(r.ce.WordAtScreen(-5.0f, -5.0f) == "" && r.ce.WordAtScreen(NAN, NAN) == "");
+        auto tipPixels = [&](CodePos at) {
+            r.sim.Move(r.X(at) + 1.0f, r.Y(at)); r.Frame(); r.Frame();
+            const Bitmap a = r.sim.Draw();
+            r.sim.Move(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))); r.Frame(); r.Frame();   // over the space: no tooltip
+            const Bitmap b = r.sim.Draw();
+            int d = 0;
+            for (int y = 0; y < (int)r.sim.H; ++y) for (int x = 0; x < (int)r.sim.W; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) ++d;
+            return d;
+        };
+        CHECK(tipPixels(P(0, 1)) > 100);              // "foo": a tooltip (plus the moved pointer's nothing)
+        CHECK(tipPixels(P(0, 5)) < 20);               // "bar": no help, no tooltip
+        UI::CodeMarker m; m.line = 1; m.message = "oops";
+        r.ce.SetMarkers({m});
+        // on line 1 the error message wins: same pixels whether or not the word has help
+        r.sim.Move(r.X(P(1, 1)) + 1.0f, r.Y(P(1, 1))); r.Frame(); r.Frame();
+        const Bitmap withHelp = r.sim.Draw();
+        r.ce.SetWordInfo({});
+        r.Frame(); r.Frame();
+        const Bitmap noHelp = r.sim.Draw();
+        int d = 0;
+        for (int y = 0; y < (int)r.sim.H; ++y) for (int x = 0; x < (int)r.sim.W; ++x) if (PixelAt(withHelp, x, y) != PixelAt(noHelp, x, y)) ++d;
+        CHECK(d == 0);
+    }
+}
+
+
+// The launcher look's glyph atlas: Roboto and JetBrains Mono at six sizes first; the first time code is drawn past the largest
+// (the script editor's code at 16 px x UI scale 0.7 to 2 x zoom 0.7 to 3, so up to 96 px) it grows, between two frames, to nine
+// code sizes. Checked: the sizes, the memory, that every scale and zoom then draws from a bake at least as large, that UI text
+// looks the same after the growth, and the growth path itself (height doubled until it fits, else the UI font alone).
+void AtlasTests() {
+    UI::UseLauncherLook(true);
+    auto say = [](const char* what, const UI::FontAtlasInfo& a) {
+        std::cout << "  " << what << ": " << a.width << " x " << a.height << ", glyphs in " << a.usedRows << " rows, " << a.grows
+                  << " doubling(s), " << a.uiSizes << " UI sizes (to " << a.largestUiPx << " px), " << a.codeSizes << " code sizes (to "
+                  << a.largestCodePx << " px), " << (double)a.bytes / (1024.0 * 1024.0) << " MB RGBA, built in " << a.buildMs << " ms\n";
+    };
+    auto upscaledPairs = [](float& worst) {
+        int n = 0; worst = 0.0f;
+        for (int u = 70; u <= 200; u += 5)
+            for (int z = 7; z <= 30; ++z) {
+                const float px = 16.0f * (float)u / 100.0f * (float)z / 10.0f, bake = UI::CodeFontBakedSizeFor(px);
+                if (bake < px - 0.5f) ++n;
+                worst = std::max(worst, px / bake);
+            }
+        return n;
+    };
+    const UI::FontAtlasInfo a = UI::GetFontAtlasInfo();
+    say("atlas at start", a);
+    CHECK(a.ok && a.codeSizes == 6 && a.uiSizes == 6 && a.largestCodePx == 46.0f);
+    CHECK(a.width == 1024 && a.height == 1024 && a.usedRows > 0 && a.usedRows <= a.height - 4);
+    CHECK(a.bytes == 1024ull * 1024ull * 4ull);
+    // UI text drawn before the growth, to compare with after
+    Sim sim(320, 120);
+    auto ui = [] { if (UI::Begin("A", 5, 5, 300, 100)) { UI::Text("Roboto 0123 Wgjy"); UI::PushCodeFont(); UI::Text("mono 0123 {}"); UI::PopCodeFont(); } UI::End(); };
+    sim.Frames(2, ui);
+    const Bitmap before = sim.Draw();
+    float worst = 0.0f;
+    const int upBefore = upscaledPairs(worst);   // (asking for 96 px code here is what asks the atlas to grow)
+    std::cout << "  before growing: " << upBefore << " of 648 UI scale x zoom pairs drawn larger than baked (up to x" << worst << ")\n";
+    CHECK(upBefore > 0);
+    CHECK(UI::GetFontAtlasInfo().height == 1024);                // not mid-frame: only at the next BeginFrame
+    sim.Frames(2, ui);
+    const UI::FontAtlasInfo g = UI::GetFontAtlasInfo();
+    say("atlas after growing", g);
+    CHECK(g.ok && g.codeSizes == 9 && g.largestCodePx == 96.0f && g.width == 1024 && g.height == 2048 && g.grows == 1);
+    CHECK(g.usedRows > a.usedRows && g.usedRows <= g.height - 4);
+    const int upAfter = upscaledPairs(worst);
+    std::cout << "  after growing: " << upAfter << " pairs drawn larger than baked (largest ratio " << worst << ")\n";
+    CHECK(upAfter == 0);
+    const Bitmap after = sim.Draw();
+    int diff = 0;
+    for (int y = 0; y < before.h; ++y) for (int x = 0; x < before.w; ++x) diff += PixelAt(before, x, y) != PixelAt(after, x, y);
+    CHECK(diff == 0);                                             // the UI and code text at 16 px look exactly the same
+    if (diff) std::cerr << "  pixels changed by the growth: " << diff << "\n";
+    sim.Frames(2, ui);
+    CHECK(UI::GetFontAtlasInfo().height == 2048);                 // grown once, stays
+    // the growth path on its own: start small, doubled until the code font fits
+    const UI::FontAtlasInfo s6 = UI::TestBuildFontAtlas(128, 4096, 6);
+    CHECK(s6.ok && s6.height == 1024 && s6.grows == 3 && s6.codeSizes == 6 && s6.usedRows == a.usedRows);
+    const UI::FontAtlasInfo s9 = UI::TestBuildFontAtlas(256, 4096, 9);
+    CHECK(s9.ok && s9.height == 2048 && s9.grows == 3 && s9.codeSizes == 9 && s9.usedRows == g.usedRows);
+    // no room for the code font: the UI font alone (the code font falls back to it)
+    const UI::FontAtlasInfo n = UI::TestBuildFontAtlas(1024, 1024, 9);
+    CHECK(n.ok && n.codeSizes == 0 && n.uiSizes == 6 && n.height == 1024);
+    // no room for anything: no atlas (the classic look's 8x8 font is used then)
+    CHECK(!UI::TestBuildFontAtlas(64, 64, 6).ok);
+    CHECK(UI::GetFontAtlasInfo().height == 2048 && UI::GetFontAtlasInfo().codeSizes == 9);   // the real atlas is untouched
+    UI::UseLauncherLook(false);
+}
+
+// Step 30: what ImGuiColorTextEdit does that ours did not (docs/own_ui_code_editor.md, step 30).
+void ParityTests() {
+    {   // AltGr (Ctrl+Alt on Windows) types: { [ @ on many keyboards come with it. Ctrl alone does not type.
+        Rig r;
+        r.ce.SetText("");
+        r.Frames(2);
+        ClickPos(r, P(0, 0));
+        r.sim.ctrl = true; r.sim.Hold(UI::KeyId_Alt, true);
+        r.Type("{");
+        r.sim.Hold(UI::KeyId_Alt, false);
+        r.Type("x");
+        r.sim.ctrl = false;
+        CHECK(r.ce.GetText() == "{");
+    }
+    {   // Alt+Backspace undoes, as in the ImGui editor; Backspace alone still deletes
+        Rig r;
+        r.ce.SetText("ab");
+        r.Frames(2);
+        ClickPos(r, P(0, 2));
+        r.Type("c");
+        CHECK(r.ce.GetText() == "abc");
+        r.sim.Hold(UI::KeyId_Alt, true); r.Key(Key_Backspace); r.sim.Hold(UI::KeyId_Alt, false); r.Frame();
+        CHECK(r.ce.GetText() == "ab");
+        r.Key(Key_Backspace);
+        CHECK(r.ce.GetText() == "a");
+    }
+    {   // DropTypedText: the next Draw ignores the text (the host used it); the one after types again
+        Rig r;
+        r.ce.SetText("");
+        r.Frames(2);
+        ClickPos(r, P(0, 0));
+        r.ce.DropTypedText();
+        r.Type(")");
+        CHECK(r.ce.GetText().empty());
+        r.Type(")");
+        CHECK(r.ce.GetText() == ")");
+    }
+    {   // without bracket indent, Enter copies the indent only (the ImGui editor's rule); with it, one more level after '{'
+        CodeEdit e;
+        e.SetText("  if {}");
+        e.SetBracketIndent(false);
+        e.SetCaret(P(0, 6));
+        CHECK(e.NewLine());
+        CHECK(e.GetText() == "  if {\n  }");
+        CHECK(e.Caret() == P(1, 2));
+        e.SetText("  if {}");
+        e.SetBracketIndent(true);
+        e.SetCaret(P(0, 6));
+        CHECK(e.NewLine());
+        CHECK(e.GetText() == "  if {\n      \n  }");
+    }
+    {   // the wheel: the step the host gives (an ImGui child scrolls 5 font heights), none with Ctrl (the host's zoom)
+        Rig r;
+        std::string t; for (int i = 0; i < 300; ++i) t += "line " + std::to_string(i) + "\n";
+        r.ce.SetText(t);
+        r.Frames(2);
+        r.sim.Move(r.X(P(2, 1)), r.Y(P(2, 1))); r.Frame();
+        r.sim.wheel = -1.0f; r.Frame();
+        CHECK(std::fabs(r.ce.ScrollY() - 3.0f * r.ce.LineHeight()) < 0.01f);   // default: three rows
+        r.ce.SetWheelStep(80.0f, 32.0f);
+        r.sim.wheel = -1.0f; r.Frame();
+        CHECK(std::fabs(r.ce.ScrollY() - (3.0f * r.ce.LineHeight() + 80.0f)) < 0.01f);
+        const float y0 = r.ce.ScrollY();
+        r.sim.ctrl = true; r.sim.wheel = -1.0f; r.Frame(); r.sim.ctrl = false; r.Frame();
+        CHECK(r.ce.ScrollY() == y0);                                              // Ctrl+wheel: no scroll
+    }
+    {   // a drag after a double click extends by whole words, after a triple click by whole lines
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("alpha beta gamma\ndelta epsilon\nzeta");
+        r.Frames(2);
+        r.sim.Move(r.X(P(0, 7)) + 1, r.Y(P(0, 7))); r.Frame();
+        r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame();
+        CHECK(r.ce.SelectedText() == "beta");
+        r.sim.Move(r.X(P(0, 13)) + 1, r.Y(P(0, 13))); r.Frame();                  // into "gamma": the whole word joins
+        CHECK(r.ce.SelectedText() == "beta gamma");
+        r.sim.Move(r.X(P(0, 1)) + 1, r.Y(P(0, 1))); r.Frame();                    // back into "alpha": from its start to the end of "beta"
+        CHECK(r.ce.SelectedText() == "alpha beta" && r.ce.Caret() == P(0, 0));
+        r.sim.Up(); r.Frame();
+        for (int i = 0; i < 40; ++i) r.Frame();
+        r.sim.Move(r.X(P(1, 2)) + 1, r.Y(P(1, 2))); r.Frame();
+        r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame();
+        CHECK(r.ce.SelectedText() == "delta epsilon\n");
+        r.sim.Move(r.X(P(2, 1)) + 1, r.Y(P(2, 1))); r.Frame();                    // down a line: both lines
+        CHECK(r.ce.SelectedText() == "delta epsilon\nzeta");
+        r.sim.Move(r.X(P(0, 3)) + 1, r.Y(P(0, 3))); r.Frame();                    // up a line: from line 0 to the end of line 1
+        CHECK(r.ce.SelectedText() == "alpha beta gamma\ndelta epsilon\n");
+        r.sim.Up(); r.Frame();
+    }
+    {   // the host draws the tooltip: Hover() says what is under the pointer, and OkayUI draws none itself
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetWordInfo({{"foo", "foo() does a thing"}});
+        r.ce.SetText("foo bar\nfoo");
+        UI::CodeMarker m; m.line = 1; m.message = "oops"; m.warning = true;
+        r.ce.SetMarkers({m});
+        r.Frame();
+        r.sim.Move(r.X(P(0, 1)) + 1.0f, r.Y(P(0, 1))); r.Frame(); r.Frame();
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Info && r.ce.Hover().text == "foo() does a thing" && r.ce.Hover().line == 0);
+        CHECK(r.ce.Hover().tooltip == "foo() does a thing");
+        const Bitmap own = r.sim.Draw();
+        r.ce.SetHostDrawsTooltip(true);
+        r.Frame(); r.Frame();
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Info);                          // still reported
+        const Bitmap hosted = r.sim.Draw();
+        r.sim.Move(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))); r.Frame(); r.Frame();      // over the space: nothing
+        CHECK(r.ce.Hover().kind == UI::CodeHover::None && r.ce.Hover().tooltip.empty());
+        const Bitmap none = r.sim.Draw();
+        int dOwn = 0, dHosted = 0;
+        for (int y = 0; y < (int)r.sim.H; ++y)
+            for (int x = 0; x < (int)r.sim.W; ++x) { dOwn += PixelAt(own, x, y) != PixelAt(none, x, y); dHosted += PixelAt(hosted, x, y) != PixelAt(none, x, y); }
+        CHECK(dOwn > 100);      // OkayUI's own tooltip
+        CHECK(dHosted < 20);    // none drawn by OkayUI when the host draws it
+        r.sim.Move(r.X(P(1, 1)) + 1.0f, r.Y(P(1, 1))); r.Frame(); r.Frame();      // the warning's line: the marker wins
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Warning && r.ce.Hover().line == 1 && r.ce.Hover().text == "oops");
+        CHECK(r.ce.Hover().tooltip == "Warning at line 2: oops");
+    }
+}
 } // namespace
 
 int main() {
@@ -1152,6 +1659,12 @@ int main() {
     WidgetTests();
     ExtraTests();
     DrawTests();
+    ProportionalAndOverwriteTests();
+    CodeFontTests();
+    RowLookTests();
+    CaptureTests();
+    ParityTests();
+    AtlasTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

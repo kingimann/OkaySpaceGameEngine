@@ -13,7 +13,9 @@
 // The widget that picks between this and the ImGui editor is editor/ScriptEditorWidget.hpp.
 #include "okay/UI/OkayUICodeEdit.hpp"
 
+#include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -69,8 +71,21 @@ public:
     // ---- configuration ----
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
+    /// The script editor's own words, as its ImGui language definition has them: keywords, type names, and the built-ins
+    /// ("known" words, drawn in their own colour). Comments stay OkayScript's ("//", "#", block comments). `info` is the
+    /// hover help per word (a built-in's signature and doc), shown as a tooltip like the ImGui editor does.
+    void SetLanguageWords(const std::unordered_set<std::string>& keywords, const std::unordered_set<std::string>& types,
+                          const std::unordered_set<std::string>& known, std::unordered_map<std::string, std::string> info = {});
+    /// The script editor's palette, given as TextEditor::Palette's colours in TextEditor::PaletteIndex order (packed
+    /// 0xAABBGGRR, which is also OkayUI's order). Fewer than 21 colours: ignored. Entries 21 to 23 (type, function, member)
+    /// are used when present.
+    void SetPalette(const std::uint32_t* colors, int count);
+    /// Insert-key overwrite mode (also toggled by the Insert key while the editor has the keyboard).
+    void SetOverwrite(bool on) { ed_.SetOverwrite(on); }
+    bool IsOverwrite() const { return ed_.Overwrite(); }
     void SetUserTypes(const std::unordered_set<std::string>& types);
-    /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
+    /// Error markers by 1-based line, as TextEditor::ErrorMarkers: a message starting "warning: " is a warning (amber, the prefix
+    /// not shown), anything else an error; the line is washed and the message written after it, with no underline.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
     /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
     void SetBreakpoints(const std::unordered_set<int>& lines);
@@ -78,6 +93,8 @@ public:
     void SetReadOnly(bool on) { ed_.SetReadOnly(on); }
     void SetTabSize(int n) { ed_.SetTabSize(n); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
+    /// The space left of the line numbers in pixels, as TextEditor::SetLeftMargin (the breakpoint column).
+    void SetLeftMargin(int px) { ed_.SetLeftMargin((float)px); }
 
     // ---- geometry of the last Draw (screen pixels) ----
     float RowHeight() const { return ed_.LineHeight(); }
@@ -93,6 +110,9 @@ private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    OkayUI::CodeLanguage lang_;        // what SetColorizerEnable(true) puts back
+    std::unordered_set<std::string> userTypes_;   // the last SetUserTypes (re-colour only when it changes)
+    void applyLanguage();              // lang_ plus the user types
 };
 
 } // namespace scripteditor

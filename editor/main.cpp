@@ -754,6 +754,7 @@ struct SDL_Texture;
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "OwnImGuiFontLoader.hpp" // OKAY_OWN_FONT_RASTER=1: the atlas uses our own TrueType rasteriser
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "CodeEditorChoice.hpp"   // OKAY_CODE_EDITOR=own|imgui: which code widget the script editor uses
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
@@ -2236,6 +2237,13 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+// The script editor's code widget (editor/CodeEditorChoice.hpp): OKAY_CODE_EDITOR=own picks our own OkayUI::CodeEdit.
+const codeeditorchoice::Choice g_codeEditorChoice = codeeditorchoice::Parse(std::getenv("OKAY_CODE_EDITOR"));
+#ifdef OKAY_HAVE_OKAYUI
+bool UseOwnCodeEditor() { return codeeditorchoice::UseOwn(g_codeEditorChoice, UseOkayUIBackend()); }
+#else
+bool UseOwnCodeEditor() { return false; }
+#endif
 
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
@@ -15171,6 +15179,15 @@ static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWi
 static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
+        static bool logged = false;   // say once which code widget is in use (OKAY_CODE_EDITOR, docs/try_it.md)
+        if (!logged) {
+            logged = true;
+#ifdef OKAY_HAVE_OKAYUI
+            okay::Log::Info("Script editor code widget: ", codeeditorchoice::Describe(g_codeEditorChoice, UseOkayUIBackend()));
+#else
+            okay::Log::Info("Script editor code widget: ", codeeditorchoice::Describe(g_codeEditorChoice, false, false));
+#endif
+        }
         auto te = std::make_unique<ScriptEditorWidget>();
         te->SetLanguageDefinition(OkayScriptLangDef());
         te->SetPalette(OkayScriptPalette());
@@ -15384,7 +15401,10 @@ static void DrawScriptClosePrompt() {
     }
     ImGui::EndPopup();
 }
+static bool g_scriptCodeHasKeys = false;   // the script editor's code widget has the keyboard (set where it is drawn)
 void DrawScriptEditor(EditorState& ed) {
+    const bool codeHadKeys = g_scriptCodeHasKeys;   // at the end of the last frame
+    g_scriptCodeHasKeys = false;                    // (stays false on a frame the code is not drawn)
     struct ClosePromptGuard { ~ClosePromptGuard() { DrawScriptClosePrompt(); } } closePromptGuard;
     // Float/Dock request from the toolbar (applied for one frame before Begin):
     // 1 = undock into a floating window, 2 = dock back into the main area as a tab.
@@ -15512,7 +15532,9 @@ void DrawScriptEditor(EditorState& ed) {
             if (ScriptTabDirty(closeTab)) g_scriptCloseAsk = closeTab;
             else CloseScriptTab(closeTab, false);
         }
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+        // (Also while the code has the keyboard, as with the ImGui editor: its io.WantTextInput is only set later in the frame.
+        // Our own editor's is set from the frame before, so it is let through by name.)
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && (!ImGui::GetIO().WantTextInput || codeHadKeys)) {
             if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_T)) ReopenClosedScript();
             else if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_W) && g_activeScriptTab) {
                 if (ScriptTabDirty(g_activeScriptTab)) g_scriptCloseAsk = g_activeScriptTab;
@@ -16707,6 +16729,7 @@ void DrawScriptEditor(EditorState& ed) {
                 const ImWchar ch = kio.InputQueueCharacters[0];
                 if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == (char)ch) {
                     kio.InputQueueCharacters.resize(0);   // step over the closer instead of doubling it
+                    te.DropTypedText();                   // (our own editor reads the character from SDL, not from ImGui's queue)
                     stepOver = true;
                 } else if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
                     bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
@@ -16729,7 +16752,7 @@ void DrawScriptEditor(EditorState& ed) {
             static std::string s_sideRoot;
             const bool seFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
             ImGuiIO& tio = ImGui::GetIO();
-            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_sideOpen = !s_sideOpen; tio.InputQueueCharacters.resize(0); }   // (don't also type the digit)
+            if (seFocus && tio.KeyAlt && !tio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1, false)) { s_sideOpen = !s_sideOpen; tio.InputQueueCharacters.resize(0); te.DropTypedText(); }   // (don't also type the digit)
             auto chevron = [](ImDrawList* d, ImVec2 c, bool left, ImU32 col) {
                 const float k = left ? -1.0f : 1.0f;
                 d->AddLine(ImVec2(c.x - 2.5f * k, c.y - 5), ImVec2(c.x + 2.5f * k, c.y), col, 1.6f);
@@ -16923,6 +16946,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
         }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
+        te.SetZoom(s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);
@@ -16932,6 +16956,7 @@ void DrawScriptEditor(EditorState& ed) {
         }
         s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
                                        : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
+        g_scriptCodeHasKeys = s_codeFocus;
         if (stepOver) {
             ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
@@ -50895,11 +50920,11 @@ int main(int argc, char** argv) {
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
                 const bool left = uin.mouseDown;
-                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool owns = HostsOkayUI() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const bool keys = HostsOkayUI() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
                 const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & plat::MouseMask(plat::MouseRight)) != 0, blocked, keys);
-                if (UseOkayUIBackend()) {
+                if (HostsOkayUI()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
                 }
@@ -51819,7 +51844,7 @@ int main(int argc, char** argv) {
         // the Inspector is open. This catches whichever queue is still pending.
         ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
-        { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
+        { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); else g_scriptCodeHasKeys = false; }
         if (const char* vsOpen = std::getenv("OKAY_VS_OPEN")) {
             static bool opened = false;
             if (!opened && *vsOpen) {
@@ -51876,7 +51901,10 @@ int main(int argc, char** argv) {
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
 #ifdef OKAY_HAVE_OKAYUI
-        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+        // A hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out. With only our code editor on (the rest of
+        // the editor is ImGui), only while the code really has the keyboard: OkayUI keeps its focus while a popup or another
+        // window is focused, and the ImGui editor gave the keys back then too.
+        if (HostsOkayUI() && OkayUI::WantsTextInput() && (UseOkayUIBackend() || g_scriptCodeHasKeys)) {
             GImGui->PlatformImeData.WantTextInput = true;
             ImGui::SetNextFrameWantCaptureKeyboard(true);
             if (okay::platform::Backend* ib = EdInput()) ib->StartTextInput();

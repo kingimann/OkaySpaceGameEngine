@@ -473,7 +473,29 @@ inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
+// PushCodeFont depth: while > 0 the launcher look draws and measures with the code font (JetBrains Mono), every
+// character advancing a whole number of pixels so the columns of a code editor stay on a pixel grid.
+int g_codeFont = 0;
+inline bool codeFontOn() { return g_codeFont > 0 && g_ttf && g_ttf->ncode > 0; }
+// A code-font glyph's advance in pixels at `px` (the baked advance scaled, rounded to a whole pixel, at least one).
+inline float codeAdvance(const fontatlas::Glyph& g, float px, const fontatlas::Size& z) {
+    const float a = std::floor(g.advance * px / z.px + 0.5f);
+    return a < 1.0f ? 1.0f : a;
+}
 inline float fMeasure(const char* s) {
+    if (g_ttf && s && codeFontOn()) {
+        if (okay::TtfFont* f = fontatlas::FallbackFont(s, true)) return f->Measure(s, 8.0f);
+        const float scale = g_theme.textScale > 0.0f ? g_theme.textScale : 1.0f;
+        const float px = 8.0f * scale;
+        const fontatlas::Size& z = g_ttf->PickCode(px);
+        float w = 0.0f;
+        for (const char* p = s; *p;) {
+            const unsigned cp = fontatlas::NextCodepoint(&p);
+            const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
+            if (g) w += codeAdvance(*g, px, z);
+        }
+        return w / scale;
+    }
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
@@ -775,14 +797,54 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     bindTexture(g_defTex);
 }
 
+// The horizontal runs of lit pixels of every glyph of a bitmap font up to 8x8 (both built-in fonts), worked out once
+// per font instead of asking the font's pixel function 64 times per character per frame (that was most of a frame of
+// classic-look text: docs/own_ui_code_editor.md, "ImGui and ours, measured"). Two fonts are cached; a font's pixel
+// function is assumed not to change what it returns.
+struct GlyphRunCache {
+    const Font* font = nullptr;
+    bool (*pixel)(char, int, int) = nullptr;
+    int w = 0, h = 0;
+    unsigned short start[257] = {};
+    unsigned char runs[256 * 32][3] = {};   // (row, first column, length); at most 32 runs in an 8x8 glyph
+};
+GlyphRunCache g_runCache[2];
+int g_runCacheNext = 0;
+const GlyphRunCache* glyphRuns() {
+    const Font* f = g_font;
+    if (!f || !f->pixel || f->width < 1 || f->height < 1 || f->width > 8 || f->height > 8) return nullptr;
+    for (const GlyphRunCache& c : g_runCache)
+        if (c.font == f && c.pixel == f->pixel && c.w == f->width && c.h == f->height) return &c;
+    GlyphRunCache& c = g_runCache[g_runCacheNext];
+    g_runCacheNext = (g_runCacheNext + 1) % 2;
+    int n = 0;
+    for (int ch = 0; ch < 256; ++ch) {
+        c.start[ch] = (unsigned short)n;
+        for (int gy = 0; gy < f->height; ++gy) {
+            int gx = 0;
+            while (gx < f->width) {
+                if (!f->pixel((char)ch, gx, gy)) { ++gx; continue; }
+                const int g0 = gx;
+                while (gx < f->width && f->pixel((char)ch, gx, gy)) ++gx;
+                c.runs[n][0] = (unsigned char)gy; c.runs[n][1] = (unsigned char)g0; c.runs[n][2] = (unsigned char)(gx - g0);
+                ++n;
+            }
+        }
+    }
+    c.start[256] = (unsigned short)n;
+    c.font = f; c.pixel = f->pixel; c.w = f->width; c.h = f->height;
+    return &c;
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
+    const bool code = codeFontOn();
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
-        if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
+        if (okay::TtfFont* f = fontatlas::FallbackFont(str, code)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
         const float px = fH() * s;
-        const fontatlas::Size& z = g_ttf->Pick(px);
+        const fontatlas::Size& z = code ? g_ttf->PickCode(px) : g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
         float pen = exact ? std::floor(x + 0.5f) : x;
@@ -797,7 +859,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
             const unsigned cp = fontatlas::NextCodepoint(&p);
             const fontatlas::Glyph* g = z.Find(cp); if (!g) g = z.Find('?');
             if (!g) { prev = 0; continue; }
-            if (prev) pen += (float)fontatlas::KerningUnits(prev, g->cp) * z.scale * k;   // pair kerning (fMeasure counts it too)
+            if (prev && !code) pen += (float)fontatlas::KerningUnits(prev, g->cp) * z.scale * k;   // pair kerning, UI font only (fMeasure counts it too; code keeps whole-pixel cells)
             prev = g->cp;
             if (g->x1 > g->x0 && !(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) noteDrop();
             if (g->x1 > g->x0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
@@ -813,11 +875,22 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
                 v.position.x = x0; v.position.y = y1; v.tex_coord.x = g->u0; v.tex_coord.y = g->v1; V[nv++] = v;
                 I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2; I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
             }
-            pen += g->advance * k;
+            pen += code ? codeAdvance(*g, px, z) : g->advance * k;
         }
         return;
     }
     float penX = x;
+    if (const GlyphRunCache* rc = glyphRuns()) {   // the same quads as below, from runs worked out once per font
+        for (const char* p = str; *p; ++p) {
+            const unsigned char ch = (unsigned char)*p;
+            for (int r = rc->start[ch]; r < rc->start[ch + 1]; ++r) {
+                const unsigned char* run = rc->runs[r];
+                quad(penX + run[1] * s, y + run[0] * s, (float)run[2] * s, s, c);
+            }
+            penX += fW() * s;
+        }
+        return;
+    }
     for (const char* p = str; *p; ++p) {
         // One quad per horizontal run of lit pixels (not per pixel): the same pixels with about a
         // third of the vertices, so a screen of classic-look text fits the fixed batch.
@@ -1002,6 +1075,10 @@ constexpr int kMaxHexSlots = 16;
 } // namespace
 
 void BeginFrame(const Input& in) {
+    if (g_ttf && fontatlas::Grow()) {   // code was drawn larger than the atlas had it: it now has every code size (taller, new UVs)
+        g_whiteU = g_ttf->whiteU; g_whiteV = g_ttf->whiteV;
+        if (g_atlasTex) { SDL_DestroyTexture(g_atlasTex); g_atlasTex = nullptr; }
+    }
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
@@ -1701,12 +1778,77 @@ DrawData GetDrawData() {
     return d;
 }
 
+AtlasView GetAtlasView() {
+    AtlasView v;
+    if (g_ttf && g_ttf->ok) { v.key = (const void*)kAtlasTex; v.rgba = g_ttf->rgba; v.w = g_ttf->w; v.h = g_ttf->h; }
+    return v;
+}
+
 okay::TtfFont* FallbackFontOf(const void* texture) {
     for (int i = 0; i < g_nfb; ++i) if (texture == (const void*)g_fbFonts[i]) return g_fbFonts[i];
     return nullptr;
 }
 
 void EndFrameData() { finalizeFrame(); }
+
+namespace {
+// The frame's counts at the mark, the draw state in force, and a copy of the last span: a span that starts exactly at the mark is
+// overwritten in place by the next state change (pushSpan coalesces empty spans), so it is put back at the end.
+struct CaptureMark {
+    bool on = false; int v0 = 0, i0 = 0, ns0 = 0, nwrec0 = 0; bool clipOn = false; okay::ui2d::Rect clip{0, 0, 0, 0}; SDL_Texture* tex = nullptr;
+    DrawSpan last{0, false, okay::ui2d::Rect{0, 0, 0, 0}, nullptr};
+};
+CaptureMark g_cap;
+} // namespace
+
+void BeginGeometryCapture() {
+    g_cap = CaptureMark{true, g_nv, g_ni, g_nspans, g_nwrec, g_curClipOn, g_curClipRect, g_curTex,
+                        g_nspans > 0 ? g_spans[g_nspans - 1] : DrawSpan{0, false, okay::ui2d::Rect{0, 0, 0, 0}, nullptr}};
+}
+
+void EndGeometryCapture(CapturedGeometry& out) {
+    out.Clear();
+    if (!g_cap.on) return;
+    const CaptureMark m = g_cap;
+    g_cap = CaptureMark{};
+    if (g_ni < m.i0 || g_nv < m.v0) return;   // the frame was reset in between: nothing to take
+    if (g_wrecOpen >= m.nwrec0) wrecEnd();      // a window still open inside the capture ends here
+    // the vertices and indices drawn since the mark (indices rebased onto the copied vertices); DrawVertex has SDL_Vertex's layout
+    // (static_asserts above), so the vertices are copied as they are. The vectors keep their capacity from frame to frame.
+    const DrawVertex* vs = reinterpret_cast<const DrawVertex*>(g_verts + m.v0);
+    out.vertices.assign(vs, vs + (g_nv - m.v0));
+    out.indices.resize((size_t)(g_ni - m.i0));
+    {
+        const int nvx = g_nv - m.v0;
+        int* dst = out.indices.data();
+        const int* src = g_idx + m.i0;
+        for (int k = 0, n = g_ni - m.i0; k < n; ++k) {
+            const int ix = src[k] - m.v0;
+            dst[k] = (unsigned)ix < (unsigned)nvx ? ix : 0;
+        }
+    }
+    // the commands: the state in force at the mark, then every span from the mark on (the last span before the mark is looked
+    // at again: when it started exactly at the mark it now holds the first state drawn inside the capture)
+    auto addCmd = [&](int from, int to, bool on, const okay::ui2d::Rect& r, SDL_Texture* tex) {
+        if (to <= from) return;
+        DrawCmd c;
+        c.idxOffset = from - m.i0; c.idxCount = to - from;
+        c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
+        c.texture = (const void*)tex;
+        out.cmds.push_back(c);
+    };
+    int from = m.i0; bool on = m.clipOn; okay::ui2d::Rect rect = m.clip; SDL_Texture* tex = m.tex;
+    for (int k = m.ns0 > 0 ? m.ns0 - 1 : 0; k < g_nspans; ++k) {
+        const int si = std::max(g_spans[k].startIdx, m.i0);
+        addCmd(from, si, on, rect, tex);
+        from = si; on = g_spans[k].on; rect = g_spans[k].rect; tex = g_spans[k].tex;
+    }
+    addCmd(from, g_ni, on, rect, tex);
+    // take it out of the frame, as a hidden measuring window does
+    g_nv = m.v0; g_ni = m.i0; g_nspans = m.ns0; g_nwrec = std::min(g_nwrec, m.nwrec0); g_wrecOpen = -1;
+    if (m.ns0 > 0) g_spans[m.ns0 - 1] = m.last;
+    g_curClipOn = m.clipOn; g_curClipRect = m.clip; g_curTex = m.tex;
+}
 
 #ifdef OKAY_PLATFORM_HAVE_SDL2
 // The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
@@ -1727,6 +1869,11 @@ SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
         }
     }
     return g_atlasTex;
+}
+
+SDL_Texture* TextureForRenderer(SDL_Renderer* renderer, const void* texture) {
+    if (!renderer || !texture) return nullptr;
+    return resolveTex(renderer, (SDL_Texture*)texture);
 }
 #endif // OKAY_PLATFORM_HAVE_SDL2
 
@@ -4634,6 +4781,9 @@ void PushTextScale(float scale) {
     g_theme.textScale = g_theme.textScale * (scale > 0.1f ? scale : 0.1f);
 }
 void PopTextScale() { if (g_textScaleTop > 0) g_theme.textScale = g_textScaleStack[--g_textScaleTop]; }
+void PushCodeFont() { ++g_codeFont; }
+void PopCodeFont() { if (g_codeFont > 0) --g_codeFont; }
+bool CodeFontActive() { return codeFontOn(); }
 
 void Heading(const char* text) {
     if (!g_lay.active || !text) return;
@@ -4810,6 +4960,29 @@ unsigned GetID(const char* label) { return (unsigned)hashLabel(label ? label : "
 
 bool IsItemHovered() {
     return g_lay.active && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);
+}
+
+static FontAtlasInfo InfoOf(const fontatlas::Atlas& a) {
+    FontAtlasInfo i;
+    i.ok = a.ok; i.width = a.w; i.height = a.h; i.usedRows = a.usedRows; i.grows = a.grows;
+    i.uiSizes = a.nsizes; i.codeSizes = a.ncode;
+    i.largestUiPx = a.nsizes > 0 ? a.sizes[a.nsizes - 1].px : 0.0f;
+    i.largestCodePx = a.ncode > 0 ? a.code[a.ncode - 1].px : 0.0f;
+    i.buildMs = a.buildMs;
+    i.bytes = a.ok ? (unsigned long long)a.w * (unsigned long long)a.h * 4ull : 0ull;
+    return i;
+}
+FontAtlasInfo GetFontAtlasInfo() { return InfoOf(fontatlas::Get()); }
+float CodeFontBakedSizeFor(float pixelHeight) {
+    const fontatlas::Atlas& a = fontatlas::Get();
+    return a.ok ? a.PickCode(pixelHeight).px : 0.0f;
+}
+FontAtlasInfo TestBuildFontAtlas(int startHeight, int maxHeight, int codeSizes) {
+    static fontatlas::Atlas t;   // large (every glyph of every size): not on the stack
+    fontatlas::BuildInto(t, startHeight, maxHeight, codeSizes);
+    const FontAtlasInfo i = InfoOf(t);
+    fontatlas::Free(t);
+    return i;
 }
 
 bool WantsTextInput() { return g_focus != 0; }
@@ -5232,7 +5405,7 @@ void ResetState() {
     for (TblStore& t : g_tstore) t = TblStore();
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
     g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = 0;
-    g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
+    g_textScaleTop = 0; g_codeFont = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_bareNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
     ColorPickerReset();

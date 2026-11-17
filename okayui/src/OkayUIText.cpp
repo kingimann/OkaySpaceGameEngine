@@ -38,6 +38,8 @@ Box& BoxFor(unsigned id, long long now) {
     b.ed->SetAutoIndent(false);
     b.ed->SetInsertSpaces(false);
     b.ed->SetHighlighter(CodeHighlighter());
+    b.ed->SetUseCodeFont(false);      // a text box: the UI font, not the code font
+    b.ed->SetPadding(4.0f, 0.0f);     // the text 8 px in from the left edge (4 px padding, the 4 px no-number gutter)
     return b;
 }
 
@@ -53,7 +55,7 @@ CodePalette ThemePalette() {
     p.caret = txt;
     p.selection = Style(Col_TextSelectedBg);
     p.selectionInactive = ColorMulAlpha(p.selection, 0.5f);
-    p.currentLine = clear; p.currentLineEdge = clear;
+    p.currentLine = clear; p.currentLineEdge = clear; p.currentLineInactive = clear;
     p.scrollTrack = Style(Col_ScrollbarBg);
     p.scrollThumb = Style(Col_ScrollbarGrab);
     p.scrollThumbHot = Style(Col_ScrollbarGrabHovered);

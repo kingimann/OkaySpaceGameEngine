@@ -16,6 +16,8 @@
 //     OkayUI::EndFrame(renderer);                       // flush — AFTER ImGui draws,
 //                                                       // so OkayUI sits on top
 // ---------------------------------------------------------------------------
+#include <vector>
+
 struct SDL_Renderer;
 struct SDL_Texture;
 namespace okay { class TtfFont; }
@@ -237,6 +239,33 @@ DrawData GetDrawData();
 okay::TtfFont* FallbackFontOf(const void* texture);
 /// The same count as DrawData::dropped, for the frame being built or the last one finished.
 int DroppedGeometry();
+
+/// Geometry taken out of the frame (BeginGeometryCapture .. EndGeometryCapture): the vertices, the indices (into `vertices`)
+/// and the commands (index ranges into `indices`, with their clip rectangle and texture as in DrawData). A host that draws
+/// with another toolkit puts it into that toolkit's draw list, at that toolkit's layer: the script editor puts its OkayUI
+/// code area into the ImGui window's draw list, so ImGui popups opened later in the frame are drawn over the code.
+struct CapturedGeometry {
+    std::vector<DrawVertex> vertices;
+    std::vector<int>        indices;
+    std::vector<DrawCmd>    cmds;
+    void Clear() { vertices.clear(); indices.clear(); cmds.clear(); }
+};
+/// Everything drawn into the main batch from here (windows included) until EndGeometryCapture is moved out of the frame
+/// into `out`: EndFrame does not draw it. Tooltips and popups (the overlay batch) are not captured and stay on top.
+/// Input, hit testing and widget state are not affected. Captures do not nest; call both in the same frame.
+void BeginGeometryCapture();
+void EndGeometryCapture(CapturedGeometry& out);
+/// The SDL texture a DrawCmd::texture stands for on `renderer`: the launcher look's atlas (made on the renderer when it is
+/// first asked for), a fallback font's atlas, or the texture itself. nullptr for untextured geometry.
+/// The launcher look's glyph atlas as a host sees it (the key DrawCmd::texture carries for it, RGBA8 pixels, size), for a host
+/// that uploads OkayUI textures itself outside EndFrame (editor/OkayUIInImGui.hpp on the own renderer). All null / 0 while the
+/// atlas is not built. Cheap: no frame state is touched.
+struct AtlasView { const void* key = nullptr; const unsigned char* rgba = nullptr; int w = 0, h = 0; };
+AtlasView GetAtlasView();
+/// SDL builds only (OKAY_PLATFORM_HAVE_SDL2); an own-renderer host uploads DrawData::atlasRgba / FallbackFontOf itself.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+SDL_Texture* TextureForRenderer(SDL_Renderer* renderer, const void* texture);
+#endif
 
 /// Finalize the frame's interaction state WITHOUT drawing — for custom backends that
 /// submit GetDrawData() themselves instead of calling EndFrame(SDL_Renderer*).
@@ -755,6 +784,34 @@ void Toast(const char* text, int kind = 0, float seconds = 3.0f);
 /// Scale the text of the following widgets (1 = normal) until PopTextScale().
 void PushTextScale(float scale);
 void PopTextScale();
+/// The code font: until PopCodeFont() the launcher look draws and measures text with JetBrains Mono (the font the script
+/// editor's code uses), each character advancing a whole number of pixels, so every character of a line sits in a column of
+/// the same width. Nests. In the classic look (the 8x8 bitmap font, already fixed width) it changes nothing.
+void PushCodeFont();
+void PopCodeFont();
+/// True while PushCodeFont is in force and the code font could be baked (the launcher look).
+bool CodeFontActive();
+
+/// The launcher look's glyph atlas (Roboto for the UI, JetBrains Mono for code, one RGBA texture), for checks and the docs.
+/// It starts with both fonts at six sizes (13 to 46 px); the first time code is drawn larger than 46 px (the script editor's
+/// code at a large UI scale and zoom), it grows before the next frame to nine code sizes (to 96 px), doubling its height.
+struct FontAtlasInfo {
+    bool ok = false;
+    int width = 0, height = 0;   // texels
+    int usedRows = 0;            // rows the glyphs fill (the rest is free; the last 4 rows are the white patch)
+    int grows = 0;               // times the height was doubled so the code font fits
+    int uiSizes = 0, codeSizes = 0;   // baked sizes (codeSizes 0: the code font could not be baked; the UI font stands in)
+    float largestUiPx = 0.0f, largestCodePx = 0.0f;
+    double buildMs = 0.0;        // rasterising and packing, once, the first time the launcher look is used
+    unsigned long long bytes = 0;   // the RGBA copy kept in memory (the GPU texture is the same size again)
+};
+FontAtlasInfo GetFontAtlasInfo();
+/// The baked code-font size that text of `pixelHeight` is drawn from (the smallest at least as large, else the largest; the UI
+/// font's when the code font is missing). Text is only ever scaled down from it, unless pixelHeight is past the largest bake.
+float CodeFontBakedSizeFor(float pixelHeight);
+/// For tests: build a separate atlas with `codeSizes` of the code font's sizes (6 is the first atlas, 9 every size) starting
+/// `startHeight` rows high and doubling up to `maxHeight`; report it and free it.
+FontAtlasInfo TestBuildFontAtlas(int startHeight, int maxHeight, int codeSizes = 9);
 
 // ---- Drag and drop -------------------------------------------------------------
 // Lightweight int-payload drag & drop (e.g. reorder a list by dragging item indices).

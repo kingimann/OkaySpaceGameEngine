@@ -42,7 +42,22 @@ bool IsCompiledIn(BackendKind k) {
 
 namespace {
 std::atomic<int> g_fallbackKind{-1};   // FallBackTo: the backend a failed own start fell back to (-1: none)
+std::atomic<int> g_defaultKind{-1};    // the default decided on first use (-1: not yet; ReconsiderDefault clears it)
+
+BackendKind ComputeDefaultKind() {
+#if defined(OKAY_PLATFORM_DEFAULT_OWN)
+    BackendKind k = BackendKind::Own;
+#else
+    BackendKind k = BackendKind::Sdl2;
+#endif
+    if (okay::ThirdPartyForced() && IsCompiledIn(BackendKind::Sdl2)) k = BackendKind::Sdl2;
+    BackendKind fromEnv;
+    if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
+    return k;
 }
+}
+
+void ReconsiderDefault() { g_defaultKind.store(-1); }
 
 bool FallBackTo(BackendKind k) {
     if (!IsCompiledIn(k)) return false;
@@ -58,18 +73,9 @@ BackendKind DefaultKind() {
     // (okay/Core/ThirdPartySwitch.hpp) makes the default SDL2 when the variable is not set.
     // The launcher, the editor and the player make our own backend their default at start-up
     // (okay::ownstack::ApplyOwnDefaults, owner decision 2026-11-17).
-    static const BackendKind kind = [] {
-#if defined(OKAY_PLATFORM_DEFAULT_OWN)
-        BackendKind k = BackendKind::Own;
-#else
-        BackendKind k = BackendKind::Sdl2;
-#endif
-        if (okay::ThirdPartyForced() && IsCompiledIn(BackendKind::Sdl2)) k = BackendKind::Sdl2;
-        BackendKind fromEnv;
-        if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
-        return k;
-    }();
-    return kind;
+    int k = g_defaultKind.load();
+    if (k < 0) { k = (int)ComputeDefaultKind(); g_defaultKind.store(k); }
+    return (BackendKind)k;
 }
 
 Backend* Get(BackendKind k) {

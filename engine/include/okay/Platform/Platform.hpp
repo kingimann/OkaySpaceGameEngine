@@ -43,6 +43,10 @@ BackendKind DefaultKind();
 /// backend could not start calls this with BackendKind::Sdl2, and from then on Default() / DefaultKind() answer that backend.
 /// False (and nothing changes) when `k` is not compiled in.
 bool FallBackTo(BackendKind k);
+/// Forget the default decided so far and decide it again on the next call (from OKAY_PLATFORM_BACKEND, OKAY_THIRD_PARTY and the
+/// build). For the very top of main(), before any backend is started: a static initializer may already have read the clock
+/// through Default(). okay::ownstack::ApplyOwnDefaults calls it.
+void ReconsiderDefault();
 
 // ---- Keys ------------------------------------------------------------------
 // Physical keys, numbered with the USB HID usage ids (the same numbers as SDL

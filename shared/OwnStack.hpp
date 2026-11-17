@@ -197,6 +197,7 @@ inline int ApplyOwnDefaults() {
     if (okay::ThirdPartyForced()) return 0;
     int n = 0;
     if (okay::platform::IsCompiledIn(okay::platform::BackendKind::Own) && SetIfUnset("OKAY_PLATFORM_BACKEND", "own")) ++n;
+    okay::platform::ReconsiderDefault();   // a static initializer may have read the clock (and so the default) before main()
     return n;
 }
 

@@ -1711,8 +1711,7 @@ int main(int argc, char** argv) {
             {"wav", okay::wav::OwnWavEnabled()},
         });
         if (!ownFallbackNote.empty()) pb->Log(ownFallbackNote);
-        pb->Log(line);
-        std::fprintf(stderr, "%s\n", line.c_str());
+        pb->Log(line);   // (the backend's log: stderr)
     }
 
     // ---- Boot splash: the project's branded loading frame, shown immediately so

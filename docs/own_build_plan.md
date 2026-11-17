@@ -45,6 +45,21 @@ Typed options are one line, the same shape in the manifest and in `config.okay`:
 
 `okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
 
+## Distribution layout
+A `dist` block tells `okay-build package` to assemble the same shape as `scripts/build-windows-dist.sh`: the launcher and its DLL at the top, `Tools/` with the other programs and a second copy of the DLL, `VERSION.txt` in both places, `Assets/Textures`, `Assets/Fonts`, `examples/<folder>/`, and `README.txt`. The script itself is not run.
+
+## Response files for MSVC
+The `msvc` preset writes response files as UTF-16LE with a BOM (`FF FE`) and a CRLF after each argument. `rsp_utf16 = off` in the toolchain block turns that off. Other toolchains stay one byte per character.
+
+## FIFO jobserver
+If `MAKEFLAGS` or `OKAY_JOBSERVER` contains `--jobserver-auth=fifo:PATH`, okay-build opens that fifo and takes a byte before each command, the same way it takes a byte from the pipe form. It is a client only.
+
+## Package checksums
+`okay.lock` now ends each line with an FNV-1a 64-bit hash of the files under that package path (relative names, then bytes). A later build refuses to run when the tree hash differs. This is change detection, not a security hash.
+
+## Report diff
+`okay-build report diff A B` reads two saved reports (history numbers or file paths) and prints steps that are only in one of them, and steps whose time changed.
+
 ## Compact state (OKB1)
 The state file is now binary, version 1, magic `OKB1`. Paths are stored once. Hashes are 8-byte integers. The whole file is read in one shot (mapped, then copied into a pool the records point at). A file that still starts with `okaybuild-state 3` or `okaybuild-state 4` is read as the old text. A journal after a killed build is still text and is applied on top. The mtime+size shortcut is unchanged: a matching stamp is not hashed again. `--profile` prints plan time and state time apart.
 

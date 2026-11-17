@@ -80,7 +80,7 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 // ---------------------------------------------------------------- manifest
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
-    vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false;
+    vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
 };
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
@@ -103,9 +103,14 @@ struct PackageDecl {
     string name, path, version; int line = 0;
     vector<std::pair<string, string>> depends;
 };
+struct DistDecl {
+    bool on = false; string dir = "dist", launcher, dll, readme, version, textures, fonts;
+    vector<string> tools, examples;
+};
 struct Manifest {
     Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
+    DistDecl dist;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -143,7 +148,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -173,7 +178,7 @@ static Manifest parseManifest(const string& file) {
                     else if (t[1] == "mingw") { c.cc = "x86_64-w64-mingw32-gcc-win32"; c.cxx = "x86_64-w64-mingw32-g++-win32";
                                                 c.ar = "x86_64-w64-mingw32-ar"; c.exe = ".exe"; }
                     else if (t[1] == "msvc") { c.cc = "cl.exe"; c.cxx = "cl.exe"; c.ld = "link.exe"; c.ar = "lib.exe";
-                                               c.obj = ".obj"; c.exe = ".exe"; c.libp = ""; c.libs = ".lib"; c.msvc = true; }
+                                               c.obj = ".obj"; c.exe = ".exe"; c.libp = ""; c.libs = ".lib"; c.msvc = true; c.rspUtf16 = true; }
                     else throw err("unknown toolchain preset '" + t[1] + "' (gcc, clang, mingw, msvc)");
                 }
                 continue;
@@ -189,6 +194,10 @@ static Manifest parseManifest(const string& file) {
                 m.hasBuildfile = true; m.buildLine = ln; mode = BUILDFILE; continue;
             }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
+            if (t[0] == "dist") {
+                if (m.dist.on) throw err("only one dist block is allowed");
+                m.dist.on = true; mode = DIST; continue;
+            }
             if (t[0] == "package") {
                 if (t.size() != 2) throw err("expected: package NAME");
                 for (auto& p : m.packages) if (p.name == t[1]) throw err("duplicate package '" + t[1] + "'");
@@ -239,6 +248,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
+            else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
             PoolDecl& p = m.pools.back();
@@ -285,6 +295,18 @@ static Manifest parseManifest(const string& file) {
             else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); p.version = v[0]; }
             else if (k == "depend") { if (v.size() != 2) throw err("depend takes a package name and a version"); p.depends.push_back({v[0], v[1]}); }
             else throw err("unknown package key '" + k + "'");
+        } else if (mode == DIST) {
+            DistDecl& d = m.dist;
+            if (k == "dir") { if (v.size() != 1) throw err("dir takes one value"); d.dir = v[0]; }
+            else if (k == "launcher") { if (v.size() != 1) throw err("launcher takes one value"); d.launcher = v[0]; }
+            else if (k == "dll") { if (v.size() != 1) throw err("dll takes one value"); d.dll = v[0]; }
+            else if (k == "tool") { if (v.size() != 1) throw err("tool takes one value"); d.tools.push_back(v[0]); }
+            else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); d.version = v[0]; }
+            else if (k == "textures") { if (v.size() != 1) throw err("textures takes one value"); d.textures = v[0]; }
+            else if (k == "fonts") { if (v.size() != 1) throw err("fonts takes one value"); d.fonts = v[0]; }
+            else if (k == "example") { if (v.size() != 1) throw err("example takes one value"); d.examples.push_back(v[0]); }
+            else if (k == "readme") { if (v.size() != 1) throw err("readme takes one value"); d.readme = v[0]; }
+            else throw err("unknown dist key '" + k + "'");
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
@@ -1022,9 +1044,24 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
 }
 #endif
 
-static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
+static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0}, gNsPre{0};
 static std::atomic<int> gCacheHit{0}, gCacheMiss{0};
 static bool gUseCache = true;
+static bool gRspUtf16 = false;
+static void writeArgsFile(const string& path, const vector<string>& args, size_t head) {
+    fs::create_directories(fs::path(path).parent_path());
+    std::ofstream r(path, std::ios::binary | std::ios::trunc);
+    if (gRspUtf16) { r.put((char)0xFF); r.put((char)0xFE); }
+    for (size_t i = head; i < args.size(); ++i) {
+        if (!gRspUtf16) {
+            for (char c : args[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; }
+            r << '\n';
+        } else {
+            string line = args[i] + "\r\n";
+            for (unsigned char c : line) { r.put((char)c); r.put('\0'); }
+        }
+    }
+}
 static uint64_t gCacheMax = 0;
 static int gMemLimit = 0;
 static bool gWantJobserver = false, gJobOn = false;
@@ -1066,6 +1103,16 @@ static void giveJob(JsToken t) {
     }
 }
 static bool parseJobAuth(const string& spec) {
+    if (spec.rfind("fifo:", 0) == 0) {
+#ifdef _WIN32
+        return false;
+#else
+        int fd = ::open(spec.substr(5).c_str(), O_RDWR);
+        if (fd < 0) return false;
+        gJsR = gJsW = fd;
+        return true;
+#endif
+    }
     if (spec.rfind("sem:", 0) == 0) {
 #ifdef _WIN32
         gJsSem = OpenSemaphoreW(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, widen(spec.substr(4)).c_str());
@@ -1171,7 +1218,7 @@ static void rememberCache(const string&);
 // 1 hit, 0 miss, -1 could not preprocess.
 static int lookupCache(const Action& a, string& key, string& errOut) {
     vector<string> pp = preprocessArgv(a);
-    string out, err; int rc = captureStdout(pp, out, err);
+    string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
     string id = compilerIdentity(a.argv[0]); string cmd = hashArgv(a.argv);
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
@@ -1356,6 +1403,35 @@ static int showHistory() {
     for (int id : ids) printf("%d\n", id);
     return 0;
 }
+static std::map<string, long long> loadReportSteps(const string& path) {
+    std::ifstream in(path); string line;
+    if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("not a report: " + path);
+    std::map<string, long long> steps;
+    while (std::getline(in, line)) {
+        if (line.compare(0, 5, "hits\t") == 0 || line.compare(0, 7, "misses\t") == 0) continue;
+        size_t a = line.find('\t'), b = a == string::npos ? string::npos : line.find('\t', a + 1), c = b == string::npos ? string::npos : line.find('\t', b + 1);
+        if (a == string::npos || c == string::npos) continue;
+        string desc = line.substr(c + 1);
+        steps[desc] = atoll(line.c_str()) / 1000000;
+    }
+    return steps;
+}
+static int diffReports(const string& a, const string& b) {
+    auto resolve = [](const string& name) {
+        string hist = under(".okaybuild/reports/" + name + ".txt");
+        if (fs::is_regular_file(hist)) return hist;
+        if (fs::is_regular_file(name)) return name;
+        throw Fail("no report '" + name + "'");
+    };
+    auto A = loadReportSteps(resolve(a)), B = loadReportSteps(resolve(b));
+    for (auto& [d, ms] : A) if (!B.count(d)) printf("only %s: %s (%lld ms)\n", a.c_str(), d.c_str(), ms);
+    for (auto& [d, ms] : B) if (!A.count(d)) printf("only %s: %s (%lld ms)\n", b.c_str(), d.c_str(), ms);
+    for (auto& [d, ms] : A) {
+        auto it = B.find(d); if (it == B.end() || it->second == ms) continue;
+        printf("changed: %s %lld ms -> %lld ms\n", d.c_str(), ms, it->second);
+    }
+    return 0;
+}
 static int showReport() {
     std::ifstream in(under(".okaybuild/report"));
     if (!in) throw Fail("no report yet; run a build first");
@@ -1530,11 +1606,7 @@ static string effectivePool(const Action& a) {
 static string writeRsp(const string& key, const vector<string>& args, size_t head) {
     string rf = under(".okaybuild/rsp/" + hashStr(key.empty() ? "cmd" : key) + ".rsp");
     fs::create_directories(fs::path(rf).parent_path());
-    std::ofstream r(rf, std::ios::binary);
-    for (size_t i = head; i < args.size(); ++i) {
-        for (char c : args[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; }
-        r << "\r\n";
-    }
+    writeArgsFile(rf, args, head);
     return rf;
 }
 static bool shellMeta(const string& body) {
@@ -1602,6 +1674,7 @@ static string commandLineFor(const Action& a, string& err) {
     return line;
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
+    gRspUtf16 = m.tc.rspUtf16;
     long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
@@ -1740,7 +1813,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
     if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
-    if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
+    if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, preprocess %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsPre / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
 }
@@ -1749,6 +1822,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
 #ifdef _WIN32
     return buildOnWindows(m, want, o);
 #else
+    gRspUtf16 = m.tc.rspUtf16;
     long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
@@ -1831,8 +1905,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                         vector<string> argv = a.argv;
                         if (a.rspHead > 0 && joined(a.argv).size() > a.rspThreshold) {
                             string rf = under(".okaybuild/rsp/" + hashStr(a.output.empty() ? a.desc : a.output) + ".rsp");
-                            fs::create_directories(fs::path(rf).parent_path()); std::ofstream r(rf, std::ios::trunc);
-                            for (size_t i = a.rspHead; i < a.argv.size(); ++i) { for (char c : a.argv[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; } r << '\n'; }
+                            writeArgsFile(rf, a.argv, a.rspHead);
                             argv.resize(a.rspHead); argv.push_back("@" + rf);
                         }
                         long long tStep = nowNs();
@@ -1877,7 +1950,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
     if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
-    if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
+    if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, preprocess %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsPre / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
     if (o.verbose) printf("okay-build: hashed %d input file(s), trusted size+mtime for %d\n", gHashed.load(), gTrusted.load());
     return 0;
 #endif
@@ -1966,7 +2039,41 @@ static void copyTreeFiles(const fs::path& from, const fs::path& to, const string
         listed.push_back(shown);
     }
 }
+static void copyInto(const fs::path& from, const fs::path& to) {
+    vector<string> ignore; copyTreeFiles(from, to, "", ignore);
+}
+static int packageDist(const Manifest& m) {
+    const DistDecl& d = m.dist;
+    if (d.launcher.empty() || d.dll.empty()) throw Fail("dist needs launcher and dll");
+    string root = d.dir.empty() ? "dist" : d.dir;
+    std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root);
+    auto fileTo = [&](const string& src, const string& dest) {
+        if (!fs::is_regular_file(src)) throw Fail("dist is missing '" + src + "'");
+        fs::create_directories(fs::path(dest).parent_path());
+        fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
+    };
+    string dllName = fs::path(d.dll).filename().generic_string();
+    fileTo(d.launcher, root + "/" + fs::path(d.launcher).filename().generic_string());
+    fileTo(d.dll, root + "/" + dllName);
+    if (!d.readme.empty()) fileTo(d.readme, root + "/README.txt");
+    fs::create_directories(root + "/Tools");
+    fileTo(d.dll, root + "/Tools/" + dllName);
+    for (auto& t : d.tools) fileTo(t, root + "/Tools/" + fs::path(t).filename().generic_string());
+    if (!d.version.empty()) {
+        { std::ofstream f(root + "/VERSION.txt", std::ios::trunc); f << d.version << "\n"; }
+        { std::ofstream f(root + "/Tools/VERSION.txt", std::ios::trunc); f << d.version << "\n"; }
+    }
+    if (!d.textures.empty()) copyInto(d.textures, fs::path(root) / "Assets/Textures");
+    if (!d.fonts.empty()) copyInto(d.fonts, fs::path(root) / "Assets/Fonts");
+    for (auto& ex : d.examples) {
+        string folder = fs::path(ex).filename().generic_string();
+        copyInto(ex, fs::path(root) / "examples" / folder);
+    }
+    printf("okay-build package: %s\n", root.c_str());
+    return 0;
+}
 static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
+    if (m.dist.on) return packageDist(m);
     vector<string> names;
     for (auto& t : m.targets) {
         if (t.isLib) continue;
@@ -2373,6 +2480,25 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
     return 0;
 }
 
+static uint64_t hashPackageTree(const string& root) {
+    vector<std::pair<string, string>> files;
+    std::error_code ec;
+    if (fs::is_regular_file(root, ec)) files.push_back({"", root});
+    else if (fs::is_directory(root, ec)) {
+        for (auto& e : fs::recursive_directory_iterator(root, ec)) {
+            if (ec || !e.is_regular_file()) continue;
+            files.push_back({fs::relative(e.path(), root).generic_string(), e.path().string()});
+        }
+    } else throw Fail("package path '" + root + "' does not exist");
+    std::sort(files.begin(), files.end());
+    uint64_t h = 1469598103934665603ull;
+    for (auto& [rel, abs] : files) {
+        h = fnv(rel.data(), rel.size(), h); h = fnv("\n", 1, h);
+        std::ifstream in(abs, std::ios::binary); char buf[65536];
+        while (in) { in.read(buf, sizeof buf); auto n = in.gcount(); if (n > 0) h = fnv(buf, (size_t)n, h); }
+    }
+    return h;
+}
 static int syncLock(const Manifest& m, bool writeMissing) {
     if (m.packages.empty()) return 0;
     std::map<string, const PackageDecl*> by;
@@ -2387,7 +2513,8 @@ static int syncLock(const Manifest& m, bool writeMissing) {
             throw Fail("package '" + p.name + "' needs " + d.first + " " + d.second + " but " + d.first + " is " + it->second->version);
     }
     vector<string> want;
-    for (auto& p : m.packages) want.push_back(p.name + "\t" + p.version + "\t" + p.path);
+    std::map<string, string> treeHash;
+    for (auto& p : m.packages) { string hx = hex64(hashPackageTree(p.path)); treeHash[p.name] = hx; want.push_back(p.name + "\t" + p.version + "\t" + p.path + "\t" + hx); }
     std::sort(want.begin(), want.end());
     string path = "okay.lock";
     if (!fs::exists(path)) {
@@ -2403,13 +2530,18 @@ static int syncLock(const Manifest& m, bool writeMissing) {
     while (std::getline(in, l)) {
         if (l.empty()) continue;
         auto a = l.find('\t'); auto b = a == string::npos ? string::npos : l.find('\t', a + 1);
-        if (a == string::npos || b == string::npos) throw Fail("okay.lock has a broken line");
+        auto c = b == string::npos ? string::npos : l.find('\t', b + 1);
+        if (a == string::npos || b == string::npos || c == string::npos) throw Fail("okay.lock has a broken line");
         got[l.substr(0, a)] = l.substr(a + 1, b - a - 1);
-        string recordedPath = l.substr(b + 1);
+        string recordedPath = l.substr(b + 1, c - b - 1);
+        string recordedHash = l.substr(c + 1);
         string name = l.substr(0, a);
         auto it = by.find(name);
         if (it == by.end()) throw Fail("okay.lock lists '" + name + "', which the manifest does not");
         if (it->second->path != recordedPath) throw Fail("okay.lock has " + name + " at " + recordedPath + " but the manifest says " + it->second->path);
+        auto th = treeHash.find(name);
+        if (th == treeHash.end() || th->second != recordedHash)
+            throw Fail("package '" + name + "' files changed (okay.lock has " + recordedHash + ", the tree is " + (th == treeHash.end() ? string("missing") : th->second) + ")");
     }
     for (auto& p : m.packages) {
         auto it = got.find(p.name);
@@ -2493,7 +2625,11 @@ int main(int argc, char** argv) {
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);
-        if (cmd == "report") return (!want.empty() && want[0] == "history") ? showHistory() : showReport();
+        if (cmd == "report") {
+            if (!want.empty() && want[0] == "history") return showHistory();
+            if (want.size() >= 3 && want[0] == "diff") return diffReports(want[1], want[2]);
+            return showReport();
+        }
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);
         if (cmd == "test") return cmdTest(m, o);

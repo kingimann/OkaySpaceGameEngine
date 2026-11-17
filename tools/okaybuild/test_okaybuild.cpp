@@ -3,7 +3,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <string>
+#include <vector>
 #include <chrono>
 #include <thread>
 #include <sys/stat.h>
@@ -670,6 +672,84 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testFifoJobserver() {
+    printf("test: a GNU make fifo jobserver limits this build\n");
+    fresh("fifo");
+    write("slot.sh",
+          "#!/bin/sh\ndir=\"$1\"\nout=\"$2\"\nmkdir -p \"$dir\"\nexec 9>>\"$dir/lock\"\nflock 9\n"
+          "cur=$(cat \"$dir/count\" 2>/dev/null || echo 0)\ncur=$((cur+1))\necho \"$cur\" > \"$dir/count\"\n"
+          "max=$(cat \"$dir/max\" 2>/dev/null || echo 0)\n"
+          "if [ \"$cur\" -gt \"$max\" ]; then echo \"$cur\" > \"$dir/max\"; fi\nflock -u 9\nsleep 0.25\n"
+          "exec 9>>\"$dir/lock\"\nflock 9\ncur=$(cat \"$dir/count\")\necho $((cur-1)) > \"$dir/count\"\nflock -u 9\n"
+          "echo ok > \"$out\"\n");
+    fs::permissions(gRoot / "slot.sh", fs::perms::owner_all);
+    string man;
+    for (int i = 0; i < 4; ++i) man += "action\n  cmd = ./slot.sh '" + (gRoot / "slots").string() + "' o" + std::to_string(i) + "\n  output = o" + std::to_string(i) + "\nend\n";
+    write("build.okay", man);
+    string fifo = (gRoot / "jobs.fifo").string();
+    mkfifo(fifo.c_str(), 0600);
+    int fd = open(fifo.c_str(), O_RDWR);
+    check(fd >= 0, "fifo opened");
+    char tok = '+'; check(write(fd, &tok, 1) == 1, "one token in the fifo");
+    string tool = gTool;
+    if (tool.size() >= 2 && tool.front() == '\'' && tool.back() == '\'') tool = tool.substr(1, tool.size() - 2);
+    string cmd = "cd '" + gRoot.string() + "' && MAKEFLAGS='--jobserver-auth=fifo:" + fifo + "' '" + tool + "' -j8 2>&1";
+    int rc = 0; string o = capture(cmd, &rc);
+    int mx = 0; { std::ifstream f(gRoot / "slots/max"); f >> mx; }
+    close(fd);
+    check(rc == 0 && mx >= 1 && mx <= 2, "fifo auth keeps four jobs inside two slots", o + "\nmax=" + std::to_string(mx));
+}
+
+static void testReportDiff() {
+    printf("test: okay-build report diff names steps that appeared\n");
+    fresh("rdiff");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "first build", o);
+    write("b.cpp", "int b(){return 1;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp b.cpp\nend\n");
+    o = sh("-j1", &rc);
+    check(rc == 0, "second build", o);
+    o = sh("report diff 1 2", &rc);
+    check(rc == 0 && o.find("only 2:") != string::npos && o.find("b.cpp") != string::npos, "diff shows the new source", o);
+}
+
+static void testDistLayout() {
+    printf("test: package dist matches the Windows distribution layout\n");
+    fresh("distl");
+    string script = readFile(fs::path(__FILE__).parent_path().parent_path().parent_path() / "scripts/build-windows-dist.sh");
+    check(script.find("OkaySpace.exe") != string::npos && script.find("EXAMPLE_DIRS=") != string::npos, "read the dist script");
+    string examples = script.substr(script.find("EXAMPLE_DIRS="));
+    auto q1 = examples.find('"'); auto q2 = examples.find('"', q1 + 1);
+    examples = examples.substr(q1 + 1, q2 - q1 - 1);
+    string firstEx = examples.substr(0, examples.find(' '));
+    write("fake/OkaySpace.exe", "launcher\n");
+    write("fake/SDL2.dll", "dll\n");
+    write("fake/OkayEngine.exe", "editor\n");
+    write("fake/OkaySpacePlayer.exe", "player\n");
+    write("fake/README.txt", "hi\n");
+    write("fake/textures/grid.png", "png\n");
+    write("fake/fonts/DejaVuSans.ttf", "font\n");
+    write("fake/examples/" + firstEx + "/scene.okayscene", "scene\n");
+    write("build.okay",
+          "dist\n launcher = fake/OkaySpace.exe\n dll = fake/SDL2.dll\n"
+          " tool = fake/OkayEngine.exe\n tool = fake/OkaySpacePlayer.exe\n"
+          " version = 9.9.9\n textures = fake/textures\n fonts = fake/fonts\n"
+          " example = fake/examples/" + firstEx + "\n readme = fake/README.txt\nend\n");
+    int rc; string o = sh("package", &rc);
+    check(rc == 0, "package dist exits 0", o);
+    std::vector<string> got;
+    for (auto& e : fs::recursive_directory_iterator(gRoot / "dist")) if (e.is_regular_file())
+        got.push_back(fs::relative(e.path(), gRoot / "dist").generic_string());
+    std::sort(got.begin(), got.end());
+    std::vector<string> expect = {"Assets/Fonts/DejaVuSans.ttf", "Assets/Textures/grid.png", "OkaySpace.exe", "README.txt", "SDL2.dll",
+                             "Tools/OkayEngine.exe", "Tools/OkaySpacePlayer.exe", "Tools/SDL2.dll", "Tools/VERSION.txt", "VERSION.txt",
+                             "examples/" + firstEx + "/scene.okayscene"};
+    std::sort(expect.begin(), expect.end());
+    check(got == expect, "layout matches the script's top exe, Tools DLL, version, assets and example", o);
+}
+
 static void testBinaryState() {
     printf("test: compact binary state, with the old text format still accepted\n");
     fresh("bstate");
@@ -753,6 +833,16 @@ static void testPackages() {
     fs::remove(gRoot / "okay.lock");
     o = sh("-j1", &rc);
     check(rc == 2 && o.find("needs foo 9") != string::npos && o.find("foo is 1.2") != string::npos, "a dependency on another version is a conflict", o);
+    write("build.okay",
+          "package foo\n path = vendor/foo\n version = 1.2\nend\n"
+          "package bar\n path = vendor/bar\n version = 2.0\n depend = foo 1.2\nend\n"
+          "target app exe\n sources = a.cpp\nend\n");
+    fs::remove(gRoot / "okay.lock");
+    o = sh("-j1", &rc);
+    check(rc == 0 && readFile(gRoot / "okay.lock").find("\t") != string::npos, "lock is rewritten", o);
+    write("vendor/foo/README", "foo changed\n");
+    o = sh("-j1", &rc);
+    check(rc == 2 && o.find("files changed") != string::npos && o.find("foo") != string::npos, "a changed vendored file is refused", o);
 }
 
 static void testCacheLimit() {
@@ -861,12 +951,14 @@ static void testMsvcFlags() {
           "printf 'ARG %s\\n' \"$@\" >> argv.log\n"
           "for a in \"$@\"; do\n"
           "  case \"$a\" in\n"
-          "    @*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'RSP %s\\n' \"$line\" >> argv.log; done < \"${a#@}\" ;;\n"
+          "    @*) python3 -c 'import sys; d=open(sys.argv[1],\"rb\").read();\n"
+          "t=d[2:].decode(\"utf-16-le\") if d.startswith(b\"\\xff\\xfe\") else d.decode(\"utf-8\", \"replace\")\n"
+          "open(\"argv.log\",\"a\").write(\"\".join(\"RSP \"+ln+\"\\n\" for ln in t.splitlines()))' \"${a#@}\" ;;\n"
           "  esac\n"
           "done\n"
           "out=\n"
           "scan() { case \"$1\" in /Fo*) out=${1#/Fo} ;; /Fe*) out=${1#/Fe} ;; /OUT:*) out=${1#/OUT:} ;; esac; }\n"
-          "for a in \"$@\"; do scan \"$a\"; case \"$a\" in @*) while IFS= read -r line; do scan \"$line\"; done < \"${a#@}\" ;; esac; done\n"
+          "for a in \"$@\"; do scan \"$a\"; case \"$a\" in @*) python3 -c 'import sys; d=open(sys.argv[1],\"rb\").read(); t=d[2:].decode(\"utf-16-le\") if d.startswith(b\"\\xff\\xfe\") else d.decode(\"utf-8\",\"replace\"); open(\"rsp.decoded\",\"w\").write(t.replace(\"\\r\",\"\"))' \"${a#@}\"; while IFS= read -r line; do scan \"$line\"; done < rsp.decoded ;; esac; done\n"
           "echo 'Note: including file: inc/util.h'\n"
           "echo 'Note: including file:  inc/nested.h'\n"
           "if [ -n \"$out\" ]; then mkdir -p \"$(dirname \"$out\")\"; printf 'obj\\n' > \"$out\"; fi\n"
@@ -889,6 +981,16 @@ static void testMsvcFlags() {
     check(args.find("/Fo") != string::npos, "object path uses /Fo", args);
     check(args.find("/OUT:") != string::npos && args.find("/LIBPATH:libs") != string::npos && args.find("user32.lib") != string::npos, "link uses /OUT: /LIBPATH: and name.lib", args);
     check(args.find("RSP ") != string::npos, "a long MSVC command goes through a response file", args);
+    bool bom = false;
+    if (fs::exists(gRoot / ".okaybuild/rsp")) for (auto& e : fs::directory_iterator(gRoot / ".okaybuild/rsp")) {
+        std::ifstream f(e.path(), std::ios::binary); unsigned char b[2] = {}; f.read((char*)b, 2);
+        if (b[0] == 0xFF && b[1] == 0xFE) {
+            string rest((std::istreambuf_iterator<char>(f)), {});
+            string decoded; for (size_t i = 0; i + 1 < rest.size(); i += 2) decoded.push_back(rest[i]);
+            bom = decoded.find("/showIncludes") != string::npos || decoded.find("/OUT:") != string::npos || decoded.find("/Fo") != string::npos;
+        }
+    }
+    check(bom, "msvc response file is UTF-16LE with a BOM and decodes to flags");
     write("inc/util.h", "#define V 2\n");
     o = sh("-j1 --no-cache", &rc);
     check(rc == 0 && ran(o) >= 1, "a header named by /showIncludes is a dependency", o);
@@ -925,6 +1027,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

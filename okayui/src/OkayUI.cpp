@@ -4234,7 +4234,9 @@ static bool Combo_ed(const char* label, const char* const* items, int count, int
             else if (ih && g_pressed) g_active = iid;
             // Opaque rows: the theme's panel colour is slightly translucent, and widgets under the
             // list showed through it.
-            const unsigned char rowBg[4] = { g_theme.panel[0], g_theme.panel[1], g_theme.panel[2], 255 };
+            // A host's Col_PopupBg (a raised colour, so the list stands apart from the panel under it) when it set one.
+            const unsigned char* pbg = pick(Col_PopupBg, g_theme.panel);
+            const unsigned char rowBg[4] = { pbg[0], pbg[1], pbg[2], 255 };
             quad(x, ry, boxW, h, ih ? g_theme.bgHover : rowBg);
             drawText(x + 6.0f, ry + (h - textH()) * 0.5f, items[k], s, g_theme.text);
         }

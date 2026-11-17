@@ -29,7 +29,13 @@ twice, one copy over the other. Now once, with "(Alt+Enter to fix)" after it whe
 **5. The Hierarchy's scene line fits.** In a narrow Hierarchy an unsaved scene showed "Own WAV decoder test  ·  uns" with the
 object count drawn over the end. When the whole line does not fit it now reads "Own WAV decoder test *". Both paths.
 
-**6. A panel window repaints right away after a resize.** A panel dragged out of the editor into its own window stayed black after
+**6. Nothing shows through an open menu.** The Inspector's tab title and "Lock Inspector" read faintly through the Layout dropdown:
+the menus were 98.5% opaque (Dear ImGui's own themes 94%). Every menu, combo list, popup and tooltip is now fully opaque in every
+theme of the editor and the launcher (`okaytheme::OpaquePopups`). The Console's Category list is drawn in a raised colour, so it no
+longer reads as "C All" over "Collapse duplicates". Test: `okayui_host_layering` (a combo opened from the menu bar covers the
+Inspector while open, the palettes' popup colour is opaque).
+
+**7. A panel window repaints right away after a resize.** A panel dragged out of the editor into its own window stayed black after
 it was resized from outside while a tooltip was showing, until the mouse moved and the tooltip went away. Our renderer only ever
 showed the last panel window it drew; now each panel window is shown right after it is drawn.
 
@@ -50,7 +56,9 @@ Steps (Windows, from the release, once this is in one):
    narrow: after any change to the scene its top line ends in " *", not in a cut "unsa".
 6. Drag the **Project** tab out of the editor window. Hover one of its toolbar buttons until its tooltip shows, keep the mouse
    there and resize the Project window by its corner. Expect the Project panel drawn at the new size, not a black window.
-7. Do steps 1 to 5 again after `set OKAY_THIRD_PARTY=1` in a Command Prompt (the old SDL and Dear ImGui code): the same, except
+7. Open the Layout dropdown (top right), the File, Edit and View menus, the Console's Category list and a right-click menu
+   in the Hierarchy: nothing from the panels under them shows through or over them.
+8. Do steps 1 to 5 and 7 again after `set OKAY_THIRD_PARTY=1` in a Command Prompt (the old SDL and Dear ImGui code): the same, except
    that the old Console has its options behind its "..." button and wraps as described in point 2.
 
 Verified: headless tests (`editor_tabs`, `okayui_screens`, `okayui_codeedit_imgui`, `editor_viewports_own` / `_own_2mon` /

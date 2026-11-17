@@ -13,6 +13,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "OkayUIHostImGui.hpp"
+#include "OkayTheme.hpp"
 
 #include <functional>
 
@@ -206,6 +207,60 @@ int main() {
         CHECK(!CoveredAt("Inspector", 1450.0f, 900.0f, 200.0f, 200.0f));
         popup();
     });
+
+    // The editor's Layout dropdown: a combo in the main menu bar at the top right, its list dropping over the Inspector. A combo
+    // list and a menu-bar menu are popups too: both cover the Inspector while open (a hosted OkayUI body there draws its Dear ImGui
+    // version, which ImGui layers under the list).
+    auto menuBar = [] {
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("View")) { ImGui::MenuItem("Hierarchy"); ImGui::MenuItem("Inspector"); ImGui::EndMenu(); }
+            ImGui::SetCursorPosX(1700.0f);
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::BeginCombo("##layoutcombo", "Default", ImGuiComboFlags_HeightLarge)) {
+                for (const char* n : {"Default", "Tall", "Wide", "2 by 3", "Scripting", "Animation"}) ImGui::Selectable(n);
+                ImGui::EndCombo();
+            }
+            ImGui::EndMainMenuBar();
+        }
+    };
+    // Open the combo with a click on it (the way a person does), then check the frames after.
+    for (int i = 0; i < 2; ++i) rig.Frame([&] { menuBar(); Editor(); });
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        rig.Frame([&] { menuBar(); Editor(); }, ImVec2(1760.0f, 8.0f));
+        io.AddMouseButtonEvent(0, true);
+        rig.Frame([&] { menuBar(); Editor(); }, ImVec2(1760.0f, 8.0f));
+        io.AddMouseButtonEvent(0, false);
+        for (int i = 0; i < 3; ++i) rig.Frame([&] { menuBar(); Editor(); }, ImVec2(1760.0f, 8.0f));
+    }
+    rig.Frame([&] {
+        menuBar();
+        Editor();
+        CHECK(GImGui->OpenPopupStack.Size == 1);   // the combo list is open
+        CHECK(CoveredAt("Inspector", 1650.0f, 30.0f, 270.0f, 120.0f));   // under the list: covered
+        CHECK(!CoveredAt("Inspector", 1450.0f, 900.0f, 200.0f, 200.0f));  // far below it: not
+    }, ImVec2(1760.0f, 8.0f));
+    ImGui::GetCurrentContext()->OpenPopupStack.resize(0);   // closed
+    for (int i = 0; i < 2; ++i) rig.Frame([&] { menuBar(); Editor(); });
+    rig.Frame([&] {
+        menuBar();
+        Editor();
+        CHECK(!CoveredAt("Inspector", 1650.0f, 30.0f, 270.0f, 120.0f));
+    });
+
+    // And the menus are opaque, so even ImGui's own panels never show through them (the faint "Inspector" and "Lock Inspector"
+    // that read through the Layout dropdown): the Slate palette, and Dear ImGui's own themes after OpaquePopups.
+    {
+        ImGuiStyle st;
+        okaytheme::ApplySlateColors(st, ImVec4(0.3f, 0.5f, 0.9f, 1.0f));
+        CHECK(st.Colors[ImGuiCol_PopupBg].w == 1.0f);
+        ImGui::StyleColorsDark(&st);
+        CHECK(st.Colors[ImGuiCol_PopupBg].w < 1.0f);   // (Dear ImGui's default is see-through)
+        okaytheme::OpaquePopups(st);
+        CHECK(st.Colors[ImGuiCol_PopupBg].w == 1.0f);
+        ImGui::StyleColorsLight(&st); okaytheme::OpaquePopups(st);
+        CHECK(st.Colors[ImGuiCol_PopupBg].w == 1.0f);
+    }
 
     TEST_MAIN_RESULT();
 }

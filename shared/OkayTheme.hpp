@@ -36,6 +36,11 @@ inline void ApplySlateMetrics(ImGuiStyle& s) {
     s.FrameBorderSize  = 0.0f; s.TabBorderSize   = 0.0f;
 }
 
+// Menus, combo lists, popups and tooltips are fully opaque. With any transparency (this palette had 98.5%, Dear ImGui's own
+// themes have 94%) the panel under an open menu showed through it as faint ghost text: the Inspector's tab title and "Lock
+// Inspector" read through the editor's Layout dropdown. Every theme of the editor and the launcher ends with this.
+inline void OpaquePopups(ImGuiStyle& s) { s.Colors[ImGuiCol_PopupBg].w = 1.0f; }
+
 // The full colour palette for a given accent.
 inline void ApplySlateColors(ImGuiStyle& s, const ImVec4& accentIn) {
     const ImVec4 accent(accentIn.x, accentIn.y, accentIn.z, 1.0f);
@@ -45,7 +50,7 @@ inline void ApplySlateColors(ImGuiStyle& s, const ImVec4& accentIn) {
     c[ImGuiCol_TextDisabled]          = kTextDim;
     c[ImGuiCol_WindowBg]              = kBase;
     c[ImGuiCol_ChildBg]               = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_PopupBg]               = WithAlpha(Mix(kRaised, kBase, 0.35f), 0.985f);
+    c[ImGuiCol_PopupBg]               = Mix(kRaised, kBase, 0.35f);   // opaque: see OpaquePopups
     c[ImGuiCol_Border]                = ImVec4(1, 1, 1, 0.075f);
     c[ImGuiCol_BorderShadow]          = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_FrameBg]               = kField;

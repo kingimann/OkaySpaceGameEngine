@@ -2668,7 +2668,7 @@ void DarkTheme() {
     if (g_themeIndex == 1) {                              // Midnight (deep, bluer)
         c[ImGuiCol_WindowBg]  = ImVec4(0.035f, 0.040f, 0.060f, 1.0f);
         c[ImGuiCol_ChildBg]   = ImVec4(0.070f, 0.080f, 0.110f, 1.0f);
-        c[ImGuiCol_PopupBg]   = ImVec4(0.070f, 0.080f, 0.110f, 0.98f);
+        c[ImGuiCol_PopupBg]   = ImVec4(0.070f, 0.080f, 0.110f, 1.0f);   // opaque (okaytheme::OpaquePopups)
         c[ImGuiCol_Border]    = ImVec4(1, 1, 1, 0.05f);
         c[ImGuiCol_Text]      = ImVec4(0.90f, 0.93f, 0.98f, 1.0f);
         c[ImGuiCol_TextDisabled] = ImVec4(0.46f, 0.50f, 0.60f, 1.0f);
@@ -2680,7 +2680,7 @@ void DarkTheme() {
     } else if (light) {                                   // Light
         c[ImGuiCol_WindowBg]  = ImVec4(0.93f, 0.94f, 0.96f, 1.0f);
         c[ImGuiCol_ChildBg]   = ImVec4(0.99f, 0.99f, 1.00f, 1.0f);
-        c[ImGuiCol_PopupBg]   = ImVec4(0.99f, 0.99f, 1.00f, 0.98f);
+        c[ImGuiCol_PopupBg]   = ImVec4(0.99f, 0.99f, 1.00f, 1.0f);   // opaque (okaytheme::OpaquePopups)
         c[ImGuiCol_Border]    = ImVec4(0, 0, 0, 0.10f);
         c[ImGuiCol_Text]      = ImVec4(0.10f, 0.12f, 0.16f, 1.0f);
         c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.55f, 1.0f);
@@ -9108,7 +9108,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.29f, 0.36f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.18f, 0.23f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.19f, 0.21f, 0.27f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.130f, 0.142f, 0.178f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.130f, 0.142f, 0.178f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.08f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.92f, 0.96f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0.55f, 0.59f, 0.67f, 1.0f));

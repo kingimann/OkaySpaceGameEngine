@@ -5503,6 +5503,7 @@ void ApplyTheme() {
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
 
+    okaytheme::OpaquePopups(s);   // no panel shows through an open menu or combo list (every theme)
     // Light / Classic keep ImGui's own palette (only the metrics above apply).
     if (g_theme != 0) return;
 

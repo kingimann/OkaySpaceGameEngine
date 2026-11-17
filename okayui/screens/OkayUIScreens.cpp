@@ -210,7 +210,12 @@ ConsoleResult DrawConsole(okay::ConsoleModel& model, ConsoleViewState& st, const
         res.searchField = UI::GetItemRect();
         UI::SameLine();
         UI::SetNextItemWidth(comboW);
+        // The list drops over the toggles below: in a raised colour, so it does not read as stray text
+        // over them (in the panel's own colour "All" sat next to a cut "C" of "Collapse duplicates"). (A lighter shade than ImGui's 35,39,48:
+        // this list has no visible edge.)
+        UI::PushStyleColor(UI::Col_PopupBg, 46, 51, 63);
         UI::Combo("Category", catItems.data(), (int)catItems.size(), &st.category);
+        UI::PopStyleColor();
         res.categoryCombo = UI::GetItemRect();
 
         // ---- row 2: what to show (with counts) ----

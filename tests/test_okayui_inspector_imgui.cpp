@@ -293,6 +293,19 @@ int main() {
             const UI::Rect ot = rowOf("Only Tag");
             CHECK(ot.y < pm.y + 60.0f);
         }
+        if (b == inspbody::BodyCurves) {   // stage 4: a click on the gradient bar adds the same stop in both; a click on the plot the same key
+            const UI::Rect g = rowOf("psgrad");
+            clickBoth(std::floor(g.x + g.w * 0.25f), std::floor(g.y + 9.0f));
+            CHECK(imv.gCount == 4 && okv.gCount == 4 && std::fabs(imv.gStops[15] - okv.gStops[15]) < 0.01f);
+            const UI::Rect c = rowOf("pssize");
+            clickBoth(std::floor(c.x + c.w * 0.8f), std::floor(c.y + c.h - 10.0f));
+            CHECK(imv.cCount == 4 && okv.cCount == 4 && std::fabs(imv.cKeys[7] - okv.cKeys[7]) < 0.05f);
+        }
+        if (b == inspbody::BodyTerrain) {   // stage 4: a Generate click in both (the radio rows lie below this canvas; okayui_inspector tries them)
+            const UI::Rect gb = rowOf("Generate##terrgen");
+            clickBoth(gb.x + gb.w * 0.5f, gb.y + gb.h * 0.5f);
+            CHECK(imv.clicked.size() == 1 && okv.clicked.size() == 1 && okv.clicked[0] == "Generate");
+        }
         if (b == inspbody::BodyRigidbody) {   // the freeze boxes on one line: a click on Y ticks Y in both
             const UI::Rect fy = rowOf("Y");
             clickBoth(fy.x + 11.0f, fy.y + fy.h * 0.5f);

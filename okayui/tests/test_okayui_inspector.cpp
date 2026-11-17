@@ -918,5 +918,100 @@ int main() {
         UI::UseLauncherLook(false);
     }
 
+
+    // ================= stage 4 (section 17): the new row kinds and the bodies that use them =================
+    {   // Text: the style bar wraps inside the region; the multi-line box is the region wide; the anchor's grid sets the anchor
+        BRig r(inspbody::BodyText);
+        r.Frames(3);
+        Check("inspector_text", r.Draw());
+        const float right = 16.0f + 428.0f + 0.5f;
+        for (const char* n : inspbody::kTextLooks) { const UI::Rect b = r.R(n); CHECK(b.w > 0.0f && b.x + b.w <= right); }
+        CHECK(std::fabs(CY(r.R("Title")) - CY(r.R("Look"))) < 3.0f);                                // the first preset on the "Look" line
+        const UI::Rect tx = r.R("Text##txt");
+        CHECK(tx.w > 400.0f && tx.x + tx.w <= right && tx.h > 50.0f);                            // three text lines, the region wide
+        const UI::Rect an = r.R("Anchor##txt");
+        r.Click(an.x + 60.0f, CY(an));
+        CHECK(r.res.popup.w > 150.0f && r.res.popup.h > 120.0f);                                   // the grid is open
+        const UI::Rect pop = r.res.popup;
+        r.Click(pop.x + 10.0f + 44.0f + 20.0f, pop.y + 8.0f + 30.0f + 20.0f);                     // the top row's middle cell: Top
+        CHECK(r.v.txAnchor == 1);
+        CHECK(r.res.popup.w == 0.0f);                                                              // and the grid closed
+    }
+    {   // a UI Button: the Function list has the editor's two headings; a pick sets the function
+        BRig r(inspbody::BodyButton, 460.0f, 1600.0f);
+        r.Frames(3);
+        Check("inspector_uibutton", r.Draw());
+        const UI::Rect fn = r.R("Function##uibclk");
+        r.Click(fn.x + 40.0f, CY(fn));
+        CHECK(r.res.listRows.size() == 5);
+        CHECK(r.res.listRows[1].y > r.res.listRows[0].y + 40.0f);                                  // a heading between "(none)" and "Heal"
+        r.Click(r.res.listRows[3]);
+        CHECK(r.v.btFn == 3);
+        const UI::Rect fs = r.R("uibfont");
+        CHECK(fs.w > 200.0f && fs.x + fs.w <= 16.0f + 428.0f - 20.0f);                              // the slot leaves room for its "x"
+        r.v.btFont = "Assets/Fonts/Inter.ttf"; r.Frames(2);
+        const int sk = r.Row("uibfont");
+        const UI::Rect x = r.res.rows[(std::size_t)sk + 1].w > 0.0f ? r.res.rows[(std::size_t)sk] : UI::Rect{};
+        CHECK(x.w > 0.0f);
+        r.Click(x.x + x.w + 14.0f, CY(x));                                                         // the "x" after the slot
+        CHECK(r.v.btFont.empty());
+    }
+    {   // the Nav Mesh Agent's Area Mask: the two presets on one line inside the list, then a box per area
+        BRig r(inspbody::BodyNavAgent);
+        r.Frames(3);
+        Check("inspector_navagent", r.Draw());
+        const UI::Rect m = r.R("Area Mask##nava");
+        r.Click(m.x + 40.0f, CY(m));
+        CHECK(r.res.listRows.size() == 8 && r.res.listRows[0].w > 0.0f);
+        const UI::Rect pop = r.res.popup;
+        r.Click(pop.x + 10.0f + 30.0f, r.res.listRows[0].y - 18.0f);                              // "All but Not Walkable"'s line, its first button
+        CHECK(r.v.naMask == (int)0xFFFFFFFDu);
+        r.Click(r.res.listRows[1].x + 11.0f, CY(r.res.listRows[1]));                               // tick "1 Not Walkable"
+        CHECK(r.v.naMask == -1);
+    }
+    {   // the gradient: a click on the bar away from the markers adds a stop there; a drag moves it; a right-click deletes it
+        BRig r(inspbody::BodyCurves);
+        r.Frames(3);
+        Check("inspector_curves", r.Draw());
+        const UI::Rect g = r.R("psgrad");
+        CHECK(g.w > 400.0f && std::fabs(g.h - 29.0f) < 0.5f);
+        r.Click(g.x + g.w * 0.25f, g.y + 9.0f);
+        CHECK(r.v.gCount == 4 && r.v.gSel == 3 && Near(r.v.gStops[15], 0.25f, 0.01f));
+        CHECK(r.v.gStops[16] > 0.9f && r.v.gStops[17] > 0.5f && r.v.gStops[17] < 0.7f);         // the colour already showing there
+        r.Drag(g.x + g.w * 0.25f, g.y + 24.0f, g.w * 0.25f);
+        CHECK(Near(r.v.gStops[15], 0.5f, 0.02f));
+        r.RightClick(g.x + g.w * 0.5f, g.y + 24.0f); r.Frame();
+        CHECK(r.v.gCount == 3);
+        // the curve: a click in an empty spot adds a key under the pointer; Smooth changes the drawn curve, not the keys
+        const UI::Rect c = r.R("pssize");
+        CHECK(std::fabs(c.h - 64.0f) < 0.5f);
+        r.Click(c.x + c.w * 0.8f, c.y + c.h - 10.0f);
+        CHECK(r.v.cCount == 4 && Near(r.v.cKeys[6], 0.8f, 0.01f) && r.v.cKeys[7] > 0.0f && r.v.cKeys[7] < 0.6f);
+        r.RightClick(c.x + c.w * 0.8f, c.y + c.h - 10.0f); r.Frame();
+        CHECK(r.v.cCount == 3);
+    }
+    {   // the Terrain: a radio picks the layer to paint; a range's low cell is dragged and stays under the high one
+        BRig r(inspbody::BodyTerrain, 460.0f, 2900.0f);
+        r.Frames(3);
+        Check("inspector_terrain", r.Draw());
+        const int r0 = r.Row("##paintlayer");
+        const UI::Rect rb = r.res.rows[(std::size_t)r0];
+        CHECK(rb.w > 10.0f);
+        r.Click(rb.x + 8.0f, CY(rb));
+        CHECK(r.v.teLayer == 0);
+        const UI::Rect sc = r.R("Scale##scat");
+        r.Drag(sc.x + 20.0f, CY(sc), 400.0f, 8);
+        CHECK(r.v.teScale[0] <= r.v.teScale[1] + 1e-4f && r.v.teScale[0] > 0.7f);
+        const UI::Rect w = r.R("Water##terr"), s = r.R("Sand##terr");
+        CHECK(w.w > 0.0f && std::fabs(w.y - s.y) < 1.0f && s.x > w.x + w.w);                       // the swatches share a line
+    }
+    {   // the other UI bodies are drawn (their pictures are compared with Dear ImGui's in okayui_inspector_imgui)
+        for (inspbody::Body b : {inspbody::BodyCanvas, inspbody::BodyImage, inspbody::BodySlider, inspbody::BodyToggle, inspbody::BodyInput, inspbody::BodyLayout}) {
+            BRig r(b, 460.0f, 1400.0f);
+            r.Frames(3);
+            CHECK(r.res.contentHeight > 300.0f);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

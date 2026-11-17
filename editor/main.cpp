@@ -32400,11 +32400,11 @@ static bool DrawTerrainWithOkayUI(EditorState& ed, Terrain* tr, okay::Component*
     L.Slider("Talus angle##tero", &g_terrainThermalTalus, 0.2f, 6.0f); L.Tip("Slopes steeper than this (height step per cell) slump into scree.");
     const int kTherm = L.Button("Thermal Erode##tero");
     L.SliderInt("Terrace bands##tero", &g_terrainTerraceSteps, 2, 20);
-    L.SameLine(); const int kTerr = L.Button("Terrace##tero"); L.Tip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
+    L.SameLineOrWrap(); const int kTerr = L.Button("Terrace##tero"); L.Tip("Flatten the terrain into stepped elevation bands (mesas / rice paddies).");
     L.Range("Range##ternorm", g_terrainNormRange, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
-    L.SameLine(); const int kNorm = L.Button("Normalize##ternorm");
+    L.SameLineOrWrap(); const int kNorm = L.Button("Normalize##ternorm");
     L.Tip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
-    L.SameLine(); const int kInv = L.Button("Invert##terinv"); L.Tip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
+    L.SameLineOrWrap(); const int kInv = L.Button("Invert##terinv"); L.Tip("Flip the terrain about its mid elevation: peaks become valleys and vice-versa.");
     L.Section("Heightmap (World Machine / Gaea / Photoshop)");
     const int kImp = L.Button("Import PNG...##terhm");
     L.SameLine(); const int kExp = L.Button("Export PNG...##terhm");
@@ -32474,6 +32474,140 @@ static bool DrawTerrainWithOkayUI(EditorState& ed, Terrain* tr, okay::Component*
     if (apply) { tr->Apply(); ed.dirty = true; }
     oked::RunTerrainToolRows(ed, *tr, L, tools);
     if (L[kRemove].clicked) toRemove = tr;
+    return true;
+}
+
+// A Visual Script's declared variable edited in the Inspector: while playing, the live value; else the graph's starting value (in its text,
+// saved to its file, and in the open node editor). Shared by the Dear ImGui body and the OkayUI rows (stage 4).
+static void ApplyVsVarEdit(EditorState& ed, GameObject* go, VisualScriptComponent* vsc, const okay::vs::VarDecl& d, okay::vs::VsValue value,
+                           bool live, const std::vector<okay::vs::StructDef>& structs) {
+    if (live) {
+        std::string err;
+        if (okay::vs::VsCoerce(d.type, value, structs, &err)) vsc->SetVariable(d.name, value);
+        else ConsoleLog("Variable " + d.name + ": " + err, 2);
+        return;
+    }
+    if (ed.isPlaying()) return;
+    std::string src;
+    const std::string legacyType = okay::vs::VarTypeText(d.type);
+    if (!okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) return;
+    std::string err;
+    if (!vsc->LoadFromText(src, &err)) { ConsoleLog("Variable " + d.name + ": " + err, 2); return; }
+    if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
+    ed.dirty = true;
+    // Keep the open graph in step, or the next Save / Play would put the old value back.
+    auto& eg = okay::editor::vsed::State().g;
+    const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
+    const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(), okay::editor::vsed::State().boundGuids.end(), go->Guid()) !=
+                       okay::editor::vsed::State().boundGuids.end();
+    if (sameFile || bound) {
+        for (auto& ev : eg.vars)
+            if (ev.name == d.name && ev.scope == okay::vs::VarScopeName(d.scope)) { ev.value = okay::vs::VsToLiteral(value); ev.typed = true; ev.type = legacyType; }
+        eg.declsChanged();
+    }
+}
+// "Open in node editor": an embedded graph gets a file first, so it can be edited.
+static void OpenVisualScriptInEditor(EditorState& ed, GameObject* go, VisualScriptComponent* vsc) {
+    std::string path = vsc->Path();
+    if (path.empty()) {
+        std::filesystem::path dir = ed.projectDir().empty() ? std::filesystem::path("Assets") : std::filesystem::path(ed.projectDir()) / "Assets";
+        std::error_code mk; std::filesystem::create_directories(dir, mk);
+        path = (dir / (go->name + "Graph.okayvs")).string();
+        std::ofstream(path) << vsc->Source();
+        vsc->SetPath(path); ed.dirty = true;
+    }
+    okay::editor::vsed::OpenFile(path);
+    okay::editor::vsed::BindObject(go);
+    g_showVisualScript = true;
+}
+
+// The Visual Script (the component the most example scenes use): the graph's name, its error or node count, Open and Reload, and each
+// declared variable as its type's field (a number, a check box, three cells, a colour, a text). A graph with a list, map or struct
+// variable keeps Dear ImGui's body (those editors are not rows).
+static bool DrawVisualScriptWithOkayUI(EditorState& ed, GameObject* go, VisualScriptComponent* vsc) {
+    using namespace okaypanels;
+    using okay::vs::PinType;
+    const std::vector<okay::vs::VarDecl> decls = vsc->Graph() ? vsc->Graph()->Decls() : std::vector<okay::vs::VarDecl>{};
+    for (const auto& d : decls) {
+        if (d.type.IsStruct()) return false;
+        const PinType b = d.type.base;
+        if (b != PinType::Number && b != PinType::Bool && b != PinType::Vec3 && b != PinType::Color && b != PinType::Text && b != PinType::Object) return false;
+    }
+    const std::vector<okay::vs::StructDef> structs = vsc->Graph() ? vsc->Graph()->Structs() : std::vector<okay::vs::StructDef>{};
+    const std::string nm = vsc->Path().empty() ? std::string("(embedded graph)") : std::filesystem::path(vsc->Path()).filename().string();
+    InspFieldList L;
+    L.rows.reserve(8 + decls.size() * 2);
+    L.Label(nm.c_str(), 0, false, true);
+    if (!vsc->Path().empty()) L.Last().tip = vsc->Path().c_str();
+    std::string line;
+    if (!vsc->LastError().empty()) { line = "Error: " + vsc->LastError(); L.ColorText(RowCol(0.95f, 0.45f, 0.40f), line.c_str(), true); }
+    else if (vsc->Graph()) { line = std::to_string(vsc->Graph()->NodeCount()) + " nodes"; L.Note(line.c_str(), true); }
+    const int kOpen = L.SmallButton("Open in node editor##vsc");
+    L.SameLine(); const int kReload = L.SmallButton("Reload##vsc");
+    struct VarRow { int k = -1; float f[4] = {}; bool b = false; std::string s, label, type; bool live = false; };
+    std::vector<VarRow> vr(decls.size());
+    if (!decls.empty()) {
+        L.Note(ed.isPlaying() ? "Declared variables (live; edits apply now)." : "Starting values. Change them, then press Play.");
+        for (std::size_t i = 0; i < decls.size(); ++i) {
+            const auto& d = decls[i];
+            VarRow& r = vr[i];
+            okay::vs::VsValue value = d.value;
+            r.live = ed.isPlaying() && d.scope == okay::vs::VarScope::Object;
+            if (r.live) { auto it = vsc->Variables().find(d.name); if (it != vsc->Variables().end()) value = it->second; }
+            r.label = "##" + d.name;
+            if (d.scope != okay::vs::VarScope::Object) r.label += std::string("  [") + okay::vs::VarScopeName(d.scope) + "]";
+            r.type = okay::vs::VarTypeText(d.type);
+        }
+        for (std::size_t i = 0; i < decls.size(); ++i) {   // the labels and texts are in place now (no more reallocation)
+            const auto& d = decls[i];
+            VarRow& r = vr[i];
+            okay::vs::VsValue value = d.value;
+            if (r.live) { auto it = vsc->Variables().find(d.name); if (it != vsc->Variables().end()) value = it->second; }
+            L.Note(r.type.c_str());
+            L.SameLine();
+            switch (d.type.base) {
+            case PinType::Number: r.f[0] = value.AsFloat(); r.k = L.Drag(r.label.c_str(), r.f, 1, 0.05f); L.Last().width = -1.0f; break;
+            case PinType::Bool: r.b = value.AsBool(); r.k = L.Check(r.label.c_str(), &r.b); break;
+            case PinType::Vec3: { const Vec3 p = value.AsVec3(); r.f[0] = p.x; r.f[1] = p.y; r.f[2] = p.z; r.k = L.Drag(r.label.c_str(), r.f, 3, 0.05f); L.Last().width = -1.0f; break; }
+            case PinType::Color: { const auto c = value.AsColor(); r.f[0] = c.r; r.f[1] = c.g; r.f[2] = c.b; r.f[3] = c.a; r.k = L.Color(r.label.c_str(), r.f, 4); L.Last().width = -1.0f; break; }
+            default:
+                r.s = value.IsObject() ? std::string() : value.AsString();
+                r.k = L.Text(r.label.c_str(), &r.s, d.type.base == PinType::Object ? "object name or @guid:..." : "");
+                L.Last().width = -1.0f;
+                break;
+            }
+        }
+    }
+    std::vector<std::string> liveLines;
+    if (ed.isPlaying() && !vsc->Variables().empty()) {
+        std::vector<std::pair<std::string, okay::vs::VsValue>> lv(vsc->Variables().begin(), vsc->Variables().end());
+        std::sort(lv.begin(), lv.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& kv : lv) liveLines.push_back(kv.first + " = " + okay::vs::VsDescribe(kv.second));
+        L.Tree("Variables##vsc");
+        for (const std::string& t : liveLines) L.Label(t.c_str());
+        L.TreeEnd();
+    }
+    if (!DrawRowsOkayUI(vsc, "##okayui_vscript", L)) return false;
+    if (L[kOpen].clicked) OpenVisualScriptInEditor(ed, go, vsc);
+    if (L[kReload].clicked) {
+        std::string err;
+        if (vsc->Reload(&err)) ConsoleLog("Reloaded " + nm); else ConsoleLog("Reload failed: " + err, 2);
+    }
+    for (std::size_t i = 0; i < decls.size(); ++i) {
+        VarRow& r = vr[i];
+        if (r.k < 0 || !L[r.k].changed) continue;
+        const auto& d = decls[i];
+        okay::vs::VsValue value;
+        switch (d.type.base) {
+        case PinType::Number: value = okay::vs::VsValue(r.f[0]); break;
+        case PinType::Bool: value = okay::vs::VsValue(r.b); break;
+        case PinType::Vec3: value = okay::vs::VsValue(Vec3{r.f[0], r.f[1], r.f[2]}); break;
+        case PinType::Color: value = okay::vs::VsValue::Color(r.f[0], r.f[1], r.f[2], r.f[3]); break;
+        default: value = (d.type.base == PinType::Object && r.s.empty()) ? okay::vs::VsValue::Object(0) : okay::vs::VsValue(r.s); break;
+        }
+        ApplyVsVarEdit(ed, go, vsc, d, value, r.live, structs);
+        break;   // the graph was reloaded: the other rows' declarations are stale
+    }
     return true;
 }
 
@@ -33707,7 +33841,7 @@ void DrawInspector(EditorState& ed) {
             }
             int& s_terraceSteps = g_terrainTerraceSteps;   // shared with the OkayUI rows
             ImGui::SliderInt("Terrace bands##tero", &s_terraceSteps, 2, 20);
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Terrace##tero"));   // the buttons after a row wrap instead of running out of a narrow Inspector
             if (ImGui::Button("Terrace##tero")) {
                 tr->Terrace(s_terraceSteps); tr->Apply(); ed.dirty = true;
                 ConsoleLog("Terraced into " + std::to_string(s_terraceSteps) + " bands");
@@ -33717,13 +33851,13 @@ void DrawInspector(EditorState& ed) {
             float& s_normLow = g_terrainNormRange[0];   // shared with the OkayUI rows
             float& s_normHigh = g_terrainNormRange[1];
             ImGui::DragFloatRange2("Range##ternorm", &s_normLow, &s_normHigh, 0.1f, -100.0f, 100.0f, "Low %.1f", "High %.1f");
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Normalize##ternorm"));
             if (ImGui::Button("Normalize##ternorm")) {
                 tr->Normalize(s_normLow, s_normHigh); tr->Apply(); ed.dirty = true;
                 ConsoleLog("Normalized heights to [" + std::to_string(s_normLow) + ", " + std::to_string(s_normHigh) + "]");
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linearly remap every height so the lowest point becomes Low and the highest becomes High.");
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Invert##terinv"));
             if (ImGui::Button("Invert##terinv")) {
                 tr->Invert(); tr->Apply(); ed.dirty = true;
                 ConsoleLog("Inverted terrain (peaks <-> valleys)");
@@ -34102,7 +34236,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* vsc = dynamic_cast<VisualScriptComponent*>(curComp)) {
-        if (CompHeader("Visual Script", vsc, &toRemove)) {
+        if (CompHeader("Visual Script", vsc, &toRemove) && !(UseOkayUIBackend() && DrawVisualScriptWithOkayUI(ed, go, vsc))) {   // OkayUI's with the preview switch (section 17)
             const std::string nm = vsc->Path().empty() ? std::string("(embedded graph)")
                                                        : std::filesystem::path(vsc->Path()).filename().string();
             ImGui::TextUnformatted(nm.c_str());
@@ -34111,20 +34245,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Error: %s", vsc->LastError().c_str());
             else if (vsc->Graph())
                 ImGui::TextDisabled("%d nodes", vsc->Graph()->NodeCount());
-            if (ImGui::SmallButton("Open in node editor##vsc")) {
-                std::string path = vsc->Path();
-                if (path.empty()) {   // embedded only: give it a file so it can be edited
-                    std::filesystem::path dir = ed.projectDir().empty() ? std::filesystem::path("Assets")
-                                                                         : std::filesystem::path(ed.projectDir()) / "Assets";
-                    std::error_code mk; std::filesystem::create_directories(dir, mk);
-                    path = (dir / (go->name + "Graph.okayvs")).string();
-                    std::ofstream(path) << vsc->Source();
-                    vsc->SetPath(path); ed.dirty = true;
-                }
-                okay::editor::vsed::OpenFile(path);
-                okay::editor::vsed::BindObject(go);
-                g_showVisualScript = true;
-            }
+            if (ImGui::SmallButton("Open in node editor##vsc")) OpenVisualScriptInEditor(ed, go, vsc);
             ImGui::SameLine();
             if (ImGui::SmallButton("Reload##vsc")) {
                 std::string err;
@@ -34151,32 +34272,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::TextDisabled("%s", okay::vs::VarTypeText(d.type).c_str());
                     ImGui::SameLine();
                     const bool edited = okay::editor::vsed::VsEditValue(label.c_str(), d.type, value, structs);
-                    if (edited && live) {
-                        std::string err;
-                        if (okay::vs::VsCoerce(d.type, value, structs, &err)) vsc->SetVariable(d.name, value);
-                        else ConsoleLog("Variable " + d.name + ": " + err, 2);
-                    } else if (edited && !ed.isPlaying()) {
-                        std::string src;
-                        const std::string legacyType = okay::vs::VarTypeText(d.type);
-                        if (okay::editor::vsed::VsSetDeclDefaultInText(vsc->Source(), d.name, d.scope, okay::vs::VsToLiteral(value), legacyType, src)) {
-                            std::string err;
-                            if (vsc->LoadFromText(src, &err)) {
-                                if (!vsc->Path().empty()) { std::ofstream(vsc->Path()) << vsc->Source(); }
-                                ed.dirty = true;
-                                // Keep the open graph in step, or the next Save / Play would put the old value back.
-                                auto& eg = okay::editor::vsed::State().g;
-                                const bool sameFile = !vsc->Path().empty() && okay::editor::vsed::VsSamePath(vsc->Path(), eg.path);
-                                const bool bound = std::find(okay::editor::vsed::State().boundGuids.begin(),
-                                                             okay::editor::vsed::State().boundGuids.end(),
-                                                             go->Guid()) != okay::editor::vsed::State().boundGuids.end();
-                                if (sameFile || bound) {
-                                    for (auto& ev : eg.vars)
-                                        if (ev.name == d.name && ev.scope == okay::vs::VarScopeName(d.scope)) { ev.value = okay::vs::VsToLiteral(value); ev.typed = true; ev.type = legacyType; }
-                                    eg.declsChanged();
-                                }
-                            } else ConsoleLog("Variable " + d.name + ": " + err, 2);
-                        }
-                    }
+                    if (edited) ApplyVsVarEdit(ed, go, vsc, d, value, live, structs);
                     ImGui::PopID();
                 }
             }

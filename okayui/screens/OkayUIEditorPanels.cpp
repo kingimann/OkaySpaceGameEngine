@@ -2356,9 +2356,11 @@ AddComponentResult DrawAddComponentButton(std::uint32_t accent, float x, float y
 namespace {
 
 // The value column, or the row's own width.
-float RowFrameW(const InspRow& r, float itemW, float regionW) {
+// A negative width is the room left from where the row starts (Dear ImGui's SetNextItemWidth(-n): from the cursor, after SameLine and
+// indents), less n.
+float RowFrameW(const InspRow& r, float itemW, float regionW, float startX = 0.0f) {
     if (r.width > 0.0f) return r.width;
-    if (r.width < 0.0f) return std::max(1.0f, regionW - (r.sameLineAt >= 0.0f ? r.sameLineAt : 0.0f) + r.width);
+    if (r.width < 0.0f) return std::max(1.0f, regionW - startX + r.width);
     return itemW;
 }
 
@@ -2582,7 +2584,7 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             unsigned treeKey = 0u;
             if (r.kind == InspRowTree) { treeKey = 2166136261u; for (const char* q = r.label; *q; ++q) treeKey = (treeKey ^ (unsigned char)*q) * 16777619u; }
             UI::PushID((int)k);
-            const float frameW = RowFrameW(r, itemW, w);
+            const float frameW = RowFrameW(r, itemW, w, UI::GetCursorScreenPos().x - regionX);
             bool hoverTip = true;   // the row's tooltip on hover (an asset field and an image show their own)
             UI::Rect whole{};       // a row made of several items (cells, a colour field, a file field): all of it
             switch (r.kind) {
@@ -2686,7 +2688,13 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                     }
                     UI::PopID();
                     const std::string vis = Visible(r.label);
-                    if (!vis.empty()) { UI::SameLine(g_metrics.innerSpacing.x); UI::Text(vis.c_str()); whole.w = UI::GetItemRectMax().x - whole.x; }
+                    if (!vis.empty()) {   // the label on the swatch's line, where a frame's text sits (a plain Text drifted down a row of these)
+                        UI::SameLine(g_metrics.innerSpacing.x);
+                        UI::Dummy(UI::CalcTextWidth(vis.c_str()), fh);
+                        const UI::Rect lb = UI::GetItemRect();
+                        UI::GetWindowDrawList().AddText(UI::Vec2{lb.x, lb.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
+                        whole.w = lb.x + lb.w - whole.x;
+                    }
                     break;
                 }
                 float before[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
@@ -3259,7 +3267,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 if (UI::IsItemActivated()) r.activated = true;
                 UI::PopID();
                 const std::string vis = Visible(r.label);
-                if (!vis.empty()) { UI::SameLine(inner); UI::Text(vis.c_str()); }
+                if (!vis.empty()) {   // the label a frame tall, its text where a frame's sits: a button put after it stays on the line's top
+                    UI::SameLine(inner);
+                    UI::Dummy(UI::CalcTextWidth(vis.c_str()), fh);
+                    const UI::Rect lb = UI::GetItemRect();
+                    UI::GetWindowDrawList().AddText(UI::Vec2{lb.x, lb.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_Text), vis.c_str());
+                }
                 whole.w = UI::GetItemRectMax().x - whole.x;
                 break;
             }

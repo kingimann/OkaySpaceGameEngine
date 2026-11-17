@@ -670,6 +670,23 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testPackage() {
+    printf("test: okay-build package lays out an exe, runtime files and assets\n");
+    fresh("pack");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("side.dll", "dll\n");
+    write("extras/readme.txt", "hello\n");
+    write("extras/nested/a.txt", "a\n");
+    write("build.okay",
+          "toolchain\n exe_suffix = .exe\nend\n"
+          "target app exe\n sources = main.cpp\n runtime = side.dll\n assets = extras\nend\n");
+    int rc; string o = sh("package -j1", &rc);
+    check(rc == 0 && fs::exists(gRoot / "dist/app/app.exe") && fs::exists(gRoot / "dist/app/side.dll"), "exe and runtime sit side by side", o);
+    check(readFile(gRoot / "dist/app/extras/nested/a.txt") == "a\n", "asset folders are copied with their structure");
+    string man = readFile(gRoot / "dist/app/PACKAGE.txt");
+    check(man.find("okay-package 1") != string::npos && man.find("app.exe") != string::npos && man.find("side.dll") != string::npos && man.find("extras/nested/a.txt") != string::npos, "PACKAGE.txt lists what was copied", man);
+}
+
 static void testPackages() {
     printf("test: local packages resolve into okay.lock and conflicts are errors\n");
     fresh("pkg");
@@ -871,6 +888,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

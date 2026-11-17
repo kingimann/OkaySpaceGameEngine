@@ -63,7 +63,12 @@ Each step that runs records its kind, its description, how long it took, and whe
 An action may say `memory = N` (a plain integer, the unit is whatever the manifest author means). `--memory N` is the budget. The scheduler will not start a step whose memory would push the running total over that budget, on top of the existing pools. A step that by itself needs more than the budget is refused before anything runs. With no `--memory`, nothing is counted and the old behaviour stays.
 
 ## Cancellation and a killed build
-Each finished step is appended to `.okaybuild/state.journal` before the build ends. The final save folds that into `.okaybuild/state` and deletes the journal. If the process is killed first, the next run reads the journal and does not repeat a step that finished. Ctrl+C sets a flag, stops starting new steps, and ends the running command (its process group). The process then exits 130. ## Packages and lockfiles
+Each finished step is appended to `.okaybuild/state.journal` before the build ends. The final save folds that into `.okaybuild/state` and deletes the journal. If the process is killed first, the next run reads the journal and does not repeat a step that finished. Ctrl+C sets a flag, stops starting new steps, and ends the running command (its process group). The process then exits 130. ## Packaging
+`okay-build package` builds an exe and copies it into `dist/<name>/` with each `runtime` file beside it and each `assets` folder kept as a folder. `PACKAGE.txt` lists every copied path. Windows loads a DLL from the exe's own directory, so runtime files sit next to the exe on purpose.
+
+`scripts/build-windows-dist.sh` (read, not called) does more, and only for the whole engine: `OkaySpace.exe` and `SDL2.dll` at the top, a second `SDL2.dll` under `Tools/` next to the editor and the player, `VERSION.txt` in both places, `Assets/Textures`, `Assets/Fonts`, a curated `examples/` list, and `README.txt`. okay-build package is the general layout for one target. It does not assemble that full engine distribution.
+
+## Packages and lockfiles
 A manifest may declare local packages: `package NAME`, then `path`, `version`, and `depend = OTHER VERSION`. There is no download and no registry. Resolving checks that every dependency names a package in the same manifest and the same version. A mismatch is an error that names both versions. The first build writes `okay.lock` (name, version, path, sorted). Later builds refuse to run when the lock and the manifest disagree, so the set of packages stays reproducible. `okay-build lock` writes or checks the same file.
 
 ## Jobserver

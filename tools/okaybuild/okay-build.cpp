@@ -85,7 +85,7 @@ struct RawAction {
 };
 struct Target {
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
-    vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs;
+    vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
 };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
@@ -289,6 +289,8 @@ static Manifest parseManifest(const string& file) {
             else if (k == "flags") add(x.flags); else if (k == "link_flags") add(x.linkFlags);
             else if (k == "libs") add(x.libs); else if (k == "deps") add(x.deps);
             else if (k == "needs") add(x.needs);
+            else if (k == "runtime") add(x.runtime);
+            else if (k == "assets") add(x.assets);
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "test") x.isTest = oneFlag(v, "test");
             else throw err("unknown target key '" + k + "'");
@@ -1784,6 +1786,51 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
 #endif
     return printTestReport(tests, code);
 }
+static void copyTreeFiles(const fs::path& from, const fs::path& to, const string& prefix, vector<string>& listed) {
+    fs::create_directories(to);
+    for (auto& e : fs::recursive_directory_iterator(from)) {
+        if (!e.is_regular_file()) continue;
+        fs::path rel = fs::relative(e.path(), from);
+        fs::path dest = to / rel;
+        fs::create_directories(dest.parent_path());
+        fs::copy_file(e.path(), dest, fs::copy_options::overwrite_existing);
+        string shown = prefix.empty() ? rel.generic_string() : prefix + "/" + rel.generic_string();
+        listed.push_back(shown);
+    }
+}
+static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
+    vector<string> names;
+    for (auto& t : m.targets) {
+        if (t.isLib) continue;
+        if (!want.empty() && std::find(want.begin(), want.end(), t.name) == want.end()) continue;
+        names.push_back(t.name);
+    }
+    if (names.empty()) throw Fail("package needs an exe target");
+    int rc = build(m, names, o);
+    if (rc != 0) return rc;
+    for (auto& n : names) {
+        const Target* t = nullptr; for (auto& x : m.targets) if (x.name == n) t = &x;
+        string exeName = n + m.tc.exe;
+        string root = "dist/" + n;
+        std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root);
+        fs::copy_file(under(m.outdir + "/" + exeName), root + "/" + exeName, fs::copy_options::overwrite_existing);
+        vector<string> listed{exeName};
+        for (auto& r : t->runtime) {
+            if (!fs::is_regular_file(r)) throw Fail("runtime file '" + r + "' does not exist");
+            string base = fs::path(r).filename().generic_string();
+            fs::copy_file(r, root + "/" + base, fs::copy_options::overwrite_existing);
+            listed.push_back(base);
+        }
+        for (auto& a : t->assets) {
+            if (!fs::is_directory(a)) throw Fail("asset folder '" + a + "' does not exist");
+            copyTreeFiles(a, fs::path(root) / fs::path(a).filename(), fs::path(a).filename().generic_string(), listed);
+        }
+        std::sort(listed.begin(), listed.end());
+        { std::ofstream f(root + "/PACKAGE.txt", std::ios::trunc); f << "okay-package 1\n"; for (auto& s : listed) f << s << "\n"; }
+        printf("okay-build package: %s (%zu files)\n", root.c_str(), listed.size());
+    }
+    return 0;
+}
 static int cmdTest(Manifest& m, const Opts& o) {
     vector<string> names;
     for (auto& t : m.targets) if (t.isTest) names.push_back(t.name);
@@ -2253,7 +2300,7 @@ int main(int argc, char** argv) {
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package") cmd = a;
             else if (a == "-h" || a == "--help") {
                 puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
@@ -2279,7 +2326,8 @@ int main(int argc, char** argv) {
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);
         if (cmd == "report") return showReport();
-        if (cmd == "build" || cmd == "test") syncLock(m, true);
+        if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
+        if (cmd == "package") return cmdPackage(m, want, o);
         if (cmd == "test") return cmdTest(m, o);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);

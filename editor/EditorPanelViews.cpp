@@ -339,7 +339,9 @@ PhysicsSettingsIntent DrawPhysicsSettingsBodyImGui(PhysicsSettingsModel& m, cons
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kSmoothTip);
     }
     ImGui::Separator();
-    ImGui::TextDisabled("%s", kPhysicsQualityHeading);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);   // wrapped: a narrow panel cut off its end
+    ImGui::TextWrapped("%s", kPhysicsQualityHeading);
+    ImGui::PopStyleColor();
     int q = m.quality == 1 ? 1 : 0;
     // Short names in the box (the long ones were cut off at "fas"); what each does is the line below (#983).
     ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());

@@ -621,7 +621,9 @@ PhysicsSettingsResult DrawPhysicsSettings(PhysicsSettingsModel& m, float x, floa
             if (UI::IsItemHovered()) UI::SetTooltip("%s", kSmoothTip);
         }
         Divider();
-        UI::TextDisabled(kPhysicsQualityHeading);
+        UI::PushStyleColor(UI::Col_Text, UI::GetColorU32(UI::Col_TextDisabled));   // wrapped: a narrow panel cut off its end
+        UI::TextWrapped(kPhysicsQualityHeading);
+        UI::PopStyleColor();
         int q = m.quality == 1 ? 1 : 0;
         // Short names in the box (the long ones were cut off at "fas"); what each does is the line below (#983).
         const float qW = UI::CalcTextWidth("Improved") + g_metrics.framePadding.x * 4.0f + UI::GetFrameHeight();

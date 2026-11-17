@@ -536,6 +536,9 @@ static void TestLongPathAndEveryCut() {
     RUN_SUITE("long project path and a variant cut at every byte");
     std::string deep = "okay_prefab_var_long";
     for (int i = 0; i < 4; ++i) deep += "/" + std::string(70, (char)('p' + i));
+    struct RemoveTop {   // Files removes only the deepest folder; take the whole chain away at the end
+        ~RemoveTop() { std::error_code ec; fs::remove_all(fs::temp_directory_path() / "okay_prefab_var_long", ec); }
+    } removeTop;
     Files f(deep);
     CHECK(f.base.size() > 300);
     MakeRobot(f.base);

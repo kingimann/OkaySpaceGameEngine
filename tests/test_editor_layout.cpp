@@ -44,6 +44,27 @@ int main() {
         const Rc unrelated = MakeRc(500, 300, 100, 50);                                  // UI elsewhere does not move it
         CHECK_NEAR(PlaceStatsLine(canvas, line, 4, 3, 6, {unrelated}).y0, 3, 1e-4);
     }
+    {   // The Game view's readout block over examples/own_wav, as in the editor screenshots: a 560 x 454 view at 432,222,
+        // the scene's instruction panel (dark background, text inside) across the top from 450,238 to the right edge,
+        // 150 high. In edit mode ("560 x 454 px" + "Edit mode - press Play to run") and in play mode (the readout +
+        // the PLAYING pill and the FPS label) the block goes to the bottom left, clear of the panel and of the cursor hint.
+        const Rc view = MakeRc(432, 222, 560, 454);
+        const Rc panel = MakeRc(450, 238, 542, 150);
+        const float lh = 17.0f;
+        for (const Pt block : {Pt{206, 2 * lh + 8}, Pt{210, 2 * lh + 15}}) {   // edit mode, play mode
+            const float dy = GameViewLabelShift(view, block, 0, 0, lh, {panel});
+            const Rc at = MakeRc(view.x0 + 3, view.y0 + 2 + dy, block.x, block.y);
+            CHECK(dy > 0.0f);
+            CHECK(!Overlaps(at, panel));
+            CHECK(at.y1 <= view.y1 - (6 + lh + 16) + 1e-3f);                   // above the centred cursor hint
+            CHECK(at.y0 >= view.y0);
+            CHECK_NEAR(GameViewLabelShift(view, block, 0, 0, lh, {}), 0, 1e-4);   // nothing there: it stays at the top
+        }
+        // On an emulated phone (notch and rounded corners) both spots move in by the insets.
+        const float dyDev = GameViewLabelShift(view, Pt{206, 2 * lh + 8}, 20, 30, lh, {panel});
+        CHECK(dyDev > 0.0f);
+        CHECK(view.y0 + 2 + 30 + dyDev + 2 * lh + 8 <= view.y1 - (6 + lh + 16 + 30) + 1e-3f);
+    }
     {   // The stats line at the top left: the camera readout steps below it (the reported collision).
         const Rc statsLine = MakeRc(8, 6, 300, 18);
         auto p = PlaceOverlay(canvas, Pt{188, 100}, Corner::TopLeft, 8, {statsLine});

@@ -48678,13 +48678,8 @@ void DrawGameView(EditorState& ed) {
         const okay::edlayout::Rc canvasRc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y};
         const bool fresh = g_gameUIRects.canvas.x == canvasPos.x && g_gameUIRects.canvas.y == canvasPos.y &&
                            ImGui::GetFrameCount() - g_gameUIRects.frame <= 1;
-        // Bottom gap: clear of the centred cursor hint, the safe area of an emulated device.
-        const float bottomGap = 6.0f + lh + 16.0f + labelDrop;
-        if (fresh) {
-            const okay::edlayout::Rc at = okay::edlayout::PlaceStatsLine(canvasRc, okay::edlayout::Pt{w, h}, 3.0f + labelIn,
-                                                                         2.0f + labelDrop, bottomGap, g_gameUIRects.rects);
-            labelShift = at.y0 - (canvasPos.y + 2.0f + labelDrop);
-        }
+        if (fresh) labelShift = okay::edlayout::GameViewLabelShift(canvasRc, okay::edlayout::Pt{w, h}, labelIn, labelDrop, lh,
+                                                                   g_gameUIRects.rects);
     }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.

@@ -106,6 +106,17 @@ inline Rc PlaceStatsLine(const Rc& canvas, Pt size, float x, float topY, float b
     return aLow < aTop ? low : top;
 }
 
+/// How far the Game view's top-left readout block (the "560 x 454 px" line and the line under it: "Edit mode - press Play
+/// to run", or the PLAYING pill and the FPS label) moves down: 0 at the top left, or down to the bottom left when the
+/// game's own UI (`content`: its panels and text, such as an example's instruction panel) covers the top left more than
+/// the bottom left. `inX` / `drop` are an emulated device's corner and notch insets; the bottom spot stays clear of the
+/// centred cursor hint (one text line plus its padding) and of the device's inset. Same rule as PlaceStatsLine.
+inline float GameViewLabelShift(const Rc& canvas, Pt block, float inX, float drop, float lineH, const std::vector<Rc>& content) {
+    const float bottomGap = 6.0f + lineH + 16.0f + drop;
+    const Rc at = PlaceStatsLine(canvas, block, 3.0f + inX, 2.0f + drop, bottomGap, content);
+    return at.y0 - (canvas.y0 + 2.0f + drop);
+}
+
 // ---- Label placement -----------------------------------------------------------------------------
 
 struct LabelReq {

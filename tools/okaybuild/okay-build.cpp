@@ -1444,16 +1444,18 @@ static int showHistory() {
     for (int id : ids) printf("%d\n", id);
     return 0;
 }
-static std::map<string, long long> loadReportSteps(const string& path) {
+static string jsonEsc(const string& s);
+struct DiffStep { long long ms = 0; string cache; };
+static std::map<string, DiffStep> loadReportSteps(const string& path) {
     std::ifstream in(path); string line;
     if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("not a report: " + path);
-    std::map<string, long long> steps;
+    std::map<string, DiffStep> steps;
     while (std::getline(in, line)) {
         if (line.compare(0, 5, "hits\t") == 0 || line.compare(0, 7, "misses\t") == 0) continue;
         size_t a = line.find('\t'), b = a == string::npos ? string::npos : line.find('\t', a + 1), c = b == string::npos ? string::npos : line.find('\t', b + 1);
         if (a == string::npos || c == string::npos) continue;
         string desc = line.substr(c + 1);
-        steps[desc] = atoll(line.c_str()) / 1000000;
+        steps[desc] = DiffStep{atoll(line.c_str()) / 1000000, line.substr(b + 1, c - b - 1)};
     }
     return steps;
 }
@@ -1465,15 +1467,16 @@ static int diffReports(const string& a, const string& b) {
         throw Fail("no report '" + name + "'");
     };
     auto A = loadReportSteps(resolve(a)), B = loadReportSteps(resolve(b));
-    for (auto& [d, ms] : A) if (!B.count(d)) printf("only %s: %s (%lld ms)\n", a.c_str(), d.c_str(), ms);
-    for (auto& [d, ms] : B) if (!A.count(d)) printf("only %s: %s (%lld ms)\n", b.c_str(), d.c_str(), ms);
-    for (auto& [d, ms] : A) {
-        auto it = B.find(d); if (it == B.end() || it->second == ms) continue;
-        printf("changed: %s %lld ms -> %lld ms\n", d.c_str(), ms, it->second);
+    for (auto& [d, st] : A) if (!B.count(d)) printf("only %s: %s (%lld ms)\n", a.c_str(), d.c_str(), st.ms);
+    for (auto& [d, st] : B) if (!A.count(d)) printf("only %s: %s (%lld ms)\n", b.c_str(), d.c_str(), st.ms);
+    for (auto& [d, st] : A) {
+        auto it = B.find(d); if (it == B.end()) continue;
+        if (it->second.ms != st.ms) printf("changed: %s %lld ms -> %lld ms\n", d.c_str(), st.ms, it->second.ms);
+        if (it->second.cache != st.cache) printf("cache: %s %s -> %s\n", d.c_str(), st.cache.c_str(), it->second.cache.c_str());
     }
     return 0;
 }
-static int showReport() {
+static int showReport(bool json = false) {
     std::ifstream in(under(".okaybuild/report"));
     if (!in) throw Fail("no report yet; run a build first");
     string line; if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("report is not from this okay-build");
@@ -1488,6 +1491,12 @@ static int showReport() {
     }
     std::sort(rows.begin(), rows.end(), [](const Row& x, const Row& y) { return x.ns > y.ns; });
     long long sum = 0; for (auto& r : rows) sum += r.ns;
+    if (json) {
+        printf("{\"steps\": %zu, \"hits\": %d, \"misses\": %d, \"total_ms\": %lld, \"items\": [", rows.size(), hits, misses, sum / 1000000);
+        for (size_t i = 0; i < rows.size(); ++i)
+            printf("%s{\"ms\": %lld, \"kind\": \"%s\", \"cache\": \"%s\", \"desc\": \"%s\"}", i ? ", " : "", rows[i].ns / 1000000, jsonEsc(rows[i].kind).c_str(), jsonEsc(rows[i].cache).c_str(), jsonEsc(rows[i].desc).c_str());
+        printf("]}\n"); return 0;
+    }
     printf("steps: %zu\n", rows.size());
     int denom = hits + misses;
     if (denom == 0) printf("cache: no compiles\n");
@@ -1495,6 +1504,10 @@ static int showReport() {
     printf("slowest:\n");
     size_t n = rows.size() < 10 ? rows.size() : 10;
     for (size_t i = 0; i < n; ++i) printf("  %lld ms\t%s\t%s\t%s\n", rows[i].ns / 1000000, rows[i].kind.c_str(), rows[i].cache.c_str(), rows[i].desc.c_str());
+    std::map<string, std::pair<int, long long>> byKind;
+    for (auto& r : rows) { auto& k = byKind[r.kind]; ++k.first; k.second += r.ns; }
+    printf("by kind:\n");
+    for (auto& [k, v] : byKind) printf("  %s\t%d step(s)\t%lld ms\n", k.c_str(), v.first, v.second / 1000000);
     printf("total: %lld ms\n", sum / 1000000);
     return 0;
 }
@@ -2824,7 +2837,7 @@ int main(int argc, char** argv) {
         if (cmd == "report") {
             if (!want.empty() && want[0] == "history") return showHistory();
             if (want.size() >= 3 && want[0] == "diff") return diffReports(want[1], want[2]);
-            return showReport();
+            return showReport(!want.empty() && want[0] == "json");
         }
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);

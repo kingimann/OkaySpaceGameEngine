@@ -1119,11 +1119,29 @@ static void testSharedCache() {
     check(rc == 0 && o.find("entries: 1") != string::npos, "cache stats reads the shared dir", o);
 }
 
+static void testReportCacheAndJson() {
+    printf("test: report shows cache changes in a diff, totals by kind, and a json form\n");
+    fresh("rjson");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "first build", o);
+    fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o"); fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o.d");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "second build restores the object from the cache", o);
+    o = sh("report diff 1 2", &rc);
+    check(rc == 0 && o.find("cache: a.cpp miss -> hit") != string::npos, "diff names a miss that became a hit", o);
+    o = sh("report", &rc);
+    check(rc == 0 && o.find("by kind:") != string::npos && o.find("CC\t1 step(s)") != string::npos, "report totals time by step kind", o);
+    o = sh("report json", &rc);
+    check(rc == 0 && o.find("{\"steps\": 1") != string::npos && o.find("\"hits\": 1") != string::npos && o.find("\"kind\": \"CC\"") != string::npos && o.find("\"cache\": \"hit\"") != string::npos, "report json carries steps, hits and per-step cache state", o);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

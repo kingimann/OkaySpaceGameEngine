@@ -20,6 +20,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "HierarchyPanelModel.hpp"   // the clip math, shared with the panel's two versions
 
 #include <algorithm>
 #include <cstdint>
@@ -41,36 +42,20 @@ struct Row {
     int objectIndex = -1;             ///< position among the object rows (zebra striping, keyboard order)
 };
 
-/// The rows from `first` up to (not including) `last` are inside the view.
-struct ClipRange {
-    int first = 0, last = 0;
-    bool operator==(const ClipRange& o) const { return first == o.first && last == o.last; }
-};
+/// The rows from `first` up to (not including) `last` are inside the view. The clip math is shared with the panel's two versions
+/// (shared/HierarchyPanelModel.hpp), so the editor and the OkayUI port agree on which rows show.
+using ClipRange = okaypanels::HierClipRange;
 
 /// Which of `rowCount` rows of height `rowHeight` show when the list is scrolled down by `scrollY` in a view
 /// `viewHeight` tall. `overscan` extra rows are kept on each side (so a row half in view is always drawn).
 inline ClipRange VisibleRange(int rowCount, float rowHeight, float scrollY, float viewHeight, int overscan = 1) {
-    ClipRange r;
-    if (rowCount <= 0) return r;
-    if (!(rowHeight > 0.0f)) { r.last = rowCount; return r; }   // unknown height: draw everything
-    if (!(scrollY > 0.0f)) scrollY = 0.0f;
-    if (!(viewHeight > 0.0f)) viewHeight = 0.0f;
-    int first = (int)(scrollY / rowHeight);
-    int last = (int)((scrollY + viewHeight) / rowHeight) + 1;   // the row cut by the bottom edge too
-    first -= overscan; last += overscan;
-    r.first = std::max(0, std::min(first, rowCount));
-    r.last = std::max(r.first, std::min(last, rowCount));
-    return r;
+    return okaypanels::HierVisibleRange(rowCount, rowHeight, scrollY, viewHeight, overscan);
 }
 
 /// The scroll position that shows row `row`: unchanged when the row is already fully in view, otherwise the
 /// row is placed `anchor` (0 = top, 1 = bottom) of the way down the view. Never below 0.
 inline float RevealScroll(int row, float rowHeight, float scrollY, float viewHeight, float anchor = 0.4f) {
-    if (row < 0 || !(rowHeight > 0.0f)) return scrollY;
-    const float top = row * rowHeight, bottom = top + rowHeight;
-    if (top >= scrollY && bottom <= scrollY + viewHeight) return scrollY;
-    const float s = top - (viewHeight - rowHeight) * anchor;
-    return s > 0.0f ? s : 0.0f;
+    return okaypanels::HierRevealScroll(row, rowHeight, scrollY, viewHeight, anchor);
 }
 
 class Model {

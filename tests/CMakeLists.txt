@@ -3839,7 +3839,7 @@ target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR=
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
 # The Hierarchy panel's flat row list and visible range (editor/HierarchyRowModel.hpp, Finding 99).
 add_executable(test_hierarchy_row_model test_hierarchy_row_model.cpp)
-target_include_directories(test_hierarchy_row_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_include_directories(test_hierarchy_row_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_hierarchy_row_model PRIVATE okay::engine)
 add_test(NAME hierarchy_row_model COMMAND test_hierarchy_row_model)
 

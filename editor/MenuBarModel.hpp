@@ -96,6 +96,95 @@ inline Entry OnlyIf(Entry e, bool ok, const std::string& why) { return ok ? e : 
 /// "Delete" for one object, "Delete 3 Objects" for several.
 inline std::string Counted(const std::string& verb, int n) { return n > 1 ? verb + " " + std::to_string(n) + " Objects" : verb; }
 
+// ---- host-drawn menu content, written once for every toolkit ----
+/// What a SlotMenu's content is drawn with. A host writes its live list (Parent To's objects, Rig & IK) once against this, and it can
+/// be drawn with Dear ImGui (MenuEntriesUI.hpp ImGuiSlotUI), recorded into entries for another toolkit (SlotRecorder: the OkayUI
+/// Hierarchy draws those) and replayed to run the item that was picked there (SlotReplayer). Item and BeginMenu answer like Dear
+/// ImGui's MenuItem and BeginMenu.
+struct SlotUI {
+    virtual ~SlotUI() = default;
+    virtual bool Item(const char* label, bool enabled = true) = 0;
+    virtual bool BeginMenu(const char* label, bool enabled = true) = 0;
+    virtual void EndMenu() = 0;
+    virtual void Separator() = 0;
+    virtual void Note(const char* text) = 0;   ///< a dim line that is not an item
+    virtual void Tip(const char* text) = 0;    ///< the hover text of the item just drawn
+};
+
+namespace detail {
+// The id of the `index`th entry of a level: "<parent id>/<index>:<label>".
+inline std::string SlotStep(const std::string& parent, int index, const char* label) {
+    return parent + "/" + std::to_string(index) + ":" + (label ? label : "");
+}
+}
+
+/// Records a slot's content as entries. Every entry's id starts with the slot's id, so a picked item can be told apart from the
+/// menu's own items and handed to a SlotReplayer.
+class SlotRecorder : public SlotUI {
+public:
+    explicit SlotRecorder(std::string slotId) { m_levels.push_back(Level{std::move(slotId), &m_root, 0}); }
+    std::vector<Entry> Take() { return std::move(m_root); }
+    bool Item(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        Entry e; e.kind = Kind::Item; e.id = detail::SlotStep(l.id, l.n++, label); e.label = label ? label : ""; e.enabled = enabled;
+        l.out->push_back(std::move(e));
+        return false;
+    }
+    bool BeginMenu(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        Entry e; e.kind = Kind::Submenu; e.id = detail::SlotStep(l.id, l.n++, label); e.label = label ? label : ""; e.enabled = enabled;
+        l.out->push_back(std::move(e));
+        if (!enabled) return false;
+        Entry& sub = l.out->back();
+        m_levels.push_back(Level{sub.id, &sub.children, 0});
+        return true;
+    }
+    void EndMenu() override { if (m_levels.size() > 1) m_levels.pop_back(); }
+    void Separator() override { Level& l = m_levels.back(); ++l.n; l.out->push_back(Sep()); }
+    void Note(const char* text) override { Level& l = m_levels.back(); ++l.n; l.out->push_back(Head(text ? text : "")); }
+    void Tip(const char* text) override {
+        Level& l = m_levels.back();
+        if (l.out->empty() || !text) return;
+        Entry& e = l.out->back();
+        if (e.enabled) e.tip = text; else e.reason = text;
+    }
+private:
+    struct Level { std::string id; std::vector<Entry>* out; int n; };
+    std::vector<Entry> m_root;
+    std::vector<Level> m_levels;
+};
+
+/// Walks a slot's content again so that only the item whose id is `pick` (an id a SlotRecorder gave) answers true, and only the
+/// sub-menus on its way open. The slot must draw the same list it drew when it was recorded (it is replayed right after the pick).
+class SlotReplayer : public SlotUI {
+public:
+    SlotReplayer(std::string slotId, std::string pick) : m_pick(std::move(pick)) { m_levels.push_back(Level{std::move(slotId), 0}); }
+    bool Item(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        const bool hit = enabled && detail::SlotStep(l.id, l.n++, label) == m_pick;
+        if (hit) m_ran = true;
+        return hit;
+    }
+    bool BeginMenu(const char* label, bool enabled) override {
+        Level& l = m_levels.back();
+        const std::string id = detail::SlotStep(l.id, l.n++, label);
+        if (!enabled || m_pick.compare(0, id.size() + 1, id + "/") != 0) return false;
+        m_levels.push_back(Level{id, 0});
+        return true;
+    }
+    void EndMenu() override { if (m_levels.size() > 1) m_levels.pop_back(); }
+    void Separator() override { ++m_levels.back().n; }
+    void Note(const char*) override { ++m_levels.back().n; }
+    void Tip(const char*) override {}
+    /// True once the picked item was found (and its code ran).
+    bool Ran() const { return m_ran; }
+private:
+    struct Level { std::string id; int n; };
+    std::string m_pick;
+    std::vector<Level> m_levels;
+    bool m_ran = false;
+};
+
 // ---- why-sentences, shared by every menu that greys the same thing out ----
 inline constexpr const char* kNeedSelection = "Select an object in the Hierarchy or the Scene view first.";
 inline constexpr const char* kStopPlayFirst = "Stop Play first: saving now would save the running game, not your scene.";

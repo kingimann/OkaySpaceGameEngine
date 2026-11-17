@@ -29,6 +29,10 @@ void DrawComponentDiagMarker(const okay::GameObject* go, const char* label, ImVe
 bool ObjectHasDiag(const okay::GameObject* go);
 bool ComponentHasDiag(const okay::GameObject* go, const char* label);
 void DrawSceneDiagMarker(ImVec2 rowMin, ImVec2 rowMax);
+/// The same facts as values, for a panel that draws its own marker (the OkayUI Hierarchy): 0 none, 1 warnings, 2 errors, and the
+/// marker's hover text.
+int ObjectDiagLevel(const okay::GameObject* go, std::string* tip);
+int SceneDiagLevel(std::string* tip);
 
 // Console: a click on a row with a source selects that object. The editor
 // binds itself once a frame; DrawConsole calls the activate without an EditorState.

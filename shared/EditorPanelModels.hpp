@@ -641,3 +641,6 @@ struct RenderingSettingsIntent {
 };
 
 } // namespace okaypanels
+
+// The Hierarchy panel (its own header, std only as well).
+#include "HierarchyPanelModel.hpp"

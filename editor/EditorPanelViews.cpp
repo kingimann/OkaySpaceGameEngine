@@ -7,7 +7,9 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -631,6 +633,372 @@ RenderingSettingsIntent DrawRenderingSettingsBodyImGui(RenderingSettingsModel& m
     if (m.skybox && ImGui::Checkbox("Skybox##ps", m.skybox)) out.changed = true;
     if (ImGui::Button("Apply to current scene##rend")) out.apply = true;
     return out;
+}
+
+} // namespace oked
+
+// ---- Hierarchy --------------------------------------------------------------------------------------------------------------------
+// editor/main.cpp DrawHierarchy, drawn from the model (shared/HierarchyPanelModel.hpp): the same toolbar, scene strip, tree rows
+// (Dear ImGui tree nodes, flat, placed at their own y), icons, badges, eye, padlock, drop lines, search list and menus.
+
+namespace oked {
+
+namespace {
+
+struct ImPen {
+    ImDrawList* dl;
+    void line(float x0, float y0, float x1, float y1, std::uint32_t c, float t) { dl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), c, t); }
+    void rect(float x0, float y0, float x1, float y1, std::uint32_t c, float r, float t) { dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), c, r, 0, t); }
+    void rectFilled(float x0, float y0, float x1, float y1, std::uint32_t c, float r) { dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), c, r); }
+    void circle(float cx, float cy, float r, std::uint32_t c, int seg, float t) { dl->AddCircle(ImVec2(cx, cy), r, c, seg, t); }
+    void circleFilled(float cx, float cy, float r, std::uint32_t c, int seg) { dl->AddCircleFilled(ImVec2(cx, cy), r, c, seg); }
+    void triangleFilled(float ax, float ay, float bx, float by, float cx, float cy, std::uint32_t c) { dl->AddTriangleFilled(ImVec2(ax, ay), ImVec2(bx, by), ImVec2(cx, cy), c); }
+    void polyline(const float* xy, int n, std::uint32_t c, bool closed, float t) {
+        ImVec2 pts[16]; n = std::min(n, 16);
+        for (int i = 0; i < n; ++i) pts[i] = ImVec2(xy[i * 2], xy[i * 2 + 1]);
+        dl->AddPolyline(pts, n, c, closed ? ImDrawFlags_Closed : 0, t);
+    }
+    void arc(float cx, float cy, float r, float a0, float a1, int seg, std::uint32_t c, float t) { dl->PathArcTo(ImVec2(cx, cy), r, a0, a1, seg); dl->PathStroke(c, 0, t); }
+    void text(float x, float y, std::uint32_t c, const char* s) { dl->AddText(ImVec2(x, y), c, s); }
+};
+
+ImVec4 Unpack(std::uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c); }
+
+// editor/EditorWidgets.cpp IconButton with the plus or the three dots.
+bool HierToolButton(const char* id, bool plus, bool active, const char* tip, std::uint32_t accent) {
+    const float h = ImGui::GetFrameHeight();
+    if (active) {
+        ImVec4 a = Unpack(accent);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(a.x, a.y, a.z, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(a.x, a.y, a.z, 1.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(a.x, a.y, a.z, 0.80f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    }
+    const bool clicked = ImGui::Button(id, ImVec2(h, h));
+    if (active) ImGui::PopStyleColor(4);
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1) : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    if (!active && !ImGui::IsItemHovered()) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+    const float s = h * 0.5f;
+    if (plus) {
+        dl->AddLine(ImVec2(c.x - s * 0.4f, c.y), ImVec2(c.x + s * 0.4f, c.y), col, 2.0f);
+        dl->AddLine(ImVec2(c.x, c.y - s * 0.4f), ImVec2(c.x, c.y + s * 0.4f), col, 2.0f);
+    } else {
+        for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.36f, c.y), s * 0.1f, col);
+    }
+    if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return clicked;
+}
+
+// MenuEntriesUI.hpp DrawEntries on the panel's data form of a menu.
+void HierMenuEntries(const std::vector<PanelMenuEntry>& es, std::string& chosen) {
+    for (const PanelMenuEntry& e : es) {
+        switch (e.kind) {
+        case PanelMenuSeparator: ImGui::Separator(); break;
+        case PanelMenuHeading: ImGui::TextDisabled("%s", e.label.c_str()); break;
+        case PanelMenuSub: {
+            const bool open = ImGui::BeginMenu(e.label.c_str(), e.enabled);
+            if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!e.enabled && !e.reason.empty()) ImGui::SetTooltip("%s", e.reason.c_str());
+                else if (!e.tip.empty()) ImGui::SetTooltip("%s", e.tip.c_str());
+            }
+            if (open) { HierMenuEntries(e.children, chosen); ImGui::EndMenu(); }
+            break;
+        }
+        default: {
+            const bool hit = ImGui::MenuItem(e.label.c_str(), e.shortcut.empty() ? nullptr : e.shortcut.c_str(), e.kind == PanelMenuToggle && e.checked, e.enabled);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!e.enabled && !e.reason.empty()) ImGui::SetTooltip("%s", e.reason.c_str());
+                else if (!e.tip.empty()) ImGui::SetTooltip("%s", e.tip.c_str());
+            }
+            if (hit && e.enabled) chosen = e.id;
+            break;
+        }
+        }
+    }
+}
+
+std::string HierEllipsizeIm(const std::string& s, float maxW) {
+    return HierEllipsize(s, maxW, [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; });
+}
+
+} // namespace
+
+HierarchyIntent DrawHierarchyBodyImGui(const HierarchyModel& m, HierarchyState& st, const PanelViewHooks& hooks) {
+    HierarchyIntent in;
+    st.rowsFilled = 0;
+    const std::uint32_t accent = hooks.accent;
+    bool openMenu = false;
+    // One toolbar row: [+] [search.............] [...]
+    if (HierToolButton("##hcreate", true, false, "Create object", accent)) { st.menuKind = HierMenuCreate; st.menuRow = 0; openMenu = true; }
+    ImGui::SameLine();
+    if (SearchFieldOr(hooks, "##hfilter", st.filter, sizeof(st.filter), "Search", -(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x)))
+        in.filterChanged = true;
+    if (ImGui::IsItemHovered() && !st.filter[0]) ImGui::SetTooltip("%s", kHierSearchTip);
+    ImGui::SameLine();
+    if (HierToolButton("##hmore", false, m.sortAZ, "Hierarchy options", accent)) { st.menuKind = HierMenuOptions; st.menuRow = 0; openMenu = true; }
+    // Scene header: name (with unsaved marker) and object count, as a quiet strip.
+    {
+        ImGui::Spacing();
+        char cnt[24]; std::snprintf(cnt, sizeof(cnt), "%d", m.objectCount);
+        const std::string title = HierSceneTitle(m.sceneName, m.dirty);
+        ImGui::TextUnformatted(title.c_str());
+        if (m.sceneDiag > 0) {
+            const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+            ImPen pen{ImGui::GetWindowDrawList()};
+            const ImVec2 bang = ImGui::CalcTextSize("!");
+            HierDrawDiag(pen, m.sceneDiag, mx.x + 16.0f, (mn.y + mx.y) * 0.5f, bang.x, bang.y);
+        }
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(cnt).x);
+        ImGui::TextDisabled("%s", cnt);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
+    }
+    ImGui::Separator();
+    // The search bar and scene header stay put; only the rows scroll.
+    ImGui::BeginChild("##hiertree", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImPen pen{dl};
+    const float rowH = ImGui::GetTextLineHeightWithSpacing();
+    const float listX = ImGui::GetCursorPosX(), listY = ImGui::GetCursorPosY();
+    const float viewH = ImGui::GetWindowHeight();
+    const float fs = ImGui::GetFontSize();
+    const ImVec2 bang = ImGui::CalcTextSize("!");
+    if (m.revealRow >= 0 && !m.searching) {
+        const float rel = ImGui::GetScrollY() - listY;
+        const float want = HierRevealScroll(m.revealRow, rowH, rel, viewH);
+        if (want != rel) ImGui::SetScrollY(want + listY);
+    }
+    st.scrollY = ImGui::GetScrollY();
+    const HierClipRange clip = HierVisibleRange(m.rowCount, rowH, ImGui::GetScrollY() - listY, viewH);
+    if (m.rowCount == 0 && !m.searching) {   // editor/main.cpp EmptyState, in short
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail.y * 0.34f);
+        ImGui::SetWindowFontScale(1.25f);
+        ImGui::SetCursorPosX(listX + std::max(0.0f, (avail.x - ImGui::CalcTextSize(kHierEmptyTitle).x) * 0.5f));
+        ImGui::TextUnformatted(kHierEmptyTitle);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::SetCursorPosX(listX + std::max(0.0f, (avail.x - ImGui::CalcTextSize(kHierEmptyHint).x) * 0.5f));
+        ImGui::TextDisabled("%s", kHierEmptyHint);
+    }
+    const ImGuiPayload* live = ImGui::GetDragDropPayload();
+    HierRow row;
+    for (int ri = clip.first; ri < clip.last; ++ri) {
+        row = HierRow();
+        if (m.fillRow) m.fillRow(ri, row);
+        ++st.rowsFilled;
+        ImGui::SetCursorPos(ImVec2(listX, listY + ri * rowH));
+        if (row.header) {   // a combined scene's group title
+            const ImU32 col = row.headerMain ? IM_COL32(150, 152, 160, 255) : IM_COL32(120, 190, 255, 255);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(("    " + row.name).c_str());
+            ImGui::PopStyleColor();
+            const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
+            const float cy2 = hmn.y + ImGui::GetTextLineHeight() * 0.52f;
+            dl->AddTriangleFilled(ImVec2(hmn.x + 2.0f, cy2 - fs * 0.14f), ImVec2(hmn.x + 2.0f + fs * 0.42f, cy2 - fs * 0.14f),
+                                  ImVec2(hmn.x + 2.0f + fs * 0.21f, cy2 + fs * 0.22f), col);
+            dl->AddLine(ImVec2(hmn.x, hmx.y + 1.0f), ImVec2(hmn.x + ImGui::GetContentRegionAvail().x, hmx.y + 1.0f), ImGui::GetColorU32(ImGuiCol_Separator));
+            continue;
+        }
+        ImGui::PushID((int)ri);
+        if (m.searching) {   // a flat list of the matches, each with its parents after it
+            const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x - (row.diag ? 28.0f : 6.0f);
+            const std::string shown = HierEllipsizeIm(row.name, searchRoom);
+            if (ImGui::Selectable(("     " + shown).c_str(), row.selected)) {
+                if (ImGui::GetIO().KeyCtrl) in.toggle = row.id; else in.select = row.id;
+            }
+            if (shown != row.name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", row.name.c_str());
+            const ImVec2 smn = ImGui::GetItemRectMin(), smx = ImGui::GetItemRectMax();
+            HierDrawIcon(pen, row.icon, smn.x + 2.0f, smn.y, fs);
+            float hv[4]; HierDrawPrefabMark(pen, row, smn.x + 2.0f, smn.y, fs, hv);
+            if (!row.path.empty()) {
+                const float nx = smn.x + ImGui::CalcTextSize(("     " + shown).c_str()).x + 12.0f;
+                dl->AddText(ImVec2(nx, smn.y + 1.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.75f), ("in " + row.path).c_str());
+            }
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) in.frame = row.id;
+            HierDrawBadges(pen, row.badges, smx.x, smn.y, smx.y, 0.0f);
+            HierDrawDiag(pen, row.diag, smx.x - 48.0f, (smn.y + smx.y) * 0.5f, bang.x, bang.y);
+            ImGui::PopID();
+            continue;
+        }
+        ImGui::SetCursorPosX(listX + row.depth * ImGui::GetStyle().IndentSpacing);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (row.selected) flags |= ImGuiTreeNodeFlags_Selected;
+        if (row.childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+        if (row.dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+        else if (row.prefabBlue) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
+        {   // zebra striping: a faint band on every other object row
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if ((row.objectIndex & 1) != 0)
+                dl->AddRectFilled(ImVec2(ImGui::GetWindowPos().x, p.y), ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + rowH), IM_COL32(255, 255, 255, 5));
+        }
+        const std::string tail = HierTail(row.childCount, row.active);
+        const float nameRoom = ImGui::GetContentRegionAvail().x - (fs + ImGui::GetStyle().FramePadding.x * 2.0f) - ImGui::CalcTextSize("     ").x -
+                               ImGui::CalcTextSize(tail.c_str()).x - kHierEyeW * 2.0f - 8.0f - (row.diag ? 22.0f : 0.0f);
+        const std::string shown = HierEllipsizeIm(row.name, nameRoom);
+        const bool renaming = st.renameId != 0 && st.renameId == row.id;
+        if (row.childCount > 0) ImGui::SetNextItemOpen(row.open, ImGuiCond_Always);   // the model owns the open state
+        const bool open = ImGui::TreeNodeEx("##node", flags, "     %s%s", renaming ? "" : shown.c_str(), renaming ? "" : tail.c_str());
+        if (row.childCount > 0 && open != row.open) { in.openId = row.id; in.open = open ? 1 : 0; }
+        if (shown != row.name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", row.name.c_str());
+        if (row.dim || row.prefabBlue) ImGui::PopStyleColor();
+        const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+        const bool hovered = ImGui::IsItemHovered();
+        {   // the type icon after the arrow, and the prefab mark
+            const float ax = fs + ImGui::GetStyle().FramePadding.x * 2.0f;
+            const float ix = rowMin.x + ax, iy = rowMin.y + (rowMax.y - rowMin.y - fs) * 0.5f;
+            HierDrawIcon(pen, row.icon, ix, iy, fs);
+            float hv[4]; HierDrawPrefabMark(pen, row, ix, iy, fs, hv);
+            if (hv[2] > hv[0] && !row.prefabTip.empty() && ImGui::IsMouseHoveringRect(ImVec2(hv[0], hv[1]), ImVec2(hv[2], hv[3])) && ImGui::IsWindowHovered())
+                ImGui::SetTooltip("%s", row.prefabTip.c_str());
+        }
+        if (row.selected) dl->AddRectFilled(rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), accent);   // the accent bar
+        {
+            const float labelEnd = rowMin.x + fs + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
+            HierDrawBadges(pen, row.badges, rowMax.x - kHierEyeW * 2.0f, rowMin.y, rowMax.y, labelEnd);
+        }
+        HierDrawDiag(pen, row.diag, rowMax.x - 48.0f, (rowMin.y + rowMax.y) * 0.5f, bang.x, bang.y);
+        HierDrawEye(pen, row.active, rowMax.x, rowMin.y, rowMax.y);
+        HierDrawLock(pen, row.locked, hovered, rowMax.x, rowMin.y, rowMax.y);
+        const float mx = ImGui::GetIO().MousePos.x;
+        const bool inEye = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
+        const bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
+        const bool inArrow = row.childCount > 0 && mx >= rowMin.x && mx < rowMin.x + fs + ImGui::GetStyle().FramePadding.x * 2.0f;
+        if (hovered && inEye) ImGui::SetTooltip("%s", HierEyeTip(row.active));
+        if (hovered && inLock) ImGui::SetTooltip("%s", HierLockTip(row.locked));
+        if (renaming) {   // the name becomes a field in place
+            ImGui::SetCursorScreenPos(ImVec2(rowMin.x + fs + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::CalcTextSize("     ").x - 4.0f, rowMin.y - 2.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 1.0f));
+            ImGui::SetNextItemWidth(std::max(60.0f, rowMax.x - kHierEyeW * 2.0f - ImGui::GetCursorScreenPos().x));
+            if (st.renameAge == 0) ImGui::SetKeyboardFocusHere();
+            const bool enter = ImGui::InputText("##rename", st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::PopStyleVar();
+            const bool escape = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+            if (enter || (st.renameAge > 0 && !ImGui::IsItemActive() && !escape)) {
+                if (st.renameBuf[0]) { in.renameId = row.id; in.renameTo = st.renameBuf; }
+                st.renameId = 0;
+            } else if (escape) st.renameId = 0;
+            else ++st.renameAge;
+            ImGui::PopID();
+            continue;
+        }
+        if (ImGui::IsItemClicked()) {
+            if (inEye) in.toggleActive = row.id;
+            else if (inLock) in.toggleLock = row.id;
+            else if (ImGui::GetIO().KeyShift && m.activeRow >= 0) in.rangeTo = row.id;
+            else if (ImGui::GetIO().KeyCtrl) in.toggle = row.id;
+            else if (row.selected && m.selectedCount > 1) st.pressedMulti = row.id;
+            else in.select = row.id;
+            (void)inArrow;
+        }
+        if (st.pressedMulti == row.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            const ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 4.0f);
+            if (hovered && moved.x == 0.0f && moved.y == 0.0f) in.select = row.id;
+            st.pressedMulti = 0;
+        }
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("GO_PTR", &row.id, sizeof(row.id));
+            ImGui::TextUnformatted(HierDragLabel(row.name, row.selected, m.selectedCount).c_str());
+            st.dragging = row.id;
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+            const float ty = (ImGui::GetIO().MousePos.y - rowMin.y) / (rowMax.y - rowMin.y);
+            const int where = HierDropZone(ty);
+            bool bad = false;
+            if (live && live->IsDataType("GO_PTR") && live->Data && live->DataSize == (int)sizeof(std::uint64_t)) {
+                std::uint64_t dg = 0; std::memcpy(&dg, live->Data, sizeof dg);
+                bad = dg == row.id;
+            }
+            const ImU32 col = bad ? IM_COL32(235, 90, 80, 255) : accent;
+            if (where != HierDropInside) {
+                const float ly = where == HierDropBefore ? rowMin.y : rowMax.y;
+                dl->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly), col, 2.5f);
+                dl->AddCircleFilled(ImVec2(rowMin.x + 4.0f, ly), 3.5f, col);
+            } else {
+                dl->AddRectFilled(rowMin, rowMax, (col & 0x00FFFFFF) | 0x30000000, 3.0f);
+                dl->AddRect(rowMin, rowMax, col, 3.0f, 0, 2.0f);
+            }
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                if (p->DataSize == (int)sizeof(std::uint64_t)) { std::memcpy(&in.dragged, p->Data, sizeof in.dragged); in.dropTarget = row.id; in.dropWhere = where; }
+            }
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                in.dropAsset.assign((const char*)p->Data, strnlen((const char*)p->Data, (std::size_t)std::max(0, p->DataSize)));
+                in.dropTarget = row.id; in.dropWhere = where;
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (hovered && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            st.renameId = row.id; st.renameAge = 0; in.renameBegan = row.id;
+            std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", row.name.c_str());
+        }
+        if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && st.menuKind == HierMenuNone) {
+            if (!row.selected) in.select = row.id;
+            st.menuKind = HierMenuRow; st.menuRow = row.id; openMenu = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::SetCursorPos(ImVec2(listX, listY + m.rowCount * rowH));   // below the last row, drawn or not
+    if (m.searching) {
+        ImGui::TextDisabled("%s", HierSearchFooter(m.rowCount, st.filter).c_str());
+    } else {
+        if (st.pressedMulti && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) st.pressedMulti = 0;
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImGui::Dummy(ImVec2(std::max(1.0f, avail.x), std::max(24.0f, avail.y - ImGui::GetStyle().ItemSpacing.y * 2.0f)));
+        if (ImGui::BeginDragDropTarget()) {
+            dl->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), (accent & 0x00FFFFFFu) | ((std::uint32_t)(0.8f * 255.0f + 0.5f) << 24), 4.0f, 0, 2.0f);
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                if (p->DataSize == (int)sizeof(std::uint64_t)) { std::memcpy(&in.dragged, p->Data, sizeof in.dragged); in.dropTarget = 0; in.dropWhere = HierDropRoot; }
+            }
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                in.dropAsset.assign((const char*)p->Data, strnlen((const char*)p->Data, (std::size_t)std::max(0, p->DataSize)));
+                in.dropTarget = 0; in.dropWhere = HierDropRoot;
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && st.menuKind == HierMenuNone) {
+            st.menuKind = HierMenuEmpty; st.menuRow = 0; openMenu = true;
+        }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) st.dragging = 0;
+    // the keys: the arrows walk the rows, Left / Right fold, Ctrl+A selects every listed object, F2 renames
+    if (m.focused && st.renameId == 0 && !ImGui::GetIO().WantTextInput && m.rowCount > 0) {
+        if (!m.searching && m.activeRow >= 0) {
+            auto objectAt = [&](int from, int step) -> std::uint64_t {
+                for (int i = from + step; i >= 0 && i < m.rowCount; i += step) {
+                    HierRow r; if (m.fillRow) m.fillRow(i, r); ++st.rowsFilled;
+                    if (!r.header) return r.id;
+                }
+                return 0;
+            };
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { if (std::uint64_t id = objectAt(m.activeRow, 1)) in.select = id; }
+            else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) { if (std::uint64_t id = objectAt(m.activeRow, -1)) in.select = id; }
+            HierRow cur; if (m.fillRow) m.fillRow(m.activeRow, cur); ++st.rowsFilled;
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && cur.childCount > 0) { in.openId = cur.id; in.open = 1; }
+            else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { in.openId = cur.id; in.open = 0; }
+            if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+                st.renameId = cur.id; st.renameAge = 0; in.renameBegan = cur.id;
+                std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", cur.name.c_str());
+            }
+        }
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false)) in.selectAll = true;
+    }
+    ImGui::EndChild();
+    // the open menu
+    if (openMenu) ImGui::OpenPopup("##hiermenu");
+    if (st.menuKind != HierMenuNone) {
+        if (ImGui::BeginPopup("##hiermenu")) {
+            std::vector<PanelMenuEntry> entries;
+            if (st.menuKind == HierMenuOptions) entries = HierOptionsMenu(m.sortAZ);
+            else if (m.buildMenu) m.buildMenu(st.menuKind, st.menuRow, entries);
+            std::string chosen;
+            HierMenuEntries(entries, chosen);
+            if (!chosen.empty()) { in.menuId = chosen; in.menuKind = st.menuKind; in.menuRow = st.menuRow; }
+            ImGui::EndPopup();
+        } else { st.menuKind = HierMenuNone; st.menuRow = 0; }
+    }
+    return in;
 }
 
 } // namespace oked

@@ -175,6 +175,7 @@ struct CurMenu {
     int   n = 0;                                 // items seen so far this frame (the next item's ordinal)
     unsigned long long mask = 0;                 // which of them are enabled
     bool  activate = false;                      // Enter pressed for the highlighted item this frame
+    int   popupId = 0;                           // a sub-menu opened from a popup's row: that popup (picking an item closes it too)
 };
 CurMenu g_curMenu;
 CurMenu g_menuStack[4];
@@ -393,7 +394,8 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float padX, padY; bool exact; };
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float padX, padY; bool exact;
+                  float subX0 = 0, subY0 = 0, subX1 = 0, subY1 = 0; };   // the sub-menu lists opened from its rows this frame (a press there is inside)
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
@@ -443,6 +445,7 @@ struct TypedDrag {
     DragPayload pay; char preview[64] = {0};
 };
 TypedDrag g_tdd;
+bool g_tddExt = false, g_tddExtSeen = false, g_tddExtReleased = false;   // the drag came from outside OkayUI (SetExternalDragDrop)
 float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
 MouseCursor g_cursor = MouseCursor_Arrow;
 IO g_io;                              // GetIO(): filled in BeginFrame
@@ -1099,6 +1102,7 @@ void BeginFrame(const Input& in) {
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
     g_prevDown = in.mouseDown;
+    if (in.escape && (g_tdd.active || g_tdd.armed || g_dd.active || g_dd.armed)) CancelDragDrop();   // Escape drops the drag (no drop)
     g_rPressed  = in.rightDown && !g_rPrevDown;
     g_rReleased = !in.rightDown && g_rPrevDown;
     g_rPrevDown = in.rightDown;
@@ -1765,7 +1769,7 @@ void finalizeFrame() {
         fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, ac);
         g_toOverlay = false;
     }
-    if (g_tdd.active) {   // the dragged thing follows the cursor: a dot, plus the preview text when there is one
+    if (g_tdd.active && !g_tddExt) {   // the dragged thing follows the cursor: a dot, plus the preview text when there is one
         g_toOverlay = true;
         fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, g_theme.accent);
         if (g_tdd.preview[0]) {
@@ -1776,7 +1780,10 @@ void finalizeFrame() {
         }
         g_toOverlay = false;
     }
-    if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; g_tdd.active = false; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.preview[0] = 0; }
+    if (g_tddExt) {   // an outside drag ends when the host stops reporting it, or on the frame it was let go (after the targets had it)
+        if (!g_tddExtSeen || g_tddExtReleased) { g_tddExt = false; g_tdd = TypedDrag(); }
+        g_tddExtSeen = false; g_tddExtReleased = false;
+    } else if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; g_tdd.active = false; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.preview[0] = 0; }
     reorderWindows();                                // windows in stacking order, then the overlay on top
     mergeOverlay();
     // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
@@ -4067,7 +4074,30 @@ void menuKeysBegin(int menuId, bool nestedMenu) {
 }
 }
 
+namespace { bool popupRow(const char* label, const char* shortcut, bool selected, bool enabled, bool lit, bool arrow, float& x, float& y, float& w, float& h); }
 bool BeginMenu(const char* label) {
+    if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) {   // a sub-menu row inside a popup (a context menu)
+        if (g_menuDepth >= 4) return false;
+        const int id = hashLabel(label) ^ 0x7e11;
+        bool* open = openState(id, false);
+        float x, y, w, h;
+        const bool ih = popupRow(label, nullptr, false, true, *open, true, x, y, w, h);
+        g_lastId = id;
+        if (ih) { g_hot = id; *open = true; }   // hovering the row opens its list
+        if (!*open) return false;
+        CurMenu from;                           // the popup's row: an inactive menu the sub-menu returns to
+        from.popupId = g_popupStack[g_popupTop - 1].id;
+        from.bx = x; from.by = y; from.bw = w; from.bh = h;
+        g_menuStack[g_menuDepth++] = from;
+        g_curMenu = CurMenu();
+        g_curMenu.active = true; g_curMenu.menuId = id;
+        g_curMenu.x = x + w; g_curMenu.w = g_popupW > 0.0f ? g_popupW : 180.0f;
+        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
+        g_curMenu.itemStartY = y; g_curMenu.itemY = y;
+        if (g_dispW > 0.0f && g_curMenu.x + g_curMenu.w > g_dispW) g_curMenu.x = std::max(0.0f, x - g_curMenu.w);   // no room on the right: the left
+        menuKeysBegin(id, true);
+        return true;
+    }
     if (g_lay.active && g_curMenu.active && label) {   // a sub-menu: a row of the open menu that opens a list to its right
         if (g_menuDepth >= 4) return false;
         const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
@@ -4125,7 +4155,49 @@ bool BeginMenu(const char* label) {
 }
 
 namespace {
+// A menu row inside a popup body (a context menu), Dear ImGui's way: the item is one text line in the popup's layout and its highlight
+// reaches half the item spacing past it on each side, so consecutive rows touch. The label starts at the row; a shortcut is right-aligned
+// and dim; a checked item has a tick at the right end; a disabled one is dim and takes no clicks. `arrow` draws a sub-menu's arrow.
+// Returns whether the row is under the pointer; (x, y, w, h) is the highlight rectangle.
+bool popupRow(const char* label, const char* shortcut, bool selected, bool enabled, bool lit, bool arrow, float& x, float& y, float& w, float& h) {
+    const float s = g_theme.textScale, th = textH();
+    float ix, iy; w = fullW(); place(w, th, ix, iy);
+    x = ix - g_lay.spacingX * 0.5f; y = iy - g_lay.spacingY * 0.5f; w += g_lay.spacingX; h = th + g_lay.spacingY;
+    const bool ih = enabled && hit(x, y, w, h);
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    if (ih || lit) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
+    const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
+    drawText(ix, iy, label, s, col);
+    const float right = ix + w - g_lay.spacingX;
+    if (shortcut && shortcut[0]) {
+        const float sw = labelW(shortcut), sx = right - sw - (selected || arrow ? th + 4.0f : 0.0f);
+        if (sx > ix + labelW(label) + 12.0f) drawText(sx, iy, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
+    }
+    if (selected) {   // a tick in the text colour, a text line wide
+        const float a = th * 0.25f, cx = right - th * 0.5f, cy = iy + th * 0.5f;
+        line(cx - a * 1.2f, cy, cx - a * 0.3f, cy + a * 0.9f, 2.0f, col);
+        line(cx - a * 0.3f, cy + a * 0.9f, cx + a * 1.3f, cy - a * 0.9f, 2.0f, col);
+    }
+    if (arrow) {      // a small right-pointing triangle, as Dear ImGui's sub-menu rows have
+        const float a = th * 0.22f, cx = right - th * 0.4f, cy = iy + th * 0.5f;
+        const float xs[3] = {cx - a * 0.6f, cx - a * 0.6f, cx + a * 0.8f}, ys[3] = {cy - a, cy + a, cy};
+        tri(xs[0], ys[0], xs[1], ys[1], xs[2], ys[2], col);
+    }
+    return ih;
+}
+bool popupMenuItem(const char* label, const char* shortcut, bool selected, bool enabled) {
+    float x, y, w, h;
+    const int iid = hashLabel(label) ^ 0x31a7;
+    const bool ih = popupRow(label, shortcut, selected, enabled, false, false, x, y, w, h);
+    g_lastId = iid; if (ih) g_hot = iid;
+    bool clicked = false;
+    if (g_active == iid) { if (g_released) { if (ih) clicked = true; g_active = 0; } }
+    else if (ih && g_pressed) g_active = iid;
+    if (clicked) CloseCurrentPopup();
+    return clicked;
+}
 bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool enabled) {
+    if (g_lay.active && !g_curMenu.active && g_popupTop > 0 && label) return popupMenuItem(label, shortcut, selected, enabled);
     if (!g_lay.active || !g_curMenu.active || !label) return false;
     const float h = rowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
@@ -4146,6 +4218,9 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     if (g_active == iid) {
         if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
+    if (clicked)   // a chain of sub-menus opened from a popup's row: the popup closes as well, as a context menu does
+        for (int i = 0; i < g_menuDepth; ++i)
+            if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     g_toOverlay = true;
     quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
@@ -4196,6 +4271,11 @@ void EndMenu() {
             float x0 = child.x, y0 = child.itemStartY, x1 = child.x + child.w, y1 = child.itemY;
             if (child.subW > 0.0f) { x0 = std::min(x0, child.subX); y0 = std::min(y0, child.subY); x1 = std::max(x1, child.subX + child.subW); y1 = std::max(y1, child.subY + child.subH); }
             g_curMenu.subX = x0; g_curMenu.subY = y0; g_curMenu.subW = x1 - x0; g_curMenu.subH = y1 - y0;
+            if (!g_curMenu.active && g_popupTop > 0) {   // back in the popup the chain started from: a press in these lists is inside it
+                PopupCtx& pc = g_popupStack[g_popupTop - 1];
+                if (pc.subX1 <= pc.subX0) { pc.subX0 = x0; pc.subY0 = y0; pc.subX1 = x1; pc.subY1 = y1; }
+                else { pc.subX0 = std::min(pc.subX0, x0); pc.subY0 = std::min(pc.subY0, y0); pc.subX1 = std::max(pc.subX1, x1); pc.subY1 = std::max(pc.subY1, y1); }
+            }
         }
         return;
     }
@@ -4288,6 +4368,7 @@ static bool beginPopupBody(int id) {
     PopupCtx& c = g_popupStack[g_popupTop++];
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
     c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f;
+    c.subX0 = c.subY0 = c.subX1 = c.subY1 = 0.0f;
     g_lay.active = true;
     g_lay.ox = px + padX; g_lay.oy = py + padY;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
@@ -4308,7 +4389,8 @@ void EndPopup() {
     PopupSlot* p = popupSlot(c.id, false);
     if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
         const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f);
-        if (!inside) p->open = false;
+        const bool inSub = c.subX1 > c.subX0 && pointIn(g_in.mouseX, g_in.mouseY, c.subX0, c.subY0, c.subX1 - c.subX0, c.subY1 - c.subY0);
+        if (!inside && !inSub) p->open = false;
     }
     g_lay = c.lay;   // restore parent layout
 }
@@ -4461,22 +4543,47 @@ void SetDragDropPreview(const char* text) { if (g_tdd.active) std::snprintf(g_td
 void EndDragDropSource() {}
 
 static bool g_tddOver = false;   // BeginDragDropTarget said yes for the item being asked about
-bool BeginDragDropTarget() {
+bool BeginDragDropTarget() { return BeginDragDropTarget(0); }
+bool BeginDragDropTarget(int flags) {
     g_tddOver = false;
     if (!g_lay.active || !g_tdd.active || !g_tdd.hasPayload) return false;
     const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
-    if (!hit(px, py, pw, ph)) return false;
-    const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
-    quad(px, py, pw, 2.0f, dc); quad(px, py + ph - 2.0f, pw, 2.0f, dc);   // an accent outline marks the drop spot
+    if (g_tddExt) {   // the other toolkit owns the mouse (Input::blocked): the pointer's position, the clip and the windows still count
+        if (g_disCount > 0 || !pointIn(g_in.mouseX, g_in.mouseY, px, py, pw, ph) || !inClip()) return false;
+        if (g_hitWinOn && coveredByHigher(g_in.mouseX, g_in.mouseY, g_hitWinZ, g_hitWinId)) return false;
+    } else if (!hit(px, py, pw, ph)) return false;
+    if (!(flags & DragDrop_NoDefaultRect)) {
+        const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
+        quad(px, py, pw, 2.0f, dc); quad(px, py + ph - 2.0f, pw, 2.0f, dc);   // an accent outline marks the drop spot
+    }
     g_tddOver = true;
     return true;
+}
+const DragPayload* GetDragDropPayload() {
+    if (!g_tdd.active || !g_tdd.hasPayload) return nullptr;
+    static DragPayload live;
+    live = g_tdd.pay; live.delivery = false;
+    return &live;
+}
+void SetExternalDragDrop(const char* type, const void* data, int size, bool released) {
+    if (!type || !*type || size < 0 || size > kDragPayloadMax || (size > 0 && !data)) return;
+    if (g_tdd.active && !g_tddExt) return;   // OkayUI's own drag is in flight: it wins
+    g_tddExt = true; g_tddExtSeen = true; g_tddExtReleased = released;
+    g_tdd.active = true; g_tdd.armed = false; g_tdd.srcId = 0; g_tdd.preview[0] = 0;
+    std::snprintf(g_tdd.pay.type, sizeof g_tdd.pay.type, "%s", type);
+    if (size > 0) std::memcpy(g_tdd.pay.data, data, (std::size_t)size);
+    g_tdd.pay.size = size; g_tdd.hasPayload = true;
+}
+bool IsDragDropExternal() { return g_tddExt && g_tdd.active; }
+void CancelDragDrop() {
+    g_dd = DragDrop(); g_tdd = TypedDrag(); g_tddExt = false; g_tddExtSeen = g_tddExtReleased = false;
 }
 const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
     if (!g_tddOver || !g_tdd.active || !g_tdd.hasPayload) return nullptr;
     if (type && *type && std::strncmp(type, g_tdd.pay.type, sizeof g_tdd.pay.type - 1) != 0) return nullptr;
     static DragPayload out;
     out = g_tdd.pay;
-    if (g_released) { out.delivery = true; g_tdd.active = false; g_tdd.hasPayload = false; return &out; }
+    if (g_tddExt ? g_tddExtReleased : g_released) { out.delivery = true; g_tdd.active = false; g_tdd.hasPayload = false; return &out; }
     if (flags & DragDrop_AcceptBeforeDelivery) { out.delivery = false; return &out; }
     return nullptr;
 }
@@ -5800,7 +5907,7 @@ void ResetState() {
     for (OpenSlot& o : g_opens) o = OpenSlot();
     for (FloatSlot& f : g_floats) f = FloatSlot();
     for (TextSlot& t : g_texts) t = TextSlot();
-    g_dd = DragDrop(); g_curMenu = CurMenu(); g_inMenuBar = false;
+    g_dd = DragDrop(); g_tdd = TypedDrag(); g_tddExt = g_tddExtSeen = g_tddExtReleased = false; g_curMenu = CurMenu(); g_inMenuBar = false;
     g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState(); g_cullRow = false;
     for (TblStore& t : g_tstore) t = TblStore();
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;

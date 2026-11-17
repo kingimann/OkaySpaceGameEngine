@@ -5547,6 +5547,13 @@ struct ListScope {
     ~ListScope() { g_rawDraw = prevRaw; g_toOverlay = prevOv; }
 };
 
+// cos(pi / n) for n = 3..128, worked out once: the mitre of a regular n-gon's stroke.
+float cosHalfTurn(int n) {
+    static float t[129] = {};
+    if (t[n] == 0.0f) t[n] = SDL_cosf(3.14159265f / (float)n);
+    return t[n];
+}
+
 int circleSegments(float r, int requested) {
     if (requested >= 3) return requested > 128 ? 128 : requested;
     int n = 10 + (int)(r * 0.9f);
@@ -5610,14 +5617,21 @@ int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad
         out[n++] = Vec2{ x0, y0 }; out[n++] = Vec2{ x1, y0 }; out[n++] = Vec2{ x1, y1 }; out[n++] = Vec2{ x0, y1 };
         return n;
     }
-    const float PI = 3.14159265f;
-    const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
-    const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
-    for (int k = 0; k < 4; ++k)
-        for (int i = 0; i <= 6; ++i) {
-            const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
-            out[n++] = Vec2{ cx[k] + rad * SDL_cosf(a), cy[k] + rad * SDL_sinf(a) };
+    // The corners' unit points, worked out once (the same float angles as before: the path is unchanged), not 56 sines and cosines
+    // per rectangle.
+    struct Arcs {
+        float c[4][7], s[4][7];
+        Arcs() {
+            const float PI = 3.14159265f;
+            const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+            for (int k = 0; k < 4; ++k)
+                for (int i = 0; i <= 6; ++i) { const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f; c[k][i] = SDL_cosf(a); s[k][i] = SDL_sinf(a); }
         }
+    };
+    static const Arcs A;
+    const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
+    for (int k = 0; k < 4; ++k)
+        for (int i = 0; i <= 6; ++i) out[n++] = Vec2{ cx[k] + rad * A.c[k][i], cy[k] + rad * A.s[k][i] };
     return n;
 }
 
@@ -5688,12 +5702,17 @@ void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, f
     const int n = circleSegments(radius, segments);
     float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
     if (th >= radius) { fillCircle(center.x, center.y, radius, c, n); return; }
-    Vec2 pts[128];
+    // A regular polygon's stroke: every mitre is radial, half the thickness over cos(pi / n) long (what strokePath works out per
+    // corner), so the ring is drawn straight from the cached unit points: no sines, cosines or square roots per call.
+    const float* u = unitCircle(n);
+    const float k = cosHalfTurn(n), ro = r + th * 0.5f / k, ri = r - th * 0.5f / k;
+    float px = u[(n - 1) * 2], py = u[(n - 1) * 2 + 1];   // angle 2 pi: the first corner
     for (int i = 0; i < n; ++i) {
-        const float a = 6.2831853f * (float)i / (float)n;
-        pts[i] = Vec2{ center.x + r * SDL_cosf(a), center.y + r * SDL_sinf(a) };
+        const float qx = u[i * 2], qy = u[i * 2 + 1];
+        quadPts(center.x + px * ro, center.y + py * ro, center.x + qx * ro, center.y + qy * ro,
+                center.x + qx * ri, center.y + qy * ri, center.x + px * ri, center.y + py * ri, c);
+        px = qx; py = qy;
     }
-    strokePath(pts, n, true, th, c);
 }
 
 void DrawList::AddTriangleFilled(Vec2 a, Vec2 b, Vec2 c3, Color32 col) const {

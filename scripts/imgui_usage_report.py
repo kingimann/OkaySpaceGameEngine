@@ -60,6 +60,9 @@ PORTED = [
     ("Post-processing (Lighting)", "editor/EditorPanelViews.cpp", "DrawPostProcessBodyImGui"),
     ("Player (Project Settings)", "editor/EditorPanelViews.cpp", "DrawPlayerSettingsBodyImGui"),
     ("Rendering (Project Settings)", "editor/EditorPanelViews.cpp", "DrawRenderingSettingsBodyImGui"),
+    ("Hierarchy (the body drawn from the model; the editor's own DrawHierarchy is still its default)", "editor/EditorPanelViews.cpp", "DrawHierarchyBodyImGui"),
+    ("Hierarchy's toolbar buttons", "editor/EditorPanelViews.cpp", "HierToolButton"),
+    ("Hierarchy's menus", "editor/EditorPanelViews.cpp", "HierMenuEntries"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

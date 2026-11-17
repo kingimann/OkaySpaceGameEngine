@@ -1403,12 +1403,13 @@ HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float
                     else if (inLock) in.toggleLock = row.id;
                     else if (shift && m.activeRow >= 0) in.rangeTo = row.id;
                     else if (ctrl) in.toggle = row.id;
-                    else if (row.selected && m.selectedCount > 1) st.pressedMulti = row.id;   // maybe a drag of them all: decided on release
+                    else if (row.selected && m.selectedCount > 1) { st.pressedMulti = row.id; st.pressX = mouse.x; st.pressY = mouse.y; }   // maybe a drag of them all: decided on release
                     else in.select = row.id;
                 }
             }
             if (!renaming && st.pressedMulti == row.id && UI::IsMouseReleased(0)) {   // a plain click on one of several selected rows
-                if (hovered && !UI::IsMouseDragging(0, 4.0f) && st.dragging == 0) in.select = row.id;
+                const float dx = mouse.x - st.pressX, dy = mouse.y - st.pressY;
+                if (hovered && dx * dx + dy * dy < 16.0f && st.dragging == 0) in.select = row.id;   // Dear ImGui's 4-pixel drag threshold
                 st.pressedMulti = 0;
             }
             if (!renaming && hovered && UI::IsMouseDoubleClicked(0)) {

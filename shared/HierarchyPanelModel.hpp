@@ -133,6 +133,7 @@ struct HierarchyModel {
 struct HierarchyState {
     char filter[96] = "";            ///< the search field
     std::uint64_t pressedMulti = 0;  ///< pressed on one of several selected rows: decided on release (a drag moves them all)
+    float pressX = 0.0f, pressY = 0.0f;   ///< where that press was (a release 4 pixels or more away is a drag, not a click)
     std::uint64_t renameId = 0;      ///< the row being renamed in place (0 = none)
     char renameBuf[128] = "";
     int renameAge = 0;               ///< frames since the rename began (the field takes the keyboard on the first)

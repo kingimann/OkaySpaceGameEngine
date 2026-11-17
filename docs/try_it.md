@@ -1418,10 +1418,11 @@ run in a real window.
 To turn it on for the editor: open the Command Prompt in the folder with `Tools\OkayEngine.exe`, type `set OKAY_DEV=1`, then
 `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. To compare, start it again with `set OKAY_UI_BACKEND=imgui`.
 
-The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10 and 11):
+The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10, 11 and 12):
 
 | Where | How to open it | What to try |
 |---|---|---|
+| Hierarchy | always open (left side) | click, Ctrl+click and Shift+click rows; click a row's arrow to fold it; click the eye (hide) and the padlock left of it; double-click a row (or press F2) and type a new name in the row, Enter keeps it, Escape gives up; drag a row onto the middle of another (it goes inside), onto its top or bottom edge (above or below), or onto the empty space under the list (to the top level); drag a picture or a prefab from the Project panel onto a row; right-click a row (Order and Parent To open to the side) and the empty space; type in the search box; Up, Down, Left, Right and Ctrl+A with the panel clicked. Open `examples\navigation\nav_crowd.okayscene` (650 objects) and scroll: it should stay smooth. Create sub-menus (2D Object, 3D Object, ...) still open as the old Dear ImGui list at the pointer |
 | Console, Crash Log, Audio Mixer | View > Panels | as before |
 | Problems | View > Panels > Problems | type in the search box (a magnifier at the left; the cross at the right empties it), right-click a row: the menu looks like Dear ImGui's |
 | Stats, History | View > Panels > Stats, History | click a culling or batching switch (it changes the real setting); right-click the census or a history row; the current history row has a flat blue tint |
@@ -1437,8 +1438,8 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
 screen uses them yet, so there is nothing to click.
 
-You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7
-(mostly text edges). Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7 and 12.6
+(mostly text edges; the Hierarchy renames in the row instead of a "Rename Object" box). Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
 setting) to go back. Unverified: none of this was opened in a real editor window.
 
 ### 13. Own cryptography

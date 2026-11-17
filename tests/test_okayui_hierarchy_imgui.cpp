@@ -163,8 +163,9 @@ int main() {
         }
         im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
         both(2);
+        ims.scene.fills = oks.scene.fills = 0;
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
-        Report("hierarchy", imPic, okPic, t);
+        Report("hierarchy", imPic, okPic, t, ims.scene.fills, oks.scene.fills);
     }
 
     // ================= pictures: the right-click menu, the search, a rename, a drop line =================

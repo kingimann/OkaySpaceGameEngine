@@ -46,7 +46,10 @@ struct Target {
     string name; bool isLib = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs;
 };
-struct Manifest { Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools; };
+struct Manifest {
+    Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
+    bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
+};
 
 // split on whitespace; "double quoted" words may contain spaces
 static vector<string> tokens(const string& line) {
@@ -82,7 +85,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -94,11 +97,11 @@ static Manifest parseManifest(const string& file) {
         ++ln;
         if (!isCmdLine(line)) line = stripComment(line);
         auto t = tokens(line); if (t.empty()) continue;
-        if (mode == ACTION && t[0] == "cmd") { // raw rest of line, kept exactly
+        if ((mode == ACTION || mode == BUILDFILE) && t[0] == "cmd") { // raw rest of line, kept exactly
             auto p = line.find('='); if (p == string::npos) throw err("expected: cmd = command");
-            size_t b = line.find_first_not_of(" \t", p + 1); m.actions.back().cmd = b == string::npos ? "" : line.substr(b);
-            while (!m.actions.back().cmd.empty() && isspace((unsigned char)m.actions.back().cmd.back())) m.actions.back().cmd.pop_back();
-            continue;
+            size_t b = line.find_first_not_of(" \t", p + 1); string cmd = b == string::npos ? "" : line.substr(b);
+            while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
+            (mode == ACTION ? m.actions.back().cmd : m.buildCmd) = cmd; continue;
         }
         if (t[0] == "end") { if (mode == TOP) throw err("'end' outside a block"); mode = TOP; continue; }
         if (mode == TOP) {
@@ -120,13 +123,18 @@ static Manifest parseManifest(const string& file) {
                 for (auto& p : m.pools) if (p.name == t[1]) throw err("duplicate pool '" + t[1] + "'");
                 m.pools.push_back(PoolDecl{t[1], 1, ln}); mode = POOL; continue;
             }
+            if (t[0] == "buildfile") {
+                if (t.size() != 1) throw err("expected: buildfile");
+                if (m.hasBuildfile) throw err("only one buildfile block is allowed");
+                m.hasBuildfile = true; m.buildLine = ln; mode = BUILDFILE; continue;
+            }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
             if (t[0] == "target") {
                 if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
                 Target x; x.name = t[1]; x.isLib = t[2] == "lib"; x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
             }
-            throw err("unexpected '" + t[0] + "' (expected toolchain, target, pool, action or outdir)");
+            throw err("unexpected '" + t[0] + "' (expected toolchain, target, pool, action, buildfile or outdir)");
         }
         if (t.size() < 2 || t[1] != "=") throw err("expected: key = values");
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
@@ -155,6 +163,10 @@ static Manifest parseManifest(const string& file) {
             else if (k == "restat") x.restat = oneFlag(v, k);
             else if (k == "inputs") add(x.inputs); else if (k == "after") add(x.after);
             else throw err("unknown action key '" + k + "'");
+        } else if (mode == BUILDFILE) {
+            if (k == "inputs") add(m.buildInputs);
+            else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); m.buildDepfile = v[0]; }
+            else throw err("unknown buildfile key '" + k + "'");
         } else {
             Target& x = m.targets.back();
             if (k == "sources") add(x.sources); else if (k == "include") add(x.includes);
@@ -171,6 +183,7 @@ static Manifest parseManifest(const string& file) {
         if (a.cmd.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": action has no cmd");
         if (a.restat && a.output.empty() && a.outputs.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": restat action has no output");
     }
+    if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
     return m;
 }
 
@@ -734,6 +747,46 @@ static void writeCompdb(const Manifest& m) {
     f << "\n]\n"; printf("okay-build: wrote compile_commands.json\n");
 }
 
+static vector<std::pair<string, string>> buildfileSigs(const Manifest& m) {
+    vector<string> paths = m.buildInputs;
+    if (!m.buildDepfile.empty() && !fileMissing(m.buildDepfile)) {
+        for (auto& h : parseDepfile(m.buildDepfile)) {
+            string p = resolve("", h);
+            if (std::find(paths.begin(), paths.end(), p) == paths.end()) paths.push_back(p);
+        }
+    }
+    vector<std::pair<string, string>> sigs;
+    for (auto& p : paths) { forgetHash(p); FileSig s; sigs.push_back({p, hashFile(p, s) ? s.hash : string("-")}); }
+    std::sort(sigs.begin(), sigs.end());
+    return sigs;
+}
+static vector<std::pair<string, string>> loadBuildfileState() {
+    vector<std::pair<string, string>> s; std::ifstream f(under(".okaybuild/buildfile")); string l;
+    if (!std::getline(f, l) || l != "okaybuild-buildfile 1") return {};
+    while (std::getline(f, l)) { auto t = l.find('\t'); if (t != string::npos) s.push_back({l.substr(0, t), l.substr(t + 1)}); }
+    return s;
+}
+static void saveBuildfileState(const vector<std::pair<string, string>>& sigs) {
+    fs::create_directories(under(".okaybuild")); string tmp = under(".okaybuild/buildfile.tmp");
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-buildfile 1\n"; for (auto& [p, h] : sigs) f << p << "\t" << h << "\n"; }
+    fs::rename(tmp, under(".okaybuild/buildfile"));
+}
+// A buildfile block reruns its command when an input (or a depfile input) changes, then the manifest is read again.
+// One build invocation regenerates at most twice. graph, targets, clean and compdb use the file as it stands.
+static Manifest loadWithRegen(const string& file) {
+    Manifest m = parseManifest(file);
+    for (int round = 0; m.hasBuildfile; ++round) {
+        if (buildfileSigs(m) == loadBuildfileState()) return m;
+        if (round >= 2) throw Fail("build file regeneration did not settle");
+        printf("okay-build: regenerating %s\n", fs::path(file).filename().string().c_str());
+        string out; int rc = runCmd({"sh", "-c", m.buildCmd}, out);
+        if (rc != 0) throw Fail("build file regeneration failed:\n" + out);
+        saveBuildfileState(buildfileSigs(m));
+        m = parseManifest(file);
+    }
+    return m;
+}
+
 int main(int argc, char** argv) {
     Opts o; string cmd = "build", runDir, importOut = "build.okay"; vector<string> want;
     try {
@@ -761,7 +814,8 @@ int main(int argc, char** argv) {
             string bd = want[0]; want.erase(want.begin()); return importCmake(bd, runDir, importOut, want);
         }
         if (gBuildDir != ".") gBuildDir = fs::absolute(gBuildDir).string();
-        fs::path mp = fs::absolute(o.file); Manifest m = parseManifest(mp.string()); fs::current_path(mp.parent_path());
+        fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
+        Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

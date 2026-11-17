@@ -18,8 +18,15 @@ No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
   (`rsp_threshold` in the toolchain block, default 30000 chars), quoted words so paths may contain spaces, `--build-dir DIR`
   (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
 - Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic),
-  no regeneration of the manifest, no-op still slower than Ninja on a just-built tree; structured targets use -MMD
-  (system headers not tracked), imported ones keep CMake's -MD.
+  no-op still slower than Ninja on a just-built tree; structured targets use -MMD (system headers not tracked),
+  imported ones keep CMake's -MD.
+
+## Regenerating the manifest (2026-11-17)
+A single `buildfile` block names a command, `inputs`, and an optional `depfile` (same make-style reader as compile
+depfiles). `okay-build build` hashes those files. If the hashes differ from `.okaybuild/buildfile`, or there is no
+record yet, it runs the command and reads the manifest again (at most twice). A hand edit of `build.okay` is left
+alone until an input changes. `clean` deletes the record, so the next build regenerates. `graph`, `targets`,
+`compdb` and `clean` do not regenerate. `--dry-run` does regenerate, because the planned steps come from the new file.
 
 ## Stage A follow-up (2026-11-17, grok/okaybuild-1): pools, generators, restat, -k, listings
 Written from the same general ideas (a named slot counter beside the worker count, declared outputs as edges,

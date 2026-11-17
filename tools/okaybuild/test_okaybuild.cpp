@@ -285,6 +285,56 @@ static void testKeepGoing() {
     check(!fs::exists(gRoot / "dep.txt"), "-k still skips the dependent of the failure", o);
 }
 
+static int countLines(const fs::path& p) { std::ifstream f(p); int n = 0; string s; while (std::getline(f, s)) ++n; return n; }
+static int progPrint(const fs::path& p) {
+    string cmd = "'" + p.string() + "'"; FILE* f = popen(cmd.c_str(), "r"); if (!f) return -1;
+    char b[64] = {}; size_t n = fread(b, 1, sizeof b - 1, f); pclose(f); b[n] = 0; return atoi(b);
+}
+static void testRegenManifest() {
+    printf("test: regenerate the manifest when a declared input changes\n");
+    fresh("regen");
+    write("main.cpp", "#include <cstdio>\n#ifndef VAL\n#define VAL 0\n#endif\nint main(){printf(\"%d\\n\", VAL); return 0;}\n");
+    write("flag.txt", "3\n"); write("extra.txt", "a\n");
+    write("gen.sh",
+          "#!/bin/sh\n"
+          "v=$(tr -d '[:space:]' < flag.txt)\n"
+          "echo R >> regen.log\n"
+          "printf 'build.okay: flag.txt extra.txt\\n' > build.okay.d\n"
+          "cat > build.okay << EOF\n"
+          "buildfile\n"
+          "  cmd = sh gen.sh\n"
+          "  inputs = flag.txt\n"
+          "  depfile = build.okay.d\n"
+          "end\n"
+          "target app exe\n"
+          "  sources = main.cpp\n"
+          "  flags = -DVAL=${v}\n"
+          "end\n"
+          "EOF\n");
+    write("build.okay",
+          "buildfile\n"
+          "  cmd = sh gen.sh\n"
+          "  inputs = flag.txt\n"
+          "  depfile = build.okay.d\n"
+          "end\n"
+          "target app exe\n"
+          "  sources = main.cpp\n"
+          "  flags = -DVAL=3\n"
+          "end\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && progPrint(gRoot / "build/app") == 3, "first build runs the program with VAL 3", o);
+    check(countLines(gRoot / "regen.log") == 1, "generator ran once", o);
+    o = sh("", &rc);
+    check(rc == 0 && ran(o) == 0 && countLines(gRoot / "regen.log") == 1, "unchanged inputs do not regenerate or rebuild", o);
+    write("flag.txt", "9\n");
+    o = sh("--explain", &rc);
+    check(rc == 0 && progPrint(gRoot / "build/app") == 9, "changed flag regenerates and the program prints 9", o);
+    check(countLines(gRoot / "regen.log") == 2, "generator ran because flag.txt changed");
+    write("extra.txt", "b\n");
+    o = sh("", &rc);
+    check(rc == 0 && ran(o) == 0 && countLines(gRoot / "regen.log") == 3, "depfile input change regenerates without a rebuild", o);
+}
+
 static void testGraphTargets() {
     printf("test: targets and graph listings, including the link pool\n");
     fresh("graph"); basicProject();
@@ -309,6 +359,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

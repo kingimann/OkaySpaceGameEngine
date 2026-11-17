@@ -32905,13 +32905,13 @@ static bool DrawCharacterWithOkayUI(EditorState& ed, GameObject* go, Character* 
     L.Tip("Build the character as a hierarchy of part objects (Hips, Torso, Head, arms, legs)\nright here in the editor \xE2\x80\x94 select, recolour, attach things to, and animate them part-by-part.\nThe rig is rebuilt from the Character on load (not spawned at Play).");
     if (ch->separateParts) { L.Check("Play built-in animation on parts##char", &ch->animateParts); L.Tip("Off = the parts hold still so you can pose / keyframe them yourself."); }
     L.Section("Movement animations");
-    L.Note("Play YOUR authored clips as the character moves (no scripting).");
+    L.Note("Play YOUR authored clips as the character moves (no scripting).", false, true);
     const std::vector<std::string> clips = ch->ClipNames();
     std::vector<const char*> opts{"(built-in)"};
     for (const auto& n : clips) opts.push_back(n.c_str());
     struct Bind { int row = -1, cur = 0; std::string* field = nullptr; };
     Bind binds[3];
-    if (clips.empty()) L.Note("No clips yet \xE2\x80\x94 make one in View > Animation, then Apply to Character.");
+    if (clips.empty()) L.Note("No clips yet \xE2\x80\x94 make one in View > Animation, then Apply to Character.", false, true);
     else {
         const char* lbl[3] = {"Idle##charstate", "Walk##charstate", "Run##charstate"};
         std::string* fld[3] = {&ch->clipIdle, &ch->clipWalk, &ch->clipRun};
@@ -36229,7 +36229,9 @@ void DrawInspector(EditorState& ed) {
             }
 
             SectionHeader("Movement animations");
+            ImGui::PushTextWrapPos(0.0f);   // wrapped: it ran past the docked Inspector's edge (stage 5 pictures)
             ImGui::TextDisabled("Play YOUR authored clips as the character moves (no scripting).");
+            ImGui::PopTextWrapPos();
             {
                 // Build a "(built-in)" + clip-name list for the three locomotion states.
                 std::vector<std::string> clips = ch->ClipNames();
@@ -36245,7 +36247,9 @@ void DrawInspector(EditorState& ed) {
                     }
                 };
                 if (clips.empty()) {
+                    ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextDisabled("No clips yet — make one in View > Animation, then Apply to Character.");
+                    ImGui::PopTextWrapPos();
                 } else {
                     bindCombo("Idle##charstate", ch->clipIdle);
                     bindCombo("Walk##charstate", ch->clipWalk);

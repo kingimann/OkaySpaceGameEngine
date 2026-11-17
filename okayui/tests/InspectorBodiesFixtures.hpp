@@ -935,7 +935,7 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Section("Rig");
         L.Check("Separate Into Parts (editable rig)##char", &v.chParts);
         L.Section("Movement animations");
-        L.Note("Play YOUR authored clips as the character moves (no scripting).");
+        L.Note("Play YOUR authored clips as the character moves (no scripting).", false, true);
         L.Combo("Idle##charstate", &v.chIdle, kClips, 3); L.Last().width = 150.0f;
         L.Combo("Walk##charstate", &v.chWalk, kClips, 3); L.Last().width = 150.0f;
         L.Combo("Run##charstate", &v.chRun, kClips, 3); L.Last().width = 150.0f;

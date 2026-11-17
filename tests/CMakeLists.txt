@@ -3968,3 +3968,8 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+# The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
+add_executable(test_vs_search_nav test_vs_search_nav.cpp)
+target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_search_nav COMMAND test_vs_search_nav)

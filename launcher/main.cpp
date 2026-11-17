@@ -21951,10 +21951,10 @@ int main(int argc, char** argv) {
             };
             // Dashed outline along a rounded rect (ImGui has no dashed primitive):
             // walk the rect's path and emit alternating dash / gap pieces.
-            // The walk below used to be able to run forever, adding lines until the system killed the launcher for lack
-            // of memory (seen on the Community page, now and then): at the end of a side `len - t` can be so small that
-            // `t + step` rounds back to `t`. A step that does not move ends the side now. A rectangle that is not finite
-            // or absurdly large gets a plain outline (logged once), and the walk stops after a fixed number of pieces.
+            // The walk below used to run on, adding lines until the system killed the launcher for lack of memory (the
+            // Community page, now and then): its closing point was read from freed memory (see push_back below). Kept as
+            // guards: a step that does not move ends a side, a rectangle that is not finite or absurdly large gets a plain
+            // outline (logged once), and the walk stops after a fixed number of pieces (logged once).
             auto dashedRoundRect = [](ImDrawList* dl, ImVec2 a, ImVec2 b, float r, ImU32 col, float th, float dash, float gap) {
                 const bool sane = std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(b.x) && std::isfinite(b.y) &&
                                   std::fabs(b.x - a.x) < 100000.0f && std::fabs(b.y - a.y) < 100000.0f &&
@@ -21975,7 +21975,11 @@ int main(int argc, char** argv) {
                 ImVector<ImVec2> pts = dl->_Path;
                 dl->PathClear();
                 if (pts.Size < 2) return;
-                pts.push_back(pts[0]);
+                // Copy the first point before push_back: ImVector::push_back grows the buffer (freeing the old one) before
+                // it copies its argument, so pts.push_back(pts[0]) on a full vector read freed memory. That garbage
+                // closing point (now and then a huge side) is what made this walk run on until the memory ran out.
+                const ImVec2 first = pts[0];
+                pts.push_back(first);
                 bool on = true; float left = dash;
                 int pieces = 0;
                 for (int i = 0; i + 1 < pts.Size && pieces < 20000; ++i) {

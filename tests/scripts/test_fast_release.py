@@ -101,6 +101,16 @@ j = fr.ci_jobs_decision({"jobs": [{"name": "Build & test (Ubuntu)", "conclusion"
 check(not j["ok"] and j["bad"] == ["own-http: failure"], "a failed job is named")
 check(not fr.ci_jobs_decision([{"name": "x", "conclusion": None, "status": "in_progress"}])["ok"], "an unfinished job fails")
 check(not fr.ci_jobs_decision([])["ok"], "no jobs listed fails")
+check(fr.ci_jobs_failed([{"name": "a", "conclusion": "success"}, {"name": "b", "conclusion": None, "status": "in_progress"}])["ok"], "running jobs are not 'already red'")
+_ok = [{"name": n, "conclusion": "success"} for n in fr.RELEASE_GATE_JOBS]
+check(fr.ci_gate_decision(_ok + [{"name": "WebGL", "conclusion": None, "status": "in_progress"}])["ok"], "gate: a running non-gate job is not waited for")
+check(fr.ci_gate_decision(_ok[:-1])["pending"], "gate: a missing gate job is pending")
+check(fr.ci_gate_decision(_ok[:-1] + [{"name": fr.RELEASE_GATE_JOBS[-1], "conclusion": None, "status": "in_progress"}])["pending"], "gate: a running gate job is pending")
+check(fr.ci_gate_decision(_ok + [{"name": "WebGL", "conclusion": "failure"}])["bad"], "gate: a red job anywhere refuses")
+_ci = open(os.path.join(ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8").read()
+check(all("    name: " + n + "\n" in _ci for n in fr.RELEASE_GATE_JOBS), "every RELEASE_GATE_JOBS name is a job name in ci.yml")
+check(not fr.ci_jobs_failed([{"name": "a", "conclusion": "cancelled"}])["ok"], "a cancelled job in a running run stops the wait")
+check(not fr.ci_jobs_failed({"jobs": [{"name": "a", "conclusion": "failure"}]})["ok"], "a failed job in a running run stops the wait")
 
 # ---- entries -----------------------------------------------------------------------------------------------------
 GOOD = "section: Sandbox\npr: 12, #13\nroadmap: Digging is faster\n---\n- Digging is faster now.\n- Second line of\n  the second bullet.\n"
@@ -321,14 +331,14 @@ REL = load(".github/workflows/release.yml")
 
 check(set(FR["on"]) == {"workflow_dispatch"}, "fast-release starts only by hand")
 ins = FR["on"]["workflow_dispatch"]["inputs"]
-check(set(ins) == {"dry_run", "bump", "version", "allow_empty"}, "fast-release inputs: %r" % sorted(ins))
+check(set(ins) == {"dry_run", "bump", "version", "allow_empty", "gate"}, "fast-release inputs: %r" % sorted(ins))
 check(FR["permissions"] == {"contents": "read"}, "fast-release is read-only by default")
 check(FR["concurrency"]["group"] == "fast-release" and FR["concurrency"]["cancel-in-progress"] is False, "one fast release at a time, never cancelled")
 check(set(FR["jobs"]) == {"plan", "release", "after"}, "three jobs")
 check(FR["jobs"]["release"]["uses"] == "./.github/workflows/release.yml", "the release job calls release.yml")
 check(FR["jobs"]["release"]["needs"] == "plan" and "dry_run" in str(FR["jobs"]["release"]["if"]), "release needs the plan and is skipped on a dry run")
 check(FR["jobs"]["release"]["with"]["channel"] == "latest", "fast releases are the latest channel only (LTS has its own path)")
-check(FR["jobs"]["release"]["permissions"] == {"contents": "write"} and FR["jobs"]["release"]["secrets"] == "inherit", "release job: write + secrets for release.yml")
+check(FR["jobs"]["release"]["permissions"] == {"contents": "write", "actions": "read"} and FR["jobs"]["release"]["secrets"] == "inherit", "release job: write + secrets for release.yml")
 check(FR["jobs"]["plan"]["permissions"].get("actions") == "read", "plan can read CI runs")
 check("contents" in FR["jobs"]["plan"]["permissions"] and FR["jobs"]["plan"]["permissions"]["contents"] == "read", "plan cannot write")
 for name, job in FR["jobs"].items():

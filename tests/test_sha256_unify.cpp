@@ -24,6 +24,23 @@ static Bytes Pat(std::size_t n) { Bytes b(n); for (std::size_t i = 0; i < n; ++i
 static Bytes Rep(std::uint8_t v, std::size_t n) { return Bytes(n, v); }
 static Bytes S(const char* s) { return Bytes(s, s + std::strlen(s)); }
 
+// SHA-256 of `m` with one chosen block function (FIPS 180-4 5.1.1 padding done here): 0 = portable, 1 = SHA extensions.
+static std::string PadHash(const Bytes& m, int fn) {
+    Bytes p = m; p.push_back(0x80);
+    while (p.size() % 64 != 56) p.push_back(0);
+    const std::uint64_t bits = (std::uint64_t)m.size() * 8;
+    for (int i = 7; i >= 0; --i) p.push_back((std::uint8_t)(bits >> (8 * i)));
+    std::uint32_t h[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au, 0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
+#if defined(OKAY_SHA256_SHANI)
+    if (fn == 1) okay::crypto::sha256_detail::ShaNiCompress(h, p.data(), p.size() / 64, true);
+    else
+#endif
+    { (void)fn; okay::crypto::sha256_detail::BlocksPortable(h, p.data(), p.size() / 64); }
+    std::uint8_t d[32];
+    for (int i = 0; i < 8; ++i) { d[4 * i] = (std::uint8_t)(h[i] >> 24); d[4 * i + 1] = (std::uint8_t)(h[i] >> 16); d[4 * i + 2] = (std::uint8_t)(h[i] >> 8); d[4 * i + 3] = (std::uint8_t)h[i]; }
+    return Hex(d, 32);
+}
+
 int main() {
     RUN_SUITE("sha256_unify");
 
@@ -171,6 +188,51 @@ int main() {
             Bytes all = p; all.insert(all.end(), in.begin(), in.end());
             CHECK(Hex(got, 32) == NewHex(all));
         }
+    }
+
+    // ---- the two block functions (portable and x86 SHA extensions) give the same digests ----
+    {
+        std::printf("block function in use: %s\n", nw::sha256_detail::BlockFunctionName());
+        bool shaNi = false;
+#if defined(OKAY_SHA256_SHANI)
+        shaNi = nw::sha256_detail::CpuHasShaNi();
+#endif
+        std::printf("SHA extensions on this CPU: %s\n", shaNi ? "yes (both functions are compared)" : "no (portable function only)");
+        const char* fips[4][2] = {
+            {"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+            {"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+            {"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"},
+            {nullptr, "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"}};
+        for (auto& v : fips) {
+            const Bytes m = v[0] ? S(v[0]) : Rep('a', 1000000);
+            CHECK(PadHash(m, 0) == v[1]);
+            if (shaNi) CHECK(PadHash(m, 1) == v[1]);
+        }
+        std::mt19937 r(2026);
+        int agree = 0;
+        for (int i = 0; i < 2000; ++i) {
+            Bytes m(r() % 3000); for (auto& b : m) b = (std::uint8_t)r();
+            const std::string want = NewHex(m);
+            bool ok = PadHash(m, 0) == want;
+            if (shaNi) ok = ok && PadHash(m, 1) == want;
+            agree += ok;
+        }
+        CHECK(agree == 2000);
+#if defined(OKAY_SHA256_SHANI)
+        if (shaNi) {   // the word-input path (FinalWith32Words, PBKDF2) on random states and words
+            int same = 0;
+            for (int i = 0; i < 2000; ++i) {
+                std::uint32_t h1[8], h2[8], w[16];
+                for (auto& x : h1) x = (std::uint32_t)r();
+                for (auto& x : w) x = (std::uint32_t)r();
+                std::memcpy(h2, h1, sizeof h1);
+                nw::sha256_detail::WordsPortable(h1, w);
+                nw::sha256_detail::ShaNiCompress(h2, w, 1, false);
+                same += std::memcmp(h1, h2, sizeof h1) == 0;
+            }
+            CHECK(same == 2000);
+        }
+#endif
     }
 
     // ---- hygiene and shape ----

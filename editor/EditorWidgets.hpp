@@ -6,27 +6,13 @@
 
 namespace oked {
 
-extern int g_accent;   // accent colour preset (index into kAccents; saved in settings)
 
-// Selectable editor accent colours (the highlight used on selections, buttons,
-// checks, tabs, etc.). Index persists in settings.
+// The editor's one accent colour (the highlight used on selections, buttons, checks, tabs, etc.).
+// There is no accent picker any more: Edit > Dark Mode / Light Mode is the only look choice.
 struct AccentPreset { const char* name; float r, g, b; };
 inline constexpr AccentPreset kAccents[] = {
-    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue (default)
-    {"Blue",    0.26f, 0.59f, 0.98f},
-    {"Teal",    0.18f, 0.78f, 0.74f},
-    {"Violet",  0.56f, 0.46f, 0.96f},
-    {"Green",   0.36f, 0.80f, 0.46f},
-    {"Amber",   0.95f, 0.66f, 0.26f},
-    {"Rose",    0.96f, 0.42f, 0.56f},
-    {"Slate",   0.52f, 0.58f, 0.68f},
-    {"Cyan",    0.30f, 0.80f, 0.92f},
-    {"Orange",  0.96f, 0.55f, 0.22f},
-    {"Crimson", 0.92f, 0.34f, 0.40f},
-    {"Mint",    0.40f, 0.86f, 0.66f},
-    {"Indigo",  0.42f, 0.40f, 0.92f},
+    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue
 };
-inline constexpr int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
 
 // The current accent colour, for panels that tint their own widgets to match the theme.
 ImVec4 AccentCol(float alpha = 1.0f);

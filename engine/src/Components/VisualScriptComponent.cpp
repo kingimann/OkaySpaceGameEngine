@@ -1,3 +1,4 @@
+#include "okay/Modules/Interact.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
 #include "okay/Testing/ObjectPath.hpp"
@@ -266,7 +267,7 @@ void VisualScriptComponent::Update(float dt) {
 
 namespace {
 bool ActionDown(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyDown('e');
+    if (name == "interact" || name == "use") return interact::Pressed('e');
     if (name == "jump") return Input::GetKeyDown(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonDown(0);
     if (name == "crouch") return Input::GetKeyDown('c');
@@ -297,7 +298,7 @@ void VisualScriptComponent::FireTagged(const char* prefix, GameObject* other) {
 
 void VisualScriptComponent::PollGameplay(float) {
     if (!m_graph || !gameObject) return;
-    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDown('e') && transform && gameObject->scene()) {
+    if (!m_graph->Entries("OnInteract").empty() && interact::Pressed('e') && transform && gameObject->scene()) {
         GameObject* best = nullptr;
         float bestD = 2.0f;
         for (const auto& up : gameObject->scene()->Objects()) {

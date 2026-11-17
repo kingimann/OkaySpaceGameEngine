@@ -227,7 +227,7 @@ void Volume::UpdateBodies() {
             rec.hasCheck = true;
             if (!eventName.empty() && s) BroadcastLogicSignal(*s, g, eventName, true);
         } else if (kind == Kind::Kill) {
-            DamageHealthOn(g, killDamage);
+            health::Damage(g, killDamage);
             if (!eventName.empty() && s) BroadcastLogicSignal(*s, g, eventName, true);
             if (killAction == (int)KillAction::Destroy) { if (s) s->Destroy(g); }
             else Respawn(g);

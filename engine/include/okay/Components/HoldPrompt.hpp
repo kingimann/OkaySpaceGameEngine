@@ -3,6 +3,7 @@
 // hold-in-hands item is in range, and "E or G to drop" while one is carried.
 // Drop lives here, not in the holding solver. E is also lean-right while held;
 // the drop is the press, the lean is the hold.
+#include "okay/Modules/Interact.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -49,7 +50,7 @@ public:
                              Input::GetKeyDown(altDropKey);
             if (main || alt) {
                 hold->Drop();
-                if (main) ItemPickup::BlockInteract();
+                if (main) interact::Block();
             }
         }
     }
@@ -57,7 +58,7 @@ public:
     void LateUpdate(float) override {
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         m_wasHolding = hold && hold->IsHolding();
-        ItemPickup::ClearInteractBlock();
+        interact::ClearBlock();
         Refresh(hold);   // after this frame's pick up, drop or throw
     }
 
@@ -98,8 +99,8 @@ private:
             }
             msg = localized ? Localize("hold.drop", keys) : keys + " to drop";
         } else if (ItemPickup* pk = Nearest(gameObject)) {
-            msg = localized ? Localize("hold.pickup", Input::KeyName(pk->interactKey))
-                            : Input::KeyName(pk->interactKey) + " to pick up";
+            msg = localized ? Localize("hold.pickup", interact::KeyLabel(pk->interactKey))
+                            : interact::KeyLabel(pk->interactKey) + " to pick up";
         } else msg = ExtraPrompt();
         tr->text = msg;
         tr->background = !msg.empty();

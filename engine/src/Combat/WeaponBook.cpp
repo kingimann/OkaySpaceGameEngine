@@ -1,9 +1,6 @@
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
-#include "okay/Components/NPCController.hpp"
-#include "okay/Components/Stats.hpp"
-#include "okay/Components/SurvivalComponents.hpp"
-#include "okay/Components/SurvivalStats.hpp"
+#include "okay/Modules/Health.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -298,18 +295,15 @@ const WeaponDefinition* WeaponForHolder(GameObject* go) {
     return WeaponBook::Get().ForItem(item);
 }
 
-bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse) {
+bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse, DamageType type,
+                       GameObject* instigator) {
     if (!target || !(amount > 0.0f)) return false;
-    bool hurt = false;
-    if (auto* hp = target->GetComponent<HealthStat>()) {
-        if (!hp->IsDead()) { hp->Damage(amount, from); hurt = true; }
-    } else if (auto* surv = target->GetComponent<SurvivalStats>()) {
-        if (!surv->dead) { surv->Damage(amount); hurt = true; }
-    } else if (auto* stats = target->GetComponent<Stats>()) {
-        if (!stats->IsDead()) { stats->TakeDamage(amount); hurt = true; }
-    } else if (auto* npc = target->GetComponent<NPCController>()) {
-        if (!npc->IsDead()) { npc->Damage(amount); hurt = true; }
-    }
+    DamageEvent e = DamageEvent::Of(amount, type);
+    e.instigator = instigator;
+    e.origin = from; e.hasOrigin = true;
+    // Health of any kind on the target itself (not its parents): HealthStat, survival, RPG stats or NPC.
+    const DamageResult r = health::Damage(target, e);
+    const bool hurt = r.handled && !r.blocked;
     if (hurt && (impulse.x != 0.0f || impulse.y != 0.0f || impulse.z != 0.0f))
         if (auto* body = target->GetComponent<Rigidbody3D>()) body->AddImpulse(impulse);
     return hurt;

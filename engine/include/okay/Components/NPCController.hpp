@@ -9,7 +9,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
+#include "okay/Components/SurvivalAfflictions.hpp"   // health::Damage
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
@@ -440,7 +440,7 @@ private:
         if (m_atkTimer > 0.0f || !tgt) return false;
         if (attackWindup > 0.0f && m_windup <= 0.0f && !m_winding) { m_windup = attackWindup; m_winding = true; return false; }
         if (m_winding && m_windup > 0.0f) return false;   // still telegraphing
-        DamageHealthOn(tgt, attackDamage);
+        health::Damage(tgt, attackDamage);
         m_atkTimer = attackInterval; m_winding = false;
         Broadcast("npc_attack");
         return true;

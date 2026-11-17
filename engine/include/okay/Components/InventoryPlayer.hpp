@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Modules/Interact.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -104,7 +105,7 @@ public:
 
     void Update(float) override {
         const char key = InteractKey();
-        if (key && Input::GetKeyDown(key)) {
+        if (key && interact::Pressed(key)) {
             // Every instance makes the same choice, whatever order they update in.
             open = (Nearest(gameObject ? gameObject->scene() : nullptr, key) == this) ? !open : false;
         }

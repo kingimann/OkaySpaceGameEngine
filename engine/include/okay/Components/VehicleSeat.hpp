@@ -29,6 +29,7 @@
 //     camLerp; it eases in from where the orbit was). First person: at the seated eyes, looking along the car.
 //     On exit the camera gets its old local pose back and the player controller takes over again. A camera that
 //     is not the occupant's is left alone (VehicleController followCamera still works for it).
+#include "okay/Modules/Interact.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -57,7 +58,7 @@ public:
     Vec3  exitPoint{-1.8f, 0.0f, 0.0f};  ///< local point they step out to (left of the car)
     float useRadius = 2.0f;              ///< how close the player must be to get in (metres, flat)
     std::string prompt = "Drive";        ///< shown while a player is in range
-    char  enterKey = 'e';                ///< get in and get out (raw key only: pad and input actions are not read)
+    char  enterKey = 'e';                ///< get in and get out ('e' = the Interact action, rebindable and on the pad; another letter stays a raw key)
     bool  occupied = false;              ///< runtime only
     bool  playerInRange = false;         ///< runtime only
 
@@ -159,7 +160,7 @@ public:
         Sync();
         if (m_who && (m_who->IsDestroyed() || !m_who->transform)) Forget();
         if (m_who && HumanoidActions::IsDead(m_who)) Exit();   // a dead body is not at the wheel
-        const bool down = Input::GetKeyDown(enterKey);
+        const bool down = interact::Pressed(enterKey);
         if (!down) s_justExited() = nullptr;
         playerInRange = false;
         if (m_who) {

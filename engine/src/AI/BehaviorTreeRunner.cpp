@@ -14,7 +14,7 @@
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
-#include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
+#include "okay/Components/SurvivalAfflictions.hpp"   // health::Damage
 #include "okay/Components/SurvivalComponents.hpp"    // HealthStat
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -990,7 +990,7 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             if (r.flag && m_time < r.timer) return BtStatus::Running;
             float damage = n.Num("damage");
             if (damage <= 0.0f) damage = 10.0f;
-            DamageHealthOn(g, damage);
+            health::Damage(g, damage);
             r.flag = false;
             r.until = m_time + std::max(0.0f, n.Num("interval"));
             if (sc) for (ActionList* al : sc->FindObjectsOfType<ActionList>()) if (al) al->ReceiveMessage("npc_attack");

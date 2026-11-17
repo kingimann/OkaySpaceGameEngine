@@ -1,3 +1,4 @@
+#include "okay/Modules/Interact.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/AnimControl.hpp"
@@ -2232,8 +2233,8 @@ void Seat::Update(float dt) {
         if (d.Magnitude() < best) closer = true;
     }
     playerInRange = !closer;
-    // E is the use key. There is no shared interact binding; FPC lean-right is also E.
-    if (playerInRange && Input::GetKeyDown('e'))
+    // The interact key (the Interact action, E by default) is shared with every other interactable: one press, one use.
+    if (playerInRange && interact::Take('e'))
         HumanoidActions::RequestSit(who, gameObject, type);
 }
 

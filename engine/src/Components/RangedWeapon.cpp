@@ -126,7 +126,7 @@ bool RangedWeapon::Shoot(const Tune& t) {
     }
     const RaycastHit3D hit = scene->physics3D().Raycast(*scene, origin, dir, std::max(0.0f, t.range), gameObject);
     if (!hit.hit || !hit.gameObject) return true;   // the shot still left the gun
-    ApplyCombatDamage(hit.gameObject, t.damage, origin, dir * t.knockback);
+    ApplyCombatDamage(hit.gameObject, t.damage, origin, dir * t.knockback, DamageType::Bullet, gameObject);
     return true;
 }
 

@@ -1,3 +1,4 @@
+#include "okay/Modules/Interact.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -306,7 +307,7 @@ void DialogueRunner::Update(float dt) {
     }
     if (IsActive()) {
         if (pausePlayer) Input::SetUICaptured(true);
-        ItemPickup::BlockInteract();   // E advances the conversation; no crate takes the press
+        interact::Block();   // E advances the conversation; no crate takes the press
         const DialogueNode* n = m_session.Node();
         if (n && n->kind == DialogueNode::Kind::Line) {
             const float len = (float)utf8::Length(LineText(GraphName(), *n));
@@ -326,9 +327,9 @@ void DialogueRunner::Update(float dt) {
     // Not talking: the prompt and the interact key.
     const bool near = startMode == 0 && interactKey && enabled && InRange();
     if (near) {
-        SetPrompt(promptText.empty() ? UiText("dialogue.talk", Input::KeyName(interactKey)) : promptText);
-        if (Input::GetKeyDown(interactKey) && !Input::UICaptured()) {
-            ItemPickup::BlockInteract();
+        SetPrompt(promptText.empty() ? UiText("dialogue.talk", interact::KeyLabel(interactKey)) : promptText);
+        if (interact::Pressed(interactKey) && !Input::UICaptured()) {
+            interact::Block();
             StartDialogue();
             if (IsActive() && drawUI) DrawUI();
         }
@@ -344,7 +345,7 @@ void DialogueRunner::HandleInput() {
             if (Input::GetKeyDown((char)('1' + i))) { Choose(i); return; }
         return;
     }
-    const bool confirm = (interactKey && Input::GetKeyDown(interactKey)) || Input::GetKeyDown('\r') ||
+    const bool confirm = (interactKey && interact::Pressed(interactKey)) || Input::GetKeyDown('\r') ||
                          Input::GetKeyDown(' ') || Input::GetMouseButtonDown(0);
     if (confirm) Advance();
 }
@@ -372,7 +373,7 @@ void DialogueRunner::DrawUI() {
             if (ui->PrimaryButton(label.c_str())) { Choose((int)i); break; }
         }
     } else {
-        const std::string hint = l.complete ? UiText("dialogue.continue", Input::KeyName(interactKey ? interactKey : '\r')) : "...";
+        const std::string hint = l.complete ? UiText("dialogue.continue", interact::KeyLabel(interactKey ? interactKey : '\r')) : "...";
         ui->TextDim(hint.c_str());
     }
     ui->End();

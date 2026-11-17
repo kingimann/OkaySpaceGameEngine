@@ -1,10 +1,7 @@
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/ActionList.hpp"
-#include "okay/Components/NPCController.hpp"
-#include "okay/Components/Stats.hpp"
-#include "okay/Components/SurvivalComponents.hpp"
-#include "okay/Components/SurvivalStats.hpp"
+#include "okay/Modules/Health.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
 #include <cmath>
@@ -37,10 +34,7 @@ Vec3 Flat(const Vec3& v) {
     return m > 1e-5f ? Vec3{p.x / m, 0.0f, p.z / m} : Vec3{0.0f, 0.0f, 1.0f};
 }
 
-bool CanBeHurt(const GameObject* g) {
-    return g->GetComponent<HealthStat>() || g->GetComponent<SurvivalStats>() ||
-           g->GetComponent<Stats>() || g->GetComponent<NPCController>();
-}
+bool CanBeHurt(GameObject* g) { return health::Find(g) != nullptr; }   // health of any kind (the health contract)
 
 const WeaponDefinition* Chosen(const MeleeAttacker& m) {
     const WeaponDefinition* w = FindWeapon(m.weapon, m.weaponFile);
@@ -129,7 +123,7 @@ void MeleeAttacker::Swing() {
                 if (g->IsSelfOrDescendantOf(gameObject) || !CanBeHurt(g)) continue;
                 if (!Inside(*this, t, g->transform->Position())) continue;
                 const Vec3 away = Flat(g->transform->Position() - pos);
-                ApplyCombatDamage(g, amount, pos, away * t.knockback);
+                ApplyCombatDamage(g, amount, pos, away * t.knockback, DamageType::Melee, gameObject);
             }
         }
         m_comboTimer = t.comboWindow;
@@ -157,7 +151,7 @@ void MeleeAttacker::Update(float dt) {
                     if (!Inside(*this, t, g->transform->Position())) continue;
                     m_hit.push_back(g);
                     const Vec3 away = Flat(g->transform->Position() - pos);
-                    ApplyCombatDamage(g, amount, pos, away * t.knockback);
+                    ApplyCombatDamage(g, amount, pos, away * t.knockback, DamageType::Melee, gameObject);
                 }
             }
         }

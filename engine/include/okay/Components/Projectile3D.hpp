@@ -6,26 +6,16 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Modules/Health.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
 namespace okay {
 
-/// Damage the nearest HealthStat on `target` or one of its parents. Returns true
-/// when something took the hit.
-inline bool DamageGameObject(GameObject* target, float amount) {
-    for (GameObject* g = target; g;) {
-        if (auto* hp = g->GetComponent<HealthStat>()) { hp->Damage(amount); return true; }
-        Transform* p = g->transform ? g->transform->Parent() : nullptr;
-        g = p ? p->gameObject : nullptr;
-    }
-    return false;
-}
-
 /// A bullet / rocket / arrow in 3D. It flies along `velocity`, sweeps a ray each
-/// frame so fast shots never pass through thin walls, damages the HealthStat it
-/// hits, pushes Rigidbody3Ds, and calls on_hit() on its own script. Spawned by
+/// frame so fast shots never pass through thin walls, damages whatever with health
+/// it hits, pushes Rigidbody3Ds, and calls on_hit() on its own script. Spawned by
 /// the TopDownShooterController (or any script); also fine on a prefab.
 class Projectile3D : public Behaviour {
 public:
@@ -95,7 +85,11 @@ private:
     void OnHit(Scene& sc, const RaycastHit3D& hit, const Vec3& dir) {
         ++m_hits;
         m_lastHit = hit.gameObject;
-        const bool damaged = DamageGameObject(hit.gameObject, damage);
+        DamageEvent hurt = DamageEvent::Of(damage, DamageType::Bullet);
+        hurt.source = gameObject; hurt.instigator = owner;
+        hurt.point = hit.point; hurt.hasPoint = true;
+        // The nearest object up the hierarchy with health of any kind (HealthStat, survival, RPG stats, NPC).
+        const bool damaged = health::Damage(hit.gameObject, hurt, true).handled;
         if (hit.gameObject)
             if (auto* rb = hit.gameObject->GetComponent<Rigidbody3D>())
                 if (impactForce > 0.0f) rb->AddImpulse(dir * impactForce);

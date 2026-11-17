@@ -64,6 +64,18 @@ void opReg(Image& im, int opcode, int dstRm, int srcReg) {
 
 void movReg(Image& im, int dst, int src) { opReg(im, 0x89, dst, src); }
 
+void sext(Image& im, int width) {
+    if (width != 1 && width != 2 && width != 4) return;
+    rexW(im, Rax, Rax);
+    if (width == 4) {
+        u8(im, 0x63);
+    } else {
+        u8(im, 0x0F);
+        u8(im, width == 1 ? 0xBE : 0xBF);
+    }
+    u8(im, modrm(3, Rax, Rax));
+}
+
 void movImm(Image& im, int dst, std::int64_t v) {
     rexW(im, 0, dst);
     u8(im, 0xB8 + (dst & 7));
@@ -200,23 +212,9 @@ void movRaxRip(Image& im, const std::string& target) {
     rel32(im, target);
 }
 
-void movzxRaxRip(Image& im, const std::string& target) {
-    rexW(im, Rax, Rbp);
-    u8(im, 0x0F);
-    u8(im, 0xB6);
-    u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
-}
-
 void movRipRax(Image& im, const std::string& target) {
     rexW(im, Rax, Rbp);
     u8(im, 0x89);
-    u8(im, modrm(0, Rax, Rbp));
-    rel32(im, target);
-}
-
-void movRipAl(Image& im, const std::string& target) {
-    u8(im, 0x88);
     u8(im, modrm(0, Rax, Rbp));
     rel32(im, target);
 }
@@ -227,22 +225,65 @@ void movRaxMemRax(Image& im) {
     u8(im, modrm(0, Rax, Rax));
 }
 
-void movzxRaxMemRax(Image& im) {
-    rexW(im, Rax, Rax);
-    u8(im, 0x0F);
-    u8(im, 0xB6);
-    u8(im, modrm(0, Rax, Rax));
-}
-
 void movMemRaxRcx(Image& im) {
     rexW(im, Rcx, Rax);
     u8(im, 0x89);
     u8(im, modrm(0, Rcx, Rax));
 }
 
-void movMemRaxCl(Image& im) {
-    u8(im, 0x88);
+void loadMemRax(Image& im, int width) {
+    if (width == 8 || width == 0) {
+        movRaxMemRax(im);
+        return;
+    }
+    rexW(im, Rax, Rax);
+    if (width == 4) {
+        u8(im, 0x63);
+        u8(im, modrm(0, Rax, Rax));
+        return;
+    }
+    u8(im, 0x0F);
+    u8(im, width == 1 ? 0xBE : 0xBF);
+    u8(im, modrm(0, Rax, Rax));
+}
+
+void loadRipRax(Image& im, const std::string& target, int width) {
+    if (width == 8 || width == 0) {
+        movRaxRip(im, target);
+        return;
+    }
+    rexW(im, Rax, Rbp);
+    if (width == 4) {
+        u8(im, 0x63);
+        u8(im, modrm(0, Rax, Rbp));
+        rel32(im, target);
+        return;
+    }
+    u8(im, 0x0F);
+    u8(im, width == 1 ? 0xBE : 0xBF);
+    u8(im, modrm(0, Rax, Rbp));
+    rel32(im, target);
+}
+
+void storeMemRcx(Image& im, int width) {
+    if (width == 8 || width == 0) {
+        movMemRaxRcx(im);
+        return;
+    }
+    if (width == 2) u8(im, 0x66);
+    u8(im, width == 1 ? 0x88 : 0x89);
     u8(im, modrm(0, Rcx, Rax));
+}
+
+void storeRipRax(Image& im, const std::string& target, int width) {
+    if (width == 8 || width == 0) {
+        movRipRax(im, target);
+        return;
+    }
+    if (width == 2) u8(im, 0x66);
+    u8(im, width == 1 ? 0x88 : 0x89);
+    u8(im, modrm(0, Rax, Rbp));
+    rel32(im, target);
 }
 
 std::string blockName(const std::string& func, const std::string& block) { return func + "_" + block; }
@@ -295,6 +336,7 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
     switch (in.op) {
     case Inst::Op::Mov:
         loadRax(im, in.a);
+        sext(im, in.extra);
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Add:
@@ -383,7 +425,10 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         break;
     }
     case Inst::Op::Ret:
-        if (in.a.kind != Operand::Kind::None) loadRax(im, in.a);
+        if (in.a.kind != Operand::Kind::None) {
+            loadRax(im, in.a);
+            sext(im, in.extra);
+        }
         jmpRel(im, f.name + "_epilogue");
         break;
     default:
@@ -407,25 +452,21 @@ void emitMem(Image& im, const Inst& in, int localOff) {
         break;
     case Inst::Op::Load:
         loadRax(im, in.a);
-        if (in.extra == 1) movzxRaxMemRax(im);
-        else movRaxMemRax(im);
+        loadMemRax(im, in.extra);
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::Store:
         loadRax(im, in.a);
         loadRcx(im, in.b);
-        if (in.extra == 1) movMemRaxCl(im);
-        else movMemRaxRcx(im);
+        storeMemRcx(im, in.extra);
         break;
     case Inst::Op::GLoad:
-        if (in.extra == 1) movzxRaxRip(im, in.func);
-        else movRaxRip(im, in.func);
+        loadRipRax(im, in.func, in.extra);
         movSlotRax(im, in.dst);
         break;
     case Inst::Op::GStore:
         loadRax(im, in.a);
-        if (in.extra == 1) movRipAl(im, in.func);
-        else movRipRax(im, in.func);
+        storeRipRax(im, in.func, in.extra);
         break;
     default:
         break;

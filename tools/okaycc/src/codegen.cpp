@@ -53,6 +53,40 @@ void store(std::string& s, const char* reg, int dst) {
     s += "\n";
 }
 
+void sext(std::string& s, int width) {
+    if (width == 4) s += "  movslq %eax, %rax\n";
+    else if (width == 2) s += "  movswq %ax, %rax\n";
+    else if (width == 1) s += "  movsbq %al, %rax\n";
+}
+
+const char* loadOp(int width) {
+    if (width == 1) return "movsbq";
+    if (width == 2) return "movswq";
+    if (width == 4) return "movslq";
+    return "movq";
+}
+
+const char* storeOp(int width) {
+    if (width == 1) return "movb";
+    if (width == 2) return "movw";
+    if (width == 4) return "movl";
+    return "movq";
+}
+
+const char* storeReg(int width) {
+    if (width == 1) return "%al";
+    if (width == 2) return "%ax";
+    if (width == 4) return "%eax";
+    return "%rax";
+}
+
+const char* storeRegC(int width) {
+    if (width == 1) return "%cl";
+    if (width == 2) return "%cx";
+    if (width == 4) return "%ecx";
+    return "%rcx";
+}
+
 const char* setcc(Inst::Op op) {
     switch (op) {
     case Inst::Op::Ceq: return "sete";
@@ -85,6 +119,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
     switch (in.op) {
     case Inst::Op::Mov:
         load(s, in.a, "%rax");
+        sext(s, in.extra);
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Add:
@@ -191,7 +226,10 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         break;
     }
     case Inst::Op::Ret:
-        if (in.a.kind != Operand::Kind::None) load(s, in.a, "%rax");
+        if (in.a.kind != Operand::Kind::None) {
+            load(s, in.a, "%rax");
+            sext(s, in.extra);
+        }
         s += "  jmp ";
         s += f.name;
         s += "_epilogue\n";
@@ -229,39 +267,37 @@ void emitMem(std::string& s, const Inst& in, int localOff) {
         break;
     case Inst::Op::Load:
         load(s, in.a, "%rax");
-        if (in.extra == 1) s += "  movzbq (%rax), %rax\n";
-        else s += "  movq (%rax), %rax\n";
+        s += "  ";
+        s += loadOp(in.extra);
+        s += " (%rax), %rax\n";
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::Store:
         load(s, in.a, "%rax");
         load(s, in.b, "%rcx");
-        if (in.extra == 1) s += "  movb %cl, (%rax)\n";
-        else s += "  movq %rcx, (%rax)\n";
+        s += "  ";
+        s += storeOp(in.extra);
+        s += " ";
+        s += storeRegC(in.extra);
+        s += ", (%rax)\n";
         break;
     case Inst::Op::GLoad:
-        if (in.extra == 1) {
-            s += "  movzbq ";
-            s += in.func;
-            s += "(%rip), %rax\n";
-        } else {
-            s += "  movq ";
-            s += in.func;
-            s += "(%rip), %rax\n";
-        }
+        s += "  ";
+        s += loadOp(in.extra);
+        s += " ";
+        s += in.func;
+        s += "(%rip), %rax\n";
         store(s, "%rax", in.dst);
         break;
     case Inst::Op::GStore:
         load(s, in.a, "%rax");
-        if (in.extra == 1) {
-            s += "  movb %al, ";
-            s += in.func;
-            s += "(%rip)\n";
-        } else {
-            s += "  movq %rax, ";
-            s += in.func;
-            s += "(%rip)\n";
-        }
+        s += "  ";
+        s += storeOp(in.extra);
+        s += " ";
+        s += storeReg(in.extra);
+        s += ", ";
+        s += in.func;
+        s += "(%rip)\n";
         break;
     default:
         break;

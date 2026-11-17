@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,7 +47,7 @@ struct Expr {
 };
 
 struct Type {
-    enum class Kind { Void, Char, Int, Pointer, Array, Function, Struct } kind = Kind::Int;
+    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct } kind = Kind::Int;
     std::string tag;
     std::unique_ptr<Type> inner;
     std::unique_ptr<Expr> bound;
@@ -159,7 +160,9 @@ std::string typeStr(const Type& t) {
     switch (t.kind) {
     case Type::Kind::Void: return "void";
     case Type::Kind::Char: return "char";
+    case Type::Kind::Short: return "short";
     case Type::Kind::Int: return "int";
+    case Type::Kind::Long: return "long";
     case Type::Kind::Pointer: return "(ptr " + typeStr(*t.inner) + ")";
     case Type::Kind::Array: {
         std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
@@ -414,7 +417,8 @@ private:
     }
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
-        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "int") || isKwTok(t, "struct");
+        return isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
+               isKwTok(t, "long") || isKwTok(t, "struct");
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
@@ -474,10 +478,50 @@ private:
     }
 
     std::unique_ptr<Type> parseBase() {
-        if (eatKw("void")) return ty(Type::Kind::Void);
-        if (eatKw("char")) return ty(Type::Kind::Char);
-        if (eatKw("int")) return ty(Type::Kind::Int);
         if (isKw("struct")) return parseStructType();
+        int longs = 0;
+        int shorts = 0;
+        bool sawInt = false;
+        bool sawChar = false;
+        bool sawVoid = false;
+        bool any = false;
+        while (!atEnd()) {
+            if (eatKw("long")) {
+                ++longs;
+                any = true;
+                continue;
+            }
+            if (eatKw("short")) {
+                ++shorts;
+                any = true;
+                continue;
+            }
+            if (eatKw("int")) {
+                sawInt = true;
+                any = true;
+                continue;
+            }
+            if (eatKw("char")) {
+                sawChar = true;
+                any = true;
+                continue;
+            }
+            if (eatKw("void")) {
+                sawVoid = true;
+                any = true;
+                continue;
+            }
+            break;
+        }
+        if (any) {
+            if (sawVoid && !longs && !shorts && !sawInt && !sawChar) return ty(Type::Kind::Void);
+            if (sawChar && !longs && !shorts && !sawInt && !sawVoid) return ty(Type::Kind::Char);
+            if (shorts && !longs && !sawChar && !sawVoid) return ty(Type::Kind::Short);
+            if (longs && !shorts && !sawChar && !sawVoid) return ty(Type::Kind::Long);
+            if (sawInt && !longs && !shorts && !sawChar && !sawVoid) return ty(Type::Kind::Int);
+            err("unsupported type");
+            return ty(Type::Kind::Int);
+        }
         if (!atEnd() && cur().kind == Tok::Keyword) {
             err("'" + cur().text + "' is not in this subset");
             advance();
@@ -1128,7 +1172,10 @@ private:
 
 };
 
-bool isIntish(const Type& t) { return t.kind == Type::Kind::Int || t.kind == Type::Kind::Char; }
+bool isIntish(const Type& t) {
+    return t.kind == Type::Kind::Char || t.kind == Type::Kind::Short || t.kind == Type::Kind::Int ||
+           t.kind == Type::Kind::Long;
+}
 bool isPtr(const Type& t) { return t.kind == Type::Kind::Pointer; }
 bool isVoidPtr(const Type& t) {
     return isPtr(t) && t.inner && t.inner->kind == Type::Kind::Void;
@@ -1743,6 +1790,7 @@ private:
         bool global = false;
         bool array = false;
         bool agg = false;
+        bool mem = false;
         std::string gname;
         int width = 8;
         int step = 0;
@@ -1765,6 +1813,8 @@ private:
     int forN_ = 0;
     int tmpN_ = 0;
     int strN_ = 0;
+    int retWidth_ = 8;
+    std::set<std::string> addr_;
     std::vector<std::map<std::string, Sym>> scopes_;
     std::map<std::string, Sym> globals_;
     std::vector<Loop> loops_;
@@ -1779,21 +1829,57 @@ private:
     int fresh() { return nextReg_++; }
     std::string lab(const std::string& prefix) { return prefix + std::to_string(tmpN_++); }
 
-    static int sizeOf(const Type* t) {
-        if (!t) return 8;
-        if (t->kind == Type::Kind::Char) return 1;
-        if (t->kind == Type::Kind::Int || t->kind == Type::Kind::Pointer) return 8;
-        if (t->kind == Type::Kind::Struct) {
-            int n = 0;
-            for (const Param& p : t->params) n += fieldSpan(p.type.get());
-            return n == 0 ? 8 : n;
+    static int alignUp(int off, int al) {
+        if (al <= 1) return off;
+        int m = off % al;
+        return m ? off + (al - m) : off;
+    }
+
+    static int alignOf(const Type* t) {
+        if (!t) return 1;
+        switch (t->kind) {
+        case Type::Kind::Char: return 1;
+        case Type::Kind::Short: return 2;
+        case Type::Kind::Int: return 4;
+        case Type::Kind::Long:
+        case Type::Kind::Pointer: return 8;
+        case Type::Kind::Array: return alignOf(t->inner.get());
+        case Type::Kind::Struct: {
+            int a = 1;
+            for (const Param& p : t->params) {
+                int fa = alignOf(p.type.get());
+                if (fa > a) a = fa;
+            }
+            return a;
         }
-        if (t->kind == Type::Kind::Array) {
+        default: return 1;
+        }
+    }
+
+    static int sizeOf(const Type* t) {
+        if (!t) return 4;
+        switch (t->kind) {
+        case Type::Kind::Char: return 1;
+        case Type::Kind::Short: return 2;
+        case Type::Kind::Int: return 4;
+        case Type::Kind::Long:
+        case Type::Kind::Pointer: return 8;
+        case Type::Kind::Array: {
             int n = 0;
             if (t->bound && t->bound->kind == Expr::Kind::Int) n = static_cast<int>(t->bound->ival);
             return n * sizeOf(t->inner.get());
         }
-        return 8;
+        case Type::Kind::Struct: {
+            int off = 0;
+            for (const Param& p : t->params) {
+                off = alignUp(off, alignOf(p.type.get()));
+                off += sizeOf(p.type.get());
+            }
+            if (off == 0) return 0;
+            return alignUp(off, alignOf(t));
+        }
+        default: return 4;
+        }
     }
     static int valueStep(const Type* t) {
         if (!t) return 0;
@@ -1806,16 +1892,12 @@ private:
         return 0;
     }
 
-    static int fieldSpan(const Type* t) {
-        if (t && t->kind == Type::Kind::Struct) return sizeOf(t);
-        return 8;
-    }
-
     static std::vector<FieldOff> layoutOf(const Type* t) {
         std::vector<FieldOff> out;
         if (!t || t->kind != Type::Kind::Struct) return out;
         int off = 0;
         for (const Param& p : t->params) {
+            off = alignUp(off, alignOf(p.type.get()));
             FieldOff f;
             f.name = p.name;
             f.offset = off;
@@ -1830,7 +1912,7 @@ private:
             else if (pstruct && (p.type->inner->tag.empty() || p.type->inner->tag != t->tag))
                 f.fields = layoutOf(p.type->inner.get());
             out.push_back(std::move(f));
-            off += fieldSpan(p.type.get());
+            off += f.width;
         }
         return out;
     }
@@ -1864,12 +1946,49 @@ private:
         return nullptr;
     }
 
-    void emitMov(int dst, Operand src) {
+    void emitMov(int dst, Operand src, int width = 8) {
         Inst in;
         in.op = Inst::Op::Mov;
         in.dst = dst;
         in.a = src;
+        in.extra = width <= 0 ? 8 : width;
         emit(in);
+    }
+    Operand narrow(Operand src, int width) {
+        if (width >= 8 || width <= 0) return src;
+        int t = fresh();
+        emitMov(t, src, width);
+        return Operand::vreg(t);
+    }
+    void storeMem(int slot, Operand val, int width) {
+        int addr = fresh();
+        Inst lea;
+        lea.op = Inst::Op::Lea;
+        lea.dst = addr;
+        lea.a = Operand::vreg(slot);
+        emit(lea);
+        Inst st;
+        st.op = Inst::Op::Store;
+        st.a = Operand::vreg(addr);
+        st.b = val;
+        st.extra = width;
+        emit(st);
+    }
+    Val loadMem(int slot, int width) {
+        int addr = fresh();
+        Inst lea;
+        lea.op = Inst::Op::Lea;
+        lea.dst = addr;
+        lea.a = Operand::vreg(slot);
+        emit(lea);
+        int dst = fresh();
+        Inst ld;
+        ld.op = Inst::Op::Load;
+        ld.dst = dst;
+        ld.a = Operand::vreg(addr);
+        ld.extra = width;
+        emit(ld);
+        return Val{Operand::vreg(dst), 0, 0};
     }
     void emitJmp(const std::string& label) {
         Inst in;
@@ -1970,9 +2089,11 @@ private:
         return mod_.globals.back().name;
     }
 
-    void putI64(std::vector<unsigned char>& b, std::int64_t v) {
+    void putInt(std::vector<unsigned char>& b, std::int64_t v, int n) {
         auto u = static_cast<std::uint64_t>(v);
-        for (int i = 0; i < 8; ++i) b.push_back(static_cast<unsigned char>((u >> (8 * i)) & 0xffu));
+        if (n < 1) n = 1;
+        if (n > 8) n = 8;
+        for (int i = 0; i < n; ++i) b.push_back(static_cast<unsigned char>((u >> (8 * i)) & 0xffu));
     }
 
     void addGlobal(Decl& d) {
@@ -1991,13 +2112,12 @@ private:
             g.size = 8;
             g.reloc = addString(d.init->text);
         } else if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
-            g.size = s.width < 8 ? s.width : 8;
-            if (g.size == 8) putI64(g.bytes, static_cast<std::int64_t>(d.init->ival));
-            else g.bytes.push_back(static_cast<unsigned char>(d.init->ival));
+            g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
+            putInt(g.bytes, static_cast<std::int64_t>(d.init->ival), g.size);
         } else if (d.init && d.init->kind == Expr::Kind::Unary && d.init->text == "-" && !d.init->kids.empty() &&
                    d.init->kids[0] && d.init->kids[0]->kind == Expr::Kind::Int) {
-            g.size = 8;
-            putI64(g.bytes, -static_cast<std::int64_t>(d.init->kids[0]->ival));
+            g.size = s.width > 0 && s.width <= 8 ? s.width : 8;
+            putInt(g.bytes, -static_cast<std::int64_t>(d.init->kids[0]->ival), g.size);
         } else if (!d.init) {
             g.size = s.array ? sizeOf(d.type.get()) : (s.width < 8 ? s.width : 8);
         } else {
@@ -2014,6 +2134,7 @@ private:
             err(line, col, "not lowered: " + name);
             return {};
         }
+        if (s->mem) return loadMem(s->reg, s->width);
         if (s->array || s->agg) {
             if (s->global) {
                 int dst = fresh();
@@ -2075,6 +2196,18 @@ private:
                 err(e.line, e.col, "not lowered: " + e.text);
                 return a;
             }
+            if (s->mem) {
+                int dst = fresh();
+                Inst in;
+                in.op = Inst::Op::Lea;
+                in.dst = dst;
+                in.a = Operand::vreg(s->reg);
+                emit(in);
+                a.op = Operand::vreg(dst);
+                a.width = s->width;
+                a.ok = true;
+                return a;
+            }
             if (s->agg) {
                 Val base = readName(e.text, e.line, e.col);
                 a.op = base.op;
@@ -2110,7 +2243,7 @@ private:
             in.a = Operand::vreg(s->reg);
             emit(in);
             a.op = Operand::vreg(dst);
-            a.width = s->width == 1 ? 1 : 8;
+            a.width = s->width;
             a.ok = true;
             return a;
         }
@@ -2376,7 +2509,7 @@ private:
                     emit(in);
                     Val v;
                     v.op = Operand::vreg(dst);
-                    v.step = s->width == 1 ? 1 : 8;
+                    v.step = s->width;
                     v.inner = s->step;
                     return v;
                 }
@@ -2388,7 +2521,7 @@ private:
                 emit(in);
                 Val v;
                 v.op = Operand::vreg(dst);
-                v.step = s->width == 1 ? 1 : 8;
+                v.step = s->width;
                 v.inner = s->step;
                 return v;
             }
@@ -2450,13 +2583,23 @@ private:
             return {};
         }
         Operand one = Operand::number(e.text == "--" ? -1 : 1);
+        if (s->mem) {
+            Val cur = loadMem(s->reg, s->width);
+            int dst = fresh();
+            emitBin(Inst::Op::Add, dst, cur.op, one);
+            Operand nxt = narrow(Operand::vreg(dst), s->width);
+            storeMem(s->reg, nxt, s->width);
+            return pre ? Val{nxt, 0, 0} : cur;
+        }
         if (pre) {
             emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
+            if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         int old = fresh();
         emitMov(old, Operand::vreg(s->reg));
         emitBin(Inst::Op::Add, s->reg, Operand::vreg(s->reg), one);
+        if (s->width > 0 && s->width < 8) emitMov(s->reg, Operand::vreg(s->reg), s->width);
         return Val{Operand::vreg(old), s->step, s->inner};
     }
 
@@ -2509,27 +2652,33 @@ private:
                 err(e.line, e.col, "not lowered");
                 return {};
             }
-            if (s->global) {
-                Inst in;
-                in.op = Inst::Op::GStore;
-                in.func = s->gname;
-                in.a = rhs.op;
-                in.extra = s->width;
-                emit(in);
-                return rhs;
+            if (s->global || s->mem) {
+                Operand val = narrow(rhs.op, s->width);
+                if (s->global) {
+                    Inst in;
+                    in.op = Inst::Op::GStore;
+                    in.func = s->gname;
+                    in.a = val;
+                    in.extra = s->width;
+                    emit(in);
+                } else {
+                    storeMem(s->reg, val, s->width);
+                }
+                return Val{val, 0, 0};
             }
-            emitMov(s->reg, rhs.op);
+            emitMov(s->reg, rhs.op, s->width);
             return Val{Operand::vreg(s->reg), s->step, s->inner};
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
+        Operand val = narrow(rhs.op, a.width);
         Inst in;
         in.op = Inst::Op::Store;
         in.a = a.op;
-        in.b = rhs.op;
+        in.b = val;
         in.extra = a.width;
         emit(in);
-        return rhs;
+        return Val{val, 0, 0};
     }
 
     Val lowerCond(Expr& e) {
@@ -2583,7 +2732,10 @@ private:
         case Stmt::Kind::Return: {
             Inst in;
             in.op = Inst::Op::Ret;
-            if (s.expr) in.a = lowerExpr(*s.expr).op;
+            if (s.expr) {
+                in.a = lowerExpr(*s.expr).op;
+                in.extra = retWidth_;
+            }
             emit(in);
             break;
         }
@@ -2632,8 +2784,13 @@ private:
         }
         int slot = fresh();
         s.reg = slot;
+        if (!d.name.empty() && addr_.count(d.name)) s.mem = true;
         if (!d.name.empty()) scopes_.back()[d.name] = s;
-        if (d.init) emitMov(slot, lowerExpr(*d.init).op);
+        if (d.init) {
+            Operand val = narrow(lowerExpr(*d.init).op, s.width);
+            if (s.mem) storeMem(slot, val, s.width);
+            else emitMov(slot, val, s.width);
+        }
     }
 
     void lowerIf(Stmt& s) {
@@ -2704,6 +2861,26 @@ private:
         scopes_.pop_back();
     }
 
+    void scanExpr(const Expr* e) {
+        if (!e) return;
+        if (e->kind == Expr::Kind::Unary && e->text == "&" && !e->kids.empty() && e->kids[0] &&
+            e->kids[0]->kind == Expr::Kind::Name)
+            addr_.insert(e->kids[0]->text);
+        for (const auto& k : e->kids) scanExpr(k.get());
+    }
+    void scanStmt(const Stmt& s) {
+        scanExpr(s.expr.get());
+        scanExpr(s.expr2.get());
+        scanExpr(s.expr3.get());
+        if (s.decl) scanExpr(s.decl->init.get());
+        for (const auto& st : s.stmts)
+            if (st) scanStmt(*st);
+        if (s.thenS) scanStmt(*s.thenS);
+        if (s.elseS) scanStmt(*s.elseS);
+        if (s.body) scanStmt(*s.body);
+        if (s.init) scanStmt(*s.init);
+    }
+
     void lowerFunc(Decl& d) {
         fn_ = Function();
         fn_.name = d.name;
@@ -2712,6 +2889,15 @@ private:
         scopes_.clear();
         scopes_.emplace_back();
         loops_.clear();
+        addr_.clear();
+        retWidth_ = 8;
+        if (d.body) scanStmt(*d.body);
+        if (d.type && d.type->inner) {
+            const Type* r = d.type->inner.get();
+            if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
+                r->kind == Type::Kind::Long)
+                retWidth_ = sizeOf(r);
+        }
         if (d.type) {
             for (const Param& p : d.type->params) {
                 Sym s;
@@ -2720,6 +2906,7 @@ private:
                     if (p.type->kind == Type::Kind::Struct)
                         err(d.line, d.col, "struct parameter is not lowered");
                     describe(s, p.type.get());
+                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
                 }
                 if (!p.name.empty()) scopes_.back()[p.name] = s;
             }

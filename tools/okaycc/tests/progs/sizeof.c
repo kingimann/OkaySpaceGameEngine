@@ -4,10 +4,10 @@ int main() {
     struct P { int x; int y; };
     struct P p;
     char *s;
-    if (sizeof(int) != 8) return 1;
-    if (sizeof(a) != 32) return 2;
-    if (sizeof(p) != 16) return 3;
-    if (sizeof(p.y) != 8) return 4;
+    if (sizeof(int) != 4) return 1;
+    if (sizeof(a) != 16) return 2;
+    if (sizeof(p) != 8) return 3;
+    if (sizeof(p.y) != 4) return 4;
     if (sizeof(*s) != 1) return 5;
     if (sizeof(s) != 8) return 6;
     if (sizeof("hi") != 3) return 7;

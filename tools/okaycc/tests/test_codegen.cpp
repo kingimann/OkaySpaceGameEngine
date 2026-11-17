@@ -3,8 +3,10 @@
 #include "harness.hpp"
 
 #include <cstdlib>
+#include <dirent.h>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -109,6 +111,29 @@ int main() {
                "struct C { char a; char b; };\n"
                "int main(){struct C c; c.a=65; c.b=66; return c.a+c.b;}\n",
                131);
+
+    DIR* dir = opendir("tests/progs");
+    if (!dir) {
+        std::fprintf(stderr, "FAIL cannot open tests/progs\n");
+        ++okaycc_test::gFail;
+    } else {
+        int files = 0;
+        while (dirent* ent = readdir(dir)) {
+            std::string name = ent->d_name;
+            if (name.size() < 3 || name.compare(name.size() - 2, 2, ".c") != 0) continue;
+            std::ifstream in("tests/progs/" + name);
+            std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            int want = -1;
+            if (src.compare(0, 8, "// exit ") == 0) want = std::atoi(src.c_str() + 8);
+            expectExit(name.c_str(), src, want);
+            ++files;
+        }
+        closedir(dir);
+        if (files == 0) {
+            std::fprintf(stderr, "FAIL no programs in tests/progs\n");
+            ++okaycc_test::gFail;
+        }
+    }
 
     okaycc_test::gPass += gOk;
     std::printf("codegen: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);

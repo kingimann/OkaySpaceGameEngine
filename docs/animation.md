@@ -329,7 +329,30 @@ body really moves over the ground**:
   (`OKAY_OLD_GAIT=1`) are in [walk_vs_run.md](walk_vs_run.md).
 - **Strafing and backpedalling.** The hips and legs turn toward the travel
   direction (up to 75°, the chest keeps facing forward) and side-step the
-  rest; travelling backwards steps backwards.
+  rest; travelling backwards steps backwards. The direction is also read as
+  **eight blend weights** (forward, forward-right, right, back-right, back,
+  back-left, left, forward-left; `HumanoidMotion::DirectionWeights`): the two
+  neighbouring compass points share the whole weight, so they always sum to
+  one and change smoothly at every angle. They set how far the arms swing (a
+  sidestep keeps about half the forward swing, a backpedal 60%, diagonals in
+  between) and how far the chest rolls into a sidestep (up to 4°). The
+  default clips are baked with the same law.
+- **Stopping.** Slowing from a walk or run no longer collapses the stride onto
+  the planted foot. When the body drops below 70% of its recent top speed the
+  stride length is held and the phase follows the distance still covered; at
+  rest the foot that is in the air steps in under the hips first, the planted
+  foot after it (each lifted through a small step, about 0.45 s in all). The
+  measured planted-foot slide while stopping from a run is in
+  [player_tp_anim.md](player_tp_anim.md). Only the built-in pose does this:
+  an imported rig's own clips and a remote copy driven by the network keep
+  their own stop (the remote copy shows the stop step only through the same
+  state change, with the speed it receives).
+- **Upper-body aim.** While the player aims (right mouse) or holds an item, the
+  chest takes `Upper Body Aim` (45%) of the look pitch and yaw and the head the
+  rest, so the shoulders and arms point where you look while the hips and legs
+  keep the travel direction. The look is already in the network message, so a
+  remote copy shows the same chest. `Character.upperBodyAim = 0` is the old
+  head-only look.
 - **Air and stances.** Jump (lead knee up, trailing leg, arms driving),
   **Fall** (legs reaching for the ground, arms out for balance), a landing
   absorb, **Crouch** (hips back and down, knees over the toes, hands in

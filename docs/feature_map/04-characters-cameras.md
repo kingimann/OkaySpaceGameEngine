@@ -178,14 +178,15 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.9.3 Part rig (Separate Into Parts) - `Components/Character` - BuildParts creates a real child "Rig" with one object per bone to select, recolour and attach to (`Components/Sockets`); RemoveParts
   - 4.9.4 Custom mesh and external rig - `Components/Character` - BindCustomMesh (auto-rig), driveExternal for an imported rig fed by HumanoidRetarget
   - 4.9.5 Blocky feel - `Components/Character` - takeoff dip, turn-in-place step, motion lean (tested), fidget while standing (per docs); gait maths are in 5.4
+  - 4.9.7 Third-person body animation - `Components/Character`, `Animation/HumanoidMotion` - eight-way direction weights (arm swing, chest roll), stop step (stride held while slowing, then the feet step in), chest takes 45% of the look while aiming or holding (`upperBodyAim`); lab scene `examples/player/third_person_anim_lab.okayscene`
   - 4.9.6 Character panel and creator - `editor/main.cpp` - DrawCharacterAnim and the Character inspector; the planned Character creator is area 30
 - **Code:** `Components/Character`, `Components/Sockets`, `editor/main.cpp`
 - **API:** `Character` (`height`, `skin`, `hairStyle`, `hatStyle`, `BuildParts()`, `RemoveParts()`, `BindCustomMesh`, `separateParts`, `driveExternal`); GameObject > 3D > Character
 - **Editor:** Character inspector, "Separate Into Parts (editable rig)", Unrig, Animation tab
 - **Docs:** `docs/animation.md`
-- **Tests:** `character_parts`, `char_editor_parts`, `character_feel`, `player_fixes`
+- **Tests:** `character_parts`, `char_editor_parts`, `character_feel`, `player_fixes`, `player_tp_anim`
 - **Status:** Works - parts and feel tests exist; customization is a fixed list of styles and colours
-- **Open:** old map: more customization options; no cloth, morph or secondary-motion for the blocky body (searched for cloth, jiggle, spring bone); creator UI is planned in 30.1
+- **Open:** hands are one block with no fingers (the grip `curl` is not applied); old map: more customization options; no cloth, morph or secondary-motion for the blocky body (searched for cloth, jiggle, spring bone); creator UI is planned in 30.1
 - **Related:** 3.7, 4.7, 5.2, 5.3, 30.1
 - **Words:** Character, blocky character, Unturned style, customization, hair style, hat, backpack, cape, part rig, Separate Into Parts, Rig node, avatar
 - **Seen as:** the part rig is duplicated after reload; colours not saved; arms stay when parts are separated; the body is hidden after a model swap

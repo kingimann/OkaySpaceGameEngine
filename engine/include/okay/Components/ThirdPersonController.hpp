@@ -816,6 +816,7 @@ public:
                     lo.yawRate = Character::YawRateOf(bodyYaw, m_prevBodyYaw, m_haveBodyYaw, dt);
                 }
                 ch->DriveLocomotion(lo);
+                ch->SetAiming(m_aim);   // the chest takes up the look while aiming (a held item does the same on its own)
                 // The head turns to keep looking where the camera points (relative to
                 // the body's current facing) AND tilts up/down with the orbit pitch,
                 // so the avatar looks around as you aim. (18 = the resting orbit pitch,

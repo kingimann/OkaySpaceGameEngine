@@ -4807,6 +4807,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Themes and the launcher-matching UI kit (12.7)
 - third person (4.1)
 - third-party (41.11)
+- Third-person body animation (4.9.7)
 - Third-person camera (4.6)
 - Third-person movement part (4.1.3)
 - third-person shooter (4.4, 4.4.1)

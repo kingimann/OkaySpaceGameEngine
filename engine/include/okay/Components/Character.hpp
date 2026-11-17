@@ -105,6 +105,16 @@ public:
     bool SprintingPose() const;
     /// How much the built-in stride shows a run right now: 0 = a pure walk, 1 = a pure run (eased over ~0.2 s).
     float RunStyle() const { return m_runW; }
+    /// Upper-body aim: while the body holds an item (ProceduralObjectHolding) or its controller says it is
+    /// aiming (SetAiming), the chest takes up this share (0..1) of the look pitch and yaw and the head the
+    /// rest, so the shoulders and arms point where the player looks while the hips and legs keep the
+    /// travel direction. 0 = the head alone looks (the old behaviour). The look is already synced for
+    /// remote copies, so they show the same pose. Not serialized.
+    float upperBodyAim = 0.45f;
+    /// The controller's aim state (right mouse in third person): turns the upper-body aim on without a held item.
+    void SetAiming(bool on) { m_aimFlag = on; }
+    /// How far the upper-body aim is on right now, 0..1 (eased).
+    float UpperAim() const { return m_upperAim; }
     /// Hide or show the held item on the owner's camera only. Others still see it.
     void SetHeldHiddenFromOwner(bool hide);
 
@@ -708,6 +718,8 @@ private:
     void AssignBonesForMesh(const Mesh& m, std::vector<int>& bone) const;
     float m_headYaw = 0.0f;        // eased head turn (toward lookYaw)
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
+    bool  m_aimFlag = false;       // the controller is aiming (SetAiming)
+    float m_upperAim = 0.0f;       // eased 0..1: how much the chest takes up the look
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
     int   m_prevAnim = 1;          // last frame's anim state (detects jump -> ground)
     int   m_animHold = 0, m_animBeforeHold = 1;   // HoldAnim: the held built-in animation (0 = none)
@@ -756,6 +768,28 @@ private:
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     void EaseFirstPersonArm(float dt);
     void BlendHeldTowardGrip();
+    // ---- Stopping from a stride (the stop step) ----
+    // While a gait slows to a stop the stride length is held (the phase follows the distance the body still
+    // covers), so a planted foot stays on the ground; then the foot that is in the air comes in under the
+    // hips, and only after it the other one steps in. No planted foot slides at any point of the stop.
+    int   m_stopHold = 0;          // 0 off, 1 slowing (the gait is held), 2 settling (the feet step in)
+    float m_stopV = 0.0f;          // the held stride speed (rig units/s)
+    int   m_stopAnim = 0;          // the gait state the stop started from
+    int   m_stopFirst = 0;         // the foot that steps in first (0 left, 1 right)
+    float m_gaitPeak = 0.0f;       // recent top stride speed (rig units/s), fading
+    float m_gaitLive = 0.0f;       // the smoothed ground speed (rig units/s), whatever the hold says
+    float m_gaitLast = 0.0f;       // the same, one step earlier (to tell slowing from speeding up)
+    float m_stopEntry = 0.0f;      // the live speed when the hold began
+    PoseSource::Movement m_lastMove; bool m_haveMove = false;   // what the last DriveLocomotion told the Animator
+    PoseSource::Movement m_stopMv;                              // the movement held while slowing (Animator path)
+    std::vector<Vec3> m_stopFrom; Vec3 m_stopRoot{0, 0, 0};    // the pose the stop started settling from (Animator path)
+    float m_stopU = 0.0f;          // settle progress 0..1 (Animator path)
+    bool  m_stopOut = false; float m_stopFade = 0.0f;   // settle interrupted (a jump, a start): the mix fades out over 0.12 s
+    bool  m_wasGait = false;       // the body was striding last step
+    int   m_lastGaitAnim = 2;      // the stride it was in (2 walk, 3 run, 17 crouch-walk)
+    void UpdateStopHold(float dt);
+    void FinishStopHold();
+    void MixBlend(std::vector<Vec3>& to, const std::vector<Vec3>& from, float u) const;
     GameObject* OwnerHideTarget() const;
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;

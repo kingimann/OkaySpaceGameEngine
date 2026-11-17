@@ -258,6 +258,8 @@ float GaitHipY(int state, const Inputs& in) {
     return a + (b - a) * w;
 }
 
+float TravelAngle(const Inputs& in) { return in.travelYaw + (in.backward ? 180.0f : 0.0f); }
+
 void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, const Inputs& in) {
     float down = kHipToAnkle + hipY;                       // hip joint to ankle, at rest on the ground
     FootState fl = FootAt(ph, g);
@@ -289,6 +291,9 @@ void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, cons
     if (g.crouch)   { armA = 8.0f + 5.0f * v;                     elbow = 30.0f; }
     else if (g.run) { armA = clampf(8.0f + 6.0f * v, 18.0f, 55.0f); elbow = clampf(70.0f + 3.0f * v, 70.0f, 95.0f); }
     else            { armA = clampf(10.0f + 5.0f * v, 10.0f, 30.0f); elbow = clampf(8.0f + 4.0f * v, 8.0f, 25.0f); }
+    // A sidestep or a backpedal swings the arms less than a forward stride (the eight-way mix).
+    const float armK = ArmSwingFor(TravelAngle(in));
+    armA *= armK;
     float lArm = armA * sl, rArm = armA * sr;
     float base = g.crouch ? -18.0f : 0.0f;                 // crouched: hands carried in front
     // Arms hang a little out from the ribs. +Z on the left arm is inward, so the
@@ -303,7 +308,9 @@ void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, cons
     // and the head stays level.
     float lean = g.crouch ? 28.0f : (g.run ? clampf(2.0f + 1.2f * v, 2.0f, 12.0f) : clampf(1.0f + 0.8f * v, 1.0f, 5.0f));
     r[B_HIPS]  = {0.0f, twist * sl - in.lowerYaw, 0.0f};
-    r[B_TORSO] = {lean + 9.0f * in.landK, -1.8f * twist * sl + in.lowerYaw, 0.0f};
+    // A sidestep rolls the chest a few degrees toward the side it travels to (+Z rolls to the body's right).
+    const float sideRoll = g.crouch ? 0.0f : clampf(1.1f * v, 0.0f, 4.0f) * std::sin(TravelAngle(in) * (kPi / 180.0f));
+    r[B_TORSO] = {lean + 9.0f * in.landK, -1.8f * twist * sl + in.lowerYaw, sideRoll};
     r[B_HEAD]  = {-0.65f * lean, 0.8f * twist * sl, 0.0f};
 }
 
@@ -412,6 +419,28 @@ float KneelPose(int which, std::vector<Vec3>& r) {
 }
 
 float StartPhase(int state, float speed) { return 0.5f * GaitFor(state, SpeedFor(state, speed)).beta; }
+
+void DirectionWeights(float angleDeg, float w[8]) {
+    float a = std::fmod(angleDeg, 360.0f);
+    if (a < 0.0f) a += 360.0f;                       // 0..360
+    const float u = a / 45.0f;
+    int i0 = (int)std::floor(u);
+    float f = u - (float)i0;
+    i0 %= 8;
+    const int i1 = (i0 + 1) % 8;
+    for (int i = 0; i < 8; ++i) w[i] = 0.0f;
+    w[i0] = 1.0f - f;
+    w[i1] += f;
+}
+
+float ArmSwingFor(float angleDeg) {
+    static const float k[8] = {1.0f, 0.85f, 0.55f, 0.5f, 0.6f, 0.5f, 0.55f, 0.85f};
+    float w[8];
+    DirectionWeights(angleDeg, w);
+    float s = 0.0f;
+    for (int i = 0; i < 8; ++i) s += w[i] * k[i];
+    return s;
+}
 
 float HipY(int state, const Inputs& in) {
     // Walk / run / crouch-walk: the hips ride the stride (lower while a planted

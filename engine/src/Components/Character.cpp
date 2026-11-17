@@ -335,6 +335,7 @@ HumanoidMotion::Inputs Character::MotionInputs(int state, float t) const {
     in.travelYaw = m_travelYaw;
     in.lowerYaw = m_lowerYaw;
     in.landK = m_landK;
+    in.backward = m_gaitDir < 0.0f;
     return in;
 }
 
@@ -375,6 +376,7 @@ float Character::GaitCycleSeconds(int state) const {
 // 0 = walking style, 1 = running style. The live state eases between them; any
 // other state asked for (a crossfade source) uses its own style outright.
 float Character::RunWeight(int state) const {
+    if (m_stopHold && state == m_stopAnim && (state == 2 || state == 3)) return m_runW;   // a stop keeps the stride's style
     if (state == anim && (state == 2 || state == 3)) return m_runW;
     return state == 3 ? 1.0f : 0.0f;
 }
@@ -415,16 +417,21 @@ void Character::AdvanceAnimClock(float dt) {
                                                     (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
     }
 
+    m_gaitLive = m_gaitSpeed;
+    if (m_stopHold) m_gaitSpeed = m_stopV;   // a stop holds the stride it started with (UpdateStopHold)
+
     // Travel direction relative to the facing: the hips and legs turn toward it
     // (up to 75°, the chest stays forward); pointing behind, they step backwards.
-    float a = std::fmod(moveAngle + 540.0f, 360.0f) - 180.0f;
-    float limit = m_gaitDir < 0.0f ? 80.0f : 100.0f;            // hysteresis around the side
-    m_gaitDir = std::fabs(a) > limit ? -1.0f : 1.0f;
-    float yaw = m_gaitDir < 0.0f ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
-    if ((!gait && anim != 7) || m_gaitSpeed < 0.1f) yaw = 0.0f;   // the crawl goes every way too
-    float ek = 1.0f - std::exp(-10.0f * dt);
-    m_travelYaw += (yaw - m_travelYaw) * ek;                    // where the feet actually step
-    m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
+    if (!m_stopHold) {
+        float a = std::fmod(moveAngle + 540.0f, 360.0f) - 180.0f;
+        float limit = m_gaitDir < 0.0f ? 80.0f : 100.0f;            // hysteresis around the side
+        m_gaitDir = std::fabs(a) > limit ? -1.0f : 1.0f;
+        float yaw = m_gaitDir < 0.0f ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
+        if ((!gait && anim != 7) || m_gaitSpeed < 0.1f) yaw = 0.0f;   // the crawl goes every way too
+        float ek = 1.0f - std::exp(-10.0f * dt);
+        m_travelYaw += (yaw - m_travelYaw) * ek;                    // where the feet actually step
+        m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
+    }
 
     // Walk <-> run blends the two styles over ~0.2 s on the live poses.
     // DriveLocomotion sets the target from speed, so the threshold is a blend
@@ -433,6 +440,7 @@ void Character::AdvanceAnimClock(float dt) {
     float wantRun = m_haveRunWant ? m_runWant
                   : (anim == 3 ? 1.0f : (anim == 2 ? HumanoidMotion::JogWeight(m_gaitSpeed) : 0.0f));
     m_haveRunWant = false;
+    if (m_stopHold) wantRun = m_runW;
     float step = dt / 0.2f;
     m_runW = m_runW < wantRun ? std::fmin(wantRun, m_runW + step) : std::fmax(wantRun, m_runW - step);
 
@@ -443,6 +451,10 @@ void Character::AdvanceAnimClock(float dt) {
     else {
         m_gaitFreq = 0.0f;
     }
+    if (m_stopHold == 1) {      // slowing: the phase follows the distance the body still covers, at the held stride length
+        const float k = m_stopV > 1e-3f ? clampf(m_gaitLive / m_stopV, 0.0f, 1.2f) : 0.0f;
+        m_gaitFreq = HumanoidMotion::CycleFreq(m_stopAnim, m_stopV, m_runW) * m_gaitDir * k;
+    } else if (m_stopHold == 2) m_gaitFreq = 0.0f;   // settling: the feet are stepping in, the cycle stands still
     m_gaitPhase = frac(m_gaitPhase + rate * m_gaitFreq);
 
     // The Animator's gait trees: the travel direction (at least as long as the
@@ -451,7 +463,7 @@ void Character::AdvanceAnimClock(float dt) {
         const float v = m_gaitSpeed >= 0.0f ? m_gaitSpeed : HumanoidMotion::NaturalSpeed(anim);
         const float dir = (m_travelYaw + (m_gaitDir < 0.0f ? 180.0f : 0.0f)) / kRad2Deg;
         const float r = std::fmax(v, 0.3f);
-        m_poseSource->Gait(r * std::sin(dir), r * std::cos(dir), v);
+        m_poseSource->Gait(r * std::sin(dir), r * std::cos(dir), m_stopHold == 1 ? m_gaitLive : v);   // slowing: the stride length stays, the playback rate follows the body
     }
 }
 
@@ -571,6 +583,7 @@ void Character::DriveLocomotion(const Locomotion& l) {
         m.stance = l.swim ? 0.0f : m_stanceLevel;
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
         m.swim = l.swim;
+        m_lastMove = m; m_haveMove = true;
         m_poseSource->Move(m);
         return;
     }
@@ -603,8 +616,13 @@ std::vector<Vec3> Character::PoseFor(int state, float t) const {
 // never breaks. (The body is flipped 180° about Y in Apply(), which negates the
 // pitch sense — hence the minus on X.)
 void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
-    r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
-    r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
+    // The chest takes `share` of the look while aiming or holding; the head keeps the rest, so the gaze is the same.
+    const float share = Mathf::Clamp(upperBodyAim, 0.0f, 0.8f) * m_upperAim;
+    const float hp = Mathf::Clamp(m_headPitch, -55.0f, 55.0f), hy = Mathf::Clamp(m_headYaw, -72.0f, 72.0f);
+    r[B_HEAD].x += -hp * (1.0f - share);
+    r[B_HEAD].y +=  hy * (1.0f - share);
+    r[B_TORSO].x += -hp * share;
+    r[B_TORSO].y +=  hy * share;
     // Body lean (peek): roll the torso sideways toward the lean direction.
     // Splitting a little onto the hips makes it read as a whole-body lean rather
     // than just a bent waist. (bodyLean > 0 = lean to the player's right, e.g. the
@@ -632,6 +650,13 @@ void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
 }
 
 void Character::TickFeel(float dt) {
+    {   // upper-body aim: on while aiming or while an item is held, eased so the chest never snaps
+        bool want = m_aimFlag;
+        if (!want && gameObject)
+            if (auto* hold = gameObject->GetComponent<ProceduralObjectHolding>()) want = hold->IsHolding();
+        const float k = dt > 1e-5f ? 1.0f - std::exp(-dt / 0.12f) : 1.0f;
+        m_upperAim += ((want ? 1.0f : 0.0f) - m_upperAim) * k;
+    }
     if (jumpCrouchTime > 1e-4f && m_anticipation > 0.0f) {
         const float u = std::min(1.0f, m_anticipation / jumpCrouchTime);
         m_jumpCrouchW = std::sin(u * 1.5707963f);   // 1 at the takeoff, 0 as it ends
@@ -688,6 +713,18 @@ bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
     // Landing on the move: the stride gives at the knees (a standing landing
     // plays the Land state instead).
     if (m_landK > 0.0f && (anim == 2 || anim == 3)) root.y += HumanoidMotion::AbsorbLanding(pose, m_landK);
+    if (m_stopHold == 2 && m_stopFrom.size() == pose.size()) {   // a stop settling: the legs step in, one after the other
+        const std::vector<Vec3> raw = pose;
+        const Vec3 rawRoot = root;
+        MixBlend(pose, m_stopFrom, m_stopU);
+        const float u = clampf(m_stopU, 0.0f, 1.0f), w = u * u * (3.0f - 2.0f * u);
+        root = m_stopRoot + (root - m_stopRoot) * w;
+        if (m_stopOut) {   // interrupted: back to the Animator's own pose without a snap
+            const float k = clampf(m_stopFade, 0.0f, 1.0f);
+            for (std::size_t i = 0; i < pose.size(); ++i) pose[i] = pose[i] + (raw[i] - pose[i]) * k;
+            root = root + (rawRoot - root) * k;
+        }
+    }
     return true;
 }
 
@@ -954,6 +991,106 @@ void Character::SyncStateClips() {
     }
 }
 
+// Crossfade `to` (the state being shown) from `from` (the state left) at progress u (0..1, smoothstep). While a stop
+// is settling the legs go in two stages instead: the foot that is in the air comes in under the hips first, the planted
+// foot after it, each lifted through a step, so no foot on the ground slides while the pose changes.
+void Character::MixBlend(std::vector<Vec3>& to, const std::vector<Vec3>& from, float u) const {
+    u = clampf(u, 0.0f, 1.0f);
+    const float w = u * u * (3.0f - 2.0f * u);
+    const std::vector<Vec3> target = to;
+    for (std::size_t i = 0; i < to.size(); ++i) to[i] = from[i] + (to[i] - from[i]) * w;
+    if (m_stopHold != 2 || to.size() < (std::size_t)B_COUNT) return;
+    auto stage = [](float x) { x = clampf(x, 0.0f, 1.0f); return x * x * (3.0f - 2.0f * x); };
+    const int legs[2][3] = {{B_LTHIGH, B_LSHIN, B_LFOOT}, {B_RTHIGH, B_RSHIN, B_RFOOT}};
+    for (int side = 0; side < 2; ++side) {
+        const bool first = side == m_stopFirst;
+        const float k = first ? clampf(u / 0.55f, 0.0f, 1.0f) : clampf((u - 0.40f) / 0.60f, 0.0f, 1.0f);
+        const float ws = stage(k);
+        for (int b : legs[side]) to[b] = from[b] + (target[b] - from[b]) * ws;
+        const float lift = std::sin(3.14159265f * k);          // 0 at both ends: the foot leaves and lands softly
+        to[legs[side][0]].x -= 22.0f * lift;                   // thigh forward ...
+        to[legs[side][1]].x += 50.0f * lift;                   // ... and the knee bends: the foot clears the floor
+    }
+}
+
+// A stride that is slowing to a stop. The speed the controller reports falls within a few frames, and a stride laid
+// out from it shrinks with it, so the planted foot used to slide back under the hips. Here the stride length is held
+// from the moment the body slows hard, the phase follows the distance it still covers, and when it is at rest the feet
+// step in one after the other (MixBlend). Works on the built-in pose and on the default Animator graph.
+void Character::UpdateStopHold(float dt) {
+    auto isGait = [](int a) { return a == 2 || a == 3 || a == 17; };
+    const bool ps = m_poseSource && m_poseSource->Live();
+    const bool free = (ps || !m_poseSource) && !m_activeClip && !m_blendTreeOn && !m_editorPosing && !driveExternal && m_animHold <= 0;
+    const float v = m_gaitLive;
+    const bool falling = v < m_gaitLast - 1e-4f;
+    m_gaitLast = v;
+    if (!free || dt <= 1e-6f || (ps && !m_haveMove)) { m_stopHold = 0; m_gaitPeak = 0.0f; m_wasGait = false; return; }
+    bool gaitNow, standNow;
+    int curAnim;
+    if (ps) {
+        const auto& mv = m_lastMove;
+        standNow = mv.airTime < 0.12f && !mv.prone && !mv.swim;
+        gaitNow = standNow && mv.speed > 0.3f;
+        curAnim = mv.crouch ? 17 : (mv.run ? 3 : 2);
+    } else {
+        gaitNow = isGait(anim);
+        standNow = gaitNow || anim == 1 || anim == 6;
+        curAnim = anim;
+    }
+    if (m_stopHold == 0) {
+        m_gaitPeak = std::max(gaitNow ? v : 0.0f, m_gaitPeak * std::exp(-dt / 0.6f));
+        if (m_wasGait && standNow && m_gaitPeak > 1.2f && v < 0.7f * m_gaitPeak && (falling || !gaitNow) && m_gaitSpeed >= 0.0f) {
+            m_stopHold = 1;
+            m_stopV = std::max(v, 0.3f);
+            m_stopEntry = v;
+            m_stopAnim = ps ? m_lastGaitAnim : m_prevAnim;
+            m_stopMv = m_lastMove;
+            m_stopMv.speed = std::max(m_lastMove.speed, 0.3f);
+            m_stopMv.run = m_stopAnim == 3;
+        }
+    }
+    if (gaitNow) m_lastGaitAnim = curAnim;
+    m_wasGait = gaitNow;
+    if (m_stopHold == 1) {
+        const bool gone = ps ? !standNow : (anim == 5 || anim == 18 || anim == 7 || anim == 0);
+        if (gone) { m_stopHold = 0; m_gaitPeak = 0.0f; return; }                  // left the ground / went prone
+        if (gaitNow && v > m_stopEntry + 0.6f) { m_stopHold = 0; return; }        // speeding up again
+        if (v < 0.25f) {
+            if (gaitNow && (ps ? m_lastMove.speed > 0.6f : true)) { m_stopHold = 0; return; }   // creeping, not stopping
+            m_stopHold = 2;
+            m_stopU = 0.0f; m_stopOut = false; m_stopFade = 0.0f;
+            m_gaitPeak = 0.0f;
+            std::vector<Vec3> shown;
+            Vec3 root{0, 0, 0};
+            m_stopFrom.clear();
+            if (ps) { AnimatorSample(shown, root); m_stopFrom = shown; m_stopRoot = root; }
+            else shown = PoseFor(m_stopAnim, animTime);
+            const std::vector<Vec3> j = PosedJoints(shown);
+            m_stopFirst = (int)j.size() > B_RFOOT && j[B_LFOOT].y > j[B_RFOOT].y ? 0 : 1;   // the foot in the air steps in first
+        } else if (ps) {
+            m_poseSource->Move(m_stopMv);   // the Animator stays in the stride it was in
+        } else {
+            anim = m_stopAnim;              // the stride goes on until the body is at rest
+        }
+    }
+    if (m_stopHold == 2 && ps) {
+        m_stopU += dt / 0.45f;
+        if (m_stopOut) { m_stopFade += dt / 0.12f; if (m_stopFade >= 1.0f) { m_stopHold = 0; m_stopOut = false; m_stopFade = 0.0f; } }
+    }
+}
+
+// After the state change was handled: a settling stop ends with its crossfade, or at once when something else asked.
+void Character::FinishStopHold() {
+    if (m_stopHold != 2) return;
+    const bool ps = m_poseSource && m_poseSource->Live();
+    if (ps) {
+        if (m_stopU >= 1.0f) { m_stopHold = 0; m_stopOut = false; return; }
+        if (m_lastMove.airTime >= 0.12f || m_lastMove.prone || m_lastMove.speed > 0.6f) m_stopOut = true;
+        return;
+    }
+    if ((anim != 1 && anim != 6) || m_blendT >= 1.0f || m_activeClip || m_blendTreeOn) m_stopHold = 0;
+}
+
 void Character::NoteStateChange() {
     if (m_animHold > 0) anim = m_animHold;   // a script's held animation wins over the controller's pick
     // Landing recovery: coming out of the jump pose into any grounded state plays a
@@ -968,7 +1105,8 @@ void Character::NoteStateChange() {
         // that pose instead of the state we left.
         const bool reversing = m_blendT < 1.0f;
         if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && m_prevAnim != 0 && anim != 0) {
-            const float secs = CrossfadeSeconds(m_prevAnim, anim);
+            float secs = CrossfadeSeconds(m_prevAnim, anim);
+            if (m_stopHold == 2) secs = std::max(secs, 0.45f);   // the stop step takes its time: one foot, then the other
             if (secs <= 1e-4f) { m_blendT = 1.0f; m_blendFromAnim = -1; }
             else {
                 CaptureLeavingPose();
@@ -1022,8 +1160,7 @@ void Character::CaptureLeavingPose() {
         std::vector<Vec3> from = m_blendFromAnim >= 0 ? PoseFor(m_blendFromAnim, animTime) : m_blendFrom;
         const float u = std::min(std::max(m_blendT, 0.0f), 1.0f);
         const float w = u * u * (3.0f - 2.0f * u);
-        if (from.size() == shown.size())
-            for (std::size_t i = 0; i < shown.size(); ++i) shown[i] = from[i] + (shown[i] - from[i]) * w;
+        if (from.size() == shown.size()) MixBlend(shown, from, u);
         const float fromY = m_blendFromAnim >= 0 ? RawStanceOffsetFor(m_blendFromAnim, animTime).y : m_blendFromY;
         m_blendFromY = fromY + (toY - fromY) * w;
         m_blendFrom = std::move(shown);
@@ -1037,7 +1174,9 @@ void Character::CaptureLeavingPose() {
 void Character::Update(float dt) {
     OKAY_PROFILE("Anim.Character");
     TickFeel(dt);
+    UpdateStopHold(dt);
     NoteStateChange();
+    FinishStopHold();
     if (m_landT >= 0.0f) {
         m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
         if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; }
@@ -2354,10 +2493,7 @@ std::vector<Vec3> Character::CurrentSourcePose() const {
     if (m_blendT < 1.0f && !p.empty()) {
         const bool live = m_blendFromAnim >= 0 && !m_editorPosing && !m_activeClip && !m_blendTreeOn;
         std::vector<Vec3> from = live ? PoseFor(m_blendFromAnim, animTime) : m_blendFrom;
-        if (from.size() == p.size()) {
-            float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
-            for (std::size_t i = 0; i < p.size(); ++i) p[i] = from[i] + (p[i] - from[i]) * w;
-        }
+        if (from.size() == p.size()) MixBlend(p, from, m_blendT);
     }
     ApplyLayer(p);   // overlay a partial-body layer clip (e.g. wave while walking) on top
     return p;

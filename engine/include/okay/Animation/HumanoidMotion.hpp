@@ -25,7 +25,19 @@ struct Inputs {
     float travelYaw = 0.0f;  ///< direction the feet step (or the crawl goes) along, relative to the facing (deg)
     float lowerYaw = 0.0f;   ///< how far the hips and legs turn toward it (deg)
     float landK = 0.0f;      ///< landing-absorb envelope 0..1 (knees give after a landing)
+    bool  backward = false;  ///< the feet step backwards (a backpedal): travelYaw is then folded 180 degrees
 };
+
+/// The eight-way direction blend: `angleDeg` is the direction of travel relative to the way the body
+/// faces (0 forward, +90 its right, 180 back). The eight weights are, in order, forward, forward-right,
+/// right, back-right, back, back-left, left, forward-left. The two compass points either side of the
+/// angle share the whole weight linearly, so the weights always sum to exactly one and change smoothly
+/// (no step at any angle, including across +-180). The gait uses them for how far the arms swing and
+/// how far the chest rolls into a sidestep (docs/animation.md, "Strafing and backpedalling").
+void DirectionWeights(float angleDeg, float w[8]);
+/// How much of a forward stride's arm swing a travel direction keeps: the eight-way mix of the
+/// per-direction factors (a sidestep swings the arms about half as far as a forward walk).
+float ArmSwingFor(float angleDeg);
 
 /// The pose (per-bone Euler, degrees) of built-in state `state` — the Character's
 /// `anim` numbering, 1..19 — at clock time `t`. Bones a state doesn't move are 0.

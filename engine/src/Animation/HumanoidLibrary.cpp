@@ -93,6 +93,7 @@ Entry Gait(const char* base, int state, float speed, int dir8) {
         in.phase = back ? 1.0f - u : u;
         in.runW = runW;
         in.travelYaw = yaw;
+        in.backward = back;   // the eight-way arm swing and chest roll need the real direction
         in.lowerYaw = yaw < -75.0f ? -75.0f : (yaw > 75.0f ? 75.0f : yaw);
         return in;
     });

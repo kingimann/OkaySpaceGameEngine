@@ -1204,7 +1204,8 @@ UI::Color32 CAmber() { return Rgb(240, 200, 100); }
 // A combo box the launcher's way (frame colour, arrow button, 6 px corners); returns true when the choice changed.
 bool LauncherCombo(const char* id, const std::vector<std::string>& items, int* current, float x, float y, float w, UI::Rect& rect) {
     if (g_layoutOnly) return false;
-    std::vector<const char*> ptrs;
+    static std::vector<const char*> ptrs;   // kept: no allocation per frame
+    ptrs.clear();
     for (const std::string& s : items) ptrs.push_back(s.c_str());
     UI::SetCursorScreenPos(V(x, y));
     UI::SetNextItemWidth(w);
@@ -1251,7 +1252,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
 
         // A card: its small-caps title, then the content `body` lays out from (x, y) in width w, returning where the next item
         // would go. The card is drawn behind (its height known once the body is laid out: it is drawn into a channel first).
-        auto card = [&](const char* title, const std::function<float(float, float, float)>& body) {
+        auto card = [&](const char* title, auto&& body) {   // body(px, yy, iw) -> where the next item goes (no std::function: no allocation)
             const float px = x + 18.0f, iw = w - 36.0f;
             float yy = cy + 14.0f;
             // background first, as tall as last frame's content (stable after the first frame)
@@ -1314,7 +1315,8 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             Txt(dl, V(px, yy + kFrameY), cText, "Follow");
             const float fw = UI::CalcTextSize("Follow").x;
             int ch = m.channel;
-            if (LauncherCombo("##updchannel", {"Latest", "Long-term support (LTS)"}, &ch, px + fw + 10.0f, yy, 260.0f, res.channelCombo)) res.channel = ch;
+            static const std::vector<std::string> kChannels = {"Latest", "Long-term support (LTS)"};
+            if (LauncherCombo("##updchannel", kChannels, &ch, px + fw + 10.0f, yy, 260.0f, res.channelCombo)) res.channel = ch;
             yy = NextY(NextY(yy, fh), 6.0f);
             yy = NextY(yy, DrawWrapped(dl, px, yy, iw, m.channelText, cText));
             if (!m.channelDim.empty()) yy = NextY(yy, DrawWrapped(dl, px, yy, iw, m.channelDim, cDim));

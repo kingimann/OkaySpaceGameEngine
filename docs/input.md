@@ -395,6 +395,52 @@ artwork from another project was used; the tables are in `engine/src/Input/Gamep
   zone, Setup, saved round trip, names, slots, toasts) and the station in `tests/test_input_playground.cpp`. No real PS5, Xbox or
   other pad, and nothing on Windows, has been run.
 
+### Typed actions, maps, interactions and local players (the `.okayinput` system)
+Existing: `InputActions` (named actions, contexts, chords, response, timing, per-player) and `RemapModel` stay as they are and keep
+working. Gap this fills: typed values, composites, a processor chain, control schemes with auto switch, interaction phases,
+an asset file, action maps with priority, a local-player manager and runtime rebinding with per-player saving. It is a layer next to
+`InputActions`, not a second copy of it: `MigrateInputActions()` builds the new form from the old table. Written from the general
+idea of action maps, in our own words and format; no code, text or tests from another project.
+
+- **Value types** (`Input/ActionSet.hpp`): `ValueType::Button`, `Axis1D`, `Vector2`, `Vector3`; `InputValue {x, y, z}`.
+- **Bindings**: a single input (the `InputBinding` text: `key:space`, `pad:rt`, `stick:left`, `dpad`, `mouse:delta`, `chord:ctrl+z` ...) or a
+  composite: `AddVector2(up, down, left, right)`, `AddVector3(...)`, `AddAxis(negative, positive)`, `AddChord({modifier..., input})`.
+  Composite vectors are kept to length 1 (a diagonal is not faster). The binding with the largest value drives the action.
+- **Processors** (a chain on a binding and on the action, in the order written): `deadzone(min[,max])`, `invert(xyz)`, `scale(a[,b[,c]])`,
+  `normalize`, `swizzle(yxz)`, `smooth(seconds)`, `curve(power)`, `clamp(min,max)`. Text round-trips (`ParseProcessors`).
+- **Control schemes**: `AddScheme({"Gamepad", keyboard, mouse, gamepad, touch})`, each binding has a `group`; only the active scheme's bindings
+  (and group-less ones) read. `SetAutoSwitch(true)` follows `Input::LastDevice()`; a set paired with `SetPad(n)` reads controller n and only
+  that controller's activity switches it.
+- **Interactions and phases**: `press`, `release`, `press_release`, `hold(s)`, `tap(s)`, `multitap(count,gap,tapTime)`, `repeat(every,first)`,
+  `chorded(Action)`. Each gives Started / Performed / Canceled (`Started(name)`, `Performed(name)`, `Canceled(name)`, `PhaseOf`, `Progress`
+  for a hold bar, `Events()` and `Subscribe(fn)`). With no interaction a button is started and performed when pressed and canceled when
+  released; a value is started when it leaves zero, performed each time it changes and canceled at zero.
+- **Gameplay timing helpers** (`Input/InputBuffer.hpp`): `InputBuffer` (a press is remembered for a moment) and `CoyoteTime` (can still jump just
+  after leaving a ledge). Header-only; the game passes the frame time.
+- **Action maps**: `AddMap(name, priority, consume, enabled)`, `SetMapEnabled`. Enabled maps run from the highest priority down; a map with
+  `consume` swallows the exact inputs its bindings use from every map below it (the UI map eats Space so Jump does not fire).
+- **The asset** (`Input/InputAsset.hpp`): text file `.okayinput` (format in the header). `SerializeInputAsset`, `ParseInputAsset` (errors name the
+  line and change nothing), `LoadInputAsset`, `SaveInputAsset`. `DefaultInputAsset()` is the default for new projects (Gameplay: Move, Look, Jump,
+  Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause; UI map, off, consuming: Navigate, Submit, Cancel; schemes Keyboard+Mouse, Gamepad,
+  Touch); the same text ships as `examples/input/default.okayinput` (a test keeps them equal). `MigrateInputActions()` turns the old table into an
+  asset (contexts become maps, the response becomes processors); a test compares its readings with `InputActions` for the same keys.
+- **Local players** (`Input/PlayerInput.hpp`): `PlayerInputManager` gives each player their own copy of the asset, one device (keyboard, or
+  controller n, or `Any` for a single player with auto switch), their own scheme and their own saved overrides. `Join`, `PollJoin` (press any
+  button), `Leave`, `Update`.
+- **Runtime rebinding**: `Rebind(action, binding, part, path)`, `Conflicts(...)` (same map, bindings that can be active together),
+  `ExportOverrides` / `ImportOverrides` / `ResetOverrides`, and `SaveOverrides(key)` / `LoadOverrides(key)` in Prefs (`inputov.<key>`; players use
+  `inputov.player<N>`). The asset text keeps the authored bindings; overrides are separate.
+- **Scripts** (`Input/InputRuntime.hpp`, ticked from `InputActions::Tick`): `ia_use_default()`, `ia_load(path)`, `ia_join("keyboard"|"pad0"..|"any")`,
+  `ia_poll_join()`, `ia_x/ia_y/ia_z/ia_value(action[,player])`, `ia_down/ia_pressed/ia_released`, `ia_started/ia_performed/ia_canceled`,
+  `ia_progress`, `ia_phase`, `ia_event()` (one "Jump:performed" per call), `ia_map(name,on)`, `ia_map_enabled`, `ia_scheme()`, `ia_set_scheme`,
+  `ia_rebind`, `ia_conflicts`, `ia_reset_bindings`, `ia_save`, `ia_label(action)` (names follow the connected controller), `ia_players`, `ia_leave`.
+- **Tests** (headless, real `Input` fed by hand): `action_set`, `action_phases`, `input_asset`, `input_script_api`. Pictures (software renders):
+  `docs/images/input/action-set-*.png`, `action-phases.png`, `input-players.png`.
+- **Not done yet:** the Inspector Player Input component, visual-script nodes for the `ia_*` calls, the editor authoring window and live debugger
+  (see `docs/UNFINISHED.md`), a ready in-game rebinding screen for this system (the existing `RemapModel` / keybind field cover `InputActions`),
+  a hook that copies the default asset into new projects, touch scheme bindings (the scheme exists, no touch leaf inputs yet), and
+  per-binding interactions (interactions are per action).
+
 ### Recording and replay (`InputRecorder`)
 `InputRecorder::StartRecording()` ... `StopRecording()`, then `StartPlayback(InputRecorder::Text())`. It works inside
 `InputActions::Tick`: recording copies the keys, mouse, wheel and every controller; playback puts the recorded frame back

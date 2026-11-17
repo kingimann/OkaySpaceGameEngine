@@ -1,4 +1,5 @@
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
@@ -498,6 +499,7 @@ void InputActions::Tick(float dt) {
     g_now += g_dt;
     InputHaptics::Update(g_dt);
     InputRecorder::BeginFrame(g_dt);   // playback puts the recorded frame over what the runtime fed
+    InputRuntime::Update(g_dt);        // typed actions (ActionSet) and local players read the same frame
     auto& actions = Actions();
     const bool legacy = g_legacy;
     // Actions can be added behind our back (tests clear the list): keep the index and keys in step.

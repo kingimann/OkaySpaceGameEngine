@@ -125,6 +125,8 @@
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/PadProfiles.hpp"
+#include "okay/Input/InputRuntime.hpp"
+#include "okay/Input/InputAsset.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/GameSaves.hpp"
 #include "okay/Core/SaveFramework.hpp"
@@ -3993,6 +3995,64 @@ struct OkayScriptVM::Impl {
             if (!p.present || !p.hostGyro) return Value{std::string()};
             char buf[64]; std::snprintf(buf, sizeof buf, "%.2f,%.2f,%.2f", p.gyro[0], p.gyro[1], p.gyro[2]);
             return Value{std::string(buf)};
+        };
+        // Typed actions and local players (the .okayinput system): ia_use_default() / ia_load("Assets/my.okayinput"), ia_join("keyboard" |
+        // "pad0".."pad3" | "any"), then read by name: ia_x / ia_y / ia_z / ia_value, ia_down, ia_pressed, ia_released, and the phases
+        // ia_started / ia_performed / ia_canceled, ia_progress ("hold to confirm" 0..1), ia_phase, ia_event (one "Jump:performed" per call).
+        // The last argument of each is the player (0 = first, default). ia_map("UI", true) switches an action map, ia_scheme() names
+        // the active control scheme, ia_rebind(action, binding, part, "key:j") changes one input (ia_conflicts lists clashes), ia_save() keeps it.
+        auto iaPlayer = [](std::vector<Value>& a, size_t i) { return a.size() > i ? SafeInt(a[i].AsFloat()) : 0; };
+        auto iaName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
+        b["ia_use_default"] = [](std::vector<Value>&) { InputRuntime::UseDefault(); return Value{}; };
+        b["ia_load"] = [](std::vector<Value>& a) { return Value{!a.empty() && InputRuntime::LoadAsset(a[0].AsString())}; };
+        b["ia_join"] = [](std::vector<Value>& a) { return Value{(float)InputRuntime::JoinNamed(a.empty() ? std::string("any") : a[0].AsString())}; };
+        b["ia_poll_join"] = [](std::vector<Value>&) { InputRuntime::Set(); return Value{(float)InputRuntime::Players().PollJoin()}; };
+        b["ia_leave"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Players().Leave(iaPlayer(a, 0)); return Value{}; };
+        b["ia_players"] = [](std::vector<Value>&) { int n = 0; for (int i = 0; i < InputRuntime::Players().Count(); ++i) n += InputRuntime::Players().Active(i); return Value{(float)n}; };
+        auto iaVal = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return s ? s->Value(iaName(a)) : InputValue{}; };
+        b["ia_value"] = [iaVal](std::vector<Value>& a) { return Value{iaVal(a).x}; };
+        b["ia_x"] = [iaVal](std::vector<Value>& a) { return Value{iaVal(a).x}; };
+        b["ia_y"] = [iaVal](std::vector<Value>& a) { return Value{iaVal(a).y}; };
+        b["ia_z"] = [iaVal](std::vector<Value>& a) { return Value{iaVal(a).z}; };
+        auto iaFlag = [iaName, iaPlayer](bool (ActionSet::*fn)(const std::string&) const) {
+            return [=](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && (s->*fn)(iaName(a))}; };
+        };
+        b["ia_down"] = iaFlag(&ActionSet::Held);
+        b["ia_pressed"] = iaFlag(&ActionSet::Pressed);
+        b["ia_released"] = iaFlag(&ActionSet::Released);
+        b["ia_started"] = iaFlag(&ActionSet::Started);
+        b["ia_performed"] = iaFlag(&ActionSet::Performed);
+        b["ia_canceled"] = iaFlag(&ActionSet::Canceled);
+        b["ia_progress"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s ? s->Progress(iaName(a)) : 0.0f}; };
+        b["ia_phase"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{std::string(PhaseName(s ? s->PhaseOf(iaName(a)) : Phase::Waiting))}; };
+        b["ia_event"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Set(iaPlayer(a, 0)); std::string e; return Value{InputRuntime::PopEvent(iaPlayer(a, 0), e) ? e : std::string()}; };
+        b["ia_map"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 2)); return Value{s && a.size() > 1 && s->SetMapEnabled(iaName(a), a[1].AsFloat() != 0.0f)}; };
+        b["ia_map_enabled"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && s->MapEnabled(iaName(a))}; };
+        b["ia_scheme"] = [iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 0)); return Value{s ? s->Scheme() : std::string()}; };
+        b["ia_set_scheme"] = [iaName, iaPlayer](std::vector<Value>& a) { ActionSet* s = InputRuntime::Set(iaPlayer(a, 1)); return Value{s && s->SetScheme(iaName(a))}; };
+        b["ia_rebind"] = [iaPlayer](std::vector<Value>& a) {
+            ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
+            return Value{s && a.size() > 3 && s->Rebind(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())};
+        };
+        b["ia_conflicts"] = [iaPlayer](std::vector<Value>& a) {
+            ActionSet* s = InputRuntime::Set(iaPlayer(a, 4));
+            std::string out;
+            if (s && a.size() > 3) for (const std::string& c : s->Conflicts(a[0].AsString(), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), a[3].AsString())) { if (!out.empty()) out += ", "; out += c; }
+            return Value{out};
+        };
+        b["ia_reset_bindings"] = [iaPlayer](std::vector<Value>& a) { if (ActionSet* s = InputRuntime::Set(iaPlayer(a, 0))) s->ResetOverrides(); return Value{}; };
+        b["ia_save"] = [iaPlayer](std::vector<Value>& a) { InputRuntime::Set(iaPlayer(a, 0)); InputRuntime::Players().SaveOverrides(iaPlayer(a, 0)); return Value{}; };
+        b["ia_label"] = [iaName, iaPlayer](std::vector<Value>& a) {   // the first active binding of the action as the player reads it ("Cross", "Space", "W A S D")
+            ActionSet* s = InputRuntime::Set(iaPlayer(a, 1));
+            const ActionDef* d = s ? s->Find(iaName(a)) : nullptr;
+            if (!d) return Value{std::string()};
+            for (const BindingSpec& bs : d->bindings) {
+                if (!s->BindingActive(bs) || bs.parts.empty()) continue;
+                std::string out;
+                for (std::size_t i = 0; i < bs.parts.size() && i < 6; ++i) { const InputBinding ib = InputBinding::Parse(bs.parts[i]); out += (i ? (bs.kind == BindingSpec::Kind::Chord ? " + " : " ") : "") + PadProfiles::BindingLabel(ib); if (bs.kind == BindingSpec::Kind::Single) break; }
+                return Value{out};
+            }
+            return Value{std::string()};
         };
         b["gamepad_count"] = [](std::vector<Value>&) { return Value{(float)Input::GamepadCount()}; };
         b["gamepad_connected"] = [](std::vector<Value>& a) { return Value{Input::GamepadConnected(a.empty() ? 0 : SafeInt(a[0].AsFloat()))}; };

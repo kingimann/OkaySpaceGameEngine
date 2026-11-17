@@ -2436,6 +2436,7 @@ add_test(NAME input_bench COMMAND test_input_bench)
 add_executable(test_input_playground test_input_playground.cpp)
 target_link_libraries(test_input_playground PRIVATE okay::engine)
 target_compile_definitions(test_input_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_include_directories(test_input_playground PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME input_playground COMMAND test_input_playground)
 
 # Save games: slots, whole-scene state, script variables, deferred load, autosave
@@ -3910,3 +3911,27 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+# Typed actions, composites, processors and control schemes (Input/ActionSet.hpp), with the real Input fed by hand; pictures with OKAY_SHOT_DIR.
+add_executable(test_action_set test_action_set.cpp)
+target_link_libraries(test_action_set PRIVATE okay::engine)
+target_include_directories(test_action_set PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_set COMMAND test_action_set)
+
+# Interactions and phases (tap, hold, multi-tap, repeat, chorded), the input buffer and coyote time.
+add_executable(test_action_phases test_action_phases.cpp)
+target_link_libraries(test_action_phases PRIVATE okay::engine)
+target_include_directories(test_action_phases PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_phases COMMAND test_action_phases)
+
+# The .okayinput asset, default asset, migration, action maps, rebinding overrides and local players.
+add_executable(test_input_asset test_input_asset.cpp)
+target_link_libraries(test_input_asset PRIVATE okay::engine)
+target_include_directories(test_input_asset PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(test_input_asset PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_asset COMMAND test_input_asset)
+
+# The ia_* script functions (typed actions, maps, phases, local players, rebinding).
+add_executable(test_input_script_api test_input_script_api.cpp)
+target_link_libraries(test_input_script_api PRIVATE okay::engine)
+add_test(NAME input_script_api COMMAND test_input_script_api)

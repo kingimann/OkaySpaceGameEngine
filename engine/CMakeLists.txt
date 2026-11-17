@@ -62,6 +62,10 @@ add_library(okay_engine
     src/Input/GamepadInfo.cpp
     src/Input/ControllerMapping.cpp
     src/Input/PadProfiles.cpp
+    src/Input/ActionSet.cpp
+    src/Input/InputAsset.cpp
+    src/Input/PlayerInput.cpp
+    src/Input/InputRuntime.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp

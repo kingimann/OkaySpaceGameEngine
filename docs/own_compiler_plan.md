@@ -19,7 +19,10 @@ have something of our own to build toward. It does not replace them.
   `int`, plus pointers and arrays. Declarations, functions, `if`/`else`, `while`, `for`,
   `return`, `break`, `continue`, and expressions at C precedence. An empty `()` parameter
   list means zero parameters.
-- Type checker and every later stage: not started.
+- Type checker: implemented for that subset (`okay-cc --check`). It checks names, scopes,
+  integer conversions, pointers, calls, returns, and that a global initializer is a constant.
+- Every later stage (intermediate form, optimizer, code generator, assembler, object
+  writers, linker): not started.
 
 ## Rules for the code
 

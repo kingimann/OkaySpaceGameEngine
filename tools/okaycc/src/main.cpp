@@ -23,7 +23,9 @@ void usage(std::ostream& out) {
     out << "okay-cc --lex [file]\n"
         << "okay-cc --pp [-I dir]... [file]\n"
         << "okay-cc --ast [-I dir]... [file]\n"
-        << "  --lex prints tokens, --pp runs the preprocessor, --ast prints the tree.\n"
+        << "okay-cc --check [file]\n"
+        << "  --lex prints tokens, --pp runs the preprocessor, --ast prints the tree,\n"
+        << "  --check type-checks the subset and prints nothing when the program is legal.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -33,6 +35,7 @@ int main(int argc, char** argv) {
     bool lex = false;
     bool pp = false;
     bool ast = false;
+    bool check = false;
     std::string path;
     std::vector<std::string> includes;
     for (int i = 1; i < argc; ++i) {
@@ -43,6 +46,8 @@ int main(int argc, char** argv) {
             pp = true;
         } else if (a == "--ast") {
             ast = true;
+        } else if (a == "--check") {
+            check = true;
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -62,7 +67,7 @@ int main(int argc, char** argv) {
             path = a;
         }
     }
-    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) != 1) {
+    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) != 1) {
         usage(std::cerr);
         return 2;
     }
@@ -81,7 +86,9 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
-    if (ast) {
+    if (check) {
+        okaycc::checkSource(src, diags);
+    } else if (ast) {
         if (path.empty()) {
             okaycc::MemoryFiles mem;
             mem.add("<stdin>", src);

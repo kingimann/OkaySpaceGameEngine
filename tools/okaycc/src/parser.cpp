@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -1037,6 +1038,526 @@ private:
 
 };
 
+bool isIntish(const Type& t) { return t.kind == Type::Kind::Int || t.kind == Type::Kind::Char; }
+bool isPtr(const Type& t) { return t.kind == Type::Kind::Pointer; }
+bool isVoidPtr(const Type& t) {
+    return isPtr(t) && t.inner && t.inner->kind == Type::Kind::Void;
+}
+bool sameType(const Type& a, const Type& b) {
+    if (a.kind != b.kind) return false;
+    if (a.kind == Type::Kind::Pointer || a.kind == Type::Kind::Array) {
+        return a.inner && b.inner && sameType(*a.inner, *b.inner);
+    }
+    if (a.kind == Type::Kind::Function) {
+        if (!a.inner || !b.inner || !sameType(*a.inner, *b.inner) || a.params.size() != b.params.size())
+            return false;
+        for (std::size_t i = 0; i < a.params.size(); ++i) {
+            if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
+                return false;
+        }
+    }
+    return true;
+}
+
+struct ET {
+    std::unique_ptr<Type> type;
+    bool lvalue = false;
+    bool mod = false;
+    bool nullc = false;
+    bool bad = false;
+    int line = 1;
+    int col = 1;
+};
+
+class Checker {
+public:
+    explicit Checker(Diagnostics& diags) : diags_(diags) {}
+
+    void check(Tu& tu) {
+        scopes_.emplace_back();
+        for (auto& d : tu.decls) {
+            if (!d) continue;
+            if (d->function) checkFunction(*d);
+            else checkVar(*d);
+        }
+        scopes_.pop_back();
+    }
+
+private:
+    struct Sym {
+        std::unique_ptr<Type> type;
+        bool func = false;
+    };
+
+    Diagnostics& diags_;
+    std::vector<std::map<std::string, Sym>> scopes_;
+    int loops_ = 0;
+    const Type* ret_ = nullptr;
+
+    void err(int line, int col, const std::string& msg) { diags_.error("t.c", line, col, msg); }
+
+    std::unique_ptr<Type> prim(Type::Kind k) {
+        auto t = std::make_unique<Type>();
+        t->kind = k;
+        return t;
+    }
+    std::unique_ptr<Type> ptrTo(std::unique_ptr<Type> inner) {
+        auto t = prim(Type::Kind::Pointer);
+        t->inner = std::move(inner);
+        return t;
+    }
+
+    ET bad(int line, int col) {
+        ET e;
+        e.type = prim(Type::Kind::Int);
+        e.bad = true;
+        e.line = line;
+        e.col = col;
+        return e;
+    }
+
+    void add(const std::string& name, std::unique_ptr<Type> type, bool func, int line, int col) {
+        if (name.empty()) return;
+        auto& sc = scopes_.back();
+        auto it = sc.find(name);
+        if (it != sc.end()) {
+            if (func && it->second.func && it->second.type && type && sameType(*it->second.type, *type)) return;
+            err(line, col, "redefined '" + name + "'");
+            return;
+        }
+        Sym s;
+        s.type = std::move(type);
+        s.func = func;
+        sc.emplace(name, std::move(s));
+    }
+
+    ET lookup(const std::string& name, int line, int col) {
+        for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
+            auto it = scopes_[static_cast<std::size_t>(i)].find(name);
+            if (it == scopes_[static_cast<std::size_t>(i)].end() || !it->second.type) continue;
+            ET e;
+            e.type = cloneType(*it->second.type);
+            e.line = line;
+            e.col = col;
+            if (e.type->kind == Type::Kind::Function) {
+                e.lvalue = false;
+                e.mod = false;
+            } else if (e.type->kind == Type::Kind::Array) {
+                e.lvalue = true;
+                e.mod = false;
+            } else {
+                e.lvalue = true;
+                e.mod = true;
+            }
+            return e;
+        }
+        err(line, col, "undeclared identifier '" + name + "'");
+        return bad(line, col);
+    }
+
+    ET decay(ET e) {
+        if (!e.type) return e;
+        if (e.type->kind == Type::Kind::Array && e.type->inner) {
+            e.type = ptrTo(std::move(e.type->inner));
+            e.lvalue = false;
+            e.mod = false;
+        } else if (e.type->kind == Type::Kind::Function) {
+            e.type = ptrTo(std::move(e.type));
+            e.lvalue = false;
+            e.mod = false;
+        }
+        return e;
+    }
+
+    bool scalar(const Type& t) const { return isIntish(t) || isPtr(t); }
+
+    bool canAssign(const Type& dst, const ET& src) {
+        if (src.bad || !src.type) return true;
+        if (isIntish(dst) && isIntish(*src.type)) return true;
+        if (isPtr(dst) && src.nullc) return true;
+        if (isPtr(dst) && isPtr(*src.type)) {
+            if (isVoidPtr(dst) || isVoidPtr(*src.type)) return true;
+            return dst.inner && src.type->inner && sameType(*dst.inner, *src.type->inner);
+        }
+        return false;
+    }
+
+    bool isConst(const Expr& e) {
+        switch (e.kind) {
+        case Expr::Kind::Int:
+        case Expr::Kind::Char:
+        case Expr::Kind::String:
+            return true;
+        case Expr::Kind::Unary:
+            return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
+        case Expr::Kind::Bin:
+            return e.kids.size() == 2 && e.kids[0] && e.kids[1] && isConst(*e.kids[0]) && isConst(*e.kids[1]);
+        case Expr::Kind::Cast:
+            return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
+        default:
+            return false;
+        }
+    }
+
+    ET checkExpr(Expr& e) {
+        ET r;
+        r.line = e.line;
+        r.col = e.col;
+        auto need = [&](std::size_t n) {
+            return e.kids.size() > n && e.kids[n] != nullptr;
+        };
+        switch (e.kind) {
+        case Expr::Kind::Int:
+            r.type = prim(Type::Kind::Int);
+            r.nullc = e.ival == 0;
+            return r;
+        case Expr::Kind::Char:
+            r.type = prim(Type::Kind::Int);
+            r.nullc = e.ival == 0;
+            return r;
+        case Expr::Kind::String: {
+            r.type = prim(Type::Kind::Array);
+            r.type->inner = prim(Type::Kind::Char);
+            r.type->unsized = true;
+            r.lvalue = true;
+            return r;
+        }
+        case Expr::Kind::Name:
+            return lookup(e.text, e.line, e.col);
+        case Expr::Kind::Unary: {
+            if (!need(0)) return bad(e.line, e.col);
+            if (e.text == "&") {
+                ET inner = checkExpr(*e.kids[0]);
+                if (inner.bad) return bad(e.line, e.col);
+                if (!inner.lvalue && !(inner.type && inner.type->kind == Type::Kind::Function)) {
+                    err(e.line, e.col, "operand of '&' is not an lvalue");
+                    return bad(e.line, e.col);
+                }
+                r.type = ptrTo(std::move(inner.type));
+                return r;
+            }
+            if (e.text == "*") {
+                ET inner = decay(checkExpr(*e.kids[0]));
+                if (inner.bad) return bad(e.line, e.col);
+                if (!inner.type || !isPtr(*inner.type) || !inner.type->inner) {
+                    err(e.line, e.col, "operand is not a pointer");
+                    return bad(e.line, e.col);
+                }
+                if (inner.type->inner->kind == Type::Kind::Void) {
+                    err(e.line, e.col, "operand is not a pointer");
+                    return bad(e.line, e.col);
+                }
+                r.type = cloneType(*inner.type->inner);
+                r.lvalue = true;
+                r.mod = isIntish(*r.type) || isPtr(*r.type);
+                return r;
+            }
+            ET inner = decay(checkExpr(*e.kids[0]));
+            if (inner.bad) return bad(e.line, e.col);
+            if (e.text == "!" && inner.type && scalar(*inner.type)) {
+                r.type = prim(Type::Kind::Int);
+                return r;
+            }
+            if (!inner.type || !isIntish(*inner.type)) {
+                err(e.line, e.col, "operand is not an integer");
+                return bad(e.line, e.col);
+            }
+            r.type = prim(Type::Kind::Int);
+            return r;
+        }
+        case Expr::Kind::Pre:
+        case Expr::Kind::Post: {
+            if (!need(0)) return bad(e.line, e.col);
+            ET inner = checkExpr(*e.kids[0]);
+            if (inner.bad) return bad(e.line, e.col);
+            if (!inner.mod || !inner.type || !(isIntish(*inner.type) || isPtr(*inner.type))) {
+                err(e.line, e.col, "operand of '" + e.text + "' is not a modifiable integer or pointer");
+                return bad(e.line, e.col);
+            }
+            r.type = cloneType(*inner.type);
+            return r;
+        }
+        case Expr::Kind::Bin:
+            return checkBin(e);
+        case Expr::Kind::Assign:
+            return checkAssign(e);
+        case Expr::Kind::Cond: {
+            if (!need(0) || !need(1) || !need(2)) return bad(e.line, e.col);
+            ET c = decay(checkExpr(*e.kids[0]));
+            ET a = decay(checkExpr(*e.kids[1]));
+            ET b = decay(checkExpr(*e.kids[2]));
+            if (c.bad || a.bad || b.bad) return bad(e.line, e.col);
+            if (!c.type || !scalar(*c.type)) {
+                err(e.line, e.col, "condition is not a scalar");
+                return bad(e.line, e.col);
+            }
+            if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
+                r.type = prim(Type::Kind::Int);
+                return r;
+            }
+            if (a.nullc && b.type && isPtr(*b.type)) {
+                r.type = cloneType(*b.type);
+                return r;
+            }
+            if (b.nullc && a.type && isPtr(*a.type)) {
+                r.type = cloneType(*a.type);
+                return r;
+            }
+            if (a.type && b.type && isPtr(*a.type) && isPtr(*b.type) && canAssign(*a.type, b)) {
+                r.type = cloneType(*a.type);
+                return r;
+            }
+            err(e.line, e.col, "branches of '?:' do not have a common type");
+            return bad(e.line, e.col);
+        }
+        case Expr::Kind::Call:
+            return checkCall(e);
+        case Expr::Kind::Index: {
+            if (!need(0) || !need(1)) return bad(e.line, e.col);
+            ET base = decay(checkExpr(*e.kids[0]));
+            ET idx = decay(checkExpr(*e.kids[1]));
+            if (base.bad || idx.bad) return bad(e.line, e.col);
+            ET* ptr = nullptr;
+            ET* off = nullptr;
+            if (base.type && isPtr(*base.type) && idx.type && isIntish(*idx.type)) {
+                ptr = &base;
+                off = &idx;
+            } else if (idx.type && isPtr(*idx.type) && base.type && isIntish(*base.type)) {
+                ptr = &idx;
+                off = &base;
+            }
+            (void)off;
+            if (!ptr || !ptr->type->inner) {
+                err(e.line, e.col, "operand is not a pointer");
+                return bad(e.line, e.col);
+            }
+            r.type = cloneType(*ptr->type->inner);
+            r.lvalue = true;
+            r.mod = isIntish(*r.type) || isPtr(*r.type);
+            return r;
+        }
+        case Expr::Kind::Cast: {
+            if (!need(0) || !e.ty) return bad(e.line, e.col);
+            ET inner = decay(checkExpr(*e.kids[0]));
+            if (inner.bad) return bad(e.line, e.col);
+            r.type = cloneType(*e.ty);
+            r.nullc = inner.nullc && isIntish(*r.type);
+            return r;
+        }
+        case Expr::Kind::Comma: {
+            if (e.kids.empty()) return bad(e.line, e.col);
+            ET last = bad(e.line, e.col);
+            for (auto& k : e.kids)
+                if (k) last = decay(checkExpr(*k));
+            last.lvalue = false;
+            last.mod = false;
+            return last;
+        }
+        case Expr::Kind::Brace:
+            err(e.line, e.col, "brace initializer is not an expression");
+            return bad(e.line, e.col);
+        }
+        return bad(e.line, e.col);
+    }
+
+    ET checkBin(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
+        ET a = decay(checkExpr(*e.kids[0]));
+        ET b = decay(checkExpr(*e.kids[1]));
+        if (a.bad || b.bad || !a.type || !b.type) return bad(e.line, e.col);
+        const std::string& op = e.text;
+        auto result = [&](std::unique_ptr<Type> t) {
+            ET r;
+            r.type = std::move(t);
+            r.line = e.line;
+            r.col = e.col;
+            return r;
+        };
+        if (op == "+" ) {
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+            if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
+            if (isIntish(*a.type) && isPtr(*b.type)) return result(cloneType(*b.type));
+        } else if (op == "-") {
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+            if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
+            if (isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
+                sameType(*a.type->inner, *b.type->inner))
+                return result(prim(Type::Kind::Int));
+        } else if (op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" || op == "<<" ||
+                   op == ">>") {
+            if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
+        } else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
+            bool arith = isIntish(*a.type) && isIntish(*b.type);
+            bool ptrs = isPtr(*a.type) && isPtr(*b.type) && a.type->inner && b.type->inner &&
+                        sameType(*a.type->inner, *b.type->inner);
+            bool null = (isPtr(*a.type) && b.nullc) || (isPtr(*b.type) && a.nullc);
+            if (arith || ptrs || null) return result(prim(Type::Kind::Int));
+        } else if (op == "&&" || op == "||") {
+            if (scalar(*a.type) && scalar(*b.type)) return result(prim(Type::Kind::Int));
+        }
+        err(e.line, e.col, "invalid operands to '" + op + "'");
+        return bad(e.line, e.col);
+    }
+
+    ET checkAssign(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
+        ET lhs = checkExpr(*e.kids[0]);
+        ET rhs = decay(checkExpr(*e.kids[1]));
+        if (lhs.bad || rhs.bad || !lhs.type) return bad(e.line, e.col);
+        if (!lhs.mod) {
+            err(e.line, e.col, "cannot assign to this expression");
+            return bad(e.line, e.col);
+        }
+        if (e.text == "=") {
+            if (!canAssign(*lhs.type, rhs)) {
+                err(e.line, e.col, "cannot assign this value");
+                return bad(e.line, e.col);
+            }
+        } else if (!isIntish(*lhs.type) || !rhs.type || !isIntish(*rhs.type)) {
+            err(e.line, e.col, "cannot assign this value");
+            return bad(e.line, e.col);
+        }
+        ET r;
+        r.type = cloneType(*lhs.type);
+        r.line = e.line;
+        r.col = e.col;
+        return r;
+    }
+
+    ET checkCall(Expr& e) {
+        if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
+        ET callee = decay(checkExpr(*e.kids[0]));
+        if (callee.bad || !callee.type) return bad(e.line, e.col);
+        if (!isPtr(*callee.type) || !callee.type->inner || callee.type->inner->kind != Type::Kind::Function) {
+            err(e.line, e.col, "called expression is not a function");
+            return bad(e.line, e.col);
+        }
+        const Type& fn = *callee.type->inner;
+        if (e.kids.size() - 1 != fn.params.size()) {
+            err(e.line, e.col, "wrong number of arguments");
+            return bad(e.line, e.col);
+        }
+        for (std::size_t i = 0; i < fn.params.size(); ++i) {
+            ET arg = decay(checkExpr(*e.kids[i + 1]));
+            if (arg.bad) return bad(e.line, e.col);
+            if (fn.params[i].type && !canAssign(*fn.params[i].type, arg)) {
+                err(e.line, e.col, "cannot assign argument");
+                return bad(e.line, e.col);
+            }
+        }
+        ET r;
+        r.line = e.line;
+        r.col = e.col;
+        r.type = fn.inner ? cloneType(*fn.inner) : prim(Type::Kind::Int);
+        return r;
+    }
+
+    void checkVar(Decl& d) {
+        if (!d.type) return;
+        if (d.type->kind == Type::Kind::Void ||
+            (d.type->kind == Type::Kind::Array && d.type->inner && d.type->inner->kind == Type::Kind::Void)) {
+            err(d.line, d.col, "variable has type void");
+        }
+        if (d.init) {
+            ET src = decay(checkExpr(*d.init));
+            if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
+            else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
+                err(d.line, d.col, "initializer is not a constant");
+        }
+        add(d.name, cloneType(*d.type), false, d.line, d.col);
+    }
+
+    void checkFunction(Decl& d) {
+        if (!d.type) return;
+        add(d.name, cloneType(*d.type), true, d.line, d.col);
+        if (!d.body) return;
+        scopes_.emplace_back();
+        const Type* saved = ret_;
+        ret_ = d.type->inner.get();
+        for (const Param& p : d.type->params) {
+            if (p.name.empty() || !p.type) continue;
+            add(p.name, cloneType(*p.type), false, d.line, d.col);
+        }
+        if (d.body->kind == Stmt::Kind::Block) {
+            for (auto& s : d.body->stmts)
+                if (s) checkStmt(*s);
+        } else {
+            checkStmt(*d.body);
+        }
+        ret_ = saved;
+        scopes_.pop_back();
+    }
+
+    void checkCond(Expr& e) {
+        ET c = decay(checkExpr(e));
+        if (!c.bad && c.type && !scalar(*c.type)) err(e.line, e.col, "condition is not a scalar");
+    }
+
+    void checkStmt(Stmt& s) {
+        switch (s.kind) {
+        case Stmt::Kind::Block:
+            scopes_.emplace_back();
+            for (auto& st : s.stmts)
+                if (st) checkStmt(*st);
+            scopes_.pop_back();
+            break;
+        case Stmt::Kind::Empty:
+            break;
+        case Stmt::Kind::Expr:
+            if (s.expr) checkExpr(*s.expr);
+            break;
+        case Stmt::Kind::Return:
+            if (!ret_) {
+                err(s.line, s.col, "return outside a function");
+                break;
+            }
+            if (ret_->kind == Type::Kind::Void) {
+                if (s.expr) err(s.line, s.col, "return type does not match");
+            } else if (!s.expr) {
+                err(s.line, s.col, "return type does not match");
+            } else {
+                ET v = decay(checkExpr(*s.expr));
+                if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
+            }
+            break;
+        case Stmt::Kind::If:
+            if (s.expr) checkCond(*s.expr);
+            if (s.thenS) checkStmt(*s.thenS);
+            if (s.elseS) checkStmt(*s.elseS);
+            break;
+        case Stmt::Kind::While:
+            if (s.expr) checkCond(*s.expr);
+            ++loops_;
+            if (s.body) checkStmt(*s.body);
+            --loops_;
+            break;
+        case Stmt::Kind::For:
+            scopes_.emplace_back();
+            if (s.init) checkStmt(*s.init);
+            if (s.expr) checkCond(*s.expr);
+            if (s.expr2) checkExpr(*s.expr2);
+            ++loops_;
+            if (s.body) checkStmt(*s.body);
+            --loops_;
+            scopes_.pop_back();
+            break;
+        case Stmt::Kind::Break:
+            if (loops_ == 0) err(s.line, s.col, "break is not inside a loop");
+            break;
+        case Stmt::Kind::Continue:
+            if (loops_ == 0) err(s.line, s.col, "continue is not inside a loop");
+            break;
+        case Stmt::Kind::Decl:
+            if (s.decl) checkVar(*s.decl);
+            break;
+        }
+    }
+};
+
+void typecheckTu(Tu& tu, Diagnostics& diags) {
+    Checker checker(diags);
+    checker.check(tu);
+}
 
 }  // namespace
 
@@ -1076,5 +1597,33 @@ std::string astOfFile(FileStore& files, const std::string& path, const std::vect
     return astFromRaw(preprocessTokens(files, path, includePaths, diags), diags);
 }
 
+void checkSource(const std::string& source, Diagnostics& diags) {
+    MemoryFiles files;
+    files.add("t.c", source);
+    std::vector<Token> raw = preprocessTokens(files, "t.c", {}, diags);
+    if (!diags.ok()) return;
+    std::string file = "t.c";
+    int line = 1;
+    int col = 1;
+    if (!raw.empty()) {
+        line = raw.back().line;
+        col = raw.back().column;
+        if (!raw.back().file.empty()) file = raw.back().file;
+    }
+    std::vector<Token> toks;
+    for (Token& t : raw) {
+        if (t.kind != Tok::Newline) toks.push_back(std::move(t));
+    }
+    Token end;
+    end.kind = Tok::End;
+    end.file = std::move(file);
+    end.line = line;
+    end.column = col;
+    toks.push_back(std::move(end));
+    Parser parser(std::move(toks), diags);
+    Tu tu = parser.parseTu();
+    if (!diags.ok()) return;
+    typecheckTu(tu, diags);
+}
 
 }  // namespace okaycc

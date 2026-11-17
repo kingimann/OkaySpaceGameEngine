@@ -20,8 +20,10 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_lexer tests/test_lexer.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_preproc tests/test_preproc.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_parser tests/test_parser.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_typecheck tests/test_typecheck.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
 ./build/test_parser
+./build/test_typecheck
 tests/test_plan.sh

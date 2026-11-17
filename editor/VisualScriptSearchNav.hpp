@@ -5,6 +5,8 @@
 //
 // Written from scratch for this engine from plain list-box behaviour (move, clamp, reveal); the pixel numbers are our own
 // choices and the row height reads the shared Density table (ScriptingDensity.hpp).
+#include "ScriptingDensity.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -151,6 +153,19 @@ inline std::string EmptyMessage(int side, bool searching, bool fitOnly, bool lev
     if (fitOnly) return "No node in this list fits this plug. Press Show all to see every node.";
     if (levelFiltered) return "Nothing here at this level. Try the All button to see every level.";
     return "Nothing here yet. Pick another topic on the left.";
+}
+
+/// The one line under a node's name. The node's help line when it says something; when it only repeats the name (the
+/// registry's fallback is "<Name>.") the subcategory instead; an empty string when there is neither. Safe to call with
+/// empty inputs: the descriptions arrive from another change and may not exist yet.
+inline std::string RowDescription(const std::string& title, const std::string& helpLine, const std::string& sub) {
+    if (!helpLine.empty() && helpLine != title + ".") return helpLine;
+    return sub;
+}
+/// Cut a description to `maxW` pixels, ending in "..." (a line that fits is kept as it is).
+template <class Measure>
+inline std::string ElideDescription(const std::string& text, Measure measure, float maxW) {
+    return oked::scriptui::ElideToWidth(text, maxW, std::function<float(const std::string&)>(measure));
 }
 
 /// Number of single-letter edits (insert, delete, change) between two strings.

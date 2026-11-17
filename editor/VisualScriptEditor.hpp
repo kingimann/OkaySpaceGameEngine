@@ -5273,11 +5273,8 @@ inline void Draw(EditorState& ed, bool* open) {
         addFromPalette(*pconn.def);
         st.linkPending = false;
     }
-    {   // wide enough for the topic list (it follows the Density) + the node list + the details, and never bigger than the screen
-        const oked::scriptui::Metrics pdm = oked::scriptui::Current();
-        const ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(std::min(pdm.paletteSideW + 360.0f + 560.0f + 60.0f, vp.x - 40.0f), std::min(780.0f, vp.y - 60.0f)), ImGuiCond_Always);
-    }
+    // The popup opens at the size you left it at (or the default for the Density), inside the screen.
+    ImGui::SetNextWindowSize(VsPaletteWantedSize(ImGui::GetMainViewport()->Size), ImGuiCond_Appearing);
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();

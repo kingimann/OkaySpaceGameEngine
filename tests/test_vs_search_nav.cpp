@@ -123,5 +123,14 @@ int main() {
         CHECK(NearestIndices(t, "wait", 0).empty());
         CHECK(EditDistance("kitten", "sitting") == 3 && EditDistance("", "abc") == 3 && EditDistance("abc", "abc") == 0);
     }
+    {   // The line under the name: help text, else the subcategory, else nothing; cut to fit.
+        CHECK(RowDescription("Wait", "Pauses the script for some seconds.", "Time") == "Pauses the script for some seconds.");
+        CHECK(RowDescription("Wait", "Wait.", "Time") == "Time");          // the fallback only repeats the name
+        CHECK(RowDescription("Wait", "", "") == "");
+        auto measure = [](const std::string& s) { return 10.0f * (float)s.size(); };
+        CHECK(ElideDescription("short", measure, 200.0f) == "short");
+        const std::string cut = ElideDescription("a much longer description here", measure, 100.0f);
+        CHECK(cut.size() <= 10 && cut.size() >= 4 && cut.substr(cut.size() - 3) == "...");
+    }
     TEST_MAIN_RESULT();
 }

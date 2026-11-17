@@ -2843,6 +2843,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Node Playground (42.8)
 - node registry (24.3)
 - node SDK (24.3)
+- Node search popup (14.1.12)
 - node shader (26.1)
 - nodes (14.4)
 - noise (29.3, 36.7)

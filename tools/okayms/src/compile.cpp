@@ -1,9 +1,11 @@
 #include "okayms/compile.hpp"
 #include "okayms/unwind.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -2258,6 +2260,26 @@ struct Gen {
     void promote(Type* type) const;
     void load_typed(int32_t offset, const Type& type);
     void store_mem(int size);
+    void mov_eax_from(int reg) {
+        const int low = reg & 7;
+        if (reg >= 8) b(0x44);
+        b(0x89);
+        b(static_cast<uint8_t>(0xC0 | (low << 3)));
+    }
+    void mov_reg_eax(int reg) {
+        const int low = reg & 7;
+        if (reg >= 8) b(0x41);
+        b(0x89);
+        b(static_cast<uint8_t>(0xC0 | low));
+    }
+    void mov_regs(int dest, int src) {
+        uint8_t rex = 0;
+        if (src >= 8) rex = static_cast<uint8_t>(rex | 0x44);
+        if (dest >= 8) rex = static_cast<uint8_t>(rex | 0x41);
+        if (rex != 0) b(rex);
+        b(0x89);
+        b(static_cast<uint8_t>(0xC0 | ((src & 7) << 3) | (dest & 7)));
+    }
     void epilogue() {
         b(0x48);
         b(0x89);
@@ -2592,16 +2614,7 @@ bool Gen::gen_expr(const Node& node) {
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
             if (local->reg != 0) {
-                if (local->reg == 3) {
-                    b(0x89);
-                    b(0xD8);
-                } else if (local->reg == 6) {
-                    b(0x89);
-                    b(0xF0);
-                } else {
-                    b(0x89);
-                    b(0xF8);
-                }
+                mov_eax_from(local->reg);
                 last_type = local->type;
                 promote(&last_type);
                 return true;
@@ -2862,16 +2875,7 @@ bool Gen::gen_expr(const Node& node) {
             if (Local* local = find_local(node.kids[0].text)) {
                 if (local->reg != 0) {
                     if (!gen_expr(node.kids[1])) return false;
-                    if (local->reg == 3) {
-                        b(0x89);
-                        b(0xC3);
-                    } else if (local->reg == 6) {
-                        b(0x89);
-                        b(0xC6);
-                    } else {
-                        b(0x89);
-                        b(0xC7);
-                    }
+                    mov_reg_eax(local->reg);
                     return true;
                 }
             }
@@ -3862,18 +3866,68 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         }
         std::vector<int> extra_regs;
         if ((optimize || opt_level >= 1) && !needs_nv) {
-            const int pool[] = {3, 6, 7};
-            int used = 0;
-            for (Local& local : fn.locals) {
-                if (used >= 3) break;
+            std::map<std::string, std::pair<int, int>> range;
+            int stamp = 0;
+            const std::function<void(const Node&)> walk = [&](const Node& node) {
+                if (node.kind == Node::Name) {
+                    const auto found = range.find(node.text);
+                    if (found == range.end()) range[node.text] = {stamp, stamp};
+                    else found->second.second = stamp;
+                    ++stamp;
+                }
+                for (const Node& kid : node.kids) walk(kid);
+            };
+            walk(fn.body);
+            struct Span {
+                int index;
+                int start;
+                int end;
+            };
+            std::vector<Span> spans;
+            for (int i = 0; i < static_cast<int>(fn.locals.size()); ++i) {
+                Local& local = fn.locals[static_cast<size_t>(i)];
                 if (local.is_static || local.name.empty() || local.name[0] == '_') continue;
                 if (shadowed.count(local.name) != 0) continue;
                 if (local.type.is_array() || local.type.pointers != 0 || local.type.base == 3 || local.type.base == 5 ||
                     local.type.base == 6)
                     continue;
                 if (address_taken(fn.body, local.name)) continue;
-                local.reg = pool[used++];
-                extra_regs.push_back(local.reg);
+                const auto found = range.find(local.name);
+                if (found == range.end()) continue;
+                spans.push_back({i, found->second.first, found->second.second});
+            }
+            std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.start < b.start; });
+            std::vector<int> pool = {3, 6, 7, 12, 13, 14, 15};
+            if (max_args == 0) {
+                pool.push_back(8);
+                pool.push_back(9);
+                pool.push_back(10);
+                pool.push_back(11);
+            }
+            struct Active {
+                int end;
+                int reg;
+            };
+            std::vector<Active> active;
+            auto callee_saved = [](int reg) { return reg == 3 || reg == 6 || reg == 7 || reg >= 12; };
+            for (const Span& span : spans) {
+                std::vector<Active> still;
+                for (const Active& item : active) {
+                    if (item.end < span.start) pool.insert(pool.begin(), item.reg);
+                    else still.push_back(item);
+                }
+                active.swap(still);
+                if (pool.empty()) continue;
+                const int reg = pool.front();
+                pool.erase(pool.begin());
+                fn.locals[static_cast<size_t>(span.index)].reg = reg;
+                if (callee_saved(reg)) {
+                    bool already = false;
+                    for (int have : extra_regs)
+                        if (have == reg) already = true;
+                    if (!already) extra_regs.push_back(reg);
+                }
+                active.push_back({span.end, reg});
             }
         }
         if (needs_nv) extra_regs = {3, 6, 7};
@@ -3888,11 +3942,20 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         auto mark = [&](uint8_t bytes) { cursor = static_cast<uint8_t>(cursor + bytes); return cursor; };
         std::vector<UnwindPush> pushes;
         for (int reg : extra_regs) {
-            const uint8_t push_op = reg == 3 ? 0x53 : reg == 6 ? 0x56 : 0x57;
-            const uint8_t pop_op = reg == 3 ? 0x5B : reg == 6 ? 0x5E : 0x5F;
-            gen.b(push_op);
-            pushes.push_back({static_cast<uint8_t>(reg), mark(1)});
-            gen.extra_pops.insert(gen.extra_pops.begin(), pop_op);
+            if (reg >= 12) {
+                const uint8_t n = static_cast<uint8_t>(reg - 12);
+                gen.b(0x41);
+                gen.b(static_cast<uint8_t>(0x54 + n));
+                pushes.push_back({static_cast<uint8_t>(reg), mark(2)});
+                gen.extra_pops.insert(gen.extra_pops.begin(), static_cast<uint8_t>(0x5C + n));
+                gen.extra_pops.insert(gen.extra_pops.begin(), 0x41);
+            } else {
+                const uint8_t push_op = reg == 3 ? 0x53 : reg == 6 ? 0x56 : 0x57;
+                const uint8_t pop_op = reg == 3 ? 0x5B : reg == 6 ? 0x5E : 0x5F;
+                gen.b(push_op);
+                pushes.push_back({static_cast<uint8_t>(reg), mark(1)});
+                gen.extra_pops.insert(gen.extra_pops.begin(), pop_op);
+            }
         }
         gen.b(0x55);
         pushes.push_back({5, mark(1)});
@@ -3996,12 +4059,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             if (local.reg == 0) continue;
             const int src = p + (fn.sret ? 1 : 0);
             if (src >= 4) continue;
-            const uint8_t modrm = local.reg == 3 ? (src == 0 ? 0xCB : src == 1 ? 0xD3 : src == 2 ? 0xC3 : 0xCB)
-                                                 : local.reg == 6 ? (src == 0 ? 0xCE : src == 1 ? 0xD6 : 0xC6)
-                                                                  : (src == 0 ? 0xCF : src == 1 ? 0xD7 : 0xC7);
-            if (src >= 2) gen.b(0x44);
-            gen.b(0x89);
-            gen.b(modrm);
+            const int machine = src == 0 ? 1 : src == 1 ? 2 : src == 2 ? 8 : 9;
+            gen.mov_regs(local.reg, machine);
         }
         if (!gen.gen_stmt(fn.body)) {
             *error = gen.error.empty() ? "codegen failed" : gen.error;

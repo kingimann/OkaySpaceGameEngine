@@ -144,10 +144,12 @@ void test_static_image(Tally& tally) {
             if (!std::fgets(buf, sizeof buf, pipe)) buf[0] = 0;
             pclose(pipe);
             const std::string got(buf);
-            CHECK(tally, got.find("PE32+ executable (console) x86-64") != std::string::npos);
-            if (got.find("PE32+ executable (console) x86-64") == std::string::npos) {
-                std::fprintf(stderr, "  file said: %s\n", buf);
-            }
+            // file(1) wording varies: "PE32+ executable (console) x86-64" and
+            // "PE32+ executable for MS Windows 6.00 (console), x86-64".
+            const bool recognized = got.find("PE32+") != std::string::npos && got.find("x86-64") != std::string::npos &&
+                                    got.find("console") != std::string::npos;
+            CHECK(tally, recognized);
+            if (!recognized) std::fprintf(stderr, "  file said: %s\n", buf);
         }
         unlink(path);
     }

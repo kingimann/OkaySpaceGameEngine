@@ -4,6 +4,10 @@
 //                                      (cases made by scripts/sha256_python_diff.py)
 //   sha256_compare bench               speed (MB/s), PBKDF2 rate, allocation
 //   sha256_compare big                 a 4.3 GB stream (length field past 2^32 bytes) through each implementation
+//   sha256_compare split               cases on stdin from scripts/sha256_fast_check.py: each message hashed in the given
+//                                      pieces and in one shot, against Python hashlib's digest
+//   sha256_compare gb                  the new one over 1 GB (1,073,741,824 bytes): MB/s in 64 KB, 1 MB and 1,500-byte updates
+//                                      (OKAY_SHA256_PORTABLE=1 forces the portable block function)
 // Written by us; the old copies are our own earlier code.
 #include <okay/Crypto/Sha256.hpp>
 #include <okay/Platform/Account/AccountService.hpp>
@@ -150,10 +154,58 @@ static void Big() {   // 4,300,000,000 bytes of 0..255 pattern in 1 MB pieces: t
     std::printf("total bytes %zu\nnew  %s\nold1 %s\nold2 %s\n", full * blk.size() + tail, hex(dn).c_str(), hex(d1).c_str(), hex(d2).c_str());
 }
 
+static bool ReadAll(std::FILE* f, void* p, std::size_t n) { return n == 0 || std::fread(p, 1, n, f) == n; }
+static int Split() {   // <u32 len><u32 pieces><len bytes><pieces x u32><32-byte digest>, repeated, little-endian
+    long count = 0, bad = 0, updates = 0;
+    std::uint8_t hdr[8];
+    Bytes m; std::vector<std::uint32_t> pieces;
+    while (ReadAll(stdin, hdr, 8)) {
+        const std::uint32_t len = hdr[0] | hdr[1] << 8 | hdr[2] << 16 | (std::uint32_t)hdr[3] << 24;
+        const std::uint32_t np = hdr[4] | hdr[5] << 8 | hdr[6] << 16 | (std::uint32_t)hdr[7] << 24;
+        m.resize(len); pieces.resize(np);
+        std::uint8_t want[32];
+        if (!ReadAll(stdin, m.data(), len) || !ReadAll(stdin, pieces.data(), 4 * std::size_t(np)) || !ReadAll(stdin, want, 32)) {
+            std::puts("truncated case"); return 2;
+        }
+        nw::Sha256 s; std::size_t at = 0; bool fits = true;
+        for (std::uint32_t p : pieces) { if (at + p > len) { fits = false; break; } s.Update(m.data() + at, p); at += p; ++updates; }
+        std::uint8_t got[32], one[32];
+        s.Final(got);
+        nw::Sha256Hash(one, m.data(), m.size());
+        if (!fits || at != len || std::memcmp(got, want, 32) || std::memcmp(one, want, 32)) {
+            if (++bad <= 10) std::printf("MISMATCH case %ld len=%u pieces=%u\n", count, len, np);
+        }
+        ++count;
+    }
+    std::printf("split check (%s block function): %ld messages, %ld updates, %ld mismatches\n",
+                nw::sha256_detail::BlockFunctionName(), count, updates, bad);
+    return bad || count == 0 ? 1 : 0;
+}
+
+static void Gb() {   // 1 GiB through the new hash, as a download feeds it: 64 MiB of random bytes, 16 times
+    const std::size_t buf = std::size_t(64) << 20, total = std::size_t(1) << 30;
+    Bytes m(buf); std::mt19937 r(7); for (auto& b : m) b = (std::uint8_t)r();
+    for (std::size_t piece : {std::size_t(65536), std::size_t(1) << 20, std::size_t(1500)}) {
+        double best = 1e30; Dig d{};
+        for (int rep = 0; rep < 3; ++rep) {
+            const double t = Now();
+            nw::Sha256 s;
+            for (std::size_t done = 0; done < total; done += buf)
+                for (std::size_t i = 0; i < buf; i += piece) s.Update(m.data() + i, std::min(piece, buf - i));
+            s.Final(d.data());
+            best = std::min(best, Now() - t);
+        }
+        std::printf("[%s] 1 GiB in %zu-byte updates: %.0f MB/s (best of 3, %.3f s) digest %02x%02x%02x%02x...\n", nw::sha256_detail::BlockFunctionName(), piece,
+                    (double)total / best / 1e6, best, d[0], d[1], d[2], d[3]);
+    }
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && !std::strcmp(argv[1], "gb")) { Gb(); return 0; }
+    if (argc >= 2 && !std::strcmp(argv[1], "split")) return Split();
     if (argc >= 3 && !std::strcmp(argv[1], "check")) return Check(argv[2]);
     if (argc >= 2 && !std::strcmp(argv[1], "bench")) { Bench(); return 0; }
     if (argc >= 2 && !std::strcmp(argv[1], "big")) { Big(); return 0; }
-    std::puts("usage: sha256_compare check <cases.bin> | bench | big");
+    std::puts("usage: sha256_compare check <cases.bin> | bench | big | gb | split");
     return 2;
 }

@@ -22,7 +22,11 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
     const ImGuiWindow* cw = ImGui::FindWindowByName(title);
     if (cw && okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;
     if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        // OkayUI draws and reads the mouse in the editor window's own pixels; with the multi-window viewports on, ImGui's
+        // screen positions are desktop positions, so take the window's position off (the panel was drawn that far down
+        // and to the right of where it belongs, by the editor window's place on the screen).
+        const ImVec2 vpPos = ImGui::GetWindowViewport()->Pos;
+        const ImVec2 p(ImGui::GetCursorScreenPos().x - vpPos.x, ImGui::GetCursorScreenPos().y - vpPos.y);
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton(itemId, a);               // an ImGui item, so ImGui does not move or scroll the window under it

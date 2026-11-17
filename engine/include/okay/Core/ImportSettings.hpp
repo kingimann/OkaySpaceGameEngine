@@ -53,7 +53,7 @@ struct TextureImportSettings {
     bool   sRGB = true;                    ///< the pixels are colour (gamma) data, not linear data like normal maps
     Filter filter = Filter::Trilinear;   // what a picture with no settings file renders with
     Wrap   wrap = Wrap::Repeat;
-    int    maxSize = 2048;                 ///< 0, or 32..16384
+    int    maxSize = 0;                    ///< 0 (no limit: what a texture with no meta loads at), or 32..16384
     bool   mipmaps = true;
     bool   compress = false;               ///< ask the renderer for a compressed GPU format
 };

@@ -41,6 +41,7 @@ node 115 Fn.GameObject.Find
 node 116 Fn.GameObject.FindGameObjectWithTag
 node 117 Fn.GameObject.FindGameObjectsWithTag
 node 118 Fn.GameObject.FindWithTag
+node 1537 Fn.GameObject.FindIncludingInactive
 node 119 Fn.GetComponent
 node 120 Fn.GetView
 node 121 Fn.Input.GetAxis

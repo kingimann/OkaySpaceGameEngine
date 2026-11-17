@@ -74,6 +74,16 @@
 // Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
 namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
+// Where the notifications panel is this frame (set while it is drawn, before the page). OkayUI is flushed after every Dear ImGui
+// window, so an OkayUI page under the open panel would be painted over it: while the panel overlaps a page, the page draws its
+// Dear ImGui version (as it does under a Dear ImGui popup).
+static bool g_ntPanelShown = false;
+static float g_ntPanelRect[4] = {0, 0, 0, 0};
+static bool OkayPageCovered(float x, float y, float w, float h) {
+    if (okayuihost::PopupCoversRect(x, y, w, h)) return true;
+    const float* r = g_ntPanelRect;
+    return g_ntPanelShown && r[0] + r[2] > x && r[0] < x + w && r[1] + r[3] > y && r[1] < y + h;
+}
 
 #include <algorithm>
 #include <atomic>
@@ -15411,6 +15421,36 @@ static const std::string& CommunityItemMeta(const fs::path& root, const fs::path
     std::string meta = std::string(IsBuiltGame(scene) ? "Game" : "Scene") + "  \xC2\xB7  " + sz;
     return cache.emplace(scene.string(), meta).first->second;
 }
+// The Community library (the scenes under community/), shared by both Community pages: each item's scene index, its folder,
+// title, file age ("4 d ago") and its lower-case search text. Worked out again when the scene list changes, after a refresh
+// (the size cache emptied) or once a second (the ages), not every frame: CommunityItemRoot and ModifiedAgo ask the file system
+// about every scene. `gen` counts the rebuilds.
+struct CommunityLibItem { std::size_t idx; fs::path root; std::string title, ago, search; };
+struct CommunityLib { std::vector<CommunityLibItem> items; unsigned gen = 0; };
+static const CommunityLib& CommunityLibrary(const std::vector<fs::path>& scenes) {
+    static CommunityLib lib;
+    static std::vector<fs::path::string_type> made;   // the scene list it was made from
+    static Uint32 next = 0;
+    static bool metaWasFilled = false;
+    bool same = made.size() == scenes.size() && okay::platform::TicksMs32() < next && !(metaWasFilled && CommunityMetaCache().empty());
+    for (std::size_t i = 0; same && i < scenes.size(); ++i) same = made[i] == scenes[i].native();
+    metaWasFilled = !CommunityMetaCache().empty();
+    if (same) return lib;
+    next = okay::platform::TicksMs32() + 1000;
+    made.clear();
+    for (const fs::path& p : scenes) made.push_back(p.native());
+    lib.items.clear();
+    ++lib.gen;
+    for (std::size_t i = 0; i < scenes.size(); ++i) {
+        fs::path croot = CommunityItemRoot(scenes[i]);
+        if (croot.empty()) continue;
+        CommunityLibItem it{i, croot, croot.filename().string(), ModifiedAgo(scenes[i]), {}};
+        it.search = scenes[i].filename().string() + " " + it.title;
+        for (char& ch : it.search) ch = (char)std::tolower((unsigned char)ch);
+        lib.items.push_back(std::move(it));
+    }
+    return lib;
+}
 // "Remove from library?": the confirmation both Community pages open by setting `path` (a Dear ImGui modal on both).
 static void DrawCommunityRemoveModal(std::string& commRemovePath, const std::string& commRemoveName, std::vector<fs::path>& scenes) {
     auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
@@ -19294,6 +19334,7 @@ int main(int argc, char** argv) {
         static bool ntWasOpen = false;
         static int  ntFilter = 0;                  // 0 All, 1 Unread, 2 Friends, 3 Messages, 4 Updates, 5 System
         std::set<std::string>& ntHidden = g_notifGoneSigs;   // cleared items ("key\nbody"), saved so they stay gone
+        g_ntPanelShown = false;
         if (g_notifPanelOpen) {
             ImGuiViewport* vp = ImGui::GetMainViewport();
             const float navWNow = g_navCollapsed ? 64.0f : 232.0f;
@@ -19316,6 +19357,8 @@ int main(int argc, char** argv) {
             ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
             const ImVec2 wpos = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
+            g_ntPanelShown = true;
+            g_ntPanelRect[0] = wpos.x; g_ntPanelRect[1] = wpos.y; g_ntPanelRect[2] = wsz.x; g_ntPanelRect[3] = wsz.y;
             ImDrawList* dl = ImGui::GetWindowDrawList();
             {   // Soft drop shadow just outside the panel edge.
                 const ImVec2 a = wpos, b(wpos.x + wsz.x, wpos.y + wsz.y);
@@ -20898,7 +20941,7 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
-        } else if (tab == 12 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 12 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
@@ -21029,7 +21072,7 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
-        } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 13 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
@@ -21617,7 +21660,7 @@ int main(int argc, char** argv) {
                 }
                 }   // end list view
             }
-        } else if (tab == 2 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 2 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Community, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same hero, drop zone, library (search, cards, menu, double-click to play), share steps and templates as the Dear ImGui
@@ -21628,26 +21671,24 @@ int main(int argc, char** argv) {
                 auto mute = [](float c) { return 0.40f + (c - 0.40f) * 0.38f; };
                 out[0] = (unsigned char)(mute(raw.x) * 255.0f + 0.5f); out[1] = (unsigned char)(mute(raw.y) * 255.0f + 0.5f); out[2] = (unsigned char)(mute(raw.z) * 255.0f + 0.5f);
             };
-            // The library model is rebuilt when the scene list changes or once a second (the ages), not every frame.
+            // The library model is rebuilt when the library is (CommunityLibrary: the scene list changes or once a second), not every frame.
             static okayuiscreens::CommunityModel cm;
             static std::vector<std::pair<std::size_t, fs::path>> cmItems;   // scene index and item root, parallel to cm.items
-            static std::size_t cmScenes = (std::size_t)-1;
-            static Uint32 cmNext = 0;
-            if (cmScenes != scenes.size() || okay::platform::TicksMs32() >= cmNext || CommunityMetaCache().empty()) {
-                cmScenes = scenes.size(); cmNext = okay::platform::TicksMs32() + 1000;
+            static unsigned cmGen = 0;
+            const CommunityLib& lib = CommunityLibrary(scenes);
+            if (cmGen != lib.gen || CommunityMetaCache().empty()) {
+                cmGen = lib.gen;
                 cm = okayuiscreens::CommunityModel();
                 cmItems.clear();
-                for (std::size_t i = 0; i < scenes.size(); ++i) {
-                    const fs::path croot = CommunityItemRoot(scenes[i]);
-                    if (croot.empty()) continue;
+                for (const CommunityLibItem& li : lib.items) {
                     okayuiscreens::CommunityItem it;
-                    it.title = croot.filename().string();
-                    it.file = scenes[i].filename().string();
-                    it.meta = CommunityItemMeta(croot, scenes[i]);
-                    it.ago = ModifiedAgo(scenes[i]);
+                    it.title = li.title;
+                    it.file = scenes[li.idx].filename().string();
+                    it.meta = CommunityItemMeta(li.root, scenes[li.idx]);
+                    it.ago = li.ago;
                     mutedTile(it.title, it.tile);
                     cm.items.push_back(it);
-                    cmItems.push_back({i, croot});
+                    cmItems.push_back({li.idx, li.root});
                 }
                 for (const auto& t : templates) {
                     okayuiscreens::CommunityTemplate ct; ct.name = t.name; ct.desc = t.desc; mutedTile(t.name, ct.tile);
@@ -21747,17 +21788,13 @@ int main(int argc, char** argv) {
             auto itemMeta = [&](const fs::path& root, const fs::path& scene) -> const std::string& { return CommunityItemMeta(root, scene); };
             auto refreshLibrary = [&]() { scenes = FindScenes(); CommunityMetaCache().clear(); };
 
-            // Collect library items (scenes living under community/).
-            struct CommItem { std::size_t idx; fs::path root; std::string title; };
-            std::vector<CommItem> commAll, commShown;
-            for (std::size_t i = 0; i < scenes.size(); ++i) {
-                fs::path croot = CommunityItemRoot(scenes[i]);
-                if (croot.empty()) continue;
-                CommItem ci{i, croot, croot.filename().string()};
-                commAll.push_back(ci);
-                std::string cneedle = lowerStr(commFilter);
-                if (cneedle.empty() || lowerStr(scenes[i].filename().string() + " " + ci.title).find(cneedle) != std::string::npos)
-                    commShown.push_back(ci);
+            // The library items (scenes living under community/), worked out once a second (CommunityLibrary).
+            const std::vector<CommunityLibItem>& commAll = CommunityLibrary(scenes).items;
+            std::vector<const CommunityLibItem*> commShown;
+            {
+                const std::string cneedle = lowerStr(commFilter);
+                for (const CommunityLibItem& ci : commAll)
+                    if (cneedle.empty() || ci.search.find(cneedle) != std::string::npos) commShown.push_back(&ci);
             }
 
             const float bodyH = ImGui::GetContentRegionAvail().y - 46.0f;
@@ -21889,7 +21926,8 @@ int main(int argc, char** argv) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 g0 = ImGui::GetCursorScreenPos();
                 int n = 0;
-                for (const CommItem& it : commShown) {
+                for (const CommunityLibItem* itp : commShown) {
+                    const CommunityLibItem& it = *itp;
                     const fs::path& scene = scenes[it.idx];
                     const std::string cpath = scene.string();
                     ImGui::PushID((int)(it.idx + 5000));
@@ -21926,7 +21964,7 @@ int main(int argc, char** argv) {
                     const float tx = cp.x + 14 + A + 12, tr = cp.x + cardW - 14;
                     dl->AddText(ImVec2(tx, cp.y + 16), cText, FitText(it.title, tr - tx).c_str());
                     dl->AddText(ImVec2(tx, cp.y + 37), ImGui::GetColorU32(accLt), FitText(itemMeta(it.root, scene), tr - tx).c_str());
-                    std::string ago = ModifiedAgo(scene);
+                    const std::string& ago = it.ago;
                     std::string sub = scene.filename().string() + (ago.empty() ? "" : "  \xC2\xB7  " + ago);
                     dl->AddText(ImVec2(tx, cp.y + 56), cDim, FitText(sub, tr - tx).c_str());
                     // Actions: Play (primary) + reveal folder + more.
@@ -23883,7 +23921,7 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
         } else if (tab == 5 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || account.IsLoggedIn()) &&
-                   !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                   !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                 ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Achievements, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same achievements, header, chips, sort, search, tiles and right-click menu as the Dear ImGui page below
@@ -24184,7 +24222,7 @@ int main(int argc, char** argv) {
             ImGui::EndChild();
             }   // end achievements login gate
         } else if (tab == 6 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || okay::Friends(account).Available()) &&
-                   !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                   !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                 ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Friends, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same lists, chips, presence, rows, menus, follows, Add friend, code and activity as the Dear ImGui page below (signed
@@ -27423,7 +27461,7 @@ int main(int argc, char** argv) {
                     foReplyFocus = true;   // keep typing (Enter deactivates a single-line input)
                 }
             }
-        } else if (tab == 10 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 10 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Downloads, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same list, buttons and actions as the Dear ImGui page below; differences in docs/own_ui_toolkit.md section 8.
@@ -27582,7 +27620,7 @@ int main(int argc, char** argv) {
                 ImGui::PopID();
             }
             ImGui::EndChild();
-        } else if (tab == 15 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+        } else if (tab == 15 && okayFrame && !OkayPageCovered(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Versions, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same cards, rows, buttons and choices as the Dear ImGui page below, decided by the same rules in VersionsUI.cpp; the

@@ -1144,14 +1144,29 @@ static void listGraph(const Graph& g) {
 }
 
 static string jsonEsc(const string& s) { string r; for (char c : s) { if (c == '"' || c == '\\') { r += '\\'; r += c; } else if (c == '\n') r += "\\n"; else r += c; } return r; }
+// An imported command is a compile when it has a -c argument. Links and archives do not.
+static bool importedCompile(const Action& a, string& file) {
+    if (a.kind != "RUN" || a.rawCmd.empty()) return false;
+    auto w = shellWords(a.rawCmd); file.clear();
+    for (size_t i = 0; i < w.size(); ++i) if (w[i] == "-c" && i + 1 < w.size()) { file = w[i + 1]; return !file.empty(); }
+    return false;
+}
 static void writeCompdb(const Manifest& m) {
     Graph g = plan(m, {}); string dir = fs::current_path().string(); std::ofstream f("compile_commands.json"); f << "[\n"; bool first = true;
-    for (auto& a : g.acts) if (a.kind == "CC") {
-        f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
-        for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(a.argv[i]) << "\""; }
-        f << "]}"; first = false;
+    int n = 0;
+    for (auto& a : g.acts) {
+        if (a.kind == "CC") {
+            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
+            for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(a.argv[i]) << "\""; }
+            f << "]}"; first = false; ++n;
+        } else {
+            string file; if (!importedCompile(a, file)) continue;
+            string where = a.dir.empty() ? dir : a.dir;
+            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(where) << "\", \"file\": \"" << jsonEsc(file) << "\", \"command\": \"" << jsonEsc(a.rawCmd) << "\"}";
+            first = false; ++n;
+        }
     }
-    f << "\n]\n"; printf("okay-build: wrote compile_commands.json\n");
+    f << "\n]\n"; printf("okay-build: wrote compile_commands.json (%d compile command(s))\n", n);
 }
 
 static vector<std::pair<string, string>> buildfileSigs(const Manifest& m) {

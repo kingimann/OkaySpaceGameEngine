@@ -372,6 +372,21 @@ static string capture(const string& cmd, int* rc = nullptr) {
 }
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testImportedCompdb() {
+    printf("test: compdb lists imported compile commands, not the link\n");
+    fresh("icdb");
+    write("src/a.cpp", "int a(){return 1;}\n");
+    string src = (gRoot / "src/a.cpp").string();
+    string dir = gRoot.string();
+    write("build.okay",
+          "action\n  dir = \"" + dir + "\"\n  cmd = g++ -Wall -c " + src + " -o a.o\n  output = a.o\n  inputs = " + src + "\nend\n"
+          "action\n  dir = \"" + dir + "\"\n  cmd = g++ a.o -o prog\n  output = prog\n  inputs = a.o\nend\n");
+    int rc; string o = sh("compdb", &rc);
+    string j = readFile(gRoot / "compile_commands.json");
+    check(rc == 0 && j.find("a.cpp") != string::npos && j.find("-Wall") != string::npos, "imported compile is in compile_commands.json", o + j);
+    check(j.find("prog") == string::npos, "the link step is not a compile command", j);
+}
+
 static void testWindowsHost() {
     printf("test: okay-build compiles as a Windows program and runs under wine\n");
     fs::path cpp = fs::path(__FILE__).parent_path() / "okay-build.cpp";
@@ -429,6 +444,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testWindowsHost(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testImportedCompdb(); testWindowsHost(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -69,6 +69,7 @@ imported commands, a jobserver, and a Windows host (see the design note). The ol
 files) is replaced by the measurements in "No-op speed".
 
 ## Stage B: CMake importer (done as prototype)
+`okay-build compdb` writes structured compiles and also imported commands that contain `-c` (the source is the argument after `-c`; links are left out). The entry uses `command` with the raw text and `directory` from the action.
 `okay-build import <cmake build dir> [--run-dir DIR] [-o build.okay] [ninja targets/objects...]` runs `ninja -t commands` in an
 already configured build dir (simplest robust source: every compile, archive, link and custom command, exact text, in dependency
 order, with CMake's -MD -MF depfile flags). compile_commands.json is not enough alone (no link steps, no depfile flag), so it is

@@ -24,6 +24,23 @@ static std::string WithoutGuids(const std::string& text) {
     return out;
 }
 
+// Same text, ignoring guids. On a difference it prints the first few differing lines (a loaded file against a freshly built scene), so a failure
+// on another compiler or machine says which property differs instead of only "not equal".
+static bool SameScene(const std::string& a, const std::string& b) {
+    const std::string x = WithoutGuids(a), y = WithoutGuids(b);
+    if (x == y) return true;
+    std::size_t pa = 0, pb = 0; int shown = 0;
+    while ((pa < x.size() || pb < y.size()) && shown < 6) {
+        const std::size_t ea = x.find('\n', pa), eb = y.find('\n', pb);
+        const std::string la = pa < x.size() ? x.substr(pa, ea == std::string::npos ? std::string::npos : ea - pa) : std::string("<end>");
+        const std::string lb = pb < y.size() ? y.substr(pb, eb == std::string::npos ? std::string::npos : eb - pb) : std::string("<end>");
+        if (la != lb) { std::printf("  scene differs: [%s] vs [%s]\n", la.c_str(), lb.c_str()); ++shown; }
+        pa = ea == std::string::npos ? x.size() : ea + 1;
+        pb = eb == std::string::npos ? y.size() : eb + 1;
+    }
+    return false;
+}
+
 static GameObject* Under(GameObject* root, const std::string& name) {
     if (!root) return nullptr;
     if (root->name == name) return root;
@@ -93,7 +110,7 @@ int main() {
             Scene fresh("UI Library 4"); UILibrary::BuildSlice4(fresh);
             Scene reread("reread"); std::string e2;
             CHECK(SceneSerializer::Deserialize(reread, SceneSerializer::Serialize(fresh), &e2, nullptr));
-            CHECK(WithoutGuids(SceneSerializer::Serialize(reread)) == WithoutGuids(SceneSerializer::Serialize(p.s)));
+            CHECK(SameScene(SceneSerializer::Serialize(reread), SceneSerializer::Serialize(p.s)));
         }
         int icons = 0, vectorIcons = 0;
         for (const auto& o : p.s.Objects()) if (auto* ib = o->GetComponent<UIButton>()) { if (!ib->interactable) { ++icons; vectorIcons += !uilib::IconNameOf(ib->icon).empty() && uilib::FindIcon(uilib::IconNameOf(ib->icon)); } }
@@ -130,7 +147,7 @@ int main() {
             Scene fresh("UI Starter Pack"); UILibrary::BuildStarterExample(fresh);
             Scene reread("reread"); std::string e2;
             CHECK(SceneSerializer::Deserialize(reread, SceneSerializer::Serialize(fresh), &e2, nullptr));
-            CHECK(WithoutGuids(SceneSerializer::Serialize(reread)) == WithoutGuids(SceneSerializer::Serialize(p.s)));
+            CHECK(SameScene(SceneSerializer::Serialize(reread), SceneSerializer::Serialize(p.s)));
         }
         p.Begin();
         GameObject *menu = Named(p.s, "Main Menu"), *settings = Named(p.s, "Settings"), *hud = Named(p.s, "HUD Shooter"), *pause = Named(p.s, "Pause Menu"), *over = Named(p.s, "Game Over");
@@ -174,7 +191,7 @@ int main() {
             Scene fresh("UI Mix Styles"); UILibrary::BuildMixStyles(fresh);
             Scene reread("reread"); std::string e2;
             CHECK(SceneSerializer::Deserialize(reread, SceneSerializer::Serialize(fresh), &e2, nullptr));
-            CHECK(WithoutGuids(SceneSerializer::Serialize(reread)) == WithoutGuids(SceneSerializer::Serialize(p.s)));
+            CHECK(SameScene(SceneSerializer::Serialize(reread), SceneSerializer::Serialize(p.s)));
         }
         p.Begin();
         GameObject *menu = Named(p.s, "Main Menu"), *hud = Named(p.s, "HUD Shooter"), *pop = Named(p.s, "Confirm Popup");

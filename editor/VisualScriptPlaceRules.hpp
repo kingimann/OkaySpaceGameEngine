@@ -888,7 +888,7 @@ inline const VsRule kBuiltinRules[] = {
     {"swipe_direction", "Mouse & Touch", "Touch & Gestures"}, {"twist_degrees", "Mouse & Touch", "Touch & Gestures"},
     {"axis_*", "Gamepad & Controls", ""}, {"input_*", "Gamepad & Controls", ""}, {"gamepad*", "Gamepad & Controls", ""},
     {"action_*", "Gamepad & Controls", "Named Actions"}, {"define_action", "Gamepad & Controls", "Named Actions"},
-    {"define_direction", "Gamepad & Controls", "Named Actions"}, {"rebind", "Gamepad & Controls", "Named Actions"},
+    {"define_direction", "Gamepad & Controls", "Named Actions"}, {"rebind", "Gamepad & Controls", "Named Actions"}, {"reset_controls", "Gamepad & Controls", "Named Actions"},
     {"rumble", "Gamepad & Controls", "Named Actions"}, {"Input.*", "Gamepad & Controls", ""},
     // ---- Online
     {"net_browser_*", "Multiplayer", "Server Browser"}, {"net_queue_*", "Multiplayer", "Matchmaking & Relay"},

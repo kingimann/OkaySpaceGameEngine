@@ -302,6 +302,21 @@ int main() {
         for (const std::string& p : found) { EditorState ed; std::string err; CHECK(ed.Load(p, &err)); }
     }
 
+    // ---- a scene opens in the view it is made for (it used to keep the editor's view, so 3D scenes opened flattened
+    // into the 2D view and the physics playground's depth-separated labels were drawn on top of each other) ----
+    {
+        EditorState ed; std::string err;
+        const std::string physics = (copy / "physics" / "physics_playground.okayscene").string();
+        const std::string flat = (copy / "ui_text" / "ui_text.okayscene").string();
+        CHECK(ed.Load(physics, &err) && ed.view3D);                                  // perspective camera: the 3D view
+        CHECK(EditorState::SceneViewFor(ed.scene()) == 1);
+        CHECK(ed.Load(flat, &err) && !ed.view3D);                                    // orthographic camera: the 2D view
+        CHECK(EditorState::SceneViewFor(ed.scene()) == 0);
+        CHECK(ed.Load(physics, &err) && ed.view3D);                                  // and back
+        Scene empty;
+        CHECK(EditorState::SceneViewFor(empty) == -1);                               // no camera: the view is kept
+    }
+
     CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

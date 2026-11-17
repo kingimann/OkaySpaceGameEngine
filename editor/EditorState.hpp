@@ -127,6 +127,9 @@ public:
     /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
     /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// The view `scene` is made for: 1 = 3D (its camera is a perspective camera), 0 = 2D (orthographic), -1 = no
+    /// camera. Load switches the Scene view to it.
+    static int SceneViewFor(const Scene& scene);
     /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
     /// and the scene is left unsaved, so the real file is not overwritten.
     bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);

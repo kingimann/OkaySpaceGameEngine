@@ -79,6 +79,10 @@ int main(int argc, char** argv) {
             if (options.image_base == 0x140000000ULL) options.image_base = 0x180000000ULL;
             continue;
         }
+        if (lower_copy(body) == "debug") {
+            options.debug = true;
+            continue;
+        }
         const size_t colon = body.find(':');
         if (colon == std::string::npos) {
             fail("flag needs a value: " + arg);

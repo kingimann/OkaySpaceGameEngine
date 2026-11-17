@@ -48,6 +48,9 @@ struct LinkOptions {
     // file name (for example "math.dll") is image_name.
     std::vector<std::string> exports;
     std::string image_name;
+    // When set, the image gets one IMAGE_DEBUG_DIRECTORY of type
+    // IMAGE_DEBUG_TYPE_CODEVIEW (2) and a small RSDS record. There is no PDB.
+    bool debug = false;
 };
 
 // map_text, when not null, receives a text map: the preferred base, each

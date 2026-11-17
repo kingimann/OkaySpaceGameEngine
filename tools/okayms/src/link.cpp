@@ -460,6 +460,19 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         outs.push_back(std::move(rel));
         reloc_section = static_cast<int>(outs.size()) - 1;
     }
+    int debug_section = -1;
+    if (options.debug) {
+        // 28-byte IMAGE_DEBUG_DIRECTORY, then an RSDS CodeView record:
+        // signature, 16-byte guid, age, and a PDB name. No PDB file is written.
+        OutSection dbg;
+        dbg.name = ".debug";
+        dbg.bytes.assign(28u + 33u, 0);
+        dbg.virtual_size = 28u + 33u;
+        dbg.any_data = true;
+        dbg.characteristics = kScnCntInitData | kScnMemRead;
+        outs.push_back(std::move(dbg));
+        debug_section = static_cast<int>(outs.size()) - 1;
+    }
 
     const uint32_t header_bytes = 64u + 4u + 20u + 240u + 40u * static_cast<uint32_t>(outs.size());
     uint32_t size_of_headers = 0;
@@ -925,6 +938,25 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     if (reloc_section >= 0) {
         put32(0xC8 + 40, outs[static_cast<size_t>(reloc_section)].rva);
         put32(0xC8 + 44, outs[static_cast<size_t>(reloc_section)].virtual_size);
+    }
+    if (debug_section >= 0) {
+        OutSection& dbg = outs[static_cast<size_t>(debug_section)];
+        auto store32 = [&](uint32_t at, uint32_t value) {
+            for (int i = 0; i < 4; ++i) dbg.bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
+        };
+        store32(12, 2);
+        store32(16, 33);
+        store32(20, dbg.rva + 28);
+        store32(24, dbg.raw_pointer + 28);
+        dbg.bytes[28] = 'R';
+        dbg.bytes[29] = 'S';
+        dbg.bytes[30] = 'D';
+        dbg.bytes[31] = 'S';
+        store32(28 + 20, 1);
+        const char pdb[] = "okay.pdb";
+        std::memcpy(dbg.bytes.data() + 28 + 24, pdb, sizeof pdb);
+        put32(0xC8 + 48, dbg.rva);
+        put32(0xC8 + 52, 28);
     }
 
     size_t section_at = 0x148;

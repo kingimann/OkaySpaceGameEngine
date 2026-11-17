@@ -680,6 +680,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         put32(0xC8 + 96, outs[static_cast<size_t>(idata_section)].rva + import_iat_begin);
         put32(0xC8 + 100, import_iat_size);
     }
+    for (const OutSection& out : outs) {
+        if (out.name == ".pdata") {
+            put32(0xC8 + 24, out.rva);
+            put32(0xC8 + 28, out.virtual_size);
+        }
+    }
 
     size_t section_at = 0x148;
     for (const OutSection& out : outs) {

@@ -55,6 +55,7 @@ inline UI::Color32 CControlHover(float alpha = 1.0f) { return Rgb(67, 72, 86, (i
 inline UI::Color32 CBorder() { return Rgb(255, 255, 255, 19); }
 inline UI::Color32 CTitle() { return Rgb(242, 245, 250); }
 inline UI::Color32 CProgress() { return Rgb(230, 179, 0); }   // the bar fill the launcher's progress bars use
+inline UI::Color32 CProgressText() { return Rgb(26, 28, 35); }   // text over that fill (dark, so it can be read on the yellow)
 
 // For the length of a page: text at the launcher's 17 px (16 px times 17/16; the atlas has that size baked), frames padded as
 // the launcher's, and the launcher's tooltip and combo box. Theme values it changes are put back at the end.

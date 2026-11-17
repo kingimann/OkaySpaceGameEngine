@@ -6,6 +6,7 @@
 // and do), not from any other project's code.
 #include "okay/UI/OkayUI.hpp"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,9 @@ const char* DownloadStatusText(int status);
 bool DownloadIsZip(const std::string& dest);
 /// The bar's fill 0..1: received / total, full for a completed download of unknown size.
 float DownloadFraction(const DownloadEntry& d);
+/// The text in the bar: "12.0 MB / 48.0 MB" ("0 B / 48.0 MB" before the first byte), "1.5 KB" when the size is not known, and
+/// nothing at all while nothing is known (a queued download: the status beside the bar already says "Queued").
+void DownloadOverlay(const DownloadEntry& d, char* out, std::size_t n);
 
 DownloadsResult DrawDownloads(const DownloadsModel& model, float x, float y, float w, float h);
 

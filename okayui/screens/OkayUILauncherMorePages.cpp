@@ -69,7 +69,10 @@ namespace {
 // text rounds to the nearest pixel).
 // While set, the Versions page lays a card out without drawing it (the card is outside the visible band).
 bool g_layoutOnly = false;
-void Txt(const UI::DrawList& dl, UI::Vec2 p, UI::Color32 col, const char* s) { if (!g_layoutOnly) dl.AddText(V(Tr(p.x), Tr(p.y)), col, s); }
+// The Versions page draws a card in two passes when it keeps the card's still parts as one drawing (DrawList::Cached): 1 draws
+// only the still parts (backgrounds, texts, pills, lines), 2 only the widgets (buttons, combos). 0 draws both (every other page).
+int g_vpass = 0;
+void Txt(const UI::DrawList& dl, UI::Vec2 p, UI::Color32 col, const char* s) { if (!g_layoutOnly && g_vpass != 2) dl.AddText(V(Tr(p.x), Tr(p.y)), col, s); }
 void CenteredT(const UI::DrawList& dl, float x, float y, float width, const char* s, UI::Color32 col) {
     Txt(dl, V(x + std::max(0.0f, (width - UI::CalcTextSize(s).x) * 0.5f), y), col, s);
 }
@@ -522,7 +525,7 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                             else bg = held ? Rgb(acc[0], acc[1], acc[2], (int)(255 * a)) : over && en ? CControlHover(a) : CControl(a);
                             dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), bg, 6.0f);
                             const UI::Vec2 ts = UI::CalcTextSize(lbl);
-                            Txt(dl, V(r.x + (r.w - ts.x) * 0.5f, Tr(r.y + (r.h - ts.y) * 0.5f)), primary ? Rgb(255, 255, 255, (int)(255 * a)) : Col(th.text, a), lbl);
+                            Txt(dl, V(r.x + (r.w - ts.x) * 0.5f, Tr(r.y + std::max(kFrameY, (r.h - ts.y) * 0.5f))), primary ? Rgb(255, 255, 255, (int)(255 * a)) : Col(th.text, a), lbl);
                             bx -= 8.0f;
                             return click && over && en;
                         };
@@ -1182,9 +1185,46 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
 
 namespace {
 
-void Fill(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, UI::Color32 c, float r = 0.0f) { if (!g_layoutOnly) dl.AddRectFilled(a, b, c, r); }
+void Fill(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, UI::Color32 c, float r = 0.0f) { if (!g_layoutOnly && g_vpass != 2) dl.AddRectFilled(a, b, c, r); }
 bool Btn(const char* id, const char* label, float x, float y, float w, float h, bool enabled = true, bool primary = false) {
-    return !g_layoutOnly && FlatButton(id, label, x, y, w, h, enabled, primary);
+    return !g_layoutOnly && g_vpass != 1 && FlatButton(id, label, x, y, w, h, enabled, primary);
+}
+
+// What a Versions card's still parts depend on, as one number: the model's texts, flags and numbers (FNV-1a, eight bytes at a
+// time for the texts, so hashing the whole model costs about as much as drawing two short texts).
+struct ModelHash {
+    unsigned long long h = 1469598103934665603ull;
+    void word(unsigned long long v) { h = (h ^ v) * 1099511628211ull; }
+    void str(const std::string& t) {
+        const char* p = t.data(); std::size_t n = t.size();
+        word(n);
+        for (; n >= 8; p += 8, n -= 8) { unsigned long long v; std::memcpy(&v, p, 8); word(v); }
+        unsigned long long v = 0; if (n) std::memcpy(&v, p, n); word(v);
+    }
+    void row(const VersionRow& r) {
+        str(r.version); str(r.title); str(r.sub); str(r.size); str(r.overlay); str(r.note);
+        word((unsigned long long)r.latest | (unsigned long long)r.lts << 1 | (unsigned long long)r.isDefault << 2 | (unsigned long long)r.highlight << 3
+             | (unsigned long long)r.downloading << 4 | (unsigned long long)r.noteBad << 5);
+        word(FloatBits(r.progress));
+    }
+};
+unsigned long long HashVersionsModel(const VersionsModel& m) {
+    ModelHash k;
+    k.str(m.subtitle); k.str(m.bannerText); k.str(m.runningTitle); k.str(m.runningSub); k.str(m.status); k.str(m.channelText);
+    k.str(m.channelDim); k.str(m.ltsSentence); k.str(m.ltsButton); k.str(m.ltsDefaultText); k.str(m.ltsDefaultButton);
+    k.str(m.installedEmpty); k.str(m.usage); k.str(m.prune); k.str(m.availableError); k.str(m.moreButton);
+    k.word((unsigned long long)m.banner | (unsigned long long)m.bannerGreen << 1 | (unsigned long long)m.runningLatest << 2
+           | (unsigned long long)m.runningLts << 3 | (unsigned long long)m.defaultRow << 4);
+    for (int v : {m.statusKind, m.ltsKind, m.ltsDefault, m.availableState, m.keep, m.channel, m.defaultSelected}) k.word((unsigned long long)(long long)v);
+    k.word(m.defaultOptions.size()); for (const std::string& o : m.defaultOptions) k.str(o);
+    k.word(m.installed.size()); for (const VersionRow& r : m.installed) k.row(r);
+    k.word(m.available.size()); for (const VersionRow& r : m.available) k.row(r);
+    return k.h;
+}
+
+// Runs `f()` as a DrawList::Cached drawing (a lambda with captures, called through a plain function pointer).
+template <class F> void CachedCall(const UI::DrawList& dl, unsigned long long key, UI::Vec2 origin, F& f) {
+    dl.Cached(key, origin, [](void* u) { (*(F*)u)(); }, &f);
 }
 
 // The Versions module's small rounded label: text at 86% size, padded 7 x 2.5; returns its width.
@@ -1203,7 +1243,7 @@ UI::Color32 CAmber() { return Rgb(240, 200, 100); }
 
 // A combo box the launcher's way (frame colour, arrow button, 6 px corners); returns true when the choice changed.
 bool LauncherCombo(const char* id, const std::vector<std::string>& items, int* current, float x, float y, float w, UI::Rect& rect) {
-    if (g_layoutOnly) return false;
+    if (g_layoutOnly || g_vpass == 1) return false;
     static std::vector<const char*> ptrs;   // kept: no allocation per frame
     ptrs.clear();
     for (const std::string& s : items) ptrs.push_back(s.c_str());
@@ -1219,7 +1259,8 @@ bool LauncherCombo(const char* id, const std::vector<std::string>& items, int* c
 
 // The Versions module's danger button: a translucent red, solid red under the mouse.
 bool DangerButton(const char* id, const char* label, float x, float y, float w, float h, const UI::Vec2 mouse) {
-    if (g_layoutOnly) return false;
+    if (g_layoutOnly || g_vpass == 1) return false;
+    struct PassBoth { int was = g_vpass; PassBoth() { g_vpass = 0; } ~PassBoth() { g_vpass = was; } } both;   // its look changes under the mouse: drawn here
     UI::SetCursorScreenPos(V(x, y));
     const bool clicked = UI::InvisibleButton(id, w, h);
     const bool hov = UI::IsItemHovered(), held = hov && UI::IsItemActive();
@@ -1228,7 +1269,7 @@ bool DangerButton(const char* id, const char* label, float x, float y, float w, 
     const UI::DrawList& dl = UI::GetWindowDrawList();
     Fill(dl, V(x, y), V(x + w, y + h), held ? Rgb(acc[0], acc[1], acc[2]) : hov ? Rgb(191, 66, 66) : Rgb(140, 51, 51, 140), 6.0f);
     const UI::Vec2 ts = UI::CalcTextSize(label);
-    Txt(dl, V(x + (w - ts.x) * 0.5f, y + (h - ts.y) * 0.5f), Col(UI::Style().text), label);
+    Txt(dl, V(x + (w - ts.x) * 0.5f, y + std::max(kFrameY, (h - ts.y) * 0.5f)), Col(UI::Style().text), label);   // Dear ImGui keeps the text below the frame padding
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;
 }
@@ -1249,11 +1290,16 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
         const UI::DrawList& dl = UI::GetWindowDrawList();
         const float fs = UI::GetTextLineHeight(), fh = fs + 2.0f * kFrameY;
         float cy = PageHeader(dl, x, y, w, "Versions", m.subtitle.c_str());
+        // What the cards' kept drawings depend on besides their place: the model, and the theme's text and accent colours.
+        const unsigned long long modelKey = th.cacheDrawing ? HashVersionsModel(m) : 0ull;
+        const unsigned lookColours = (unsigned)LookKey({(unsigned)cText, (unsigned)cDim, (unsigned)Col(th.accent)});
+        unsigned cardNo = 0;   // which card (part of its kept drawing's key)
 
         // A card: its small-caps title, then the content `body` lays out from (x, y) in width w, returning where the next item
         // would go. The card is drawn behind (its height known once the body is laid out: it is drawn into a channel first).
         auto card = [&](const char* title, auto&& body) {   // body(px, yy, iw) -> where the next item goes (no std::function: no allocation)
             const float px = x + 18.0f, iw = w - 36.0f;
+            const unsigned cardId = ++cardNo;
             float yy = cy + 14.0f;
             // background first, as tall as last frame's content (stable after the first frame)
             static std::vector<std::pair<std::string, float>> heights;
@@ -1262,15 +1308,41 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             if (!hh) { heights.push_back({title, 0.0f}); hh = &heights.back().second; }
             // a card wholly outside the visible band (by last frame's height) is laid out but not drawn
             g_layoutOnly = *hh > 0.0f && (cy + *hh < viewY0 || cy > viewY1);
-            if (*hh > 0.0f) Fill(dl, V(x, cy), V(x + w, cy + *hh), CRaised(), 10.0f);
-            if (title) {
-                PushScale(0.80f);
-                const float lh = UI::GetTextLineHeight();
-                Txt(dl, V(px, yy), cDim, title);
-                UI::PopTextScale();
-                yy = NextY(NextY(yy, lh), 4.0f);
+            float titleH = 0.0f;
+            auto still = [&] {   // the card's background and title (the body adds its own still parts)
+                if (*hh > 0.0f) Fill(dl, V(x, cy), V(x + w, cy + *hh), CRaised(), 10.0f);
+                if (title) {
+                    PushScale(0.80f);
+                    titleH = UI::GetTextLineHeight();
+                    Txt(dl, V(px, yy), cDim, title);
+                    UI::PopTextScale();
+                }
+            };
+            if (!g_layoutOnly && UI::Style().cacheDrawing && *hh > 0.0f) {
+                // The still parts of the whole card (background, texts, pills, lines) as one kept drawing, copied while the model,
+                // the width and the card's height stay the same; then the body again for its widgets only (buttons and combos
+                // change under the mouse). The same pixels as drawing it all at once: widgets never overlap the still parts.
+                const unsigned long long key = LookKey({0x76636172u, (unsigned)(modelKey & 0xffffffffu), (unsigned)(modelKey >> 32),
+                                                        cardId, FloatBits(w), FloatBits(*hh), FloatBits(fs),
+                                                        lookColours});
+                auto drawStill = [&] {
+                    g_vpass = 1;
+                    still();
+                    float y2 = yy;
+                    if (title) y2 = NextY(NextY(y2, titleH), 4.0f);
+                    body(px, y2, iw);
+                    g_vpass = 0;
+                };
+                CachedCall(dl, key, V(x, cy), drawStill);
+                if (title) { PushScale(0.80f); titleH = UI::GetTextLineHeight(); UI::PopTextScale(); yy = NextY(NextY(yy, titleH), 4.0f); }
+                g_vpass = 2;
+                yy = body(px, yy, iw);
+                g_vpass = 0;
+            } else {
+                still();
+                if (title) yy = NextY(NextY(yy, titleH), 4.0f);
+                yy = body(px, yy, iw);              // where the next item would go
             }
-            yy = body(px, yy, iw);              // where the next item would go
             const float bottom = yy + 2.0f;   // CardEnd's 2 px spacer where the next item would go
             *hh = bottom + 14.0f - cy;
             g_layoutOnly = false;
@@ -1375,7 +1447,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
         };
         auto highlight = [&](UI::Vec2 p0, float rw, float rh) {
             Fill(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.10f), 8.0f);
-            if (!g_layoutOnly) OutlineRect(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.70f), 8.0f, 1.4f);
+            if (!g_layoutOnly && g_vpass != 2) OutlineRect(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.70f), 8.0f, 1.4f);
         };
 
         // ---- installed next to this version ----

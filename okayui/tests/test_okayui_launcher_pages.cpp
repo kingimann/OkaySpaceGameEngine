@@ -338,6 +338,13 @@ int main() {
         d.status = 1; CHECK(S::DownloadFraction(d) == 0.0f);
         d.received = 30; d.total = 120; CHECK(std::fabs(S::DownloadFraction(d) - 0.25f) < 1e-6f);
         d.received = 500; CHECK(S::DownloadFraction(d) == 1.0f);                   // more than the size: clamped
+        {   // the text in the bar: nothing for a queued download (no "--"), "0 B" before the first byte
+            char ov[64];
+            S::DownloadEntry q; q.status = 0; S::DownloadOverlay(q, ov, sizeof(ov)); CHECK(ov[0] == '\0');
+            q.total = 48 * 1024 * 1024; S::DownloadOverlay(q, ov, sizeof(ov)); CHECK(std::strcmp(ov, "0 B / 48.0 MB") == 0);
+            q.received = 12 * 1024 * 1024; S::DownloadOverlay(q, ov, sizeof(ov)); CHECK(std::strcmp(ov, "12.0 MB / 48.0 MB") == 0);
+            q.total = 0; q.received = 1536; S::DownloadOverlay(q, ov, sizeof(ov)); CHECK(std::strcmp(ov, "1.5 KB") == 0);
+        }
     }
     {   // empty: the friendly message and Browse Marketplace; Clear finished is disabled
         S::DownloadsModel m; S::DownloadsResult r;

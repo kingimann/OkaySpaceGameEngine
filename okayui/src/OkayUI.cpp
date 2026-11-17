@@ -2157,6 +2157,9 @@ void EndFrame(SDL_Renderer* r) {
     static int scratch[kMaxIdx];
     auto submit = [&](SDL_Texture* tex, const int* idx, int count) {
         if (count <= 0) return;
+        // The whole index list in one call (a page under one clip): every index is below g_nv already, so the vertices are
+        // handed over as they are, without looking through the indices first.
+        if (idx == g_idx && count == g_ni) { SDL_RenderGeometry(r, tex, g_verts, g_nv, idx, count); return; }
         int lo = idx[0], hi = idx[0];
         for (int i = 1; i < count; ++i) { const int v = idx[i]; lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
         if (lo == 0) { SDL_RenderGeometry(r, tex, g_verts, hi + 1, idx, count); return; }   // already relative: no copy
@@ -2197,9 +2200,11 @@ void EndFrame(SDL_Renderer* r) {
             runs[nr++] = Run{from, to, on, rect, tex};
         };
         addRun(0, g_spans[0].startIdx, false, SDL_Rect{0, 0, 0, 0}, defTex);
-        for (int s = 0; s < g_nspans && nr < kMaxSpans + 1; ++s)
-            addRun(g_spans[s].startIdx, (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni, g_spans[s].on, g_spans[s].rect,
-                   resolveTex(r, g_spans[s].tex));
+        SDL_Texture* lastIn = g_defTex; SDL_Texture* lastOut = defTex;   // spans mostly share one texture: look it up once
+        for (int s = 0; s < g_nspans && nr < kMaxSpans + 1; ++s) {
+            if (g_spans[s].tex != lastIn) { lastIn = g_spans[s].tex; lastOut = resolveTex(r, lastIn); }
+            addRun(g_spans[s].startIdx, (s + 1 < g_nspans) ? g_spans[s + 1].startIdx : g_ni, g_spans[s].on, g_spans[s].rect, lastOut);
+        }
         for (int k = 0; k < nr; ++k) {
             SDL_RenderSetClipRect(r, runs[k].on ? &runs[k].rect : nullptr);
             submit(runs[k].tex, &g_idx[runs[k].from], runs[k].to - runs[k].from);
@@ -2555,7 +2560,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         scrollY = slot->scroll; scrollable = true;
     } else if (slot) slot->scroll = 0.0f;
     const bool showBar = scrollable && !(wf & Window_NoScrollbar);
-    if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
+    // A framed window clips inside its 1 px hairline; a bare window has no frame, so it clips to its whole rectangle (its content
+    // may reach the edges: the launcher pages' cards put their 1 px outline on the first and last column, as Dear ImGui does).
+    if (bare && (g_look || scrollable)) { PushClipRect(wx, wy, w, h); g_lay.winClip = true; }
+    else if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
     g_lay.active = true;
     g_lay.seed = id;
     g_lay.ox = wx + pad;
@@ -2793,11 +2801,14 @@ void EndChild() {
         const float sbx = c.rx + c.rw - c.sbw;
         if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, c.ry, c.sbw, c.rh, pick(Col_ScrollbarBg, g_theme.track));
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
-        // The thumb moves along the track. With the Dear ImGui look (imguiBar) the track is the bar inset by `in` at both ends
-        // and the thumb is drawn at its full length on it; otherwise the track is the whole bar.
-        const float in = c.imguiBar ? std::min(3.0f, std::max(0.0f, std::floor((c.sbw - 2.0f) * 0.5f))) : 0.0f;
+        // The thumb moves along the track. With the Dear ImGui look (imguiBar) the track is the bar inset by `in` on every side
+        // (2 px, or half the bar when it is thinner: Dear ImGui's ScrollbarPadding) and the thumb is a whole number of pixels
+        // long, at least 11 (its GrabMinSize, the launcher's value) or the thumb's width; otherwise the track is the whole bar.
+        const float in = c.imguiBar ? std::floor(std::min(2.0f, std::min(c.sbw, c.rh) * 0.5f)) : 0.0f;
         const float trackY = c.ry + in, trackH = std::max(0.0f, c.rh - 2.0f * in);
-        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f; if (c.imguiBar && thumbH > trackH) thumbH = trackH;
+        float thumbH = frac * trackH;
+        if (c.imguiBar) thumbH = std::floor(std::max(std::min(c.sbw - 2.0f * in, 11.0f), std::min(thumbH, trackH)));
+        else if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
         float thumbY = trackY + t * (trackH - thumbH);
         // Drag the thumb.

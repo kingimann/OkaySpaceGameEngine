@@ -1367,3 +1367,76 @@ in the Community search, the Versions channel combo (its list opens over the pag
 
 **Not done or unverified:** Windows was not built or run; Versions does not meet the owner's rule; Downloads and Notifications
 meet it in most sessions but not all; pictures were not seen on screen (no sample avatars or covers).
+
+### 8.10 Looking at the pages: what the pixel numbers missed, and Versions speed again
+
+The owner asked to judge the ports by looking at the screenshots, not only by the share of differing pixels (a 1 px outline is
+a tiny share of the picture). Every page pair was opened side by side and zoomed: Downloads, Notifications over Friends,
+Achievements, Friends (Online, All, Pending, Following, Followers, Add friend), Community (top, scrolled, empty library and a
+library of six games) and Versions (top and scrolled). Written for OkayUI from what the screenshots showed; no other project's code.
+
+**Fixed in OkayUI:**
+
+- **Card outlines missing on the left and right (all bare pages).** A window with the launcher look clipped its content one
+  pixel inside its edge, for the hairline frame it draws; a bare window (`BareNextWindow`, the host's page) draws no frame, so
+  the pages lost their first and last pixel column: the Downloads rows had no side edges at all, and every card, chip and
+  button that starts at the page edge was one pixel narrower than in Dear ImGui. A bare window now clips to its whole rectangle.
+  (The editor's Console, Crash Log, Tips and the `imcompat` scenes are bare windows too: their edge column and bottom row now
+  show what was drawn there.)
+- **Child scrollbars** (Community, the Friends list, the Notifications list, Console) were 2 px wide and one pixel lower than
+  Dear ImGui's 4 px thumb. The thumb is now inset by 2 px (Dear ImGui's current `ScrollbarPadding`, or half the bar when it is
+  thinner) and is a whole number of pixels long, at least 11 (`GrabMinSize`).
+
+**Fixed on the pages:**
+
+- **Downloads, both versions:** the bar text over the yellow fill ("42.0 MB / 42.0 MB") was light on yellow and hard to read.
+  The part of the text over the fill is now dark (26, 28, 35), the rest stays the normal text colour: the text is cut at the
+  fill's end, so a bar half full shows dark and light halves. A queued download showed "--" in its bar; the bar is now empty
+  (the status beside it says "Queued"), and a download with a known size and nothing received yet shows "0 B / 48.0 MB".
+  The Dear ImGui page draws its bar text itself the same way (`DlProgressBarText` in `launcher/main.cpp`); the rule is
+  `DownloadOverlay` in `OkayUILauncherPages.cpp` (tested).
+- **Notifications:** the line under the filter chips was drawn as a 1 px line centred on a whole pixel, so it smeared over two
+  rows at half strength; it is now one pixel row where Dear ImGui's lands.
+- **Friends, Followers and Following views:** the text in the round-cornered Remove, Follow back and Unfollow buttons sat one
+  pixel higher than Dear ImGui's (Dear ImGui keeps button text below the frame padding); the Versions Remove button had the same.
+- **Comparison runs:** the screenshot tool now deletes the launcher's saved `notifications.cfg` before each run, so both
+  backends start from the same feed (an old saved "Update available" made the two "3h" rows swap places between runs).
+
+**Looked at and left:** text glyphs differ by single anti-aliasing pixels (different rasterisers); the Achievements gold
+outline is a little brighter on its inner pixel; the Community drop zone's dashes start at another place along the edge;
+the Community ages ("3 min ago") differ between runs because the runs are minutes apart.
+
+**Versions speed.** Tried, as suggested: (1) a whole card's still parts (background, texts, pills, lines) kept as one
+`DrawList::Cached` drawing, keyed by a hash of the model (eight bytes at a time), the width, the card's height and the theme
+colours; the body runs a second time for its widgets only (buttons and combos change under the mouse); (2) `EndFrame` hands
+SDL the whole index list without scanning it first when the frame is one call; (3) a span's texture is looked up once per run
+of spans with the same texture. Callgrind in the real launcher (Versions, about 210 frames): OkayUI about 1.03M instructions per
+frame for its page build and render work against Dear ImGui's 1.14M (9% fewer); three quarters of the remaining render cost is
+inside SDL's `SDL_RenderGeometry`, which costs about the same per index for both toolkits, so the page's 5,448 indices against
+Dear ImGui's similar count leave little room there. A smaller vertex format would not help: SDL copies every index's vertex into
+its own format either way.
+
+Before this step, 8.9 measured Versions at 3.4% and -2.5% to 1.4% less. Timing in the real launcher (`OKAY_UI_TIMING=1`, Linux, Release, Xvfb, software OpenGL, each page on both backends one after the
+other, 25 s each; the machine was shared with other builds, load about 3.5, so absolute numbers are about twice those of 8.9):
+
+| Page | Rounds | Dear ImGui build + render (us) | OkayUI (us) | Lead per round | Met (10% less)? |
+|---|---|---|---|---|---|
+| Versions (with (1) and (2), before (3)) | 5 | 192.5 | 190.0 | median 0.0% (9, 4, -1, -1, 0) | no |
+| Versions (all three) | 6 | 189 | 179 | median 5.5% (2, 7, 9, -2, 5, 6) | **no** |
+| Downloads | 2 | 178 | 166 | 13%, 2% | not in this session |
+| Notifications | 2 | 377 | 351.5 | 12%, 9% | about |
+| Achievements | 2 | 350.5 | 330.5 | 5%, 7% | not in this session |
+| Friends | 2 | 261 | 239 | 10%, 10% | about |
+| Community (six games) | 1 | 531.5 | 341 | 38% | yes |
+
+With the drawing cache off (`OKAY_UI_NO_DRAW_CACHE=1`, 4 rounds) Versions took 188.5 us against 182.5 with it and 184 for
+Dear ImGui. Versions still does not meet the 10% rule; the next step would be fewer indices (rounded rectangles and their
+anti-aliased rims) or a renderer of our own that takes the index list as it is instead of SDL's per-index copy.
+
+**Tests:** all 36 suites pass. Goldens regenerated on purpose after looking at each: the bare pages' edge columns and bottom
+row, the wider scrollbar thumb, the dark bar text and the empty queued bar (`downloads_list`), the one-row notifications line,
+the lower button text on the Followers view, and `versions_empty` (its golden was older than the anti-aliasing step and had
+passed inside the tolerance). New check: `DownloadOverlay`.
+
+**Not done or unverified:** Windows was not built or run. The timing above is from one loaded session with few rounds for the
+other pages. Screenshots: `shots/ol5/b-*-imgui.png` and `b-*-okayui.png` in the session's scratch folder (not committed).

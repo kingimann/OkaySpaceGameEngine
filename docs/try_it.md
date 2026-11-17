@@ -1290,6 +1290,15 @@ What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.
 - **Speed**: with `set OKAY_UI_TIMING=1`, compare the "build + render" figure of each screen with and without
   `set OKAY_UI_BACKEND=okayui`: OkayUI's should be lower (on Linux it was 12% to 18% lower).
 
+What to look for after the "looking at the pages" step (docs/own_ui_toolkit.md section 8.10), same steps as above, on both
+backends:
+- **Downloads**: every row has a thin rounded outline on all four sides. The "42.0 MB / 42.0 MB" text on the full yellow bar is
+  dark and easy to read; on a half-full bar the text is dark over the yellow and light after it. The queued "Puzzle Pack" bar is
+  empty (no "--"); the status beside it says Queued.
+- **Community** (scroll the page) and the **Friends** list: the scrollbar thumb is as wide as the Dear ImGui one.
+- **Friends > Followers**: the Remove and Follow back labels sit in the middle of their buttons, as in Dear ImGui.
+- **Notifications** (the bell): the line under the chips is one sharp pixel line.
+
 **New in the change "own UI 3": the Stats window (and what else is new).**
 It is developer-only on purpose (owner rule: no own replacement is on until declared ready), so a normal run still shows
 Dear ImGui everywhere. To try it:

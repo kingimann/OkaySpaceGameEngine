@@ -334,6 +334,13 @@ bool DownloadIsZip(const std::string& dest) {
     return ext == ".zip" || ext == ".ZIP";
 }
 
+void DownloadOverlay(const DownloadEntry& d, char* out, std::size_t n) {
+    if (!out || n == 0) return;
+    if (d.total > 0) std::snprintf(out, n, "%s / %s", d.received > 0 ? HumanBytes(d.received).c_str() : "0 B", HumanBytes(d.total).c_str());
+    else if (d.received > 0) std::snprintf(out, n, "%s", HumanBytes(d.received).c_str());
+    else out[0] = '\0';   // nothing received and no size yet (a queued download): the bar stays empty, the status says "Queued"
+}
+
 float DownloadFraction(const DownloadEntry& d) {
     float f = d.total > 0 ? (float)((double)d.received / (double)d.total) : (d.status == 2 ? 1.0f : 0.0f);
     if (!(f > 0.0f)) f = 0.0f;
@@ -359,7 +366,21 @@ void LauncherProgressBar(const UI::DrawList& dl, float x, float y, float w, floa
         const UI::Vec2 ts = UI::CalcTextSize(overlay);
         const float tx = std::max(x, std::min(x + fillW + kSpX, x + w - ts.x - kInnerX));
         // Dear ImGui's progress bar rounds this text's centred y to the nearest pixel (text elsewhere is cut down to whole pixels).
-        dl.AddText(V(tx, std::floor(y + (h - ts.y) * 0.5f + 0.5f)), Col(UI::Style().text), overlay);
+        const float ty = std::floor(y + (h - ts.y) * 0.5f + 0.5f);
+        // The part of the text over the yellow fill is dark (light text on it could hardly be read), the rest light. Both launcher
+        // pages split it at the fill's end the same way (launcher/main.cpp, DlProgressBar).
+        const float fillEnd = x + fillW;
+        if (fillW > 0.0f && tx < fillEnd) {
+            dl.PushClipRect(V(x, y), V(fillEnd, y + h));
+            dl.AddText(V(tx, ty), CProgressText(), overlay);
+            dl.PopClipRect();
+        }
+        if (tx + ts.x > fillEnd) {
+            const bool split = fillW > 0.0f && tx < fillEnd;
+            if (split) dl.PushClipRect(V(fillEnd, y), V(x + w, y + h));
+            dl.AddText(V(tx, ty), Col(UI::Style().text), overlay);
+            if (split) dl.PopClipRect();
+        }
     }
 }
 } // namespace
@@ -431,8 +452,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             if (!overlay) {
                 Ov& o = ovs[ovNext]; ovNext = (ovNext + 1) % 16;
                 o.rec = d.received; o.tot = d.total;
-                if (d.total > 0) std::snprintf(o.text, sizeof(o.text), "%s / %s", HumanBytes(d.received).c_str(), HumanBytes(d.total).c_str());
-                else std::snprintf(o.text, sizeof(o.text), "%s", HumanBytes(d.received).c_str());
+                DownloadOverlay(d, o.text, sizeof(o.text));
                 overlay = o.text;
             }
             const float barW = std::max(40.0f, inW - 220.0f);
@@ -614,7 +634,9 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
                 cx += cwid + 6.0f;
             }
             const float ly = cy + ch + 12.0f;
-            dl.AddLine(V(cp.x - 16.0f, ly), V(cp.x + cw + 16.0f, ly), Rgb(255, 255, 255, 16), 1.0f);
+            // The hairline under the chips: one whole pixel row, where Dear ImGui's 1 px AddLine lands (it draws through the
+            // pixel centres, y + 0.5); a line centred on ly itself would smear over two rows at half strength.
+            dl.AddRectFilled(V(cp.x - 16.0f, std::floor(ly)), V(cp.x + cw + 16.0f, std::floor(ly) + 1.0f), Rgb(255, 255, 255, 16));
             listTop = NextY(ly, 4.0f);
         }
 

@@ -519,6 +519,30 @@ std::vector<std::shared_ptr<DlItem>> g_dls;
 SDL_mutex* g_dlMutex = nullptr;
 int g_dlNextId = 1;
 
+// The Downloads page's progress bar text, drawn over the bar ImGui::ProgressBar just drew (called with an empty overlay) at the
+// place Dear ImGui puts it: just right of the fill, kept inside the bar. The part over the yellow fill is dark so it can be read
+// there, the rest is the normal text colour (the OkayUI page does the same: okayui/screens/OkayUILauncherPages.cpp).
+static void DlProgressBarText(float frac, const char* overlay) {
+    if (!overlay || !*overlay) return;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    ImRect bb(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    bb.Expand(ImVec2(-st.FrameBorderSize, -st.FrameBorderSize));
+    const float fillX = ImLerp(bb.Min.x, bb.Max.x, ImSaturate(frac));
+    const ImVec2 ts = ImGui::CalcTextSize(overlay);
+    const ImVec2 pos(ImClamp(fillX + st.ItemSpacing.x, bb.Min.x, bb.Max.x - ts.x - st.ItemInnerSpacing.x), bb.Min.y);
+    const bool onFill = frac > 0.0f && pos.x < fillX;
+    if (onFill) {
+        const ImRect clip(bb.Min, ImVec2(fillX, bb.Max.y));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(26, 28, 35, 255));
+        ImGui::RenderTextClipped(pos, bb.Max, overlay, nullptr, &ts, ImVec2(0.0f, 0.5f), &clip);
+        ImGui::PopStyleColor();
+    }
+    if (pos.x + ts.x > fillX) {
+        const ImRect clip(onFill ? ImVec2(fillX, bb.Min.y) : bb.Min, bb.Max);
+        ImGui::RenderTextClipped(pos, bb.Max, overlay, nullptr, &ts, ImVec2(0.0f, 0.5f), &clip);
+    }
+}
+
 // OKAY_UI_DEMO_USER (the dev screenshot hook): the Downloads page starts with sample rows in every state (nothing is fetched;
 // the "downloading" one never moves), so both its Dear ImGui and its OkayUI version can be looked at without a marketplace.
 static void SeedDemoDownloads() {
@@ -27598,11 +27622,14 @@ int main(int argc, char** argv) {
                 // Progress bar.
                 float frac = (tot > 0) ? (float)rec / (float)tot : (stt==2?1.0f:0.0f);
                 if (frac > 1.0f) frac = 1.0f;
+                // "12.0 MB / 48.0 MB"; nothing at all while nothing is known (a queued download: the status says "Queued").
                 char overlay[64];
-                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", humanBytes(rec).c_str(), humanBytes(tot).c_str());
-                else         std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
+                if (tot > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", rec > 0 ? humanBytes(rec).c_str() : "0 B", humanBytes(tot).c_str());
+                else if (rec > 0) std::snprintf(overlay, sizeof(overlay), "%s", humanBytes(rec).c_str());
+                else overlay[0] = '\0';
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220);
-                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), overlay);
+                ImGui::ProgressBar(frac, ImVec2(ImGui::GetContentRegionAvail().x - 220, 16), "");
+                DlProgressBarText(frac, overlay);
                 ImGui::SameLine();
                 ImGui::TextColored(stCol, "%s", stTxt);
                 // Actions.

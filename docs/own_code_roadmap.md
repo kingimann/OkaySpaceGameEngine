@@ -57,6 +57,25 @@ Everything third-party that is in the build or in the shipped binaries, taken fr
 
 Already replaced or removed, merged: tinyfiledialogs, stb_image_write, font8x8, dr_mp3, stb_vorbis, stb_image, stb_truetype, Lua, Mono. (Their code is gone. The last stb leftover, the font decompressor, is gone from the engine too; see the embedded-fonts row for the two legacy headers that remain for Dear ImGui.)
 
+## Model readers: our own are the default (owner approval, 2026-11-17)
+
+The owner approved the switch on 2026-11-17: "start switching them so i can test them out" (passed on by the coordinator). On
+branch `claude2/own-readers-integration` every `OKAY_OWN_<FMT>` model reader option is now **ON by default**, the FBX one
+(`OKAY_OWN_FBX`, ufbx stays the fallback) and `OKAY_PREFER_OWN_READERS` (STL and PLY) included. The one exception is NDO: that
+reader is a seam that refuses every file, so `OKAY_OWN_NDO` stays OFF. What stays the same:
+
+- **Assimp and ufbx stay compiled in** (`scripts/build-windows-dist.sh` still configures `-DOKAY_USE_ASSIMP=ON`; ufbx is always
+  built). A file our reader refuses goes to them, and the Console line says so: `read by Assimp (the own X reader refused it: ...)`
+  or `ufbx (the own FBX reader could not read it)`.
+- **Ways back, at run time:** `OKAY_OWN_<FMT>=0` sends one format back to Assimp (`OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` for STL and
+  PLY, new); **`OKAY_THIRD_PARTY=1` sends every model format back** to Assimp and ufbx. The master switch is the shared helper
+  `okay::ThirdPartyForced()` in `engine/include/okay/Core/ThirdParty.hpp` (true only for the exact value `1`, read on every call),
+  so other parts can use the same switch. It wins over `OKAY_OWN_<FMT>=1`; only `SetImportBackend` in code wins over it. In a build
+  without Assimp it changes nothing for the formats only our readers can read.
+- The old code is **not deleted** yet (rule 17: one release later, and only once the switch has been tried on Windows).
+
+Unverified: nothing of this was run on Windows; the defaults were tested on Linux only (see `docs/own_readers_speed.md`).
+
 ## What still needs Assimp
 
 Counted 2026-11-16 (branch `claude2/own-readers-gap`). The list is the one the shipped Windows build really hands to Assimp:
@@ -66,9 +85,8 @@ program linked against the engine; Assimp's code was not read). "Corpus" is the 
 `test/models` and `test/models-nonbsd` of the Assimp v5.4.3 checkout (`docs/model_corpus.md`). "Met" means the reader meets the
 owner's switching rule on those files in `docs/own_readers_speed.md`: **at least as fast and no more peak memory than Assimp**,
 with every difference in what is read written down in the reader's page; "up to par" in the full sense also needs the
-owner's approval and a Windows run, which none has. **No default was flipped**: every reader below except OBJ, STL, PLY and
-glTF 2.0 is off by default, so today every one of these extensions still goes to Assimp in the shipped build unless its
-`OKAY_OWN_<FMT>` variable is set.
+owner's approval and a Windows run, which none has. When this list was counted no default was flipped; since
+2026-11-17 (section above) our readers are the default for every extension below that has one, and Assimp is the fallback.
 
 **1. Ours exists, and it is faster and lighter than Assimp on the corpus (time and memory met):**
 

@@ -1,5 +1,11 @@
 # Own stack rollout: connecting our own code to the real programs, step by step
 
+> **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
+> `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
+> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
+> `docs/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
+
 Owner's instruction: "Start slowly connecting so we depend on them less and less." This page is the plan for that, and
 it says what is real today. The removal rules stay as written in `docs/own_code_roadmap.md` ("How a library is removed");
 this page adds the **stages** between "our code exists" and "the old library is deleted", the **gates** for each stage,

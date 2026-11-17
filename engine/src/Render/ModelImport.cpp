@@ -46,6 +46,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
 #include "okay/Render/FbxReader.hpp"
+#include "okay/Core/ThirdParty.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -145,7 +146,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     }
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb")) { g_readBy = "the own glTF reader"; return LoadGLTF(path, ok, outTexture); }
     if (EndsWith(p, ".fbx")) {
-        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";
+        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";   // (the own reader is the default; OKAY_OWN_FBX=0 or OKAY_THIRD_PARTY=1: ufbx)
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
@@ -733,10 +734,12 @@ int OwnSlot(const std::string& ext) {
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
 
-// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
-// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+// Whether our reader is the one for a format (slot 3 and up). Order: SetImportBackend in code (checked by the caller), then
+// OKAY_THIRD_PARTY=1 (every format back to Assimp; okay/Core/ThirdParty.hpp), then OKAY_OWN_<FMT>=0/1, then the CMake option
+// (ON for every reader since the owner's approval of 2026-11-17, except the NDO seam, which refuses every file).
 bool OwnOptedIn(int slot) {
     if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
+    if (ThirdPartyForced()) return false;
     bool v = kOptIn[slot - 3].cmakeDefault;
     if (const char* e = std::getenv(kOptIn[slot - 3].var)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
@@ -813,12 +816,21 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+    if (s >= 3) {   // the readers from Collada on: ours unless switched off (OKAY_OWN_<FMT>=0 or OKAY_THIRD_PARTY=1); then Assimp
         if (OwnOptedIn(s)) return ImportBackend::Own;
-        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+        if (AssimpAvailable()) return ImportBackend::Assimp;
+        // OKAY_THIRD_PARTY=1 in a build without Assimp: nothing else can read the file, so ours still does. A single format
+        // switched off with OKAY_OWN_<FMT>=0 stays off (the import then says how to switch it on).
+        if (ThirdPartyForced() && kOptIn[s - 3].cmakeDefault) return ImportBackend::Own;
+        return ImportBackend::Default;
     }
-    if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
-    return ImportBackend::Assimp;
+    if (s == 0 || !AssimpAvailable()) return ImportBackend::Own;
+    // STL / PLY: ours by default (OKAY_PREFER_OWN_READERS, ON since 2026-11-17); OKAY_OWN_STL / OKAY_OWN_PLY = 0/1 and
+    // OKAY_THIRD_PARTY=1 change it at run time.
+    if (ThirdPartyForced()) return ImportBackend::Assimp;
+    bool own = kPreferOwnDefault;
+    if (const char* e = std::getenv(s == 1 ? "OKAY_OWN_STL" : "OKAY_OWN_PLY")) { if (e[0] == '1') own = true; else if (e[0] == '0') own = false; }
+    return own ? ImportBackend::Own : ImportBackend::Assimp;
 }
 
 bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
@@ -1025,7 +1037,8 @@ static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, Imp
         const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
-            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+            *err = std::string("no ") + nm + " reader enabled: our own reader is switched off (" + var + "=0, or OKAY_THIRD_PARTY=1, or a build with -D" + var +
+                   "=OFF; set " + var + "=1, build with -D" + var +
                    "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
         else *err = "no reader for this format in this build";
     }
@@ -1501,7 +1514,7 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
-    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+    if (fbx::OwnReaderEnabled()) {   // our reader first (the default since 2026-11-17); ufbx below if it could not read the file
         bool ownOk = false;
         Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
         if (ownOk) { if (ok) *ok = true; return m; }
@@ -1535,9 +1548,10 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 // caller must then fail the import instead of falling back to another reader that would take the
 // same hostile file.
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
-    if (fbx::OwnReaderEnabled())
+    const bool ownFbx = fbx::OwnReaderEnabled();
+    if (ownFbx)
         if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { g_readBy = "the own FBX reader"; return r; }
-    g_readBy = "ufbx";
+    g_readBy = ownFbx ? "ufbx (the own FBX reader could not read it)" : "ufbx";
     ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 

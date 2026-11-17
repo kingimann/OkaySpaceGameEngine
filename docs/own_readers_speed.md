@@ -1,5 +1,11 @@
 # Own model readers: speed and memory against Assimp
 
+> **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
+> `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
+> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
+> `docs/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
+
 The owner's rule for switching a format from Assimp to our own reader: "we only switch when it's faster and up to par". That
 means, on the same real files: **at least as fast, no more peak memory, and at least as good**. This page measures the first
 two for every reader that sits behind the `ImportModelData` seam, and lists where ours and Assimp disagree. FBX has its own

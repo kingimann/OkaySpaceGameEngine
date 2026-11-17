@@ -3,6 +3,7 @@
 // Written from the public description of the FBX object model; no third-party code.
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Render/FbxReader.hpp"
+#include "okay/Core/ThirdParty.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1082,6 +1083,7 @@ int g_own = -1;   // -1: not decided yet
 }
 bool OwnReaderEnabled() {
     if (g_own >= 0) return g_own != 0;
+    if (okay::ThirdPartyForced()) { g_own = 0; return false; }   // OKAY_THIRD_PARTY=1: ufbx for every FBX file
 #ifdef OKAY_OWN_FBX_DEFAULT
     bool v = true;
 #else

@@ -1,5 +1,11 @@
 # Model import: who reads which format
 
+> **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
+> `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
+> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
+> `docs/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
+
 All model files come in through one door, `okay::ImportModel` (one merged mesh) and
 `okay::ImportModelScene` (a node hierarchy with materials, skins and clips), both in
 `okay/Render/ModelImport.hpp`. This page says which reader handles which format and how

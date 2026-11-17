@@ -84,7 +84,7 @@ release job or the installer build for this change.
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+| 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
@@ -1499,6 +1499,23 @@ and PLY, no import log line) are "Step 0" of the proposal. Until they are closed
 at the top (rule 4a).
 
 ### 8. Own model readers
+
+* **Now the default (owner approval 2026-11-17; branch `claude2/own-readers-integration`, not in a release yet).** Every model
+  format that has a reader of ours is read by it with nothing set: FBX, COLLADA, Blender, 3DS, STL, PLY, `.x` and about 40 more
+  (not NDO: that reader refuses every file). Assimp and ufbx are still in the program: a file ours refuses goes to them.
+  **Steps, once a release has it:**
+  1. Start `Tools\OkayEngine.exe` with nothing set. **File > Import Model...**, choose `examples\own_readers\cube.off`. A white
+     cube appears and the **Console** says `model import '...cube.off': read by the own OFF reader in ... ms`.
+     **Help > About OkaySpace** says `readers=own(fbx,dae,3ds,...)+assimp`.
+  2. Close it. In a Command Prompt: `set OKAY_THIRD_PARTY=1`, then start `Tools\OkayEngine.exe` from that window. Import the same
+     file: the same cube, and the Console says `read by Assimp in ... ms`. About says `readers=ufbx+assimp`. This is the way back
+     for **every** model format (only the exact value `1` counts).
+  3. Close it, `set OKAY_THIRD_PARTY=`, `set OKAY_OWN_OFF=0`, start again and import: `read by Assimp` for `.off` only; any other
+     format is still ours. `OKAY_OWN_FBX=0` sends FBX back to ufbx; `OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` work for STL and PLY.
+  4. If a model looks wrong with ours and right with `OKAY_THIRD_PARTY=1`, that is a bug in our reader: please report the file.
+  Checked on Linux by `own_dispatch_c`, `own_dispatch_d`, `own_dispatch_gap`, `own_stack`, `own_stack_third_party` and
+  `model_readers`; **nothing here was run on Windows** and no editor window was opened (unverified).
+* The text below is from before the switch, when every reader had to be switched on; the variables still work the same way.
 
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,

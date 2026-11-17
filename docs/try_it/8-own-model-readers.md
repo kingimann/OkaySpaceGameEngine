@@ -1,9 +1,26 @@
 ---
 id: 8
 group: switches
-row: | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+row: | 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 ---
 ### 8. Own model readers
+
+* **Now the default (owner approval 2026-11-17; branch `claude2/own-readers-integration`, not in a release yet).** Every model
+  format that has a reader of ours is read by it with nothing set: FBX, COLLADA, Blender, 3DS, STL, PLY, `.x` and about 40 more
+  (not NDO: that reader refuses every file). Assimp and ufbx are still in the program: a file ours refuses goes to them.
+  **Steps, once a release has it:**
+  1. Start `Tools\OkayEngine.exe` with nothing set. **File > Import Model...**, choose `examples\own_readers\cube.off`. A white
+     cube appears and the **Console** says `model import '...cube.off': read by the own OFF reader in ... ms`.
+     **Help > About OkaySpace** says `readers=own(fbx,dae,3ds,...)+assimp`.
+  2. Close it. In a Command Prompt: `set OKAY_THIRD_PARTY=1`, then start `Tools\OkayEngine.exe` from that window. Import the same
+     file: the same cube, and the Console says `read by Assimp in ... ms`. About says `readers=ufbx+assimp`. This is the way back
+     for **every** model format (only the exact value `1` counts).
+  3. Close it, `set OKAY_THIRD_PARTY=`, `set OKAY_OWN_OFF=0`, start again and import: `read by Assimp` for `.off` only; any other
+     format is still ours. `OKAY_OWN_FBX=0` sends FBX back to ufbx; `OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` work for STL and PLY.
+  4. If a model looks wrong with ours and right with `OKAY_THIRD_PARTY=1`, that is a bug in our reader: please report the file.
+  Checked on Linux by `own_dispatch_c`, `own_dispatch_d`, `own_dispatch_gap`, `own_stack`, `own_stack_third_party` and
+  `model_readers`; **nothing here was run on Windows** and no editor window was opened (unverified).
+* The text below is from before the switch, when every reader had to be switched on; the variables still work the same way.
 
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,

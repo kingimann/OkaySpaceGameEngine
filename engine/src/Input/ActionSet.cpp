@@ -595,6 +595,13 @@ int ActionSet::ImportOverrides(const std::string& text) {
 void ActionSet::ResetOverrides() {
     for (ActionDef& a : m_actions) for (BindingSpec& b : a.bindings) if (!b.original.empty()) { b.parts = b.original; b.original.clear(); b.built = false; }
 }
+bool ActionSet::ResetOverride(const std::string& action, int binding) {
+    ActionDef* a = Find(action);
+    if (!a || binding < 0 || binding >= (int)a->bindings.size() || a->bindings[(std::size_t)binding].original.empty()) return false;
+    BindingSpec& b = a->bindings[(std::size_t)binding];
+    b.parts = b.original; b.original.clear(); b.built = false;
+    return true;
+}
 void ActionSet::SaveOverrides(const std::string& key) const {
     const std::string t = ExportOverrides();
     if (t.empty()) Prefs::Delete("inputov." + key); else Prefs::SetString("inputov." + key, t);

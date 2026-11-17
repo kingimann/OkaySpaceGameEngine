@@ -39,6 +39,7 @@
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -32512,6 +32513,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ss")) toRemove = ss;
         }
     }
+    if (auto* lpi = dynamic_cast<LocalPlayerInput*>(curComp)) {
+        if (CompHeader("Player Input", lpi, &toRemove)) {
+            ImGui::TextDisabled("One local player's input. While the game plays it joins with the device below and reads the actions of the input asset.");
+            char ab[256]; std::snprintf(ab, sizeof(ab), "%s", lpi->actions.c_str());
+            if (ImGui::InputText("Actions asset##lpi", ab, sizeof(ab))) { lpi->actions = ab; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayinput file (Assets/input.okayinput). Empty = the default asset.");
+            int dev = (int)lpi->device;
+            if (ImGui::Combo("Device##lpi", &dev, "Any (keyboard and controllers)\0Keyboard and mouse\0Controller\0")) { lpi->device = (LocalPlayerInput::Device)dev; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Each device can belong to one player. Any switches control scheme with the device used last.");
+            if (lpi->device == LocalPlayerInput::Device::Controller && ImGui::DragInt("Controller##lpi", &lpi->controller, 0.2f, 0, 3)) ed.dirty = true;
+            if (lpi->device == LocalPlayerInput::Device::Any && ImGui::Checkbox("Switch scheme with the last device##lpi", &lpi->autoSwitch)) ed.dirty = true;
+            char sb[96]; std::snprintf(sb, sizeof(sb), "%s", lpi->scheme.c_str());
+            if (ImGui::InputText("Start scheme##lpi", sb, sizeof(sb))) { lpi->scheme = sb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Control scheme to start in (Keyboard+Mouse, Gamepad ...). Empty = the one that fits the device.");
+            char mb[160]; std::snprintf(mb, sizeof(mb), "%s", lpi->startMaps.c_str());
+            if (ImGui::InputText("Action maps on at start##lpi", mb, sizeof(mb))) { lpi->startMaps = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Comma list, for example Gameplay. Maps not listed start off. Empty = as the asset says.");
+            if (ed.isPlaying()) ImGui::TextDisabled("Playing: player index %d (use it with the ia_* calls)", lpi->GetPlayerIndex());
+            if (ImGui::SmallButton("Remove##lpi")) toRemove = lpi;
+        }
+    }
     if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
         if (CompHeader("Auto Save", as, &toRemove)) {
             ImGui::TextDisabled("Saves the whole game to a slot while playing.");
@@ -42039,6 +42061,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
             oked::AddAntiCheatMenuItem(ed, go);   // one click: a config with a safe preset next to the Network Manager
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
+            if (item(true, "Player Input (a local player: device, control scheme, action maps)")) { go->AddComponent<LocalPlayerInput>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             // grok/ui-theme
             if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }

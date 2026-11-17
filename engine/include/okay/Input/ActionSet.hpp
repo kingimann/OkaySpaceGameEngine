@@ -147,6 +147,8 @@ public:
     std::string ExportOverrides() const;
     int ImportOverrides(const std::string& text);
     void ResetOverrides();
+    /// Put one binding back to what the asset says (false when it was never rebound).
+    bool ResetOverride(const std::string& action, int binding);
     /// Save / load the overrides in Prefs under "inputov.<key>" (one key per local player).
     void SaveOverrides(const std::string& key) const;
     int LoadOverrides(const std::string& key);

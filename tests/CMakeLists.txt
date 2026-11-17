@@ -3970,3 +3970,13 @@ add_executable(test_action_editor test_action_editor.cpp)
 target_link_libraries(test_action_editor PRIVATE okay::engine)
 target_include_directories(test_action_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME action_editor COMMAND test_action_editor)
+
+# The Controls screen on the typed input system: fields on "ia:<action>@<player>" show and rebind a local player's inputs.
+add_executable(test_controls_screen test_controls_screen.cpp)
+target_link_libraries(test_controls_screen PRIVATE okay::engine)
+add_test(NAME controls_screen COMMAND test_controls_screen)
+
+# The Player Input component: joins a local player on scene start, with its device, scheme, maps and asset.
+add_executable(test_local_player_input test_local_player_input.cpp)
+target_link_libraries(test_local_player_input PRIVATE okay::engine)
+add_test(NAME local_player_input COMMAND test_local_player_input)

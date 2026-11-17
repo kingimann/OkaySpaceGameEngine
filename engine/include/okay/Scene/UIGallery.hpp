@@ -22,6 +22,8 @@
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/UIKeybindField.hpp"
+#include "okay/Input/InputAsset.hpp"
 #include <string>
 
 namespace okay { namespace UIGallery {
@@ -153,6 +155,68 @@ inline GameObject* AddDialogueScreen(Scene& scene) {
     GameObject* next = Text(scene, box, "Next", "Press Space to continue", UIAnchor::BottomRight, {-24, -16}, {260, 20}, 13.0f, slate::Dim(), 2);
     next->active = false;
     IntroAnim(box, UIAnimation::Intro::SlideBottom);
+    return root;
+}
+
+/// A Controls screen for the typed input system: one row per rebindable input of the Gameplay map of `asset` (the default asset when none is
+/// given), a keyboard field and a controller field each. A field is a UIKeybindField on "ia:<action>@<player>": click it, press a key or a
+/// controller button, and the change is kept as that player's overrides. Inputs that cannot be a single key or button (sticks, mouse movement)
+/// are left out.
+inline GameObject* AddControlsScreen(Scene& scene, const ActionSet* asset = nullptr, int player = 0) {
+    const ActionSet defaults = asset ? ActionSet() : DefaultInputAsset();
+    const ActionSet& set = asset ? *asset : defaults;
+    GameObject* canvas = EnsureCanvas(scene);
+    struct Row { std::string label, action; int part; bool pad; };
+    std::vector<Row> rows;
+    static const char* const kDir[] = {"up", "down", "left", "right", "forward", "back"};
+    auto isKeyPath = [](const std::string& p) { return p.rfind("key:", 0) == 0; };
+    for (const ActionDef& a : set.Actions()) {
+        if (!a.map.empty() && a.map != "Gameplay") continue;
+        bool kbDone = false, padDone = false;
+        for (const BindingSpec& b : a.bindings) {
+            const bool padGroup = [&] { for (const ControlScheme& c : set.Schemes()) if (c.name == b.group) return c.gamepad; return false; }();
+            if (padGroup && !padDone && b.kind == BindingSpec::Kind::Single && b.parts[0].rfind("pad:", 0) == 0) { rows.push_back({a.name, a.name, 0, true}); padDone = true; }
+            if (!padGroup && !kbDone) {
+                bool allKeys = !b.parts.empty();
+                for (const std::string& p : b.parts) allKeys = allKeys && (isKeyPath(p) || p.rfind("mouse:", 0) == 0) && p != "mouse:delta";
+                if (!allKeys) continue;
+                kbDone = true;
+                if (b.kind == BindingSpec::Kind::Vector2 || b.kind == BindingSpec::Kind::Vector3)
+                    for (std::size_t i = 0; i < b.parts.size(); ++i) rows.push_back({a.name + " " + kDir[i], a.name, (int)i, false});
+                else rows.push_back({a.name, a.name, 0, false});
+            }
+        }
+    }
+    // Rows that share an action share a line for the controller field.
+    GameObject* root = Panel(scene, canvas, "Controls", UIAnchor::Center, {0, 0}, {620, 130.0f + 34.0f * (float)rows.size()}, slate::Panel(), 14.0f, true);
+    root->GetComponent<UIPanel>()->blocksPointer = true;
+    Caption(scene, root, "Caption", "SETTINGS", UIAnchor::TopLeft, {28, 22}, 300, slate::Accent());
+    Text(scene, root, "Title", "Controls", UIAnchor::TopLeft, {28, 42}, {300, 34}, 26.0f, slate::Text(), 0, true);
+    Text(scene, root, "KeyboardHeader", "Keyboard / mouse", UIAnchor::TopLeft, {210, 74}, {180, 20}, 13.0f, slate::Dim());
+    Text(scene, root, "ControllerHeader", "Controller", UIAnchor::TopLeft, {420, 74}, {180, 20}, 13.0f, slate::Dim());
+    float y = 96.0f;
+    std::string lastAction;
+    for (const Row& r : rows) {
+        if (!r.pad) {
+            Text(scene, root, ("Label " + r.label).c_str(), r.label, UIAnchor::TopLeft, {28, y + 4}, {170, 22}, 15.0f, slate::Text());
+            GameObject* k = Child(scene, root, ("Key " + r.label).c_str());
+            auto* kb = k->AddComponent<UIKeybindField>();
+            kb->anchor = UIAnchor::TopLeft; kb->position = {210, y}; kb->size = {190, 28}; kb->textSize = 1.5f;
+            kb->action = r.label; kb->inputAction = "ia:" + r.action + "@" + std::to_string(player); kb->part = r.part; kb->gamepad = false;
+            lastAction = r.action;
+            // the controller field sits on the first row of its action
+            for (const Row& p : rows) if (p.pad && p.action == r.action && lastAction != "") {
+                GameObject* g = Child(scene, root, ("Pad " + r.label).c_str());
+                auto* pb = g->AddComponent<UIKeybindField>();
+                pb->anchor = UIAnchor::TopLeft; pb->position = {420, y}; pb->size = {180, 28}; pb->textSize = 1.5f;
+                pb->action = r.label; pb->inputAction = "ia:" + r.action + "@" + std::to_string(player); pb->part = 0; pb->gamepad = true;
+                break;
+            }
+            y += 34.0f;
+        }
+    }
+    Text(scene, root, "Hint", "Click a field, then press a key or a controller button. Backspace restores the default.", UIAnchor::BottomLeft, {28, -20}, {560, 20}, 12.0f, slate::Dim());
+    IntroAnim(root, UIAnimation::Intro::Pop);
     return root;
 }
 

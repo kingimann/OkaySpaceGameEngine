@@ -142,7 +142,7 @@ PostProcessResult DrawPostProcess(okaypanels::PostProcessModel& model, float x, 
 struct PlayerSettingsResult {
     okaypanels::PlayerSettingsIntent intent;
     OkayUI::Rect company, version, width, height;
-    OkayUI::Rect widthMinus, widthPlus, heightMinus, heightPlus;   // the step buttons
+    OkayUI::Rect widthField, heightField;   // the number boxes alone (no step buttons: a click types a number)
     float contentHeight = 0.0f;
 };
 

@@ -1066,12 +1066,19 @@ int main() {
             if (rres.intent.apply) apply = true;
         });
         r.Frames(3);
-        CHECK(res.company.w > 0 && res.widthPlus.w > 0 && res.heightPlus.x > res.widthPlus.x && rres.apply.w > 0);
+        CHECK(res.company.w > 0 && res.widthField.w > 0 && res.heightField.x > res.widthField.x + res.widthField.w && rres.apply.w > 0);
         Check("editorpanels_player_rendering", r.Draw());
+        // five digits fit in each number box (no -/+ buttons take the room: 1280 x 720 once showed as "12" and "72")
+        float fiveDigits = 0.0f;
+        r.sim.Frame([&] { UI::PushTextScale(S::kEditorTextScale); fiveDigits = UI::CalcTextWidth("00000"); UI::PopTextScale(); });
+        CHECK(res.widthField.w > fiveDigits + 12.0f && res.heightField.w > fiveDigits + 12.0f);
+        r.Frame();
         r.Click(res.version); r.sim.Press(Key_End); r.Frame(); r.sim.Type("-beta"); r.Frame();
         CHECK(changed && std::strcmp(d.version, "1.4.2-beta") == 0);
-        r.Click(res.widthPlus);   CHECK(d.width == 1281);
-        r.Click(res.heightMinus); CHECK(d.height == 719);
+        r.Click(res.widthField);  r.sim.Type("1281"); r.Frame(); r.sim.Press(Key_Enter); r.Frame(); r.Frame();
+        CHECK(d.width == 1281);
+        r.Click(res.heightField); r.sim.Type("719"); r.Frame(); r.sim.Press(Key_Enter); r.Frame(); r.Frame();
+        CHECK(d.height == 719);
         r.sim.Move(rres.ambient.x + 3.0f, CY(rres.ambient)); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(rd.ambient == 0.0f);
         r.Click(rres.skybox); CHECK(!rd.skybox);

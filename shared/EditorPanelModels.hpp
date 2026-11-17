@@ -365,7 +365,9 @@ struct PhysicsSettingsIntent {
     bool apply = false;                 // "Apply to current scene"
 };
 
-inline const char* const kPhysicsQualityNames[2] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
+/// What the Quality box shows (the long names were cut off at "fas", #983), and the line under it that says what each does.
+inline const char* const kPhysicsQualityShortNames[2] = {"Classic", "Improved"};
+inline const char* const kPhysicsQualityLines[2] = {"The original step, for old scenes.", "Stacks stand, bodies sleep, fast bodies stop."};
 inline const char* kStepRateTip = "How many times a second physics runs. 50 is the usual rate.\nA drop lands in the same place at a low frame rate and a high one.\nSaved with the project.";
 inline const char* kSmoothTip = "Draw each body part way between its last two physics steps,\nso motion stays smooth when the frame rate and the step rate differ.";
 inline const char* kQualityTip = "Classic plays old scenes exactly as they always played.\nImproved solves contacts several times a step and remembers them, so crates stack and stay put,\nresting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\nNew scenes start Improved. The setting is part of the scene file.";

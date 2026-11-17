@@ -355,13 +355,21 @@ int main() {
         ras.DrawImGui(); const Bitmap imPic = ras.bmp;
         ras.DrawOkay();  const Bitmap okPic = ras.bmp;
         CHECK(okRes.width.w > 0 && okRes.height.x > okRes.width.x + okRes.width.w);
-        // the same click on the Width "+" (the field's right end less the label and a step button) steps both by one
-        const UI::Rect wp = okRes.widthPlus;
-        ok.sim.Move(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
-        im.Click(wp.x + wp.w * 0.5f, wp.y + wp.h * 0.5f, imBody);
-        if (okD.width != 1281 || imD.width != 1281) std::printf("width +: okayui %d imgui %d\n", okD.width, imD.width);
+        // the same click on each number box (no -/+ buttons now), the same digits typed and Enter: both versions take the same value
+        auto typeInto = [&](const UI::Rect& f, const char* digits) {
+            const float cx = f.x + f.w * 0.5f, cy = f.y + f.h * 0.5f;
+            ok.sim.Move(cx, cy); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+            ok.sim.Type(digits); ok.Frame(okBody); ok.sim.Press(okayuitest::Key_Enter); ok.Frame(okBody); ok.Frame(okBody);
+            im.Click(cx, cy, imBody);
+            im.text = digits; im.Frame(imBody); im.Press(ImGuiKey_Enter, imBody); im.Frame(imBody);
+        };
+        typeInto(okRes.widthField, "1281");
+        if (okD.width != 1281 || imD.width != 1281) std::printf("width typed: okayui %d imgui %d\n", okD.width, imD.width);
         CHECK(okD.width == 1281 && imD.width == 1281);
-        imD.width = okD.width = 1280;
+        typeInto(okRes.heightField, "719");
+        if (okD.height != 719 || imD.height != 719) std::printf("height typed: okayui %d imgui %d\n", okD.height, imD.height);
+        CHECK(okD.height == 719 && imD.height == 719);
+        imD.width = okD.width = 1280; imD.height = okD.height = 720;
         im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("player", imPic, okPic, t);

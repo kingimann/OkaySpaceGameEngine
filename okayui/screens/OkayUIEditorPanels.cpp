@@ -623,10 +623,15 @@ PhysicsSettingsResult DrawPhysicsSettings(PhysicsSettingsModel& m, float x, floa
         Divider();
         UI::TextDisabled(kPhysicsQualityHeading);
         int q = m.quality == 1 ? 1 : 0;
-        UI::SetNextItemWidth(WithLabel(330.0f, "Quality"));
-        if (UI::Combo("Quality##psq", kPhysicsQualityNames, 2, &q)) res.intent.quality = q;
+        // Short names in the box (the long ones were cut off at "fas"); what each does is the line below (#983).
+        const float qW = UI::CalcTextWidth("Improved") + g_metrics.framePadding.x * 4.0f + UI::GetFrameHeight();
+        UI::SetNextItemWidth(WithLabel(qW, "Quality"));
+        if (UI::Combo("Quality##psq", kPhysicsQualityShortNames, 2, &q)) res.intent.quality = q;
         res.quality = UI::GetItemRect();
         if (UI::IsItemHovered()) UI::SetTooltip("%s", kQualityTip);
+        UI::PushStyleColor(UI::Col_Text, UI::GetColorU32(UI::Col_TextDisabled));
+        UI::TextWrapped(kPhysicsQualityLines[q]);
+        UI::PopStyleColor();
         if (q == 1) {
             int it = m.solverIterations;
             UI::SetNextItemWidth(WithLabel(160.0f, "Solver iterations"));
@@ -819,14 +824,25 @@ ProfilerResult DrawProfiler(ProfilerModel& m, float x, float y, float w, float h
 // ---- Import settings (the Project panel) ----------------------------------------------------------------------------------------
 
 namespace {
-// The import panel's combo: a 160-pixel field and the label after it.
+// The import panel's combo and the label after it. As wide as its longest choice (a fixed 160 px showed "Load the whole fi"),
+// at least 160 px, never wider than the panel (#983); the Dear ImGui body (EditorPanelViews.cpp) sizes it the same way.
 bool ImportCombo(const char* label, int& value, const char* const* items, int count, UI::Rect& rect) {
-    UI::SetNextItemWidth(WithLabel(160.0f, label));
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, UI::CalcTextWidth(items[i]));
+    const float want = widest + g_metrics.framePadding.x * 2.0f + UI::GetFrameHeight();
+    const float room = UI::GetContentRegionAvail().x - UI::CalcTextWidth(label) - g_metrics.innerSpacing.x;
+    UI::SetNextItemWidth(WithLabel(std::max(160.0f, std::min(want, room)), label));
     int v = value >= 0 && value < count ? value : -1;
     const bool ch = UI::Combo(label, items, count, &v);
     rect = UI::GetItemRect();
     if (ch && v >= 0 && v < count && v != value) { value = v; return true; }
     return false;
+}
+// A grey note under a setting, wrapped at the panel's edge instead of running off it (#983).
+void ImportHint(const char* text) {
+    UI::PushStyleColor(UI::Col_Text, UI::GetColorU32(UI::Col_TextDisabled));
+    UI::TextWrapped(text);
+    UI::PopStyleColor();
 }
 } // namespace
 
@@ -840,22 +856,22 @@ ImportSettingsResult DrawImportSettings(ImportSettingsModel& m, ImportSettingsSt
         const float top = UI::GetCursorScreenPos().y;
         bool body = m.edit != nullptr;
         if (body) UI::TextDisabled(kImportHeading);
-        if (body && m.newer) { UI::TextDisabled(kImportNewerNote); body = false; }
+        if (body && m.newer) { ImportHint(kImportNewerNote); body = false; }
         ImportFields* e = body ? m.edit : nullptr;
         if (e) switch (e->kind) {
             case ImportTexture: {
                 int si = ImportSizeIndex(e->maxSize);
                 if (ImportCombo("Largest side", si, kImportSizeNames, 11, res.sizeCombo)) { e->maxSize = kImportSizes[si]; res.intent.changed = true; }
-                UI::TextDisabled("Bigger pictures are made smaller when loaded.");
+                ImportHint("Bigger pictures are made smaller when loaded.");
                 if (m.showSampler) {
                     if (ImportCombo("Filter", e->filter, kImportFilterNames, 3, res.filterCombo)) res.intent.changed = true;
-                    UI::TextDisabled("Point keeps hard pixel edges.");
+                    ImportHint("Point keeps hard pixel edges.");
                     if (ImportCombo("Wrap", e->wrap, kImportWrapNames, 3, res.wrapCombo)) res.intent.changed = true;
-                    UI::TextDisabled("What is drawn past the picture's edge.");
+                    ImportHint("What is drawn past the picture's edge.");
                     if (UI::Checkbox("Mipmaps", &e->mipmaps)) res.intent.changed = true;
                     res.mipmaps = UI::GetItemRect();
-                    UI::TextDisabled("Smaller copies for far away. Off: always full size.");
-                    UI::TextDisabled("Applies in the editor view and OpenGL / software games.");
+                    ImportHint("Smaller copies for far away. Off: always full size.");
+                    ImportHint("Applies in the editor view and OpenGL / software games.");
                 }
                 break;
             }
@@ -863,29 +879,29 @@ ImportSettingsResult DrawImportSettings(ImportSettingsModel& m, ImportSettingsSt
                 UI::SetNextItemWidth(WithLabel(160.0f, "Scale"));
                 if (UI::DragFloat("Scale", &e->scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) res.intent.changed = true;
                 res.scale = UI::GetItemRect();
-                UI::TextDisabled("Multiplies its size when you add it to a scene.");
+                ImportHint("Multiplies its size when you add it to a scene.");
                 if (ImportCombo("Normals", e->normals, kImportNormalsNames, 3, res.normalsCombo)) res.intent.changed = true;
                 if (e->normals == 1) {
                     UI::SetNextItemWidth(WithLabel(160.0f, "Smoothing angle"));
                     if (UI::DragFloat("Smoothing angle", &e->smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) res.intent.changed = true;
                     res.smoothing = UI::GetItemRect();
-                    UI::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                    ImportHint("Sharper edges stay hard. Not for rigged parts.");
                 } else if (e->normals == 2) {
-                    UI::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                    ImportHint("Each face shaded alone. Not for rigged parts.");
                 }
                 if (UI::Checkbox("Import animations", &e->importAnimations)) res.intent.changed = true;
                 res.animations = UI::GetItemRect();
-                UI::TextDisabled("Off: no clips, rest pose.");
-                UI::TextDisabled("Used when the model is next added to a scene.");
+                ImportHint("Off: no clips, rest pose.");
+                ImportHint("Used when the model is next added to a scene.");
                 break;
             }
             case ImportAudio: {
                 if (ImportCombo("Loading", e->loadMode, kImportLoadNames, 2, res.loadCombo)) res.intent.changed = true;
-                UI::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+                ImportHint("Read while it plays keeps a long file in a small fixed amount of memory.");
                 if (UI::Checkbox("Mix down to one channel", &e->forceMono)) res.intent.changed = true;
                 res.mono = UI::GetItemRect();
-                UI::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-                UI::TextDisabled("Used the next time the file is loaded.");
+                ImportHint("Left and right become a single channel. Off keeps the recording as it is.");
+                ImportHint("Used the next time the file is loaded.");
                 break;
             }
             default: e = nullptr; break;
@@ -1063,21 +1079,18 @@ PlayerSettingsResult DrawPlayerSettings(PlayerSettingsModel& m, float x, float y
             res.version = UI::GetItemRect();
         }
         if (m.width && m.height) {
-            UI::SetNextItemWidth(WithLabel(110.0f, "Width"));
-            // the step buttons: two squares a frame tall before the label, 8 pixels apart (the framed InputInt)
-            auto steps = [](const UI::Rect& r, const char* label, UI::Rect& minus, UI::Rect& plus) {
-                const float right = r.x + r.w - (UI::CalcTextWidth(label) + 8.0f);
-                plus = UI::Rect{right - r.h, r.y, r.h, r.h};
-                minus = UI::Rect{plus.x - 8.0f - r.h, r.y, r.h, r.h};
-            };
-            if (UI::InputInt("Width##ps", m.width)) res.intent.changed = true;
+            // Wide enough for five digits at any text size, and no -/+ buttons (a click types a number): at 110 px the buttons
+            // took the room and 1280 x 720 showed as "12" and "72" (#983). Same as the Dear ImGui body (EditorPanelViews.cpp).
+            const float numW = UI::CalcTextWidth("000000") + g_metrics.framePadding.x * 2.0f;
+            UI::SetNextItemWidth(WithLabel(numW, "Width"));
+            if (UI::InputInt("Width##ps", m.width, 0)) res.intent.changed = true;
             res.width = UI::GetItemRect();
-            steps(res.width, "Width", res.widthMinus, res.widthPlus);
+            res.widthField = UI::Rect{res.width.x, res.width.y, numW, res.width.h};
             UI::SameLine();
-            UI::SetNextItemWidth(WithLabel(110.0f, "Height"));
-            if (UI::InputInt("Height##ps", m.height)) res.intent.changed = true;
+            UI::SetNextItemWidth(WithLabel(numW, "Height"));
+            if (UI::InputInt("Height##ps", m.height, 0)) res.intent.changed = true;
             res.height = UI::GetItemRect();
-            steps(res.height, "Height", res.heightMinus, res.heightPlus);
+            res.heightField = UI::Rect{res.height.x, res.height.y, numW, res.height.h};
         }
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();

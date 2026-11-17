@@ -76,6 +76,8 @@ struct ImGuiRig {
     float mx = -100, my = -100; bool down = false, rdown = false;
     float wheel = 0.0f;
     std::string text;
+    ImGuiKey key = ImGuiKey_None;   // pressed for the next frame and released in the one after (Press)
+    bool keyHeld = false;
     explicit ImGuiRig() {
         ctx = ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
@@ -114,6 +116,11 @@ struct ImGuiRig {
         if (wheel != 0.0f) io.AddMouseWheelEvent(0.0f, wheel);
         if (!text.empty()) io.AddInputCharactersUTF8(text.c_str());
         wheel = 0.0f; text.clear();
+        if (key != ImGuiKey_None) {
+            io.AddKeyEvent(key, !keyHeld);
+            if (keyHeld) key = ImGuiKey_None;
+            keyHeld = !keyHeld;
+        }
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)kW, (float)kH));
@@ -125,6 +132,8 @@ struct ImGuiRig {
     }
     void Click(float x, float y, const std::function<void()>& body) { mx = x; my = y; Frame(body); down = true; Frame(body); down = false; Frame(body); }
     void RightClick(float x, float y, const std::function<void()>& body) { mx = x; my = y; Frame(body); rdown = true; Frame(body); rdown = false; Frame(body); }
+    // A key pressed and released over two frames (Enter to apply a typed number).
+    void Press(ImGuiKey k, const std::function<void()>& body) { key = k; keyHeld = false; Frame(body); Frame(body); }
 };
 
 // Dear ImGui's draw data as OkayUI draw data (same vertex layout after conversion), drawn by OkayUI's render front end.

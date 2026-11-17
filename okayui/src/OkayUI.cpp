@@ -3961,7 +3961,8 @@ static bool InputInt_ed(const char* label, int* value, int step) {
         const VisLabel vis(label);   // "##" and what follows only name the widget
         const float gap = g_innerX >= 0.0f ? g_innerX : 4.0f, padX = g_framePadX >= 0.0f ? g_framePadX : 6.0f;
         const float lw2 = labelW(vis.b) > 0.0f ? labelW(vis.b) + gap : 0.0f;
-        const float fieldW = std::max(24.0f, w - lw2 - 2.0f * (h + gap));
+        const bool steppers = step != 0;   // step 0: a plain number field, no [-]/[+] (as Dear ImGui's InputInt with step 0)
+        const float fieldW = std::max(24.0f, w - lw2 - (steppers ? 2.0f * (h + gap) : 0.0f));
         const bool inField = hit(x, y, fieldW, h);
         bool ch = false;
         double typed = 0.0;
@@ -3975,13 +3976,13 @@ static bool InputInt_ed(const char* label, int* value, int step) {
             PopClipRect();
         }
         const float bx = x + fieldW + gap;
-        if (Button(id ^ 0x2d, bx, y, h, h, "-"))              { *value -= step; ch = true; }
-        if (Button(id ^ 0x2b, bx + h + gap, y, h, h, "+")) { *value += step; ch = true; }
-        if (lw2 > 0.0f) drawText(bx + 2.0f * h + 2.0f * gap, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
+        if (steppers && Button(id ^ 0x2d, bx, y, h, h, "-"))              { *value -= step; ch = true; }
+        if (steppers && Button(id ^ 0x2b, bx + h + gap, y, h, h, "+")) { *value += step; ch = true; }
+        if (lw2 > 0.0f) drawText(steppers ? bx + 2.0f * h + 2.0f * gap : bx, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
         return ch;
     }
-    const float btnW = h;                 // square [-]/[+] steppers
-    float fieldW = w - lw - btnW * 2.0f - 8.0f;
+    const float btnW = step != 0 ? h : 0.0f;   // square [-]/[+] steppers; none for step 0
+    float fieldW = w - lw - (step != 0 ? btnW * 2.0f + 8.0f : 0.0f);
     if (fieldW < 24.0f) fieldW = 24.0f;
     // Value box: a click on it types a number (Enter or clicking away applies it, Escape cancels).
     quad(x, y, fieldW, h, g_theme.track);
@@ -3992,9 +3993,9 @@ static bool InputInt_ed(const char* label, int* value, int step) {
     if (ed == 0) { char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *value); drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, g_theme.textScale, g_theme.text); }
     // Steppers (unique ids via the field id so they don't collide).
     const float bx = x + fieldW + 4.0f;
-    if (Button(id ^ 0x2d, bx, y, btnW, h, "-"))              { *value -= step; ch = true; }
-    if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+")) { *value += step; ch = true; }
-    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f,
+    if (step != 0 && Button(id ^ 0x2d, bx, y, btnW, h, "-"))              { *value -= step; ch = true; }
+    if (step != 0 && Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+")) { *value += step; ch = true; }
+    if (lw > 0.0f) drawText(step != 0 ? x + fieldW + btnW * 2.0f + 12.0f : bx + 4.0f, y + (h - textH()) * 0.5f,
                             shown.b, g_theme.textScale, g_theme.text);
     return ch;
 }

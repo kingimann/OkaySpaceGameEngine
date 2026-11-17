@@ -341,9 +341,13 @@ PhysicsSettingsIntent DrawPhysicsSettingsBodyImGui(PhysicsSettingsModel& m, cons
     ImGui::Separator();
     ImGui::TextDisabled("%s", kPhysicsQualityHeading);
     int q = m.quality == 1 ? 1 : 0;
-    ImGui::SetNextItemWidth(330);
-    if (ImGui::Combo("Quality##psq", &q, kPhysicsQualityNames, 2)) out.quality = q;
+    // Short names in the box (the long ones were cut off at "fas"); what each does is the line below (#983).
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Improved").x + ImGui::GetStyle().FramePadding.x * 4.0f + ImGui::GetFrameHeight());
+    if (ImGui::Combo("Quality##psq", &q, kPhysicsQualityShortNames, 2)) out.quality = q;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kQualityTip);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", kPhysicsQualityLines[q]);
+    ImGui::PopStyleColor();
     if (q == 1) {
         int it = m.solverIterations;
         ImGui::SetNextItemWidth(160);
@@ -468,6 +472,13 @@ bool ImportCombo(const char* label, int& value, const char* const* items, int co
     }
     return changed;
 }
+// A grey note under a setting, wrapped at the panel's edge (a plain TextDisabled line ran off the Inspector's right side:
+// "Read while it plays keeps a long file in a small fixed amount" with the rest cut off; #983).
+void ImportHint(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
 } // namespace
 
 ImportSettingsIntent DrawImportSettingsBodyImGui(ImportSettingsModel& m, ImportSettingsState& st, const PanelViewHooks&) {
@@ -475,46 +486,46 @@ ImportSettingsIntent DrawImportSettingsBodyImGui(ImportSettingsModel& m, ImportS
     if (!m.edit) return out;
     ImportFields& e = *m.edit;
     ImGui::TextDisabled("%s", kImportHeading);
-    if (m.newer) { ImGui::TextDisabled("%s", kImportNewerNote); return out; }
+    if (m.newer) { ImportHint(kImportNewerNote); return out; }
     switch (e.kind) {
         case ImportTexture: {
             int si = ImportSizeIndex(e.maxSize);
             if (ImportCombo("Largest side", si, kImportSizeNames, 11)) { e.maxSize = kImportSizes[si]; out.changed = true; }
-            ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
+            ImportHint("Bigger pictures are made smaller when loaded.");
             if (m.showSampler) {
                 if (ImportCombo("Filter", e.filter, kImportFilterNames, 3)) out.changed = true;
-                ImGui::TextDisabled("Point keeps hard pixel edges.");
+                ImportHint("Point keeps hard pixel edges.");
                 if (ImportCombo("Wrap", e.wrap, kImportWrapNames, 3)) out.changed = true;
-                ImGui::TextDisabled("What is drawn past the picture's edge.");
+                ImportHint("What is drawn past the picture's edge.");
                 if (ImGui::Checkbox("Mipmaps", &e.mipmaps)) out.changed = true;
-                ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
-                ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
+                ImportHint("Smaller copies for far away. Off: always full size.");
+                ImportHint("Applies in the editor view and OpenGL / software games.");
             }
             break;
         }
         case ImportModel: {
             ImGui::SetNextItemWidth(160);
             if (ImGui::DragFloat("Scale", &e.scale, 0.01f, 0.0001f, 10000.0f, "%.4f")) out.changed = true;
-            ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
+            ImportHint("Multiplies its size when you add it to a scene.");
             if (ImportCombo("Normals", e.normals, kImportNormalsNames, 3)) out.changed = true;
             if (e.normals == 1) {
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::DragFloat("Smoothing angle", &e.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg")) out.changed = true;
-                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
+                ImportHint("Sharper edges stay hard. Not for rigged parts.");
             } else if (e.normals == 2) {
-                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
+                ImportHint("Each face shaded alone. Not for rigged parts.");
             }
             if (ImGui::Checkbox("Import animations", &e.importAnimations)) out.changed = true;
-            ImGui::TextDisabled("Off: no clips, rest pose.");
-            ImGui::TextDisabled("Used when the model is next added to a scene.");
+            ImportHint("Off: no clips, rest pose.");
+            ImportHint("Used when the model is next added to a scene.");
             break;
         }
         case ImportAudio: {
             if (ImportCombo("Loading", e.loadMode, kImportLoadNames, 2)) out.changed = true;
-            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            ImportHint("Read while it plays keeps a long file in a small fixed amount of memory.");
             if (ImGui::Checkbox("Mix down to one channel", &e.forceMono)) out.changed = true;
-            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-            ImGui::TextDisabled("Used the next time the file is loaded.");
+            ImportHint("Left and right become a single channel. Off keeps the recording as it is.");
+            ImportHint("Used the next time the file is loaded.");
             break;
         }
         default: return out;
@@ -625,9 +636,12 @@ PlayerSettingsIntent DrawPlayerSettingsBodyImGui(PlayerSettingsModel& m, const P
         if (ImGui::InputText("Version##ps", m.version, m.versionSize)) out.changed = true;
     }
     if (m.width && m.height) {
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Width##ps", m.width)) out.changed = true;
+        // Wide enough for five digits at any text size, and no -/+ buttons (a click types a number): at 110 px the buttons took
+        // the room and 1280 x 720 showed as "12" and "72" (#983). Same as the OkayUI port (OkayUIEditorPanels.cpp).
+        const float numW = ImGui::CalcTextSize("000000").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Width##ps", m.width, 0)) out.changed = true;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(110); if (ImGui::InputInt("Height##ps", m.height)) out.changed = true;
+        ImGui::SetNextItemWidth(numW); if (ImGui::InputInt("Height##ps", m.height, 0)) out.changed = true;
     }
     return out;
 }

@@ -516,8 +516,8 @@ void SetKeyboardFocusHere();
 /// The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
 /// ImGui lines up a small button with the text of a frame-tall row this way. Applies to one item.
 void CenterNextOnLine();
-/// An integer field with [-]/[+] stepper buttons that change *value by `step`.
-/// Returns true on any frame the value changed.
+/// An integer field with [-]/[+] stepper buttons that change *value by `step`; `step` 0 draws the field alone, no steppers
+/// (click it to type a number). Returns true on any frame the value changed.
 bool InputInt(const char* label, int* value, int step = 1);
 
 /// A collapsing section header. Returns true while expanded — put the section's

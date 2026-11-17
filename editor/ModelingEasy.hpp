@@ -60,17 +60,17 @@ inline const std::vector<Tool>& Tools() {
         {"bigger",    "Make bigger",  "Grow the model or the parts you picked.",          "Make a ball into a giant ball.",       Tab::Reshape, Needs::Model, "S"},
         {"turn",      "Turn",         "Spin the model or the parts you picked.",          "Tip a sign to the side.",              Tab::Reshape, Needs::Model, "R"},
         {"squash",    "Squash",       "Make the model flatter, like pressing it down.",   "Turn a ball into a pancake.",          Tab::Reshape, Needs::Model, ""},
-        {"smooth",    "Smooth it",    "Rounds off bumps so the model looks soft.",        "Make a rock look like a pebble.",      Tab::Reshape, Needs::Model, ""},
+        {"smooth",    "Smooth it",    "Evens out bumps without adding detail.",                 "Make a rock look like a pebble.",      Tab::Reshape, Needs::Model, ""},
         {"mirror",    "Copy to other side", "Makes a matching copy on the other side.",   "Draw one wing and get two.",           Tab::Reshape, Needs::Model, ""},
         // Details
         {"cut.half",  "Cut in half",  "Adds a cut across the middle of the model.",       "Add a row of faces for a belt.",       Tab::Details, Needs::Model, "Ctrl+R"},
         {"detail.add","Add detail",   "Splits every face into four small ones.",          "Gives you more faces to shape.",       Tab::Details, Needs::Model, ""},
-        {"round.it",  "Round it",     "Rounds the sharp edges and corners.",              "Make a box look like a soft pillow.",  Tab::Details, Needs::Model, ""},
+        {"round.it",  "Round all edges","Softens every sharp edge and corner of the whole model.", "Make a box look like a soft pillow.",  Tab::Details, Needs::Model, ""},
         {"hollow",    "Make hollow",  "Gives the model thick walls with an empty inside.", "Turn a ball into a bowl shell.",       Tab::Details, Needs::Model, ""},
         {"push.out",  "Push out",     "Pulls the faces you picked out of the model.",     "Pull a box out of a wall.",            Tab::Details, Needs::Faces, "E"},
         {"make.hole", "Make hole",    "Cuts a hole through the faces you picked.",        "Cut a window in a wall.",              Tab::Details, Needs::Faces, ""},
         {"delete.faces","Delete faces","Removes the faces you picked.",                   "Take the lid off a box.",              Tab::Details, Needs::Faces, "X"},
-        {"round.corners","Round corners","Rounds the corners you picked.",                "Soften the corner of a table.",        Tab::Details, Needs::Corners, ""},
+        {"round.corners","Round picked corners","Rounds only the corners you picked, nothing else.", "Soften one corner of a table.",        Tab::Details, Needs::Corners, ""},
         // Colour
         {"paint.faces","Paint faces", "Colours only the faces you picked.",               "Paint one wall red.",                  Tab::Colour, Needs::Faces, ""},
         {"paint.all", "Paint all",    "Colours the whole model.",                         "Make the whole car blue.",             Tab::Colour, Needs::Model, ""},
@@ -171,6 +171,22 @@ inline std::vector<std::string> QuickActions(const EditState& s) {
         return {"move", "bigger", "turn", "round.it"};
     }
     return {"bigger", "smooth", "mirror", "round.it", "hollow", "on.ground"};
+}
+
+/// Quick actions without the buttons the open tab already shows (so nothing appears twice on screen).
+inline std::vector<std::string> QuickActionsFor(const EditState& s, int openTab) {
+    std::vector<std::string> out;
+    for (const std::string& id : QuickActions(s)) { const Tool* t = FindTool(id); if (t && (int)t->tab != openTab) out.push_back(id); }
+    return out;
+}
+/// The "used lately" strip without anything the quick row or the open tab already shows.
+inline std::vector<std::string> RecentShown(const std::vector<std::string>& recent, const std::vector<std::string>& quick, int openTab) {
+    std::vector<std::string> out;
+    for (const std::string& id : recent) {
+        const Tool* t = FindTool(id);
+        if (t && (int)t->tab != openTab && std::find(quick.begin(), quick.end(), id) == quick.end()) out.push_back(id);
+    }
+    return out;
 }
 
 // ---- Last used tools (the strip of four) --------------------------------------------------------------------------------

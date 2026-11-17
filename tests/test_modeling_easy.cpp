@@ -81,6 +81,19 @@ int main() {
         CHECK(WhyNot(*FindTool(id), *e).empty());   // never offers something that is greyed out
     }
 
+    // Nothing shows twice: the quick row skips the open tab's buttons, the recent strip skips both.
+    {
+        EditState e; e.haveObject = true;
+        auto q = QuickActionsFor(e, (int)Tab::Reshape);
+        for (const std::string& id : q) CHECK(FindTool(id)->tab != Tab::Reshape);
+        CHECK(!q.empty() && q.size() < QuickActions(e).size());
+        CHECK(QuickActionsFor(e, (int)Tab::Shape) == QuickActions(e));
+        auto rs = RecentShown({"smooth", "hollow", "paint.all", "bogus"}, q, (int)Tab::Reshape);
+        for (const std::string& id : rs) CHECK(std::find(q.begin(), q.end(), id) == q.end() && FindTool(id)->tab != Tab::Reshape);
+        CHECK(std::find(rs.begin(), rs.end(), "paint.all") != rs.end());
+    }
+    // "Round all edges" (whole model) and "Round picked corners" cannot be mistaken for each other.
+    CHECK(std::string(FindTool("round.it")->name) == "Round all edges" && std::string(FindTool("round.corners")->name) == "Round picked corners");
     // Recent strip: newest first, no repeats, four at most, survives saving.
     std::vector<std::string> r;
     for (const char* id : {"smooth", "mirror", "hollow", "round.it", "smooth", "bigger"}) NoteRecent(r, id);

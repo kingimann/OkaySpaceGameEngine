@@ -116,7 +116,9 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
         const char* sw = "Show advanced tools";
         ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(sw).x - 40));
         ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 12));   // a bigger tick box: easy to find and to hit
         ImGui::Checkbox("Show advanced tools##easy", &showAdvanced);
+        ImGui::PopStyleVar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch to the full toolset for people who know 3D modeling.\nIt is remembered next time.");
     }
 
@@ -146,7 +148,7 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Stop picking parts and go back to the whole model.  Tab");
 
-        const std::vector<std::string> qa = QuickActions(h.state);   // O(1): reads a few numbers, six names at most
+        const std::vector<std::string> qa = QuickActionsFor(h.state, g_ui.tab);   // O(1): reads a few numbers, six names at most
         if (!qa.empty()) {
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Quick:"); ImGui::SameLine();
             for (const std::string& id : qa) {
@@ -154,9 +156,9 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
             }
             ImGui::NewLine();
         }
-        if (!g_ui.recent.empty()) {
+        const std::vector<std::string> rc = RecentShown(g_ui.recent, qa, g_ui.tab);   // a copy: RunTool changes the list
+        if (!rc.empty()) {
             ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Used lately:"); ImGui::SameLine();
-            const std::vector<std::string> rc = g_ui.recent;   // RunTool changes the list, so draw from a copy
             for (const std::string& id : rc) {
                 if (const Tool* t = FindTool(id)) { if (ToolBtn(h, *t, ImVec2(0, 30), "_r")) RunTool(h, *t); ImGui::SameLine(); }
             }
@@ -197,8 +199,10 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
             }
             if (tab == Tab::Reshape || tab == Tab::Details) {
                 ImGui::SetNextItemWidth(220);
+                ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 26.0f);   // a handle you can grab
                 ImGui::SliderFloat("How much##easy", &g_ui.strength, 0.1f, 1.0f, "%.2f");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Small = a little, big = a lot. Used by Squash, Smooth it, Round it and Round corners.");
+                ImGui::PopStyleVar();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Small = a little, big = a lot. Used by Squash, Smooth it, Round all edges and Round picked corners.");
             }
             if (tab == Tab::Colour) {
                 static const float sw[][3] = {{0.85f,0.2f,0.2f},{0.95f,0.55f,0.15f},{0.95f,0.85f,0.2f},{0.3f,0.7f,0.3f},{0.2f,0.6f,0.85f},{0.25f,0.3f,0.8f},

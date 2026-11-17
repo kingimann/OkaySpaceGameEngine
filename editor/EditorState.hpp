@@ -7,6 +7,7 @@
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Undo.hpp"
 #include "SceneUndo.hpp"
+#include "ObjectRef.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,8 +64,9 @@ public:
     /// added to a camera-less scene if it's still untouched.
     void AdoptCamera(Camera* cam);
     /// The "Main Camera" the editor added automatically because the scene had
-    /// none (null once it's gone or the user adds their own).
-    GameObject* autoCamera = nullptr;
+    /// none (empty once it's gone or the user adds their own). Held by GUID (ObjectRef), so a scene rebuilt by
+    /// undo / reload can never make another object at the same address count as the placeholder.
+    ObjectRef autoCamera;
     GameObject* CreateCube(const std::string& name = "Cube");
     GameObject* CreatePyramid(const std::string& name = "Pyramid");
     /// Create a GameObject with a MeshRenderer for any named primitive

@@ -868,16 +868,17 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             const char* badge = VsLevelBadge(e.level);
             const ImVec2 bs = ImGui::CalcTextSize(badge);
             const float bw = bs.x + 8.0f, bh = lh + 2.0f;
-            if (x + 8.0f + bw < right - starW - catW - 16.0f) {
+            if (x + 8.0f + bw < right - starW - 16.0f) {
                 const ImVec2 b0(x + 8.0f, textTop - 1.0f), b1(b0.x + bw, b0.y + bh);
                 const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
                                : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
                                : IM_COL32(52, 78, 120, 255);
                 rdl->AddRectFilled(b0, b1, bg, 3.0f);
                 rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
+                x = b1.x;
             }
         }
-        if (showCat && textX + 40.0f < right - starW - catW)
+        if (showCat && x + 24.0f < right - starW - catW - 8.0f)   // only when it does not touch the name or badge
             rdl->AddText(ImVec2(right - starW - catW - 8.0f, textTop), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
         // One line under the name: what it does in plain words (RowDescription), cut to fit.
         {
@@ -915,13 +916,15 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::TextDisabled("Up/Down choose   Enter add   Tab list or search   Left/Right topic   Esc close");
     if (toAdd) add(*toAdd);
     ImGui::PopStyleVar(3);
-    // Remember the size the popup was left at (once you stop dragging the edge).
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const ImVec2 ws = ImGui::GetWindowSize();
-        if (std::fabs(ws.x - store.size.w) > 1.5f || std::fabs(ws.y - store.size.h) > 1.5f) {
-            const bool first = store.size.w <= 0;
+    // Remember the size the popup was left at (once you stop dragging an edge). The first frames after it opens are
+    // skipped: the window is still settling to the size it was asked for.
+    static int s_framesOpen = 0;
+    if (ImGui::IsWindowAppearing()) s_framesOpen = 0; else ++s_framesOpen;
+    if (s_framesOpen > 4 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const ImVec2 ws = ImGui::GetWindowSize(), want = VsPaletteWantedSize(ImGui::GetMainViewport()->Size);
+        if (std::fabs(ws.x - want.x) > 1.5f || std::fabs(ws.y - want.y) > 1.5f) {   // only a size you chose is kept
             store.size = {ws.x, ws.y};
-            if (!first) saveLists();   // the very first frame just records what the default was
+            saveLists();
         }
     }
 }

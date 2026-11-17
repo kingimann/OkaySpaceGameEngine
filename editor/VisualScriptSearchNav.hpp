@@ -19,28 +19,31 @@ namespace okay::editor::vsed::searchnav {
 
 struct PanelSize { float w = 0, h = 0; bool bad = false; };
 
-constexpr float kScreenMargin = 24.0f;   // the popup never touches the edge of the screen
-constexpr float kMinW = 420.0f, kMinH = 320.0f;
+constexpr float kMaxFraction = 0.85f;                    // never more than 85% of the screen
+constexpr float kMinW = 640.0f, kMinH = 480.0f;          // never smaller than this (unless the screen is)
 
-/// Never bigger than the screen minus a margin; never smaller than a usable size (unless the screen itself is smaller).
+/// At most 85% of the screen, at least 640 x 480 (when the screen has that much room), always a real size.
 inline PanelSize ClampPanelSize(PanelSize want, float screenW, float screenH) {
-    const float maxW = std::max(160.0f, screenW - kScreenMargin);
-    const float maxH = std::max(120.0f, screenH - kScreenMargin);
+    const float maxW = std::max(200.0f, screenW * kMaxFraction), maxH = std::max(160.0f, screenH * kMaxFraction);
+    const float minW = std::min(kMinW, maxW), minH = std::min(kMinH, maxH);
     PanelSize r;
-    r.w = std::min(std::max(want.w, kMinW), maxW);
-    r.h = std::min(std::max(want.h, kMinH), maxH);
-    if (!(want.w > 0)) r.w = std::min(kMinW, maxW);
-    if (!(want.h > 0)) r.h = std::min(kMinH, maxH);
+    r.w = want.w > 0 ? std::min(std::max(want.w, minW), maxW) : minW;
+    r.h = want.h > 0 ? std::min(std::max(want.h, minH), maxH) : minH;
     return r;
 }
 
-/// The size a fresh editor opens at: about 560 x 520 at Comfortable (the default Density), a little smaller at Compact
-/// and bigger at Spacious, clamped to the screen.
+/// The size a fresh editor opens at: 880 x 780 at Comfortable (the default Density, room for 8 big rows), smaller at
+/// Compact and bigger at Spacious, clamped to the screen.
 inline PanelSize DefaultPanelSize(int density, float screenW, float screenH) {
-    PanelSize p{560.0f, 520.0f};
-    if (density <= 0) p = {520.0f, 480.0f};
-    else if (density >= 2) p = {640.0f, 580.0f};
+    PanelSize p{880.0f, 780.0f};
+    if (density <= 0) p = {760.0f, 640.0f};
+    else if (density >= 2) p = {1040.0f, 860.0f};
     return ClampPanelSize(p, screenW, screenH);
+}
+
+/// Dragging the corner grip: the size after the mouse moved by (dx, dy), kept inside the limits.
+inline PanelSize DragResize(PanelSize cur, float dx, float dy, float screenW, float screenH) {
+    return ClampPanelSize({cur.w + dx, cur.h + dy}, screenW, screenH);
 }
 
 /// "700x600" in the settings file. `bad` is set when the text is not two positive numbers.
@@ -59,11 +62,17 @@ inline std::string FormatPanelSize(PanelSize p) {
     return std::to_string((int)std::lround(p.w)) + "x" + std::to_string((int)std::lround(p.h));
 }
 
-/// The category list on the left: about a third of the panel, within limits, so the node rows keep the room.
-inline float CategoryPaneWidth(float panelW) { return std::min(240.0f, std::max(160.0f, std::floor(panelW * 0.34f))); }
+/// The topic list on the left (about a fifth of the panel) and the preview on the right (about a quarter), within limits,
+/// so the node rows keep the middle.
+inline float CategoryPaneWidth(float panelW) { return std::min(260.0f, std::max(180.0f, std::floor(panelW * 0.23f))); }
+inline float PreviewPaneWidth(float panelW) { return std::min(340.0f, std::max(220.0f, std::floor(panelW * 0.28f))); }
 
-/// One node row: the Density's row height, or two lines of text plus padding when that is taller (name, then description).
-inline float RowHeight(float densityRowH, float textH, float pad) { return std::max(densityRowH, 2.0f * textH + 2.0f * pad); }
+/// One node row: the Density's pin-row height plus 20, or three lines of text (name, two lines of description) plus padding
+/// when that is taller. About 64 to 72 px at the normal text size.
+inline float RowHeight(float densityRowH, float textH, float pad) { return std::max(densityRowH + 20.0f, 3.0f * textH + 2.0f * pad + 4.0f); }
+
+/// How many whole rows (each `stride` tall) fit a list `listH` tall.
+inline int RowsThatFit(float listH, float stride) { return stride > 0 ? (int)std::floor(listH / stride) : 0; }
 
 // ---- Selection and scrolling -----------------------------------------------------------------------------------------
 
@@ -166,6 +175,50 @@ inline std::string RowDescription(const std::string& title, const std::string& h
 template <class Measure>
 inline std::string ElideDescription(const std::string& text, Measure measure, float maxW) {
     return oked::scriptui::ElideToWidth(text, maxW, std::function<float(const std::string&)>(measure));
+}
+
+/// Break `text` into at most `maxLines` lines no wider than `maxW`, at spaces. Only when the text runs out of lines is the
+/// last one cut with "..." (a single word wider than the line is cut too). Empty text gives no lines.
+template <class Measure>
+inline std::vector<std::string> WrapLines(const std::string& text, Measure measure, float maxW, int maxLines) {
+    std::vector<std::string> lines;
+    if (text.empty() || maxLines <= 0) return lines;
+    const std::function<float(const std::string&)> m(measure);
+    std::vector<std::string> words;
+    for (std::size_t i = 0; i < text.size();) {
+        while (i < text.size() && text[i] == ' ') ++i;
+        std::size_t j = i;
+        while (j < text.size() && text[j] != ' ') ++j;
+        if (j > i) words.push_back(text.substr(i, j - i));
+        i = j;
+    }
+    std::string cur;
+    for (std::size_t w = 0; w < words.size(); ++w) {
+        const std::string cand = cur.empty() ? words[w] : cur + " " + words[w];
+        if (cur.empty() || m(cand) <= maxW) { cur = cand; continue; }
+        if ((int)lines.size() + 1 >= maxLines) {   // this is the last line: it takes all that is left
+            std::string rest = cur;
+            for (std::size_t k = w; k < words.size(); ++k) rest += " " + words[k];
+            lines.push_back(oked::scriptui::ElideToWidth(rest, maxW, m));
+            return lines;
+        }
+        lines.push_back(cur); cur = words[w];
+    }
+    if (!cur.empty()) lines.push_back(oked::scriptui::ElideToWidth(cur, maxW, m));
+    return lines;
+}
+
+/// "A, B" for a list of pin names (empty names skipped); "nothing" when there are none.
+inline std::string NameList(const std::vector<std::string>& names) {
+    std::string out;
+    for (const auto& n : names) if (!n.empty()) { if (!out.empty()) out += ", "; out += n; }
+    return out.empty() ? std::string("nothing") : out;
+}
+/// One plain sentence on how a node plugs in: an event starts a flow, an action runs when the flow reaches it, the rest give values.
+inline std::string HowItPlugsIn(bool hasFlowIn, bool hasFlowOut, bool hasDataIn) {
+    if (!hasFlowIn && hasFlowOut && !hasDataIn) return "An event: it starts a flow when it happens.";
+    if (hasFlowIn) return "A step: it runs when the flow reaches it.";
+    return "A value: it gives something to other nodes.";
 }
 
 /// Number of single-letter edits (insert, delete, change) between two strings.

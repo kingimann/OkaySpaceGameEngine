@@ -10,35 +10,50 @@ using namespace okay::editor::vsed::searchnav;
 int main() {
     RUN_SUITE("vs_search_nav");
 
-    {   // Default size: about 560x520 at Comfortable, growing with the density, never bigger than the screen.
+    {   // Default size: 880 x 780 at Comfortable (room for 8 big rows), bigger at Spacious, smaller at Compact, clamped to 85% of the screen.
         const PanelSize c = DefaultPanelSize(1, 1920, 1080);
-        CHECK(c.w == 560 && c.h == 520);
-        CHECK(DefaultPanelSize(0, 1920, 1080).w < c.w);
-        CHECK(DefaultPanelSize(2, 1920, 1080).w > c.w);
-        const PanelSize small = DefaultPanelSize(1, 400, 300);
-        CHECK(small.w <= 400 - 24 && small.h <= 300 - 24);
-        CHECK(small.w > 0 && small.h > 0);
+        CHECK(c.w == 880 && c.h == 780);
+        CHECK(DefaultPanelSize(0, 1920, 1080).w < c.w && DefaultPanelSize(0, 1920, 1080).h < c.h);
+        CHECK(DefaultPanelSize(2, 1920, 1080).w > c.w && DefaultPanelSize(2, 1920, 1080).h > c.h);
+        const PanelSize hd = DefaultPanelSize(1, 1280, 720);
+        CHECK(hd.w <= 1280 * 0.85f + 0.5f && hd.h <= 720 * 0.85f + 0.5f && hd.h >= 480);
+        const PanelSize tiny = DefaultPanelSize(1, 400, 300);
+        CHECK(tiny.w <= 400 * 0.85f + 0.5f && tiny.h <= 300 * 0.85f + 0.5f && tiny.w > 0 && tiny.h > 0);
     }
     {   // A remembered size is kept when it fits, pulled in when the screen is smaller, and never tiny.
-        PanelSize r = ClampPanelSize({700, 600}, 1920, 1080);
-        CHECK(r.w == 700 && r.h == 600);
+        PanelSize r = ClampPanelSize({900, 700}, 1920, 1080);
+        CHECK(r.w == 900 && r.h == 700);
         r = ClampPanelSize({3000, 3000}, 1000, 800);
-        CHECK(r.w <= 1000 - 24 && r.h <= 800 - 24);
+        CHECK(r.w <= 850.5f && r.h <= 680.5f);
         r = ClampPanelSize({10, 10}, 1920, 1080);
-        CHECK(r.w >= 420 && r.h >= 320);
+        CHECK(r.w == 640 && r.h == 480);
         r = ClampPanelSize({0, -5}, 1920, 1080);
-        CHECK(r.w >= 420 && r.h >= 320);
+        CHECK(r.w == 640 && r.h == 480);
+        // Dragging the corner grows and shrinks inside the limits.
+        r = DragResize({880, 720}, 40, -30, 1920, 1080);
+        CHECK(r.w == 920 && r.h == 690);
+        r = DragResize({880, 720}, -900, -900, 1920, 1080);
+        CHECK(r.w == 640 && r.h == 480);
+        r = DragResize({880, 720}, 5000, 5000, 1920, 1080);
+        CHECK(r.w <= 1920 * 0.85f + 0.5f && r.h <= 1080 * 0.85f + 0.5f);
         CHECK(!ParsePanelSize("700x600").bad && ParsePanelSize("700x600").w == 700 && ParsePanelSize("700x600").h == 600);
         CHECK(ParsePanelSize("junk").bad && ParsePanelSize("5x").bad && ParsePanelSize("").bad);
         CHECK(FormatPanelSize({701.4f, 600.6f}) == "701x601");
     }
-    {   // Categories get about a third of the width, within sane limits.
-        CHECK(CategoryPaneWidth(560) >= 160 && CategoryPaneWidth(560) <= 240);
-        CHECK(CategoryPaneWidth(300) == 160 && CategoryPaneWidth(2000) == 240);
+    {   // Side panes: topics about a fifth, preview about a quarter, so the node rows keep the middle.
+        CHECK(CategoryPaneWidth(880) >= 180 && CategoryPaneWidth(880) <= 260);
+        CHECK(PreviewPaneWidth(880) >= 220 && PreviewPaneWidth(880) <= 340);
+        CHECK(CategoryPaneWidth(300) == 180 && CategoryPaneWidth(3000) == 260 && PreviewPaneWidth(300) == 220 && PreviewPaneWidth(3000) == 340);
+        CHECK(880 - CategoryPaneWidth(880) - PreviewPaneWidth(880) >= 400);
     }
-    {   // Row height: the density's row height, or two lines of text when that is taller.
-        CHECK(RowHeight(44.0f, 16.0f, 8.0f) == 48.0f);   // 2 lines (32) + 2*8 beats 44
-        CHECK(RowHeight(60.0f, 16.0f, 8.0f) == 60.0f);
+    {   // Row height: about 64 at the default, taller when three text lines need it; 8 rows fit the default panel.
+        CHECK(RowHeight(44.0f, 12.0f, 8.0f) == 64.0f);
+        CHECK(RowHeight(44.0f, 17.0f, 8.0f) == 71.0f);
+        CHECK(RowHeight(50.0f, 12.0f, 8.0f) == 70.0f);
+        CHECK(RowsThatFit(500.0f, 75.0f) == 6 && RowsThatFit(600.0f, 75.0f) == 8 && RowsThatFit(100.0f, 0.0f) == 0);
+        const float stride = RowHeight(44.0f, 17.0f, 8.0f) + 4.0f;   // row plus the gap between rows
+        const PanelSize c = DefaultPanelSize(1, 1920, 1080);
+        CHECK(RowsThatFit(c.h - 180.0f, stride) >= 8);               // 180 = search, level buttons, footer, padding
     }
     {   // Selection movement.
         const int n = 20, page = 6;
@@ -131,6 +146,25 @@ int main() {
         CHECK(ElideDescription("short", measure, 200.0f) == "short");
         const std::string cut = ElideDescription("a much longer description here", measure, 100.0f);
         CHECK(cut.size() <= 10 && cut.size() >= 4 && cut.substr(cut.size() - 3) == "...");
+    }
+    {   // Wrapping a description into two lines: no "..." unless the text really runs out.
+        auto measure = [](const std::string& t) { return 10.0f * (float)t.size(); };
+        auto l = WrapLines("Runs once when the object is created", measure, 200.0f, 2);   // 36 chars, 20 per line
+        CHECK(l.size() == 2 && l[0] == "Runs once when the" && l[1] == "object is created");
+        CHECK(l[1].find("...") == std::string::npos);
+        l = WrapLines("short", measure, 200.0f, 2);
+        CHECK(l.size() == 1 && l[0] == "short");
+        l = WrapLines("one two three four five six seven eight nine ten", measure, 200.0f, 2);
+        CHECK(l.size() == 2 && l[1].size() >= 3 && l[1].substr(l[1].size() - 3) == "...");
+        CHECK(WrapLines("", measure, 200.0f, 2).empty() && WrapLines("x", measure, 200.0f, 0).empty());
+        l = WrapLines("Supercalifragilisticexpialidocious", measure, 100.0f, 2);
+        CHECK(l.size() == 1 && measure(l[0]) <= 100.0f);
+    }
+    {   // The plain-words lines of the preview.
+        CHECK(NameList({"A", "B"}) == "A, B" && NameList({}) == "nothing" && NameList({"", "X"}) == "X");
+        CHECK(HowItPlugsIn(false, true, false).find("event") != std::string::npos);
+        CHECK(HowItPlugsIn(true, true, true).find("step") != std::string::npos);
+        CHECK(HowItPlugsIn(false, false, true).find("value") != std::string::npos);
     }
     TEST_MAIN_RESULT();
 }

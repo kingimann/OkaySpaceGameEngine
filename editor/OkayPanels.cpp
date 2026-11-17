@@ -23,8 +23,12 @@ template <class Draw>
 bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
     const ImGuiWindow* cw = ImGui::FindWindowByName(title);
     if (cw && okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;
+    if (okayuihost::OutsideMainWindow(cw)) return false;
+    // The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to its content (the Dear
+    // ImGui versions are fitted): without a size of its own it would open as a tiny empty window.
+    ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton(itemId, a);               // an ImGui item, so ImGui does not move or scroll the window under it
@@ -46,12 +50,28 @@ template <class Draw>
 bool HostSection(const char* itemId, Draw draw) {
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (!win || okayuihost::PopupCoversRect(win->Pos.x, win->Pos.y, win->Size.x, win->Size.y)) return false;
-    float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), 300.0f);
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f), h = std::max(*height, 8.0f);
+    if (okayuihost::OutsideMainWindow(win)) return false;
+    float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
+    const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
+    const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    if (*height < 0.0f) {
+        // The first frame: draw the body into an empty clip only to learn its height, and place a placeholder that tall. A new
+        // window fits itself to this frame's content (with a guessed height Project Settings opened far too tall, and so in its own
+        // OS window, where OkayUI cannot draw). The body shows from the next frame.
+        OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
+        OkayUI::PushClipRect(p.x, p.y, 0.0f, 0.0f);
+        const SectionDrawn d = draw(p.x, p.y, w, 20000.0f);
+        OkayUI::PopClipRect();
+        OkayUI::PopTextScale();
+        *height = (d.height > 1.0f && std::isfinite(d.height)) ? std::min(d.height, 20000.0f) : 300.0f;
+        ImGui::InvisibleButton(itemId, ImVec2(w, std::max(*height, 8.0f)));
+        return true;
+    }
+    const float h = std::max(*height, 8.0f);
     ImGui::InvisibleButton(itemId, ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-    const ImRect clip = win->InnerClipRect;
+    const ImVec2 c0 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Min), c1 = okayuihost::ToMainWindowPixels(win->InnerClipRect.Max);
+    const ImRect clip(c0, c1);
     const float x0 = std::max(p.x, clip.Min.x), y0 = std::max(p.y, clip.Min.y);
     const float x1 = std::min(p.x + w, clip.Max.x), y1 = std::min(p.y + h, clip.Max.y);
     if (x1 <= x0 || y1 <= y0) return true;            // scrolled out of view: the space stays, nothing is drawn

@@ -50306,7 +50306,13 @@ int main(int argc, char** argv) {
         // stopped/paused so editor keyboard nav still works.
         // Same in mesh edit mode: Enter confirms a G / R / S transform there, and
         // must not also press whichever button last had focus.
-        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj))
+        // And while a hosted OkayUI field has the keyboard: Space would press the ImGui item that last had nav focus, which holds
+        // ImGui's active item for a frame and keeps the next typed letter from the field.
+        bool okayTyping = false;
+#ifdef OKAY_HAVE_OKAYUI
+        okayTyping = UseOkayUIBackend() && OkayUI::WantsTextInput();
+#endif
+        if ((ed.isPlaying() && !g_paused) || (g_meshEdit && g_meshEditObj) || okayTyping)
             ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

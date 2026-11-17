@@ -146,7 +146,7 @@ void DrawConsoleOkayUI(const char* title) {
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
     if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton("##okayui_console", a);   // the rectangle: an ImGui item, so ImGui does not move or scroll the window under it

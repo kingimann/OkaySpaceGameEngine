@@ -24,6 +24,26 @@ int main() {
         auto br = PlaceOverlay(canvas, sz, Corner::BottomRight, 8, {});
         CHECK_NEAR(br.rect.x1, 792, 1e-4); CHECK_NEAR(br.rect.y1, 592, 1e-4);
     }
+    {   // The stats line keeps off the scene's own UI text: an example's instruction text at the top left sent it
+        // to the bottom left (it used to be drawn straight over the instructions).
+        const Pt line{260, 22};
+        const Rc top = PlaceStatsLine(canvas, line, 4, 3, 6, {});
+        CHECK_NEAR(top.x0, 4, 1e-4); CHECK_NEAR(top.y0, 3, 1e-4);                        // nothing there: top left
+        const Rc instructions = MakeRc(18, 16, 420, 110);
+        const Rc moved = PlaceStatsLine(canvas, line, 4, 3, 6, {instructions});
+        CHECK_NEAR(moved.x0, 4, 1e-4); CHECK_NEAR(moved.y1, 594, 1e-4);                  // bottom left
+        CHECK(!Overlaps(moved, instructions));
+        const Rc fullScreen = MakeRc(0, 0, 800, 600);                                    // a panel over everything: no better spot
+        const Rc stay = PlaceStatsLine(canvas, line, 4, 3, 6, {fullScreen});
+        CHECK_NEAR(stay.y0, 3, 1e-4);
+        const Rc footer = MakeRc(0, 560, 800, 40);                                       // text at both corners: the one covered less
+        const Rc less = PlaceStatsLine(canvas, line, 4, 3, 6, {instructions, footer});
+        CHECK_NEAR(less.y0, 3, 1e-4);                                                    // the footer covers all of the bottom spot
+        const Rc tiny = PlaceStatsLine(MakeRc(0, 0, 400, 40), line, 4, 3, 6, {instructions});   // too short for a second spot
+        CHECK_NEAR(tiny.y0, 3, 1e-4);
+        const Rc unrelated = MakeRc(500, 300, 100, 50);                                  // UI elsewhere does not move it
+        CHECK_NEAR(PlaceStatsLine(canvas, line, 4, 3, 6, {unrelated}).y0, 3, 1e-4);
+    }
     {   // The stats line at the top left: the camera readout steps below it (the reported collision).
         const Rc statsLine = MakeRc(8, 6, 300, 18);
         auto p = PlaceOverlay(canvas, Pt{188, 100}, Corner::TopLeft, 8, {statsLine});

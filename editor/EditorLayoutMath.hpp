@@ -3,7 +3,7 @@
 // (tests/test_editor_layout.cpp). The drawing code in main.cpp only measures text, asks
 // these functions where things go, and draws the answer.
 //   - Overlay anchoring: the Scene view's camera readout sits in a corner and steps clear
-//     of the top-left stats line (PlaceOverlay)
+//     of the top-left stats line (PlaceOverlay); the stats line keeps off the scene's own UI text (PlaceStatsLine)
 //   - Label placement: the selected object's name, camera / light names and gizmo hints
 //     are placed so they do not sit on each other, and fade when the view is crowded
 //   - Density metrics: Compact / Comfortable spacing for the Inspector, and the width the
@@ -90,6 +90,20 @@ inline OverlayPlacement PlaceOverlay(const Rc& canvas, Pt size, Corner corner, f
     for (const Rc& a : avoid) if (Overlaps(r, a)) out.visible = false;
     out.rect = r;
     return out;
+}
+
+/// Where the Scene view's stats line ("3D | 5 objects | 25 FPS") goes. It sits at the top left (`x`, `topY` in from
+/// the canvas edges) unless that covers something the scene itself draws there (`content`: the screen-space UI text
+/// and panels, such as an example's instruction text, which it used to be drawn straight over). Then it moves to the
+/// bottom left (`bottomGap` in from the bottom), if that covers less. When both cover the same amount (a full-screen
+/// panel, or nothing at all) it stays at the top.
+inline Rc PlaceStatsLine(const Rc& canvas, Pt size, float x, float topY, float bottomGap, const std::vector<Rc>& content) {
+    const Rc top = MakeRc(canvas.x0 + x, canvas.y0 + topY, size.x, size.y);
+    const Rc low = MakeRc(canvas.x0 + x, canvas.y1 - bottomGap - size.y, size.x, size.y);
+    float aTop = 0.0f, aLow = 0.0f;
+    for (const Rc& c : content) { aTop += OverlapArea(top, c); aLow += OverlapArea(low, c); }
+    if (aTop <= 0.0f || low.y0 < top.y1) return top;   // clear, or the view is too short for a second spot
+    return aLow < aTop ? low : top;
 }
 
 // ---- Label placement -----------------------------------------------------------------------------

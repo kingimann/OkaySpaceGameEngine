@@ -305,6 +305,9 @@ struct LayoutState {
     float contentW = 0;             // usable content width
     float spacingX = 8.0f, spacingY = 6.0f;
     float prevX = 0, prevY = 0, prevW = 0, prevH = 0;   // last placed item
+    // a text centred on the taller item before it on its line (textLine) keeps the line's top here: the next SameLine item starts at
+    // the line's top as in Dear ImGui, not at the text's lowered top (a drag after a labelled drag sat 8 px low, section 19)
+    bool hasLineTop = false; float lineTopY = 0;
     bool  pendingSameLine = false;
     float sameLineSpacing = -1.0f;
     float indent = 0.0f;            // TreeNode indentation of the content's left edge
@@ -611,7 +614,7 @@ void place(float w, float h, float& x, float& y) {
     } else if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         x = g_lay.prevX + g_lay.prevW + sp;
-        y = g_lay.prevY;
+        y = g_lay.hasLineTop && !g_centerNext ? g_lay.lineTopY : g_lay.prevY;   // one centred on the item before it: on that item
         g_lay.pendingSameLine = false;
         g_lay.sameLineSpacing = -1.0f;
         sameLine = true;
@@ -621,7 +624,7 @@ void place(float w, float h, float& x, float& y) {
     }
     if (g_centerNext && sameLine && lineH > h) y += (lineH - h) * 0.5f;   // CenterNextOnLine
     g_centerNext = false;
-    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h; g_lay.hasLineTop = false;
     if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
     groupAdd(x, y, w, h);
     g_lastId = 0;   // the widget that follows registers its own id
@@ -2703,8 +2706,12 @@ void textLine(const char* s, const unsigned char* col) {
     const float h = g_textRowH > 0.0f ? g_textRowH : rowH();
     const bool after = g_lay.pendingSameLine && !g_posOverride;
     const float prevH = g_lay.prevH;
+    const bool onText = after && g_lay.hasLineTop;   // after a centred text: on that text's line (one baseline), the line's top kept
+    const float top = g_lay.lineTopY;
+    g_lay.hasLineTop = false;
     float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
-    if (after && prevH > h) { y += (prevH - h) * 0.5f; g_lay.prevY = y; }   // centred on the taller item before it on this line
+    if (onText) { g_lay.hasLineTop = true; g_lay.lineTopY = top; }
+    else if (after && prevH > h) { g_lay.hasLineTop = true; g_lay.lineTopY = y; y += (prevH - h) * 0.5f; g_lay.prevY = y; }   // centred on the taller item before it on this line
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
@@ -2797,6 +2804,7 @@ void BeginGroup() {
 void EndGroup() {
     if (!g_lay.active || g_grpTop <= 0) return;
     const GroupBox g = g_grp[--g_grpTop];
+    g_lay.hasLineTop = false;
     if (g.any) {
         g_lay.prevX = g.x0; g_lay.prevY = g.y0; g_lay.prevW = g.x1 - g.x0; g_lay.prevH = g.y1 - g.y0;
     } else {   // an empty group is a zero-size item at the cursor
@@ -2902,6 +2910,7 @@ bool Button(const char* label, Vec2 size) {
 bool SmallButton(const char* label) {
     if (!g_lay.active) return false;
     const float w = labelW(VisLabel(label).b) + 12.0f, h = textH() + 6.0f;   // tight padding
+    g_lay.hasLineTop = false;   // a small button sits on the text line it follows (Dear ImGui aligns it to the text's baseline)
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -5988,12 +5997,12 @@ float GetFrameHeightWithSpacing() { return rowH() + g_lay.spacingY; }
 Vec2 GetCursorScreenPos() {
     if (!g_lay.active) return Vec2{};
     if (g_posOverride) return Vec2{ g_posX, g_posY };
-    return g_lay.pendingSameLine ? Vec2{ cursorX(), g_lay.prevY } : Vec2{ leftEdge(), g_lay.cy };
+    return g_lay.pendingSameLine ? Vec2{ cursorX(), g_lay.hasLineTop ? g_lay.lineTopY : g_lay.prevY } : Vec2{ leftEdge(), g_lay.cy };
 }
 void SetCursorScreenPos(Vec2 p) {
     if (!g_lay.active || !finite2(p)) return;
     // SameLine then SetCursorPosX (Dear ImGui's SameLine(offset)): still the same line, so the next line still starts below its tallest item.
-    const bool onLine = g_lay.pendingSameLine && p.y == g_lay.prevY;
+    const bool onLine = g_lay.pendingSameLine && (p.y == g_lay.prevY || (g_lay.hasLineTop && p.y == g_lay.lineTopY));
     g_lay.pendingSameLine = false;
     g_lay.cx = p.x; if (!onLine) g_lay.cy = p.y;
     g_posOverride = true; g_posX = p.x; g_posY = p.y; g_posSameLine = onLine;

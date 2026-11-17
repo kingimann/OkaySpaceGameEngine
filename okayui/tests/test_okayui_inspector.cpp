@@ -1067,5 +1067,49 @@ int main() {
         CHECK(p.R("Toggle Key##pv").w > 90.0f && p.R("Toggle Key##pv").w < 200.0f);
     }
 
+    // ================= stage 6 (section 19): Item Pickup, Hold Prompt, Water, Flashlight, Pause Menu, Hand, Voxel Digger and Terrain =================
+    {   // a long closed combo text is cut before the arrow with "..." (whole characters only)
+        const auto m = [](const std::string& t) { return 7.0f * (float)t.size(); };
+        CHECK(P::InspFitText("Bool false", 100.0f, m) == "Bool false");
+        const std::string cut = P::InspFitText("CrouchWalk", 50.0f, m);
+        CHECK(cut == "Crou..." && m(cut) <= 50.0f);
+        CHECK(P::InspFitText("\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9", 40.0f, [](const std::string& t) { return 7.0f * (float)t.size(); }) == "\xC3\xA9...");
+    }
+    {   // Item Pickup: the unknown item's id is fitted into the 160-wide box; a pick sets the item; the notes wrap inside the body
+        BRig r(inspbody::BodyItemPickup, 460.0f, 900.0f);
+        r.Frames(3);
+        Check("inspector_itempickup", r.Draw());
+        const UI::Rect it = r.R("Item##pk");
+        CHECK(it.w > 0.0f && it.x + it.w <= 16.0f + 428.0f + 0.5f);
+        r.Click(it.x + 40.0f, CY(it));
+        CHECK(r.res.listRows.size() == 4);
+        r.Click(r.res.listRows[1]);
+        CHECK(r.v.ipItem == 1);
+        for (std::size_t k = 0; k < r.res.rows.size(); ++k) CHECK(r.res.rows[k].x + r.res.rows[k].w <= 16.0f + 428.0f + 0.5f);
+    }
+    {   // the Voxel Terrain's Seed is a whole-number field: typed in, kept whole; the material rows wrap and run out nowhere
+        BRig r(inspbody::BodyVoxelTerrain, 460.0f, 2400.0f);
+        r.Frames(3);
+        Check("inspector_voxelterrain", r.Draw());
+        const UI::Rect sd = r.R("Seed##vox");
+        r.Click(sd.x + 30.0f, CY(sd));
+        r.sim.Press(Key_SelectAll); r.Frame();
+        r.sim.Type("77"); r.Frame(); r.sim.Press(Key_Enter); r.Frame(); r.Frame();
+        CHECK(r.v.vtSeed == 77);
+        for (std::size_t k = 0; k < r.res.rows.size(); ++k) CHECK(r.res.rows[k].x + r.res.rows[k].w <= 16.0f + 428.0f + 0.5f);
+    }
+    {   // the others are drawn and run out nowhere either
+        for (inspbody::Body b : {inspbody::BodyHoldPrompt, inspbody::BodyWater, inspbody::BodyFlashlight, inspbody::BodyPauseMenu, inspbody::BodyFpHand,
+                                 inspbody::BodyVoxelDigger}) {
+            BRig r(b, 460.0f, 1600.0f);
+            r.Frames(3);
+            CHECK(r.res.contentHeight > 80.0f);
+            for (std::size_t k = 0; k < r.res.rows.size(); ++k) CHECK(r.res.rows[k].x + r.res.rows[k].w <= 16.0f + 428.0f + 0.5f);
+        }
+        BRig d(inspbody::BodyVoxelDigger, 460.0f, 1600.0f);
+        d.Frames(3);
+        Check("inspector_voxeldigger", d.Draw());
+    }
+
     TEST_MAIN_RESULT();
 }

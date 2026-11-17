@@ -39,6 +39,7 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <poll.h>
+#include <csignal>
 #endif
 
 namespace fs = std::filesystem;
@@ -552,19 +553,30 @@ static vector<string> parseDepfile(const string& path) {
 // ---------------------------------------------------------------- state
 struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs, produced; };
 static std::map<string, Rec> gState;
+static std::atomic<int> gCancel{0};
+#ifdef _WIN32
+static BOOL WINAPI onCtrl(DWORD) { gCancel.store(1); return TRUE; }
+#else
+static void onInt(int) { gCancel.store(1); }
+#endif
 static string statePath() { return under(".okaybuild/state"); }
+static string journalPath() { return under(".okaybuild/state.journal"); }
+static void ingestStateLine(const string& l, Rec*& cur) {
+    const char* p = l.c_str(); const char* e = p + l.size(); const char* fld[6]; int n = 0; fld[n++] = p;
+    for (const char* q = p; q < e && n < 6; ++q) if (*q == '\t') fld[n++] = q + 1;
+    auto len = [&](int i) { return (size_t)((i + 1 < n ? fld[i + 1] - 1 : e) - fld[i]); };
+    if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}, {}});
+    else if (n == 6 && (l[0] == 'I' || l[0] == 'P') && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
+                                               string path(fld[1], len(1)); (l[0] == 'I' ? cur->inputs : cur->produced).push_back({path, s}); if (l[0] == 'I') gPrev[path] = s; }
+}
 static void loadState() {
-    std::ifstream f(statePath(), std::ios::binary); string l; Rec* cur = nullptr;
-    if (!std::getline(f, l) || (l != "okaybuild-state 3" && l != "okaybuild-state 4")) return; // unknown/missing: rebuild everything
-    gPrev.reserve(4096);
-    while (std::getline(f, l)) {
-        const char* p = l.c_str(); const char* e = p + l.size(); const char* fld[6]; int n = 0; fld[n++] = p;
-        for (const char* q = p; q < e && n < 6; ++q) if (*q == '\t') fld[n++] = q + 1;
-        auto len = [&](int i) { return (size_t)((i + 1 < n ? fld[i + 1] - 1 : e) - fld[i]); };
-        if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}, {}});
-        else if (n == 6 && (l[0] == 'I' || l[0] == 'P') && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
-                                                   string path(fld[1], len(1)); (l[0] == 'I' ? cur->inputs : cur->produced).push_back({path, s}); if (l[0] == 'I') gPrev[path] = s; }
-    }
+    gPrev.reserve(4096); string l; Rec* cur = nullptr;
+    std::ifstream f(statePath(), std::ios::binary);
+    if (std::getline(f, l) && (l == "okaybuild-state 3" || l == "okaybuild-state 4"))
+        while (std::getline(f, l)) ingestStateLine(l, cur);
+    // A killed build leaves finished steps here. They are folded in on the next start.
+    std::ifstream j(journalPath(), std::ios::binary); cur = nullptr;
+    while (std::getline(j, l)) ingestStateLine(l, cur);
 }
 static void saveState() {
     fs::create_directories(under(".okaybuild")); string tmp = statePath() + ".tmp";
@@ -575,6 +587,16 @@ static void saveState() {
           for (auto& [p, s] : r.produced) f << "P\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
       } }
     fs::rename(tmp, statePath());
+    std::error_code ec; fs::remove(journalPath(), ec);
+}
+static void appendJournal(const string& output) {
+    OK_LOCK(l, gStateMu);
+    auto it = gState.find(output); if (it == gState.end()) return;
+    fs::create_directories(under(".okaybuild"));
+    std::ofstream f(journalPath(), std::ios::app);
+    f << "O\t" << output << "\t" << it->second.cmd << "\n";
+    for (auto& [p, s] : it->second.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
+    for (auto& [p, s] : it->second.produced) f << "P\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n";
 }
 
 static bool fileMissing(const string& p) {
@@ -705,6 +727,7 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     if (!spawnLive(winJoin(argv), "", stream, L, err)) { out += err; return 127; }
     for (;;) {
         drainLive(L);
+        if (gCancel.load()) { TerminateProcess(L.proc, 130); WaitForSingleObject(L.proc, 1000); break; }
         if (WaitForSingleObject(L.proc, 20) == WAIT_OBJECT_0) break;
     }
     drainLive(L);
@@ -737,7 +760,11 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
             dest.append(b, n);
         }
     };
-    for (;;) { drain(orr, out); drain(errr, err); if (WaitForSingleObject(pi.hProcess, 20) == WAIT_OBJECT_0) break; }
+    for (;;) {
+        drain(orr, out); drain(errr, err);
+        if (gCancel.load()) { TerminateProcess(pi.hProcess, 130); WaitForSingleObject(pi.hProcess, 1000); CloseHandle(pi.hProcess); CloseHandle(orr); CloseHandle(errr); return 130; }
+        if (WaitForSingleObject(pi.hProcess, 20) == WAIT_OBJECT_0) break;
+    }
     drain(orr, out); drain(errr, err);
     DWORD code = 1; GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess); CloseHandle(orr); CloseHandle(errr);
@@ -745,8 +772,13 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
 }
 #else
 static int waitChild(pid_t pid) {
-    int st = 0; while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) return 128; }
-    return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+    for (;;) {
+        int st = 0; pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid) return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+        if (r < 0 && errno != EINTR) return 128;
+        if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); waitpid(pid, &st, 0); return 130; }
+        struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 20000000; nanosleep(&ts, nullptr);
+    }
 }
 static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
     auto child = [&]() {
@@ -754,14 +786,24 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
     };
     if (stream) { // console pool: the command owns the terminal, one at a time
-        pid_t pid = fork(); if (pid < 0) return 127; if (pid == 0) child(); return waitChild(pid);
+        pid_t pid = fork(); if (pid < 0) return 127;
+        if (pid == 0) { setpgid(0, 0); child(); }
+        setpgid(pid, pid); return waitChild(pid);
     }
     int fd[2]; if (pipe(fd)) return 127;
     pid_t pid = fork();
     if (pid < 0) { close(fd[0]); close(fd[1]); return 127; }
-    if (pid == 0) { dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
-    close(fd[1]); char b[4096]; ssize_t n; while ((n = read(fd[0], b, sizeof b)) > 0) out.append(b, (size_t)n);
-    close(fd[0]); return waitChild(pid);
+    if (pid == 0) { setpgid(0, 0); dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
+    setpgid(pid, pid);
+    close(fd[1]); fcntl(fd[0], F_SETFL, O_NONBLOCK);
+    for (;;) {
+        pollfd pf{}; pf.fd = fd[0]; pf.events = POLLIN; poll(&pf, 1, 20);
+        for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
+        int st = 0; pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid) { close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; }
+        if (r < 0 && errno != EINTR) { close(fd[0]); return 128; }
+        if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); return 130; }
+    }
 }
 static int captureStdout(const vector<string>& argv, string& out, string& err) {
     int op[2], ep[2];
@@ -889,6 +931,7 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
     if (ok) { OK_LOCK(l, gStateMu); gState[a.output] = rec; }
     else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
     gNsPost += nowNs() - ts;
+    if (ok && !a.output.empty()) appendJournal(a.output);
 }
 static void printCache() {
     int h = gCacheHit.load(), m = gCacheMiss.load();
@@ -1208,7 +1251,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     };
     vector<Live> live;
     for (;;) {
-        while ((int)live.size() < jobs && !stop) {
+        while ((int)live.size() < jobs && !stop && !gCancel.load()) {
             int id = take();
             if (id < 0) break;
             const Action& a = g.acts[id];
@@ -1249,6 +1292,10 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 live.push_back(L);
             } catch (const std::exception& e) { done(id, false, string("okay-build: ") + e.what() + "\n", false); }
         }
+        if (gCancel.load()) {
+            for (auto& L : live) { TerminateProcess(L.proc, 130); WaitForSingleObject(L.proc, 1000); CloseHandle(L.proc); if (L.pipe) CloseHandle(L.pipe); }
+            live.clear(); break;
+        }
         if (live.empty()) {
             if (!ready.empty() && !stop) { anyFail = true; stop = true; fprintf(stderr, "okay-build: steps are waiting on a pool but none is free\n"); }
             break;
@@ -1276,6 +1323,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     }
     if (!o.dry) saveState();
     if (!o.dry) writeReport();
+    if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
@@ -1339,11 +1387,11 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
         std::unique_lock<std::mutex> lk(mu);
         for (;;) {
             cv.wait(lk, [&] {
-                if (stop || ready.empty()) return running == 0;
+                if (gCancel.load() || stop || ready.empty()) return running == 0;
                 for (int id : ready) if (!blocked(id)) return true;
                 return running == 0;
             });
-            if (stop || ready.empty()) { if (running == 0) { cv.notify_all(); return; } continue; }
+            if (gCancel.load() || stop || ready.empty()) { if (running == 0) { cv.notify_all(); return; } continue; }
             int id = take();
             if (id < 0) {
                 if (running == 0) { anyFail = true; stop = true; firstErr = "okay-build: steps are waiting on a pool but none is free\n"; cv.notify_all(); return; }
@@ -1400,6 +1448,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     for (auto& t : th) t.join();
     if (!o.dry) saveState();
     if (!o.dry) writeReport();
+    if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
     printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
@@ -1842,6 +1891,11 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(onCtrl, TRUE);
+#else
+    signal(SIGINT, onInt);
+#endif
     Opts o; string cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {

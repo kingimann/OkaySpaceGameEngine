@@ -8,6 +8,9 @@
 #include <thread>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
 namespace fs = std::filesystem;
 using std::string;
 static string gTool; static int gFail = 0, gPass = 0; static fs::path gRoot;
@@ -429,6 +432,52 @@ static void testConfigsAndToolchains() {
     }
 }
 
+static pid_t launchBuild() {
+    pid_t pid = fork();
+    if (pid == 0) {
+        setpgid(0, 0);
+        if (chdir(gRoot.c_str()) != 0) _exit(127);
+        int fd = open("cancel.log", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); }
+        string bin = gTool;
+        if (bin.size() >= 2 && bin.front() == '\'' && bin.back() == '\'') bin = bin.substr(1, bin.size() - 2);
+        execl(bin.c_str(), bin.c_str(), "-j2", (char*)nullptr);
+        _exit(127);
+    }
+    setpgid(pid, pid);
+    return pid;
+}
+static void testCancelAndRecover() {
+    printf("test: Ctrl+C stops a build, and a killed build resumes finished steps\n");
+    fresh("kill9");
+    write("build.okay",
+          "action\n  cmd = echo x > fast\n  output = fast\nend\n"
+          "action\n  cmd = sleep 30 && echo x > slow\n  output = slow\nend\n");
+    pid_t pid = launchBuild();
+    check(pid > 0, "started a build to kill");
+    bool saw = false;
+    for (int i = 0; i < 50; ++i) {
+        if (fs::exists(gRoot / ".okaybuild/state.journal")) { std::ifstream j(gRoot / ".okaybuild/state.journal"); string s((std::istreambuf_iterator<char>(j)), {}); if (s.find("fast") != string::npos) { saw = true; break; } }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    kill(-pid, SIGKILL); int st = 0; waitpid(pid, &st, 0);
+    check(saw, "the finished step was journaled before the kill");
+    int rc; string o = sh("--dry-run -v", &rc);
+    check(rc == 0 && o.find("[up to date]") != string::npos && o.find("fast") != string::npos && ran(o) == 1, "after kill -9 the finished step is kept and the other would run", o);
+    fresh("sigint");
+    write("build.okay", "action\n  cmd = sleep 30 && echo x > slow\n  output = slow\nend\n");
+    pid = launchBuild();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    auto t0 = std::chrono::steady_clock::now();
+    kill(-pid, SIGINT);
+    bool reaped = false;
+    for (int i = 0; i < 30; ++i) { if (waitpid(pid, &st, WNOHANG) == pid) { reaped = true; break; } std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
+    if (!reaped) { kill(-pid, SIGKILL); waitpid(pid, &st, 0); }
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    check(WIFEXITED(st) && WEXITSTATUS(st) == 130 && ms < 3000, "Ctrl+C stops the sleep and exits 130", "status=" + std::to_string(WIFEXITED(st) ? WEXITSTATUS(st) : -1) + " ms=" + std::to_string(ms) + "\n" + readFile(gRoot / "cancel.log"));
+    check(!fs::exists(gRoot / "slow"), "the cancelled step did not produce its output");
+}
+
 static void testMemoryLimit() {
     printf("test: a memory limit keeps heavy steps from overlapping\n");
     auto three = [&](const string& name) {
@@ -645,6 +694,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

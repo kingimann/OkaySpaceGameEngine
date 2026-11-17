@@ -1092,11 +1092,38 @@ static void testToolchainAuto() {
     check(rc == 2 && o.find("no compiler found") != string::npos, "toolchain auto with nothing installed says so", o);
 }
 
+static void testSharedCache() {
+    printf("test: a shared cache dir serves a second build tree, and a damaged entry is a miss\n");
+    fresh("sharedcache");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = main.cpp\nend\n");
+    string cd = (gRoot / "shared").string();
+    int rc; string o = sh("-j1 --build-dir b1 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "first tree misses and fills the shared cache", o);
+    check(fs::exists(gRoot / "shared/index") && !fs::exists(gRoot / "b1/.okaybuild/cache"), "entries live in the shared dir, not the build tree");
+    o = sh("-j1 --build-dir b2 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && o.find("cache miss") == string::npos, "a different build tree hits the same entry", o);
+    check(system(("'" + (gRoot / "b2/build/app").string() + "'").c_str()) == 0, "program from the second tree runs");
+    // environment variable does the same as the option
+    o = capture("cd '" + gRoot.string() + "' && OKAY_CACHE_DIR='" + cd + "' " + gTool + " -j1 --build-dir b3 2>&1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "OKAY_CACHE_DIR selects the shared cache", o);
+    // damage the stored object: the entry must be refused and rebuilt, not copied
+    string key; for (auto& e : fs::directory_iterator(gRoot / "shared")) if (e.is_directory()) key = e.path().filename().string();
+    check(!key.empty(), "found a cache entry");
+    { std::ofstream f(gRoot / "shared" / key / "obj", std::ios::trunc | std::ios::binary); f << "broken"; }
+    o = sh("-j1 --build-dir b4 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos && o.find("cache hit") == string::npos, "a truncated entry is a miss", o);
+    o = sh("-j1 --build-dir b5 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "the entry was replaced by a good one", o);
+    o = sh("cache stats --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("entries: 1") != string::npos, "cache stats reads the shared dir", o);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

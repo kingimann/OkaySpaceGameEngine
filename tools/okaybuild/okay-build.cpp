@@ -1217,21 +1217,43 @@ static vector<string> preprocessArgv(const Action& a) {
     }
     return p;
 }
-static string cacheDirOf(const string& key) { return under(".okaybuild/cache/" + key); }
+static string gCacheDir; // --cache-dir or OKAY_CACHE_DIR: one cache shared by many build trees
+static string cacheRoot() { return gCacheDir.empty() ? under(".okaybuild/cache") : gCacheDir; }
+static string cacheDirOf(const string& key) { return cacheRoot() + "/" + key; }
+static long long fileSizeOf(const string& p) { std::error_code ec; auto n = fs::file_size(p, ec); return ec ? -1 : (long long)n; }
+// The key must not depend on where the object goes: leave out the values of -o, -MF, -MT and the cl /Fo form.
+static string hashArgvForCache(const vector<string>& a) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const string& s = a[i];
+        if ((s == "-o" || s == "-MF" || s == "-MT") && i + 1 < a.size()) { ++i; continue; }
+        if (s.rfind("/Fo", 0) == 0 || s.rfind("/Fd", 0) == 0) continue;
+        h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h);
+    }
+    return hex64(h);
+}
+// An entry is usable only when meta names this key and both stored files still have the recorded size.
+// A truncated or half-written entry is removed and counts as a miss.
+static bool cacheEntryOk(const string& key, bool needDep) {
+    string dir = cacheDirOf(key);
+    std::ifstream in(dir + "/meta"); string l1, l2, l3, l4;
+    bool ok = in && std::getline(in, l1) && std::getline(in, l2) && std::getline(in, l3) && std::getline(in, l4);
+    if (ok) ok = l1 == "okaybuild-cache 2" && l2 == key && fileSizeOf(dir + "/obj") == atoll(l3.c_str());
+    if (ok && needDep) ok = fileSizeOf(dir + "/dep") == atoll(l4.c_str()) && atoll(l4.c_str()) >= 0;
+    if (!ok && fs::exists(dir)) { std::error_code ec; fs::remove_all(dir, ec); }
+    return ok;
+}
 static void rememberCache(const string&);
 // 1 hit, 0 miss, -1 could not preprocess.
 static int lookupCache(const Action& a, string& key, string& errOut) {
     vector<string> pp = preprocessArgv(a);
     string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
-    string id = compilerIdentity(a.argv[0]); string cmd = hashArgv(a.argv);
+    string id = compilerIdentity(a.argv[0]); string cmd = hashArgvForCache(a.argv);
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
-    string dir = cacheDirOf(key), meta = dir + "/meta";
-    if (!fs::is_regular_file(dir + "/obj") || !fs::is_regular_file(meta)) return 0;
-    if (!a.depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
-    std::ifstream in(meta); string l1, l2; std::getline(in, l1); std::getline(in, l2);
-    if (l1 != "okaybuild-cache 1" || l2 != key) return 0;
+    string dir = cacheDirOf(key);
+    if (!cacheEntryOk(key, !a.depfile.empty())) return 0;
     std::error_code ec;
     fs::copy_file(dir + "/obj", a.output, fs::copy_options::overwrite_existing, ec);
     if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
@@ -1240,12 +1262,27 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     return 1;
 }
 static void rememberCache(const string&);
+static int ownPid() {
+#ifdef _WIN32
+    return (int)GetCurrentProcessId();
+#else
+    return (int)getpid();
+#endif
+}
 static void storeCache(const Action& a, const string& key) {
     if (key.empty() || a.output.empty() || !fs::is_regular_file(a.output)) return;
-    string dir = cacheDirOf(key); fs::create_directories(dir); std::error_code ec;
-    fs::copy_file(a.output, dir + "/obj", fs::copy_options::overwrite_existing, ec);
-    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) fs::copy_file(a.depfile, dir + "/dep", fs::copy_options::overwrite_existing, ec);
-    std::ofstream m(dir + "/meta", std::ios::trunc); m << "okaybuild-cache 1\n" << key << "\n";
+    // Build the entry beside the final one and rename it in, so a killed or racing build never leaves a half entry that looks whole.
+    static std::atomic<int> seq{0};
+    string dir = cacheDirOf(key), tmp = dir + ".tmp" + std::to_string(ownPid()) + "_" + std::to_string(seq++);
+    std::error_code ec; fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
+    fs::copy_file(a.output, tmp + "/obj", fs::copy_options::overwrite_existing, ec);
+    if (ec) { fs::remove_all(tmp, ec); return; }
+    long long depSize = -1;
+    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) { fs::copy_file(a.depfile, tmp + "/dep", fs::copy_options::overwrite_existing, ec); if (!ec) depSize = fileSizeOf(tmp + "/dep"); }
+    { std::ofstream m(tmp + "/meta", std::ios::trunc); m << "okaybuild-cache 2\n" << key << "\n" << fileSizeOf(tmp + "/obj") << "\n" << depSize << "\n"; }
+    fs::remove_all(dir, ec);
+    fs::rename(tmp, dir, ec);
+    if (ec) { std::error_code e2; fs::remove_all(tmp, e2); }
     rememberCache(key);
 }
 struct CacheRow { string key; uint64_t bytes = 0, used = 0; };
@@ -1256,7 +1293,7 @@ static uint64_t cacheDirBytes(const string& dir) {
     for (auto& e : fs::directory_iterator(dir, ec)) if (!ec && e.is_regular_file()) n += (uint64_t)e.file_size();
     return n;
 }
-static string cacheIndexPath() { return under(".okaybuild/cache/index"); }
+static string cacheIndexPath() { return cacheRoot() + "/index"; }
 static vector<CacheRow> loadCacheIndex() {
     vector<CacheRow> rows; std::ifstream in(cacheIndexPath()); string l;
     if (!std::getline(in, l) || l != "okaybuild-cache-index 1") return rows;
@@ -1270,8 +1307,8 @@ static vector<CacheRow> loadCacheIndex() {
     return rows;
 }
 static void saveCacheIndex(const vector<CacheRow>& rows) {
-    fs::create_directories(under(".okaybuild/cache"));
-    string tmp = cacheIndexPath() + ".tmp";
+    fs::create_directories(cacheRoot());
+    string tmp = cacheIndexPath() + ".tmp" + std::to_string(ownPid());
     { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-cache-index 1\n";
       f << "limit\t" << gCacheMax << "\n";
       for (auto& r : rows) f << r.key << '\t' << r.bytes << '\t' << r.used << '\n'; }
@@ -1300,13 +1337,13 @@ static void rememberCache(const string& key) {
 }
 static int cmdCache(const string& sub) {
     if (sub == "clean") {
-        std::error_code ec; fs::remove_all(under(".okaybuild/cache"), ec);
+        std::error_code ec; fs::remove_all(cacheRoot(), ec);
         printf("okay-build cache: removed\n"); return 0;
     }
     if (sub != "stats") throw Fail("usage: okay-build cache stats|clean");
     int entries = 0; uint64_t bytes = 0; std::error_code ec;
-    string root = under(".okaybuild/cache");
-    if (fs::exists(root, ec)) for (auto& e : fs::directory_iterator(root, ec)) if (!ec && e.is_directory()) { ++entries; bytes += cacheDirBytes(e.path().generic_string()); }
+    string root = cacheRoot();
+    if (fs::exists(root, ec)) for (auto& e : fs::directory_iterator(root, ec)) if (!ec && e.is_directory() && e.path().filename().string().find(".tmp") == string::npos) { ++entries; bytes += cacheDirBytes(e.path().generic_string()); }
     uint64_t limit = gCacheMax;
     if (limit == 0) {
         std::ifstream in(cacheIndexPath()); string l;
@@ -1514,12 +1551,11 @@ static int lookupImported(const Action& a, string& key, string& errOut) {
     string depfile = a.depfile.empty() ? dep : a.depfile;
     string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
-    string id = compilerIdentity(w[0]); string cmd = hashArgv(w);
+    string id = compilerIdentity(w[0]); string cmd = hashArgvForCache(w);
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
     string dir = cacheDirOf(key);
-    if (!fs::is_regular_file(dir + "/obj")) return 0;
-    if (!depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
+    if (!cacheEntryOk(key, !depfile.empty())) return 0;
     std::error_code ec;
     fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec);
     if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
@@ -2710,6 +2746,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, onInt);
 #endif
     adoptJobserver();
+    if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
     Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
@@ -2726,6 +2763,7 @@ int main(int argc, char** argv) {
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;
+            else if (a == "--cache-dir" && i + 1 < argc) gCacheDir = fs::absolute(argv[++i]).string();
             else if (a == "--cache-max" && i + 1 < argc) {
                 string s = argv[++i]; uint64_t n = 0; size_t k = 0;
                 if (s.empty()) throw Fail("--cache-max wants a number of bytes");
@@ -2755,7 +2793,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }

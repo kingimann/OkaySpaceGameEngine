@@ -95,7 +95,11 @@ std::vector<std::string> PlayFrames(EditorState& ed, int frames, LogCatch& logs,
         ed.Stop();
     } catch (const std::exception& e) { bad.push_back(std::string("exception: ") + e.what()); }
     catch (...) { bad.push_back("unknown exception"); }
-    for (std::size_t i = errorsBefore; i < logs.errors.size(); ++i) bad.push_back("Console error during Play: " + logs.errors[i]);
+    for (std::size_t i = errorsBefore; i < logs.errors.size(); ++i) {
+        // examples/security_paths shows the file-path gate refusing bad names on purpose (docs/security.md): those lines are the point.
+        if (logs.errors[i].find("[script] ") == 0 && logs.errors[i].find(": refusing file '") != std::string::npos) continue;
+        bad.push_back("Console error during Play: " + logs.errors[i]);
+    }
     return bad;
 }
 

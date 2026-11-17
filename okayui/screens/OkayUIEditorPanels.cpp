@@ -2507,6 +2507,23 @@ void DrawCross(const UI::Rect& b) {
     dl.AddLine(UI::Vec2{cx - r, cy + r}, UI::Vec2{cx + r, cy - r}, col, 1.5f);
 }
 
+// The editor's SectionHeader inside an open list (the UI Button's Function list: "Native (gameplay)", "Script"): Spacing, the accent
+// tick, the heading face, a rule across the list.
+void PopupHeading(const char* text) {
+    UI::Dummy(1.0f, 0.0f);
+    UI::PushTextScale(22.0f / 18.0f);
+    UI::PushStyleVar(UI::StyleVar_TextRowHeight, UI::GetFontSize());
+    const UI::Vec2 p = UI::GetCursorScreenPos();
+    const float th = UI::GetFontSize();
+    UI::GetWindowDrawList().AddRectFilled(UI::Vec2{p.x, p.y + 1.0f}, UI::Vec2{p.x + 3.0f, p.y + th}, kAccent, 1.5f);
+    UI::Indent(9.0f);
+    UI::TextColored(230, 235, 247, text);
+    UI::Unindent(9.0f);
+    UI::PopStyleVar();
+    UI::PopTextScale();
+    Divider();
+}
+
 } // namespace
 
 FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, float y, float w, float h) {
@@ -2618,7 +2635,20 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (c >= 0 && r.items ? r.items[c] : "");
                 const bool open = UI::BeginCombo(r.label, preview);
                 const UI::Rect box = UI::GetItemRect();
-                if (open) {
+                if (open && r.heads) {   // a list with the editor's section headings inside it (the UI Button's Function): every row drawn
+                    res.listRows.assign((std::size_t)r.count, UI::Rect{});
+                    const UI::Vec2 lp = UI::GetCursorScreenPos();
+                    for (int q = 0; q < r.count; ++q) {
+                        if (r.heads[q]) PopupHeading(r.heads[q]);
+                        UI::PushID(q);
+                        if (ListRow(r.items[q], !r.mixed && q == c)) picked = q;
+                        res.listRows[(std::size_t)q] = UI::GetItemRect();
+                        UI::PopID();
+                    }
+                    const UI::Vec2 le = UI::GetCursorScreenPos();
+                    setPopup(UI::Rect{lp.x - 10.0f, lp.y - 8.0f, frameW, le.y - lp.y + 16.0f});
+                    UI::EndCombo();
+                } else if (open) {
                     res.listRows.assign((std::size_t)r.count, UI::Rect{});
                     const UI::Vec2 lp = UI::GetCursorScreenPos();
                     ListWindow(r.label, r.count, c, [&](int q) {
@@ -2638,6 +2668,27 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             case InspRowColor: {
                 const int n = r.n == 4 ? 4 : 3;
                 float* c = r.F();
+                if (r.noInputs) {   // ColorEdit3 with NoInputs: the swatch (a click opens the picker) and the label
+                    float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+                    UI::PushID(r.label);
+                    if (UI::ColorButton("##swatch", rgba, UI::ColorEdit_NoAlpha, fh)) UI::OpenPopup("##picker");
+                    whole = UI::GetItemRect();
+                    {
+                        MenuLook look_(220.0f);
+                        if (UI::BeginPopup("##picker")) {
+                            float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+                            if (UI::ColorPicker4("##pick", tmp, (n == 4 ? 0 : UI::ColorEdit_NoAlpha) | UI::ColorEdit_NoLabel)) {
+                                for (int q = 0; q < n; ++q) { if (c[q] != tmp[q]) r.axes |= 1u << q; c[q] = tmp[q]; }
+                                r.changed = true;
+                            }
+                            UI::EndPopup();
+                        }
+                    }
+                    UI::PopID();
+                    const std::string vis = Visible(r.label);
+                    if (!vis.empty()) { UI::SameLine(g_metrics.innerSpacing.x); UI::Text(vis.c_str()); whole.w = UI::GetItemRectMax().x - whole.x; }
+                    break;
+                }
                 float before[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
                 const float keep = g_metrics.itemWidth;
                 g_metrics.itemWidth = frameW;
@@ -2653,7 +2704,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 std::snprintf(buf, sizeof buf, "%s", r.mixed ? "" : r.S()->c_str());
                 UI::SetNextItemWidth(WithLabel(frameW, r.label, 8.0f));
                 bool edited;
-                if (r.wrap) edited = UI::InputTextMultiline(r.label, buf, (int)sizeof buf, UI::Vec2{frameW, fs * 4.0f});   // a multi-line property
+                if (r.wrap) {   // a multi-line property (texH: its height in text lines); a box the region wide shows no label (Dear ImGui's is
+                                // drawn past the right edge)
+                    const std::string hidden = std::string("##") + r.label;
+                    edited = UI::InputTextMultiline(r.width < 0.0f ? hidden.c_str() : r.label, buf, (int)sizeof buf,
+                                                    UI::Vec2{frameW, fs * (r.texH > 0.0f ? r.texH : 4.0f)});
+                }
                 else edited = (r.hint || r.mixed) ? UI::InputTextWithHint(r.label, r.mixed ? "Mixed" : r.hint, buf, (int)sizeof buf)
                                                   : UI::InputText(r.label, buf, (int)sizeof buf);
                 if (edited) { *r.S() = buf; r.changed = true; }
@@ -2726,6 +2782,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 break;
             }
             case InspRowNote:
+                if (r.alignFrame && !r.wrap) {   // AlignTextToFramePadding, then TextDisabled (the style bar's "Look")
+                    UI::Dummy(UI::CalcTextWidth(r.Text()), fh);
+                    const UI::Rect b = UI::GetItemRect();
+                    UI::GetWindowDrawList().AddText(UI::Vec2{b.x, b.y + g_metrics.framePadding.y}, UI::GetColorU32(UI::Col_TextDisabled), r.Text());
+                    break;
+                }
                 if (!r.wrap && std::strchr(r.Text(), '\n')) { LinesText(r.Text(), UI::GetColorU32(UI::Col_TextDisabled)); break; }
                 if (r.wrap) UI::PushTextWrapPos(0.0f);
                 UI::TextDisabled(r.Text());
@@ -2842,37 +2904,51 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
             }
             case InspRowMask: {   // the Camera's Culling Mask: Everything, Nothing, then a check box per layer
                 int* bits = r.I();
+                const int nbits = r.count > 0 && r.count < 32 ? r.count : 32;
+                const bool presets = r.presetCount > 0;
                 std::vector<std::string> names;
-                auto fetch = [&] {   // the layer names, asked of the host only when they are shown
+                auto fetch = [&] {   // the layer names, asked of the host only when they are shown (or the row's own)
                     if (!names.empty()) return;
-                    std::vector<std::string> vals; std::vector<void*> thumbs;
-                    if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
+                    if (r.items) { for (int i = 0; i < nbits; ++i) names.emplace_back(r.items[i] ? r.items[i] : ""); }
+                    else {
+                        std::vector<std::string> vals; std::vector<void*> thumbs;
+                        if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
+                    }
                     names.resize(32);
                 };
-                if (*bits != ~0 && *bits != 0) fetch();
-                const std::string preview = InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
+                if (!r.preview && *bits != ~0 && *bits != 0) fetch();
+                const std::string preview = r.preview ? std::string(r.preview) : InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
                 MenuLook look_(0.0f);
                 // the list is as wide as its widest line, as Dear ImGui's grows to its content: the rename note is wider than a narrow
                 // box (seen in the real editor: the note ran out of the list over the Inspector)
-                const bool renameNote = list.hooks.renameLayer && list.hooks.layerName;
+                const bool renameNote = !presets && list.hooks.renameLayer && list.hooks.layerName;
                 const float listW = renameNote ? std::max(frameW, UI::CalcTextWidth("Right-click a layer to rename it") + 34.0f) : frameW;
                 UI::PushStyleVar(UI::StyleVar_PopupWidth, listW);
                 UI::SetNextItemWidth(WithLabel(frameW, r.label));
                 if (UI::BeginCombo(r.label, preview.c_str())) {
                     fetch();
                     const UI::Vec2 lp = UI::GetCursorScreenPos();
-                    if (ListRow("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
-                    if (ListRow("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
-                    Divider();
+                    if (presets) {   // the Nav Mesh Agent's Area Mask: preset buttons on one line, a click sets the bits
+                        for (int q = 0; q < r.presetCount; ++q) {
+                            if (q) UI::SameLine();
+                            UI::PushID(q);
+                            if (InspSmallButton(r.presetNames[q])) { *bits = r.presetBits[q]; r.changed = true; }
+                            UI::PopID();
+                        }
+                    } else {
+                        if (ListRow("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
+                        if (ListRow("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
+                        Divider();
+                    }
                     // the editor's LayerRenameMenu (stage 3): a right-click on a layer renames it, as in the Dear ImGui list
-                    const bool rename = list.hooks.renameLayer && list.hooks.layerName;
+                    const bool rename = renameNote;
                     if (rename) UI::TextDisabled("Right-click a layer to rename it");
                     const float rowH = fh + g_metrics.itemSpacing.y;
                     // as many check box rows as fit in Dear ImGui's list height (eight text rows) after Everything, Nothing and the rule
-                    const int shown = std::max(4, (int)std::floor(((float)kListRows - 2.0f - (rename ? 1.0f : 0.0f)) * (fs + g_metrics.itemSpacing.y) / rowH));
-                    res.listRows.assign(32, UI::Rect{});
+                    const int shown = std::max(4, (int)std::floor(((float)kListRows - (presets ? 1.0f : 2.0f) - (rename ? 1.0f : 0.0f)) * (fs + g_metrics.itemSpacing.y) / rowH));
+                    res.listRows.assign((std::size_t)nbits, UI::Rect{});
                     UI::Rect renameRect{};
-                    ScrollRows("##maskrows", 32, shown, rowH, 0, [&](int i) {
+                    ScrollRows("##maskrows", nbits, shown, rowH, 0, [&](int i) {
                         bool on = (*bits & (1 << i)) != 0;
                         UI::PushID(i);
                         if (UI::Checkbox(names[(std::size_t)i].c_str(), &on)) {
@@ -2965,6 +3041,226 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const UI::DrawList& dl = UI::GetWindowDrawList();
                 dl.AddCircleFilled(UI::Vec2{p.x + g_metrics.framePadding.x + fs * 0.5f, p.y + fs * 0.5f}, fs * 0.20f, UI::GetColorU32(UI::Col_Text), 12);
                 dl.AddText(UI::Vec2{p.x + fs + 2.0f * g_metrics.framePadding.x, p.y}, UI::GetColorU32(UI::Col_Text), r.Text());
+                break;
+            }
+            case InspRowGradient: {   // the editor's ParticleGradientEditor: a check under the bar, the gradient in 32 strips, a marker per stop
+                float* st = r.F();
+                int& cnt = *r.I();
+                const int maxStops = std::max(1, (int)r.hi);
+                int sel = r.sel ? *r.sel : 0;
+                if (sel >= cnt) sel = cnt - 1;
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                const float gw = std::max(60.0f, UI::GetContentRegionAvail().x), barH = 18.0f, mkH = 9.0f;
+                const UI::Vec2 p1{p0.x + gw, p0.y + barH};
+                const UI::DrawList& dl = UI::GetWindowDrawList();
+                for (int cx = 0; (float)cx * 6.0f < gw; ++cx)
+                    for (int cy = 0; cy < 3; ++cy)
+                        dl.AddRectFilled(UI::Vec2{p0.x + (float)cx * 6.0f, p0.y + (float)cy * 6.0f},
+                                         UI::Vec2{std::min(p1.x, p0.x + (float)cx * 6.0f + 6.0f), p0.y + (float)cy * 6.0f + 6.0f},
+                                         ((cx + cy) & 1) ? UI::RGBA(150, 150, 150) : UI::RGBA(95, 95, 95), 0.0f);
+                auto col32 = [](const float c[4]) { auto b = [](float v) { return (int)(std::clamp(v, 0.0f, 1.0f) * 255.0f); };
+                                                     return UI::RGBA(b(c[0]), b(c[1]), b(c[2]), b(c[3])); };
+                for (int i = 0; i < 32; ++i) {
+                    const float ta = (float)i / 32.0f, tb = (float)(i + 1) / 32.0f;
+                    float ca[4], cb[4];
+                    InspGradientAt(st, cnt, ta, ca); InspGradientAt(st, cnt, tb, cb);
+                    dl.AddRectFilledMultiColor(UI::Vec2{p0.x + ta * gw, p0.y}, UI::Vec2{p0.x + tb * gw, p1.y}, col32(ca), col32(cb), col32(cb), col32(ca));
+                }
+                dl.AddRect(p0, p1, UI::RGBA(20, 20, 24), 0.0f, 1.0f);
+                for (int i = 0; i < cnt; ++i) {
+                    const float x = p0.x + std::clamp(st[i * 5], 0.0f, 1.0f) * gw;
+                    const UI::Vec2 a{x, p1.y}, b{x - 5.0f, p1.y + mkH}, c{x + 5.0f, p1.y + mkH};
+                    const float rgb[4] = {st[i * 5 + 1], st[i * 5 + 2], st[i * 5 + 3], 1.0f};
+                    dl.AddTriangleFilled(a, b, c, col32(rgb));
+                    dl.AddTriangle(a, b, c, i == sel ? kAccent : UI::RGBA(220, 220, 225), i == sel ? 2.0f : 1.0f);
+                }
+                UI::InvisibleButton("##gradbar", gw, barH + mkH + 2.0f);
+                const UI::Vec2 m = UI::GetMousePos();
+                const float mt = std::clamp((m.x - p0.x) / gw, 0.0f, 1.0f);
+                static unsigned s_dragId = 0;
+                const unsigned gid = UI::GetID("##gradbar");
+                if (UI::IsItemActivated()) {   // a press: the marker under it, else a new stop with the colour showing there
+                    r.activated = true;
+                    int hit = InspNearestStop(st, cnt, p0.x, gw, m.x);
+                    if (hit < 0) { float c[4]; InspGradientAt(st, cnt, mt, c); hit = InspAddStop(st, cnt, maxStops, mt, c); if (hit >= 0) r.changed = true; }
+                    if (hit >= 0) sel = hit;
+                    s_dragId = hit >= 0 ? gid : 0;
+                }
+                if (UI::IsItemActive() && s_dragId == gid && sel >= 0 && UI::IsMouseDragging(0, 1.0f) && st[sel * 5] != mt) { st[sel * 5] = mt; r.changed = true; }
+                if (!UI::IsMouseDown(0) && s_dragId == gid) s_dragId = 0;
+                if (UI::IsItemHovered() && UI::IsMouseClicked(1)) {   // a right-click on a marker deletes it (one stop always stays)
+                    const int hit = InspNearestStop(st, cnt, p0.x, gw, m.x);
+                    if (hit >= 0 && cnt > 1) { r.activated = true; InspRemoveAt(st, cnt, 5, hit); r.changed = true; if (sel >= cnt) sel = cnt - 1; }
+                }
+                if (UI::IsItemHovered()) UI::SetTooltip("Click the bar to add a stop, drag a marker to move it, right-click a marker to delete it.");
+                hoverTip = false;
+                if (r.sel) *r.sel = sel;
+                break;
+            }
+            case InspRowCurve: {   // the editor's ParticleCurveEditor: a 64-pixel plot, the x1 line, quarter lines, the curve, a dot per key
+                float* ks = r.F();
+                int& cnt = *r.I();
+                const int maxKeys = std::max(1, (int)r.hi);
+                int sel = r.sel ? *r.sel : 0;
+                if (sel >= cnt) sel = cnt - 1;
+                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                const float gw = std::max(60.0f, UI::GetContentRegionAvail().x), gh = 64.0f;
+                const UI::Vec2 p1{p0.x + gw, p0.y + gh};
+                static unsigned s_dragId = 0;
+                static float s_top = 1.0f;
+                const unsigned cid = UI::GetID("##curveplot");
+                const bool dragging = s_dragId == cid && UI::IsMouseDown(0);
+                const float top = dragging ? s_top : InspCurveTop(ks, cnt);   // frozen while a key is dragged, so it does not jump
+                s_top = dragging ? s_top : top;
+                auto at = [&](float t, float v) { return UI::Vec2{p0.x + t * gw, p1.y - (v / top) * gh}; };
+                const UI::DrawList& dl = UI::GetWindowDrawList();
+                dl.AddRectFilled(p0, p1, UI::RGBA(28, 30, 36), 3.0f);
+                const float y1 = at(0.0f, 1.0f).y;
+                dl.AddLine(UI::Vec2{p0.x, y1}, UI::Vec2{p1.x, y1}, UI::RGBA(70, 74, 86), 1.0f);
+                for (int gx = 1; gx < 4; ++gx)
+                    dl.AddLine(UI::Vec2{p0.x + gw * (float)gx * 0.25f, p0.y}, UI::Vec2{p0.x + gw * (float)gx * 0.25f, p1.y}, UI::RGBA(48, 50, 60), 1.0f);
+                const bool smooth = *r.B();
+                UI::Vec2 prev = at(0.0f, InspCurveAt(ks, cnt, smooth, 0.0f));
+                for (int i = 1; i <= 48; ++i) {
+                    const float t = (float)i / 48.0f;
+                    const UI::Vec2 cur = at(t, InspCurveAt(ks, cnt, smooth, t));
+                    dl.AddLine(prev, cur, kAccent, 2.0f);
+                    prev = cur;
+                }
+                for (int i = 0; i < cnt; ++i) {
+                    const UI::Vec2 kp = at(ks[i * 2], ks[i * 2 + 1]);
+                    dl.AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? UI::RGBA(255, 255, 255) : UI::RGBA(200, 205, 215));
+                    if (i == sel) dl.AddCircle(kp, 6.5f, kAccent, 12, 1.5f);
+                }
+                dl.AddRect(p0, p1, UI::RGBA(20, 20, 24), 3.0f, 1.0f);
+                char ylab[16]; std::snprintf(ylab, sizeof ylab, "x%.2g", top);
+                dl.AddText(UI::Vec2{p0.x + 3.0f, p0.y + 1.0f}, UI::RGBA(140, 145, 160), ylab);
+                UI::InvisibleButton("##curveplot", gw, gh);
+                const UI::Vec2 m = UI::GetMousePos();
+                const float mt = std::clamp((m.x - p0.x) / gw, 0.0f, 1.0f);
+                const float mv = std::max(0.0f, (p1.y - m.y) / gh * top);
+                if (UI::IsItemActivated()) {
+                    r.activated = true;
+                    int hit = InspNearestKey(ks, cnt, p0.x, p1.y, gw, gh, top, m.x, m.y);
+                    if (hit < 0) { hit = InspAddKey(ks, cnt, maxKeys, mt, mv); if (hit >= 0) r.changed = true; }
+                    if (hit >= 0) sel = hit;
+                    s_dragId = hit >= 0 ? cid : 0;
+                    s_top = top;
+                }
+                if (UI::IsItemActive() && s_dragId == cid && sel >= 0 && UI::IsMouseDragging(0, 1.0f)) {
+                    ks[sel * 2] = mt; ks[sel * 2 + 1] = std::min(mv, top); r.changed = true;
+                }
+                if (!UI::IsMouseDown(0) && s_dragId == cid) s_dragId = 0;
+                if (UI::IsItemHovered() && UI::IsMouseClicked(1)) {
+                    const int hit = InspNearestKey(ks, cnt, p0.x, p1.y, gw, gh, top, m.x, m.y);
+                    if (hit >= 0 && cnt > 1) { r.activated = true; InspRemoveAt(ks, cnt, 2, hit); r.changed = true; if (sel >= cnt) sel = cnt - 1; }
+                }
+                if (UI::IsItemHovered()) UI::SetTooltip("Click to add a key, drag a key to move it, right-click a key to delete it.");
+                hoverTip = false;
+                if (r.sel) *r.sel = sel;
+                break;
+            }
+            case InspRowAnchor: {   // the editor's AnchorCombo: the anchor's name on a button, its picture at the left, the label; a grid
+                int* a = r.I();
+                const int ai = (*a < 0 || *a > 11) ? 0 : *a;
+                const UI::Vec2 bp = UI::GetCursorScreenPos();
+                if (UI::Button(kInspAnchorNames[ai], UI::Vec2{frameW, fh})) UI::OpenPopup("##anchorpop");
+                whole = UI::GetItemRect();
+                auto picture = [&](float x0, float y0, float x1, float y1, int which, bool active) {
+                    const UI::DrawList& dl = UI::GetWindowDrawList();
+                    dl.AddRect(UI::Vec2{x0, y0}, UI::Vec2{x1, y1}, active ? UI::RGBA(150, 190, 255) : UI::RGBA(150, 154, 166), 2.0f, 1.2f);
+                    const InspAnchorPicture f = InspAnchorFill(which, x0, y0, x1, y1);
+                    dl.AddRectFilled(UI::Vec2{f.fx0, f.fy0}, UI::Vec2{f.fx1, f.fy1}, active ? UI::RGBA(110, 160, 255) : UI::RGBA(205, 208, 216), 1.5f);
+                };
+                picture(bp.x + 4.0f, bp.y + 3.0f, bp.x + fh - 2.0f, bp.y + fh - 3.0f, ai, false);
+                if (UI::IsItemHovered() && !UI::IsPopupOpen("##anchorpop"))
+                    UI::SetTooltip(ai >= 9 ? "Stretch: the widget fills its parent / the canvas on the stretched axis;\nPosition and Size become margins. Click to change."
+                                           : "Which point of its parent / the screen this widget sticks to when the\nwindow resizes. Click to change.");
+                hoverTip = false;
+                const std::string vis = Visible(r.label);
+                if (!vis.empty()) { UI::SameLine(g_metrics.innerSpacing.x); UI::Text(vis.c_str()); whole.w = UI::GetItemRectMax().x - whole.x; }
+                if (UI::IsPopupOpen("##anchorpop")) {
+                    MenuLook look_(0.0f);
+                    const float cell = 40.0f;
+                    const float popW = 3.0f * cell + 2.0f * 4.0f + 10.0f + cell * 1.4f;
+                    UI::PushStyleVar(UI::StyleVar_PopupWidth, std::max(popW, UI::CalcTextWidth("ANCHOR  (Shift+click: also move it there)")) + 20.0f);
+                    if (UI::BeginPopup("##anchorpop")) {
+                        const UI::Vec2 pp = UI::GetCursorScreenPos();
+                        UI::TextDisabled("ANCHOR");
+                        UI::SameLine(); UI::TextDisabled("(Shift+click: also move it there)");
+                        auto cellButton = [&](int which, float cw, float ch) {
+                            UI::PushID(which);
+                            const UI::Vec2 p = UI::GetCursorScreenPos();
+                            const bool hit = UI::InvisibleButton("##a", cw, ch);
+                            const bool hov = UI::IsItemHovered();
+                            UI::GetWindowDrawList().AddRectFilled(p, UI::Vec2{p.x + cw, p.y + ch}, hov ? UI::RGBA(70, 76, 92) : UI::RGBA(44, 46, 54), 4.0f);
+                            picture(p.x + 6.0f, p.y + 6.0f, p.x + cw - 6.0f, p.y + ch - 6.0f, which, which == ai);
+                            if (hov) UI::SetTooltip("%s", kInspAnchorNames[which]);
+                            UI::PopID();
+                            if (hit) {
+                                *a = which; r.changed = true; r.activated = true;
+                                if (UI::GetIO().keyShift) r.axes = 1u;
+                                UI::CloseCurrentPopup();
+                            }
+                        };
+                        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{g_metrics.itemSpacing.x, 4.0f});
+                        for (int row = 0; row < 3; ++row) {
+                            for (int col = 0; col < 3; ++col) { if (col) UI::SameLine(4.0f); cellButton(row * 3 + col, cell, cell); }
+                            UI::SameLine(10.0f);
+                            if (row == 1) cellButton(9, cell * 1.4f, cell); else UI::Dummy(cell * 1.4f, cell);
+                        }
+                        cellButton(10, cell, cell * 1.4f); UI::SameLine(4.0f);
+                        cellButton(11, cell * 1.4f, cell * 1.4f);
+                        UI::SameLine(); UI::TextDisabled("Stretch vertical / Fill");
+                        UI::PopStyleVar();
+                        const UI::Vec2 pe = UI::GetCursorScreenPos();
+                        setPopup(UI::Rect{pp.x - 10.0f, pp.y - 8.0f, std::max(popW, UI::CalcTextWidth("ANCHOR  (Shift+click: also move it there)")) + 20.0f, pe.y - pp.y + 16.0f});
+                        UI::EndPopup();
+                    }
+                    UI::PopStyleVar();
+                }
+                break;
+            }
+            case InspRowSlot: {   // the editor's AssetSlot: the file's name centred on a button 28 short of the region, an "x" small button
+                std::string* v = r.S();
+                std::string name = *v;
+                const std::size_t sl = name.find_last_of("/\\");
+                if (sl != std::string::npos) name = name.substr(sl + 1);
+                if (v->empty()) name = std::string("None (") + (r.hint ? r.hint : "") + ")";
+                const UI::Vec2 p = UI::GetCursorScreenPos();
+                const float bw = std::max(1.0f, regionX + w - p.x - 28.0f);
+                UI::PushID("##slot");
+                UI::Button((name + "##slotbtn").c_str(), UI::Vec2{bw, fh});
+                whole = UI::GetItemRect();
+                if (UI::IsItemHovered()) UI::SetTooltip("Drag a %s from the Project panel here", r.hint ? r.hint : "file");
+                hoverTip = false;
+                UI::SameLine();
+                if (InspSmallButton("x") && !v->empty()) { v->clear(); r.changed = true; r.activated = true; }
+                UI::PopID();
+                break;
+            }
+            case InspRowRadio: {   // Dear ImGui's RadioButton
+                if (UI::RadioButton(r.label, r.I(), r.iv)) r.changed = true;
+                break;
+            }
+            case InspRowRange: {   // Dear ImGui's DragFloatRange2: two cells sharing the value column, the label after them
+                float* v = r.F();
+                const float inner = g_metrics.innerSpacing.x;
+                float widths[2];
+                InspCellWidths(frameW, 2, inner, widths);
+                UI::PushID(r.label);
+                UI::SetNextItemWidth(widths[0]);
+                if (UI::DragFloat("##min", &v[0], r.speed, r.lo, std::min(v[1], r.hi), r.fmt ? r.fmt : "%.3f")) { v[0] = std::min(v[0], v[1]); r.changed = true; }
+                if (UI::IsItemActivated()) r.activated = true;
+                whole = UI::GetItemRect();
+                UI::SameLine(inner);
+                UI::SetNextItemWidth(widths[1]);
+                if (UI::DragFloat("##max", &v[1], r.speed, std::max(v[0], r.lo), r.hi, r.hint ? r.hint : (r.fmt ? r.fmt : "%.3f"))) { v[1] = std::max(v[1], v[0]); r.changed = true; }
+                if (UI::IsItemActivated()) r.activated = true;
+                UI::PopID();
+                const std::string vis = Visible(r.label);
+                if (!vis.empty()) { UI::SameLine(inner); UI::Text(vis.c_str()); }
+                whole.w = UI::GetItemRectMax().x - whole.x;
                 break;
             }
             }

@@ -1489,8 +1489,12 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             int* cur = r.I();
             const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
             if (ImGui::BeginCombo(r.label, preview)) {
-                for (int q = 0; q < r.count; ++q)
+                for (int q = 0; q < r.count; ++q) {
+                    if (r.heads && r.heads[q]) SectionHeaderImGui(r.heads[q], hooks);
+                    ImGui::PushID(q);
                     if (ImGui::Selectable(r.items[q], !r.mixed && q == *cur) && (q != *cur || r.mixed)) { *cur = q; r.changed = true; }
+                    ImGui::PopID();
+                }
                 ImGui::EndCombo();
             }
             break;
@@ -1498,7 +1502,8 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowColor: {
             float* c = r.F();
             const float before[4] = {c[0], c[1], c[2], r.n == 4 ? c[3] : 1.0f};
-            const bool ch = r.n == 4 ? ImGui::ColorEdit4(r.label, c) : ImGui::ColorEdit3(r.label, c);
+            const int fl = r.noInputs ? ImGuiColorEditFlags_NoInputs : 0;
+            const bool ch = r.n == 4 ? ImGui::ColorEdit4(r.label, c, fl) : ImGui::ColorEdit3(r.label, c, fl);
             if (ch) { r.changed = true; for (int q = 0; q < (r.n == 4 ? 4 : 3); ++q) if (c[q] != before[q]) r.axes |= 1u << q; }
             break;
         }
@@ -1506,7 +1511,8 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             char buf[512];
             std::snprintf(buf, sizeof buf, "%s", r.mixed ? "" : r.S()->c_str());
             bool ed;
-            if (r.wrap) ed = ImGui::InputTextMultiline(r.label, buf, sizeof buf, ImVec2(ImGui::CalcItemWidth(), ImGui::GetTextLineHeight() * 4.0f));
+            if (r.wrap) ed = ImGui::InputTextMultiline(r.label, buf, sizeof buf, ImVec2(r.width < 0.0f ? r.width : ImGui::CalcItemWidth(),
+                                                                                      ImGui::GetTextLineHeight() * (r.texH > 0.0f ? r.texH : 4.0f)));
             else ed = (r.hint || r.mixed) ? ImGui::InputTextWithHint(r.label, r.mixed ? "Mixed" : r.hint, buf, sizeof buf)
                                           : ImGui::InputText(r.label, buf, sizeof buf);
             if (ed) { *r.S() = buf; r.changed = true; }
@@ -1524,6 +1530,7 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowSection: SectionHeaderImGui(r.Text(), hooks); break;
         case InspRowGroup: ImGui::SeparatorText(r.Text()); break;
         case InspRowNote:
+            if (r.alignFrame && !r.wrap) ImGui::AlignTextToFramePadding();
             if (r.wrap) ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s", r.Text());
             if (r.wrap) ImGui::PopTextWrapPos();
@@ -1591,17 +1598,29 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             break;
         case InspRowMask: {
             int* bits = r.I();
+            const int nbits = r.count > 0 && r.count < 32 ? r.count : 32;
+            const bool presets = r.presetCount > 0;
             std::vector<std::string> names, vals; std::vector<void*> thumbs;
-            if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
+            if (r.items) { for (int i = 0; i < nbits; ++i) names.emplace_back(r.items[i] ? r.items[i] : ""); }
+            else if (list.hooks.choices) list.hooks.choices(r, vals, names, thumbs);
             names.resize(32);
-            const std::string preview = InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
+            const std::string preview = r.preview ? std::string(r.preview) : InspMaskPreview(*bits, [&](int i) { return names[(std::size_t)i]; });
             if (ImGui::BeginCombo(r.label, preview.c_str())) {
-                if (ImGui::Selectable("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
-                if (ImGui::Selectable("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
-                ImGui::Separator();
-                const bool rename = list.hooks.renameLayer && list.hooks.layerName;
+                if (presets) {   // the editor's AreaMaskCombo: the preset small buttons on one line
+                    for (int q = 0; q < r.presetCount; ++q) {
+                        if (q) ImGui::SameLine();
+                        ImGui::PushID(q);
+                        if (ImGui::SmallButton(r.presetNames[q])) { *bits = r.presetBits[q]; r.changed = true; }
+                        ImGui::PopID();
+                    }
+                } else {
+                    if (ImGui::Selectable("Everything", *bits == ~0)) { *bits = ~0; r.changed = true; }
+                    if (ImGui::Selectable("Nothing", *bits == 0)) { *bits = 0; r.changed = true; }
+                    ImGui::Separator();
+                }
+                const bool rename = !presets && list.hooks.renameLayer && list.hooks.layerName;
                 if (rename) ImGui::TextDisabled("Right-click a layer to rename it");
-                for (int i = 0; i < 32; ++i) {
+                for (int i = 0; i < nbits; ++i) {
                     bool on = (*bits & (1 << i)) != 0;
                     ImGui::PushID(i);
                     if (ImGui::Checkbox(names[(std::size_t)i].c_str(), &on)) { if (on) *bits |= (1 << i); else *bits &= ~(1 << i); r.changed = true; }
@@ -1640,6 +1659,183 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowSpacing: ImGui::Spacing(); break;
         case InspRowSeparator: ImGui::Separator(); hoverTip = false; break;
         case InspRowBullet: ImGui::BulletText("%s", r.Text()); break;
+        case InspRowGradient: {   // the editor's ParticleGradientEditor (sel kept by the host instead of ImGui's storage)
+            float* st = r.F();
+            int& cnt = *r.I();
+            const int maxStops = r.hi > 0.0f ? (int)r.hi : 1;
+            int sel = r.sel ? *r.sel : 0;
+            if (sel >= cnt) sel = cnt - 1;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), barH = 18.0f, mkH = 9.0f;
+            const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + barH);
+            for (int cx = 0; cx * 6.0f < w; ++cx)
+                for (int cy = 0; cy < 3; ++cy)
+                    dl->AddRectFilled(ImVec2(p0.x + cx * 6.0f, p0.y + cy * 6.0f), ImVec2(std::min(p1.x, p0.x + cx * 6.0f + 6.0f), p0.y + cy * 6.0f + 6.0f),
+                                      ((cx + cy) & 1) ? IM_COL32(150, 150, 150, 255) : IM_COL32(95, 95, 95, 255));
+            auto col32 = [](const float c[4]) { auto b = [](float v) { return (int)(std::min(1.0f, std::max(0.0f, v)) * 255.0f); };
+                                                 return IM_COL32(b(c[0]), b(c[1]), b(c[2]), b(c[3])); };
+            for (int i = 0; i < 32; ++i) {
+                const float ta = (float)i / 32, tb = (float)(i + 1) / 32;
+                float ca[4], cb[4];
+                InspGradientAt(st, cnt, ta, ca); InspGradientAt(st, cnt, tb, cb);
+                dl->AddRectFilledMultiColor(ImVec2(p0.x + ta * w, p0.y), ImVec2(p0.x + tb * w, p1.y), col32(ca), col32(cb), col32(cb), col32(ca));
+            }
+            dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255));
+            for (int i = 0; i < cnt; ++i) {
+                const float x = p0.x + std::min(1.0f, std::max(0.0f, st[i * 5])) * w;
+                const ImVec2 a(x, p1.y), b(x - 5.0f, p1.y + mkH), c(x + 5.0f, p1.y + mkH);
+                const float rgb[4] = {st[i * 5 + 1], st[i * 5 + 2], st[i * 5 + 3], 1.0f};
+                dl->AddTriangleFilled(a, b, c, col32(rgb));
+                dl->AddTriangle(a, b, c, i == sel ? (hooks.accent | 0xff000000u) : IM_COL32(220, 220, 225, 255), i == sel ? 2.0f : 1.0f);
+            }
+            ImGui::InvisibleButton("##gradbar", ImVec2(w, barH + mkH + 2.0f), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            const float mx = ImGui::GetIO().MousePos.x, mt = std::min(1.0f, std::max(0.0f, (mx - p0.x) / w));
+            static bool s_drag = false;
+            if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                r.activated = true;
+                int hit = InspNearestStop(st, cnt, p0.x, w, mx);
+                if (hit < 0) { float c[4]; InspGradientAt(st, cnt, mt, c); hit = InspAddStop(st, cnt, maxStops, mt, c); if (hit >= 0) r.changed = true; }
+                if (hit >= 0) sel = hit;
+                s_drag = hit >= 0;
+            }
+            if (ImGui::IsItemActive() && s_drag && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f) && st[sel * 5] != mt) { st[sel * 5] = mt; r.changed = true; }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_drag = false;
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                const int hit = InspNearestStop(st, cnt, p0.x, w, mx);
+                if (hit >= 0 && cnt > 1) { r.activated = true; InspRemoveAt(st, cnt, 5, hit); r.changed = true; if (sel >= cnt) sel = cnt - 1; }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click the bar to add a stop, drag a marker to move it, right-click a marker to delete it.");
+            hoverTip = false;
+            if (r.sel) *r.sel = sel;
+            break;
+        }
+        case InspRowCurve: {   // the editor's ParticleCurveEditor
+            float* ks = r.F();
+            int& cnt = *r.I();
+            const int maxKeys = r.hi > 0.0f ? (int)r.hi : 1;
+            int sel = r.sel ? *r.sel : 0;
+            if (sel >= cnt) sel = cnt - 1;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f;
+            const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+            static bool s_drag = false;
+            static float s_top = 1.0f;
+            const bool dragging = s_drag && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            const float top = dragging ? s_top : InspCurveTop(ks, cnt);
+            s_top = top;
+            auto at = [&](float t, float v) { return ImVec2(p0.x + t * w, p1.y - (v / top) * h); };
+            const ImU32 lineCol = hooks.accent | 0xff000000u;
+            dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 36, 255), 3.0f);
+            const float y1 = at(0.0f, 1.0f).y;
+            dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), IM_COL32(70, 74, 86, 255));
+            for (int gx = 1; gx < 4; ++gx) dl->AddLine(ImVec2(p0.x + w * gx * 0.25f, p0.y), ImVec2(p0.x + w * gx * 0.25f, p1.y), IM_COL32(48, 50, 60, 255));
+            const bool smooth = *r.B();
+            ImVec2 prev = at(0.0f, InspCurveAt(ks, cnt, smooth, 0.0f));
+            for (int i = 1; i <= 48; ++i) {
+                const float t = i / 48.0f;
+                const ImVec2 cur = at(t, InspCurveAt(ks, cnt, smooth, t));
+                dl->AddLine(prev, cur, lineCol, 2.0f);
+                prev = cur;
+            }
+            for (int i = 0; i < cnt; ++i) {
+                const ImVec2 kp = at(ks[i * 2], ks[i * 2 + 1]);
+                dl->AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 205, 215, 255));
+                if (i == sel) dl->AddCircle(kp, 6.5f, lineCol, 12, 1.5f);
+            }
+            dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
+            char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", top);
+            dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
+            ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            const ImVec2 m = ImGui::GetIO().MousePos;
+            const float mt = std::min(1.0f, std::max(0.0f, (m.x - p0.x) / w)), mv = std::max(0.0f, (p1.y - m.y) / h * top);
+            if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                r.activated = true;
+                int hit = InspNearestKey(ks, cnt, p0.x, p1.y, w, h, top, m.x, m.y);
+                if (hit < 0) { hit = InspAddKey(ks, cnt, maxKeys, mt, mv); if (hit >= 0) r.changed = true; }
+                if (hit >= 0) sel = hit;
+                s_drag = hit >= 0;
+            }
+            if (ImGui::IsItemActive() && s_drag && sel >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+                ks[sel * 2] = mt; ks[sel * 2 + 1] = std::min(mv, top); r.changed = true;
+            }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s_drag = false;
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                const int hit = InspNearestKey(ks, cnt, p0.x, p1.y, w, h, top, m.x, m.y);
+                if (hit >= 0 && cnt > 1) { r.activated = true; InspRemoveAt(ks, cnt, 2, hit); r.changed = true; if (sel >= cnt) sel = cnt - 1; }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to add a key, drag a key to move it, right-click a key to delete it.");
+            hoverTip = false;
+            if (r.sel) *r.sel = sel;
+            break;
+        }
+        case InspRowAnchor: {   // the editor's AnchorCombo
+            int* a = r.I();
+            const int ai = (*a < 0 || *a > 11) ? 0 : *a;
+            auto diagram = [](ImDrawList* dl, ImVec2 q0, ImVec2 q1, int which, bool active) {
+                dl->AddRect(q0, q1, active ? IM_COL32(150, 190, 255, 255) : IM_COL32(150, 154, 166, 255), 2.0f, 0, 1.2f);
+                const InspAnchorPicture f = InspAnchorFill(which, q0.x, q0.y, q1.x, q1.y);
+                dl->AddRectFilled(ImVec2(f.fx0, f.fy0), ImVec2(f.fx1, f.fy1), active ? IM_COL32(110, 160, 255, 255) : IM_COL32(205, 208, 216, 255), 1.5f);
+            };
+            ImGui::AlignTextToFramePadding();
+            const float sz = ImGui::GetFrameHeight();
+            const ImVec2 bp = ImGui::GetCursorScreenPos();
+            if (ImGui::Button((std::string(kInspAnchorNames[ai]) + "##anchorbtn").c_str(), ImVec2(ImGui::CalcItemWidth(), 0))) ImGui::OpenPopup("##anchorpop");
+            diagram(ImGui::GetWindowDrawList(), ImVec2(bp.x + 4, bp.y + 3), ImVec2(bp.x + sz - 2, bp.y + sz - 3), ai, false);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(ai >= 9 ? "Stretch: the widget fills its parent / the canvas on the stretched axis;\nPosition and Size become margins. Click to change."
+                                          : "Which point of its parent / the screen this widget sticks to when the\nwindow resizes. Click to change.");
+            hoverTip = false;
+            const std::size_t vl = InspVisibleLen(r.label);
+            if (vl) { ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x); ImGui::TextUnformatted(r.label, r.label + vl); }
+            if (ImGui::BeginPopup("##anchorpop")) {
+                ImGui::TextDisabled("ANCHOR");
+                ImGui::SameLine(); ImGui::TextDisabled("(Shift+click: also move it there)");
+                const float cell = 40.0f;
+                auto cellButton = [&](int which, ImVec2 size) {
+                    ImGui::PushID(which);
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    const bool clicked = ImGui::InvisibleButton("##a", size);
+                    const bool hov = ImGui::IsItemHovered();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), hov ? IM_COL32(70, 76, 92, 255) : IM_COL32(44, 46, 54, 255), 4.0f);
+                    diagram(dl, ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + size.x - 6, p.y + size.y - 6), which, which == ai);
+                    if (hov) ImGui::SetTooltip("%s", kInspAnchorNames[which]);
+                    ImGui::PopID();
+                    if (clicked) { *a = which; r.changed = true; r.activated = true; if (ImGui::GetIO().KeyShift) r.axes = 1u; ImGui::CloseCurrentPopup(); }
+                };
+                for (int row = 0; row < 3; ++row) {
+                    for (int col = 0; col < 3; ++col) { if (col) ImGui::SameLine(0, 4); cellButton(row * 3 + col, ImVec2(cell, cell)); }
+                    ImGui::SameLine(0, 10);
+                    if (row == 1) cellButton(9, ImVec2(cell * 1.4f, cell)); else ImGui::Dummy(ImVec2(cell * 1.4f, cell));
+                }
+                cellButton(10, ImVec2(cell, cell * 1.4f)); ImGui::SameLine(0, 4);
+                cellButton(11, ImVec2(cell * 1.4f, cell * 1.4f));
+                ImGui::SameLine(); ImGui::TextDisabled("Stretch vertical / Fill");
+                ImGui::EndPopup();
+            }
+            break;
+        }
+        case InspRowSlot: {   // the editor's AssetSlot
+            std::string* v = r.S();
+            std::string name = *v;
+            if (auto sl = name.find_last_of("/\\"); sl != std::string::npos) name = name.substr(sl + 1);
+            const std::string lbl = (v->empty() ? (std::string("None (") + (r.hint ? r.hint : "") + ")") : name) + "##slotbtn";
+            ImGui::Button(lbl.c_str(), ImVec2(-28, 0));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag a %s from the Project panel here", r.hint ? r.hint : "file");
+            hoverTip = false;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x") && !v->empty()) { v->clear(); r.changed = true; r.activated = true; }
+            break;
+        }
+        case InspRowRadio:
+            if (ImGui::RadioButton(r.label, r.I(), r.iv)) r.changed = true;
+            break;
+        case InspRowRange: {
+            float* v = r.F();
+            if (ImGui::DragFloatRange2(r.label, &v[0], &v[1], r.speed, r.lo, r.hi, r.fmt ? r.fmt : "%.3f", r.hint)) r.changed = true;
+            if (ImGui::IsItemActivated()) r.activated = true;
+            break;
+        }
         }
         if (hoverTip && (r.tip || r.tipLookup) && ImGui::IsItemHovered()) {
             if (r.tip && *r.tip) ImGui::SetTooltip("%s", r.tip);

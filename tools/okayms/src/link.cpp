@@ -13,7 +13,6 @@ constexpr uint16_t kFileRelocsStripped = 0x0001;
 constexpr uint16_t kFileExecutable = 0x0002;
 constexpr uint16_t kFileLargeAddress = 0x0020;
 constexpr uint16_t kRelAbsolute = 0;
-constexpr uint16_t kRelRel32 = 4;
 constexpr uint32_t kAlignMask = 0x00F00000u;
 constexpr uint32_t kImageFlagDrop = kAlignMask | kScnLnkInfo | kScnLnkRemove | kScnLnkComdat | 0x01000000u | 0x8u;
 
@@ -21,8 +20,16 @@ uint32_t read_u32(const uint8_t* p) {
     return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
            (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
+uint64_t read_u64(const uint8_t* p) {
+    uint64_t value = 0;
+    for (int i = 0; i < 8; ++i) value |= static_cast<uint64_t>(p[i]) << (8 * i);
+    return value;
+}
 void write_u32(uint8_t* p, uint32_t value) {
     for (int i = 0; i < 4; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+void write_u64(uint8_t* p, uint64_t value) {
+    for (int i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
 }
 
 bool power_of_two(uint32_t value) {
@@ -545,33 +552,63 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             }
             for (const Relocation& reloc : section.relocations) {
                 if (reloc.type == kRelAbsolute) continue;
-                if (reloc.type != kRelRel32) {
+                const bool relative = reloc.type >= kRelAmd64Rel32 && reloc.type <= static_cast<uint16_t>(kRelAmd64Rel32 + 5);
+                const bool known = reloc.type == kRelAmd64Addr64 || reloc.type == kRelAmd64Addr32 ||
+                                   reloc.type == kRelAmd64Addr32Nb || relative;
+                if (!known) {
                     return Result<std::vector<uint8_t>>::fail(
                         "unsupported relocation " + std::to_string(reloc.type));
                 }
-                if (static_cast<uint64_t>(reloc.offset) + 4u > section.data.size()) {
+                const uint32_t width = reloc.type == kRelAmd64Addr64 ? 8u : 4u;
+                if (static_cast<uint64_t>(reloc.offset) + width > section.data.size()) {
                     return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");
                 }
                 Placed target;
                 if (!resolve(oi, reloc.symbol, &target, &error)) return Result<std::vector<uint8_t>>::fail(error);
                 const uint32_t location = contrib.offset + reloc.offset;
-                if (static_cast<uint64_t>(location) + 4u > out.bytes.size()) {
+                if (static_cast<uint64_t>(location) + width > out.bytes.size()) {
                     return Result<std::vector<uint8_t>>::fail("relocation offset is outside the section");
                 }
+                uint64_t target_rva = 0;
                 uint64_t target_va = 0;
                 if (target.absolute) {
                     target_va = target.absolute_value;
                 } else {
-                    target_va = options.image_base + outs[target.out_section].rva + target.offset;
+                    target_rva = static_cast<uint64_t>(outs[target.out_section].rva) + target.offset;
+                    target_va = options.image_base + target_rva;
                 }
-                const uint64_t site_va = options.image_base + out.rva + location;
-                const int32_t addend = static_cast<int32_t>(read_u32(out.bytes.data() + location));
-                const int64_t result = static_cast<int64_t>(addend) +
-                                       (static_cast<int64_t>(target_va) - (static_cast<int64_t>(site_va) + 4));
-                if (result < static_cast<int64_t>(-2147483647 - 1) || result > 2147483647LL) {
-                    return Result<std::vector<uint8_t>>::fail("REL32 relocation does not fit");
+                uint8_t* slot = out.bytes.data() + location;
+                if (reloc.type == kRelAmd64Addr64) {
+                    write_u64(slot, read_u64(slot) + target_va);
+                } else if (reloc.type == kRelAmd64Addr32) {
+                    const uint64_t sum = static_cast<uint64_t>(read_u32(slot)) + target_va;
+                    if (sum > 0xFFFFFFFFu) {
+                        return Result<std::vector<uint8_t>>::fail("ADDR32 relocation does not fit");
+                    }
+                    write_u32(slot, static_cast<uint32_t>(sum));
+                } else if (reloc.type == kRelAmd64Addr32Nb) {
+                    if (target.absolute) {
+                        return Result<std::vector<uint8_t>>::fail("ADDR32NB relocation against an absolute symbol");
+                    }
+                    const uint64_t sum = static_cast<uint64_t>(read_u32(slot)) + target_rva;
+                    if (sum > 0xFFFFFFFFu) {
+                        return Result<std::vector<uint8_t>>::fail("ADDR32NB relocation does not fit");
+                    }
+                    write_u32(slot, static_cast<uint32_t>(sum));
+                } else {
+                    // REL32 is from the byte after the field. REL32_1 .. REL32_5
+                    // are from 1 .. 5 bytes beyond that.
+                    const int extra = static_cast<int>(reloc.type - kRelAmd64Rel32);
+                    const uint64_t site_va = options.image_base + out.rva + location;
+                    const int32_t addend = static_cast<int32_t>(read_u32(slot));
+                    const int64_t result = static_cast<int64_t>(addend) +
+                                           (static_cast<int64_t>(target_va) -
+                                            (static_cast<int64_t>(site_va) + 4 + extra));
+                    if (result < static_cast<int64_t>(-2147483647 - 1) || result > 2147483647LL) {
+                        return Result<std::vector<uint8_t>>::fail("REL32 relocation does not fit");
+                    }
+                    write_u32(slot, static_cast<uint32_t>(static_cast<int32_t>(result)));
                 }
-                write_u32(out.bytes.data() + location, static_cast<uint32_t>(static_cast<int32_t>(result)));
             }
         }
     }

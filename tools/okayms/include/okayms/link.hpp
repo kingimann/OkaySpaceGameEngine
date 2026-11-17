@@ -50,13 +50,17 @@ struct LinkOptions {
     std::string image_name;
 };
 
+// map_text, when not null, receives a text map: the preferred base, each
+// section RVA, each public symbol, and the entry point.
 Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects,
-                                             const LinkOptions& options);
+                                             const LinkOptions& options,
+                                             std::string* map_text = nullptr);
 
 // Reads archives, pulls members that define a symbol still missing from
 // `objects`, and links the result. A short import member becomes an import.
 Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects,
                                                  const std::vector<Archive>& libraries,
-                                                 LinkOptions options);
+                                                 LinkOptions options,
+                                                 std::string* map_text = nullptr);
 
 }  // namespace okayms

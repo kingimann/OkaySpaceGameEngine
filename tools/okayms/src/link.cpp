@@ -3,6 +3,7 @@
 #include "okayms/archive.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <set>
@@ -158,7 +159,7 @@ bool member_provides(const ArchiveMember& member, const std::string& name) {
 }  // namespace
 
 Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects, const std::vector<Archive>& libraries,
-                                                 LinkOptions options) {
+                                                 LinkOptions options, std::string* map_text) {
     std::vector<std::vector<char>> taken;
     for (const Archive& library : libraries) taken.emplace_back(library.members.size(), 0);
     bool progressed = true;
@@ -195,10 +196,11 @@ Result<std::vector<uint8_t>> link_with_libraries(std::vector<ObjectFile> objects
             }
         }
     }
-    return link_executable(std::move(objects), options);
+    return link_executable(std::move(objects), options, map_text);
 }
 
-Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options) {
+Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options,
+                                             std::string* map_text) {
     if (!power_of_two(options.file_alignment) || options.file_alignment < 512 || options.file_alignment > 65536) {
         return Result<std::vector<uint8_t>>::fail("file alignment must be a power of two from 512 to 65536");
     }
@@ -942,6 +944,26 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         const size_t end = static_cast<size_t>(out.raw_pointer) + out.raw_size;
         if (image.size() < end) image.resize(end, 0);
         std::memcpy(image.data() + out.raw_pointer, out.bytes.data(), out.bytes.size());
+    }
+    if (map_text != nullptr) {
+        std::string text;
+        char line[128];
+        std::snprintf(line, sizeof line, "base %08x%08x\n", static_cast<uint32_t>(options.image_base >> 32),
+                      static_cast<uint32_t>(options.image_base));
+        text += line;
+        for (const OutSection& out : outs) {
+            std::snprintf(line, sizeof line, "section %s %08x\n", out.name.c_str(), out.rva);
+            text += line;
+        }
+        for (const auto& item : globals) {
+            if (!item.second.defined || item.second.absolute) continue;
+            const uint32_t rva = outs[item.second.out_section].rva + item.second.offset;
+            std::snprintf(line, sizeof line, "public %s %08x\n", item.first.c_str(), rva);
+            text += line;
+        }
+        std::snprintf(line, sizeof line, "entry %08x\n", entry_rva);
+        text += line;
+        *map_text = std::move(text);
     }
     return Result<std::vector<uint8_t>>::success(std::move(image));
 }

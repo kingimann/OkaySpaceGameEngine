@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> inputs;
     std::vector<std::string> libpaths;
     std::string out_path;
+    std::string map_path;
     bool have_out = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -104,6 +105,8 @@ int main(int argc, char** argv) {
             }
         } else if (key == "libpath") {
             libpaths.push_back(value);
+        } else if (key == "map") {
+            map_path = value;
         } else if (key == "export") {
             options.exports.push_back(value);
             options.dll = true;
@@ -168,7 +171,9 @@ int main(int argc, char** argv) {
         const size_t slash = out_path.find_last_of('/');
         options.image_name = slash == std::string::npos ? out_path : out_path.substr(slash + 1);
     }
-    const auto image = okayms::link_with_libraries(std::move(objects), libraries, options);
+    std::string map_text;
+    const auto image = okayms::link_with_libraries(std::move(objects), libraries, options,
+                                                   map_path.empty() ? nullptr : &map_text);
     if (!image.ok()) {
         fail(image.error);
         return 1;
@@ -177,6 +182,14 @@ int main(int argc, char** argv) {
     if (!write_file(out_path, image.value, &error)) {
         fail(error);
         return 1;
+    }
+    if (!map_path.empty()) {
+        std::ofstream map_out(map_path.c_str());
+        if (!map_out) {
+            fail("cannot write " + map_path);
+            return 1;
+        }
+        map_out << map_text;
     }
     return 0;
 }

@@ -80,6 +80,23 @@ struct Contrib {
     uint32_t offset = 0;
 };
 
+struct ImportSlot {
+    std::string name;
+    uint16_t hint = 0;
+    uint32_t hint_at = 0;
+    uint32_t ilt_at = 0;
+    uint32_t iat_at = 0;
+    uint32_t thunk_at = 0;
+};
+
+struct ImportGroup {
+    std::string dll;
+    uint32_t desc_at = 0;
+    uint32_t ilt_at = 0;
+    uint32_t name_at = 0;
+    std::vector<ImportSlot> slots;
+};
+
 }  // namespace
 
 Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& objects, const LinkOptions& options) {
@@ -158,9 +175,104 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             contribs[oi][si].offset = at;
         }
     }
+    std::vector<ImportGroup> import_groups;
+    int text_section = -1;
+    int idata_section = -1;
+    uint32_t import_iat_begin = 0;
+    uint32_t import_iat_size = 0;
+    std::string error;
+    if (!options.imports.empty()) {
+        for (const ImportedSymbol& imported : options.imports) {
+            if (imported.dll.empty() || imported.name.empty() ||
+                imported.dll.find('\0') != std::string::npos ||
+                imported.name.find('\0') != std::string::npos) {
+                return Result<std::vector<uint8_t>>::fail("import is missing a dll or a name");
+            }
+            ImportGroup* group = nullptr;
+            for (ImportGroup& existing : import_groups) {
+                if (existing.dll == imported.dll) group = &existing;
+            }
+            if (group == nullptr) {
+                import_groups.push_back(ImportGroup{});
+                import_groups.back().dll = imported.dll;
+                group = &import_groups.back();
+            }
+            ImportSlot slot;
+            slot.name = imported.name;
+            slot.hint = imported.hint;
+            group->slots.push_back(std::move(slot));
+        }
+        uint32_t cursor = static_cast<uint32_t>(import_groups.size() + 1u) * 20u;
+        for (size_t gi = 0; gi < import_groups.size(); ++gi) {
+            ImportGroup& group = import_groups[gi];
+            group.desc_at = static_cast<uint32_t>(gi) * 20u;
+            group.ilt_at = cursor;
+            if (cursor > 0xFFFFFFFFu - (static_cast<uint32_t>(group.slots.size()) + 1u) * 8u) {
+                return Result<std::vector<uint8_t>>::fail("import table is too large");
+            }
+            for (size_t s = 0; s < group.slots.size(); ++s) {
+                group.slots[s].ilt_at = cursor + static_cast<uint32_t>(s) * 8u;
+            }
+            cursor += (static_cast<uint32_t>(group.slots.size()) + 1u) * 8u;
+            for (ImportSlot& slot : group.slots) {
+                slot.hint_at = cursor;
+                uint32_t hint_bytes = 2u + static_cast<uint32_t>(slot.name.size()) + 1u;
+                if ((hint_bytes & 1u) != 0) ++hint_bytes;
+                if (cursor > 0xFFFFFFFFu - hint_bytes) {
+                    return Result<std::vector<uint8_t>>::fail("import table is too large");
+                }
+                cursor += hint_bytes;
+            }
+            group.name_at = cursor;
+            if (cursor > 0xFFFFFFFFu - (static_cast<uint32_t>(group.dll.size()) + 1u)) {
+                return Result<std::vector<uint8_t>>::fail("import table is too large");
+            }
+            cursor += static_cast<uint32_t>(group.dll.size()) + 1u;
+        }
+        if (!align_up(cursor, 8, &cursor, &error)) return Result<std::vector<uint8_t>>::fail(error);
+        import_iat_begin = cursor;
+        for (ImportGroup& group : import_groups) {
+            for (ImportSlot& slot : group.slots) {
+                slot.iat_at = cursor;
+                cursor += 8u;
+            }
+            cursor += 8u;
+        }
+        import_iat_size = cursor - import_iat_begin;
+
+        for (size_t i = 0; i < outs.size(); ++i) {
+            if (outs[i].name == ".text") text_section = static_cast<int>(i);
+        }
+        if (text_section < 0) {
+            OutSection created;
+            created.name = ".text";
+            created.characteristics = kScnCntCode | kScnMemExecute | kScnMemRead;
+            created.any_data = true;
+            outs.push_back(std::move(created));
+            text_section = static_cast<int>(outs.size()) - 1;
+        }
+        OutSection& text = outs[static_cast<size_t>(text_section)];
+        text.characteristics |= kScnCntCode | kScnMemExecute | kScnMemRead;
+        if (text.bytes.size() < text.virtual_size) text.bytes.resize(text.virtual_size, 0);
+        for (ImportGroup& group : import_groups) {
+            for (ImportSlot& slot : group.slots) {
+                slot.thunk_at = text.virtual_size;
+                text.bytes.resize(static_cast<size_t>(text.virtual_size) + 6u, 0);
+                text.virtual_size += 6u;
+                text.any_data = true;
+            }
+        }
+        OutSection idata;
+        idata.name = ".idata";
+        idata.bytes.assign(cursor, 0);
+        idata.virtual_size = cursor;
+        idata.any_data = true;
+        idata.characteristics = kScnCntInitData | kScnMemRead | kScnMemWrite;
+        outs.push_back(std::move(idata));
+        idata_section = static_cast<int>(outs.size()) - 1;
+    }
     if (outs.empty()) return Result<std::vector<uint8_t>>::fail("image has no sections");
 
-    std::string error;
     const uint32_t header_bytes = 64u + 4u + 20u + 240u + 40u * static_cast<uint32_t>(outs.size());
     uint32_t size_of_headers = 0;
     if (!align_up(header_bytes, options.file_alignment, &size_of_headers, &error)) {
@@ -208,6 +320,27 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     }
     const uint32_t size_of_image = rva;
 
+    if (idata_section >= 0) {
+        OutSection& idata = outs[static_cast<size_t>(idata_section)];
+        auto write32 = [&](uint32_t at, uint32_t value) {
+            write_u32(idata.bytes.data() + at, value);
+        };
+        for (const ImportGroup& group : import_groups) {
+            write32(group.desc_at, idata.rva + group.ilt_at);
+            write32(group.desc_at + 12, idata.rva + group.name_at);
+            write32(group.desc_at + 16, idata.rva + group.slots.front().iat_at);
+            std::memcpy(idata.bytes.data() + group.name_at, group.dll.data(), group.dll.size());
+            for (const ImportSlot& slot : group.slots) {
+                const uint32_t hint_rva = idata.rva + slot.hint_at;
+                write32(slot.ilt_at, hint_rva);
+                write32(slot.iat_at, hint_rva);
+                idata.bytes[slot.hint_at] = static_cast<uint8_t>(slot.hint);
+                idata.bytes[slot.hint_at + 1] = static_cast<uint8_t>(slot.hint >> 8);
+                std::memcpy(idata.bytes.data() + slot.hint_at + 2, slot.name.data(), slot.name.size());
+            }
+        }
+    }
+
     std::vector<std::vector<Placed>> placed(objects.size());
     std::map<std::string, Placed> globals;
     for (size_t oi = 0; oi < objects.size(); ++oi) {
@@ -243,6 +376,26 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                     return Result<std::vector<uint8_t>>::fail("duplicate symbol " + symbol.name);
                 }
                 globals[symbol.name] = slot;
+            }
+        }
+    }
+    if (idata_section >= 0) {
+        for (const ImportGroup& group : import_groups) {
+            for (const ImportSlot& slot : group.slots) {
+                const std::string imp_name = "__imp_" + slot.name;
+                if (globals.find(imp_name) != globals.end() || globals.find(slot.name) != globals.end()) {
+                    return Result<std::vector<uint8_t>>::fail("duplicate symbol " + slot.name);
+                }
+                Placed at_iat;
+                at_iat.defined = true;
+                at_iat.out_section = static_cast<uint32_t>(idata_section);
+                at_iat.offset = slot.iat_at;
+                globals[imp_name] = at_iat;
+                Placed at_thunk;
+                at_thunk.defined = true;
+                at_thunk.out_section = static_cast<uint32_t>(text_section);
+                at_thunk.offset = slot.thunk_at;
+                globals[slot.name] = at_thunk;
             }
         }
     }
@@ -340,6 +493,24 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
             }
         }
     }
+    if (idata_section >= 0) {
+        OutSection& text = outs[static_cast<size_t>(text_section)];
+        const OutSection& idata = outs[static_cast<size_t>(idata_section)];
+        for (const ImportGroup& group : import_groups) {
+            for (const ImportSlot& slot : group.slots) {
+                const uint32_t at = slot.thunk_at;
+                text.bytes[at] = 0xFF;
+                text.bytes[at + 1] = 0x25;
+                const uint64_t target = options.image_base + idata.rva + slot.iat_at;
+                const uint64_t site = options.image_base + text.rva + at + 2u;
+                const int64_t disp = static_cast<int64_t>(target) - (static_cast<int64_t>(site) + 4);
+                if (disp < static_cast<int64_t>(-2147483647 - 1) || disp > 2147483647LL) {
+                    return Result<std::vector<uint8_t>>::fail("REL32 relocation does not fit");
+                }
+                write_u32(text.bytes.data() + at + 2, static_cast<uint32_t>(static_cast<int32_t>(disp)));
+            }
+        }
+    }
 
     std::vector<uint8_t> image(size_of_headers, 0);
     image[0] = 'M';
@@ -384,6 +555,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
     put64(0xB0, options.heap_reserve);
     put64(0xB8, options.heap_commit);
     put32(0xC4, 16);
+    if (idata_section >= 0) {
+        put32(0xC8 + 8, outs[static_cast<size_t>(idata_section)].rva);
+        put32(0xC8 + 12, static_cast<uint32_t>(import_groups.size() + 1u) * 20u);
+        put32(0xC8 + 96, outs[static_cast<size_t>(idata_section)].rva + import_iat_begin);
+        put32(0xC8 + 100, import_iat_size);
+    }
 
     size_t section_at = 0x148;
     for (const OutSection& out : outs) {

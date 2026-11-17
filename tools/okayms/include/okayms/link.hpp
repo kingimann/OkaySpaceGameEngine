@@ -15,8 +15,18 @@ namespace okayms {
 constexpr uint16_t kSubsystemConsole = 3;
 constexpr uint16_t kSubsystemWindowsGui = 2;
 
+// One function imported by name from a DLL. The linker defines
+// `__imp_<name>` on the import address table and `<name>` as a
+// jmp-through-the-table thunk.
+struct ImportedSymbol {
+    std::string dll;
+    std::string name;
+    uint16_t hint = 0;
+};
+
 struct LinkOptions {
     std::string entry = "entry";
+    std::vector<ImportedSymbol> imports;
     uint64_t image_base = 0x140000000ULL;
     uint32_t section_alignment = 0x1000;
     uint32_t file_alignment = 0x200;

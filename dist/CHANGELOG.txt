@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.882.0
+  Fixes and new things
+  - Security: scripts can no longer read or write files outside the project,
+    the relay and updater checks were tightened, and a reactions database
+    hole was closed.
+  - Modeling: Recenter, Ground and Fit 1u now survive saving; typed NaN or
+    infinity values no longer break a mesh; Solidify closes open edges; Export
+    OBJ keeps colours, polygons and normals; every whole-mesh button is one
+    undo step in Edit Mesh.
+  - Many smaller bug fixes in scenes, scripts and saving.
+
 v2.881.0
   New things
   - Anti-cheat hardening for multiplayer games: the server can keep a ban

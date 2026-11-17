@@ -17,10 +17,10 @@ enum Tok {
     TLParen, TRParen, TLBrace, TRBrace, TSemi, TComma, TStar, TAmp,
     TPlus, TMinus, TSlash, TPercent, TAssign, TEq, TNe, TLt, TGt, TLe, TGe,
     TPlusPlus, TMinusMinus, TPlusEq, TMinusEq, TStarEq, TSlashEq, TPercentEq, TQuestion,
-    TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon,
+    TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon, TColonColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TContinue, TReturn,
     TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
-    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble
+    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble, TNamespace
 };
 
 struct Token {
@@ -44,6 +44,7 @@ struct Type {
     int bit_off = 0;
     bool is_unsigned = false;
     bool is_const = false;
+    bool is_ref = false;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -130,6 +131,7 @@ struct FuncDecl {
     bool is_static = false;
     bool vararg = false;
     bool sret = false;
+    std::string symbol;
     int func_id = -1;
     int sret_off = 0;
     int param_base = 0;
@@ -731,6 +733,7 @@ Tok keyword(const std::string& text) {
     if (text == "goto") return TGoto;
     if (text == "float") return TFloat;
     if (text == "double") return TDouble;
+    if (text == "namespace") return TNamespace;
     return TIdent;
 }
 
@@ -1015,7 +1018,12 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         else if (c == '[') tok.kind = TLBrack;
         else if (c == ']') tok.kind = TRBrack;
         else if (c == '.') tok.kind = TDot;
-        else if (c == ':') tok.kind = TColon;
+        else if (c == ':' && i + 1 < text.size() && text[i + 1] == ':') {
+            tok.kind = TColonColon;
+            i += 2;
+            tokens.push_back(tok);
+            continue;
+        } else if (c == ':') tok.kind = TColon;
         else {
             *error = "unexpected character";
             return {};
@@ -1025,6 +1033,39 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
     }
     tokens.push_back(Token{});
     return tokens;
+}
+
+// MSVC decorated names, from the public decoration rules: '?' name '@'
+// namespace '@@YA' return-type argument-types '@Z'. H is int, X is void,
+// A in front of a type is a reference. Written here, not copied.
+std::string cxx_type(const Type& type) {
+    if (type.is_ref) {
+        Type inner = type;
+        inner.is_ref = false;
+        return "A" + cxx_type(inner);
+    }
+    if (type.pointers > 0) {
+        Type inner = type;
+        --inner.pointers;
+        return "PEA" + cxx_type(inner);
+    }
+    if (type.base == 0) return "X";
+    if (type.base == 2) return "D";
+    if (type.base == 4) return "F";
+    if (type.base == 5) return "M";
+    if (type.base == 6) return "N";
+    return "H";
+}
+
+std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params) {
+    std::string out = "?" + name + "@" + ns + "@@YA" + cxx_type(ret);
+    if (params.empty()) out += "X";
+    else {
+        for (const Type& param : params) out += cxx_type(param);
+        out += "@";
+    }
+    out += "Z";
+    return out;
 }
 
 struct Parser {
@@ -1040,6 +1081,7 @@ struct Parser {
     std::map<std::string, uint64_t> enum_values;
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
+    std::string current_ns;
     int scope_depth = 0;
     std::vector<int> scope_parent{0};
 
@@ -1078,6 +1120,7 @@ struct Parser {
         return -1;
     }
     int size_of(const Type& type) const {
+        if (type.is_ref) return 8;
         if (type.array_len >= 0) return type.array_len * size_of(peel_array(type));
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
@@ -1090,6 +1133,7 @@ struct Parser {
         return 4;
     }
     int align_of(const Type& type) const {
+        if (type.is_ref) return 8;
         if (type.array_len >= 0) return align_of(peel_array(type));
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
@@ -1360,6 +1404,7 @@ struct Parser {
             return true;
         }
         while (accept(TStar)) ++out->type.pointers;
+        if (accept(TAmp)) out->type.is_ref = true;
         if (!is(TIdent)) {
             error = "expected a name";
             return false;
@@ -1494,6 +1539,21 @@ struct Parser {
 
     bool parse() {
         while (!is(TEnd)) {
+            if (!current_ns.empty() && accept(TRBrace)) {
+                current_ns.clear();
+                continue;
+            }
+            if (is(TNamespace)) {
+                next();
+                if (!is(TIdent)) {
+                    error = "expected a namespace name";
+                    return false;
+                }
+                current_ns = cur().text;
+                next();
+                if (!expect(TLBrace, "'{'")) return false;
+                continue;
+            }
             bool is_typedef = false;
             bool is_static = false;
             bool is_const = false;
@@ -1535,7 +1595,8 @@ struct Parser {
                 continue;
             }
             FuncDecl fn;
-            fn.name = decl.name;
+            fn.name = current_ns.empty() ? decl.name : current_ns + "::" + decl.name;
+            if (!current_ns.empty()) fn.symbol = cxx_symbol(current_ns, decl.name, decl.type, decl.params);
             fn.ret = decl.type;
             fn.params = decl.params;
             fn.param_names = decl.param_names;
@@ -1971,8 +2032,16 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = 2;
         next();
     } else if (is(TIdent)) {
-        const std::string name = cur().text;
+        std::string name = cur().text;
         next();
+        if (accept(TColonColon)) {
+            if (!is(TIdent)) {
+                error = "expected a name after ::";
+                return false;
+            }
+            name += "::" + cur().text;
+            next();
+        }
         if (name == "va_arg" && accept(TLParen)) {
             Node ap;
             if (!parse_expr(1, &ap)) return false;
@@ -2380,6 +2449,7 @@ struct Gen {
 };
 
 int Gen::size_of(const Type& type) const {
+    if (type.is_ref) return 8;
     if (type.array_len >= 0) return type.array_len * size_of(peel_array(type));
     if (type.pointers > 0) return 8;
     if (type.base == 2) return 1;
@@ -2411,6 +2481,12 @@ Type Gen::element_type(const Type& type) const { return peel_array(type); }
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
+            if (local->type.is_ref) {
+                load_slot(local->offset, true);
+                last_type = local->type;
+                last_type.is_ref = false;
+                return true;
+            }
             if (local->is_static) {
                 b(0x48);
                 b(0x8D);
@@ -2675,6 +2751,16 @@ bool Gen::gen_expr(const Node& node) {
     }
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
+            if (local->type.is_ref) {
+                load_slot(local->offset, true);
+                Type referred = local->type;
+                referred.is_ref = false;
+                const int size = std::max(1, size_of(referred));
+                load_from_rax(size >= 8 ? 8 : size, referred.is_unsigned);
+                last_type = referred;
+                promote(&last_type);
+                return true;
+            }
             if (local->reg != 0) {
                 mov_eax_from(local->reg);
                 last_type = local->type;
@@ -2752,7 +2838,7 @@ bool Gen::gen_expr(const Node& node) {
             b(0x48);
             b(0x8D);
             b(0x05);
-            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->symbol.empty() ? fn->name : fn->symbol, kRelAmd64Rel32});
             u32(0);
             last_type = Type{};
             last_type.pointers = 1;
@@ -2935,6 +3021,23 @@ bool Gen::gen_expr(const Node& node) {
         }
         if (node.kids[0].kind == Node::Name && (node.op == TAssign || node.op == TEnd)) {
             if (Local* local = find_local(node.kids[0].text)) {
+                if (local->type.is_ref && node.number == 1) {
+                    if (!gen_addr(node.kids[1])) return false;
+                    const int addr = spill();
+                    if (!error.empty()) return false;
+                    b(0x48);
+                    b(0x8B);
+                    b(0x85);
+                    disp(addr);
+                    b(0x48);
+                    b(0x89);
+                    b(0x85);
+                    disp(local->offset);
+                    --temp_depth;
+                    last_type = local->type;
+                    last_type.is_ref = false;
+                    return true;
+                }
                 if (local->reg != 0) {
                     if (!gen_expr(node.kids[1])) return false;
                     mov_reg_eax(local->reg);
@@ -3370,7 +3473,7 @@ bool Gen::gen_expr(const Node& node) {
             u32(0);
         } else {
             b(0xE8);
-            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->symbol.empty() ? fn->name : fn->symbol, kRelAmd64Rel32});
             u32(0);
         }
         reload_caller();
@@ -4223,7 +4326,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             std::vector<Span> spans;
             for (int i = 0; i < static_cast<int>(fn.locals.size()); ++i) {
                 Local& local = fn.locals[static_cast<size_t>(i)];
-                if (local.is_static || local.name.empty() || local.name[0] == '_') continue;
+                if (local.is_static || local.name.empty() || local.name[0] == '_' || local.type.is_ref) continue;
                 if (shadowed.count(local.name) != 0) continue;
                 if (local.type.is_array() || local.type.pointers != 0 || local.type.base == 3 || local.type.base == 5 ||
                     local.type.base == 6)
@@ -4401,7 +4504,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             return false;
         }
         gen.epilogue();
-        placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static});
+        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static});
         for (const auto& site : gen.gotos) {
             const auto found = gen.labels.find(site.first);
             if (found == gen.labels.end()) {
@@ -4428,7 +4531,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         const uint32_t xat = static_cast<uint32_t>(gen.xdata.size());
         unwind_offs.push_back(xat);
         gen.xdata.insert(gen.xdata.end(), unwind.value.begin(), unwind.value.end());
-        const std::string unw = "unwind_" + fn.name;
+        const std::string unw = "unwind_" + placed.back().name;
         // pdata: begin, end (addend = size), unwind info.
         const uint32_t pat = static_cast<uint32_t>(gen.pdata.size());
         for (int i = 0; i < 3; ++i) gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0);
@@ -4436,8 +4539,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.pdata[pat + 5] = static_cast<uint8_t>(placed.back().size >> 8);
         gen.pdata[pat + 6] = static_cast<uint8_t>(placed.back().size >> 16);
         gen.pdata[pat + 7] = static_cast<uint8_t>(placed.back().size >> 24);
-        gen.relocs.push_back({2, pat, fn.name, kRelAmd64Addr32Nb});
-        gen.relocs.push_back({2, pat + 4, fn.name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat, placed.back().name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat + 4, placed.back().name, kRelAmd64Addr32Nb});
         gen.relocs.push_back({2, pat + 8, unw, kRelAmd64Addr32Nb});
         (void)xat;
         (void)unw;
@@ -4598,7 +4701,7 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     std::string lex_error;
     const std::vector<Token> tokens = lex(expanded, &lex_error);
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
-    Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}};
+    Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}, {}};
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     CompileOutput output;
     std::string error;

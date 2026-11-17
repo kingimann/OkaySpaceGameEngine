@@ -76,8 +76,8 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 
 // ---------------------------------------------------------------- manifest
 struct Toolchain {
-    string name = "gcc", cc = "gcc", cxx = "g++", ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
-    vector<string> flags, linkFlags; size_t rspThreshold = 30000;
+    string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
+    vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false;
 };
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
@@ -165,7 +165,9 @@ static Manifest parseManifest(const string& file) {
                     else if (t[1] == "clang") { c.cc = "clang"; c.cxx = "clang++"; }
                     else if (t[1] == "mingw") { c.cc = "x86_64-w64-mingw32-gcc-win32"; c.cxx = "x86_64-w64-mingw32-g++-win32";
                                                 c.ar = "x86_64-w64-mingw32-ar"; c.exe = ".exe"; }
-                    else throw err("unknown toolchain preset '" + t[1] + "' (gcc, clang, mingw)");
+                    else if (t[1] == "msvc") { c.cc = "cl.exe"; c.cxx = "cl.exe"; c.ld = "link.exe"; c.ar = "lib.exe";
+                                               c.obj = ".obj"; c.exe = ".exe"; c.libp = ""; c.libs = ".lib"; c.msvc = true; }
+                    else throw err("unknown toolchain preset '" + t[1] + "' (gcc, clang, mingw, msvc)");
                 }
                 continue;
             }
@@ -220,7 +222,7 @@ static Manifest parseManifest(const string& file) {
         auto add = [&](vector<string>& d) { d.insert(d.end(), v.begin(), v.end()); };
         if (mode == TC) {
             Toolchain& c = m.tc; auto one = [&](string& d) { if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
-            if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ar") one(c.ar);
+            if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
@@ -389,6 +391,23 @@ static string resolve(const string& dir, const string& p) {
 static string quote(const string& s) { return s.find_first_of(" \"'$\\") == string::npos ? s : "'" + s + "'"; }
 static string joined(const vector<string>& a) { string r; for (auto& s : a) { if (!r.empty()) r += ' '; r += quote(s); } return r; }
 
+static string spellMsvc(const string& f, bool link) {
+    if (f.size() >= 2 && f[0] == '-' && f[1] == 'D') return "/D" + f.substr(2);
+    if (f.size() >= 2 && f[0] == '-' && f[1] == 'I') return "/I" + f.substr(2);
+    if (f == "-g" || f == "-g1" || f == "-ggdb") return "/Zi";
+    if (f == "-O0") return "/Od";
+    if (f == "-O1") return "/O1";
+    if (f == "-O2") return "/O2";
+    if (f == "-O3") return "/Ox";
+    if (link && f.size() >= 2 && f[0] == '-' && f[1] == 'l') return f.substr(2) + ".lib";
+    if (link && f.size() >= 2 && f[0] == '-' && f[1] == 'L') return "/LIBPATH:" + f.substr(2);
+    return f;
+}
+static bool msvcLinkerIsCl(const string& ld) {
+    string b = ld; auto p = b.find_last_of("/\\"); if (p != string::npos) b = b.substr(p + 1);
+    if (b.size() > 4 && b.compare(b.size() - 4, 4, ".exe") == 0) b.resize(b.size() - 4);
+    return b == "cl";
+}
 static Graph plan(const Manifest& m, const vector<string>& want) {
     std::map<string, const Target*> byName;
     for (auto& t : m.targets) byName[t.name] = &t;
@@ -446,27 +465,50 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
             a.output = under(".okaybuild/obj/" + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
-            a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
-            for (auto& f : m.tc.flags) a.argv.push_back(f);
-            for (auto& f : t.flags) a.argv.push_back(f);
-            for (auto& i : t.includes) a.argv.push_back("-I" + i);
-            for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
-            for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
-            for (auto& d : t.defines) a.argv.push_back("-D" + d);
-            for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
+            if (m.tc.msvc) {
+                a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
+                a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
+                for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
+                for (auto& f : t.flags) a.argv.push_back(spellMsvc(f, false));
+                for (auto& i : t.includes) a.argv.push_back("/I" + i);
+                for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
+                for (auto& d : t.defines) a.argv.push_back("/D" + d);
+                a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
+                a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
+            } else {
+                a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
+                for (auto& f : m.tc.flags) a.argv.push_back(f);
+                for (auto& f : t.flags) a.argv.push_back(f);
+                for (auto& i : t.includes) a.argv.push_back("-I" + i);
+                for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
+                for (auto& d : t.defines) a.argv.push_back("-D" + d);
+                for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
+            }
             objs.push_back(a.output); objActs.push_back(add(a));
         }
         Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
-        if (t.isLib) { a.kind = "AR"; a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; for (auto& o : objs) a.argv.push_back(o); }
-        else {
-            a.kind = "LD"; a.argv = {m.tc.cxx}; a.rspHead = 1; for (auto& o : objs) a.argv.push_back(o);
-            for (auto& f : m.tc.linkFlags) a.argv.push_back(f);
-            for (auto& f : t.linkFlags) a.argv.push_back(f);
+        if (t.isLib) {
+            a.kind = "AR";
+            if (m.tc.msvc) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
+            else { a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; }
+            for (auto& o : objs) a.argv.push_back(o);
+        } else {
+            a.kind = "LD";
+            string linker = m.tc.ld.empty() ? m.tc.cxx : m.tc.ld;
+            a.argv = {linker}; a.rspHead = 1;
+            if (m.tc.msvc) a.argv.push_back("/nologo");
+            for (auto& o : objs) a.argv.push_back(o);
+            for (auto& f : m.tc.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
+            for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
             vector<string> sys = t.libs;
             for (auto& l : libs) { a.argv.push_back(outPath(*byName[l])); a.inputs.push_back(outPath(*byName[l])); a.deps.push_back(finalAct[l]);
                                    for (auto& s : byName[l]->libs) sys.push_back(s); }
-            for (auto& s : sys) a.argv.push_back("-l" + s);
-            a.argv.push_back("-o"); a.argv.push_back(a.output);
+            for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : "-l" + s);
+            if (m.tc.msvc && (msvcLinkerIsCl(linker) || linker == m.tc.cc || linker == m.tc.cxx)) { a.argv.push_back("/Fe" + a.output); }
+            else if (m.tc.msvc) { a.argv.push_back("/OUT:" + a.output); }
+            else { a.argv.push_back("-o"); a.argv.push_back(a.output); }
         }
         finalAct[n] = add(a); g.targetFinal.push_back({n, finalAct[n]});
     }
@@ -920,7 +962,36 @@ static void storeCache(const Action& a, const string& key) {
     if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) fs::copy_file(a.depfile, dir + "/dep", fs::copy_options::overwrite_existing, ec);
     std::ofstream m(dir + "/meta", std::ios::trunc); m << "okaybuild-cache 1\n" << key << "\n";
 }
+static bool hasShowIncludes(const Action& a) {
+    for (auto& s : a.argv) if (s == "/showIncludes") return true;
+    return false;
+}
+// cl.exe prints "Note: including file: <path>" (deeper includes have more spaces). We turn that into
+// the same depfile the gcc path already reads. This is not a copy of any other parser.
+static bool okShow(const Action& a) { return a.kind == "CC" && !a.depfile.empty() && hasShowIncludes(a); }
+static void writeShowIncludesDepFile(const Action& a, const string& captured) {
+    if (!okShow(a)) return;
+    vector<string> hdrs;
+    size_t i = 0;
+    while (i < captured.size()) {
+        size_t nl = captured.find('\n', i); if (nl == string::npos) nl = captured.size();
+        string line = captured.substr(i, nl - i); if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto p = line.find("including file:");
+        if (p != string::npos) {
+            string path = line.substr(p + 15);
+            size_t a0 = path.find_first_not_of(" \t"); size_t b0 = path.find_last_not_of(" \t");
+            if (a0 != string::npos) hdrs.push_back(path.substr(a0, b0 - a0 + 1));
+        }
+        i = nl + 1; if (nl == captured.size()) break;
+    }
+    fs::path parent = fs::path(a.depfile).parent_path(); if (!parent.empty()) fs::create_directories(parent);
+    std::ofstream f(a.depfile, std::ios::trunc);
+    f << a.output << ":";
+    for (auto& h : hdrs) { f << ' '; for (char c : h) { if (c == ' ' || c == '\\' || c == '#') f << '\\'; f << c; } }
+    f << '\n';
+}
 static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string, FileSig>>& oldProduced) {
+    if (ok) writeShowIncludesDepFile(a, out);
     if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
     long long ts = nowNs();
     Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
@@ -1271,7 +1342,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (!err.empty()) { done(id, false, err, false); continue; }
                 long long tStep = nowNs();
                 string cacheKey, tag = "-";
-                if (gUseCache && a.kind == "CC") {
+                if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) {
                     int cr = lookupCache(a, cacheKey, out);
                     if (cr < 0) { noteStep(a.kind, a.desc, nowNs() - tStep, "fail"); done(id, false, out, false); continue; }
                     if (cr == 1) {
@@ -1423,7 +1494,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                         }
                         long long tStep = nowNs();
                         string cacheKey, tag = "-"; bool cached = false;
-                        if (gUseCache && a.kind == "CC") {
+                        if (gUseCache && a.kind == "CC" && !hasShowIncludes(a)) {
                             int cr = lookupCache(a, cacheKey, out);
                             if (cr < 0) { ok = false; tag = "fail"; }
                             else if (cr == 1) { cached = true; tag = "hit"; ++gCacheHit; std::lock_guard<std::mutex> pl(mu); printf("        cache hit\n"); fflush(stdout); }

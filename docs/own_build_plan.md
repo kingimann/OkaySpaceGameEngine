@@ -45,6 +45,9 @@ Typed options are one line, the same shape in the manifest and in `config.okay`:
 
 `okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
 
+## MSVC flag spelling
+The `msvc` toolchain preset drives `cl.exe`, `link.exe` and `lib.exe` (object `.obj`, library `.lib`, program `.exe`). Configs, defines and includes are spelled for that driver: `/Od` `/O1` `/O2` `/Ox`, `/Zi`, `/D`, `/I`, `/Fo` on a compile, `/OUT:` on `link.exe` and `lib.exe`, `/Fe` when the linker itself is `cl.exe`, `/LIBPATH:` and `name.lib` for libraries. A compile passes `/showIncludes`. Lines that say `including file:` are written into the same depfile the gcc path already reads, so a named header is a real dependency. Long commands use the existing response-file path (`tool @file`, one argument per line). This was checked with a fake `cl.exe` that records its arguments. It was not run against a real Microsoft compiler.
+
 ## Compiler cache
 Before a compile that is going to run, okay-build preprocesses that file and builds a cache key from three pieces: the preprocessed text, the compile command, and the compiler file's own bytes. The hash is FNV-1a 64-bit. It is not collision-safe. Two different inputs can land on the same key. The cache is a speed-up, not a security boundary, and it is not a cryptographic check. `--no-cache` turns it off.
 

@@ -670,6 +670,54 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testMsvcFlags() {
+    printf("test: MSVC flag spelling, /showIncludes deps, response files\n");
+    fresh("msvc");
+    write("fakecl",
+          "#!/bin/sh\n"
+          "printf 'ARG %s\\n' \"$@\" >> argv.log\n"
+          "for a in \"$@\"; do\n"
+          "  case \"$a\" in\n"
+          "    @*) while IFS= read -r line || [ -n \"$line\" ]; do printf 'RSP %s\\n' \"$line\" >> argv.log; done < \"${a#@}\" ;;\n"
+          "  esac\n"
+          "done\n"
+          "out=\n"
+          "scan() { case \"$1\" in /Fo*) out=${1#/Fo} ;; /Fe*) out=${1#/Fe} ;; /OUT:*) out=${1#/OUT:} ;; esac; }\n"
+          "for a in \"$@\"; do scan \"$a\"; case \"$a\" in @*) while IFS= read -r line; do scan \"$line\"; done < \"${a#@}\" ;; esac; done\n"
+          "echo 'Note: including file: inc/util.h'\n"
+          "echo 'Note: including file:  inc/nested.h'\n"
+          "if [ -n \"$out\" ]; then mkdir -p \"$(dirname \"$out\")\"; printf 'obj\\n' > \"$out\"; fi\n"
+          "exit 0\n");
+    fs::permissions(gRoot / "fakecl", fs::perms::owner_all);
+    fs::copy(gRoot / "fakecl", gRoot / "link.exe"); fs::permissions(gRoot / "link.exe", fs::perms::owner_all);
+    fs::copy(gRoot / "fakecl", gRoot / "lib.exe"); fs::permissions(gRoot / "lib.exe", fs::perms::owner_all);
+    write("inc/util.h", "#define V 1\n");
+    write("inc/nested.h", "#define N 1\n");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("build.okay",
+          "toolchain msvc\n cc = ./fakecl\n cxx = ./fakecl\n ld = ./link.exe\n ar = ./lib.exe\n rsp_threshold = 40\nend\n"
+          "config debug\n optimize = 0\n debug = on\n define = MODE=debug\nend\n"
+          "target app exe\n sources = main.cpp\n include = inc\n define = NAME=app\n libs = user32\n link_flags = -Llibs\nend\n");
+    int rc; string o = sh("--config debug -j1 --no-cache", &rc);
+    check(rc == 0, "fake cl.exe build exits 0", o);
+    string args = readFile(gRoot / "argv.log");
+    check(args.find("/showIncludes") != string::npos && args.find("/Od") != string::npos && args.find("/Zi") != string::npos, "compile uses /showIncludes /Od /Zi", args);
+    check(args.find("/DMODE=debug") != string::npos && args.find("/DNAME=app") != string::npos && args.find("/Iinc") != string::npos, "defines and includes use /D and /I", args);
+    check(args.find("/Fo") != string::npos, "object path uses /Fo", args);
+    check(args.find("/OUT:") != string::npos && args.find("/LIBPATH:libs") != string::npos && args.find("user32.lib") != string::npos, "link uses /OUT: /LIBPATH: and name.lib", args);
+    check(args.find("RSP ") != string::npos, "a long MSVC command goes through a response file", args);
+    write("inc/util.h", "#define V 2\n");
+    o = sh("-j1 --no-cache", &rc);
+    check(rc == 0 && ran(o) >= 1, "a header named by /showIncludes is a dependency", o);
+    write("build.okay",
+          "toolchain msvc\n cc = ./fakecl\n cxx = ./fakecl\n ld = ./fakecl\n ar = ./lib.exe\nend\n"
+          "target app exe\n sources = main.cpp\nend\n");
+    fs::remove(gRoot / "argv.log");
+    o = sh("-j1 --no-cache", &rc);
+    args = readFile(gRoot / "argv.log");
+    check(rc == 0 && args.find("/Fe") != string::npos, "cl.exe as the linker uses /Fe", args + o);
+}
+
 static void testGraphTargets() {
     printf("test: targets and graph listings, including the link pool\n");
     fresh("graph"); basicProject();
@@ -694,6 +742,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

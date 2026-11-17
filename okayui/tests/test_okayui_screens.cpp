@@ -279,9 +279,35 @@ int main() {
                 CHECK(r->x + r->w <= x0 + w + 0.5f);
             }
             CHECK(c.res.autoScrollToggle.y > c.res.warnToggle.y);                    // moved down a line
-            CHECK(c.res.autoScrollToggle.y < c.res.clearOnPlayToggle.y);             // and the next row still comes after it
             CHECK(c.res.firstRow.y > c.res.saveButton.y + c.res.saveButton.h);       // the log starts below every control
             Check("console_narrow", c.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+            // Nothing is cut off at 560, 420 and 300 px (the layout decided for #988: "Save log" may share the Auto-scroll row):
+            // every control lies wholly inside the panel, no two controls overlap, and Auto-scroll keeps its whole label.
+            for (float pw : {560.0f, 420.0f, 300.0f}) {
+                CRig n; n.Fill();
+                float autoNeed = 0.0f;
+                for (int i = 0; i < 3; ++i) n.sim.Frame([&] {
+                    n.res = S::DrawConsole(n.model, n.st, n.host.h, x0, 12, pw, 520 - 24);
+                    autoNeed = UI::GetTextLineHeight() + 8.0f + UI::CalcTextSize("Auto-scroll").x;   // box (at least a text line) + gap + whole label
+                });
+                const UI::Rect* all[] = {&n.res.clearButton, &n.res.searchField, &n.res.categoryCombo, &n.res.warnToggle,
+                                         &n.res.errorToggle, &n.res.collapseToggle, &n.res.autoScrollToggle, &n.res.clearOnPlayToggle,
+                                         &n.res.pauseOnErrorToggle, &n.res.copyAllButton, &n.res.saveButton};
+                for (const UI::Rect* r : all) {
+                    CHECK(r->w > 0 && r->h > 0);
+                    CHECK(r->x >= x0 - 0.5f && r->x + r->w <= x0 + pw + 0.5f);   // wholly inside the panel's width
+                }
+                for (std::size_t i = 0; i < sizeof all / sizeof all[0]; ++i)
+                    for (std::size_t j = i + 1; j < sizeof all / sizeof all[0]; ++j) {
+                        const UI::Rect& p = *all[i]; const UI::Rect& q = *all[j];
+                        const bool apart = p.x + p.w <= q.x + 0.5f || q.x + q.w <= p.x + 0.5f ||
+                                           p.y + p.h <= q.y + 0.5f || q.y + q.h <= p.y + 0.5f;
+                        if (!apart) std::printf("  console %.0f wide: controls %zu and %zu overlap\n", pw, i, j);
+                        CHECK(apart);
+                    }
+                CHECK(n.res.autoScrollToggle.w + 0.5f >= autoNeed);                    // the Auto-scroll label is not clipped
+                CHECK(n.res.firstRow.y > n.res.saveButton.y + n.res.saveButton.h);   // the log starts below every control
+            }
             // At the usual width everything still fits on its own rows.
             CRig wide; wide.Fill(); wide.Frames(3);
             CHECK(wide.res.autoScrollToggle.y == wide.res.warnToggle.y);

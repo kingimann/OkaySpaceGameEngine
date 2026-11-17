@@ -13,9 +13,11 @@ enum Tok {
     TEnd, TIdent, TNumber, TString,
     TLParen, TRParen, TLBrace, TRBrace, TSemi, TComma, TStar, TAmp,
     TPlus, TMinus, TSlash, TPercent, TAssign, TEq, TNe, TLt, TGt, TLe, TGe,
+    TPlusPlus, TMinusMinus, TPlusEq, TMinusEq, TStarEq, TSlashEq, TPercentEq, TQuestion,
     TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TReturn,
-    TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec
+    TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
+    TSizeof, TConst, TStatic, TGoto
 };
 
 struct Token {
@@ -31,7 +33,10 @@ struct Type {
     int array_len = -1;
     int struct_id = -1;
     int func_id = -1;
+    int bits = -1;
+    int bit_off = 0;
     bool is_unsigned = false;
+    bool is_const = false;
     bool pointer() const { return pointers > 0; }
     bool is_array() const { return array_len >= 0; }
     bool is_func() const { return func_id >= 0; }
@@ -61,13 +66,15 @@ struct Global {
     std::string name;
     Type type{};
     bool bss = true;
+    bool is_static = false;
     uint32_t init = 0;
 };
 
 struct Node {
     enum Kind {
         Block, Return, If, While, For, Do, Switch, Case, Break, ExprStmt,
-        IntLit, StringLit, Name, Unary, Binary, Assign, Call, Index, Field
+        IntLit, StringLit, Name, Unary, Binary, Assign, Call, Index, Field,
+        Ternary, Goto, Label
     } kind = Block;
     std::string text;
     uint64_t number = 0;
@@ -82,6 +89,9 @@ struct Local {
     std::string name;
     Type type{};
     int32_t offset = 0;
+    bool is_static = false;
+    bool is_const = false;
+    std::string symbol;
 };
 
 struct FuncDecl {
@@ -92,6 +102,7 @@ struct FuncDecl {
     bool imported = false;
     bool exported = false;
     bool defined = false;
+    bool is_static = false;
     bool vararg = false;
     bool sret = false;
     int func_id = -1;
@@ -152,6 +163,227 @@ struct Preprocessor {
     int depth = 0;
 
     bool defined(const std::string& name) const { return macros.find(name) != macros.end(); }
+
+    // Integer constant expression for #if / #elif. An undefined name is 0.
+    // defined(name) is replaced before macro expansion, as C requires.
+    int64_t eval_pp(const std::string& raw, bool* ok) {
+        *ok = true;
+        std::string step;
+        for (size_t i = 0; i < raw.size();) {
+            const unsigned char c = static_cast<unsigned char>(raw[i]);
+            if (std::isalpha(c) || c == '_') {
+                size_t j = i + 1;
+                while (j < raw.size() && (std::isalnum(static_cast<unsigned char>(raw[j])) || raw[j] == '_')) ++j;
+                const std::string word = raw.substr(i, j - i);
+                if (word == "defined") {
+                    while (j < raw.size() && std::isspace(static_cast<unsigned char>(raw[j]))) ++j;
+                    bool paren = false;
+                    if (j < raw.size() && raw[j] == '(') {
+                        paren = true;
+                        ++j;
+                        while (j < raw.size() && std::isspace(static_cast<unsigned char>(raw[j]))) ++j;
+                    }
+                    size_t k = j;
+                    while (k < raw.size() && (std::isalnum(static_cast<unsigned char>(raw[k])) || raw[k] == '_')) ++k;
+                    const std::string name = raw.substr(j, k - j);
+                    if (paren) {
+                        while (k < raw.size() && std::isspace(static_cast<unsigned char>(raw[k]))) ++k;
+                        if (k < raw.size() && raw[k] == ')') ++k;
+                    }
+                    step += defined(name) ? "1" : "0";
+                    i = k;
+                    continue;
+                }
+                step += word;
+                i = j;
+                continue;
+            }
+            step.push_back(raw[i++]);
+        }
+        const std::string expanded = expand(step, 0);
+        if (!error.empty()) {
+            *ok = false;
+            return 0;
+        }
+        struct Tok {
+            int kind = 0;
+            int64_t num = 0;
+            std::string text;
+        };
+        std::vector<Tok> toks;
+        for (size_t i = 0; i < expanded.size();) {
+            const unsigned char c = static_cast<unsigned char>(expanded[i]);
+            if (std::isspace(c)) {
+                ++i;
+                continue;
+            }
+            if (std::isalpha(c) || c == '_') {
+                size_t j = i + 1;
+                while (j < expanded.size() && (std::isalnum(static_cast<unsigned char>(expanded[j])) || expanded[j] == '_')) ++j;
+                Tok tok;
+                tok.kind = 2;
+                tok.text = expanded.substr(i, j - i);
+                toks.push_back(tok);
+                i = j;
+                continue;
+            }
+            if (std::isdigit(c)) {
+                int base = 10;
+                size_t j = i;
+                if (expanded[i] == '0' && j + 1 < expanded.size() && (expanded[j + 1] == 'x' || expanded[j + 1] == 'X')) {
+                    base = 16;
+                    j += 2;
+                }
+                int64_t value = 0;
+                bool any = false;
+                while (j < expanded.size()) {
+                    const char d = expanded[j];
+                    int digit = -1;
+                    if (d >= '0' && d <= '9') digit = d - '0';
+                    else if (base == 16 && d >= 'a' && d <= 'f') digit = d - 'a' + 10;
+                    else if (base == 16 && d >= 'A' && d <= 'F') digit = d - 'A' + 10;
+                    else break;
+                    if (digit >= base) break;
+                    any = true;
+                    value = value * base + digit;
+                    ++j;
+                }
+                if (!any) {
+                    *ok = false;
+                    return 0;
+                }
+                Tok tok;
+                tok.kind = 1;
+                tok.num = value;
+                toks.push_back(tok);
+                i = j;
+                continue;
+            }
+            Tok tok;
+            tok.kind = 3;
+            tok.text.assign(1, expanded[i]);
+            if (i + 1 < expanded.size()) {
+                const char n = expanded[i + 1];
+                const char f = expanded[i];
+                if ((f == '&' && n == '&') || (f == '|' && n == '|') || (f == '=' && n == '=') || (f == '!' && n == '=') ||
+                    (f == '<' && n == '=') || (f == '>' && n == '=')) {
+                    tok.text.push_back(n);
+                    ++i;
+                }
+            }
+            ++i;
+            toks.push_back(tok);
+        }
+        Tok end;
+        toks.push_back(end);
+        struct Ev {
+            const std::vector<Tok>& t;
+            size_t at = 0;
+            bool* ok = nullptr;
+            const Tok& cur() const { return t[at]; }
+            void next() { if (at + 1 < t.size()) ++at; }
+            int64_t primary() {
+                if (cur().kind == 1) {
+                    const int64_t value = cur().num;
+                    next();
+                    return value;
+                }
+                if (cur().kind == 2) {
+                    next();
+                    return 0;
+                }
+                if (cur().kind == 3 && cur().text == "(") {
+                    next();
+                    const int64_t value = expr();
+                    if (cur().kind != 3 || cur().text != ")") *ok = false;
+                    else next();
+                    return value;
+                }
+                if (cur().kind == 3 && (cur().text == "!" || cur().text == "-" || cur().text == "+")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t value = primary();
+                    if (op == "!") return value == 0 ? 1 : 0;
+                    if (op == "-") return -value;
+                    return value;
+                }
+                *ok = false;
+                return 0;
+            }
+            int64_t mul() {
+                int64_t left = primary();
+                while (cur().kind == 3 && (cur().text == "*" || cur().text == "/" || cur().text == "%")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t right = primary();
+                    if (op != "*" && right == 0) {
+                        *ok = false;
+                        return 0;
+                    }
+                    if (op == "*") left *= right;
+                    else if (op == "/") left /= right;
+                    else left %= right;
+                }
+                return left;
+            }
+            int64_t add() {
+                int64_t left = mul();
+                while (cur().kind == 3 && (cur().text == "+" || cur().text == "-")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t right = mul();
+                    if (op == "+") left += right;
+                    else left -= right;
+                }
+                return left;
+            }
+            int64_t rel() {
+                int64_t left = add();
+                while (cur().kind == 3 && (cur().text == "<" || cur().text == ">" || cur().text == "<=" || cur().text == ">=")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t right = add();
+                    if (op == "<") left = left < right;
+                    else if (op == ">") left = left > right;
+                    else if (op == "<=") left = left <= right;
+                    else left = left >= right;
+                }
+                return left;
+            }
+            int64_t eq() {
+                int64_t left = rel();
+                while (cur().kind == 3 && (cur().text == "==" || cur().text == "!=")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t right = rel();
+                    left = op == "==" ? left == right : left != right;
+                }
+                return left;
+            }
+            int64_t and_() {
+                int64_t left = eq();
+                while (cur().kind == 3 && cur().text == "&&") {
+                    next();
+                    const int64_t right = eq();
+                    left = (left != 0 && right != 0) ? 1 : 0;
+                }
+                return left;
+            }
+            int64_t expr() {
+                int64_t left = and_();
+                while (cur().kind == 3 && cur().text == "||") {
+                    next();
+                    const int64_t right = and_();
+                    left = (left != 0 || right != 0) ? 1 : 0;
+                }
+                return left;
+            }
+        };
+        Ev ev{toks, 0, ok};
+        const int64_t value = ev.expr();
+        if (ev.cur().kind != 0) *ok = false;
+        return value;
+    }
 
     std::string expand(const std::string& line, int nest) {
         if (nest > 20) {
@@ -291,6 +523,7 @@ struct Preprocessor {
         struct Frame {
             bool parent;
             bool taken;
+            bool any;
             bool saw_else;
         };
         std::vector<Frame> stack;
@@ -384,7 +617,35 @@ struct Preprocessor {
                     const bool parent = active();
                     bool taken = parent && defined(name);
                     if (neg) taken = parent && !defined(name);
-                    stack.push_back({parent, taken, false});
+                    stack.push_back({parent, taken, taken, false});
+                } else if (word("elif") || (rest.compare(0, 2, "if") == 0 &&
+                                            (rest.size() == 2 || rest[2] == ' ' || rest[2] == '\t' || rest[2] == '('))) {
+                    const bool is_elif = word("elif");
+                    std::string expr = rest.substr(is_elif ? 4 : 2);
+                    size_t b = 0;
+                    while (b < expr.size() && (expr[b] == ' ' || expr[b] == '\t')) ++b;
+                    expr = expr.substr(b);
+                    bool good = true;
+                    const int64_t value = eval_pp(expr, &good);
+                    if (!good) {
+                        error = error.empty() ? "bad preprocessor expression" : error;
+                        --depth;
+                        return "";
+                    }
+                    if (is_elif) {
+                        if (stack.empty() || stack.back().saw_else) {
+                            error = "elif without if";
+                            --depth;
+                            return "";
+                        }
+                        const bool taken = stack.back().parent && !stack.back().any && value != 0;
+                        stack.back().taken = taken;
+                        if (taken) stack.back().any = true;
+                    } else {
+                        const bool parent = active();
+                        const bool taken = parent && value != 0;
+                        stack.push_back({parent, taken, taken, false});
+                    }
                 } else if (word("else")) {
                     if (stack.empty() || stack.back().saw_else) {
                         error = "else without if";
@@ -392,7 +653,8 @@ struct Preprocessor {
                         return "";
                     }
                     stack.back().saw_else = true;
-                    stack.back().taken = stack.back().parent && !stack.back().taken;
+                    stack.back().taken = stack.back().parent && !stack.back().any;
+                    stack.back().any = true;
                 } else if (word("endif")) {
                     if (stack.empty()) {
                         error = "endif without if";
@@ -437,6 +699,10 @@ Tok keyword(const std::string& text) {
     if (text == "long") return TLong;
     if (text == "short") return TShort;
     if (text == "__declspec") return TDeclspec;
+    if (text == "sizeof") return TSizeof;
+    if (text == "const") return TConst;
+    if (text == "static") return TStatic;
+    if (text == "goto") return TGoto;
     return TIdent;
 }
 
@@ -563,6 +829,13 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
+        if (c == '+' && two('+', TPlusPlus)) continue;
+        if (c == '+' && two('=', TPlusEq)) continue;
+        if (c == '-' && two('-', TMinusMinus)) continue;
+        if (c == '-' && two('=', TMinusEq)) continue;
+        if (c == '*' && two('=', TStarEq)) continue;
+        if (c == '/' && two('=', TSlashEq)) continue;
+        if (c == '%' && two('=', TPercentEq)) continue;
         if (c == '=' && two('=', TEq)) continue;
         if (c == '!' && two('=', TNe)) continue;
         if (c == '<' && two('=', TLe)) continue;
@@ -583,6 +856,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         else if (c == '/') tok.kind = TSlash;
         else if (c == '%') tok.kind = TPercent;
         else if (c == '=') tok.kind = TAssign;
+        else if (c == '?') tok.kind = TQuestion;
         else if (c == '<') tok.kind = TLt;
         else if (c == '>') tok.kind = TGt;
         else if (c == '!') tok.kind = TNot;
@@ -612,6 +886,8 @@ struct Parser {
     std::vector<FuncType> func_types;
     std::map<std::string, Type> typedefs;
     std::map<std::string, uint64_t> enum_values;
+    std::vector<Local>* cur_locals = nullptr;
+    std::string current_fn;
 
     const Token& cur() const { return tokens[at]; }
     bool is(Tok k) const { return cur().kind == k; }
@@ -700,7 +976,10 @@ struct Parser {
         type->array_len = -1;
         type->struct_id = -1;
         type->func_id = -1;
+        type->bits = -1;
+        type->bit_off = 0;
         type->is_unsigned = false;
+        type->is_const = false;
         if (is(TStruct) || is(TUnion)) {
             const bool as_union = is(TUnion);
             next();
@@ -904,7 +1183,7 @@ struct Parser {
 
     bool is_decl_start() const {
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
-            is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec))
+            is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst))
             return true;
         return is(TIdent) && typedefs.find(cur().text) != typedefs.end();
     }
@@ -915,13 +1194,16 @@ struct Parser {
     bool parse_block(Node* out, std::vector<Local>* locals);
 
     int prec(Tok op) const {
-        if (op == TAssign) return 1;
-        if (op == TOrOr) return 2;
-        if (op == TAndAnd) return 3;
-        if (op == TEq || op == TNe) return 4;
-        if (op == TLt || op == TGt || op == TLe || op == TGe) return 5;
-        if (op == TPlus || op == TMinus) return 6;
-        if (op == TStar || op == TSlash || op == TPercent) return 7;
+        if (op == TComma) return 0;
+        if (op == TAssign || op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq || op == TPercentEq)
+            return 1;
+        if (op == TQuestion) return 2;
+        if (op == TOrOr) return 3;
+        if (op == TAndAnd) return 4;
+        if (op == TEq || op == TNe) return 5;
+        if (op == TLt || op == TGt || op == TLe || op == TGe) return 6;
+        if (op == TPlus || op == TMinus) return 7;
+        if (op == TStar || op == TSlash || op == TPercent) return 8;
         return -1;
     }
 
@@ -954,6 +1236,14 @@ struct Parser {
                 next();
                 if (!expect(TRBrack, "']'")) return false;
             }
+            if (accept(TColon)) {
+                if (!is(TNumber)) {
+                    error = "expected a bitfield width";
+                    return false;
+                }
+                field.type.bits = static_cast<int>(cur().number);
+                next();
+            }
             if (!expect(TSemi, "';'")) return false;
             if (field.type.base == 3 && field.type.pointers == 0 && field.type.array_len < 0 && field.type.struct_id == self) {
                 error = "struct field is incomplete";
@@ -964,21 +1254,42 @@ struct Parser {
         if (!expect(TRBrace, "'}'")) return false;
         int offset = 0;
         int align = 1;
+        int cursor_bits = 0;
         for (Field& field : def.fields) {
             int field_align = align_of(field.type);
             int field_size = size_of(field.type);
             if (field_align < 1) field_align = 1;
             if (field_size < 1) field_size = 1;
+            if (field.type.bits >= 0 && !as_union) {
+                const int container = field_size * 8;
+                if (field.type.bits > container) {
+                    error = "bitfield is wider than its type";
+                    return false;
+                }
+                if (container > 0 && (cursor_bits % container) + field.type.bits > container) {
+                    cursor_bits = ((cursor_bits + container - 1) / container) * container;
+                }
+                field.offset = (cursor_bits / 8) & ~(field_size - 1);
+                field.type.bit_off = cursor_bits % container;
+                cursor_bits += field.type.bits;
+                const int end_byte = (cursor_bits + 7) / 8;
+                if (end_byte > offset) offset = end_byte;
+                if (field_align > align) align = field_align;
+                continue;
+            }
             if (as_union) {
                 field.offset = 0;
                 if (field_size > offset) offset = field_size;
             } else {
+                if (cursor_bits > offset * 8) offset = (cursor_bits + 7) / 8;
                 offset = (offset + field_align - 1) & ~(field_align - 1);
                 field.offset = offset;
                 offset += field_size;
+                cursor_bits = offset * 8;
             }
             if (field_align > align) align = field_align;
         }
+        if (cursor_bits > offset * 8) offset = (cursor_bits + 7) / 8;
         def.align = align;
         def.size = (offset + align - 1) & ~(align - 1);
         structs[static_cast<size_t>(self)] = def;
@@ -998,7 +1309,14 @@ struct Parser {
 
     bool parse() {
         while (!is(TEnd)) {
-            const bool is_typedef = accept(TTypedef);
+            bool is_typedef = false;
+            bool is_static = false;
+            bool is_const = false;
+            while (is(TTypedef) || is(TStatic) || is(TConst)) {
+                if (accept(TTypedef)) is_typedef = true;
+                else if (accept(TStatic)) is_static = true;
+                else if (accept(TConst)) is_const = true;
+            }
             bool imported = false;
             bool exported = false;
             Type type;
@@ -1010,14 +1328,17 @@ struct Parser {
             Declarator decl;
             if (!parse_declarator(type, &decl)) return false;
             if (is_typedef) {
+                decl.type.is_const = is_const;
                 typedefs[decl.name] = decl.type;
                 if (!expect(TSemi, "';'")) return false;
                 continue;
             }
+            decl.type.is_const = is_const;
             if (!decl.is_function) {
                 Global global;
                 global.name = decl.name;
                 global.type = decl.type;
+                global.is_static = is_static;
                 if (accept(TAssign)) {
                     if (!is(TNumber)) {
                         error = "global initializer must be a number";
@@ -1039,6 +1360,7 @@ struct Parser {
             fn.vararg = decl.vararg;
             fn.imported = imported;
             fn.exported = exported;
+            fn.is_static = is_static;
             finish_signature(&fn);
             if (accept(TSemi)) {
                 fn.defined = false;
@@ -1063,7 +1385,10 @@ struct Parser {
                 place_local(&locals, local);
             }
             fn.nparams = static_cast<int>(fn.params.size());
+            current_fn = fn.name;
+            cur_locals = &locals;
             if (!parse_block(&fn.body, &locals)) return false;
+            cur_locals = nullptr;
             fn.defined = true;
             fn.locals = std::move(locals);
             funcs.push_back(std::move(fn));
@@ -1084,7 +1409,30 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
 }
 
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
+    cur_locals = locals;
     if (is(TLBrace)) return parse_block(out, locals);
+    if (is(TGoto)) {
+        next();
+        if (!is(TIdent)) {
+            error = "expected a label";
+            return false;
+        }
+        out->kind = Node::Goto;
+        out->text = cur().text;
+        next();
+        return expect(TSemi, "';'");
+    }
+    if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TColon &&
+        typedefs.find(cur().text) == typedefs.end()) {
+        out->kind = Node::Label;
+        out->text = cur().text;
+        next();
+        next();
+        Node stmt;
+        if (!parse_stmt(&stmt, locals)) return false;
+        out->kids.push_back(std::move(stmt));
+        return true;
+    }
     if (is(TIf)) {
         next();
         out->kind = Node::If;
@@ -1223,7 +1571,14 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         return true;
     }
     if (is_decl_start()) {
-        const bool is_typedef = accept(TTypedef);
+        bool is_typedef = false;
+        bool is_static = false;
+        bool is_const = false;
+        while (is(TTypedef) || is(TStatic) || is(TConst)) {
+            if (accept(TTypedef)) is_typedef = true;
+            else if (accept(TStatic)) is_static = true;
+            else if (accept(TConst)) is_const = true;
+        }
         Type type;
         bool imp = false;
         bool exp = false;
@@ -1236,6 +1591,7 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         Declarator decl;
         if (!parse_declarator(type, &decl)) return false;
         if (is_typedef) {
+            decl.type.is_const = is_const;
             typedefs[decl.name] = decl.type;
             return expect(TSemi, "';'");
         }
@@ -1243,11 +1599,45 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             error = "a function cannot be nested";
             return false;
         }
+        decl.type.is_const = is_const;
         Local local;
         local.name = decl.name;
         local.type = decl.type;
+        local.is_const = is_const;
+        local.is_static = is_static;
+        Node init;
+        bool has_init = false;
+        if (accept(TAssign)) {
+            if (!parse_expr(1, &init)) return false;
+            has_init = true;
+        }
+        if (is_static) {
+            Global global;
+            global.name = current_fn + "_" + decl.name + "_" + std::to_string(globals.size());
+            global.type = decl.type;
+            global.is_static = true;
+            global.bss = true;
+            if (has_init && init.kind == Node::IntLit) {
+                global.bss = false;
+                global.init = static_cast<uint32_t>(init.number);
+                has_init = false;
+            }
+            local.symbol = global.name;
+            globals.push_back(global);
+        }
         place_local(locals, local);
         out->kind = Node::Block;
+        if (has_init) {
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.number = 1;
+            Node name;
+            name.kind = Node::Name;
+            name.text = decl.name;
+            assign.kids.push_back(std::move(name));
+            assign.kids.push_back(std::move(init));
+            out->kids.push_back(std::move(assign));
+        }
         return expect(TSemi, "';'");
     }
     out->kind = Node::ExprStmt;
@@ -1258,6 +1648,66 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
 }
 
 bool Parser::parse_unary(Node* out) {
+    if (is(TSizeof)) {
+        next();
+        if (!expect(TLParen, "'('")) return false;
+        int bytes = 0;
+        if (is_decl_start() && !is(TStatic)) {
+            Type ty;
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&ty, &imp, &exp)) return false;
+            while (accept(TStar)) ++ty.pointers;
+            if (accept(TLBrack)) {
+                if (!is(TNumber)) {
+                    error = "expected an array length";
+                    return false;
+                }
+                ty.array_len = static_cast<int>(cur().number);
+                next();
+                if (!expect(TRBrack, "']'")) return false;
+            }
+            bytes = size_of(ty);
+        } else {
+            Node inner;
+            if (!parse_expr(1, &inner)) return false;
+            if (inner.kind == Node::Name) {
+                if (cur_locals != nullptr) {
+                    for (const Local& local : *cur_locals) {
+                        if (local.name == inner.text) bytes = size_of(local.type);
+                    }
+                }
+                if (bytes == 0) {
+                    for (const Global& global : globals) {
+                        if (global.name == inner.text) bytes = size_of(global.type);
+                    }
+                }
+            } else if (inner.kind == Node::StringLit) {
+                bytes = static_cast<int>(inner.text.size()) + 1;
+            } else if (inner.kind == Node::IntLit) {
+                bytes = 4;
+            }
+            if (bytes == 0) {
+                error = "sizeof needs a type or a name";
+                return false;
+            }
+        }
+        if (!expect(TRParen, "')'")) return false;
+        out->kind = Node::IntLit;
+        out->number = static_cast<uint64_t>(bytes);
+        out->type.base = 1;
+        return true;
+    }
+    if (is(TPlusPlus) || is(TMinusMinus)) {
+        out->kind = Node::Unary;
+        out->op = cur().kind;
+        out->number = 0;
+        next();
+        Node inner;
+        if (!parse_unary(&inner)) return false;
+        out->kids.push_back(std::move(inner));
+        return true;
+    }
     if (is(TNumber)) {
         out->kind = Node::IntLit;
         out->number = cur().number;
@@ -1274,7 +1724,7 @@ bool Parser::parse_unary(Node* out) {
         next();
         if (name == "va_arg" && accept(TLParen)) {
             Node ap;
-            if (!parse_expr(0, &ap)) return false;
+            if (!parse_expr(1, &ap)) return false;
             if (!expect(TComma, "','")) return false;
             Type ty;
             bool imp = false;
@@ -1292,7 +1742,7 @@ bool Parser::parse_unary(Node* out) {
             if (!accept(TRParen)) {
                 do {
                     Node arg;
-                    if (!parse_expr(0, &arg)) return false;
+                    if (!parse_expr(1, &arg)) return false;
                     out->kids.push_back(std::move(arg));
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
@@ -1320,7 +1770,17 @@ bool Parser::parse_unary(Node* out) {
         error = "expected an expression";
         return false;
     }
-    while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen)) {
+    while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen) || is(TPlusPlus) || is(TMinusMinus)) {
+        if (is(TPlusPlus) || is(TMinusMinus)) {
+            Node wrapped;
+            wrapped.kind = Node::Unary;
+            wrapped.op = cur().kind;
+            wrapped.number = 1;
+            next();
+            wrapped.kids.push_back(std::move(*out));
+            *out = std::move(wrapped);
+            continue;
+        }
         if (is(TLParen)) {
             next();
             Node call;
@@ -1329,7 +1789,7 @@ bool Parser::parse_unary(Node* out) {
             if (!accept(TRParen)) {
                 do {
                     Node arg;
-                    if (!parse_expr(0, &arg)) return false;
+                    if (!parse_expr(1, &arg)) return false;
                     call.kids.push_back(std::move(arg));
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
@@ -1373,11 +1833,29 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         if (p < min_prec) break;
         const Tok op = cur().kind;
         next();
+        if (op == TQuestion) {
+            Node mid;
+            Node els;
+            if (!parse_expr(1, &mid)) return false;
+            if (!expect(TColon, "':'")) return false;
+            if (!parse_expr(p, &els)) return false;
+            Node tern;
+            tern.kind = Node::Ternary;
+            tern.kids.push_back(std::move(*out));
+            tern.kids.push_back(std::move(mid));
+            tern.kids.push_back(std::move(els));
+            *out = std::move(tern);
+            continue;
+        }
         Node right;
-        const int next_min = op == TAssign ? p : p + 1;
+        const int next_min = op == TAssign || op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq ||
+                                     op == TPercentEq
+                                 ? p
+                                 : p + 1;
         if (!parse_expr(next_min, &right)) return false;
         Node bin;
-        bin.kind = op == TAssign ? Node::Assign : Node::Binary;
+        const bool compound = op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq || op == TPercentEq;
+        bin.kind = op == TAssign || compound ? Node::Assign : Node::Binary;
         bin.op = op;
         bin.kids.push_back(std::move(*out));
         bin.kids.push_back(std::move(right));
@@ -1437,6 +1915,8 @@ struct Gen {
     int sret_dest_off = 0;
     bool save_nv = false;
     bool optimize = false;
+    std::map<std::string, size_t> labels;
+    std::vector<std::pair<std::string, size_t>> gotos;
     std::vector<std::vector<size_t>> break_stack;
     Type last_type{};
 
@@ -1590,6 +2070,15 @@ Type Gen::element_type(const Type& type) const {
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
+            if (local->is_static) {
+                b(0x48);
+                b(0x8D);
+                b(0x05);
+                relocs.push_back({0, static_cast<uint32_t>(text.size()), local->symbol, kRelAmd64Rel32});
+                u32(0);
+                last_type = local->type;
+                return true;
+            }
             b(0x48);
             b(0x8D);
             b(0x85);
@@ -1775,6 +2264,31 @@ bool Gen::gen_expr(const Node& node) {
     }
     if (node.kind == Node::Name) {
         if (Local* local = find_local(node.text)) {
+            if (local->is_static) {
+                const int size = size_of(local->type);
+                const bool uns = local->type.is_unsigned;
+                if (local->type.pointer() || size >= 8) {
+                    b(0x48);
+                    b(0x8B);
+                    b(0x05);
+                } else if (size == 4) {
+                    b(0x8B);
+                    b(0x05);
+                } else if (size == 2) {
+                    b(0x0F);
+                    b(uns ? 0xB7 : 0xBF);
+                    b(0x05);
+                } else {
+                    b(0x0F);
+                    b(uns ? 0xB6 : 0xBE);
+                    b(0x05);
+                }
+                relocs.push_back({0, static_cast<uint32_t>(text.size()), local->symbol, kRelAmd64Rel32});
+                u32(0);
+                last_type = local->type;
+                promote(&last_type);
+                return true;
+            }
             if (local->type.is_array()) {
                 if (!gen_addr(node)) return false;
                 last_type = element_type(local->type);
@@ -1835,11 +2349,83 @@ bool Gen::gen_expr(const Node& node) {
         if (!gen_addr(node)) return false;
         const int size = std::max(1, size_of(last_type));
         const bool uns = last_type.is_unsigned;
-        load_from_rax(size, uns);
+        const int bits = last_type.bits;
+        const int bit_off = last_type.bit_off;
+        load_from_rax(size, uns || bits >= 0);
+        if (bits >= 0) {
+            if (bit_off != 0) {
+                b(0xC1);
+                b(0xE8);
+                b(static_cast<uint8_t>(bit_off));
+            }
+            const uint32_t mask = bits >= 32 ? 0xFFFFFFFFu : (1u << bits) - 1u;
+            b(0x25);
+            u32(mask);
+        }
         promote(&last_type);
         return true;
     }
+    if (node.kind == Node::Ternary) {
+        if (!gen_expr(node.kids[0])) return false;
+        b(0x85);
+        b(0xC0);
+        const size_t jz = emit_jcc(0x84);
+        if (!gen_expr(node.kids[1])) return false;
+        const size_t jmp = emit_jmp();
+        patch(jz, text.size());
+        if (!gen_expr(node.kids[2])) return false;
+        patch(jmp, text.size());
+        return true;
+    }
     if (node.kind == Node::Unary) {
+        if (node.op == TPlusPlus || node.op == TMinusMinus) {
+            if (!gen_addr(node.kids[0])) return false;
+            const bool pointer = last_type.pointers > 0;
+            const int step = pointer ? std::max(1, size_of(element_type(last_type))) : 1;
+            const int width = pointer ? 8 : std::max(1, size_of(last_type));
+            const int addr = spill();
+            if (!error.empty()) return false;
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(addr);
+            if (width >= 8) {
+                b(0x48);
+                b(0x8B);
+                b(0x00);
+            } else if (width == 1) {
+                b(0x0F);
+                b(0xBE);
+                b(0x00);
+            } else if (width == 2) {
+                b(0x0F);
+                b(0xBF);
+                b(0x00);
+            } else {
+                b(0x8B);
+                b(0x00);
+            }
+            int old = 0;
+            if (node.number != 0) {
+                old = spill();
+                if (!error.empty()) return false;
+            }
+            if (pointer) b(0x48);
+            b(0x83);
+            b(node.op == TPlusPlus ? 0xC0 : 0xE8);
+            b(static_cast<uint8_t>(step));
+            b(0x48);
+            b(0x8B);
+            b(0x8D);
+            disp(addr);
+            store_mem(width);
+            if (node.number != 0) {
+                load_slot(old, true);
+                --temp_depth;
+            }
+            --temp_depth;
+            return true;
+        }
         if (node.op == TAmp) {
             if (!gen_addr(node.kids[0])) return false;
             Type pointed = last_type;
@@ -1882,6 +2468,64 @@ bool Gen::gen_expr(const Node& node) {
         return false;
     }
     if (node.kind == Node::Assign) {
+        if (node.number != 1 && node.kids[0].kind == Node::Name) {
+            if (Local* local = find_local(node.kids[0].text)) {
+                if (local->is_const) {
+                    error = "assignment to const " + local->name;
+                    return false;
+                }
+            }
+            if (Global* global = find_global(node.kids[0].text)) {
+                if (global->type.is_const) {
+                    error = "assignment to const " + global->name;
+                    return false;
+                }
+            }
+        }
+        if (node.op == TPlusEq || node.op == TMinusEq || node.op == TStarEq || node.op == TSlashEq || node.op == TPercentEq) {
+            if (!gen_addr(node.kids[0])) return false;
+            const int width = std::max(1, size_of(last_type));
+            const int addr = spill();
+            if (!error.empty()) return false;
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(addr);
+            load_from_rax(width >= 8 ? 8 : width, false);
+            const int left = spill();
+            if (!error.empty()) return false;
+            if (!gen_expr(node.kids[1])) return false;
+            reload_ecx(left);
+            if (node.op == TPlusEq) {
+                b(0x01);
+                b(0xC8);
+            } else if (node.op == TMinusEq) {
+                b(0x29);
+                b(0xC1);
+                b(0x89);
+                b(0xC8);
+            } else if (node.op == TStarEq) {
+                b(0x0F);
+                b(0xAF);
+                b(0xC1);
+            } else {
+                b(0x91);
+                b(0x99);
+                b(0xF7);
+                b(0xF9);
+                if (node.op == TPercentEq) {
+                    b(0x89);
+                    b(0xD0);
+                }
+            }
+            b(0x48);
+            b(0x8B);
+            b(0x8D);
+            disp(addr);
+            store_mem(width);
+            --temp_depth;
+            return true;
+        }
         if (node.kids[0].kind == Node::Name) {
             if (Local* local = find_local(node.kids[0].text)) {
                 const bool big = local->type.base == 3 && local->type.pointers == 0 && !fits_register(local->type);
@@ -1923,7 +2567,31 @@ bool Gen::gen_expr(const Node& node) {
         b(0x85);
         disp(slot);
         --temp_depth;
-        store_mem(size);
+        if (last_type.bits >= 0) {
+            const int bits = last_type.bits;
+            const int bit_off = last_type.bit_off;
+            const uint32_t mask = bits >= 32 ? 0xFFFFFFFFu : (1u << static_cast<unsigned>(bits)) - 1u;
+            b(0x89);
+            b(0xC2);
+            b(0x81);
+            b(0xE2);
+            u32(mask);
+            if (bit_off != 0) {
+                b(0xC1);
+                b(0xE2);
+                b(static_cast<uint8_t>(bit_off));
+            }
+            b(0x8B);
+            b(0x01);
+            b(0x25);
+            u32(~(mask << bit_off));
+            b(0x09);
+            b(0xD0);
+            b(0x89);
+            b(0x01);
+        } else {
+            store_mem(size);
+        }
         last_type = Type{};
         last_type.base = 1;
         return true;
@@ -2196,6 +2864,10 @@ bool Gen::gen_expr(const Node& node) {
             return true;
         }
         reload_ecx(off);
+        if (node.op == TComma) {
+            last_type = last_type;
+            return true;
+        }
         if (node.op == TPlus) {
             b(0x01);
             b(0xC8);
@@ -2401,6 +3073,19 @@ bool Gen::gen_stmt(const Node& node) {
         (void)default_jump;
         return true;
     }
+    if (node.kind == Node::Goto) {
+        gotos.push_back({node.text, emit_jmp()});
+        return true;
+    }
+    if (node.kind == Node::Label) {
+        if (labels.count(node.text) != 0) {
+            error = "duplicate label " + node.text;
+            return false;
+        }
+        labels[node.text] = text.size();
+        if (!node.kids.empty() && !gen_stmt(node.kids[0])) return false;
+        return true;
+    }
     if (node.kind == Node::Break) {
         if (break_stack.empty()) {
             error = "break is outside a loop or switch";
@@ -2448,6 +3133,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         uint32_t start = 0;
         uint32_t size = 0;
         bool exported = false;
+        bool is_static = false;
     };
     std::vector<PlacedFn> placed;
     std::vector<uint32_t> unwind_offs;
@@ -2569,7 +3255,17 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             return false;
         }
         gen.epilogue();
-        placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported});
+        placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static});
+        for (const auto& site : gen.gotos) {
+            const auto found = gen.labels.find(site.first);
+            if (found == gen.labels.end()) {
+                *error = "unknown label " + site.first;
+                return false;
+            }
+            gen.patch(site.second, found->second);
+        }
+        gen.labels.clear();
+        gen.gotos.clear();
         if (fn.exported) out->exports.push_back(fn.name);
         UnwindPrologue prolog;
         prolog.size = static_cast<uint8_t>(frame_at + (large_alloc ? 7 : 4));
@@ -2609,7 +3305,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     auto add_sym = [&](const std::string& name, uint32_t value, int16_t section, uint8_t storage, uint16_t type) {
         symbols.push_back({name, value, section, type, storage});
     };
-    for (const PlacedFn& fn : placed) add_sym(fn.name, fn.start, 1, kClassExternal, 0x20);
+    for (const PlacedFn& fn : placed)
+        add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
         if (fn.imported) add_sym("__imp_" + fn.name, 0, 0, kClassExternal, 0);
@@ -2627,7 +3324,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         const int align = global.type.pointer() ? 8 : 4;
         if (global.bss) {
             bss_size = align_to(bss_size, static_cast<uint32_t>(align));
-            add_sym(global.name, bss_size, 0, kClassExternal, 0);
+            add_sym(global.name, bss_size, 0, global.is_static ? kClassStatic : kClassExternal, 0);
             bss_size += static_cast<uint32_t>(size);
         } else {
             const uint32_t at = align_to(static_cast<uint32_t>(data_bytes.size()), static_cast<uint32_t>(align));
@@ -2638,7 +3335,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             data_bytes.push_back(static_cast<uint8_t>(value >> 16));
             data_bytes.push_back(static_cast<uint8_t>(value >> 24));
             if (size > 4) data_bytes.resize(at + static_cast<uint32_t>(size), 0);
-            add_sym(global.name, at, 0, kClassExternal, 0);
+            add_sym(global.name, at, 0, global.is_static ? kClassStatic : kClassExternal, 0);
         }
     }
     int data_section = 0;
@@ -2749,7 +3446,7 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     std::string lex_error;
     const std::vector<Token> tokens = lex(expanded, &lex_error);
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
-    Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}};
+    Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}};
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     CompileOutput output;
     std::string error;

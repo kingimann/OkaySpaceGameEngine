@@ -2950,6 +2950,10 @@ bool Gen::gen_expr(const Node& node) {
             b(0x89);
             b(0xC1);
             load_from_rax(size >= 8 ? 8 : size, node.type.is_unsigned || node.type.pointer());
+            // The bits are in rax. A previous va_arg may have left last_type as
+            // float or double, and spill would then store the old xmm0.
+            last_type = Type{};
+            last_type.pointers = 1;
             const int slot = spill();
             if (!error.empty()) return false;
             b(0x48);
@@ -3101,7 +3105,8 @@ bool Gen::gen_expr(const Node& node) {
                 const Type& at = saved_types[static_cast<size_t>(i)];
                 if (at.pointers != 0 || (at.base != 5 && at.base != 6) || reg < 0 || reg >= 4) continue;
                 b(0x66);
-                b(reg >= 2 ? 0x4C : 0x48);
+                // movq r64, xmm. REX.B selects r8/r9; REX.R would select xmm8+ instead.
+                b(reg >= 2 ? 0x49 : 0x48);
                 b(0x0F);
                 b(0x7E);
                 const uint8_t modrm = reg == 0 ? 0xC1 : reg == 1 ? 0xCA : reg == 2 ? 0xD0 : 0xD9;

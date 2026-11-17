@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 
 namespace okayms {
 namespace {
@@ -95,6 +96,8 @@ struct Local {
     bool is_const = false;
     std::string symbol;
     int reg = 0;
+    // 0 is the parameter scope. A nested block uses a higher number.
+    int scope = 0;
 };
 
 struct FuncDecl {
@@ -982,6 +985,23 @@ struct Parser {
     std::map<std::string, uint64_t> enum_values;
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
+    int scope_depth = 0;
+    std::vector<int> scope_parent{0};
+
+    void push_scope() {
+        const int id = static_cast<int>(scope_parent.size());
+        scope_parent.push_back(scope_depth);
+        scope_depth = id;
+    }
+    void pop_scope() { scope_depth = scope_parent[static_cast<size_t>(scope_depth)]; }
+    bool scope_visible(int local_scope) const {
+        int walk = scope_depth;
+        while (walk != local_scope) {
+            if (walk == 0) return false;
+            walk = scope_parent[static_cast<size_t>(walk)];
+        }
+        return true;
+    }
 
     const Token& cur() const { return tokens[at]; }
     bool is(Tok k) const { return cur().kind == k; }
@@ -1046,6 +1066,7 @@ struct Parser {
         if (size < 1) size = 1;
         const int aligned = (used + align - 1) & ~(align - 1);
         local.offset = -(aligned + size);
+        local.scope = scope_depth;
         locals->push_back(local);
     }
 
@@ -1469,6 +1490,9 @@ struct Parser {
                 funcs.push_back(std::move(fn));
                 continue;
             }
+            scope_depth = 0;
+            scope_parent.clear();
+            scope_parent.push_back(0);
             std::vector<Local> locals;
             if (fn.sret) {
                 Local hidden;
@@ -1502,11 +1526,14 @@ struct Parser {
 bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
     if (!expect(TLBrace, "'{'")) return false;
     out->kind = Node::Block;
+    out->text = "scope";
+    push_scope();
     while (!is(TRBrace) && !is(TEnd)) {
         Node stmt;
         if (!parse_stmt(&stmt, locals)) return false;
         out->kids.push_back(std::move(stmt));
     }
+    pop_scope();
     return expect(TRBrace, "'}'");
 }
 
@@ -1775,8 +1802,12 @@ bool Parser::parse_unary(Node* out) {
             if (!parse_expr(1, &inner)) return false;
             if (inner.kind == Node::Name) {
                 if (cur_locals != nullptr) {
-                    for (const Local& local : *cur_locals) {
-                        if (local.name == inner.text) bytes = size_of(local.type);
+                    for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
+                        const Local& local = (*cur_locals)[static_cast<size_t>(i)];
+                        if (local.name == inner.text && scope_visible(local.scope)) {
+                            bytes = size_of(local.type);
+                            break;
+                        }
                     }
                 }
                 if (bytes == 0) {
@@ -2043,6 +2074,23 @@ struct Gen {
     std::vector<std::pair<std::string, size_t>> gotos;
     std::vector<std::vector<size_t>> break_stack;
     Type last_type{};
+    int scope_depth = 0;
+    std::vector<int> scope_parent{0};
+
+    void push_scope() {
+        const int id = static_cast<int>(scope_parent.size());
+        scope_parent.push_back(scope_depth);
+        scope_depth = id;
+    }
+    void pop_scope() { scope_depth = scope_parent[static_cast<size_t>(scope_depth)]; }
+    bool scope_visible(int local_scope) const {
+        int walk = scope_depth;
+        while (walk != local_scope) {
+            if (walk == 0) return false;
+            walk = scope_parent[static_cast<size_t>(walk)];
+        }
+        return true;
+    }
 
     explicit Gen(std::vector<FuncDecl>& functions) : funcs(functions) {}
 
@@ -2058,8 +2106,10 @@ struct Gen {
         return nullptr;
     }
     Local* find_local(const std::string& name) {
-        for (Local& local : locals)
-            if (local.name == name) return &local;
+        for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
+            Local& local = locals[static_cast<size_t>(i)];
+            if (local.name == name && scope_visible(local.scope)) return &local;
+        }
         return nullptr;
     }
 
@@ -3296,8 +3346,11 @@ bool Gen::gen_expr(const Node& node) {
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
     if (node.kind == Node::Block) {
+        const bool scoped = node.text == "scope";
+        if (scoped) push_scope();
         for (const Node& kid : node.kids)
             if (!gen_stmt(kid)) return false;
+        if (scoped) pop_scope();
         return true;
     }
     if (node.kind == Node::Return) {
@@ -3516,7 +3569,7 @@ Node* statement_value(Node* node) {
     return node;
 }
 
-void prop_node(Node* node, std::map<std::string, uint64_t>* known) {
+void prop_node(Node* node, std::map<std::string, uint64_t>* known, const std::set<std::string>* shadowed) {
     if (node->kind == Node::Block || node->kind == Node::If || node->kind == Node::While || node->kind == Node::For ||
         node->kind == Node::Do || node->kind == Node::Label) {
         if (node->kind == Node::Block) {
@@ -3531,17 +3584,22 @@ void prop_node(Node* node, std::map<std::string, uint64_t>* known) {
                 }
             }
         }
-        for (Node& kid : node->kids) prop_node(&kid, known);
+        for (Node& kid : node->kids) prop_node(&kid, known, shadowed);
         return;
     }
     if (node->kind == Node::Assign && !node->kids.empty() && node->kids[0].kind == Node::Name &&
         (node->op == TAssign || node->op == TEnd)) {
-        prop_node(&node->kids[1], known);
+        prop_node(&node->kids[1], known, shadowed);
+        if (shadowed != nullptr && shadowed->count(node->kids[0].text) != 0) {
+            known->erase(node->kids[0].text);
+            return;
+        }
         if (node->kids[1].kind == Node::IntLit && node->kids[1].type.base < 5) (*known)[node->kids[0].text] = node->kids[1].number;
         else known->erase(node->kids[0].text);
         return;
     }
-    if (node->kind == Node::Name && known->count(node->text) != 0) {
+    if (node->kind == Node::Name && known->count(node->text) != 0 &&
+        (shadowed == nullptr || shadowed->count(node->text) == 0)) {
         const uint64_t value = (*known)[node->text];
         *node = Node{};
         node->kind = Node::IntLit;
@@ -3549,7 +3607,7 @@ void prop_node(Node* node, std::map<std::string, uint64_t>* known) {
         node->type.base = 1;
         return;
     }
-    for (Node& kid : node->kids) prop_node(&kid, known);
+    for (Node& kid : node->kids) prop_node(&kid, known, shadowed);
     if (node->kind == Node::Binary && node->kids.size() == 2 && node->kids[0].kind == Node::IntLit &&
         node->kids[1].kind == Node::IntLit && node->kids[0].type.base < 5 && node->kids[1].type.base < 5) {
         const uint64_t left = node->kids[0].number;
@@ -3588,9 +3646,14 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     std::vector<uint32_t> unwind_offs;
     for (FuncDecl& fn : funcs) {
         if (!fn.defined) continue;
+        std::map<std::string, int> name_count;
+        for (const Local& local : fn.locals) ++name_count[local.name];
+        std::set<std::string> shadowed;
+        for (const auto& item : name_count)
+            if (item.second > 1) shadowed.insert(item.first);
         if (opt_level >= 2) {
             std::map<std::string, uint64_t> known;
-            prop_node(&fn.body, &known);
+            prop_node(&fn.body, &known, &shadowed);
         }
         int max_args = count_args(fn.body);
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
@@ -3609,6 +3672,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             for (Local& local : fn.locals) {
                 if (used >= 3) break;
                 if (local.is_static || local.name.empty() || local.name[0] == '_') continue;
+                if (shadowed.count(local.name) != 0) continue;
                 if (local.type.is_array() || local.type.pointers != 0 || local.type.base == 3 || local.type.base == 5 ||
                     local.type.base == 6)
                     continue;
@@ -3677,6 +3741,9 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             gen.b(0x4D);
             gen.b(0x28);
         }
+        gen.scope_depth = 0;
+        gen.scope_parent.clear();
+        gen.scope_parent.push_back(0);
         gen.current = &fn;
         for (int p = 0; p < fn.nparams; ++p) {
             const int reg = p + (fn.sret ? 1 : 0);

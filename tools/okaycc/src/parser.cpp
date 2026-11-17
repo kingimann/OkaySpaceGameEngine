@@ -28,6 +28,7 @@ struct Decl;
 struct Param {
     std::string name;
     std::unique_ptr<Type> type;
+    int bits = -1;
     Param();
     Param(Param&&) noexcept;
     ~Param();
@@ -148,6 +149,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     for (const Param& p : t.params) {
         Param c;
         c.name = p.name;
+        c.bits = p.bits;
         if (p.type) c.type = cloneType(*p.type);
         n->params.push_back(std::move(c));
     }
@@ -706,6 +708,11 @@ private:
             Param field;
             field.name = d.name;
             field.type = apply(std::move(base), d.mods);
+            if (eatP(":")) {
+                auto w = parseAssign();
+                if (!w || w->kind != Expr::Kind::Int) err("bitfield width is not a constant");
+                else field.bits = static_cast<int>(w->ival);
+            }
             t->params.push_back(std::move(field));
             expectP(";", ";");
         }
@@ -2177,6 +2184,9 @@ private:
         int width = 8;
         int step = 0;
         int inner = 0;
+        int bitOff = 0;
+        int bitWidth = 0;
+        bool bitUns = false;
         bool agg = false;
         std::string tag;
         std::vector<FieldOff> fields;
@@ -2197,6 +2207,9 @@ private:
         int width = 8;
         int step = 0;
         int inner = 0;
+        int bitOff = 0;
+        int bitWidth = 0;
+        bool bitUns = false;
         bool ok = false;
         bool agg = false;
         std::vector<FieldOff> fields;
@@ -2304,13 +2317,15 @@ private:
             return n * sizeOf(t->inner.get());
         }
         case Type::Kind::Struct: {
-            int off = 0;
-            for (const Param& p : t->params) {
-                off = alignUp(off, alignOf(p.type.get()));
-                off += sizeOf(p.type.get());
+            auto fields = layoutOf(t);
+            int end = 0;
+            for (const FieldOff& f : fields) {
+                int span = f.bitWidth > 0 ? 4 : f.width;
+                int e = f.offset + span;
+                if (e > end) end = e;
             }
-            if (off == 0) return 0;
-            return alignUp(off, alignOf(t));
+            if (end == 0) return 0;
+            return alignUp(end, alignOf(t));
         }
         case Type::Kind::Union: {
             int sz = 0;
@@ -2355,10 +2370,32 @@ private:
             return out;
         }
         int off = 0;
+        int bitCursor = -1;
         for (const Param& p : t->params) {
-            off = alignUp(off, alignOf(p.type.get()));
             FieldOff f;
             f.name = p.name;
+            if (p.bits >= 0) {
+                int bits = p.bits;
+                if (bits > 32) bits = 32;
+                if (bitCursor < 0 || bitCursor + bits > 32) {
+                    if (bitCursor >= 0) off += 4;
+                    off = alignUp(off, 4);
+                    bitCursor = 0;
+                }
+                f.offset = off;
+                f.width = 4;
+                f.bitOff = bitCursor;
+                f.bitWidth = bits;
+                f.bitUns = p.type && p.type->unsign;
+                bitCursor += bits;
+                out.push_back(std::move(f));
+                continue;
+            }
+            if (bitCursor >= 0) {
+                off += 4;
+                bitCursor = -1;
+            }
+            off = alignUp(off, alignOf(p.type.get()));
             f.offset = off;
             f.width = sizeOf(p.type.get());
             f.step = valueStep(p.type.get());
@@ -2379,6 +2416,7 @@ private:
             out.push_back(std::move(f));
             off += f.width;
         }
+        if (bitCursor >= 0) off += 4;
         if (!t->tag.empty() && (!out.empty() || !structLayouts().count(t->tag))) structLayouts()[t->tag] = out;
         return out;
     }
@@ -2890,6 +2928,9 @@ private:
             a.width = field->width;
             a.step = field->step;
             a.inner = field->inner;
+            a.bitOff = field->bitOff;
+            a.bitWidth = field->bitWidth;
+            a.bitUns = field->bitUns;
             a.agg = field->agg;
             a.fields = fieldsFor(*field);
             a.ok = true;
@@ -2900,6 +2941,28 @@ private:
     }
 
     Val loadAddr(Addr a, int inner, bool uns = false) {
+        if (a.bitWidth > 0) {
+            int word = fresh();
+            Inst ld;
+            ld.op = Inst::Op::Load;
+            ld.dst = word;
+            ld.a = a.op;
+            ld.extra = a.width > 0 ? a.width : 4;
+            ld.uns = true;
+            emit(ld);
+            int sh = fresh();
+            emitBin(Inst::Op::Shr, sh, Operand::vreg(word), Operand::number(a.bitOff));
+            unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
+            int masked = fresh();
+            emitBin(Inst::Op::And, masked, Operand::vreg(sh), Operand::number(static_cast<std::int64_t>(mask)));
+            if (a.bitUns || a.bitWidth >= 32) return Val{Operand::vreg(masked), inner, 0};
+            int sign = 1 << (a.bitWidth - 1);
+            int flipped = fresh();
+            emitBin(Inst::Op::Xor, flipped, Operand::vreg(masked), Operand::number(sign));
+            int ext = fresh();
+            emitBin(Inst::Op::Sub, ext, Operand::vreg(flipped), Operand::number(sign));
+            return Val{Operand::vreg(ext), inner, 0};
+        }
         int dst = fresh();
         Inst in;
         in.op = Inst::Op::Load;
@@ -3574,6 +3637,29 @@ private:
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
+        if (a.bitWidth > 0) {
+            unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
+            unsigned fieldMask = mask << a.bitOff;
+            int word = fresh();
+            Inst ld;
+            ld.op = Inst::Op::Load;
+            ld.dst = word;
+            ld.a = a.op;
+            ld.extra = a.width > 0 ? a.width : 4;
+            ld.uns = true;
+            emit(ld);
+            int val = fresh();
+            emitBin(Inst::Op::And, val, rhs.op, Operand::number(static_cast<std::int64_t>(mask)));
+            int shifted = fresh();
+            emitBin(Inst::Op::Shl, shifted, Operand::vreg(val), Operand::number(a.bitOff));
+            int cleared = fresh();
+            emitBin(Inst::Op::And, cleared, Operand::vreg(word),
+                    Operand::number(static_cast<std::int64_t>(~static_cast<std::uint64_t>(fieldMask))));
+            int merged = fresh();
+            emitBin(Inst::Op::Or, merged, Operand::vreg(cleared), Operand::vreg(shifted));
+            storeBits(a.op, Operand::vreg(merged), a.width > 0 ? a.width : 4);
+            return Val{Operand::vreg(val), 0, 0};
+        }
         if (lhs.checked && isFp(*lhs.checked)) {
             int w = fpWidthOf(lhs.checked.get());
             if (rhs.fpw != w) rhs = cvtFp(rhs, rhs.fpw, w);

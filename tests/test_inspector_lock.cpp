@@ -7,8 +7,9 @@
 //
 // Each case locks object A, rebuilds the scene through the editor's undo path, creates a new object B (which may land
 // at A's old address), and checks that the Inspector shows A again (same GUID, same name) or nothing if A is gone,
-// and never B. Whether B really reused A's address depends on the allocator; the test prints when it did, and the
-// checks hold either way.
+// and never B. Whether another object really lands at A's old address depends on the allocator (with glibc the undo
+// rebuild puts "Other" there, and the old pointer lock then showed "Other"); the test prints how often it happened,
+// and the checks hold either way.
 #include "test_framework.hpp"
 #include "../editor/EditorState.hpp"
 #include "../editor/ObjectRef.hpp"
@@ -23,10 +24,13 @@ using okay::editor::ObjectRef;
 
 namespace {
 
-int g_reused = 0;   // how often a new object really took the locked object's old address (informational)
+int g_reused = 0;   // how often another object really sat at the locked object's old address (informational)
 
-void NoteReuse(const void* oldAddr, const GameObject* b) {
-    if (b && (const void*)b == oldAddr) ++g_reused;
+// After the rebuild and B's creation: is some object that is NOT A at A's old address? (The old pointer check would then
+// have shown that object. With glibc this happens in the undo case: the rebuild puts "Other" where A was.)
+void NoteReuse(const EditorState& ed, const void* oldAddr, const std::string& guidA) {
+    for (const auto& up : ed.scene().Objects())
+        if ((const void*)up.get() == oldAddr && up->Guid() != guidA) { ++g_reused; return; }
 }
 
 // Lock A, edit it, undo (the scene is rebuilt), create B: the Inspector shows A (by GUID), never B.
@@ -50,7 +54,7 @@ void TestLockSurvivesUndo() {
     CHECK(ed.Undo());                       // rebuilds every object from the scene text: `a` is freed
     ed.Select(nullptr);                     // the user selects nothing / something else
     GameObject* b = ed.CreateCube("B");     // may reuse A's address
-    NoteReuse(oldAddr, b);
+    NoteReuse(ed, oldAddr, guidA);
     ed.Select(b);                           // locked: selecting B must not change what is shown
 
     const InspectorLock::View v = lock.Resolve(ed.scene(), ed.selected());
@@ -83,7 +87,7 @@ void TestLockedObjectGone() {
     ed.DeleteSelected();                    // undoable delete: A is freed
     ed.CommitUndo();
     GameObject* b = ed.CreateCube("B");
-    NoteReuse(oldAddr, b);
+    NoteReuse(ed, oldAddr, guidA);
     ed.CommitUndo();
     ed.Select(b);
 
@@ -115,12 +119,13 @@ void TestLockOnUndoneCreation() {
     GameObject* a = ed.CreateCube("A");
     ed.CommitUndo();
     const void* oldAddr = a;
+    const std::string guidA = a->Guid();
     InspectorLock lock;
     lock.Lock(a);
 
     CHECK(ed.Undo());                       // A never existed
     GameObject* b = ed.CreateCube("B");
-    NoteReuse(oldAddr, b);
+    NoteReuse(ed, oldAddr, guidA);
     const InspectorLock::View v = lock.Resolve(ed.scene(), b);
     CHECK(v.object == nullptr);
     CHECK(v.lockedMissing);
@@ -185,6 +190,6 @@ int main() {
     TestLockOnUndoneCreation();
     TestNewSceneAndNull();
     TestObjectRef();
-    std::printf("  (a new object took the locked object's old address in %d of 4 cases)\n", g_reused);
+    std::printf("  (another object sat at the locked object's old address in %d of 3 rebuild cases: the old pointer lock would have shown it)\n", g_reused);
     TEST_MAIN_RESULT();
 }

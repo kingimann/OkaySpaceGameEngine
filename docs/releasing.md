@@ -47,6 +47,12 @@ Storage and download traffic count against the Supabase plan's quotas.
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
 
+## Fast release (one dispatch, no bump PR; off until the owner switches it on)
+
+`.github/workflows/fast-release.yml` works out the next version itself, refuses a commit that has no fully green CI run on main, takes the
+release notes from small files in `dist/changelog.d/` (one per change, so no clashes), builds the checked commit with the version stamped in,
+and checks the result. The by-hand way below keeps working. Everything: [fast_release.md](fast_release.md).
+
 ## Try a branch before it is released (test builds)
 
 To let the owner try a branch without a pull request or a release, start the **Test build (dev channel)** workflow (`gh workflow run dev-build.yml

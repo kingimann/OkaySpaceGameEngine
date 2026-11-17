@@ -28,6 +28,9 @@
 #include "okay/Components/UIPagination.hpp"
 #include "okay/Components/UISkeleton.hpp"
 #include "okay/Components/UIBottomSheet.hpp"
+#include "okay/Components/UIRangeSlider.hpp"
+#include "okay/Components/UIAspectRatio.hpp"
+#include "okay/Components/UIInputValidator.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -166,6 +169,8 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* pg = go->GetComponent<UIPagination>()) { r.valid = true; r.anchor = pg->anchor; r.anchorPtr = &pg->anchor; r.position = &pg->position; r.sizePtr = &pg->size; r.size = pg->size; }
     else if (auto* sk = go->GetComponent<UISkeleton>()) { r.valid = true; r.anchor = sk->anchor; r.anchorPtr = &sk->anchor; r.position = &sk->position; r.sizePtr = &sk->size; r.size = sk->size; }
     else if (auto* sh = go->GetComponent<UIBottomSheet>()) { r.valid = true; r.anchor = sh->anchor; r.anchorPtr = &sh->anchor; r.position = &sh->position; r.sizePtr = &sh->size; r.size = sh->size; }
+    else if (auto* rs = go->GetComponent<UIRangeSlider>()) { r.valid = true; r.anchor = rs->anchor; r.anchorPtr = &rs->anchor; r.position = &rs->position; r.sizePtr = &rs->size; r.size = rs->size; }
+    else if (auto* ar = go->GetComponent<UIAspectRatio>()) { r.valid = true; r.anchor = ar->anchor; r.anchorPtr = &ar->anchor; r.position = &ar->position; r.sizePtr = &ar->size; r.size = ar->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
     else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
@@ -226,6 +231,7 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* bc = go->GetComponent<UIBreadcrumbs>()) return bc->IsFocused();
     if (auto* pg = go->GetComponent<UIPagination>()) return pg->IsFocused();
     if (auto* sh = go->GetComponent<UIBottomSheet>()) return sh->IsFocused();
+    if (auto* rs = go->GetComponent<UIRangeSlider>()) return rs->IsFocused();
     return false;
 }
 
@@ -383,6 +389,7 @@ inline bool UIShowsFocusRing(GameObject* go) {
     if (auto* bc = go->GetComponent<UIBreadcrumbs>()) return on(bc);
     if (auto* pg = go->GetComponent<UIPagination>()) return on(pg);
     if (auto* sh = go->GetComponent<UIBottomSheet>()) return on(sh);
+    if (auto* rs = go->GetComponent<UIRangeSlider>()) return on(rs);
     return false;
 }
 
@@ -537,6 +544,8 @@ enum : int {
     K_Pagination,
     K_Skeleton,
     K_BottomSheet,
+    K_RangeSlider,  // UIRangeSlider (appended: older layer numbers stay put)
+    K_Validator,    // UIInputValidator ring and message (over the input it checks)
     K_Count
 };
 } // namespace uilayers
@@ -548,7 +557,7 @@ inline const char* UILayerName(int kind) {
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
         "keybind", "modal dim", "context menu", "captions", "virtual stick", "d-pad", "touch button",
-        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet"};
+        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet", "range slider", "validation"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -596,6 +605,8 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIPagination>())     add(K_Pagination);
     if (g->GetComponent<UISkeleton>())       add(K_Skeleton);
     if (g->GetComponent<UIBottomSheet>())    add(K_BottomSheet);
+    if (g->GetComponent<UIRangeSlider>())    add(K_RangeSlider);
+    if (g->GetComponent<UIInputValidator>() && g->GetComponent<UIInputField>()) add(K_Validator);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -640,6 +651,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIPagination>())     return K_Pagination;
     if (go->GetComponent<UISkeleton>())       return K_Skeleton;
     if (go->GetComponent<UIBottomSheet>())    return K_BottomSheet;
+    if (go->GetComponent<UIRangeSlider>())    return K_RangeSlider;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }
@@ -779,6 +791,13 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
         return true;
     }
     float s = UIScaleFor(go, screenW, screenH);
+    if (const UIAspectRatio* ar = go->GetComponent<UIAspectRatio>()) {   // a box of a fixed shape inside the parent
+        Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
+        if (GameObject* parent = OwningUIParent(go)) { Vec2 po, ps; if (GetUIScreenRect(parent, screenW, screenH, po, ps)) { co = po; cs = ps; } }
+        ar->Resolve(co, cs, origin, size);
+        if (outScale) *outScale = s;
+        return true;
+    }
     if (const UISafeArea* sa = go->GetComponent<UISafeArea>()) {   // the screen minus the phone's insets
         Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
         if (GameObject* parent = OwningUIParent(go)) { Vec2 po, ps; if (GetUIScreenRect(parent, screenW, screenH, po, ps)) { co = po; cs = ps; } }
@@ -867,6 +886,12 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
             }
         }
     }
+    if (const UIAspectRatio* ar = go->GetComponent<UIAspectRatio>()) {
+        Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
+        if (GameObject* parent = OwningUIParent(go)) { co = UIResolveOrigin(parent, screenW, screenH); cs = UIResolveSize(parent, screenW, screenH); }
+        Vec2 o, sz; ar->Resolve(co, cs, o, sz);
+        return o;
+    }
     if (const UISafeArea* sa = go->GetComponent<UISafeArea>()) {
         Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
         if (GameObject* parent = OwningUIParent(go)) { co = UIResolveOrigin(parent, screenW, screenH); cs = UIResolveSize(parent, screenW, screenH); }
@@ -896,6 +921,12 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
 inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return r.size;
+    if (const UIAspectRatio* ar = go->GetComponent<UIAspectRatio>()) {
+        Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
+        if (GameObject* parent = OwningUIParent(go)) { co = UIResolveOrigin(parent, screenW, screenH); cs = UIResolveSize(parent, screenW, screenH); }
+        Vec2 o, sz; ar->Resolve(co, cs, o, sz);
+        return sz;
+    }
     if (const UISafeArea* sa = go->GetComponent<UISafeArea>()) {
         Vec2 co{0.0f, 0.0f}, cs{screenW, screenH};
         if (GameObject* parent = OwningUIParent(go)) { co = UIResolveOrigin(parent, screenW, screenH); cs = UIResolveSize(parent, screenW, screenH); }

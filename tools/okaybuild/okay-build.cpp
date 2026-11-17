@@ -447,10 +447,10 @@ static int importCmake(const string& buildDir, const string& runDir, const strin
             else if (w[i] == "-MF" && i + 1 < w.size()) p.depfile = w[i + 1];
         }
         if (hasC && hasO) { p.kind = "compile"; p.inputs = {src}; ++nCompile; }
-        else if (hasO) { p.kind = "link"; for (auto& x : w) if (x != p.output && (endsWith(x, ".o") || endsWith(x, ".a") || endsWith(x, ".so"))) p.inputs.push_back(x); ++nLink; }
+        else if (hasO) { p.kind = "link"; for (auto& x : w) if (x != p.output && (endsWith(x, ".o") || endsWith(x, ".obj") || endsWith(x, ".a") || endsWith(x, ".so") || endsWith(x, ".dll"))) p.inputs.push_back(x); ++nLink; }
         else { // archive: "... ar qc OUT.a objs..." (no -o)
-            size_t ar = w.size(); for (size_t i = 0; i < w.size(); ++i) if (fs::path(w[i]).filename() == "ar") ar = i;
-            if (ar < w.size()) for (size_t i = ar + 1; i < w.size(); ++i) if (endsWith(w[i], ".a")) { p.output = w[i]; for (size_t j = i + 1; j < w.size(); ++j) if (endsWith(w[j], ".o")) p.inputs.push_back(w[j]); break; }
+            size_t ar = w.size(); for (size_t i = 0; i < w.size(); ++i) { string fn = fs::path(w[i]).filename().string(); if (fn == "ar" || endsWith(fn, "-ar")) ar = i; } // ar, gcc-ar, x86_64-w64-mingw32-ar, llvm-ar
+            if (ar < w.size()) for (size_t i = ar + 1; i < w.size(); ++i) if (endsWith(w[i], ".a")) { p.output = w[i]; for (size_t j = i + 1; j < w.size(); ++j) if (endsWith(w[j], ".o") || endsWith(w[j], ".obj")) p.inputs.push_back(w[j]); break; }
             if (!p.output.empty()) { p.kind = "archive"; ++nArchive; }
             else { // custom command: find the build.ninja custom edge whose output appears as a word of the command
                 p.kind = "custom"; ++nOther;

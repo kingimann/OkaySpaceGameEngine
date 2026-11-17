@@ -66,3 +66,28 @@ Replace `runCmd` (fork/exec/pipe) with CreateProcessW and an inheritable pipe; r
 makes response files mandatory (done, threshold must be below it); no `cd` chaining, so set the working directory in
 CreateProcess. Threads: use `std::thread`/`mutex` only in this dev tool, never in headers the launcher/editor/player reach
 (rule 21a), and MinGW "win32" thread model cannot compile them, so build the tool with the posix MinGW or MSVC.
+
+## Stage B follow-up (2026-11-17, second round)
+Machine was loaded by other agents (load 5-8 on 4 cores) and disk fell under 4.5 GB, so some measurements are partial.
+- Whole engine library (334 compiles + 3 archives, -O0 -g0, -j3): okay-build 7 min wall (423 s) when the machine was quieter; the
+  Ninja run on the same configure took 725 s wall, 939 s user, 61 s sys (heavily loaded; wall times are NOT comparable, CPU times are).
+  Objects: 333 of 334 byte-identical to Ninja's. `third_party/ufbx/ufbx.c.o` differs (47 bytes, same size; cause not found, no
+  __DATE__ string seen) so libokay_engine.a differs too. No-op: okay-build 381 ms before the speed work, Ninja 52 ms.
+- Test exes through okay-build (tests/test_serialize + tests/test_math, 341 steps incl. 2 links, 792 s wall under load, 977 s user):
+  both run and pass (67 checks / 15 checks, 0 failures). The Ninja-built twin was NOT compared: disk ran low, so unverified.
+  No-op of those 341 steps: 180 ms (before the speed work: not measured on this tree).
+- Order-only edges: `ninja -t commands` drops them, so the importer reads `build.ninja` (build statements, phony nodes) and keeps
+  every edge that leads to another imported output as `after`. On the engine configure only 2 exist (archive after crypto/platform
+  archives); no real generated file exists in the Linux configure (only `configure_file` at configure time and a Windows version
+  resource in cmake/OkayWinVersion.cmake). The mechanism is tested with a real CMake+Ninja tiny project (custom command makes gen.h).
+  Custom steps: their output is found by matching a build.ninja CUSTOM_COMMAND output against the command words (if none matches
+  the step always runs); absolute existing file inputs of the edge are tracked. With `--run-dir`, absolute paths of the build tree in
+  commands (`cd BUILD`, `-IBUILD`) are rewritten to the run tree.
+- Speed: the "9% slower" earlier was load noise. `--profile` on the 62-file slice: user CPU 70-72 s for both tools; okay-build's own
+  work is plan 80 ms, dirty checks 9 ms, depfile+hash 40 ms in total (below 0.3% of the run). The real problem was the no-op:
+  copying each state record, stringstream parsing, two filesystem calls per file, and building the tool with -O0. Fixes: no copy,
+  hand-parsed state, one stat(2), hash maps, `build.sh` now -O2. Slice no-op 250 ms -> 23 ms at -O2 (30 ms at -O0); Ninja 25-29 ms.
+- MinGW: importing a MinGW configure of the engine works after two importer fixes (archive tool is `x86_64-w64-mingw32-ar`,
+  objects end in `.obj`); the Core slice imports as 62 compiles + 1 archive. It was NOT built (disk stop), so bytes vs Ninja are
+  unverified for MinGW. The CMake configure used: toolchain cmake/mingw-w64-x86_64.toolchain.cmake, tests/sandbox/launcher/
+  player/editor/assimp OFF (the launcher/player/editor targets need SDL2 for MinGW).

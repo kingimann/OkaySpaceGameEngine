@@ -36,7 +36,7 @@ struct Inst {
     enum class Op {
         Mov, Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not,
         Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret,
-        Local, Lea, LeaSym, Load, Store, GLoad, GStore
+        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore
     } op = Op::Mov;
     int dst = -1;
     int extra = 8;  // byte width for a load, store, or narrowing move
@@ -47,6 +47,7 @@ struct Inst {
     std::string label2;
     std::string func;
     std::vector<Operand> args;
+    std::vector<Operand> stack;  // outgoing stack image, low address first, 8-byte chunks
 };
 
 struct Block {

@@ -431,15 +431,29 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         jneRel(im, blockName(f.name, in.label));
         jmpRel(im, blockName(f.name, in.label2));
         break;
+    case Inst::Op::LeaFrame:
+        leaRaxRbp(im, static_cast<std::int32_t>(in.a.imm));
+        movSlotRax(im, in.dst);
+        break;
     case Inst::Op::Call: {
-        int nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
-        if (nstack % 2) aluImm(im, Rsp, 8, 5);
-        for (int i = nstack - 1; i >= 0; --i) {
-            loadRax(im, in.args[static_cast<std::size_t>(6 + i)]);
-            pushReg(im, Rax);
+        int nstack = 0;
+        if (!in.stack.empty()) {
+            nstack = static_cast<int>(in.stack.size());
+            for (int i = nstack - 1; i >= 0; --i) {
+                loadRax(im, in.stack[static_cast<std::size_t>(i)]);
+                pushReg(im, Rax);
+            }
+        } else {
+            nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
+            if (nstack % 2) aluImm(im, Rsp, 8, 5);
+            for (int i = nstack - 1; i >= 0; --i) {
+                loadRax(im, in.args[static_cast<std::size_t>(6 + i)]);
+                pushReg(im, Rax);
+            }
         }
         int nreg = static_cast<int>(in.args.size()) < 6 ? static_cast<int>(in.args.size()) : 6;
-        for (int i = 0; i < nreg; ++i) {
+        if (!in.stack.empty()) nreg = static_cast<int>(in.args.size());
+        for (int i = 0; i < nreg && i < 6; ++i) {
             loadRax(im, in.args[static_cast<std::size_t>(i)]);
             movReg(im, kArg[i], Rax);
         }
@@ -455,13 +469,28 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             callRel(im, in.func);
         }
         if (nstack) {
-            int bytes = 8 * (nstack + (nstack % 2));
+            int bytes = in.stack.empty() ? 8 * (nstack + (nstack % 2)) : 8 * nstack;
             aluImm(im, Rsp, bytes, 0);
         }
         if (in.dst >= 0) movSlotRax(im, in.dst);
+        if (in.b.kind == Operand::Kind::Reg) {
+            rexW(im, Rdx, Rbp);
+            u8(im, 0x89);
+            u8(im, modrm(2, Rdx, Rbp));
+            i32(im, -8 * (in.b.reg + 1));
+        }
         break;
     }
     case Inst::Op::Ret:
+        if (in.b.kind != Operand::Kind::None) {
+            if (in.b.kind == Operand::Kind::Imm) movImm(im, Rdx, in.b.imm);
+            else {
+                rexW(im, Rdx, Rbp);
+                u8(im, 0x8B);
+                u8(im, modrm(2, Rdx, Rbp));
+                i32(im, -8 * (in.b.reg + 1));
+            }
+        }
         if (in.a.kind != Operand::Kind::None) {
             loadRax(im, in.a);
             sext(im, in.extra, in.uns);

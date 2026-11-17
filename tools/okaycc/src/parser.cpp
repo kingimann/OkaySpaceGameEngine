@@ -1954,8 +1954,10 @@ private:
     };
     struct Val {
         Operand op;
+        Operand hi;
         int step = 0;
         int inner = 0;
+        bool pair = false;
         std::vector<FieldOff> fields;
         Val() = default;
         Val(Operand o, int s, int i) : op(std::move(o)), step(s), inner(i) {}
@@ -2005,6 +2007,7 @@ private:
     int retWidth_ = 8;
     bool retUns_ = false;
     bool retStruct_ = false;
+    int hiddenReg_ = -1;
     std::set<std::string> addr_;
     std::vector<std::map<std::string, Sym>> scopes_;
     std::map<std::string, Sym> globals_;
@@ -2098,9 +2101,10 @@ private:
             f.step = valueStep(p.type.get());
             f.inner = innerOf(p.type.get());
             bool nested = p.type && p.type->kind == Type::Kind::Struct;
+            bool arr = p.type && p.type->kind == Type::Kind::Array;
             bool pstruct = p.type && p.type->kind == Type::Kind::Pointer && p.type->inner &&
                            p.type->inner->kind == Type::Kind::Struct;
-            f.agg = nested;
+            f.agg = nested || arr;
             if (nested) {
                 f.fields = layoutOf(p.type.get());
                 f.tag = p.type->tag;
@@ -2169,8 +2173,13 @@ private:
         emit(in);
     }
     Operand narrow(Operand src, int width, bool uns = false) {
-        if ((width >= 8 || width <= 0) && !uns) return src;
-        if (width >= 8) return src;
+        if (width >= 8 || width <= 0) return src;
+        if (src.kind == Operand::Kind::Imm) {
+            std::uint64_t mask = width >= 4 ? 0xffffffffull : width == 2 ? 0xffffull : 0xffull;
+            std::uint64_t bits = static_cast<std::uint64_t>(src.imm) & mask;
+            if (!uns && (bits & (1ull << (width * 8 - 1)))) bits |= ~mask;
+            return Operand::number(static_cast<std::int64_t>(bits));
+        }
         int t = fresh();
         emitMov(t, src, width, uns);
         return Operand::vreg(t);
@@ -2581,6 +2590,48 @@ private:
         st.extra = bitWidth(sz);
         emit(st);
     }
+    Operand addAddr(Operand base, int off) {
+        if (off == 0) return base;
+        int dst = fresh();
+        emitBin(Inst::Op::Add, dst, base, Operand::number(off));
+        return Operand::vreg(dst);
+    }
+    void copyMem(Operand dst, Operand src, int sz) {
+        int off = 0;
+        while (off < sz) {
+            int n = sz - off;
+            if (n > 8) n = 8;
+            Operand bits = loadBits(addAddr(src, off), n);
+            storeBits(addAddr(dst, off), bits, n);
+            off += n;
+        }
+    }
+    Operand addrOf(const Sym& s) {
+        if (!s.global) return Operand::vreg(s.reg);
+        int dst = fresh();
+        Inst lea;
+        lea.op = Inst::Op::LeaSym;
+        lea.dst = dst;
+        lea.func = s.gname;
+        emit(lea);
+        return Operand::vreg(dst);
+    }
+    Operand frameAddr(int disp) {
+        int dst = fresh();
+        Inst in;
+        in.op = Inst::Op::LeaFrame;
+        in.dst = dst;
+        in.a = Operand::number(disp);
+        emit(in);
+        return Operand::vreg(dst);
+    }
+    static int structPieces(const Type* t, int& sz, bool& memClass) {
+        sz = t ? sizeOf(t) : 8;
+        memClass = t && t->kind == Type::Kind::Struct && sz > 16;
+        if (memClass) return 0;
+        if (t && t->kind == Type::Kind::Struct && sz > 8) return 2;
+        return 1;
+    }
 
     Val lowerLogic(Expr& e, bool isAnd) {
         int dst = fresh();
@@ -2688,6 +2739,8 @@ private:
             if (a.agg) {
                 Val v;
                 v.op = a.op;
+                v.step = a.step;
+                v.inner = a.inner;
                 v.fields = a.fields;
                 return v;
             }
@@ -2936,13 +2989,34 @@ private:
         return Val{Operand::vreg(dst), 0, 0};
     }
 
+    Val storeCall(Sym& dst, Expr& call) {
+        int sz = dst.objSize > 0 ? dst.objSize : dst.width;
+        Operand addr = addrOf(dst);
+        if (sz > 16) {
+            lowerCall(call, &addr);
+            return {};
+        }
+        Val v = lowerCall(call);
+        if (v.pair) {
+            storeBits(addr, v.op, 8);
+            storeBits(addAddr(addr, 8), v.hi, sz - 8);
+        } else {
+            storeBits(addr, v.op, sz);
+        }
+        return v;
+    }
+
     Val lowerAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1] || e.text != "=") {
             err(e.line, e.col, "not lowered");
             return {};
         }
-        Val rhs = lowerExpr(*e.kids[1]);
         Expr& lhs = *e.kids[0];
+        if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind == Expr::Kind::Call) {
+            Sym* s = find(lhs.text);
+            if (s && s->agg) return storeCall(*s, *e.kids[1]);
+        }
+        Val rhs = lowerExpr(*e.kids[1]);
         if (lhs.kind == Expr::Kind::Name) {
             Sym* s = find(lhs.text);
             if (!s) {
@@ -2955,24 +3029,17 @@ private:
             }
             if (s->agg) {
                 int sz = s->objSize > 0 ? s->objSize : s->width;
-                if (sz > 8) {
-                    err(e.line, e.col, "struct bigger than 8 bytes is not lowered");
-                    return {};
+                Operand addr = addrOf(*s);
+                if (rhs.pair) {
+                    storeBits(addr, rhs.op, 8);
+                    storeBits(addAddr(addr, 8), rhs.hi, sz - 8);
+                } else if (sz > 8) {
+                    copyMem(addr, rhs.op, sz);
+                } else {
+                    Operand bits = rhs.op;
+                    if (!e.kids[1] || e.kids[1]->kind != Expr::Kind::Call) bits = loadBits(rhs.op, sz);
+                    storeBits(addr, bits, sz);
                 }
-                Operand bits = rhs.op;
-                if (!e.kids[1] || e.kids[1]->kind != Expr::Kind::Call)
-                    bits = loadBits(rhs.op, sz);
-                Operand addr = Operand::vreg(s->reg);
-                if (s->global) {
-                    int dst = fresh();
-                    Inst lea;
-                    lea.op = Inst::Op::LeaSym;
-                    lea.dst = dst;
-                    lea.func = s->gname;
-                    emit(lea);
-                    addr = Operand::vreg(dst);
-                }
-                storeBits(addr, bits, sz);
                 return rhs;
             }
             if (s->global || s->mem) {
@@ -3022,7 +3089,7 @@ private:
         return Val{Operand::vreg(dst), 0, 0};
     }
 
-    Val lowerCall(Expr& e) {
+    Val lowerCall(Expr& e, const Operand* retSlotIn = nullptr) {
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
@@ -3038,27 +3105,91 @@ private:
             }
         }
         if (!direct) target = lowerExpr(*e.kids[0]).op;
-        std::vector<Operand> args;
+        int reg = 0;
+        bool retMem = e.checked && e.checked->kind == Type::Kind::Struct && sizeOf(e.checked.get()) > 16;
+        bool retPair = e.checked && e.checked->kind == Type::Kind::Struct && sizeOf(e.checked.get()) > 8 &&
+                       sizeOf(e.checked.get()) <= 16;
+        int retSz = e.checked && e.checked->kind == Type::Kind::Struct ? sizeOf(e.checked.get()) : 0;
+        std::vector<Operand> regs;
+        std::vector<Operand> stack;
+        Operand retSlot;
+        if (retMem) {
+            if (retSlotIn) {
+                retSlot = *retSlotIn;
+            } else {
+                int slot = fresh();
+                Inst loc;
+                loc.op = Inst::Op::Local;
+                loc.dst = slot;
+                loc.a = Operand::number(retSz < 1 ? 1 : retSz);
+                emit(loc);
+                retSlot = Operand::vreg(slot);
+            }
+            regs.push_back(retSlot);
+            reg = 1;
+        }
         for (std::size_t i = 1; i < e.kids.size(); ++i) {
             if (!e.kids[i]) continue;
             Val v = lowerExpr(*e.kids[i]);
-            if (e.kids[i]->checked && e.kids[i]->checked->kind == Type::Kind::Struct) {
-                int sz = sizeOf(e.kids[i]->checked.get());
-                if (sz > 8) err(e.line, e.col, "struct argument bigger than 8 bytes is not lowered");
-                else args.push_back(loadBits(v.op, sz));
+            const Type* t = e.kids[i]->checked.get();
+            int sz = 0;
+            bool memClass = false;
+            int nreg = structPieces(t, sz, memClass);
+            bool isStruct = t && t->kind == Type::Kind::Struct;
+            if (!isStruct) {
+                bool decay = t && (t->kind == Type::Kind::Array || t->kind == Type::Kind::Function);
+                int w = !t || decay ? 8 : sizeOf(t);
+                bool uns = t && !decay && t->unsign;
+                Operand val = (w > 0 && w < 8) ? narrow(v.op, w, uns) : v.op;
+                if (reg >= 6) stack.push_back(val);
+                else {
+                    regs.push_back(val);
+                    ++reg;
+                }
+                continue;
+            }
+            if (memClass || reg + nreg > 6) {
+                int off = 0;
+                int whole = (sz + 7) & ~7;
+                while (off < whole) {
+                    int n = sz - off;
+                    if (n <= 0) stack.push_back(Operand::number(0));
+                    else {
+                        if (n > 8) n = 8;
+                        stack.push_back(loadBits(addAddr(v.op, off), n));
+                    }
+                    off += 8;
+                }
             } else {
-                args.push_back(v.op);
+                regs.push_back(loadBits(v.op, sz >= 8 ? 8 : sz));
+                if (nreg == 2) regs.push_back(loadBits(addAddr(v.op, 8), sz - 8));
+                reg += nreg;
             }
         }
+        while (stack.size() % 2) stack.push_back(Operand::number(0));
         int dst = fresh();
+        int hi = -1;
+        if (retPair) hi = fresh();
         Inst in;
         in.op = Inst::Op::Call;
         in.dst = dst;
-        if (direct) in.func = fname;
+        if (direct) in.func = std::move(fname);
         else in.a = target;
-        in.args = std::move(args);
+        in.args = std::move(regs);
+        in.stack = std::move(stack);
+        if (hi >= 0) in.b = Operand::vreg(hi);
         emit(in);
+        if (retMem) {
+            Val out;
+            out.op = retSlot;
+            out.fields = layoutOf(e.checked.get());
+            return out;
+        }
         Val out{Operand::vreg(dst), 0, 0};
+        if (retPair) {
+            out.pair = true;
+            out.hi = Operand::vreg(hi);
+        }
         if (e.checked && e.checked->kind == Type::Kind::Pointer) {
             out.step = valueStep(e.checked.get());
             out.inner = innerOf(e.checked.get());
@@ -3085,6 +3216,42 @@ private:
         case Stmt::Kind::Return: {
             Inst in;
             in.op = Inst::Op::Ret;
+            if (s.expr && retStruct_ && retWidth_ > 16 && hiddenReg_ >= 0) {
+                Operand hid = Operand::vreg(hiddenReg_);
+                if (s.expr->kind == Expr::Kind::Call) lowerCall(*s.expr, &hid);
+                else if (s.expr->kind == Expr::Kind::Name) {
+                    if (Sym* sy = find(s.expr->text))
+                        if (sy->agg) copyMem(hid, readName(s.expr->text, s.line, s.col).op, retWidth_);
+                } else {
+                    Val v = lowerExpr(*s.expr);
+                    copyMem(hid, v.op, retWidth_);
+                }
+                in.a = hid;
+                emit(in);
+                break;
+            }
+            if (s.expr && retStruct_ && retWidth_ > 8) {
+                Operand lo;
+                Operand hi;
+                if (s.expr->kind == Expr::Kind::Call) {
+                    Val v = lowerCall(*s.expr);
+                    lo = v.op;
+                    hi = v.hi;
+                } else if (s.expr->kind == Expr::Kind::Name && find(s.expr->text) && find(s.expr->text)->agg) {
+                    Val addr = readName(s.expr->text, s.line, s.col);
+                    lo = loadBits(addr.op, 8);
+                    hi = loadBits(addAddr(addr.op, 8), retWidth_ - 8);
+                } else {
+                    Val v = lowerExpr(*s.expr);
+                    lo = loadBits(v.op, 8);
+                    hi = loadBits(addAddr(v.op, 8), retWidth_ - 8);
+                }
+                in.a = lo;
+                in.b = hi;
+                in.uns = true;
+                emit(in);
+                break;
+            }
             if (s.expr && retStruct_ && s.expr->kind == Expr::Kind::Name) {
                 if (Sym* sy = find(s.expr->text)) {
                     if (sy->agg) {
@@ -3326,6 +3493,7 @@ private:
         retWidth_ = 8;
         retUns_ = false;
         retStruct_ = false;
+        hiddenReg_ = -1;
         if (d.body) scanStmt(*d.body);
         if (d.type && d.type->inner) {
             const Type* r = d.type->inner.get();
@@ -3338,44 +3506,84 @@ private:
             }
             retUns_ = r->unsign;
         }
-        startBlock("entry");
-        std::vector<int> structBits;
-        std::vector<int> structSize;
+        struct PPlan {
+            bool memory = false;
+            int nreg = 1;
+            int regAt = 0;
+            int stackOff = 0;
+            int size = 8;
+            bool isStruct = false;
+        };
+        std::vector<PPlan> plans;
+        int reg = 0;
+        int stack = 0;
+        if (retStruct_ && retWidth_ > 16) {
+            hiddenReg_ = 0;
+            reg = 1;
+        }
         if (d.type) {
             for (const Param& p : d.type->params) {
-                Sym s;
-                s.reg = nextReg_++;
-                if (p.type) {
-                    describe(s, p.type.get());
-                    if (p.type->kind == Type::Kind::Struct) {
-                        int sz = sizeOf(p.type.get());
-                        if (sz > 8) err(d.line, d.col, "struct parameter bigger than 8 bytes is not lowered");
-                        structBits.push_back(s.reg);
-                        structSize.push_back(sz);
-                        s.agg = true;
-                    } else if (!p.name.empty() && addr_.count(p.name)) {
-                        s.mem = true;
-                    }
+                PPlan plan;
+                bool memClass = false;
+                plan.nreg = structPieces(p.type.get(), plan.size, memClass);
+                plan.isStruct = p.type && p.type->kind == Type::Kind::Struct;
+                if (memClass || reg + plan.nreg > 6) {
+                    plan.memory = true;
+                    plan.nreg = 0;
+                    stack = alignUp(stack, 8);
+                    plan.stackOff = stack;
+                    stack += (plan.size + 7) & ~7;
+                } else {
+                    plan.regAt = reg;
+                    reg += plan.nreg;
                 }
-                if (!p.name.empty()) scopes_.back()[p.name] = s;
+                plans.push_back(plan);
             }
         }
-        {
-            int n = 0;
-            if (d.type) {
-                for (const Param& p : d.type->params) {
-                    if (!p.type || p.type->kind != Type::Kind::Struct || p.name.empty()) continue;
+        fn_.params = reg;
+        nextReg_ = reg;
+        startBlock("entry");
+        if (d.type) {
+            for (std::size_t i = 0; i < d.type->params.size(); ++i) {
+                const Param& p = d.type->params[i];
+                const PPlan& plan = plans[i];
+                Sym s;
+                if (p.type) describe(s, p.type.get());
+                if (plan.isStruct) {
                     int addr = fresh();
-                    Inst loc;
-                    loc.op = Inst::Op::Local;
-                    loc.dst = addr;
-                    int sz = structSize[static_cast<std::size_t>(n)];
-                    loc.a = Operand::number(sz < 1 ? 1 : sz);
-                    emit(loc);
-                    storeBits(Operand::vreg(addr), Operand::vreg(structBits[static_cast<std::size_t>(n)]), sz);
-                    if (Sym* sy = find(p.name)) sy->reg = addr;
-                    ++n;
+                    if (plan.memory) {
+                        Inst lea;
+                        lea.op = Inst::Op::LeaFrame;
+                        lea.dst = addr;
+                        lea.a = Operand::number(16 + plan.stackOff);
+                        emit(lea);
+                    } else {
+                        Inst loc;
+                        loc.op = Inst::Op::Local;
+                        loc.dst = addr;
+                        loc.a = Operand::number(plan.size < 1 ? 1 : plan.size);
+                        emit(loc);
+                        storeBits(Operand::vreg(addr), Operand::vreg(plan.regAt),
+                                  plan.size >= 8 ? 8 : plan.size);
+                        if (plan.nreg == 2)
+                            storeBits(addAddr(Operand::vreg(addr), 8), Operand::vreg(plan.regAt + 1),
+                                      plan.size - 8);
+                    }
+                    s.reg = addr;
+                    s.agg = true;
+                } else if (plan.memory) {
+                    int w = p.type ? sizeOf(p.type.get()) : 8;
+                    bool uns = p.type && p.type->unsign;
+                    Operand src = loadBits(frameAddr(16 + plan.stackOff), w);
+                    int slot = fresh();
+                    emitMov(slot, src, w, uns);
+                    s.reg = slot;
+                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
+                } else {
+                    s.reg = plan.regAt;
+                    if (!p.name.empty() && addr_.count(p.name)) s.mem = true;
                 }
+                if (!p.name.empty()) scopes_.back()[p.name] = s;
             }
         }
         if (d.body && d.body->kind == Stmt::Kind::Block) {

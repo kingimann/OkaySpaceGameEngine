@@ -33,6 +33,7 @@ const char* opName(Inst::Op op) {
     case Inst::Op::Local: return "local";
     case Inst::Op::Lea: return "lea";
     case Inst::Op::LeaSym: return "leasym";
+    case Inst::Op::LeaFrame: return "leaframe";
     case Inst::Op::Load: return "load";
     case Inst::Op::Store: return "store";
     case Inst::Op::GLoad: return "gload";

@@ -249,15 +249,31 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         s += blockName(f.name, in.label2);
         s += "\n";
         break;
+    case Inst::Op::LeaFrame:
+        s += "  leaq ";
+        s += std::to_string(in.a.imm);
+        s += "(%rbp), %rax\n";
+        store(s, "%rax", in.dst);
+        break;
     case Inst::Op::Call: {
-        int nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
-        if (nstack % 2) s += "  subq $8, %rsp\n";
-        for (int i = nstack - 1; i >= 0; --i) {
-            load(s, in.args[static_cast<std::size_t>(6 + i)], "%rax");
-            s += "  pushq %rax\n";
+        int nstack = 0;
+        if (!in.stack.empty()) {
+            nstack = static_cast<int>(in.stack.size());
+            for (int i = nstack - 1; i >= 0; --i) {
+                load(s, in.stack[static_cast<std::size_t>(i)], "%rax");
+                s += "  pushq %rax\n";
+            }
+        } else {
+            nstack = in.args.size() > 6 ? static_cast<int>(in.args.size()) - 6 : 0;
+            if (nstack % 2) s += "  subq $8, %rsp\n";
+            for (int i = nstack - 1; i >= 0; --i) {
+                load(s, in.args[static_cast<std::size_t>(6 + i)], "%rax");
+                s += "  pushq %rax\n";
+            }
         }
         int nreg = static_cast<int>(in.args.size()) < 6 ? static_cast<int>(in.args.size()) : 6;
-        for (int i = 0; i < nreg; ++i) {
+        if (!in.stack.empty()) nreg = static_cast<int>(in.args.size());
+        for (int i = 0; i < nreg && i < 6; ++i) {
             load(s, in.args[static_cast<std::size_t>(i)], "%rax");
             s += "  movq %rax, ";
             s += kArgReg[i];
@@ -275,15 +291,21 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             s += "\n";
         }
         if (nstack) {
-            int bytes = 8 * (nstack + (nstack % 2));
+            int bytes = in.stack.empty() ? 8 * (nstack + (nstack % 2)) : 8 * nstack;
             s += "  addq $";
             s += std::to_string(bytes);
             s += ", %rsp\n";
         }
         if (in.dst >= 0) store(s, "%rax", in.dst);
+        if (in.b.kind == Operand::Kind::Reg) {
+            s += "  movq %rdx, ";
+            s += slot(in.b.reg);
+            s += "\n";
+        }
         break;
     }
     case Inst::Op::Ret:
+        if (in.b.kind != Operand::Kind::None) load(s, in.b, "%rdx");
         if (in.a.kind != Operand::Kind::None) {
             load(s, in.a, "%rax");
             sext(s, in.extra, in.uns);

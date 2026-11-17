@@ -64,16 +64,14 @@ int main() {
     checkIr("pointer", "int main(){int x; int *p; x=7; p=&x; *p=9; return x;}\n",
             "func main\n"
             "entry:\n"
-            "  mov v2, 7\n"
+            "  lea v2, v0\n"
+            "  store v2, 7, 4\n"
             "  lea v3, v0\n"
-            "  store v3, v2, 4\n"
+            "  mov v1, v3\n"
+            "  store v1, 9, 4\n"
             "  lea v4, v0\n"
-            "  mov v1, v4\n"
-            "  mov v5, 9\n"
-            "  store v1, v5, 4\n"
-            "  lea v6, v0\n"
-            "  load v7, v6, 4\n"
-            "  ret v7\n");
+            "  load v5, v4, 4\n"
+            "  ret v5\n");
 
     okaycc_test::gPass += gOk;
     std::printf("ir: %d passed, %d failed\n", okaycc_test::gPass, okaycc_test::gFail);

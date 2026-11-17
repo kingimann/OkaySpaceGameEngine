@@ -246,6 +246,56 @@ bool ActionSet::SetMapEnabled(const std::string& n, bool on) { for (ActionMap& m
 bool ActionSet::SetMapPriority(const std::string& n, int p) { for (ActionMap& m : m_maps) if (m.name == n) { m.priority = p; return true; } return false; }
 bool ActionSet::MapEnabled(const std::string& n) const { for (const ActionMap& m : m_maps) if (m.name == n) return m.enabled; return n.empty(); }
 
+bool ActionSet::RemoveAction(const std::string& name) {
+    for (auto it = m_actions.begin(); it != m_actions.end(); ++it) if (it->name == name) { m_actions.erase(it); return true; }
+    return false;
+}
+bool ActionSet::RenameAction(const std::string& from, const std::string& to) {
+    if (to.empty() || Find(to)) return false;
+    ActionDef* a = Find(from);
+    if (!a) return false;
+    a->name = to;
+    for (ActionDef& o : m_actions) for (Interaction& i : o.interactions) if (i.kind == Interaction::Kind::Chorded && i.arg == from) i.arg = to;
+    return true;
+}
+bool ActionSet::RemoveMap(const std::string& name) {
+    for (auto it = m_maps.begin(); it != m_maps.end(); ++it) if (it->name == name) {
+        for (ActionDef& a : m_actions) if (a.map == name) a.map.clear();
+        m_maps.erase(it); return true;
+    }
+    return false;
+}
+bool ActionSet::RenameMap(const std::string& from, const std::string& to) {
+    if (to.empty()) return false;
+    for (const ActionMap& m : m_maps) if (m.name == to) return false;
+    for (ActionMap& m : m_maps) if (m.name == from) {
+        m.name = to;
+        for (ActionDef& a : m_actions) if (a.map == from) a.map = to;
+        return true;
+    }
+    return false;
+}
+bool ActionSet::RemoveScheme(const std::string& name) {
+    for (auto it = m_schemes.begin(); it != m_schemes.end(); ++it) if (it->name == name) {
+        for (ActionDef& a : m_actions) for (BindingSpec& b : a.bindings) if (b.group == name) b.group.clear();
+        m_schemes.erase(it);
+        if (m_scheme == name) m_scheme = m_schemes.empty() ? std::string() : m_schemes.front().name;
+        return true;
+    }
+    return false;
+}
+bool ActionSet::RenameScheme(const std::string& from, const std::string& to) {
+    if (to.empty()) return false;
+    for (const ControlScheme& c : m_schemes) if (c.name == to) return false;
+    for (ControlScheme& c : m_schemes) if (c.name == from) {
+        c.name = to;
+        for (ActionDef& a : m_actions) for (BindingSpec& b : a.bindings) if (b.group == from) b.group = to;
+        if (m_scheme == from) m_scheme = to;
+        return true;
+    }
+    return false;
+}
+
 ActionDef& ActionSet::Add(const std::string& name, ValueType type, const std::string& map) {
     if (!map.empty()) { bool have = false; for (const ActionMap& m : m_maps) if (m.name == map) have = true; if (!have) AddMap(map); }
     if (ActionDef* a = Find(name)) { a->type = type; if (!map.empty()) a->map = map; return *a; }

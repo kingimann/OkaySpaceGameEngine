@@ -162,6 +162,14 @@ public:
     void SetPad(int pad) { m_pad = pad; }
     int Pad() const { return m_pad; }
 
+    // ---- editing (the authoring window): remove and rename keep every reference consistent
+    bool RemoveAction(const std::string& name);
+    bool RenameAction(const std::string& from, const std::string& to);   ///< false when `from` is missing or `to` is taken / empty
+    bool RemoveMap(const std::string& name);                             ///< its actions move to the default map
+    bool RenameMap(const std::string& from, const std::string& to);      ///< actions follow
+    bool RemoveScheme(const std::string& name);                          ///< bindings of that group become group-less
+    bool RenameScheme(const std::string& from, const std::string& to);   ///< bindings follow
+
     // ---- actions
     ActionDef& Add(const std::string& name, ValueType type, const std::string& map = "");
     ActionDef* Find(const std::string& name);

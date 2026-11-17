@@ -436,8 +436,13 @@ idea of action maps, in our own words and format; no code, text or tests from an
   `ia_rebind`, `ia_conflicts`, `ia_reset_bindings`, `ia_save`, `ia_label(action)` (names follow the connected controller), `ia_players`, `ia_leave`.
 - **Tests** (headless, real `Input` fed by hand): `action_set`, `action_phases`, `input_asset`, `input_script_api`. Pictures (software renders):
   `docs/images/input/action-set-*.png`, `action-phases.png`, `input-players.png`.
-- **Not done yet:** the Inspector Player Input component, visual-script nodes for the `ia_*` calls, the editor authoring window and live debugger
-  (see `docs/UNFINISHED.md`), a ready in-game rebinding screen for this system (the existing `RemapModel` / keybind field cover `InputActions`),
+- **Editor:** **View > Editors & Tools > Input Actions** (`editor/InputActionsWindow.hpp`) authors an asset: schemes, maps, actions with a type, bindings
+  (single, 2D vector, 3D vector, 1D axis, chord) with group and processors, interactions, a Check tab (`ActionEditor::Validate`), a Live tab, Load / Save /
+  New from default / Migrate Input Actions / Use in game. **View > Panels > Input** gained a "Controllers and typed actions" section (controller family,
+  ids, mapping source, battery; every local player's actions with value, phase and the binding that drives it; "active" = held steady, no phase change).
+  The logic is `Input/ActionEditor.hpp` (tested headless: `action_editor`); the ImGui drawing was only compile-checked, never run in a real editor window.
+  Pictures `docs/images/input/input-actions-window.png` and `input-debugger.png` are text renders of what those windows list, not screenshots of them.
+- **Not done yet:** the Inspector Player Input component, visual-script nodes for the `ia_*` calls, a ready in-game rebinding screen for this system (the existing `RemapModel` / keybind field cover `InputActions`),
   a hook that copies the default asset into new projects, touch scheme bindings (the scheme exists, no touch leaf inputs yet), and
   per-binding interactions (interactions are per action).
 

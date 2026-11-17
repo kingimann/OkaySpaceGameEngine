@@ -66,6 +66,7 @@ add_library(okay_engine
     src/Input/InputAsset.cpp
     src/Input/PlayerInput.cpp
     src/Input/InputRuntime.cpp
+    src/Input/ActionEditor.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp

@@ -3952,3 +3952,9 @@ add_test(NAME input_asset COMMAND test_input_asset)
 add_executable(test_input_script_api test_input_script_api.cpp)
 target_link_libraries(test_input_script_api PRIVATE okay::engine)
 add_test(NAME input_script_api COMMAND test_input_script_api)
+
+# The Input Actions window's logic (ActionEditor) and the live debugger lines.
+add_executable(test_action_editor test_action_editor.cpp)
+target_link_libraries(test_action_editor PRIVATE okay::engine)
+target_include_directories(test_action_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_editor COMMAND test_action_editor)

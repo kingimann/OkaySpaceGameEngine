@@ -896,6 +896,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
+#include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
@@ -2080,6 +2081,7 @@ bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 static void DrawPluginsMenu(EditorState& ed);
 static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showInputActions = false; // Input Actions window (author a .okayinput asset, live view)
 bool g_showInputDebug = false; // Input panel (live keys, axes, actions, events, response curves)
 bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
@@ -5441,6 +5443,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Items, Loot & Recipes", "Items, Loot & Recipes", &g_showItemDatabase, "Editors & Tools", PI_Package},
         {"Weapons",       "Weapons",                   &g_showWeapons,       "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
+        {"Input Actions", "Input Actions",             &g_showInputActions,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
@@ -6819,7 +6822,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
-        {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"view.uionly", &g_uiOnlyMode},
+        {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
     return nullptr;
@@ -51588,6 +51591,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying());
+        okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         {   // Every scene needs a camera (the Game view and builds render through it):

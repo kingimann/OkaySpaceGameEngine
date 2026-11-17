@@ -3380,10 +3380,54 @@ private:
         return v;
     }
 
+    void storeNamed(Sym& s, Operand val) {
+        if (s.global) {
+            Inst in;
+            in.op = Inst::Op::GStore;
+            in.func = s.gname;
+            in.a = val;
+            in.extra = s.width > 0 ? s.width : 8;
+            emit(in);
+        } else if (s.mem) {
+            storeMem(s.reg, val, s.width);
+        } else {
+            emitMov(s.reg, val, s.width, s.zext);
+        }
+    }
+
     Val lowerAssign(Expr& e) {
-        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1] || e.text != "=") {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) {
             err(e.line, e.col, "not lowered");
             return {};
+        }
+        if (e.text != "=") {
+            std::string op = e.text.substr(0, e.text.size() - 1);
+            Expr& lhs = *e.kids[0];
+            Val rhs = lowerExpr(*e.kids[1]);
+            Val lhsVal;
+            Addr addr;
+            bool byAddr = lhs.kind != Expr::Kind::Name;
+            if (!byAddr) lhsVal = readName(lhs.text, lhs.line, lhs.col);
+            else {
+                addr = lowerAddr(lhs);
+                if (!addr.ok) return {};
+                lhsVal = loadAddr(addr, 0, lhs.checked && lhs.checked->unsign);
+            }
+            int dst = fresh();
+            emitBin(binOp(op), dst, lhsVal.op, rhs.op);
+            Operand result = Operand::vreg(dst);
+            if (!byAddr) {
+                Sym* s = find(lhs.text);
+                if (!s) {
+                    err(e.line, e.col, "not lowered");
+                    return {};
+                }
+                if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
+                storeNamed(*s, result);
+                return Val{Operand::vreg(s->reg), s->step, s->inner};
+            }
+            storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);
+            return Val{result, 0, 0};
         }
         Expr& lhs = *e.kids[0];
         if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind == Expr::Kind::Call) {
@@ -3820,6 +3864,26 @@ private:
             emit(in);
             s.reg = addr;
             if (!d.name.empty()) scopes_.back()[d.name] = s;
+            if (d.init && d.init->kind == Expr::Kind::Brace) {
+                if (d.type->kind == Type::Kind::Array && d.type->inner) {
+                    int es = sizeOf(d.type->inner.get());
+                    for (std::size_t i = 0; i < d.init->kids.size(); ++i) {
+                        if (!d.init->kids[i]) continue;
+                        Val v = lowerExpr(*d.init->kids[i]);
+                        int w = es > 8 ? 8 : es;
+                        Operand bits = w < 8 ? narrow(v.op, w, d.type->inner->unsign) : v.op;
+                        storeBits(addAddr(Operand::vreg(addr), static_cast<int>(i) * es), bits, w);
+                    }
+                } else if (d.type->kind == Type::Kind::Struct || d.type->kind == Type::Kind::Union) {
+                    auto fields = layoutOf(d.type.get());
+                    for (std::size_t i = 0; i < d.init->kids.size() && i < fields.size(); ++i) {
+                        if (!d.init->kids[i]) continue;
+                        Val v = lowerExpr(*d.init->kids[i]);
+                        int w = fields[i].width > 8 ? 8 : fields[i].width;
+                        storeBits(addAddr(Operand::vreg(addr), fields[i].offset), v.op, w);
+                    }
+                }
+            }
             return;
         }
         int slot = fresh();

@@ -15,6 +15,8 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <unordered_map>
+#include <sys/stat.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -127,13 +129,12 @@ static Manifest parseManifest(const string& file) {
 
 // ---------------------------------------------------------------- hashing + stat shortcut
 struct FileSig { string hash; long long size = 0, mtime = 0, at = 0; };
-static long long ticks(fs::file_time_type t) { return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count(); }
 static string hex64(uint64_t h) { char b[17]; snprintf(b, sizeof b, "%016llx", (unsigned long long)h); return b; }
 static uint64_t fnv(const char* p, size_t n, uint64_t h = 1469598103934665603ull) {
     for (size_t i = 0; i < n; ++i) { h ^= (unsigned char)p[i]; h *= 1099511628211ull; }
     return h;
 }
-static std::mutex gHashMu; static std::map<string, FileSig> gCache, gPrev; // this run / loaded from state
+static std::mutex gHashMu; static std::unordered_map<string, FileSig> gCache, gPrev; // this run / loaded from state
 static std::atomic<int> gHashed{0}, gTrusted{0};
 static bool gUseStat = true;
 // Shortcut: if size and mtime equal the recorded ones, and the file was already 2 s older than when it was recorded
@@ -142,16 +143,15 @@ static bool hashFile(const string& p, FileSig& out) {
     FileSig prev; bool havePrev = false;
     { std::lock_guard<std::mutex> l(gHashMu); auto it = gCache.find(p); if (it != gCache.end()) { out = it->second; return true; }
       auto pv = gPrev.find(p); if (pv != gPrev.end()) { prev = pv->second; havePrev = true; } }
-    std::error_code ec; auto sz = fs::file_size(p, ec); if (ec) return false;
-    auto mt = fs::last_write_time(p, ec); if (ec) return false;
-    FileSig s; s.size = (long long)sz; s.mtime = ticks(mt);
+    struct stat st; if (::stat(p.c_str(), &st) != 0) return false; // one system call instead of two filesystem calls
+    FileSig s; s.size = (long long)st.st_size; s.mtime = (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec;
     if (gUseStat && havePrev && prev.size == s.size && prev.mtime == s.mtime && prev.mtime + 2000000000ll < prev.at) {
         s = prev; ++gTrusted;
     } else {
         std::ifstream f(p, std::ios::binary); if (!f) return false;
         uint64_t h = 1469598103934665603ull; char buf[65536];
         while (f.read(buf, sizeof buf) || f.gcount()) { h = fnv(buf, (size_t)f.gcount(), h); if (f.eof()) break; }
-        s.hash = hex64(h); s.at = ticks(fs::file_time_type::clock::now()); ++gHashed;
+        s.hash = hex64(h); { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); s.at = (long long)ts.tv_sec * 1000000000ll + ts.tv_nsec; } ++gHashed;
     }
     out = s; std::lock_guard<std::mutex> l(gHashMu); gCache[p] = s; return true;
 }
@@ -313,18 +313,21 @@ struct Rec { string cmd; vector<std::pair<string, FileSig>> inputs; };
 static std::map<string, Rec> gState; static std::mutex gStateMu;
 static string statePath() { return under(".okaybuild/state"); }
 static void loadState() {
-    std::ifstream f(statePath()); string l; Rec* cur = nullptr;
-    if (!std::getline(f, l) || l != "okaybuild-state 2") return; // unknown/missing: rebuild everything
+    std::ifstream f(statePath(), std::ios::binary); string l; Rec* cur = nullptr;
+    if (!std::getline(f, l) || l != "okaybuild-state 3") return; // unknown/missing: rebuild everything
+    gPrev.reserve(4096);
     while (std::getline(f, l)) {
-        std::vector<string> p; std::stringstream ss(l); string x; while (std::getline(ss, x, '\t')) p.push_back(x);
-        if (p.size() == 3 && p[0] == "O") cur = &(gState[p[1]] = Rec{p[2], {}});
-        else if (p.size() == 6 && p[0] == "I" && cur) { FileSig s; s.hash = p[2]; s.size = atoll(p[3].c_str()); s.mtime = atoll(p[4].c_str()); s.at = atoll(p[5].c_str());
-                                                         cur->inputs.push_back({p[1], s}); gPrev[p[1]] = s; }
+        const char* p = l.c_str(); const char* e = p + l.size(); const char* fld[6]; int n = 0; fld[n++] = p;
+        for (const char* q = p; q < e && n < 6; ++q) if (*q == '\t') fld[n++] = q + 1;
+        auto len = [&](int i) { return (size_t)((i + 1 < n ? fld[i + 1] - 1 : e) - fld[i]); };
+        if (n == 3 && l[0] == 'O') cur = &(gState[string(fld[1], len(1))] = Rec{string(fld[2], len(2)), {}});
+        else if (n == 6 && l[0] == 'I' && cur) { FileSig s; s.hash.assign(fld[2], len(2)); s.size = atoll(fld[3]); s.mtime = atoll(fld[4]); s.at = atoll(fld[5]);
+                                                   string path(fld[1], len(1)); cur->inputs.push_back({path, s}); gPrev[path] = s; }
     }
 }
 static void saveState() {
     fs::create_directories(under(".okaybuild")); string tmp = statePath() + ".tmp";
-    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-state 2\n";
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-state 3\n";
       for (auto& [o, r] : gState) { f << "O\t" << o << "\t" << r.cmd << "\n"; for (auto& [p, s] : r.inputs) f << "I\t" << p << "\t" << s.hash << "\t" << s.size << "\t" << s.mtime << "\t" << s.at << "\n"; } }
     fs::rename(tmp, statePath());
 }
@@ -332,7 +335,8 @@ static void saveState() {
 static bool dirty(const Action& a, string& why) {
     if (a.output.empty()) { why = "no declared output (always runs)"; return true; }
     if (!fs::exists(a.output)) { why = "output " + a.output + " is missing"; return true; }
-    Rec r; { std::lock_guard<std::mutex> l(gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } r = it->second; }
+    const Rec* rp; { std::lock_guard<std::mutex> l(gStateMu); auto it = gState.find(a.output); if (it == gState.end()) { why = "no record in state file (never built by okay-build)"; return true; } rp = &it->second; } // map nodes are stable
+    const Rec& r = *rp;
     if (r.cmd != a.cmdHash) { why = "command line changed"; return true; }
     std::set<string> have; for (auto& [p, h] : r.inputs) have.insert(p);
     for (auto& i : a.inputs) if (!have.count(i)) { why = "new input " + i; return true; }
@@ -461,7 +465,8 @@ static int importCmake(const string& buildDir, const string& runDir, const strin
     std::set<string> have; for (auto& p : imps) if (!p.output.empty()) have.insert(p.output);
     long nAfter = 0;
     for (auto& p : imps) { // custom steps: their real file inputs (absolute, existing, not made by another imported action) are tracked by content
-        if (p.kind != "custom" || p.output.empty()) continue; auto e = edges.find(p.output); if (e == edges.end()) continue;
+        if (p.kind != "custom" || p.output.empty()) continue;
+        auto e = edges.find(p.output); if (e == edges.end()) continue;
         for (auto* v : {&e->second.ins, &e->second.implicit}) for (auto& x : *v) if (fs::path(x).is_absolute() && !have.count(x) && fs::exists(x)) p.inputs.push_back(x);
     }
     for (auto& p : imps) {

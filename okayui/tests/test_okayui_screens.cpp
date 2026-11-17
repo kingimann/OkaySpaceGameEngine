@@ -267,6 +267,25 @@ int main() {
                 CHECK(c.host.saved.size() == 1);                                          // the short "Save log" saves too
             }
         }
+        {   // a narrow Console (the editor's bottom dock at 1280 x 800) wraps the toggles and buttons onto the next line
+            // instead of cutting "Auto-scroll" off at the right edge; nothing runs past the panel
+            CRig c; c.Fill();
+            const float x0 = 16, w = 560;
+            for (int i = 0; i < 3; ++i) c.sim.Frame([&] { c.res = S::DrawConsole(c.model, c.st, c.host.h, x0, 12, w, 520 - 24); });
+            for (const UI::Rect* r : {&c.res.warnToggle, &c.res.errorToggle, &c.res.collapseToggle, &c.res.autoScrollToggle,
+                                      &c.res.clearOnPlayToggle, &c.res.pauseOnErrorToggle, &c.res.copyAllButton, &c.res.saveButton,
+                                      &c.res.searchField, &c.res.categoryCombo}) {
+                CHECK(r->w > 0);
+                CHECK(r->x + r->w <= x0 + w + 0.5f);
+            }
+            CHECK(c.res.autoScrollToggle.y > c.res.warnToggle.y);                    // moved down a line
+            CHECK(c.res.autoScrollToggle.y < c.res.clearOnPlayToggle.y);             // and the next row still comes after it
+            CHECK(c.res.firstRow.y > c.res.saveButton.y + c.res.saveButton.h);       // the log starts below every control
+            Check("console_narrow", c.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+            // At the usual width everything still fits on its own rows.
+            CRig wide; wide.Fill(); wide.Frames(3);
+            CHECK(wide.res.autoScrollToggle.y == wide.res.warnToggle.y);
+        }
         {   // selecting a row shows its details and Copy sends the message; right-click offers the copy menu
             CRig c; c.Fill(); c.Frames(3);
             c.Click(c.res.firstRow);

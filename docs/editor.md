@@ -315,8 +315,7 @@ Recent additions (v2.12–2.14):
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
   (`.okayscene` text files), **Examples** (one submenu), and **Build Settings…**
   (Ctrl+B) to export a standalone, double-clickable game. **Edit** has Undo / Redo,
-  Cut / Copy / Paste / Duplicate / Delete, Select All and **Preferences** (UI scale,
-  density, theme, accent colour). Greyed-out items say why when you hover them.
+  Cut / Copy / Paste / Duplicate / Delete, Select All and **Dark Mode / Light Mode** (the only look choice, remembered). Greyed-out items say why when you hover them.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame. While the game runs the toolbar also shows
@@ -452,6 +451,9 @@ MyGame/
 Each project has its own `project.okayproj` and its own build settings: opening another project loads that
 project's, and a new project starts from the defaults. (Earlier versions kept one `project.okayproj` beside the
 editor, shared by every project. A project with no file of its own takes that old file once, then keeps its own.)
+Numbers in `project.okayproj` are checked when it loads: a value that is not a number (text, `nan`, `inf`) keeps the
+default, and one out of range is pulled to the nearest end (size 16..16384, gravity -10000..10000 per part, steps per
+second 1..500, ambient and splash colours 0..1). Each one writes a one-line `WARN` line to the engine log.
 Editor preferences (theme, layouts, the recent list, the Project panel's view) are not project data: they live in
 `okay_settings.txt`, `okay_layouts.txt`, `okay_recent.txt` and `okay_projectview.txt` in the working folder, and
 `imgui.ini` holds the window layout.
@@ -680,7 +682,7 @@ unchanged.
   for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
   even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
   is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
-- **Density** (Edit ▸ Preferences ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
+- **Density** (no longer a setting: always **Comfortable**; the old Compact option was removed). It sets the row
   spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
   label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the
   space above each component.

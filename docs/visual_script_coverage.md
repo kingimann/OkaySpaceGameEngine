@@ -57,6 +57,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `GameObject.FindGameObjectWithTag` | `Fn.GameObject.FindGameObjectWithTag` |
 | `GameObject.FindGameObjectsWithTag` | `Fn.GameObject.FindGameObjectsWithTag` |
 | `GameObject.FindWithTag` | `Fn.GameObject.FindWithTag` |
+| `GameObject.FindIncludingInactive` | `Fn.GameObject.FindIncludingInactive` |
 | `GetComponent` | `Fn.GetComponent` |
 | `GetView` | `Fn.GetView` |
 | `Input.GetAxis` | `Fn.Input.GetAxis` |

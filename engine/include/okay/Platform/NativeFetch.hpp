@@ -15,9 +15,9 @@
 #include "okay/Platform/NativeHttp.hpp"
 
 #if defined(OKAY_OWN_HTTP_ACTIVE)
+#include "okay/Platform/OwnHttpDownload.hpp"   // temporary file, SHA-256 while streaming, resume, retries
 #include <chrono>
 #include <filesystem>
-#include <thread>
 
 namespace okay::http {
 
@@ -27,7 +27,8 @@ enum class OwnOutcome {
     HttpError,    ///< the server answered with a status that curl -f would call a failure; `status` says which
     Cancelled,    ///< the caller's cancel check said stop
     TooBig,       ///< more data than maxBytes (announced or sent)
-    DiskFull      ///< the output file could not be opened or written
+    DiskFull,     ///< the output file could not be opened or written
+    ChecksumMismatch   ///< the file arrived but its SHA-256 is not OwnDownloadSpec::expectedSha256 (nothing is kept)
 };
 
 struct OwnDownloadSpec {
@@ -37,7 +38,9 @@ struct OwnDownloadSpec {
     int maxRedirects = 0;                    ///< 0 = the client's default (10)
     int connectMs = 20000, ioMs = 60000, totalMs = 6 * 60 * 60 * 1000;
     int retries = 0;                         ///< like --retry N: transient failures and 408/429/500/502/503/504 are tried again
-    int retryDelayMs = 1000;                 ///< first wait; doubles each time (as curl does)
+                                             ///< (a try after a dropped connection resumes with Range where it stopped)
+    int retryDelayMs = 1000;                 ///< first wait; doubles each time (as curl does), with jitter; Retry-After is honoured
+    std::string expectedSha256;              ///< 64 hex digits: the file must have this SHA-256 or it is not kept; "" = not checked
     std::function<void(uint64_t)> onBytes;   ///< bytes written so far, at most every 100 ms and once at the end
     std::function<bool()> cancelled;         ///< true = stop now (polled about every 50 ms while data flows, 200 ms while it is silent)
 };
@@ -47,87 +50,72 @@ struct OwnDownloadResult {
     long status = 0;
     uint64_t bytes = 0;
     int attempts = 0;
+    int resumes = 0;                         ///< tries that continued a dropped transfer with a 206
+    std::string sha256;                      ///< lower-case hex SHA-256 of the file (Ok)
     std::string error;                       ///< the client's reason when NotHandled (for logs)
 };
 
 namespace detail {
 inline bool SleepUnlessCancelled(int ms, const std::function<bool()>& cancelled) {
-    for (int left = ms; left > 0; left -= 50) {
-        if (cancelled && cancelled()) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(left < 50 ? left : 50));
-    }
-    return !(cancelled && cancelled());
-}
-inline bool RetryableStatus(long s) { return s == 408 || s == 429 || s == 500 || s == 502 || s == 503 || s == 504; }
-/// A failure worth another try (curl --retry: timeouts and connection trouble), not a refusal that will repeat.
-inline bool TransientError(const std::string& err) {
-    return err.rfind("timeout", 0) == 0 || err.rfind("io", 0) == 0 || err.rfind("connect", 0) == 0 ||
-           err.find("connection closed early") != std::string::npos;
+    return okay::ownhttp::WaitMs(ms, cancelled, std::function<void(int)>());
 }
 } // namespace detail
 
 /// GET `url` into the file `path` (replacing it), like `curl -L -f [--max-filesize N] [--retry N] -o path url` with a
-/// progress callback and a cancel check. On anything but Ok the file is removed.
+/// progress callback and a cancel check. The bytes go to a temporary file of their own next to `path` first, SHA-256 is computed while they arrive,
+/// and only a complete (and, with expectedSha256, matching) file is renamed to `path`. A dropped connection is
+/// resumed with Range on the next try (sp.retries). On anything but Ok, `path` and the temporary file are removed.
 inline OwnDownloadResult OwnDownload(const std::string& url, const std::string& path, const OwnDownloadSpec& sp) {
     namespace fs = std::filesystem;
+    namespace oh = okay::ownhttp;
     OwnDownloadResult out;
     if (!NativeAvailable()) return out;
     std::error_code ec;
-    int delay = sp.retryDelayMs;
-    for (int attempt = 0; attempt <= sp.retries; ++attempt) {
-        out.attempts = attempt + 1;
-        bool wasCancelled = false, tooBig = false;
-        auto cancelNow = [&]() { if (sp.cancelled && sp.cancelled()) { wasCancelled = true; return true; } return false; };
-        RequestOptions ro;
-        ro.maxBytes = sp.maxBytes;
-        ro.maxRedirects = sp.maxRedirects;
-        ro.connectMs = sp.connectMs; ro.ioMs = sp.ioMs; ro.totalMs = sp.totalMs;
-        ro.cancel = cancelNow;
-        auto lastTick = std::chrono::steady_clock::now() - std::chrono::milliseconds(1000);
-        auto lastPoll = lastTick;
-        ro.progress = [&](uint64_t done, uint64_t) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now - lastPoll >= std::chrono::milliseconds(50)) {
-                lastPoll = now;
-                if (cancelNow()) return false;
-            }
-            if (sp.maxBytes > 0 && done > sp.maxBytes) { tooBig = true; return false; }
-            if (sp.onBytes && now - lastTick >= std::chrono::milliseconds(100)) { lastTick = now; sp.onBytes(done); }
-            return true;
-        };
-        std::vector<std::string> hdrs;
-        if (!sp.userAgent.empty()) hdrs.push_back("User-Agent: " + sp.userAgent);
-        for (const std::string& h : sp.headers) hdrs.push_back(h);
-        const ExResult r = RequestEx("GET", url, hdrs, std::string(), std::string(), path, ro);
-        out.status = r.status;
-        if (wasCancelled) { fs::remove(path, ec); out.outcome = OwnOutcome::Cancelled; return out; }
-        if (r.writeFailed) { fs::remove(path, ec); out.outcome = OwnOutcome::DiskFull; return out; }
-        if (tooBig || (!r.reached && r.error.rfind("too-large", 0) == 0)) { fs::remove(path, ec); out.outcome = OwnOutcome::TooBig; return out; }
-        if (r.reached) {
-            if (r.status == 200 && fs::is_regular_file(path, ec)) {
-                const std::uintmax_t sz = fs::file_size(path, ec);
-                out.bytes = ec ? 0 : uint64_t(sz);
-                if (sp.onBytes && !ec) sp.onBytes(out.bytes);
-                out.outcome = OwnOutcome::Ok;
-                return out;
-            }
-            fs::remove(path, ec);
-            if (detail::RetryableStatus(r.status) && attempt < sp.retries) {
-                if (!detail::SleepUnlessCancelled(delay, sp.cancelled)) { out.outcome = OwnOutcome::Cancelled; return out; }
-                delay *= 2; continue;
-            }
-            out.outcome = OwnOutcome::HttpError;
-            return out;
+    oh::DownloadSpec ds;
+    if (!sp.userAgent.empty()) ds.headers.push_back("User-Agent: " + sp.userAgent);
+    for (const std::string& h : sp.headers) ds.headers.push_back(h);
+    ds.expectedSha256 = sp.expectedSha256;
+    ds.maxBytes = sp.maxBytes ? sp.maxBytes : (8ull << 30);
+    ds.retry.maxAttempts = sp.retries + 1;
+    ds.retry.baseDelayMs = sp.retryDelayMs;
+    ds.retry.maxDelayMs = sp.retryDelayMs > 30000 ? sp.retryDelayMs : 30000;
+    auto lastTick = std::chrono::steady_clock::now() - std::chrono::milliseconds(1000);
+    auto lastPoll = lastTick;
+    bool wasCancelled = false;
+    ds.cancel = [&]() { if (sp.cancelled && sp.cancelled()) { wasCancelled = true; return true; } return false; };
+    ds.progress = [&](uint64_t done, uint64_t) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastPoll >= std::chrono::milliseconds(50)) {
+            lastPoll = now;
+            if (sp.cancelled && sp.cancelled()) { wasCancelled = true; return false; }
         }
-        fs::remove(path, ec);
-        out.error = r.error;
-        if (detail::TransientError(r.error) && attempt < sp.retries) {
-            if (!detail::SleepUnlessCancelled(delay, sp.cancelled)) { out.outcome = OwnOutcome::Cancelled; return out; }
-            delay *= 2; continue;
-        }
-        out.outcome = OwnOutcome::NotHandled;
+        if (sp.onBytes && now - lastTick >= std::chrono::milliseconds(100)) { lastTick = now; sp.onBytes(done); }
+        return true;
+    };
+    oh::NetOptions net;
+    net.keepAlive = true;
+    net.connectMs = sp.connectMs; net.ioMs = sp.ioMs; net.totalMs = sp.totalMs;
+    if (sp.maxRedirects > 0) net.limits.maxRedirects = sp.maxRedirects;
+    const oh::DownloadResult r = oh::DownloadToFile(url, path, ds, net);
+    out.attempts = r.retry.attempts;
+    out.resumes = r.resumes;
+    out.status = r.httpStatus;
+    switch (r.status) {
+    case oh::DownloadStatus::Ok:
+        out.outcome = OwnOutcome::Ok; out.bytes = r.bytes; out.sha256 = r.sha256Hex;
+        if (sp.onBytes) sp.onBytes(out.bytes);
         return out;
+    case oh::DownloadStatus::HttpError: out.outcome = OwnOutcome::HttpError; break;
+    case oh::DownloadStatus::Cancelled: out.outcome = OwnOutcome::Cancelled; break;
+    case oh::DownloadStatus::TooLarge: out.outcome = OwnOutcome::TooBig; break;
+    case oh::DownloadStatus::WriteFailed: out.outcome = OwnOutcome::DiskFull; break;
+    case oh::DownloadStatus::ChecksumMismatch: out.outcome = OwnOutcome::ChecksumMismatch; break;
+    default:   // NetworkError, SizeMismatch (an answer cut short), BadInput: not a clear answer, the caller runs curl
+        out.outcome = wasCancelled ? OwnOutcome::Cancelled : OwnOutcome::NotHandled;
+        out.error = std::string(oh::ErrName(r.err)) + ": " + r.message;
+        break;
     }
+    fs::remove(path, ec);
     return out;
 }
 

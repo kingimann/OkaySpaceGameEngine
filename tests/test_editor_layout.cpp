@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "EditorLayoutMath.hpp"
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -137,6 +138,102 @@ int main() {
         LabelReq q; q.anchor = {300, 200}; q.size = {60, 14}; q.keepOut = 20; q.priority = 3;
         auto a = PlaceLabels({q, q}, canvas, {}); auto b = PlaceLabels({q, q}, canvas, {});
         CHECK(a[1].rect.x0 == b[1].rect.x0 && a[1].rect.y0 == b[1].rect.y0);
+    }
+    {   // SegmentHitsRect: a line through the box, one that misses, one that only reaches it with the pad, a single
+        // point, and a line lying wholly inside.
+        const Rc b = MakeRc(100, 100, 50, 20);
+        CHECK(SegmentHitsRect({50, 110}, {200, 110}, b));            // straight through
+        CHECK(SegmentHitsRect({90, 90}, {160, 130}, b));             // diagonal through
+        CHECK(!SegmentHitsRect({50, 90}, {200, 90}, b));             // passes above
+        CHECK(!SegmentHitsRect({90, 140}, {160, 125}, b));           // passes below, sloping
+        CHECK(!SegmentHitsRect({50, 50}, {95, 95}, b));              // stops short of the corner
+        CHECK(SegmentHitsRect({50, 95}, {200, 95}, b, 6));           // 5 px above: inside a 6 px pad
+        CHECK(!SegmentHitsRect({50, 93}, {200, 93}, b, 6));          // 7 px above: outside it
+        CHECK(SegmentHitsRect({120, 110}, {120, 110}, b));           // a point inside
+        CHECK(!SegmentHitsRect({170, 110}, {170, 110}, b, 4));       // a point 20 px to the right
+        CHECK(SegmentHitsRect({110, 105}, {140, 115}, b));           // wholly inside
+        CHECK(SegmentHitsRect({200, 110}, {50, 110}, b));            // direction does not matter
+    }
+    {   // The bug: the selected cube A's name was drawn about 155 px to its right, on the next cube B, because it was
+        // placed outside the whole gizmo circle. The numbers are from that screenshot (1200 x 850 view): A's outline,
+        // its move gizmo's arms (up, right, down-left), and B beside it.
+        const Rc view = MakeRc(0, 0, 1200, 850);
+        LabelReq q; q.anchor = {810, 510}; q.size = {16, 18}; q.keepOut = 126; q.priority = 100;
+        q.hasBody = true; q.body = Rc{775, 478, 848, 548};
+        q.avoid = {Seg{{810, 510}, {810, 510}}, Seg{{810, 510}, {805, 380}}, Seg{{810, 510}, {918, 535}}, Seg{{810, 510}, {716, 548}}};
+        q.avoidPad = 11;
+        const Rc cubeB = Rc{900, 500, 985, 580};
+        auto r = PlaceLabels({q}, view, {});
+        CHECK(r[0].visible && r[0].alpha == 1.0f && !r[0].leader);
+        const Rc& L = r[0].rect;
+        CHECK(L.y1 <= q.body.y0 + 1e-3);                              // just above A ...
+        CHECK(q.body.y0 - L.y1 <= 4.0f);                              // ... touching distance, not floating away
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1);                  // over A, not beside it
+        CHECK(!Overlaps(L, cubeB));                                   // and not on B
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, L, q.avoidPad));   // off every handle
+        // Without the outline (the old way) the same name lands a gizmo's length to the right: on B.
+        LabelReq old = q; old.hasBody = false;
+        CHECK(Overlaps(PlaceLabels({old}, view, {})[0].rect, cubeB));
+    }
+    {   // No gizmo (it is turned off, or mesh edit is on): the name goes straight above the middle of the object.
+        LabelReq q; q.anchor = {400, 300}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{360, 260, 440, 340};
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK_NEAR((L.x0 + L.x1) * 0.5f, 400, 1e-3);
+        CHECK_NEAR(L.y1, 258, 1e-3);                                  // 2 px pad above the top edge
+    }
+    {   // An object at the top of the view: the name has no room above, so it sits on the object's top edge, inside
+        // the view, not pushed off to the side.
+        LabelReq q; q.anchor = {400, 40}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{360, 2, 440, 80};
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK(Inside(canvas, L));
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1 && L.y0 < q.body.y1);
+    }
+    {   // Rotate gizmo: rings round the object. The name keeps off the ring lines and stays near the object.
+        LabelReq q; q.anchor = {400, 300}; q.size = {40, 14}; q.keepOut = 96; q.priority = 100;
+        q.hasBody = true; q.body = Rc{370, 270, 430, 330}; q.avoidPad = 8;
+        for (float rad : {60.0f, 72.0f}) {
+            Pt prev{400 + rad, 300};
+            for (int k = 1; k <= 32; ++k) {
+                const float a = k / 32.0f * 6.2831853f;
+                const Pt cur{400 + rad * std::cos(a), 300 + rad * std::sin(a)};
+                q.avoid.push_back(Seg{prev, cur}); prev = cur;
+            }
+        }
+        auto r = PlaceLabels({q}, canvas, {});
+        CHECK(r[0].visible && r[0].alpha == 1.0f);
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, r[0].rect, q.avoidPad));
+        CHECK(RectGap(r[0].rect, q.body) <= 4.0f);                    // inside the rings, by the object
+    }
+    {   // Rotate gizmo round a SMALL object (rings much wider than the object, no room for the name inside them): the
+        // name goes up above the rings, still over its object, not off to the side onto whatever is next to it.
+        LabelReq q; q.anchor = {400, 300}; q.size = {70, 14}; q.keepOut = 40; q.priority = 100;
+        q.hasBody = true; q.body = Rc{392, 292, 408, 308}; q.avoidPad = 8;
+        for (float rad : {34.0f, 41.0f}) {
+            Pt prev{400 + rad, 300};
+            for (int k = 1; k <= 32; ++k) {
+                const float a = k / 32.0f * 6.2831853f;
+                const Pt cur{400 + rad * std::cos(a), 300 + rad * std::sin(a)};
+                q.avoid.push_back(Seg{prev, cur}); prev = cur;
+            }
+        }
+        auto r = PlaceLabels({q}, canvas, {});
+        const Rc& L = r[0].rect;
+        CHECK(r[0].visible && r[0].alpha == 1.0f);
+        for (const Seg& sg : q.avoid) CHECK(!SegmentHitsRect(sg.a, sg.b, L, q.avoidPad));
+        CHECK(L.y1 <= 300 - 41);                                      // above the outer ring
+        CHECK(L.x1 > q.body.x0 && L.x0 < q.body.x1);                  // straight above the object
+    }
+    {   // A name label still keeps off the stats line and the other names when it has an outline.
+        LabelReq q; q.anchor = {100, 60}; q.size = {40, 14}; q.keepOut = 6; q.priority = 100;
+        q.hasBody = true; q.body = Rc{80, 40, 120, 80};
+        const Rc hud = MakeRc(0, 0, 300, 40);                         // covers every spot above the object
+        auto r = PlaceLabels({q}, canvas, {hud});
+        CHECK(r[0].visible && !Overlaps(r[0].rect, hud));
+        CHECK(RectGap(r[0].rect, q.body) <= 4.0f);
     }
     {   // Crowd fade: 1 when roomy, 0.35 floor when packed, falling in between.
         CHECK(CrowdFade(1, 100) == 1.0f);

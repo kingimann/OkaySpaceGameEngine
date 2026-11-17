@@ -89,7 +89,8 @@ gameobject 8 "1 Label"
   active 1
   parent -1
   transform -10 7.2 -6 0 0 0 1 1 1 1
-  text "1  TOWER: five crates stand still and fall asleep" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  text "1  TOWER: five crates stand still and fall asleep" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 318 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 9 "2 Ramp"
   guid "c9200fb8ca504d7944c2b21dacafedaf"
@@ -115,8 +116,9 @@ gameobject 11 "2 Label"
   guid "60e133e82069d02ea808b97bc0b00c9f"
   active 1
   parent -1
-  transform 1 4.6 -6 0 0 0 1 1 1 1
-  text "2  BALL: rolls down, bounces, rolls to a stop" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform 1 5.4 -6 0 0 0 1 1 1 1
+  text "2  BALL: rolls down, bounces, rolls to a stop" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 294 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 12 "3 Ramp plain"
   guid "9f58522a8350d2b5eeba4667d96f8434"
@@ -184,8 +186,9 @@ gameobject 18 "3 Label"
   guid "3fb42a2f63afb9eb9ec4f775b4b53b37"
   active 1
   parent -1
-  transform 11.6 3.6 -6 0 0 0 1 1 1 1
-  text "3  RAMPS: plain holds, ice slides, rubber holds" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform 11.6 2.6 -6 0 0 0 1 1 1 1
+  text "3  RAMPS: plain holds, ice slides, rubber holds" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 306 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 19 "4 Thin wall"
   guid "f4c20fef08892f51c26c6b84089a1587"
@@ -213,8 +216,9 @@ gameobject 21 "4 Label"
   guid "dac4742ae01de736f0e3f782efdc484c"
   active 1
   parent -1
-  transform -10 4.6 6 0 0 0 1 1 1 1
-  text "4  BULLET: 60 m/s into a 5 cm wall, and it stops" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform -10 3.6 6 0 0 0 1 1 1 1
+  text "4  BULLET: 60 m/s into a 5 cm wall, and it stops" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 312 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 22 "5 Heavy crate (100 kg)"
   guid "e4e2615b242eded48e060f4d15511608"
@@ -244,8 +248,9 @@ gameobject 24 "5 Label"
   guid "00bc47650dcf1d417461dbfd7bcb5daf"
   active 1
   parent -1
-  transform 0 3.4 6 0 0 0 1 1 1 1
-  text "5  A 100 kg crate shoves a 1 kg crate ahead of it" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform 1.5 3.4 6 0 0 0 1 1 1 1
+  text "5  A 100 kg crate shoves a 1 kg crate ahead of it" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 318 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 25 "6 Plain pad"
   guid "60a943a87ec5426c53278ee23456ddfb"
@@ -292,8 +297,9 @@ gameobject 29 "6 Label"
   guid "a52e89c753041209ef6a693829925ffc"
   active 1
   parent -1
-  transform 10 7.6 6 0 0 0 1 1 1 1
-  text "6  PADS: the same ball on a dead pad and a rubber pad" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform 10 9.2 6 0 0 0 1 1 1 1
+  text "6  PADS: the same ball on a dead pad and a rubber pad" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 342 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 30 "7 Rope ball 1"
   guid "8e903627bcb5c82b4b6677224ffc1c6a"
@@ -379,8 +385,9 @@ gameobject 37 "7 Label"
   guid "e4f4f72c10f31a7713d60f87a8f39427"
   active 1
   parent -1
-  transform -5 9 15 0 0 0 1 1 1 1
-  text "7  ROPE: swings from the hook and keeps its length" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform -5 10.4 15 0 0 0 1 1 1 1
+  text "7  ROPE: swings from the hook and keeps its length" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 324 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 38 "8 Rail"
   guid "14fc388f50ff8bf1d3d5c5424b9d7b67"
@@ -408,7 +415,8 @@ gameobject 40 "8 Label"
   active 1
   parent -1
   transform 2.5 4.6 15 0 0 0 1 1 1 1
-  text "8  SLIDER: slides 3 m at 1 m/s and stops" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  text "8  SLIDER: slides 3 m at 1 m/s and stops" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 264 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end
 gameobject 41 "9 Debris emitter"
   guid "ac68556abb1f574bb243b97597baca82"
@@ -429,6 +437,7 @@ gameobject 43 "9 Label"
   guid "2b44c2fcf2eb67ac9b3ea9aadde06a80"
   active 1
   parent -1
-  transform 10 5.6 15 0 0 0 1 1 1 1
-  text "9  DEBRIS: chunks fly, land, sleep and fade away" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  transform 8 5.6 15 0 0 0 1 1 1 1
+  text "9  DEBRIS: chunks fly, land, sleep and fade away" 1 1 1 1 2 1 0 0 4 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 312 28 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  worldui3d 100 1 1 1
 end

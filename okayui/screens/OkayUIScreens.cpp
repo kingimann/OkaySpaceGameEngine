@@ -206,7 +206,8 @@ ConsoleResult DrawConsole(okay::ConsoleModel& model, ConsoleViewState& st, const
         UI::SameLine();
         const float comboW = 150.0f + 8.0f + UI::CalcTextSize("Category").x;
         UI::SetNextItemWidth(std::max(140.0f, UI::GetContentRegionAvail().x - comboW - 12.0f));
-        UI::InputText("Search", st.filter, (int)sizeof(st.filter));
+        // "Search" is the empty box's hint: as a label after the box it read as part of the category combo next to it.
+        UI::InputTextWithHint("##search", "Search", st.filter, (int)sizeof(st.filter));
         res.searchField = UI::GetItemRect();
         UI::SameLine();
         UI::SetNextItemWidth(comboW);

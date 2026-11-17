@@ -452,10 +452,15 @@ ProfilerIntent DrawProfilerBodyImGui(ProfilerModel& m, const PanelViewHooks&) {
 // ---- Import settings (the Project panel) -----------------------------------------------------------------------------------
 
 namespace {
-// The import panel's combo: 160 pixels, the label after it (BeginCombo and a Selectable per entry, as the editor drew it).
+// The import panel's combo, the label after it (BeginCombo and a Selectable per entry, as the editor drew it). As wide as its
+// longest choice (a fixed 160 px showed "Load the whole fi"), at least 160 px, but never wider than the panel (#983).
 bool ImportCombo(const char* label, int& value, const char* const* items, int count) {
     bool changed = false;
-    ImGui::SetNextItemWidth(160);
+    float widest = 0.0f;
+    for (int i = 0; i < count; ++i) widest = std::max(widest, ImGui::CalcTextSize(items[i]).x);
+    const float want = widest + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(label, nullptr, true).x - ImGui::GetStyle().ItemInnerSpacing.x;
+    ImGui::SetNextItemWidth(std::max(160.0f, std::min(want, room)));
     if (ImGui::BeginCombo(label, value >= 0 && value < count ? items[value] : "")) {
         for (int i = 0; i < count; ++i)
             if (ImGui::Selectable(items[i], value == i)) { value = i; changed = true; }

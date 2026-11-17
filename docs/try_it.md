@@ -111,6 +111,7 @@ release job or the installer build for this change.
 | 11h | Launcher background work on our own threads | `OkaySpace.exe` (section "Launcher: threads on our own code") | Tested on Linux only |
 | 11i | Launcher window calls through our platform layer; voice clips on our own WAV decoder | `OkaySpace.exe`, chat voice messages | Tested on Linux only |
 | 11j | Editor panels dragged out into their own windows on our own code (on with our own platform, the default on this branch) | `Tools\OkayEngine.exe`; drag a panel's tab (for example Project) outside the editor window (section "Editor: panels in their own windows on our own code") | The panel opens in its own window and works there (search, clicks, pictures); dragged back it docks again; Linux/Xvfb only, **unverified on Windows** |
+| 11k | Editor fixes on our own code: narrow tab groups show icons instead of cut names, the Console and Game toolbars wrap, `)` steps over the auto-inserted `)`, a panel window with a tooltip over it repaints after a resize | `Tools\OkayEngine.exe` at 1280x800 (section 11k) | New; checked under Xvfb on Linux, **unverified on Windows** |
 | ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
@@ -1476,6 +1477,42 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## Damaged project, texture and material files load safely (branch `claude2/data-load-checks`, not merged or released yet)
+
+Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; what changes is what you see after loading.
+
+**Project settings with bad numbers (finding 74).**
+1. Close the editor. Open your project folder and edit `project.okayproj` in Notepad. Change three lines to
+   `gravity3d=0 nan 0`, `ambient=5` and `splash_bg_top=nan 1e39 -3`, and save.
+2. Open the project in the editor and open **Edit > Project Settings**.
+3. You should see Gravity 3D back at `0, -9.81, 0` (a line with `nan` is ignored, so the default stays), Ambient at
+   `1` (5 is pulled down to the top of 0..1) and the splash background top colour at its default. Before this fix the
+   window showed `nan`, and Apply to current scene copied `nan` into the scene.
+   The rules: sizes 16..16384, gravity -10000..10000 per part, steps per second 1..500, ambient and colours 0..1. Each
+   corrected line writes one `WARN` line to the engine log.
+
+**Tagging a texture no longer shrinks it (finding 75).**
+1. Put a large picture (for example 4096 x 4096 px) in `Assets` and use it on a material, so you can see it is sharp.
+2. In the Project panel, right-click the picture and add a tag.
+3. Close and reopen the project (or reimport the picture). It should still be sharp: open its Import Settings and
+   **Largest side** says **No limit**. Before this fix the tag wrote `set maxSize 2048` into `big.png.okaymeta` and the
+   picture came back at 2048 px. To shrink a picture on purpose, choose a size in **Largest side**; that still works.
+   Pictures that already have a meta keep whatever it says (an old meta with `maxSize 2048` still shrinks; pick
+   **No limit** to undo it).
+
+**Materials with spaces in the texture path, or a bad number (finding 78).**
+1. Double-click a `.okaymat` (or make one in the Material editor). Set its texture to a file whose name has a space,
+   for example `Assets/Art/stone wall.png`. Save, close it, and open it again.
+2. You should see the full path and the texture on the object. Before this fix it came back as `Assets/Art/stone`
+   and the object was untextured. In the file the line is now `texture "Assets/Art/stone wall.png"` (a path without
+   spaces is still written bare, so older versions read it as before).
+3. Edit the `.okaymat` in Notepad and change the `emissive` line to `emissive inf 0 0`. Open it again: only emissive
+   red falls back to its default; tiling, rim, outline and the texture are all still there. Before, every line after
+   the `inf` was lost.
+
+**Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
+not built for this change); anything on Windows.
+
 ## fast1. Fast release: one dispatch, no version-bump PR
 
 **What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
@@ -1597,6 +1634,50 @@ What was not checked: this was built and tested on Linux only (headless tests); 
 syntax check, so the Hierarchy behaviour and the frame times in the real Windows editor are **unverified** until you try the
 steps above.
 
+## OkayScript: object references, Rigidbody calls and Find (bug fixes, branch `claude2/okayscript-object-refs`, not merged or released yet)
+
+Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" destroyed the first one,
+`other.GetComponent<Rigidbody>()` pushed the attacker instead of the target, most `Rigidbody` calls did nothing, and
+`GameObject.Find` returned switched-off objects.
+
+1. Open the editor (`Tools\OkayEngine.exe` or Open from the launcher), then **File > Open** and pick
+   `examples\physics\script_object_refs.okayscene`.
+2. You see three red boxes, all named **Enemy**, a blue ball above the **right** one, and a yellow **Spinner** box.
+3. Press **Play** and open **View > Console**.
+4. Expect: the ball falls on the right enemy and **that** enemy disappears (the left and middle ones stay). The
+   Console shows `Ball hit Enemy at x = 3`. Before this fix the left enemy (x = -3) vanished instead.
+5. Expect: the yellow Spinner floats (its script turns gravity off with `rb.useGravity = false`) and spins about its
+   vertical axis (`rb.AddTorque(..., ForceMode.VelocityChange)`). The Console shows
+   `Spinner: spin = 3 rad/s, Find(Hidden Enemy) found = false, FindIncludingInactive found = true`
+   ("Hidden Enemy" is switched off in the Hierarchy).
+6. Try your own: select the Ball, open its script and change `Destroy(other);` to
+   `other.GetComponent<Renderer>().color = Color.green;`. Press Play: the hit enemy turns green, not the ball.
+
+What changed for scripts: `other`, `gameObject`, `GameObject.Find(..)`, `FindWithTag(..)`,
+`FindGameObjectsWithTag(..)` and what `Instantiate` / `spawn` return now carry the object's unique id. They still
+print and compare as the name, and a quoted name (`Destroy("Enemy")`) still means the first object with that name.
+Details: [scripting.md](scripting.md#object-references).
+
+**Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
+to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
+
+## Scene view: the selected object's name sits on its object (bug fix)
+
+The small name box of the selected object in the 3D Scene view used to be drawn a gizmo's length to the right of the
+object, often on top of the next object (select cube A and its "A" sat on cube B). It now sits just above the object,
+beside the gizmo's up arrow, and never on a gizmo handle.
+
+1. Make a new 3D scene. Add two cubes (**GameObject > Cube** twice). Set the first one's Position to
+   -1.5, 0.5, 0 and the second one's to 1.5, 0.5, 0. Rename them A and B.
+2. Select A. Its name box sits just above the orange cube A, to the side of the green arrow, not on B. Select B: its box
+   sits just above B.
+3. Press the Rotate tool (the circle arrow button). The name stays by the object, inside the rings, or straight above the
+   rings when the object is small; it is never on a ring. Try the Scale tool and a few window sizes: the same.
+4. Switch the view to **2D**: the name sits at the object's corner, as before.
+
+Tests: `ctest -R editor_layout` (the placement maths, with the numbers from the screenshot that showed the bug).
+Checked by screenshots on Linux (Xvfb) at 1280x800, 1600x900 and 1920x1200; not checked on Windows.
+
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
 Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
@@ -1637,6 +1718,33 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
 
+## Lock Inspector keeps the right object after Undo (bug fix)
+
+**What was wrong:** with **Lock Inspector** on, pressing **Ctrl+Z** could make the Inspector show a *different* object. Undo
+rebuilds every object in the scene, and the Inspector remembered the locked object by its place in memory, which a new object
+could take over. It now remembers the object by its id (the GUID saved with the scene) and finds it again every frame.
+
+**Try it** (editor, `Tools\OkayEngine.exe`):
+
+1. **File > New Scene**. Add two cubes with the editor's create menu (**Cube**, twice). Name them `A` and `B`.
+2. Select `A`. In the Inspector tick **Lock Inspector** (top of the panel).
+3. Change something on `A` (for example its X position), then press **Ctrl+Z**.
+   You should see: the Inspector still shows `A`, with the old X value.
+4. Click `B` in the Hierarchy. The Inspector should still show `A` (it is locked).
+5. Add another new object (for example a third **Cube**). The Inspector should still show `A`, not the new object.
+6. Delete `A` (select it in the Hierarchy, press **Delete**).
+   You should see: the Inspector stays locked and says **"Locked object is gone"**, with an **Unlock Inspector** button.
+   It does not jump to another object.
+7. Press **Ctrl+Z**. `A` comes back and the locked Inspector shows it again.
+8. Click **Unlock Inspector** (or untick **Lock Inspector**): the Inspector follows the selection again.
+
+**Also fixed the same way** (they remember the object by its id now): the Hierarchy **Rename** box, **Save as Prefab** box,
+the editor's automatic placeholder camera, the Animator live preview, mesh edit mode (Tab) and the UI drag in the Scene view.
+None of these can now act on a different object after an Undo.
+
+**Checked here (Linux, headless):** `tests/test_inspector_lock.cpp` (lock, undo, new object, delete, undo again, new scene).
+**Not seen:** the editor on Windows, the "Locked object is gone" message on screen.
+
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 
 The **UI Notify** prebuilt screen froze the editor when the fifth toast was pushed into its stack of four. Fixed: a toast that is
@@ -1648,6 +1756,33 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## Visible UI fixes: launcher library, update card, Scene view, Project Settings, Console (bug fixes)
+
+Fixes for things seen in screenshots of the default (Dear ImGui) launcher and editor, plus the Console of the OkayUI preview.
+
+1. **Launcher, Community page.** Put two game folders (each with an `.okayscene`) in the `community` folder next to
+   `OkaySpace.exe` and open **Community**. You should see each game **once** ("YOUR LIBRARY — 2"; it used to say 4 and show
+   each card twice). The **Play** badge counts each built game once.
+2. **Launcher, update card.** When a newer version is found, the sidebar card "Update available" shows a full **Install now**
+   button (the label's bottom used to be cut off). To see it without a real update: start the launcher with
+   `OKAY_UI_DEMO_UPDATE=9.0.0`.
+3. **Editor, opening a scene.** Open `examples\physics\physics_playground.okayscene`. It opens in the **3D** view (it used to
+   open in 2D, flattened). Open **Game**: the nine station labels ("1 TOWER ..." to "9 DEBRIS ...") are readable, each on its
+   own dark box, none on top of another at the default layout. Open `examples\ui_text\ui_text.okayscene`: it opens in 2D.
+4. **Editor, Scene view stats line.** Open `examples\own_wav\own_wav_test.okayscene`. The "3D | 3 objects | .. FPS" line sits
+   at the **bottom left**, because the scene's instruction text is at the top left (it used to be drawn over that text).
+   In a scene with nothing at the top left it stays at the top left.
+5. **Editor, Edit > Project Settings.** Under Player, Width and Height show **1280** and **720** in full. The first line wraps;
+   the physics Quality box says **Improved** with what it does on the line below.
+6. **Editor, Project panel > select a sound.** In the Inspector, Import Settings: "Load the whole file" shows in full and the
+   notes wrap instead of running off the right edge.
+7. **OkayUI preview Console** (start the editor with `OKAY_UI_BACKEND=okayui`): the Console sits inside its dock (it was drawn
+   off by the window's place on the screen), "Search" is the hint inside the box, and in a narrow dock "Auto-scroll" moves
+   to the next line instead of being cut to "Auto-scro".
+
+Tests: `ctest -R "library_scan|editor_layout|examples_work|okayui_screens"`. Checked by screenshots on Linux (Xvfb); not
+checked on Windows.
 
 ## vpa. Multi-window panels: set once, before the first frame
 
@@ -1812,6 +1947,25 @@ not compiled into Windows programs, and `OKAY_OWN_HTTP=1` does nothing there. It
 (`-DOKAY_OWN_HTTP=ON` at build time, then `OKAY_OWN_HTTP=1`; the line then says `http=own`). To try it on Windows we
 would need our own TLS, which is cryptography and waits for the outside review (rule 18). Tested on main on Linux only:
 its test programs (`own_http`, `own_http_net`).
+
+What was added on 2026-11-16 (retries with backoff and `Retry-After`, downloads to a temporary file with SHA-256 while
+streaming, resume after a dropped connection, atomic rename) is in the same place: Linux builds only, not in the
+Windows release. On Windows nothing changed; the launcher's Versions download and the editor's update check use WinHTTP
+and curl exactly as before.
+
+On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
+
+1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
+   the download runs, a `<file>.part` file grows next to the target and is renamed to the real name only when the whole
+   file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
+2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
+   (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.
+3. Without a desktop: build `test_own_http_download` and run it (`ctest -R own_http_download`), or compare with curl:
+   `python3 scripts/own_http_bench.py build/tests/test_own_http_download 200 3` (prints a table and MET or NOT MET).
+
+Unverified: steps 1 and 2 have not been run on a desktop here (the new code is covered by the loopback tests and the
+launcher and editor files were only syntax-checked).
 
 ### 11. Own platform layer (window, input, audio device)
 
@@ -2354,6 +2508,67 @@ Steps (Windows, from the release, once this is in one):
 trap: no SDL call), and the test program `editor_viewports` (own, sdl2 and two monitors). **Never run on Windows: steps 1 to 6 are
 unverified there until you run them.** On Windows our window position now means the corner of the inside of the window (not of its
 frame), as SDL does.
+
+## 11k. Editor fixes on our own code (branch `claude2/own-switch-on-fixes`)
+
+Things that were wrong in the editor with our own code switched on (PR #988). Where the old code (`OKAY_THIRD_PARTY=1`) had the
+same problem it is fixed there too.
+
+**1. Tab names are never cut short.** When a group of docked panels is too narrow for all its tab names (the bottom group in the
+default layout at 1280x800 showed "Script E..." and "Problen"), the widest tabs other than the selected one show only their icon.
+Hover an icon tab for its name, or use the list button (a small down arrow) at the end of the tab strip. When the group is wide
+enough again the names come back. Both paths.
+
+**2. The Console's and the Game view's toolbars wrap.** A narrow Console puts "Auto-scroll" and the buttons after it on a second
+row instead of cutting it at the edge ("Auto-scro"); "Save to console_log.txt" becomes "Save log" when it would not fit (its
+tooltip names the file). The old Console (`OKAY_THIRD_PARTY=1`) puts its category, count pills, Collapse and "..." on a second row
+instead of squeezing the search field and cutting the "..." button. The Game view's toolbar flows onto a second row ("Capture
+mouse", "Stats", "Physics" no longer end in a lone "C"), and "live" / "press Play to run" sits level with the check boxes.
+
+**3. `)` steps over the `)` the editor typed for you.** In the Script Editor with our own code editor (the default on this
+branch), typing `(` adds the `)`; typing `)` right before it now moves past it instead of typing a second one, also right after
+Escape closed the suggestion list. Before, `zz(1` then Escape then `)` could give `zz(1))`.
+
+**4. A problem's message is written once.** On the old code editor (`OKAY_THIRD_PARTY=1`) a line with a warning showed the message
+twice, one copy over the other. Now once, with "(Alt+Enter to fix)" after it when there is a quick fix.
+
+**5. The Hierarchy's scene line fits.** In a narrow Hierarchy an unsaved scene showed "Own WAV decoder test  ·  uns" with the
+object count drawn over the end. When the whole line does not fit it now reads "Own WAV decoder test *". Both paths.
+
+**6. Nothing shows through an open menu.** The Inspector's tab title and "Lock Inspector" read faintly through the Layout dropdown:
+the menus were 98.5% opaque (Dear ImGui's own themes 94%). Every menu, combo list, popup and tooltip is now fully opaque in every
+theme of the editor and the launcher (`okaytheme::OpaquePopups`). The Console's Category list is drawn in a raised colour, so it no
+longer reads as "C All" over "Collapse duplicates". Test: `okayui_host_layering` (a combo opened from the menu bar covers the
+Inspector while open, the palettes' popup colour is opaque).
+
+**7. A panel window repaints right away after a resize.** A panel dragged out of the editor into its own window stayed black after
+it was resized from outside while a tooltip was showing, until the mouse moved and the tooltip went away. Our renderer only ever
+showed the last panel window it drew; now each panel window is shown right after it is drawn.
+
+Steps (Windows, from the release, once this is in one):
+
+1. Start `Tools\OkayEngine.exe` and open a project (for example `examples\own_wav`). Make the editor window about 1280x800
+   (or smaller) and pick **Default** in the layout dropdown at the top right.
+2. Look at the bottom group (Console, Project, Script Editor, Problems): the selected tab has its full name, one or two others
+   are icons only, and no name ends in "..." or is cut off. Hover the icon tab with `</>`: "Script Editor" shows. Click it: it
+   opens with its name, another tab turns into an icon. Make the editor window wide: all four names come back.
+3. Click the **Console** tab: "Auto-scroll", "Clear on Play", "Pause on error", "Copy all" and "Save log" are on the second row of
+   check boxes, all whole.
+4. Click the **Game** tab: two toolbar rows, nothing cut at the right edge. Press **Play**: "live" in green on the first row.
+   Stop Play.
+5. Make a new script in the **Script Editor** (New Script, a name, Create). On an empty line type `zz(` (a `)` appears), then `1`,
+   press **Escape**, then type `)`. Expect `zz(1)` with the caret after the `)`; the status bar says `Col 6`. The warning
+   "Unknown function 'zz' ..." is written once after the line. In the **Scripting** layout (layout dropdown) the Hierarchy is
+   narrow: after any change to the scene its top line ends in " *", not in a cut "unsa".
+6. Drag the **Project** tab out of the editor window. Hover one of its toolbar buttons until its tooltip shows, keep the mouse
+   there and resize the Project window by its corner. Expect the Project panel drawn at the new size, not a black window.
+7. Open the Layout dropdown (top right), the File, Edit and View menus, the Console's Category list and a right-click menu
+   in the Hierarchy: nothing from the panels under them shows through or over them.
+8. Do steps 1 to 5 and 7 again after `set OKAY_THIRD_PARTY=1` in a Command Prompt (the old SDL and Dear ImGui code): the same, except
+   that the old Console has its options behind its "..." button and wraps as described in point 2.
+
+Verified: headless tests (`editor_tabs`, `okayui_screens`, `okayui_codeedit_imgui`, `editor_viewports_own` / `_own_2mon` /
+`_sdl2`) and screenshots of the editor under Xvfb on Linux at 1280x800 and 1920x1200, both paths. Not verified: Windows.
 
 ## Checks run for this page
 

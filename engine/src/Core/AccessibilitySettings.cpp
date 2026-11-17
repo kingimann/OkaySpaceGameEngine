@@ -212,6 +212,7 @@ Color Accessibility::TextColor(const Color& foreground, const Color& background)
 }
 
 bool Accessibility::ToggleFor(const std::string& action) { return S().settings.ToggleFor(action); }
+bool Accessibility::AnyToggle() { return S().settings.toggleAllHolds || !S().settings.toggleActions.empty(); }
 float Accessibility::AimAssistStrength() { return okay::AimAssistStrength(S().settings.aimAssist); }
 
 void Accessibility::SetAnnouncer(Announcer announcer) { S().announcer = std::move(announcer); }

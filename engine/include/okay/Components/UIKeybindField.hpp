@@ -21,6 +21,10 @@ namespace okay {
 /// listens for a key / mouse button or a controller button, and for a four-key
 /// direction (Move) `part` 0..3 picks the up / down / left / right key. The new
 /// binding is saved to the player's prefs; Backspace puts the action's defaults back.
+///
+/// With `inputAction` written "ia:Jump" (or "ia:Jump@1" for local player 2) it rebinds an action of that local player's input asset
+/// (the .okayinput system, InputRuntime): the first binding of the keyboard or, with `gamepad`, the controller control scheme; `part` picks one
+/// input of a composite (0 for a single binding). The change is saved as that player's overrides; Backspace restores the asset's input.
 class UIKeybindField final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};

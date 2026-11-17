@@ -41,6 +41,7 @@
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -901,6 +902,8 @@ static void RunEditorPlayKeyTest(int& failures) {
 }
 #include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
+#include "InputDebugger.hpp"       // View > Panels > Input: live keys, axes, actions, events, curves
+#include "InputActionsWindow.hpp" // View > Editors & Tools > Input Actions: author a .okayinput asset, live view
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "AutoPerf.hpp"           // Auto for anti-aliasing and VSync (best value for this PC; tested)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
@@ -2094,6 +2097,8 @@ bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 static void DrawPluginsMenu(EditorState& ed);
 static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showInputActions = false; // Input Actions window (author a .okayinput asset, live view)
+bool g_showInputDebug = false; // Input panel (live keys, axes, actions, events, response curves)
 bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
@@ -5461,6 +5466,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels", PI_Package},
         {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
         {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
+        {"Input",         "Input",                     &g_showInputDebug,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
@@ -5477,6 +5483,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Items, Loot & Recipes", "Items, Loot & Recipes", &g_showItemDatabase, "Editors & Tools", PI_Package},
         {"Weapons",       "Weapons",                   &g_showWeapons,       "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
+        {"Input Actions", "Input Actions",             &g_showInputActions,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
@@ -6849,13 +6856,13 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.services", &g_showServices}, {"panel.scenemanager", &g_showScenes}, {"panel.net", &g_showNet},
         {"panel.savemanager", &g_showSaveManager}, {"panel.varwatch", &g_showVarWatch}, {"panel.history", &g_showHistory},
         {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
-        {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer},
+        {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug},
         {"tool.customactions", &g_showCustomActions}, {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
-        {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"view.uionly", &g_uiOnlyMode},
+        {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
     return nullptr;
@@ -19706,7 +19713,12 @@ void DrawNewProjectPopup(EditorState& ed) {
         live.productName = folder;
         live.outputDir = "build/" + folder;
         if (gpu == 0 || gpu == 1) live.settings.gpuRenderer = gpu == 1;
-        return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
+        if (!okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err)) return false;
+        {   // a new project starts with the default input asset (Assets/input.okayinput; the Input Actions window edits it); a failure here is not fatal
+            std::string ignore;
+            okayproj::WriteTextAtomic((fs::path(rt) / "Assets" / "input.okayinput").string(), okay::SerializeInputAsset(okay::DefaultInputAsset()), &ignore);
+        }
+        return true;
     };
     const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
     if (!r.ok) {
@@ -32523,6 +32535,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ss")) toRemove = ss;
         }
     }
+    if (auto* lpi = dynamic_cast<LocalPlayerInput*>(curComp)) {
+        if (CompHeader("Player Input", lpi, &toRemove)) {
+            ImGui::TextDisabled("One local player's input. While the game plays it joins with the device below and reads the actions of the input asset.");
+            char ab[256]; std::snprintf(ab, sizeof(ab), "%s", lpi->actions.c_str());
+            if (ImGui::InputText("Actions asset##lpi", ab, sizeof(ab))) { lpi->actions = ab; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayinput file (Assets/input.okayinput). Empty = the default asset.");
+            int dev = (int)lpi->device;
+            if (ImGui::Combo("Device##lpi", &dev, "Any (keyboard and controllers)\0Keyboard and mouse\0Controller\0")) { lpi->device = (LocalPlayerInput::Device)dev; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Each device can belong to one player. Any switches control scheme with the device used last.");
+            if (lpi->device == LocalPlayerInput::Device::Controller && ImGui::DragInt("Controller##lpi", &lpi->controller, 0.2f, 0, 3)) ed.dirty = true;
+            if (lpi->device == LocalPlayerInput::Device::Any && ImGui::Checkbox("Switch scheme with the last device##lpi", &lpi->autoSwitch)) ed.dirty = true;
+            char sb[96]; std::snprintf(sb, sizeof(sb), "%s", lpi->scheme.c_str());
+            if (ImGui::InputText("Start scheme##lpi", sb, sizeof(sb))) { lpi->scheme = sb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Control scheme to start in (Keyboard+Mouse, Gamepad ...). Empty = the one that fits the device.");
+            char mb[160]; std::snprintf(mb, sizeof(mb), "%s", lpi->startMaps.c_str());
+            if (ImGui::InputText("Action maps on at start##lpi", mb, sizeof(mb))) { lpi->startMaps = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Comma list, for example Gameplay. Maps not listed start off. Empty = as the asset says.");
+            if (ed.isPlaying()) ImGui::TextDisabled("Playing: player index %d (use it with the ia_* calls)", lpi->GetPlayerIndex());
+            if (ImGui::SmallButton("Remove##lpi")) toRemove = lpi;
+        }
+    }
     if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
         if (CompHeader("Auto Save", as, &toRemove)) {
             ImGui::TextDisabled("Saves the whole game to a slot while playing.");
@@ -42050,6 +42083,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
             oked::AddAntiCheatMenuItem(ed, go);   // one click: a config with a safe preset next to the Network Manager
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
+            if (item(true, "Player Input (a local player: device, control scheme, action maps)")) { go->AddComponent<LocalPlayerInput>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             // grok/ui-theme
             if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
@@ -50404,6 +50438,21 @@ int main(int argc, char** argv) {
             if (e.type == SDL_KEYDOWN && !e.key.repeat &&
                 e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
                 g_escapeEdge = true;
+            // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
+            if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
+                if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+                    const SDL_Scancode sc = e.key.keysym.scancode;
+                    const SDL_Keycode kc = SDL_GetKeyFromScancode(sc);
+                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap((char)kc);
+                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap((char)kc);
+                    else if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) Input::FeedKeyTap((char)('a' + (sc - SDL_SCANCODE_A)));
+                    else if (sc == SDL_SCANCODE_SPACE) Input::FeedKeyTap(' ');
+                    else if (sc == SDL_SCANCODE_UP) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
+                    else if (sc == SDL_SCANCODE_DOWN) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
+                    else if (sc == SDL_SCANCODE_LEFT) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
+                    else if (sc == SDL_SCANCODE_RIGHT) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                }
+            }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
@@ -50605,10 +50654,18 @@ int main(int argc, char** argv) {
         if (ed.isPlaying() && pointer.feedGame) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
+            // By the layout's letter (AZERTY W is the key labelled W); a layout with no Latin letters
+            // (Russian, Greek...) falls back to the US place so W A S D stay alive.
+            auto letterDown = [&](char c) {
+                SDL_Scancode sc = SDL_GetScancodeFromKey((SDL_Keycode)c);
+                if (sc == SDL_SCANCODE_UNKNOWN) sc = (SDL_Scancode)(c >= 'a' ? SDL_SCANCODE_A + (c - 'a')
+                                                  : c == '0' ? SDL_SCANCODE_0 : SDL_SCANCODE_1 + (c - '1'));
+                return ks[sc] != 0;
+            };
             for (char c = 'a'; c <= 'z'; ++c)
-                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+                if (letterDown(c)) down.push_back(c);
             for (char c = '0'; c <= '9'; ++c)
-                if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+                if (letterDown(c)) down.push_back(c);
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
             if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
             if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
@@ -50743,8 +50800,10 @@ int main(int argc, char** argv) {
 #else
             Gestures::Tick((double)SDL_GetTicks() / 1000.0);
 #endif
+            Input::SetTextFocused(GameInputBlocked(&ed.scene(), (unsigned)GameInputMask::Text));   // a game text field has focus: no walking
             InputActions::Tick();
         } else if (ed.isPlaying()) {
+            Input::DropKeyTaps();   // nothing is feeding the game this frame; do not keep a tap for later
             // Playing, but a text field has the keyboard. Do not feed the game,
             // and do not leave the pointer in relative mode from the frame that
             // grabbed it before the field took focus.
@@ -50756,6 +50815,8 @@ int main(int argc, char** argv) {
             g_playPointerGrabbed = false;
             Gestures::Reset();
             TouchControls::ReleaseAll(ed.scene());
+            Input::DropKeyTaps();
+            Input::SetTextFocused(false);
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
@@ -51679,6 +51740,8 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
+        okay::editor::DrawInputDebugger(&g_showInputDebug, ed.isPlaying());
+        okay::editor::DrawInputActionsWindow(&g_showInputActions, ed.projectDir());
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         {   // Every scene needs a camera (the Game view and builds render through it):

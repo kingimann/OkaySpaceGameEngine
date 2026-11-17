@@ -1,5 +1,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Input/Haptics.hpp"
+#include "okay/Core/Prefs.hpp"
 #include <cctype>
 #include <cmath>
 
@@ -11,9 +13,15 @@
 
 namespace okay {
 
-std::unordered_map<char, bool> Input::s_current;
-std::unordered_map<char, bool> Input::s_previous;
+std::array<bool, 256> Input::s_current{};
+std::array<bool, 256> Input::s_previous{};
+std::array<bool, 256> Input::s_tapKeys{};
+unsigned Input::s_tapMouse = 0;
 bool Input::s_interactive = false;
+bool Input::s_textFocused = false;
+Input::Device Input::s_lastDevice = Input::Device::Keyboard;
+int Input::s_lastPad = 0;
+Input::PadFamily Input::s_padFamily[Input::kMaxGamepads] = {};
 
 Vec2     Input::s_mousePos;
 Vec2     Input::s_mousePrevPos;
@@ -62,14 +70,14 @@ void Input::EndSession() {
         g_rawActive = false;
     }
 #endif
-    s_current.clear();
-    s_previous.clear();
+    s_current.fill(false);
+    s_previous.fill(false);
 }
 
 void Input::Poll() {
     s_previous = s_current;
     // Keys are momentary: a key counts as "down" only on the frame it arrives.
-    for (auto& kv : s_current) kv.second = false;
+    s_current.fill(false);
 
 #if defined(__unix__) || defined(__APPLE__)
     if (!s_interactive) return;
@@ -78,7 +86,7 @@ void Input::Poll() {
     while ((n = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
         for (ssize_t i = 0; i < n; ++i) {
             char c = static_cast<char>(std::tolower(static_cast<unsigned char>(buf[i])));
-            s_current[c] = true;
+            s_current[(unsigned char)c] = true;
         }
     }
 #endif
@@ -86,14 +94,65 @@ void Input::Poll() {
 
 void Input::FeedKeys(const std::vector<char>& downKeys) {
     s_previous = s_current;
-    s_current.clear();
+    s_current.fill(false);
     for (char k : downKeys)
-        s_current[static_cast<char>(std::tolower(static_cast<unsigned char>(k)))] = true;
+        s_current[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(k)))] = true;
+    // A key that went down and up between two polls still counts for this frame.
+    for (int i = 0; i < 256; ++i)
+        if (s_tapKeys[(std::size_t)i]) { s_current[(std::size_t)i] = true; s_tapKeys[(std::size_t)i] = false; }
     // The generic modifier reads true while either side is held.
-    auto held = [](char c) { auto it = s_current.find(c); return it != s_current.end() && it->second; };
-    if (held(KeyLShift) || held(KeyRShift)) s_current[KeyShift] = true;
-    if (held(KeyLCtrl) || held(KeyRCtrl))   s_current[KeyCtrl] = true;
-    if (held(KeyLAlt) || held(KeyRAlt))     s_current[KeyAlt] = true;
+    auto held = [](char c) { return s_current[(unsigned char)c]; };
+    if (held(KeyLShift) || held(KeyRShift)) s_current[(unsigned char)KeyShift] = true;
+    if (held(KeyLCtrl) || held(KeyRCtrl))   s_current[(unsigned char)KeyCtrl] = true;
+    if (held(KeyLAlt) || held(KeyRAlt))     s_current[(unsigned char)KeyAlt] = true;
+    // A newly pressed key means the keyboard, except W A S D and Space while a controller is
+    // being used: the runtime also types those for a pad (see FeedPadAt), which is not the keyboard.
+    bool padBusy = false;
+    for (const PadState& p : s_pads)
+        if (p.current != 0 || p.axis.x * p.axis.x + p.axis.y * p.axis.y > 0.25f) padBusy = true;
+    for (std::size_t i = 0; i < 256; ++i) {
+        if (!s_current[i] || s_previous[i]) continue;
+        const bool standIn = i == 'w' || i == 'a' || i == 's' || i == 'd' || i == ' ';
+        if (!(standIn && padBusy)) { NoteDevice(Device::Keyboard); break; }
+    }
+}
+
+void Input::FeedKeyTap(char key) {
+    s_tapKeys[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)))] = true;
+}
+void Input::FeedMouseTap(int button) {
+    if (button >= 0 && button <= 2) s_tapMouse |= 1u << button;
+}
+
+void Input::DropKeyTaps() { s_tapKeys.fill(false); s_tapMouse = 0; }
+
+void Input::NoteDevice(Device d, int pad) {
+    s_lastDevice = d;
+    if (d == Device::Gamepad && pad >= 0 && pad < kMaxGamepads) s_lastPad = pad;
+}
+Input::Device Input::LastDevice() { return s_lastDevice; }
+int Input::LastGamepad() { return s_lastPad; }
+void Input::SetGamepadFamily(int player, PadFamily f) { if (player >= 0 && player < kMaxGamepads) s_padFamily[player] = f; }
+Input::PadFamily Input::GamepadFamily(int player) { return player >= 0 && player < kMaxGamepads ? s_padFamily[player] : PadFamily::Xbox; }
+Input::PadFamily Input::FamilyFromName(const std::string& name) {
+    std::string n;
+    for (char c : name) n += (char)std::tolower((unsigned char)c);
+    auto has = [&](const char* w) { return n.find(w) != std::string::npos; };
+    if (has("playstation") || has("dualshock") || has("dualsense") || has("ps4") || has("ps5") || has("ps3") || has("sony")) return PadFamily::PlayStation;
+    if (has("nintendo") || has("switch") || has("joy-con") || has("joycon") || has("pro controller")) return PadFamily::Switch;
+    if (has("xbox") || has("x-box") || has("xinput") || has("microsoft")) return PadFamily::Xbox;
+    return PadFamily::Generic;
+}
+std::string Input::GamepadButtonLabel(int b, PadFamily f) {
+    if (b < 0 || b >= PadButtonCount) return "?";
+    static const char* const kPs[PadButtonCount] = {"Cross", "Circle", "Square", "Triangle", "Share", "Options", "L1", "R1",
+        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "L3", "R3", "L2", "R2"};
+    // Nintendo swaps the face buttons by position: the right button is A, the bottom one B.
+    static const char* const kSw[PadButtonCount] = {"B", "A", "Y", "X", "-", "+", "L", "R",
+        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Left Stick", "Right Stick", "ZL", "ZR"};
+    if (f == PadFamily::PlayStation) return kPs[b];
+    if (f == PadFamily::Switch) return kSw[b];
+    return GamepadButtonName(b);
 }
 
 void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
@@ -103,7 +162,10 @@ void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
     s_mouseFed = true;
     s_mousePos = position;
     s_mousePrevious = s_mouseCurrent;
-    s_mouseCurrent = buttonMask;
+    s_mouseCurrent = buttonMask | s_tapMouse;   // a click that began and ended between polls still lands
+    s_tapMouse = 0;
+    if (s_mouseCurrent != s_mousePrevious || (position.x != s_mousePrevPos.x || position.y != s_mousePrevPos.y))
+        NoteDevice(s_touches.empty() ? Device::Mouse : Device::Touch);
 }
 
 Vec2 Input::MousePosition() { return s_mousePos; }
@@ -171,6 +233,7 @@ void Input::FeedGamepadAt(int player, const Vec2& axis, unsigned buttonMask) {
     p.axis = axis;
     p.previous = p.current;
     p.current = buttonMask;
+    if (buttonMask != p.previous || axis.x * axis.x + axis.y * axis.y > 0.25f) NoteDevice(Device::Gamepad, i);
 }
 void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, float rt, bool connected) {
     const int i = PadIndex(player);
@@ -215,8 +278,17 @@ bool Input::TakeRumble(float& low, float& high, float& seconds, int player) {
     if (i < 0) return false;
     RumbleRequest& r = PendingRumble(i);
     if (!r.pending) return false;
-    low = r.low; high = r.high; seconds = r.seconds; r.pending = false;
+    // The player's vibration setting (InputHaptics::Strength, 0 = off) scales every request: patterns and plain Input::Rumble alike.
+    const float k = InputHaptics::Strength();
+    low = r.low * k; high = r.high * k; seconds = r.seconds; r.pending = false;
     return true;
+}
+
+namespace { int g_keysByPos = -1; }   // -1: not read from Prefs yet
+void Input::SetKeysByPosition(bool on) { g_keysByPos = on ? 1 : 0; Prefs::SetBool("input.keypos", on); }
+bool Input::KeysByPosition() {
+    if (g_keysByPos < 0) g_keysByPos = (Prefs::Has("input.keypos") && Prefs::GetBool("input.keypos")) ? 1 : 0;
+    return g_keysByPos == 1;
 }
 
 int Input::GamepadButtonFromName(const std::string& name) {
@@ -245,6 +317,7 @@ void Input::ClearTypedText() {
     for (auto& t : s_touches) {
         if (t.phase == Touch::Phase::Ended) continue;
         t.phase = Touch::Phase::Stationary;
+        t.began = false;
         t.delta = {0.0f, 0.0f};
         s_touches[n++] = t;
     }
@@ -264,6 +337,7 @@ bool Input::TouchDragging() {
 
 void Input::FeedTouch(long long id, int state, const Vec2& position) {
     s_touchScreen = true;
+    NoteDevice(Device::Touch);
     Touch* t = nullptr;
     for (auto& e : s_touches) if (e.id == id) t = &e;
     if (state == 0) {
@@ -274,7 +348,7 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
     if (!t) return;
     t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
     t->position = position;
-    if (state == 2) t->phase = Touch::Phase::Ended;
+    if (state == 2) t->phase = Touch::Phase::Ended;     // t->began stays true when it went down this frame
     else if (t->phase != Touch::Phase::Began) t->phase = Touch::Phase::Moved;
 }
 
@@ -301,14 +375,14 @@ bool Input::GetGamepadButton(int button, int player) {
     return (s_pads[i].current & (1u << button)) != 0;
 }
 bool Input::AnyKey() {
-    for (const auto& kv : s_current) if (kv.second) return true;
+    for (bool b : s_current) if (b) return true;
     if (s_mouseCurrent != 0) return true;
     for (const PadState& p : s_pads) if (p.current != 0) return true;
     return false;
 }
 bool Input::AnyKeyDown() {
-    for (const auto& kv : s_current)        // a key held now that wasn't held last frame
-        if (kv.second) { auto it = s_previous.find(kv.first); if (it == s_previous.end() || !it->second) return true; }
+    for (std::size_t i = 0; i < 256; ++i)   // a key held now that wasn't held last frame
+        if (s_current[i] && !s_previous[i]) return true;
     if (s_mouseCurrent & ~s_mousePrevious) return true;
     for (const PadState& p : s_pads) if (p.current & ~p.previous) return true;
     return false;
@@ -328,21 +402,31 @@ bool Input::GetGamepadButtonDown(int button, int player) {
 }
 
 bool Input::GetKey(char key) {
-    key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
-    auto it = s_current.find(key);
-    return it != s_current.end() && it->second;
+    return s_current[static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)))];
 }
 
 char Input::FirstKeyDown() {
-    char best = 0;
-    for (const auto& kv : s_current) {
-        if (!kv.second) continue;
-        auto it = s_previous.find(kv.first);
-        if (it != s_previous.end() && it->second) continue;
-        if (best == 0 || (unsigned char)kv.first < (unsigned char)best) best = kv.first;
-    }
-    return best;
+    for (std::size_t i = 0; i < 256; ++i)   // the lowest code first
+        if (s_current[i] && !s_previous[i]) return static_cast<char>(i);
+    return 0;
 }
+
+void Input::SetTextFocused(bool focused) { s_textFocused = focused; }
+bool Input::TextFocused() { return s_textFocused; }
+namespace {
+// Keys a text field types or edits with. The game stops seeing them while a field has focus.
+bool IsTypingKey(char key) {
+    const unsigned char u = static_cast<unsigned char>(key);
+    if (u >= 'a' && u <= 'z') return true;
+    if (u >= 'A' && u <= 'Z') return true;
+    if (u >= '0' && u <= '9') return true;
+    if (u == ' ') return true;
+    if (u == Input::KeyUp || u == Input::KeyDown || u == Input::KeyLeft || u == Input::KeyRight) return true;
+    return u >= 33 && u < 127;   // punctuation
+}
+} // namespace
+bool Input::GetKeyGame(char key) { return !(s_textFocused && IsTypingKey(key)) && GetKey(key); }
+bool Input::GetKeyDownGame(char key) { return !(s_textFocused && IsTypingKey(key)) && GetKeyDown(key); }
 
 std::string Input::KeyName(char key) {
     switch (key) {
@@ -380,23 +464,18 @@ std::string Input::KeyName(char key) {
 }
 
 bool Input::GetKeyDown(char key) {
-    key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
-    bool now  = GetKey(key);
-    auto prev = s_previous.find(key);
-    bool was  = prev != s_previous.end() && prev->second;
-    return now && !was;
+    const unsigned char k = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)));
+    return s_current[k] && !s_previous[k];
 }
 
 bool Input::GetKeyUp(char key) {
-    key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
-    bool now  = GetKey(key);
-    auto prev = s_previous.find(key);
-    bool was  = prev != s_previous.end() && prev->second;
-    return !now && was;
+    const unsigned char k = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(key)));
+    return !s_current[k] && s_previous[k];
 }
 
 Vec2 Input::AxisWASD() {
     Vec2 axis;
+    if (s_textFocused) return axis;   // typing in a field: the game gets no movement
     if (GetKey('d') || GetKey(KeyRight)) axis.x += 1.0f;
     if (GetKey('a') || GetKey(KeyLeft))  axis.x -= 1.0f;
     if (GetKey('w') || GetKey(KeyUp))    axis.y += 1.0f;

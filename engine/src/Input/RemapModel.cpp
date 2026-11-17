@@ -1,4 +1,5 @@
 #include "okay/Input/RemapModel.hpp"
+#include "okay/Input/PadProfiles.hpp"
 #include "okay/Input/Input.hpp"
 
 #include <algorithm>
@@ -42,7 +43,7 @@ RemapSlot MakeSlot(const InputActions::Action& a, bool gamepad) {
     if (const InputBinding* cur = SlotIn(a.bindings, gamepad)) {
         s.bound = true;
         s.binding = *cur;
-        s.label = cur->Label();
+        s.label = gamepad && cur->kind == InputBinding::Kind::PadButton ? PadProfiles::BindingLabel(*cur) : cur->Label();
         if (cur->kind == InputBinding::Kind::Keys4)
             for (int i = 0; i < 4; ++i) s.partLabels.push_back(Input::KeyName(cur->keys[i]));
     }
@@ -67,7 +68,8 @@ bool RemapOverlap(const InputBinding& a, const InputBinding& b) {
     if (a.kind == K::None || b.kind == K::None) return false;
     if (a.kind == b.kind) {
         switch (a.kind) {
-            case K::Key: case K::Mouse: case K::PadButton: return a.code == b.code;
+            case K::Key: case K::Mouse: case K::PadButton: case K::Wheel: return a.code == b.code;
+            case K::Chord: return std::equal(a.keys, a.keys + 4, b.keys);   // the same keys (a chord keeps its keys from single bindings, so a chord and a lone key do not conflict)
             case K::Keys4:
                 for (int i = 0; i < 4; ++i) if (KeyIndex(b, (unsigned char)a.keys[i]) >= 0) return true;
                 return false;

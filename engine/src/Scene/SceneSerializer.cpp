@@ -186,6 +186,7 @@
 #include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/AutoSave.hpp"
@@ -9774,6 +9775,26 @@ void RegisterBuiltinComponentSerializers() {
         k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
     };
     ComponentSerializerRegistry::Register(std::move(debris));
+
+    ComponentSerializerRegistry::Entry pin;
+    pin.name = "playerinput";
+    pin.write = [](const GameObject& go, std::ostream& out) {
+        for (const LocalPlayerInput* pi : go.GetComponents<LocalPlayerInput>()) {
+            if (!pi) continue;
+            out << "  playerinput";
+            KvOut k{out};
+            k.str("actions", pi->actions)("device", (int)pi->device)("pad", pi->controller).str("scheme", pi->scheme).b("auto", pi->autoSwitch).str("maps", pi->startMaps);
+            out << "\n";
+        }
+    };
+    pin.read = [](GameObject& go, std::istream& in) {
+        auto* pi = go.AddComponent<LocalPlayerInput>();
+        KvIn k(in);
+        int dev = (int)pi->device;
+        k.str("actions", pi->actions); k.i("device", dev); k.i("pad", pi->controller); k.str("scheme", pi->scheme); k.b("auto", pi->autoSwitch); k.str("maps", pi->startMaps);
+        pi->device = dev < 0 || dev > 2 ? LocalPlayerInput::Device::Any : (LocalPlayerInput::Device)dev;
+    };
+    ComponentSerializerRegistry::Register(std::move(pin));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

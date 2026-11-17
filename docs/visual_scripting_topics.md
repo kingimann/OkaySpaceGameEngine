@@ -26,14 +26,14 @@ Intermediate.
 | [Variables](#variables) | 64 | Remember a number, a word or a yes/no on this object, the scene or the whole game. |
 | [Saving & Loading](#saving--loading) | 73 | Keep things between runs: save slots, saved values and checkpoints. |
 | [Lists](#lists) | 47 | Several values in order under one name: add, remove, sort, search, and array functions. |
-| [Maps & Structs](#maps--structs) | 23 | Values you look up by a name, records with fields, and JSON text. |
+| [Maps & Structs](#maps--structs) | 22 | Values you look up by a name, records with fields, and JSON text. |
 | [Numbers](#numbers) | 118 | Everyday math: arithmetic, rounding, limits, averages, percentages, bits, type checks and script math functions. |
 | [Blending & Easing](#blending--easing) | 70 | Mix two values, remap a range, and smooth steps with curves, waves and springs. |
 | [Angles & Trigonometry](#angles--trigonometry) | 31 | Degrees and radians, sine and cosine, and the angle between two things. |
 | [Vectors](#vectors) | 71 | Points and directions: build, measure, add, scale, and the flat (ground) versions. |
 | [Comparisons & Logic](#comparisons--logic) | 52 | Is it bigger, equal or between? And, or, not, picking a value, and comparing scores or number sets. |
 | [Random](#random) | 19 | Dice rolls, random picks, chances and noise. |
-| [Text](#text) | 98 | Join, cut, search, clean up, format and compare words and sentences, and use the clipboard. |
+| [Text](#text) | 97 | Join, cut, search, clean up, format and compare words and sentences, and use the clipboard. |
 | [Language & Translation](#language--translation) | 7 | Show the game in the player's language and react when it changes. |
 | [Create & Destroy](#create--destroy) | 25 | Make new objects, remove them, and keep spawners and pools of them. |
 | [Find Objects](#find-objects) | 39 | Find objects by name, tag or distance, and read their names and tags. |
@@ -66,7 +66,7 @@ Intermediate.
 | [Music & Volume](#music--volume) | 22 | Music tracks, the volume of each group, muting and ducking. |
 | [Camera](#camera) | 34 | Where the player is looking: follow, switch, zoom, tilt and shake. |
 | [Screen Text](#screen-text) | 42 | Words and numbers drawn on the screen. |
-| [Buttons & Inputs](#buttons--inputs) | 74 | Buttons, sliders, toggles, dropdowns, text fields and pickers. |
+| [Buttons & Inputs](#buttons--inputs) | 80 | Buttons, sliders, toggles, dropdowns, text fields and pickers. |
 | [Bars & Layout](#bars--layout) | 92 | Progress bars, tabs and pages, scroll areas and grids, layout helpers and themes. |
 | [Popups & Dialogs](#popups--dialogs) | 35 | Toasts, tooltips, modals and bottom sheets. |
 | [Scenes & Levels](#scenes--levels) | 15 | Load, restart and quit scenes, and read which scene is open. |
@@ -75,13 +75,13 @@ Intermediate.
 | [Post Effects](#post-effects) | 5 | Full-screen looks: bloom, exposure, color grade and the like. |
 | [Window & Display](#window--display) | 19 | Screen size, display modes, refresh rate and the game window. |
 | [Cutscenes](#cutscenes) | 8 | Play a cutscene (a sequence) and build one from tweens. |
-| [Keyboard](#keyboard) | 24 | Is a key held, pressed or released. |
+| [Keyboard](#keyboard) | 25 | Is a key held, pressed or released. |
 | [Mouse & Touch](#mouse--touch) | 38 | The mouse position and buttons, the cursor, taps and swipes. |
-| [Gamepad & Controls](#gamepad--controls) | 39 | Movement axes, the gamepad, named actions and rebinding keys. |
-| [Multiplayer](#multiplayer) | 132 | Host or join, browse servers, matchmaking, messages, synced objects, players and matches. |
+| [Gamepad & Controls](#gamepad--controls) | 115 | Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use. |
+| [Multiplayer](#multiplayer) | 131 | Host or join, browse servers, matchmaking, messages, synced objects, players and matches. |
 | [Steam](#steam) | 61 | Steam achievements, stats, lobbies, friends, cloud files and the workshop. |
 | [Server Security](#server-security) | 17 | Anti-cheat: validate what clients send, rate limits, kicks and budgets. |
-| [Accounts & Online Saves](#accounts--online-saves) | 27 | Log in, cloud saves, leaderboards and PlayFab. |
+| [Accounts & Online Saves](#accounts--online-saves) | 26 | Log in, cloud saves, leaderboards and PlayFab. |
 | [Debug](#debug) | 17 | Messages for you while building, not for the player. |
 
 ## Events
@@ -637,12 +637,11 @@ The same list jobs written as text-script function calls.
 
 ### Maps & Structs
 
-Values you look up by a name, records with fields, and JSON text. (23 nodes)
+Values you look up by a name, records with fields, and JSON text. (22 nodes)
 
 - From Json - `Fn.from_json`
 - Json Parse - `Fn.json_parse`
 - Json Stringify - `Fn.json_stringify`
-- Map - `Fn.map`
 - Map Clear - `MapClear`
 - Map Copy - `MapCopy`
 - Map Count - `MapCount`
@@ -1135,7 +1134,7 @@ Dice rolls, random picks, chances and noise. (19 nodes)
 
 ### Text
 
-Join, cut, search, clean up, format and compare words and sentences, and use the clipboard. (98 nodes)
+Join, cut, search, clean up, format and compare words and sentences, and use the clipboard. (97 nodes)
 
 - Choose Text (Basic) - `LbChooseText`
 - Concat (text) (Basic) - `Concat`
@@ -1143,7 +1142,6 @@ Join, cut, search, clean up, format and compare words and sentences, and use the
 - Concat - `Fn.concat`
 - Format - `Fn.format`
 - Format Text - `Format`
-- Join - `Fn.join`
 - Text Append - `str_append`
 - Text Copy - `str_copy`
 - Text Format - `Fn.String.Format`
@@ -2719,10 +2717,11 @@ Text drawn from a script each frame: text, heading, caption, badge.
 
 ### Buttons & Inputs
 
-Buttons, sliders, toggles, dropdowns, text fields and pickers. (74 nodes)
+Buttons, sliders, toggles, dropdowns, text fields and pickers. (80 nodes)
 
 - Drop Source - `Fn.drop_source`
 - Drop Target - `Fn.drop_target`
+- Error - `UIInputValidator.Error/0`
 - Focus - `UIButton.Focus/0`
 - Press - `UIButton.Press/0`
 - Screen Button - `Fn.ui_button`
@@ -2746,6 +2745,8 @@ Buttons, sliders, toggles, dropdowns, text fields and pickers. (74 nodes)
 Sliders, checkboxes, switches and radio buttons.
 
 - Get Value - `UISlider.GetValue/0`
+- High - `UIRangeSlider.High/0`
+- Low - `UIRangeSlider.Low/0`
 - Screen Checkbox - `Fn.ui_checkbox`
 - Screen Radio Value - `Fn.ui_radio_value`
 - Screen Set Radio - `Fn.ui_set_radio`
@@ -2758,6 +2759,9 @@ Sliders, checkboxes, switches and radio buttons.
 - Screen Switch - `Fn.ui_switch`
 - Screen Toggle Value - `Fn.ui_toggle_value`
 - Set Format - `UISlider.SetFormat/1`
+- Set High - `UIRangeSlider.SetHigh/1`
+- Set Low - `UIRangeSlider.SetLow/1`
+- Set Range - `UIRangeSlider.SetRange/2`
 - Set Slider - `Fn.set_slider`
 - Set Slider Format - `Fn.set_slider_format`
 - Set Slider Step - `Fn.set_slider_step`
@@ -3085,7 +3089,7 @@ Play a cutscene (a sequence) and build one from tweens. (8 nodes)
 
 ### Keyboard
 
-Is a key held, pressed or released. (24 nodes)
+Is a key held, pressed or released. (25 nodes)
 
 - Get Key (Basic) - `Input.GetKey/1`
 - Get Key Down (Basic) - `Input.GetKeyDown/1`
@@ -3107,6 +3111,7 @@ Is a key held, pressed or released. (24 nodes)
 - Is Key Held - `Fn.is_key_held`
 - Key - `Fn.key`
 - Key Just Released - `key_up`
+- Key Positions - `Fn.key_positions`
 - Key Pressed - `Fn.key_pressed`
 - Key Released - `Fn.key_released`
 - Key Up - `KeyUp`
@@ -3162,7 +3167,7 @@ Touch screens, swipes, pinches and twists.
 
 ### Gamepad & Controls
 
-Movement axes, the gamepad, named actions and rebinding keys. (39 nodes)
+Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use. (115 nodes)
 
 - Axis X (Basic) - `AxisX`
 - Axis Y (Basic) - `AxisY`
@@ -3173,6 +3178,8 @@ Movement axes, the gamepad, named actions and rebinding keys. (39 nodes)
 - Axis Right - `Fn.axis_x`
 - Axis Vertical - `Fn.axis_y`
 - Gamepad - `Fn.gamepad`
+- Gamepad Connected - `Fn.gamepad_connected`
+- Gamepad Count - `Fn.gamepad_count`
 - Gamepad Down - `Fn.gamepad_down`
 - Gamepad Right - `Fn.gamepad_x`
 - Gamepad Vertical - `Fn.gamepad_y`
@@ -3195,7 +3202,15 @@ Movement axes, the gamepad, named actions and rebinding keys. (39 nodes)
 
 Define an action, read its value, rebind its key and rumble the pad.
 
+- Action Buffered - `Fn.action_buffered`
+- Action Conflicts - `Fn.action_conflicts`
+- Action Consume - `Fn.action_consume`
+- Action Double Tap - `Fn.action_double_tap`
 - Action Down - `Fn.action_down`
+- Action Held - `Fn.action_held`
+- Action Hold - `Fn.action_hold`
+- Action Hold Done - `Fn.action_hold_done`
+- Action Label - `Fn.action_label`
 - Action Right - `Fn.action_x`
 - Action Time - `Fn.action_time`
 - Action up - `Fn.action_up`
@@ -3205,15 +3220,91 @@ Define an action, read its value, rebind its key and rumble the pad.
 - Define Direction - `Input.DefineDirection/3`
 - Get Action Value - `Input.GetActionValue/1`
 - Get Action Vector - `Input.GetActionVector/1`
-- Rebind - `Fn.rebind`
+- Input Preset - `Fn.input_preset`
+- Input Record - `Fn.input_record`
 - Rebind Action - `Input.RebindAction/2`
+- Rebind Swap - `Fn.rebind_swap`
 - Rumble - `Input.Rumble/3`
+- Set Per Player - `Fn.set_per_player`
+- Set Response - `Fn.set_response`
+
+#### Gamepad & Controls: Local Players
+
+A local player's typed actions: values, phases, action maps, control scheme and rebinding.
+
+- Canceled - `Fn.ia_canceled`
+- Conflicts - `Fn.ia_conflicts`
+- Down - `Fn.ia_down`
+- Event - `Fn.ia_event`
+- Forward - `Fn.ia_z`
+- Join - `Fn.ia_join`
+- Leave - `Fn.ia_leave`
+- Map - `Fn.ia_map`
+- Map Enabled - `Fn.ia_map_enabled`
+- Performed - `Fn.ia_performed`
+- Player - `Input.MyPlayer/0`
+- Player Action Canceled - `Input.PlayerActionCanceled/2`
+- Player Action Held - `Input.PlayerActionHeld/2`
+- Player Action Performed - `Input.PlayerActionPerformed/2`
+- Player Action Phase - `Input.PlayerActionPhase/2`
+- Player Action Pressed - `Input.PlayerActionPressed/2`
+- Player Action Progress - `Input.PlayerActionProgress/2`
+- Player Action Released - `Input.PlayerActionReleased/2`
+- Player Action Started - `Input.PlayerActionStarted/2`
+- Player Action Value - `Input.PlayerActionValue/2`
+- Player Rebind - `Input.PlayerRebind/5`
+- Player Scheme - `Input.PlayerScheme/1`
+- Players - `Fn.ia_players`
+- Poll Join - `Fn.ia_poll_join`
+- Pressed - `Fn.ia_pressed`
+- Progress - `Fn.ia_progress`
+- Rebind - `Fn.ia_rebind`
+- Released - `Fn.ia_released`
+- Reset Bindings - `Fn.ia_reset_bindings`
+- Right - `Fn.ia_x`
+- Scheme - `Fn.ia_scheme`
+- Set Action Map Enabled - `Input.SetActionMapEnabled/3`
+- Set Scheme - `Fn.ia_set_scheme`
+- Started - `Fn.ia_started`
+- Use Default - `Fn.ia_use_default`
+- Vertical - `Fn.ia_y`
+
+#### Gamepad & Controls: Controllers
+
+Which controller is plugged in, its family and battery, lightbar, trigger rumble, Controller Setup and rumble patterns.
+
+- Haptic - `Fn.haptic`
+- Haptic Strength - `Fn.haptic_strength`
+- Input Button Name - `Fn.input_button_name`
+- Input Device - `Fn.input_device`
+- Pad Battery - `Fn.pad_battery`
+- Pad Button Name - `Fn.pad_button_name`
+- Pad Event - `Fn.pad_event`
+- Pad Family - `Fn.pad_family`
+- Pad Gyro - `Fn.pad_gyro`
+- Pad Ids - `Fn.pad_ids`
+- Pad Info - `Fn.pad_info`
+- Pad Lightbar - `Fn.pad_lightbar`
+- Pad Mapping - `Fn.pad_mapping`
+- Pad Name - `Fn.pad_name`
+- Pad Raw - `Fn.pad_raw`
+- Pad Setup Active - `Fn.pad_setup_active`
+- Pad Setup Back - `Fn.pad_setup_back`
+- Pad Setup Cancel - `Fn.pad_setup_cancel`
+- Pad Setup Clear - `Fn.pad_setup_clear`
+- Pad Setup Prompt - `Fn.pad_setup_prompt`
+- Pad Setup Save - `Fn.pad_setup_save`
+- Pad Setup Skip - `Fn.pad_setup_skip`
+- Pad Setup Start - `Fn.pad_setup_start`
+- Pad Swap - `Fn.pad_swap`
+- Pad Touch - `Fn.pad_touch`
+- Pad Trigger Rumble - `Fn.pad_trigger_rumble`
 
 ## Online
 
 ### Multiplayer
 
-Host or join, browse servers, matchmaking, messages, synced objects, players and matches. (132 nodes)
+Host or join, browse servers, matchmaking, messages, synced objects, players and matches. (131 nodes)
 
 #### Multiplayer: Hosting & Joining
 
@@ -3282,7 +3373,6 @@ Find a match, queue, and play through a relay.
 - Net Queue State - `Fn.net_queue_state`
 - Net Queue Time - `Fn.net_queue_time`
 - Net Relay Ready - `Fn.net_relay_ready`
-- Players - `Fn.mm_players`
 - Port - `Fn.mm_port`
 - Refresh - `Fn.mm_refresh`
 - Room - `Fn.mm_room`
@@ -3482,7 +3572,7 @@ Anti-cheat: validate what clients send, rate limits, kicks and budgets. (17 node
 
 ### Accounts & Online Saves
 
-Log in, cloud saves, leaderboards and PlayFab. (27 nodes)
+Log in, cloud saves, leaderboards and PlayFab. (26 nodes)
 
 #### Accounts & Online Saves: Accounts
 
@@ -3499,7 +3589,6 @@ Register, log in and read the signed-in user.
 - Account Token - `Fn.account_token`
 - Account Username - `Fn.account_username`
 - Account Verify - `Fn.account_verify`
-- Error - `Fn.pf_error`
 - Identifier - `Fn.pf_id`
 - Logged in - `Fn.pf_logged_in`
 

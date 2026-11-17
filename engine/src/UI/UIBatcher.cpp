@@ -371,14 +371,8 @@ void BatchPainter::Image4(Entry& e, const Rect* src, float x, float y, float w, 
     const int sw = src ? src->w : e.w, sh = src ? src->h : e.h;
     float u0 = U(e.page, (float)(e.x + sx)), v0 = V(e.page, (float)(e.y + sy));
     float u1 = U(e.page, (float)(e.x + sx + sw)), v1 = V(e.page, (float)(e.y + sy + sh));
-    const bool resized = std::fabs(w * m_scale - (float)sw) > 0.01f || std::fabs(h * m_scale - (float)sh) > 0.01f;
-    if (m_imgLinear && e.page == 1 && src && resized && (sw < e.w || sh < e.h)) {
-        // A piece of a bigger image (9-slice, sprite sheet): keep smooth sampling inside the piece so it
-        // does not pick up its neighbour's colour at the edge.
-        const float iu = 0.5f / (float)m_pages[1].img.Width(), iv = 0.5f / (float)m_pages[1].img.Height();
-        if (sw > 1) { u0 += iu; u1 -= iu; }
-        if (sh > 1) { v0 += iv; v1 -= iv; }
-    }
+    // (No half-texel inset of a piece's UVs: it shrank every piece of a stretched 9-slice or partly filled image by up to a texel and made this path
+    // draw those pictures differently from the direct path, which cannot inset. The gutter pixels of the atlas already keep neighbours out.)
     if (flip & FlipH) std::swap(u0, u1);
     if (flip & FlipV) std::swap(v0, v1);
     if (angle == 0.0) { Quad(x, y, x + w, y + h, u0, v0, u1, v1, e.mod); return; }

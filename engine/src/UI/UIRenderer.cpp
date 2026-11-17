@@ -1528,7 +1528,7 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                     const RGBA vc{255, 255, 255, 255};
                     std::vector<Vertex> vx;
                     auto uvOf = [&](float qx, float qy) {
-                        float u = (qx - x0) / ww, v = (qy - y0) / hh;
+                        float u = std::clamp((qx - x0) / ww, 0.0f, 1.0f), v = std::clamp((qy - y0) / hh, 0.0f, 1.0f);   // the soft edge sits just outside the picture: clamp, never wrap
                         if (im->flipX) u = 1.0f - u;
                         if (im->flipY) v = 1.0f - v;
                         return FPoint{u, v};
@@ -1537,7 +1537,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                     for (const auto& q : pts) vx.push_back({q, vc, uvOf(q.x, q.y)});
                     std::vector<int> ix;
                     const int n = (int)pts.size();
-                    for (int k = 0; k < n; ++k) { ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                    auto same = [&](int a, int b) { return std::fabs(pts[a].x - pts[b].x) < 1e-3f && std::fabs(pts[a].y - pts[b].y) < 1e-3f; };   // a corner with no radius repeats a point: no zero-area triangles
+                    for (int k = 0; k < n; ++k) { if (same(k, (k + 1) % n)) continue; ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                    // The picture is drawn first, then its soft edge as a second call: the software renderer draws nothing when a fan with
+                    // see-through ring vertices is sent in one call.
+                    p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
+                    ix.clear();
                     if (g_uiSmoothEdges) {   // a one-device-pixel soft edge: the picture fades out instead of stair-stepping
                         const RGBA vz{255, 255, 255, 0};
                         for (int k = 0; k < n; ++k) {
@@ -1546,11 +1551,14 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                         }
                         for (int k = 0; k < n; ++k) {
                             const int k1 = (k + 1) % n;
+                            if (same(k, k1)) continue;
+                            // A straight edge (the same outward direction at both ends) lies on the pixel grid and needs no soft edge; only the curves get one.
+                            if (std::fabs(nrm[k].x - nrm[k1].x) < 1e-4f && std::fabs(nrm[k].y - nrm[k1].y) < 1e-4f) continue;
                             ix.push_back(1 + k); ix.push_back(1 + n + k); ix.push_back(1 + k1);
                             ix.push_back(1 + k1); ix.push_back(1 + n + k); ix.push_back(1 + n + k1);
                         }
                     }
-                    p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
+                    if (!ix.empty()) p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
                 } else {
                     p.CopyEx(tex, nullptr, &dst, 0.0, nullptr, flip);
                 }

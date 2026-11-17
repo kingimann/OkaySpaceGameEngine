@@ -418,8 +418,8 @@ private:
     }
     void HorrorPalette() {
         SetLook(C::FromBytes(16, 8, 8, 245), C::FromBytes(6, 2, 2, 245), C::FromBytes(170, 20, 20),
-                C::FromBytes(210, 196, 184), C::FromBytes(120, 96, 88), C::FromBytes(60, 12, 12),
-                C::FromBytes(110, 20, 20), C::FromBytes(30, 6, 6), C::FromBytes(230, 210, 200),
+                C::FromBytes(240, 228, 216), C::FromBytes(178, 154, 142), C::FromBytes(60, 12, 12),
+                C::FromBytes(124, 22, 22), C::FromBytes(30, 6, 6), C::FromBytes(252, 242, 234),
                 C::FromBytes(34, 24, 24), C::FromBytes(200, 20, 20), C::FromBytes(90, 130, 70),
                 C::FromBytes(110, 20, 20, 220), C::FromBytes(140, 0, 0, 140), C::FromBytes(170, 20, 20, 120));
         SetShape(3.0f, UICornerAll, 1.0f, true, true, 20.0f, {0.0f, 0.0f}, 1.0f, false, 8.0f, 1.0f);
@@ -459,10 +459,10 @@ public:
     static constexpr float kTextContrast = 4.5f;
 
     /// `fg` moved toward white or near-black (whichever reads better on `bg`) just far enough to reach `want` : 1 on `bg`. Same hue as far as possible.
-    static Color Fixed(Color fg, Color bg, float want) {
+    static Color Fixed(Color fg, Color bg, float want, float trigger = -1.0f) {
         const Color flatBg = Flat(bg);
-        if (Contrast(fg, flatBg) >= want) return fg;
-        const Color target = Ink(flatBg);
+        if (Contrast(fg, flatBg) >= (trigger < 0.0f ? want : trigger)) return fg;
+        const Color target = Contrast(Color::White, flatBg) >= Contrast(Color(0.0f, 0.0f, 0.0f, 1.0f), flatBg) ? Color::White : Color(0.0f, 0.0f, 0.0f, 1.0f);
         Color out = fg;
         for (int i = 1; i <= 20; ++i) {
             out = Mix(fg, target, i * 0.05f); out.a = fg.a;
@@ -485,10 +485,10 @@ public:
             Color& end = pushTop ? panel : panelBottom;
             const float a = end.a; end = Mix(end, toward, 0.08f); end.a = a;
         }
-        auto fixOne = [&](Color fg) {
+        auto fixOne = [&](Color fg) {   // a colour below 4.5 : 1 is moved well past it (6.5 : 1), so it reads as clear text and not as a marginal pass
             if (worst(fg) >= kTextContrast) return fg;
             Color out = fg;
-            for (int i = 1; i <= 20; ++i) { out = Mix(fg, extreme, i * 0.05f); out.a = fg.a; if (worst(out) >= kTextContrast) break; }
+            for (int i = 1; i <= 20; ++i) { out = Mix(fg, extreme, i * 0.05f); out.a = fg.a; if (worst(out) >= 6.5f) break; }
             return out;
         };
         text = fixOne(text);
@@ -501,13 +501,13 @@ public:
         // 85 percent of the fill.
         for (Color* bgp : {&button, &buttonHover, &buttonPressed}) if (bgp->a < 0.85f) bgp->a = 0.85f;
         for (int pass = 0; pass < 2; ++pass) {
-            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) buttonText = Fixed(buttonText, *bgp, kTextContrast);
+            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) buttonText = Fixed(buttonText, *bgp, 6.5f, kTextContrast);
             bool ok = true;
             for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) ok = ok && Contrast(buttonText, *bgp) >= kTextContrast;
             if (ok) break;
             const Color away = Luminance(buttonText) > 0.4f ? Color(0.0f, 0.0f, 0.0f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f);
             for (Color* bgp : {&button, &buttonHover, &buttonPressed})
-                for (int i = 1; i <= 30 && Contrast(buttonText, *bgp) < kTextContrast; ++i) { const float a = bgp->a; *bgp = Mix(*bgp, away, 0.06f); bgp->a = a; }
+                for (int i = 1; i <= 30 && Contrast(buttonText, *bgp) < 5.5f; ++i) { const float a = bgp->a; *bgp = Mix(*bgp, away, 0.06f); bgp->a = a; }
         }
     }
 private:
@@ -569,7 +569,7 @@ private:
             b->shadowColor = shadowCol;
             b->shadowOffset = Vec2{0.0f, shadowOffset.y * 0.45f};
             b->shadowSoftness = shadowSoftness * 0.5f;
-            b->fontScale = fontScale;
+            if (b->fontScale < fontScale) b->fontScale = fontScale;   // a look never makes a label smaller than the screen asked for (a phone menu's big buttons)
             b->transitionSpeed = transitionSpeed;
             b->hoverScale = hoverScale;
             // The buttons of a slot grid sit on the grid's own (themed) slot colours, not the button colour.

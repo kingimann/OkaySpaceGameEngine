@@ -252,11 +252,13 @@ int main(int argc, char** argv) {
                 Image tile(640, 360);   // a portrait picture is scaled to the tile height and centred
                 for (int y = 0; y < 360; ++y) for (int x = 0; x < 640; ++x) tile.SetPixel(x, y, Color::FromBytes(10, 12, 16, 255));
                 if (!portrait) Blit(tile, sh.img, 0, 0, 2);
-                else for (int y = 0; y < 360; ++y) for (int x = 0; x < 202; ++x) {   // 1280 -> 360 is 3.55x: sample the middle of each block
-                    const int sx = std::min(719, (int)((float)x * 3.556f) + 1), sy = std::min(1279, (int)((float)y * 3.556f) + 1);
-                    tile.SetPixel(219 + x, y, sh.img.GetPixel(sx, sy));
+                else for (int y = 0; y < 360; ++y) for (int x = 0; x < 202; ++x) {   // 1280 -> 360 is 3.55x: the average of each block (picking one pixel made small text look like dots)
+                    const int x0 = (int)((float)x * 3.556f), y0 = (int)((float)y * 3.556f), x1 = std::min(720, (int)((float)(x + 1) * 3.556f)), y1 = std::min(1280, (int)((float)(y + 1) * 3.556f));
+                    float r = 0, g = 0, b = 0; int cnt = 0;
+                    for (int yy = y0; yy < std::max(y1, y0 + 1); ++yy) for (int xx = x0; xx < std::max(x1, x0 + 1); ++xx) { const Color c = sh.img.GetPixel(std::min(719, xx), std::min(1279, yy)); r += c.r; g += c.g; b += c.b; ++cnt; }
+                    tile.SetPixel(219 + x, y, Color(r / cnt, g / cnt, b / cnt, 1.0f));
                 }
-                if (variant == 0) tile.SavePNG(dir + "/screens/" + d.id + ".png");
+                if (variant == 0) sh.img.SavePNG(dir + "/screens/" + d.id + ".png");   // the full-size picture (a phone screen at 720 x 1280)
                 Blit(variant == 0 ? sheetA : sheetB, tile, 3 + (int)(i % cols) * 646, 3 + (int)(i / cols) * 366, 1);
             }
         }

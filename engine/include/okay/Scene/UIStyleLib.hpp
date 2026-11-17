@@ -234,20 +234,31 @@ inline bool StyleSkips(GameObject* go) {
     }
     return false;
 }
+/// Text and icons that a fill left hard to read: under every solid panel, text below 4.5 : 1 is moved to 7 : 1 and an icon below 3 : 1 to 4.5 : 1
+/// (a light look's cream title on a yellow card, a blue question mark on a red one). Colours that already read are not touched.
+inline void FixContrastUnder(GameObject* g, const UIPanel* backing = nullptr) {
+    if (!g) return;
+    if (auto* p = g->GetComponent<UIPanel>(); p && p->color.a >= 0.5f && std::min(p->size.x, p->size.y) > 24.0f) backing = p;
+    if (backing) {
+        auto fix = [&](Color c, float trigger, float want) {
+            auto worst = [&](Color x) { return std::min(UITheme::Contrast(x, backing->color), backing->useGradient ? UITheme::Contrast(x, backing->colorBottom) : 99.0f); };
+            if (worst(c) >= trigger) return c;
+            c = UITheme::Fixed(c, backing->color, want);
+            if (backing->useGradient) c = UITheme::Fixed(c, backing->colorBottom, want);
+            return c;
+        };
+        if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace) tr->color = fix(tr->color, UITheme::kTextContrast, 7.0f);
+        if (auto* b = g->GetComponent<UIButton>(); b && !b->interactable && !b->icon.empty()) { b->textColor = fix(b->textColor, 3.0f, 4.5f); b->hoverTextColor = b->textColor; }
+    }
+    if (g->transform) for (Transform* c : g->transform->Children()) if (c && c->gameObject) FixContrastUnder(c->gameObject, backing);
+}
 /// The same, for `root` and everything under it (the parts StyleSkips names are left as they are; `root` itself is always styled).
-inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal, bool isRoot = true, const UIPanel* backing = nullptr) {
+inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal, bool isRoot = true) {
     if (!root) return 0;
-    const bool styled = isRoot || !StyleSkips(root);
-    int n = styled ? ApplyStyleOne(root, sp, pal) : 0;
-    // A style can put a light fill under text that the look made light (a yellow card under cream letters): text on a solid panel is moved to 4.5 : 1.
-    if (auto* p = root->GetComponent<UIPanel>(); p && styled && p->color.a >= 0.5f) backing = p;
-    if (backing)
-        if (auto* tr = root->GetComponent<TextRenderer>(); tr && tr->screenSpace) {
-            tr->color = UITheme::Fixed(tr->color, backing->color, UITheme::kTextContrast);
-            if (backing->useGradient) tr->color = UITheme::Fixed(tr->color, backing->colorBottom, UITheme::kTextContrast);
-        }
+    int n = (isRoot || !StyleSkips(root)) ? ApplyStyleOne(root, sp, pal) : 0;
     if (root->transform)
-        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal, false, backing);
+        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal, false);
+    if (isRoot) FixContrastUnder(root);
     return n;
 }
 
@@ -372,6 +383,7 @@ inline bool ApplyLook(GameObject* root, const std::string& look, const std::stri
     }
     sv->style = style; sv->styleSize = size; sv->styleDensity = density;
     if (!style.empty()) ApplyStyle(root, SpecOf(style, size.empty() ? "m" : size, density.empty() ? "cosy" : density), PaletteFor(sv));
+    else if (ls) FixContrastUnder(root);
     return true;
 }
 /// Apply again what an object stores (after its look or style fields were edited).

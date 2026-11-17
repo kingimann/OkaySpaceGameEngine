@@ -40,6 +40,7 @@ inline bool Render(int W, int H, const std::string& tex, bool pixel, bool batche
             out.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
     }
     for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    ui2d::SDLForgetRenderer(ren);   // its glyph atlas goes with it
     SDL_DestroyRenderer(ren);
     SDL_FreeSurface(surf);
     return true;

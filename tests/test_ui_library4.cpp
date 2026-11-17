@@ -630,6 +630,46 @@ int main() {
         CHECK(sc.Find("Ammo") && sc.Find("AmmoIcon"));    // the ammo counter has its weapon icon
     }
 
+    {   // ---- no button label is ever replaced by an ellipsis or cut: every label is the data's own text, in every screen, whatever the canvas (portrait too)
+        for (const auto& d : UIScreens::Screens()) {
+            if (!d.native.empty()) continue;
+            std::string all; for (const std::string& l : d.body) all += l + "\n";
+            for (const auto sz : {Vec2{1280.0f, 720.0f}, Vec2{720.0f, 1280.0f}, Vec2{2560.0f, 1080.0f}}) {
+                UICanvas::Set(sz.x, sz.y);
+                for (const char* look : {"", "Neon", "Retro Pixel"}) {
+                    Scene sc("ell"); UIScreens::Build(sc, d.id, 0, look);
+                    for (const auto& o : sc.Objects()) if (auto* b = o->GetComponent<UIButton>(); b && b->interactable && !b->label.empty()) {
+                        const bool inData = all.find("\"" + b->label + "\"") != std::string::npos;
+                        const bool cut = b->label.find("...") != std::string::npos && !inData;
+                        if (cut) std::printf("  %s: button label \"%s\" is an ellipsis, not the data's text\n", d.id.c_str(), b->label.c_str());
+                        CHECK(!cut);
+                        CHECK(b->label.size() < 3 || b->label.find("...") == std::string::npos || all.find("\"" + b->label + "\"") != std::string::npos);
+                    }
+                }
+            }
+        }
+        UICanvas::Set(1280.0f, 720.0f);
+    }
+
+    {   // ---- a style or look that puts a light fill under a card keeps its texts (4.5 : 1) and icons (3 : 1) readable
+        int bad = 0;
+        for (const auto& t : S::Themes()) for (const char* id : {"main_menu", "confirm_popup", "settings"}) for (const char* style : {"Pixel", "Cartoon", "Flat"}) {
+            if (!S::FindStyle(style)) continue;
+            Scene sc("ct"); GameObject* root = UIScreens::Build(sc, id, 0, t.name, style);
+            std::function<void(GameObject*, const UIPanel*)> walk = [&](GameObject* g, const UIPanel* back) {
+                if (auto* p = g->GetComponent<UIPanel>(); p && p->color.a >= 0.5f && std::min(p->size.x, p->size.y) > 24.0f) back = p;
+                if (back) {
+                    auto worst = [&](Color c) { return std::min(UITheme::Contrast(c, back->color), back->useGradient ? UITheme::Contrast(c, back->colorBottom) : 99.0f); };
+                    if (auto* tr = g->GetComponent<TextRenderer>(); tr && tr->screenSpace && !tr->text.empty() && worst(tr->color) < 4.5f) { ++bad; std::printf("  %s + %s + %s: text \"%s\" %.2f\n", t.name.c_str(), style, id, tr->text.c_str(), worst(tr->color)); }
+                    if (auto* b = g->GetComponent<UIButton>(); b && !b->interactable && !b->icon.empty() && worst(b->textColor) < 3.0f) { ++bad; std::printf("  %s + %s + %s: icon %s %.2f\n", t.name.c_str(), style, id, b->icon.c_str(), worst(b->textColor)); }
+                }
+                for (Transform* c : g->transform->Children()) if (c && c->gameObject) walk(c->gameObject, back);
+            };
+            if (root) walk(root, nullptr);
+        }
+        CHECK(bad == 0);
+    }
+
     {   // ---- gallery: search and filters
         const auto all = G::Search({});
         CHECK(all.size() == G::Index().size());

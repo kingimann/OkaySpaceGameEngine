@@ -40,14 +40,22 @@ inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, con
     return tex;
 }
 
-/// Upload a TTF glyph atlas as an SDL texture (cached per font for the process;
-/// one renderer per process, as in the player). Uploaded again when the font
-/// baked new characters (TtfFont::Generation).
+/// The uploaded glyph atlases: one per (renderer, font), so a second renderer in the same process (a test, a second window) gets its own texture
+/// instead of the first one's. A renderer that is about to be destroyed calls SDLForgetRenderer, which drops its entries (the textures go with it).
+struct SDLAtlasUp { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+inline std::unordered_map<std::string, SDLAtlasUp>& SDLAtlasCache() { static std::unordered_map<std::string, SDLAtlasUp> c; return c; }
+inline std::string SDLAtlasKey(SDL_Renderer* r, TtfFont* f) { return std::to_string((unsigned long long)(std::uintptr_t)r) + ":" + std::to_string((unsigned long long)(std::uintptr_t)f); }
+inline void SDLForgetRenderer(SDL_Renderer* r) {
+    const std::string prefix = std::to_string((unsigned long long)(std::uintptr_t)r) + ":";
+    auto& c = SDLAtlasCache();
+    for (auto it = c.begin(); it != c.end();) it = it->first.compare(0, prefix.size(), prefix) == 0 ? c.erase(it) : std::next(it);
+}
+
+/// Upload a TTF glyph atlas as an SDL texture (cached per renderer and font; the player has one renderer for the process). Uploaded again when the
+/// font baked new characters (TtfFont::Generation).
 inline SDL_Texture* SDLFontAtlas(SDL_Renderer* r, TtfFont* f) {
     if (!f || !f->Valid()) return nullptr;
-    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
-    static std::unordered_map<TtfFont*, Up> cache;
-    Up& u = cache[f];
+    SDLAtlasUp& u = SDLAtlasCache()[SDLAtlasKey(r, f)];
     const Image& a = f->Atlas();
     if (u.tex && u.gen == f->Generation()) return u.tex;
     if (u.tex && (u.w != a.Width() || u.h != a.Height())) { SDL_DestroyTexture(u.tex); u.tex = nullptr; }

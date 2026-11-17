@@ -49,4 +49,10 @@ bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::Post
 bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent);
 bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent);
 
+/// The Hierarchy panel with OkayUI (docs/own_ui_toolkit.md section 12). The window keeps the keyboard focus flag (`model.focused` is
+/// set here from the ImGui window). A file dragged in from a Dear ImGui panel arrives through model.externalDrag*, which the caller
+/// fills from ImGui's payload; a row dragged out of the panel is handed on to Dear ImGui as its "GO_PTR" payload (the Inspector's
+/// object fields take it). Same return value as above.
+bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent);
+
 } // namespace oked

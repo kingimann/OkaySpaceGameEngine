@@ -142,6 +142,24 @@ public:
     std::vector<Collider3D*> OverlapSphere(Scene& scene, const Vec3& center, float radius,
                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = true,
                                            GameObject* ignore = nullptr);
+    /// The colliders ray queries walk, in the order they test them (re-gathered when the scene's
+    /// objects or components change). Callers that keep their own spatial index over the colliders
+    /// (AI/NavProbeIndex.hpp) index this list and hand a part of it back to the two queries below.
+    const std::vector<Collider3D*>& QueryColliders(Scene& scene) { return QueryLists(scene).colliders; }
+    /// Raycast over `candidates` only (and every terrain, as Raycast does). `candidates` must keep
+    /// the QueryColliders() order. The answer is exactly Raycast's whenever every collider left out
+    /// has world bounds (Collider3D::WorldAABB) the ray does not reach: same filters, same tests,
+    /// same tie-break. Used by the navigation grid fallback (Finding 107).
+    RaycastHit3D RaycastAmong(Scene& scene, const std::vector<Collider3D*>& candidates,
+                              const Vec3& origin, const Vec3& direction, float maxDistance = 1e9f,
+                              GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                              bool queryTriggers = true);
+    /// OverlapSphere over `candidates` only: exactly OverlapSphere's colliders whenever every
+    /// collider left out has world bounds the sphere does not touch.
+    std::vector<Collider3D*> OverlapSphereAmong(const std::vector<Collider3D*>& candidates,
+                                                const Vec3& center, float radius,
+                                                std::uint32_t layerMask = kAllLayers, bool queryTriggers = true,
+                                                GameObject* ignore = nullptr);
     /// All colliders overlapping a box (center, half-extents, optional rotation).
     std::vector<Collider3D*> OverlapBox(Scene& scene, const Vec3& center, const Vec3& halfExtents,
                                         const Quat& rotation = Quat::Identity,

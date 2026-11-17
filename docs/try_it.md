@@ -1523,6 +1523,35 @@ What changes for you:
 
 **Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
 
+## Many NPCs without a NavMesh, and a long Hierarchy, stay smooth (Findings 107 and 99)
+
+Before: in a scene with no baked NavMesh, every NPC's path search tested every collider in the level thousands of times, and
+all NPCs searched on the same frame, so a crowd in a rocky level froze the game for seconds every half second. And the
+Hierarchy drew every row of a big scene every frame. Now a path search only tests the colliders near each probe (same paths),
+at most 4 timer replans run per frame, and the Hierarchy draws only the rows you can see.
+
+1. Windows editor: **File > Open**, pick `examples\navigation\nav_crowd.okayscene` from the install folder. It has a floor,
+   600 rocks in 12 groups ("Rocks 1" to "Rocks 12"), a yellow ball named **Player** that wanders, and 40 blue **Followers**
+   (in the "Crowd" group) that follow it with pathfinding on. There is no NavMesh in the scene on purpose.
+2. Open **View > Panels > Stats** (and **View > Panels > Profiler** if you like), then press **Play**.
+3. You should see the followers stream after the ball and walk around the rocks, with no pauses. The frame time should stay
+   steady instead of spiking every half second.
+4. To see the old behaviour for comparison: close the editor, set the environment variables `OKAY_NAV_PROBE_INDEX=0`,
+   `OKAY_NAV_REPLAN_BUDGET=0` and `OKAY_NAV_REPLAN_STAGGER=0` (for example in a Command Prompt: `set OKAY_NAV_PROBE_INDEX=0` and
+   `set OKAY_NAV_REPLAN_BUDGET=0` and `set OKAY_NAV_REPLAN_STAGGER=0`, then start `OkayEngine.exe` from that window), and
+   repeat steps 1 to 3. The game should now hitch. `OKAY_NAV_REPLAN_BUDGET=8` allows 8 timer replans per frame instead of 4.
+5. Hierarchy: with the scene open (not playing), scroll the Hierarchy up and down, click rows, Shift+click a range, use the
+   Up/Down arrows, open and close groups with the arrows and with right-click **Expand / Collapse All Below**, double-click a
+   row to rename it, drag a rock onto another group, and type `rock` in the search box. Everything should work as before. In
+   the Profiler the `UI.Hierarchy` row should stay small however far you scroll. Selecting a follower in the Scene view
+   should open its group and scroll the Hierarchy to it.
+6. Tests: `ctest -R "perf_nav_fallback|hierarchy_row_model"`. `test_perf_nav_fallback` prints the search times with and
+   without the index and the most searches in one frame with and without the budget.
+
+What was not checked: this was built and tested on Linux only (headless tests); the editor change was only compiled for a
+syntax check, so the Hierarchy behaviour and the frame times in the real Windows editor are **unverified** until you try the
+steps above.
+
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
 Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
@@ -1795,10 +1824,12 @@ What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.
 To turn it on for the editor: open the Command Prompt in the folder with `Tools\OkayEngine.exe`, type `set OKAY_DEV=1`, then
 `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. To compare, start it again with `set OKAY_UI_BACKEND=imgui`.
 
-The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10 and 11):
+The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10, 11 and 12):
 
 | Where | How to open it | What to try |
 |---|---|---|
+| Hierarchy | always open (left side) | click, Ctrl+click and Shift+click rows; click a row's arrow to fold it; click the eye (hide) and the padlock left of it; double-click a row (or press F2) and type a new name in the row, Enter keeps it, Escape gives up; drag a row onto the middle of another (it goes inside), onto its top or bottom edge (above or below), or onto the empty space under the list (to the top level); drag a picture or a prefab from the Project panel onto a row; right-click a row (Order and Parent To open to the side) and the empty space; type in the search box; Up, Down, Left, Right and Ctrl+A with the panel clicked. Open `examples\navigation\nav_crowd.okayscene` (650 objects) and scroll: it should stay smooth. Create sub-menus (2D Object, 3D Object, ...) still open as the old Dear ImGui list at the pointer |
+| Hierarchy menus | right-click the lowest row, then hover Parent To | the menu and the Parent To list stay inside the window and nothing shows through them; make the editor window short (for example 800 pixels): Parent To fills the height and the mouse wheel scrolls it; Escape closes Parent To, a second Escape the menu; picking a row over the Scene view does not select anything in the scene |
 | Console, Crash Log, Audio Mixer | View > Panels | as before |
 | Problems | View > Panels > Problems | type in the search box (a magnifier at the left; the cross at the right empties it), right-click a row: the menu looks like Dear ImGui's |
 | Stats, History | View > Panels > Stats, History | click a culling or batching switch (it changes the real setting); right-click the census or a history row; the current history row has a flat blue tint |
@@ -1806,6 +1837,7 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 | Project Settings > Tags and Layers | Edit > Project Settings..., open "Tags and Layers" | add a tag, Rename (a small window under the pointer), Remove; type a layer name and click elsewhere or press Enter: it is saved once; Reset |
 | Project Settings > Physics | Edit > Project Settings... | drag the gravity numbers and "Steps per second" (it shows whole numbers), switch Quality between Classic and Improved, drag Solver iterations, Apply to current scene |
 | Project Settings > Player, Rendering | Edit > Project Settings... (both open at the top) | type a Company and Version, click the - and + next to Width and Height, drag Ambient, untick Skybox, Apply to current scene; Save, close and reopen: the values stay |
+| Windows on top of each other | open View > History, then Edit > Project Settings over it (both floating) | Project Settings' first line and left edge are clean: nothing of History (no "Undo Redo 1 behind" row) shows through it. Click History's title: it comes to the front and draws with OkayUI again. While a floating window or an ImGui popup lies over a ported panel, that panel draws its Dear ImGui version |
 | Lighting > Post-processing | View > Panels > Lighting (a tab next to the Inspector) | choose a Look Preset, Reset, tick Bloom and Colour Grading (more rows appear), drag Exposure and the three Lift numbers; the Scene view changes as you drag |
 | Import settings | click a picture, a model or a sound in the Project panel: its settings show in the Inspector | change "Largest side", a model's Normals and Scale, or "Mix down to one channel": Apply and Revert become clickable; Apply saves next to the asset. The Project panel's own "Import Settings" popup stays Dear ImGui |
 
@@ -1814,12 +1846,12 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
 screen uses them yet, so there is nothing to click.
 
-You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7 and 12.2
-(mostly text edges). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7, 12.6 and 13.2
+(mostly text edges; the Hierarchy renames in the row instead of a "Rename Object" box). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
 spacing), and History and the Profiler open at the size Dear ImGui opens them at. To compare: open Edit > Project Settings with
 `OKAY_UI_BACKEND=okayui` and again with `imgui`; the section headers (Player, Physics, Rendering, Tags and Layers) should be at the same
 heights. Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
-setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 12: every ported panel under 8%
+setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 13: every ported panel under 8%
 of pixels clearly different from Dear ImGui's). Unverified: Windows.
 
 ### 12b. Our own code editor in the Script Editor (`OKAY_CODE_EDITOR=own`)

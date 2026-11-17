@@ -195,6 +195,14 @@ int main() {
         r.Offer(0, 0, 100, 100, false);                         // offered again, covered this frame (an ImGui popup opened)
         CHECK(!r.OwnsThisFrame(50, 50));
     }
+    {   // an open menu offered as an overlay: the host keeps a press there from ImGui (OwnsOverlay); the panel itself is not an overlay
+        Region r;
+        r.Offer(0, 0, 300, 600, true);                         // the Hierarchy panel
+        r.Offer(250, 100, 260, 700, true, true);               // its menu, hanging out over the Scene view
+        CHECK(r.Owns(400, 300) && r.OwnsOverlay(400, 300) && !r.OwnsOverlay(100, 50) && r.Owns(100, 50));
+        r.NextFrame(); r.NextFrame();                          // the menu closed: no longer kept from ImGui
+        CHECK(!r.OwnsOverlay(400, 300));
+    }
     {   // end to end through OkayUI: typed text from SDL events edits a focused field; a blocked frame does not click
         okayuitest::Reset();
         okayuitest::Sim sim(300, 100);

@@ -98,7 +98,9 @@ void NavMeshAgent::Start() {
 }
 
 bool NavMeshAgent::Replan(Scene& scene, const Vec3& pos) {
-    m_repath = repathInterval;
+    // The first timer after a plan the agent had to make (a path from nothing) is shortened by a fixed
+    // per-agent amount, so agents that got their destination on the same frame replan on different frames.
+    m_repath = m_path.empty() ? repathInterval * (0.5f + 0.5f * Navigation::StaggerPhase(gameObject)) : repathInterval;
     m_corner = 0;
     if (!Navigation::FindPathForAgent(scene, pos, m_dest, m_path, m_pathLinks, areaMask, radius, gameObject)) {
         m_path.clear(); m_pathLinks.clear();
@@ -281,7 +283,9 @@ void NavMeshAgent::Update(float dt) {
     const bool wedged = Dist2D(pos, m_lastPos) < 0.01f && Len2D(m_velocity) > 0.05f;
     m_stuckT = wedged ? m_stuckT + dt : 0.0f;
     m_lastPos = pos;
-    bool needPlan = m_path.empty() || (autoRepath && m_repath <= 0.0f);
+    bool needPlan = m_path.empty();
+    // A timer replan waits for a free slot this frame, so agents sent off together do not all search at once.
+    if (!needPlan && autoRepath && m_repath <= 0.0f) needPlan = Navigation::TakeReplanSlot(scene);
     const std::uint32_t carveGen = Navigation::CarveGeneration(scene);
     if (carveGen != m_carveGen) { m_carveGen = carveGen; needPlan = true; }   // an obstacle's hole came, moved or went
     if (m_stuckT > 0.8f) {

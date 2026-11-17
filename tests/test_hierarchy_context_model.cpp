@@ -321,5 +321,48 @@ int main() {
         }
     }
 
+    {   // SlotRecorder / SlotReplayer: a host-drawn list (Parent To, Rig & IK) recorded into entries for the OkayUI Hierarchy, and the
+        // picked entry run again by replaying the same list (only that item answers true; only the sub-menus on its way open).
+        std::vector<std::string> ran;
+        auto slot = [&](oked::menubar::SlotUI& ui) {
+            if (ui.Item("Crate")) ran.push_back("Crate");
+            ui.Tip("a box");
+            ui.Separator();
+            if (ui.BeginMenu("Add IK Target")) {
+                if (ui.Item("Left Hand")) ran.push_back("Left Hand");
+                if (ui.Item("Head", false)) ran.push_back("Head");
+                ui.Tip("needs a head bone");
+                ui.EndMenu();
+            }
+            if (ui.BeginMenu("Closed", false)) { if (ui.Item("never")) ran.push_back("never"); ui.EndMenu(); }
+            if (ui.Item("Crate")) ran.push_back("Crate 2");   // the same label twice: told apart by place
+            ui.Note("(no eligible objects)");
+        };
+        oked::menubar::SlotRecorder rec("h.parentto");
+        slot(rec);
+        CHECK(ran.empty());   // recording runs nothing
+        const std::vector<Entry> got = rec.Take();
+        CHECK(got.size() == 6);
+        CHECK(got[0].id == "h.parentto/0:Crate" && got[0].tip == "a box" && got[1].kind == Kind::Separator);
+        CHECK(got[2].kind == Kind::Submenu && got[2].children.size() == 2 && got[2].children[0].id == "h.parentto/2:Add IK Target/0:Left Hand");
+        CHECK(!got[2].children[1].enabled && got[2].children[1].reason == "needs a head bone");
+        CHECK(got[3].kind == Kind::Submenu && !got[3].enabled && got[3].children.empty());
+        CHECK(got[4].id == "h.parentto/4:Crate" && got[5].kind == Kind::Heading);
+        oked::menubar::SlotReplayer a("h.parentto", got[2].children[0].id);
+        slot(a);
+        CHECK(a.Ran() && ran.size() == 1 && ran[0] == "Left Hand");
+        ran.clear();
+        oked::menubar::SlotReplayer b("h.parentto", got[4].id);
+        slot(b);
+        CHECK(b.Ran() && ran.size() == 1 && ran[0] == "Crate 2");
+        ran.clear();
+        oked::menubar::SlotReplayer c("h.parentto", "h.parentto/2:Add IK Target/1:Head");   // greyed out: does not run
+        slot(c);
+        CHECK(!c.Ran() && ran.empty());
+        oked::menubar::SlotReplayer d("h.modeltools", got[0].id);   // another slot's id: nothing
+        slot(d);
+        CHECK(!d.Ran() && ran.empty());
+    }
+
     TEST_MAIN_RESULT();
 }

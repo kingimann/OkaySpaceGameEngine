@@ -8,6 +8,7 @@
 #include "okay/UI/OkayUIImCompat.hpp"   // BeginChild(id, size, childFlags) and its ChildFlags
 #include "EditorPanelModels.hpp"
 
+#include <string>
 #include <vector>
 
 namespace okayuiscreens {
@@ -154,5 +155,28 @@ struct RenderingSettingsResult {
 };
 
 RenderingSettingsResult DrawRenderingSettings(okaypanels::RenderingSettingsModel& model, float x, float y, float w, float h);
+
+// ---- Hierarchy -----------------------------------------------------------------------------------------------------------------
+
+struct HierarchyResult {
+    okaypanels::HierarchyIntent intent;
+    OkayUI::Rect createButton, search, optionsButton, list, emptyArea;
+    std::vector<int> rowIndex;                       // the model row of each rows[] entry (only the rows in view are drawn)
+    std::vector<OkayUI::Rect> rows;                  // the row (its click area; the arrow, the eye and the padlock are inside it)
+    std::vector<OkayUI::Rect> arrows, eyes, locks;   // same order as rows; an arrow is zero size on a row without children
+    OkayUI::Rect renameField;                        // the name field of a rename in place (zero otherwise)
+    std::vector<std::string> menuIds;                // the open menu's top-level rows (separators and headings left out) ...
+    std::vector<OkayUI::Rect> menuRows;              // ... and where they are
+    OkayUI::Rect menu;                               // the open menu (zero when none)
+    int rowsFilled = 0;                              // rows asked of the model this frame
+    float rowHeight = 0.0f, scrollY = 0.0f;
+    bool empty = false;                              // the "Empty scene" note is showing
+};
+
+/// The Hierarchy panel (docs/own_ui_toolkit.md section 12): the toolbar, the scene strip and the list, of which only the rows in
+/// view are asked of the model and drawn. Drag and drop of rows (and of files dragged in from another panel, see
+/// HierarchyModel::externalDragType) goes through OkayUI's drag and drop.
+HierarchyResult DrawHierarchy(const okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state,
+                              float x, float y, float w, float h);
 
 } // namespace okayuiscreens

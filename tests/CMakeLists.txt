@@ -1582,6 +1582,20 @@ if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
                                ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
     add_test(NAME okayui_editor_panels_imgui COMMAND test_okayui_editor_panels_imgui)
     set_tests_properties(okayui_editor_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # The Hierarchy panel the same way (docs/own_ui_toolkit.md section 12): the village and 3,000 and 20,000 objects.
+    add_executable(test_okayui_hierarchy_imgui test_okayui_hierarchy_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_hierarchy_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_hierarchy_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_hierarchy_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_hierarchy_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_hierarchy_imgui COMMAND test_okayui_hierarchy_imgui)
+    set_tests_properties(okayui_hierarchy_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     # Hosted OkayUI bodies give way to Dear ImGui windows drawn in front of them (shared/OkayUIHostImGui.hpp): the History window
     # behind Project Settings once painted its Undo/Redo row over it. Dear ImGui only, headless.
     add_executable(test_okayui_host_layering test_okayui_host_layering.cpp)
@@ -2600,6 +2614,11 @@ add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 add_executable(test_navmesh_carving test_navmesh_carving.cpp)
 target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
 add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
+
+# Finding 107: the no-NavMesh grid search uses a collider index and spreads replans over frames.
+add_executable(test_perf_nav_fallback test_perf_nav_fallback.cpp)
+target_link_libraries(test_perf_nav_fallback PRIVATE okay::engine)
+add_test(NAME perf_nav_fallback COMMAND test_perf_nav_fallback)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -4164,6 +4183,11 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+# The Hierarchy panel's flat row list and visible range (editor/HierarchyRowModel.hpp, Finding 99).
+add_executable(test_hierarchy_row_model test_hierarchy_row_model.cpp)
+target_include_directories(test_hierarchy_row_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_hierarchy_row_model PRIVATE okay::engine)
+add_test(NAME hierarchy_row_model COMMAND test_hierarchy_row_model)
 
 # Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.

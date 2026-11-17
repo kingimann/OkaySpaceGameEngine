@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace oked {
@@ -64,8 +65,13 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, co
         OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         OkayUI::PushTextScale(g_uiScale);
         MetricsFromImGui metrics_;
+        const int overlays = OkayUI::GetOverlayCount();
         draw(p, a);
         OkayUI::PopTextScale();
+        for (int i = overlays; i < OkayUI::GetOverlayCount(); ++i) {   // a menu or a list the body opened hangs out of the window: it takes the mouse
+            const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
+            if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true, true);
+        }
     }
     ImGui::End();
     return true;
@@ -121,10 +127,10 @@ bool HostSection(const char* itemId, Draw draw) {
     OkayUI::PopClipRect();
     OkayUI::PopTextScale();
     if (d.height > 1.0f && std::isfinite(d.height)) *height = std::min(d.height, 20000.0f);
-    if (d.popup.w > 0.0f && d.popup.h > 0.0f) OkayUIRegion().Offer(d.popup.x, d.popup.y, d.popup.w, d.popup.h, true);   // it is drawn over everything
+    if (d.popup.w > 0.0f && d.popup.h > 0.0f) OkayUIRegion().Offer(d.popup.x, d.popup.y, d.popup.w, d.popup.h, true, true);   // it is drawn over everything
     for (int i = overlays; i < OkayUI::GetOverlayCount(); ++i) {   // an open combo list hangs out of the section: it takes the mouse too
         const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
-        if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true);
+        if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true, true);
     }
     return true;
 }
@@ -252,6 +258,28 @@ bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::Profile
     }, [&] { okaypanels::ProfilerModel model; fill(model); DrawProfilerBodyImGui(model, PanelViewHooks()); });
 }
 
+bool DrawHierarchyOkayUI(bool* open, okaypanels::HierarchyModel& model, okaypanels::HierarchyState& state, okaypanels::HierarchyIntent& intent) {
+    return HostWindow("Hierarchy", open, "##okayui_hierarchy", [&](ImVec2 p, ImVec2 a) {
+        model.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+        OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
+        intent = okayuiscreens::DrawHierarchy(model, state, p.x, p.y, a.x, a.y).intent;
+        OkayUI::PopTextScale();
+        // A row dragged out of the panel: Dear ImGui's targets (the Inspector's object fields, the Scene view) take the same payload
+        // they take from the Dear ImGui Hierarchy, the object's pointer under "GO_PTR".
+        const OkayUI::DragPayload* live = OkayUI::GetDragDropPayload();
+        const ImVec2 mp = okayuihost::ToMainWindowPixels(ImGui::GetIO().MousePos);   // the same pixels as p
+        const bool outside = mp.x < p.x || mp.y < p.y || mp.x >= p.x + a.x || mp.y >= p.y + a.y;
+        if (live && !OkayUI::IsDragDropExternal() && std::strcmp(live->type, "GO_PTR") == 0 && live->size == (int)sizeof(void*) && outside &&
+            ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern)) {
+                ImGui::SetDragDropPayload("GO_PTR", live->data, sizeof(void*));
+                ImGui::TextUnformatted("Object");
+                ImGui::EndDragDropSource();
+            }
+        }
+    });
+}
+
 } // namespace oked
 
 #else
@@ -268,5 +296,6 @@ bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, oka
 bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
 bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
 bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
+bool DrawHierarchyOkayUI(bool*, okaypanels::HierarchyModel&, okaypanels::HierarchyState&, okaypanels::HierarchyIntent&) { return false; }
 }
 #endif

@@ -47,10 +47,12 @@ What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.
 To turn it on for the editor: open the Command Prompt in the folder with `Tools\OkayEngine.exe`, type `set OKAY_DEV=1`, then
 `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. To compare, start it again with `set OKAY_UI_BACKEND=imgui`.
 
-The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10 and 11):
+The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10, 11 and 12):
 
 | Where | How to open it | What to try |
 |---|---|---|
+| Hierarchy | always open (left side) | click, Ctrl+click and Shift+click rows; click a row's arrow to fold it; click the eye (hide) and the padlock left of it; double-click a row (or press F2) and type a new name in the row, Enter keeps it, Escape gives up; drag a row onto the middle of another (it goes inside), onto its top or bottom edge (above or below), or onto the empty space under the list (to the top level); drag a picture or a prefab from the Project panel onto a row; right-click a row (Order and Parent To open to the side) and the empty space; type in the search box; Up, Down, Left, Right and Ctrl+A with the panel clicked. Open `examples\navigation\nav_crowd.okayscene` (650 objects) and scroll: it should stay smooth. Create sub-menus (2D Object, 3D Object, ...) still open as the old Dear ImGui list at the pointer |
+| Hierarchy menus | right-click the lowest row, then hover Parent To | the menu and the Parent To list stay inside the window and nothing shows through them; make the editor window short (for example 800 pixels): Parent To fills the height and the mouse wheel scrolls it; Escape closes Parent To, a second Escape the menu; picking a row over the Scene view does not select anything in the scene |
 | Console, Crash Log, Audio Mixer | View > Panels | as before |
 | Problems | View > Panels > Problems | type in the search box (a magnifier at the left; the cross at the right empties it), right-click a row: the menu looks like Dear ImGui's |
 | Stats, History | View > Panels > Stats, History | click a culling or batching switch (it changes the real setting); right-click the census or a history row; the current history row has a flat blue tint |
@@ -67,10 +69,10 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
 screen uses them yet, so there is nothing to click.
 
-You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7 and 12.2
-(mostly text edges). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7, 12.6 and 13.2
+(mostly text edges; the Hierarchy renames in the row instead of a "Rename Object" box). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
 spacing), and History and the Profiler open at the size Dear ImGui opens them at. To compare: open Edit > Project Settings with
 `OKAY_UI_BACKEND=okayui` and again with `imgui`; the section headers (Player, Physics, Rendering, Tags and Layers) should be at the same
 heights. Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
-setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 12: every ported panel under 8%
+setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 13: every ported panel under 8%
 of pixels clearly different from Dear ImGui's). Unverified: Windows.

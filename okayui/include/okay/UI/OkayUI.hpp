@@ -926,14 +926,30 @@ bool IsDragging();
 /// The older int-payload DragSource / DropTarget keep working next to this and share IsDragging().
 inline constexpr int kDragPayloadMax = 256;
 struct DragPayload { char type[33] = {0}; unsigned char data[kDragPayloadMax] = {0}; int size = 0; bool delivery = false; };
-enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1 };
+/// DragDrop_NoDefaultRect (for BeginDragDropTarget) leaves out the accent outline, for a target that draws where the drop would land
+/// itself (a list showing a line between rows).
+enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1, DragDrop_NoDefaultRect = 2 };
 bool BeginDragDropSource(int flags = 0);
 bool SetDragDropPayload(const char* type, const void* data, int size);
 void SetDragDropPreview(const char* text);
 void EndDragDropSource();
 bool BeginDragDropTarget();
+bool BeginDragDropTarget(int flags);
 const DragPayload* AcceptDragDropPayload(const char* type = nullptr, int flags = 0);
 void EndDragDropTarget();
+/// The drag in flight once it has a payload (its type and bytes; delivery false), or null. Lets a list show where a drop would land,
+/// and lets a host hand an OkayUI drag on to another toolkit when the pointer leaves the OkayUI area.
+const DragPayload* GetDragDropPayload();
+/// A drag that began OUTSIDE OkayUI (in another toolkit's panel beside an OkayUI one, such as a file dragged from a Dear ImGui panel):
+/// the host calls this every frame the drag lasts, after BeginFrame and before the OkayUI widgets that may take it, with `released` true
+/// on the frame the button is let go. OkayUI's drop targets see it like one of their own drags (the pointer counts even while
+/// Input::blocked is set, since the other toolkit owns the mouse) and AcceptDragDropPayload delivers it on the released frame. A frame
+/// without the call ends it. No chip follows the pointer (the other toolkit draws its own).
+void SetExternalDragDrop(const char* type, const void* data, int size, bool released);
+/// True while the drag in flight came from SetExternalDragDrop.
+bool IsDragDropExternal();
+/// End the drag in flight without a drop. Escape does this too (until the button is let go nothing starts again).
+void CancelDragDrop();
 
 // ---- ID stack ------------------------------------------------------------------
 // Widget ids are hashed from their label, so two widgets with the same label in a

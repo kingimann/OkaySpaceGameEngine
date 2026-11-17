@@ -1581,7 +1581,166 @@ committed; re-made with `OKAYUI_SHOT_DIR`).
 The call count rose by 5 because the Post-processing body has its own tooltip and renderer-note helpers (5 calls) while the editor keeps its
 own for the Sky section.
 
-## 12. The ten ported panels in the real editor: same row heights, same first window sizes
+## 12. The Hierarchy panel, drag and drop for lists, menus inside popups
+
+The editor's most-used panel, ported the same way as sections 9 to 11: a std-only model, a Dear ImGui body drawn from it, the
+OkayUI port, the editor glue behind the developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`; Dear ImGui stays the default),
+and the two test suites. Written from what the editor's `DrawHierarchy` and its helpers draw and do, Dear ImGui's documented tree
+node, menu and drag-and-drop behaviour, and measurements of both pictures; no code from any other project. This branch first merged
+`claude2/perf-nav-fallback-hierarchy` (not on `main` yet), whose flat row model (`editor/HierarchyRowModel.hpp`) the port reuses.
+
+### 12.1 What the panel does, and where each part went
+
+| Part | Before (all in `editor/main.cpp`) | Now |
+|---|---|---|
+| The rows: a flat list rebuilt only when the scene, the open state or the sort change | `hierrows::Model` (the merged branch) | the same model, now shared by both paths through `HierRowsModel()`; its clip math moved to `shared/HierarchyPanelModel.hpp` (`HierVisibleRange`, `HierRevealScroll`) so both versions agree on which rows show |
+| What a row shows: name cut with an ellipsis, `(3)` and `(off)`, the type icon, the prefab mark, the dim and blue text, the S L R C A P letters, the problems marker, the eye, the padlock, the band on every other row, the accent bar | `HierKindIcon`, `HierPrefabBadge`, `HierComponentBadges`, `HierEye`, `HierLock`, `DrawObjectDiagMarker` | `okaypanels::HierRow` (plain values the host works out for the rows in view only) and `HierDrawIcon`, `HierDrawPrefabMark`, `HierDrawBadges`, `HierDrawEye`, `HierDrawLock`, `HierDrawDiag`, written once against a small pen each toolkit implements, so both draw the same shapes |
+| Clicks: select, Ctrl to add or remove, Shift for a range in listed order, a press on one of several selected rows decided on release, the arrow, the eye, the padlock, a double click | in the row loop | `HierarchyIntent` (`select`, `toggle`, `rangeTo`, `toggleActive`, `toggleLock`, `openId`); the range rule is `HierRange` |
+| Rename | a "Rename Object" box | **in the row** in both versions of the model body (double click, F2 or the menu): Enter or leaving the field keeps it, Escape gives up, an empty name is refused. The editor's own Dear ImGui body keeps its box |
+| Drag and drop: a row above, inside or below another (top 30%, middle, bottom 30%), several selected rows together, a row onto the empty space (to the top level), a file from the Project panel onto a row or the empty space | inline in the row loop | `HierDropZone`; the drop rules stay in `InspectorModel.cpp` and the editor's actions moved into `HierDropObjects`, `HierDropAssetOnRow`, `HierDropObjectsToRoot`, `HierDropAssetToRoot`, which both paths call |
+| The right-click menus of a row and of the empty space, the [+] and [...] popups | `HierarchyContextModel.hpp` lists drawn by `MenuEntriesUI.hpp`, with host-drawn slots | the same lists turned into `PanelMenuEntry` data; Parent To and Rig & IK are recorded from their slot code through `menubar::SlotRecorder` and replayed with `SlotReplayer` when an item is picked; the create categories (2D Object, 3D Object, ...) open the editor's own Dear ImGui list at the pointer (see 12.7) |
+| Search (`HierFilter`: words, `t:`, `c:`, `l:`, `is:`, `-word`, paths): a flat list with the parents after each name, Ctrl+click, a double click looks at it | in `DrawHierarchy` | the host builds the hit list; the panel shows `searching` rows and the footer (`HierSearchFooter`) |
+| Keys: Up, Down, Left, Right, Ctrl+A, F2 while the panel has the keyboard | in `DrawHierarchy` | in both bodies, from `activeRow`; F2 starts the rename in place |
+| Selecting in the Scene view scrolls the list to the row | `RevealScroll` | `revealRow` |
+| Combined scenes: a header row per source scene | header rows | `HierRow::header`, `HierHeaderLabel` |
+| The empty scene note | `EmptyState` | the same diamond, title and wrapped hint (`HierWrapWords`) in both |
+
+Files: `shared/HierarchyPanelModel.hpp` (included by `EditorPanelModels.hpp`), `okayui/screens/OkayUIEditorPanels.cpp`
+(`okayuiscreens::DrawHierarchy`), `editor/EditorPanelViews.cpp` (`DrawHierarchyBodyImGui`), `editor/OkayPanels.cpp`
+(`DrawHierarchyOkayUI`: the window, the keyboard focus, a row dragged out of the panel handed to Dear ImGui), `editor/main.cpp`
+(`DrawHierarchyWithOkayUI`: fills the rows in view, builds the menus, carries out the intent; `DrawHierarchy` calls it first when
+the switch is on).
+
+**Only the rows in view are built.** The model does not copy the scene: it gives a row count and a fill function, and a version asks
+only for the rows it draws (about 20 of them in a 500-pixel panel, plus the active row for the keys), whatever the scene's size. The
+editor's host fills a row (its components, prefab facts and problems) only when asked.
+
+### 12.2 Gaps closed in OkayUI (`okayui/src/OkayUI.cpp`, `OkayUI.hpp`; tested in `okayui_hierarchy`)
+
+- **Drag and drop for lists.** `GetDragDropPayload()` (the drag in flight, so a list can show where it would land and refuse a row
+  onto itself), `BeginDragDropTarget(DragDrop_NoDefaultRect)` (a target that draws its own line instead of the outline), Escape and
+  `CancelDragDrop()` end a drag without a drop, and `ResetState` now also forgets a typed drag.
+- **Drags from another toolkit.** `SetExternalDragDrop(type, data, size, released)`: while a Dear ImGui panel drags something over an
+  OkayUI one, the host hands it over every frame; OkayUI's targets see it even though the other toolkit owns the mouse
+  (`Input::blocked`) and get it on the frame it is let go. `IsDragDropExternal()` tells the two apart. The reverse way (a row dragged
+  out of the OkayUI Hierarchy onto a Dear ImGui field) is the host's: it starts an external Dear ImGui source with the same "GO_PTR"
+  payload once the pointer leaves the panel.
+- **Menus inside a popup.** `MenuItem` (with a shortcut, a tick and greyed-out rows) and `BeginMenu` now work in a popup body, as in
+  Dear ImGui's context menus: rows one text line tall with the highlight reaching half the spacing past them, a sub-menu that opens to
+  the right on hover (to the left when there is no room), a press in a sub-menu's list does not close the popup, and picking an item
+  in a sub-menu closes the whole menu.
+- **Menus seen in the real editor (fixed after the first run).** A sub-menu opened from a popup row now has the popup's row height
+  (one text line and the item spacing, Dear ImGui's 26 pixels at the editor's size, not OkayUI's taller row) and the popup's padding and
+  arrow. Every menu list (a sub-menu, a menu-bar menu) starts higher when last frame's height would run past the bottom of the window;
+  one taller than the window fills it and scrolls by whole rows (three a wheel notch; the keyboard highlight is brought into view).
+  Escape closes the innermost open list, then the popup (not while a text field in it has the keyboard). The editor's menu colour is
+  opaque (it was 98.5%, which let the text under a menu show faintly). The editor host offers the menus a hosted panel opens as mouse
+  regions (a menu hanging over the Scene view could not be hovered or clicked there) and keeps a press or the wheel over an open OkayUI
+  menu from Dear ImGui (so choosing a row does not also click the Scene view). Tested in `okayui_hierarchy` (a 40-row Parent To in a
+  320-pixel window) and `okayui_host`; checked in the editor under Xvfb at 1920 x 1200 and with the window at (120, 100), 1920 x 800.
+- **Speed (no picture changed).** Rounded rectangle outlines take their corner points from a table worked out once (they computed 56
+  sines and cosines per rectangle), and circle outlines are drawn straight from the cached unit circle as a ring (the mitre of a
+  regular polygon is radial), with no sines, cosines or square roots per call. Every golden image of every OkayUI suite is unchanged.
+- **A bug the tests found** (in the editor too): cutting a name to fit dropped one byte and then any continuation bytes, which left the
+  first byte of a two-byte character alone before the ellipsis. `HierEllipsize` and the editor's `EllipsizeToWidth` now drop whole
+  characters.
+
+### 12.3 Tests
+
+- `okayui_hierarchy` (`okayui/tests/test_okayui_hierarchy.cpp`, 115 checks, headless): the shared rules (the tail, header and title
+  text, the footer, the drop zones, the drag label, the ellipsis with UTF-8, the range, the clip at 3,000 and 20,000 rows and a huge
+  scroll, reveal, the options menu); every interaction through synthetic input on the drawn rectangles: click, Ctrl+click on and off,
+  Shift+click range, a click on one of several selected rows (decided on release), the arrow folding and unfolding, the eye, the
+  padlock; rename in place by double click, F2 and the menu with Enter, Escape, a click elsewhere and an empty name; the row menu
+  (selects the row, a greyed-out item takes no click, the Order sub-menu, Rename), the empty-space menu with Sort A-Z, the [+] menu with
+  its 3D Object sub-menu, the options; drag and drop before, inside and after a row, to the top level, Escape during a drag, a row onto
+  itself, several selected rows together, a file dragged in from another toolkit onto a row and onto the empty space; the keys with and
+  without the keyboard; the search (the flat list, Ctrl+click, a double click, no matches); 3,000 and 20,000 objects (about 19 rows
+  asked for a frame, the wheel, reveal, a click on a far row); the empty scene and its menu; header rows; the new OkayUI pieces on their
+  own (`GetDragDropPayload`, the outline left out, Escape, `CancelDragDrop`, an outside drag delivered and an outside drag the host
+  stops reporting; `MenuItem` and `BeginMenu` in a popup). Six golden images: `hierarchy_tree`, `_menu`, `_search`, `_rename`,
+  `_drag` (the drop outline while a row is held over another), `_empty`.
+- `okayui_hierarchy_imgui` (`tests/test_okayui_hierarchy_imgui.cpp`, 20 checks): both versions on a 560 x 560 canvas with the editor's
+  look; a click at the middle of each of the 15 rows selects the same object in both (the rows line up), Ctrl+click, the arrow, the eye
+  and a drag of Music onto Houses do the same in both; the speed and pixel tables below; `OKAYUI_SHOT_DIR` writes the pictures and
+  `OKAY_UI_PROFILE=hier<N>:<imgui|okayui>` (N = 15, 3000 or 20000) runs one side for callgrind. The comparison rig both comparison
+  tests use is now `tests/okayui_compare_rig.hpp`.
+- `hierarchy_context_model`: `SlotRecorder` and `SlotReplayer` (ids by place, the same label twice, greyed-out items, a closed
+  sub-menu, a replay that runs exactly the picked item and nothing for another slot's id).
+- `ctest -R "okayui|ui_backend|hierarchy"`: 37 of 37 pass (all OkayUI suites with their golden images, `ui_backend`,
+  `scene_hierarchy_search`, `deep_hierarchy`, `hierarchy_row_model`). `editor/main.cpp` passes the syntax-only check with and without
+  `OKAY_HAVE_OKAYUI`; `OkayPanels.cpp` (both ways), `ProblemsPanel.cpp` and `EditorPanelViews.cpp` were compiled.
+
+### 12.4 Speed
+
+Per frame: the panel built (Dear ImGui `NewFrame` to `Render`, OkayUI `BeginFrame` to `EndFrameData`) together with the test host's
+model and row fills, which are the same code on both sides. Instructions: callgrind, 200 frames after a warm-up. Wall time: the median
+of 150 frames, three runs on a shared machine (load 8 to 10), the range shown. The big scenes are scrolled half way down.
+
+| Scene | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Rows asked for a frame (both) |
+|---|---:|---:|---:|---:|---:|
+| Village (15 rows, menus' data built only when open) | 334,500 | 255,100 (24% fewer) | 128 to 135 us | 76 to 82 us | 16 |
+| 3,000 objects | 347,100 | 224,200 (35% fewer) | 126 to 130 us | 70 to 76 us | 21 |
+| 20,000 objects | 354,000 | 228,000 (36% fewer) | 130 to 132 us | 68 to 75 us | 21 |
+
+Before the speed work of 12.2 the village took 341,000 instructions with OkayUI, 2% more than Dear ImGui: callgrind showed half of
+OkayUI's time in rounded outlines and the eyes' circles (sines and cosines per call). The cost does not grow with the scene: 20,000
+objects cost what 3,000 do. "Build + render" (with the CPU rasteriser) is also faster with OkayUI in every run (about 11 to 17 ms
+against 36 to 48 ms); as in section 9, that figure is about the software rasteriser, not the toolkits.
+
+### 12.5 Pixels
+
+Both versions at 560 x 560, the same rasteriser. "Clearly different": a channel more than 48 apart (the gate is 12%).
+
+| Picture | Average difference | Clearly different |
+|---|---:|---:|
+| The village (15 rows: icons, prefab marks, badges, an object off, a locked one, a problem) | 3.47 | 2.76% |
+| Its right-click menu, with the Order sub-menu row | 4.50 | 3.56% |
+| A search ("House": four matches with their parents) | 1.61 | 1.47% |
+| A rename in place | 4.16 | 3.09% |
+| 3,000 objects, scrolled half way | 4.21 | 3.20% |
+| 20,000 objects, scrolled half way | 4.83 | 3.59% |
+| An empty scene | 0.70 | 0.56% |
+
+What brought it there: Dear ImGui's tree node geometry (the arrow at 0.7 of a text line 12 pixels in, the icon after the arrow's
+42-pixel zone, the 18-pixel item on a 26-pixel row, the highlight from the indent to the edge), the menu's columns and 16 by 12 padding
+and its arrow, and one pixel down for OkayUI's row text (its glyphs sit a pixel higher in the line). Pictures (not committed; re-made
+with `OKAYUI_SHOT_DIR`): `<scratchpad>/shots/ohy/final/<case>-imgui.png`, `-okayui.png` and `side-<case>.png`.
+
+### 12.6 What still differs (blunt)
+
+- Text edges (OkayUI's baked Roboto against Dear ImGui's), and a long name is cut a few letters differently (the widths differ).
+- The strip's title and the menus' text sit a pixel higher than Dear ImGui's.
+- The drag preview is OkayUI's chip with the name, not Dear ImGui's tooltip box; tooltips and the hover cursor are OkayUI's.
+- **Rename is in the row** in the OkayUI version (and in the model body); the editor's own Dear ImGui Hierarchy still opens its box.
+- **The create categories** (2D Object, 3D Object, Player, Light, Camera, Audio, Effects, UI, in the [+] menu, the empty-space menu
+  and a row's Create Child) are one row each in the OkayUI menus that opens the editor's own Dear ImGui list of that category at the
+  pointer: those lists are code with a field in one of them (the volume size), not data yet. Parent To and Rig & IK are recorded and
+  drawn by OkayUI.
+
+### 12.7 Not verified
+
+- **No real editor window.** The editor was not built (its `main.cpp` is too big for this machine); `DrawHierarchyWithOkayUI`,
+  `DrawHierarchyOkayUI`, the menus converted from the editor's lists, the slot replay in the editor, the hand-over of a file dragged from
+  the Project panel and of a row dragged out of the Hierarchy onto an Inspector field have never run. Windows was not built; no GPU was
+  used. The refactor of the Dear ImGui `DrawHierarchy` (its drop handlers and the Save-as-Prefab box moved into functions both paths
+  call, Parent To and Rig & IK written against `SlotUI`) was only syntax-checked: it is the default path, so it needs a look in the real
+  editor before a release.
+- The model body (`DrawHierarchyBodyImGui`) is what the comparison runs; the editor's default Hierarchy is still its own code (switching
+  it to the model body is the next step, once it can be run).
+
+### 12.8 Coverage (usage report)
+
+| What | Before (committed report) | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,138 of 27,376 (99.1%) | 27,335 of 27,578 (99.1%) |
+| Types, flags and enums available | 11,752 of 12,083 (97.3%) | 11,888 of 12,233 (97.2%) |
+| Call sites in ported functions | 530 (1.9%) | 713 (2.6%) |
+
+The totals grew because this branch merged the row-model branch and added the model body (183 calls) next to the editor's own
+`DrawHierarchy` (182 calls), which stays the default: the 183 are counted as ported, but no call left the editor yet.
+
+## 13. The ten ported panels in the real editor: same row heights, same first window sizes
 
 The editor was built (Linux, `-O1`, assertions on) and run under Xvfb at 1920 x 1200 with a scratch project, once with Dear ImGui and once
 with `OKAY_UI_BACKEND=okayui`, driven by the same recorded clicks; each panel's rectangle was compared pixel by pixel ("clearly different":
@@ -1608,7 +1767,7 @@ ImGui's output in the editor and in the comparison test; no code from any other 
   splitting what is left by the weights 1, 0.8, 1, 0.8. The `editorpanels_stats` golden was re-made for this (looked at side by side: the
   number is at the body size, the plot 4 pixels higher, the right-hand columns further right); no other golden changed.
 
-### 12.1 Pixels in the real editor
+### 13.1 Pixels in the real editor
 
 | Panel (shot) | Rectangle | Before | After |
 |---|---|---:|---:|
@@ -1639,14 +1798,14 @@ In the comparison test (`okayui_editor_panels_imgui`) Stats went from 5.76% to 4
 hosted section's height is checked against the Dear ImGui body's (from its first row to the bottom of its last), with the editor's spacing
 and with the Inspector's, to within one pixel; and a picture of the sound import panel with the Inspector's spacing (1.37%).
 
-### 12.2 What still differs
+### 13.2 What still differs
 
 - Text edges (OkayUI's baked Roboto against Dear ImGui's) are most of what is left in every panel.
 - Text that runs past a hosted section's right edge: Dear ImGui lets it run into the window's padding, OkayUI cuts it at the section's
   edge (the long notes under the import settings).
 - Stats: the narrow scroll bar is still OkayUI's; the plot's line differs slightly.
 
-### 12.3 Not verified
+### 13.3 Not verified
 
 Windows (not built or run here; the measurements are from Linux under Xvfb with the software SDL renderer), other UI scales and the
 Compact density in the real editor (the headless test covers the Inspector's Comfortable spacing only), a docked History or Profiler.

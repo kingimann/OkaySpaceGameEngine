@@ -240,6 +240,55 @@ bridge finds the deck), `Raycast`, `RandomPoint` / `RandomPointNear`,
 agents can plan every frame. An unreachable destination (another island) is a
 `false`, not a path to the nearest point.
 
+## Scenes with no baked mesh: speed (Finding 107)
+
+The probe grid (`NavGrid3D`) opens up to 4,096 cells per path search. Each cell costs a down ray (to find
+the floor) and a sphere test (is anything in the way?). Those two used to test every collider in the scene,
+and every agent sent somewhere on the same frame replanned on the same frame. With 50 agents in a level of
+1,000 colliders that meant 120 ms frames and freezes of several seconds every half second.
+
+Two changes fix it. Neither changes a path in a scene that is standing still.
+
+- **Probe index** (`okay/AI/NavProbeIndex.hpp`). A grid over the ground of every collider's world box. A
+  probe only tests the colliders whose box is near it, through `Physics3D::RaycastAmong` and
+  `Physics3D::OverlapSphereAmong`, which run the same tests as `Raycast` and `OverlapSphere`. A collider far
+  from a probe could not have been hit by it, so the answers are the same. The collider list is fetched
+  again when objects or components change; the boxes are measured again at the start of every search (one
+  box per collider per search), and the grid is rebuilt only when a box moved. Very big boxes (a floor) and
+  boxes with broken bounds are tested by every probe. `OKAY_NAV_PROBE_INDEX=0` (or
+  `NavProbeIndex::SetEnabled(false)`) turns it off, for comparing.
+- **Replan budget** (`Navigation::TakeReplanSlot`). Agents replan on a timer (NavMeshAgent 0.5 s, NPC
+  0.6 s, click-to-move 0.5 s). A timer replan now asks for a slot first: at most 4 per scene per frame
+  (`Navigation::SetReplanBudget`, or the environment variable `OKAY_NAV_REPLAN_BUDGET`; 0 = no limit, the
+  old behaviour). The others keep their current path and try again next frame. A plan an agent cannot move
+  without (no path yet, a new or moved goal, stuck, a carved hole changed) never waits. The first timer
+  after such a plan is also shortened by a fixed amount per agent (`Navigation::StaggerPhase`, from its
+  instance id), so agents sent off together drift apart (`Navigation::SetStaggerEnabled`, or
+  `OKAY_NAV_REPLAN_STAGGER=0` to turn it off).
+
+Measured (`tests/test_perf_nav_fallback.cpp`, Linux Release build, one core; a 400 m floor with 1,000
+one-metre rocks; the "before" numbers are from main before the change):
+
+| | Before | After |
+|---|---|---|
+| One search, open goal 60 m away | 61-75 ms | 0.42 ms |
+| One search, goal walled off (full 4,096 cells) | 384-457 ms | 2.2 ms |
+| 20 agents, 120 frames: average / worst frame | 43-64 ms / 1,354-1,979 ms | 1.0 ms / 13.5 ms (3.8 ms after the first frame) |
+| 50 agents, 120 frames: average / worst frame | not run (minutes) | 1.5 ms / 29 ms (3.0 ms after the first frame) |
+| Most path searches in one frame after the first (50 agents) | 50 | 4 |
+
+(The first number of each "before" range is the old code run inside the new test with the index, the budget and
+the stagger turned off; the second is the run on main before the change. The first frame of a group still plans
+for every agent.)
+
+The same test checks the paths against values recorded before the change (10 queries in a scene with
+rocks, rotated slabs, a sphere, a capsule, a trigger, a step and a wall), compares 40 more queries with the
+index on and off, moves a wall across a route between two searches, and counts the searches per frame.
+
+Still true: the first frame after a group gets a destination plans for every agent at once (they cannot
+move without a path), and a goal that cannot be reached still costs a full search each time the timer runs
+out. Baking a NavMesh remains far faster (well under 1 ms a search).
+
 ## Components
 
 **Nav Mesh Surface** - the bake settings, the `.okaynav` path, `Bake()` /

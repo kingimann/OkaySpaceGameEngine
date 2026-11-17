@@ -6,6 +6,7 @@
 #include "EditorPanelModels.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 struct ImFont;
 
@@ -17,6 +18,7 @@ namespace oked {
 struct PanelViewHooks {
     bool (*searchField)(const char* id, char* buf, std::size_t bufSize, const char* hint, float width) = nullptr;
     ImFont* headingFont = nullptr;
+    std::uint32_t accent = 0xFFCC793Cu;   // the accent colour packed as IM_COL32 (the editor's first accent, 0.235 0.475 0.800)
 };
 
 okaypanels::ProblemsIntent DrawProblemsBodyImGui(const okaypanels::ProblemsModel& m, okaypanels::ProblemsState& st,
@@ -38,5 +40,12 @@ okaypanels::PostProcessIntent DrawPostProcessBodyImGui(okaypanels::PostProcessMo
 /// Project Settings > Player and > Rendering (each inside its collapsing header).
 okaypanels::PlayerSettingsIntent DrawPlayerSettingsBodyImGui(okaypanels::PlayerSettingsModel& m, const PanelViewHooks& hooks);
 okaypanels::RenderingSettingsIntent DrawRenderingSettingsBodyImGui(okaypanels::RenderingSettingsModel& m, const PanelViewHooks& hooks);
+
+/// The Hierarchy panel's body (docs/own_ui_toolkit.md section 12), drawn from the shared model like the OkayUI port: only the rows in
+/// view are asked for. The editor itself still draws its own Hierarchy (editor/main.cpp DrawHierarchy); this body is the same panel
+/// written against the model, which the comparison test runs against the OkayUI port. Rename is in place here, as in the port (the
+/// editor's own body opens a "Rename Object" box).
+okaypanels::HierarchyIntent DrawHierarchyBodyImGui(const okaypanels::HierarchyModel& m, okaypanels::HierarchyState& st,
+                                                   const PanelViewHooks& hooks);
 
 } // namespace oked

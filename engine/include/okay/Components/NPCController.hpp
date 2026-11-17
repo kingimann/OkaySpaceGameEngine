@@ -299,9 +299,13 @@ public:
             m_lastPos = pos;
             m_repath -= dt;
             float goalMoved = Dist2D(goal, m_pathGoal);
-            if (m_repath <= 0.0f || m_path.empty() || goalMoved > 1.5f) {
+            // A plan it cannot move without runs now; a timer replan waits for a free slot this frame
+            // (Navigation::TakeReplanSlot), and the timer after a must-plan is staggered per NPC.
+            const bool mustPlan = m_path.empty() || goalMoved > 1.5f;
+            if (mustPlan || (m_repath <= 0.0f && Navigation::TakeReplanSlot(*gameObject->scene()))) {
                 m_path = Navigation::FindPath(*gameObject->scene(), pos, goal, 0.4f, gameObject);
-                m_pathIdx = 0; m_pathGoal = goal; m_repath = repathInterval;
+                m_pathIdx = 0; m_pathGoal = goal;
+                m_repath = mustPlan ? repathInterval * (0.5f + 0.5f * Navigation::StaggerPhase(gameObject)) : repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() && Dist2D(pos, m_path[m_pathIdx]) < 0.5f)
                 ++m_pathIdx;

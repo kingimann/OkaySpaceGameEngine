@@ -14,6 +14,7 @@
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
+#include "HierarchyRowModel.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -2272,17 +2273,22 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
-// The Project Settings sections (Player, Physics, Rendering, Tags and Layers) stay on Dear ImGui by default even though the other
-// ported panels are OkayUI by default: their OkayUI ports still draw stray letters and overlaps (owner report 2026-11-17; fix on
-// claude2/okayui-ps-overdraw). They are OkayUI only when asked for by name: OKAY_UI_BACKEND=okayui or OKAY_UI_PROJECT_SETTINGS=okayui.
-bool UseOkayUIProjectSettings() {
+// OkayUI ports that are preview only (not default even though the other ported panels are): they draw with OkayUI only when asked for
+// by name, with their own variable (`var`=okayui) or OKAY_UI_BACKEND=okayui.
+static bool UseOkayUIPreview(const char* var) {
     if (!UseOkayUIBackend()) return false;
     okayuibackend::Backend b = okayuibackend::Backend::ImGui;
-    if (const char* e = std::getenv("OKAY_UI_PROJECT_SETTINGS"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    if (const char* e = std::getenv(var); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
     b = okayuibackend::Backend::ImGui;
     if (const char* e = std::getenv("OKAY_UI_BACKEND"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
     return false;
 }
+// The Project Settings sections (Player, Physics, Rendering, Tags and Layers): preview only, OKAY_UI_PROJECT_SETTINGS=okayui (their
+// OkayUI ports drew stray letters and overlaps under ImGui windows in front; fixed by claude2/okayui-ps-overdraw, not yet seen fixed
+// in a real editor run here).
+bool UseOkayUIProjectSettings() { return UseOkayUIPreview("OKAY_UI_PROJECT_SETTINGS"); }
+// The Hierarchy: preview only, OKAY_UI_HIERARCHY=okayui (one real-editor round; its keyboard arrows in menus are untested).
+bool UseOkayUIHierarchy() { return UseOkayUIPreview("OKAY_UI_HIERARCHY"); }
 // The script editor's code widget (editor/CodeEditorChoice.hpp): OKAY_CODE_EDITOR=own picks our own OkayUI::CodeEdit.
 const codeeditorchoice::Choice g_codeEditorChoice = codeeditorchoice::Parse(std::getenv("OKAY_CODE_EDITOR"));
 #ifdef OKAY_HAVE_OKAYUI
@@ -20265,9 +20271,9 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
     if (ImGui::CalcTextSize(text.c_str()).x <= maxW) return text;
     const char* ell = "\xE2\x80\xA6";
     std::string s = text;
-    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {
-        s.pop_back();
+    while (!s.empty() && ImGui::CalcTextSize((s + ell).c_str()).x > maxW) {   // drop the last character whole (it left a lone first byte)
         while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back();
+        if (!s.empty()) s.pop_back();
     }
     return s.empty() ? std::string(ell) : s + ell;
 }
@@ -20355,7 +20361,7 @@ static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
 struct HierRowResult { bool cut = false, deleteSelection = false, deleteChildren = false, revealSelection = false; };
 
 // Parent To >: every object that is not inside this one (so no cycle), world pose kept.
-static void HierParentToSlot(EditorState& ed, GameObject* node) {
+static void HierParentToSlot(EditorState& ed, GameObject* node, oked::menubar::SlotUI& ui) {
     bool any = false;
     for (const auto& up : ed.scene().Objects()) {
         GameObject* cand = up.get();
@@ -20366,21 +20372,21 @@ static void HierParentToSlot(EditorState& ed, GameObject* node) {
         if (isDescendant) continue;
         if (node->transform->Parent() == cand->transform) continue; // already
         any = true;
-        if (ImGui::MenuItem(cand->name.c_str())) {
+        if (ui.Item(cand->name.c_str())) {
             ed.PushUndo();
             node->transform->SetParent(cand->transform, true);  // keep world pose
             ed.dirty = true;
         }
     }
-    if (!any) ImGui::TextDisabled("(no eligible objects)");
+    if (!any) ui.Note("(no eligible objects)");
 }
 
 // Rig & IK >: IK targets for a character or a model animator, and the humanoid tools for a model.
-static void HierModelToolsSlot(EditorState& ed, GameObject* node) {
+static void HierModelToolsSlot(EditorState& ed, GameObject* node, oked::menubar::SlotUI& ui) {
     if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
-        if (ImGui::BeginMenu("Add IK Target")) {
+        if (ui.BeginMenu("Add IK Target")) {
             auto addLimb = [&](int limb, const char* label) {
-                if (ImGui::MenuItem(label)) {
+                if (ui.Item(label)) {
                     ed.PushUndo();
                     if (GameObject* g = IKTarget::Spawn(ed.scene(), node, limb)) {
                         ed.Select(g); ed.dirty = true;
@@ -20393,25 +20399,25 @@ static void HierModelToolsSlot(EditorState& ed, GameObject* node) {
             addLimb(IKTarget::LeftFoot, "Left Foot");
             addLimb(IKTarget::RightFoot, "Right Foot");
             addLimb(IKTarget::Head, "Head");
-            ImGui::EndMenu();
+            ui.EndMenu();
         }
     }
     if (!node->GetComponent<Character>()) {
         // A skinned humanoid keeps its own mesh + weights: the built-in
         // animations play straight on its skeleton (retargeted by bone name).
         const int hb = okay::CountHumanoidBones(ed.scene(), node);
-        if (hb >= 8 && ImGui::MenuItem("Use Built-in Animations")) {
+        if (hb >= 8 && ui.Item("Use Built-in Animations")) {
             ed.PushUndo();
             std::string log;
             int found = okay::EnableBuiltinAnimations(ed.scene(), node, &log);
             ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
             ed.Select(node); ed.dirty = true;
         }
-        if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
-        if (ImGui::MenuItem("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
-        if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
+        if (hb >= 8) ui.Tip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.");
+        if (ui.Item("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
+        ui.Tip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
+        if (ui.Item("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
+        ui.Tip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
     }
 }
 
@@ -20559,7 +20565,432 @@ static oked::menubar::Host HierEmptyHost(EditorState& ed) {
     return h;
 }
 
+// The Hierarchy's rows as a flat list (editor/HierarchyRowModel.hpp), shared by the Dear ImGui body and the OkayUI port.
+static oked::hierrows::Model& HierRowsModel() { static oked::hierrows::Model m; return m; }
+static GameObject* g_hierRevealFor = nullptr;   // the selection the list was last scrolled to (a new one opens its parents once)
+// One-frame open / close requests (menus, arrow keys, a drop), applied before the rows are built. Requests made while the rows are
+// drawn are kept for the next frame.
+static void HierApplyOpenRequests(EditorState& ed, oked::hierrows::Model& rowsModel) {
+    {
+        auto alive = [&](const GameObject* g) {
+            if (!g) return false;
+            for (const auto& up : ed.scene().Objects()) if (up.get() == g) return true;
+            return false;
+        };
+        if (g_hierExpand) rowsModel.SetAllOpen(ed.scene(), g_hierExpand == 1);
+        if (alive(g_hierExpandRoot)) rowsModel.SetSubtreeOpen(g_hierExpandRoot, g_hierExpandRootVal == 1);
+        if (alive(g_hierOpenNode) && g_hierOpenNode->transform->ChildCount() > 0) rowsModel.SetOpen(g_hierOpenNode, g_hierOpenVal == 1);
+        if (alive(g_hierDropOpen)) rowsModel.SetOpen(g_hierDropOpen, true);
+        g_hierExpand = 0; g_hierExpandRoot = nullptr; g_hierOpenNode = nullptr;
+        g_hierDropOpen = nullptr; g_hierDropOpenSeen = false;
+    }
+}
+// A row (and, when it is part of a multi-selection, the whole selection) dropped on `node`: before it, after it or inside it.
+// Shared by the Dear ImGui body and the OkayUI port of the Hierarchy.
+static void HierDropObjects(EditorState& ed, GameObject* dragged, GameObject* node, oked::DropWhere where) {
+    // Dragging a member of a multi-selection moves the WHOLE selection, in hierarchy order
+    // (a selected parent brings its children). Checks and ordering: InspectorModel.cpp.
+    std::vector<GameObject*> group;
+    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+    else if (dragged) group.push_back(dragged);
+    if (!oked::PlanDrop(ed.scene(), group, node, where).empty()) {
+        ed.PushUndo();
+        // Re-parenting a UI widget: its pixel offset is resolved WITHIN its parent, so a plain
+        // re-parent makes it jump on screen. Remember its screen rect, then nudge its offset back.
+        const float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
+        const float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
+        std::unordered_map<GameObject*, Vec2> oldOrigin;
+        oked::DropHooks hooks;
+        if (where == oked::DropWhere::Inside) {
+            hooks.before = [&](GameObject* mv) {
+                Vec2 o, sz;
+                if (cw > 1.0f && GetUIScreenRect(mv, cw, ch, o, sz)) oldOrigin[mv] = o;
+            };
+            hooks.after = [&](GameObject* mv) {
+                auto it = oldOrigin.find(mv);
+                if (it == oldOrigin.end()) return;
+                UIRect rr = GetUIRect(mv);
+                Vec2 newO, newSz;
+                if (rr.valid && rr.position && GetUIScreenRect(mv, cw, ch, newO, newSz)) {
+                    float sc = UIScaleFor(mv, cw, ch); if (sc < 1e-3f) sc = 1.0f;
+                    rr.position->x += (it->second.x - newO.x) / sc;
+                    rr.position->y += (it->second.y - newO.y) / sc;
+                }
+            };
+        }
+        oked::ApplyDrop(ed.scene(), group, node, where, hooks);
+        if (where == oked::DropWhere::Inside) { g_hierDropOpen = node; g_hierDropOpenSeen = false; }   // open it next frame to show where they went
+        ed.dirty = true;
+    }
+}
+// A file from the Project panel dropped on the row `node` (`ty` = how far down the row, 0..1): a material, a picture, a script, a
+// font, a scene to merge, a model or prefab (a character's look, or a new object beside or inside it).
+static void HierDropAssetOnRow(EditorState& ed, GameObject* node, const std::string& path, float ty) {
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".okaymat") {
+        if (auto* mr = node->GetComponent<MeshRenderer>()) {
+            Material m; if (Material::LoadFromFile(path, m)) {
+                ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true;
+                ConsoleLog("Applied material to " + node->name);
+            }
+        } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
+    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
+        ed.PushUndo();
+        if (auto* im = node->GetComponent<UIImage>())             im->texture = path;
+        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
+        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
+        ed.dirty = true; ConsoleLog("Set texture on " + node->name);
+    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script
+        AttachScriptAsset(ed, node, path);
+        ed.Select(node);
+    } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
+        ed.PushUndo();
+        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
+        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
+        ed.dirty = true; ConsoleLog("Set font on " + node->name);
+    } else if (ext == ".okayscene") {      // MERGE the scene into this one
+        MergeSceneIntoCurrent(ed, path);
+    } else if (const char* k = ImportKindLabel(ext); (k && std::strcmp(k, "model") == 0) || ext == ".okayprefab") {
+        // Drop a model onto a player/NPC: it becomes THE character —
+        // imported as a child, sized/grounded/faced, locomotion clips
+        // wired, and the blocky body hidden.
+        if (k && ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
+        else if (GameObject* made = HierInstantiateAsset(ed, path)) {
+            // Anywhere else: a new object. Middle of the row = its child, near an edge = beside it.
+            if (ty >= 0.30f && ty <= 0.70f) {
+                made->transform->SetParent(node->transform, false);
+                g_hierDropOpen = node; g_hierDropOpenSeen = false;
+            } else oked::ApplyDrop(ed.scene(), {made}, node, ty < 0.30f ? oked::DropWhere::Before : oked::DropWhere::After);
+            ed.Select(made);
+        }
+    }
+}
+// Rows dropped on the empty space under the list: to the top level (a multi-selection moves together).
+static void HierDropObjectsToRoot(EditorState& ed, GameObject* dragged) {
+    std::vector<GameObject*> group;   // a multi-selection moves together
+    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
+    else if (dragged) group.push_back(dragged);
+    bool anyChild = false;
+    for (GameObject* g : group) if (g && g->transform && g->transform->Parent()) anyChild = true;
+    if (anyChild) {
+        ed.PushUndo();
+        for (GameObject* g : oked::PlanDrop(ed.scene(), group, nullptr, oked::DropWhere::Inside))
+            if (g->transform->Parent()) g->transform->SetParent(nullptr, true);
+        ed.dirty = true;
+    }
+}
+// A file dropped on the empty space: a scene merges; a prefab, a model or a picture is added.
+static void HierDropAssetToRoot(EditorState& ed, const std::string& path) {
+    std::string ext;
+    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
+    if (ext == ".okayscene") MergeSceneIntoCurrent(ed, path);
+    else if (GameObject* r = HierInstantiateAsset(ed, path)) ed.Select(r);}
+// The Save-as-Prefab box (Hierarchy > Save As Prefab...): writes a .okayprefab into the project's Assets.
+static void HierPrefabSaveModal(EditorState& ed) {
+    // Save-as-Prefab modal: writes a .okayprefab into the project's Assets so it
+    // can be dragged back in / instantiated anywhere.
+    if (g_prefabSaveTarget) {
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_prefabSaveTarget) { alive = true; break; }
+        if (!alive) g_prefabSaveTarget = nullptr;
+    }
+    if (g_prefabSaveTarget) {
+        if (!ImGui::IsPopupOpen("Save As Prefab")) ImGui::OpenPopup("Save As Prefab");   // open once
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
+                                                   : fs::path(ed.projectDir()) / "Assets";
+            ImGui::Text("Folder: %s", dir.string().c_str());
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();   // once: every frame it took the click from Save and Cancel
+            bool enter = ImGui::InputText("Name", g_prefabNameBuf, sizeof(g_prefabNameBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+            if (enter || ImGui::Button("Save", ImVec2(110, 0))) {
+                if (g_prefabNameBuf[0]) {
+                    fs::create_directories(dir, ec);
+                    fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
+                    if (oked::SaveAsPrefabFile(*g_prefabSaveTarget, out.string()))
+                        ConsoleLog("Saved prefab " + out.string());
+                    else ConsoleLog("Prefab save failed");
+                }
+                g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        }
+    }
+}
+
+// ---- The OkayUI port of the Hierarchy (docs/own_ui_toolkit.md section 12; only with the developer switch OKAY_UI_BACKEND=okayui).
+// The same rows (HierRowsModel), the same menus (HierarchyContextModel.hpp, with Parent To and Rig & IK recorded into entries through
+// menubar::SlotRecorder), the same actions (HierRowAction, HierEmptyAction, the drop helpers above). Only the rows in view are filled.
+
+// The type icon of a row, in the order HierKindIcon decides it.
+static int HierIconKind(GameObject* go) {
+    using namespace okaypanels;
+    if (go->GetComponent<Camera>()) return HierIconCamera;
+    if (go->GetComponent<Light>()) return HierIconLight;
+    if (go->GetComponent<Canvas>()) return HierIconCanvas;
+    if (go->GetComponent<UIButton>()) return HierIconButton;
+    if (go->GetComponent<UIToggle>()) return HierIconToggle;
+    if (go->GetComponent<UISlider>() || go->GetComponent<UIProgressBar>()) return HierIconBar;
+    if (go->GetComponent<UIDropdown>()) return HierIconDropdown;
+    if (go->GetComponent<UIInputField>()) return HierIconField;
+    if (go->GetComponent<UIImage>() || go->GetComponent<UIRawImage>()) return HierIconImage;
+    if (go->GetComponent<UIPanel>() || go->GetComponent<UIScrollView>() || go->GetComponent<UITabs>()) return HierIconPanel;
+    if (go->GetComponent<UIRadialProgress>()) return HierIconRadial;
+    if (go->GetComponent<EventSystem>()) return HierIconEventSystem;
+    if (go->GetComponent<MeshRenderer>()) return HierIconMesh;
+    if (go->GetComponent<TextRenderer>()) return HierIconText;
+    if (go->GetComponent<ParticleSystem>()) return HierIconParticles;
+    if (go->GetComponent<Tilemap>()) return HierIconTilemap;
+    if (go->GetComponent<SpriteRenderer>()) return HierIconSprite;
+    if (go->GetComponent<AudioSource>()) return HierIconAudio;
+    if (go->transform && go->transform->ChildCount() > 0 && go->Components().size() <= 1) return HierIconFolder;
+    return HierIconDot;
+}
+
+// One object's row, as plain values (HierComponentBadges, HierPrefabBadge, the dim and blue text, DrawObjectDiagMarker).
+static void HierFillRow(EditorState& ed, GameObject* go, okaypanels::HierRow& r) {
+    using namespace okaypanels;
+    r.id = (std::uint64_t)(std::uintptr_t)go;
+    r.name = go->name;
+    r.childCount = go->transform ? go->transform->ChildCount() : 0;
+    r.selected = ed.IsSelected(go);
+    r.active = go->active;
+    r.locked = go->editorLocked;
+    r.dim = !go->active || (g_isolate && !go->IsSelfOrDescendantOf(g_isolate));
+    r.prefabBlue = !r.dim && !go->prefabSource.empty();
+    r.icon = HierIconKind(go);
+    if (PrefabTools::IsPrefabInstance(*go)) {
+        if (go->prefabSource.empty()) r.prefab = HierPrefabPart;
+        else {
+            r.prefab = oked::PrefabKindOfFile(go->prefabSource) == oked::PrefabKind::Variant ? HierPrefabVariant : HierPrefabRoot;
+            r.prefabNested = PrefabTools::PrefabRoot(*go) != go;
+            const int n = oked::PrefabOverrideCount(*go);
+            r.prefabChanged = n > 0;
+            oked::PrefabInstanceInfo info;
+            if (oked::DescribePrefabInstance(*go, info))
+                r.prefabTip = oked::PrefabKindLabel(info) + ": " + info.name +
+                              (n ? "\n" + std::to_string(n) + " change" + (n == 1 ? "" : "s") + " from the prefab (select it to see them)" : std::string());
+        }
+    }
+    unsigned b = 0;
+    if (!go->GetComponents<ScriptComponent>().empty()) b |= HierBadgeScript;
+    if (go->GetComponent<Light>()) b |= HierBadgeLight;
+    if (go->GetComponent<Rigidbody2D>() || go->GetComponent<Rigidbody3D>()) b |= HierBadgeRigidbody;
+    if (go->GetComponent<BoxCollider2D>() || go->GetComponent<CircleCollider2D>()) b |= HierBadgeCollider;
+    if (go->GetComponent<Animator>()) b |= HierBadgeAnimator;
+    if (go->GetComponent<ParticleSystem>()) b |= HierBadgeParticles;
+    r.badges = b;
+    r.diag = oked::ObjectDiagLevel(go, &r.diagTip);
+}
+
+// A menu of the editor (menubar entries) in the panel's data form. Parent To and Rig & IK are recorded from their slots; a create
+// category (2D Object, 3D Object, ...) stays one row that opens the editor's own list of it at the pointer (that list has fields in it).
+static void HierPanelMenu(EditorState& ed, GameObject* node, const std::vector<oked::menubar::Entry>& in, std::vector<okaypanels::PanelMenuEntry>& out) {
+    using oked::menubar::Kind;
+    for (const oked::menubar::Entry& e : in) {
+        okaypanels::PanelMenuEntry o;
+        o.id = e.id; o.label = e.label; o.shortcut = e.shortcut; o.tip = e.tip; o.reason = e.reason; o.enabled = e.enabled;
+        switch (e.kind) {
+        case Kind::Item: o.kind = okaypanels::PanelMenuItem; break;
+        case Kind::Toggle: o.kind = okaypanels::PanelMenuToggle; o.checked = e.id == "h.sortaz" && g_hierSort; break;
+        case Kind::Submenu: o.kind = okaypanels::PanelMenuSub; HierPanelMenu(ed, node, e.children, o.children); break;
+        case Kind::Separator: o.kind = okaypanels::PanelMenuSeparator; break;
+        case Kind::Heading: o.kind = okaypanels::PanelMenuHeading; break;
+        case Kind::Slot: continue;
+        case Kind::SlotMenu:
+            if (node && (e.id == "h.parentto" || e.id == "h.modeltools")) {
+                oked::menubar::SlotRecorder rec(e.id);
+                if (e.id == "h.parentto") HierParentToSlot(ed, node, rec); else HierModelToolsSlot(ed, node, rec);
+                o.kind = okaypanels::PanelMenuSub;
+                HierPanelMenu(ed, node, rec.Take(), o.children);
+            } else {
+                o.kind = okaypanels::PanelMenuItem;   // create.*: opens the editor's list of that category
+                o.label += "...";
+            }
+            break;
+        }
+        out.push_back(std::move(o));
+    }
+}
+
+static okaypanels::HierarchyState g_hierOk;        // the OkayUI version's state between frames
+static std::string g_hierCreateSlot;               // a create category picked from an OkayUI menu: its list opens at the pointer
+static GameObject* g_hierCreateParent = nullptr;   // ... for Create Child: the row it was picked on
+static bool g_hierCreateSlotOpen = false;
+
+// Draws the Hierarchy with OkayUI and carries out what was asked. False when OkayUI did not draw (an ImGui popup covers the window):
+// the Dear ImGui body draws this frame instead.
+static bool DrawHierarchyWithOkayUI(EditorState& ed) {
+    namespace P = okaypanels;
+    P::HierarchyState& st = g_hierOk;
+    std::snprintf(st.filter, sizeof st.filter, "%s", g_hierFilter);   // one search text for both versions
+    if (g_hierRename) {   // a rename asked for elsewhere: in place here
+        st.renameId = (std::uint64_t)(std::uintptr_t)g_hierRename; st.renameAge = 0;
+        std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", g_hierRename->name.c_str());
+        g_hierRename = nullptr; g_hierRenameOpen = false;
+    }
+    oked::hierrows::Model& rowsModel = HierRowsModel();
+    HierApplyOpenRequests(ed, rowsModel);
+    GameObject* revealSel = nullptr;
+    if (ed.selected() != g_hierRevealFor) { g_hierRevealFor = ed.selected(); revealSel = g_hierRevealFor; }
+    if (revealSel) rowsModel.OpenAncestors(revealSel);
+    rowsModel.Refresh(ed.scene(), g_hierSort);
+    const std::vector<oked::hierrows::Row>& rows = rowsModel.Rows();
+    const std::vector<GameObject*>& visRows = rowsModel.ObjectRows();
+
+    P::HierarchyModel m;
+    m.sceneName = ed.scene().Name(); m.dirty = ed.dirty; m.objectCount = (int)ed.scene().Objects().size();
+    m.sceneDiag = oked::SceneDiagLevel(&m.sceneDiagTip);
+    m.sortAZ = g_hierSort;
+    m.selectedCount = (int)ed.MultiSelection().size();
+    if (m.selectedCount == 0 && ed.selected()) m.selectedCount = 1;
+    std::vector<GameObject*> hits;
+    if (g_hierFilter[0]) {   // the search: every match, flat (the filter rules are InspectorModel.cpp's)
+        const oked::HierFilter filter = oked::HierFilter::Parse(g_hierFilter);
+        std::unordered_set<const GameObject*> pathHits;
+        if (!filter.PathText().empty()) for (GameObject* g : ed.scene().FindAllByPath(filter.PathText())) pathHits.insert(g);
+        for (const auto& up : ed.scene().Objects()) if (filter.Matches(*up, &pathHits)) hits.push_back(up.get());
+        m.searching = true;
+        m.rowCount = (int)hits.size();
+        m.fillRow = [&](int i, P::HierRow& r) {
+            GameObject* go = hits[(std::size_t)i];
+            HierFillRow(ed, go, r);
+            r.objectIndex = i;
+            for (Transform* t = go->transform ? go->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject) r.path = t->gameObject->name + (r.path.empty() ? "" : " / ") + r.path;
+        };
+    } else {
+        m.rowCount = (int)rows.size();
+        m.fillRow = [&](int i, P::HierRow& r) {
+            const oked::hierrows::Row& row = rows[(std::size_t)i];
+            if (row.header) {
+                r.header = true; r.headerMain = row.section.empty();
+                r.name = P::HierHeaderLabel(row.section, ed.scene().Name());
+                return;
+            }
+            HierFillRow(ed, row.go, r);
+            r.depth = row.depth; r.open = row.open; r.objectIndex = row.objectIndex;
+        };
+        m.activeRow = ed.selected() ? rowsModel.RowOf(ed.selected()) : -1;
+        if (revealSel) m.revealRow = rowsModel.RowOf(revealSel);
+    }
+    m.buildMenu = [&](int kind, std::uint64_t rowId, std::vector<P::PanelMenuEntry>& out) {
+        if (kind == P::HierMenuRow) {
+            GameObject* node = (GameObject*)(std::uintptr_t)rowId;
+            bool alive = false;
+            for (const auto& up : ed.scene().Objects()) if (up.get() == node) { alive = true; break; }
+            if (!alive) return;
+            static GameObject* s_menuFor = nullptr;
+            const bool fresh = s_menuFor != node; s_menuFor = node;
+            HierPanelMenu(ed, node, oked::hiermenu::RowMenu(HierRowState(ed, node, fresh)), out);
+        } else if (kind == P::HierMenuEmpty) HierPanelMenu(ed, nullptr, oked::hiermenu::EmptyMenu(HierEmptyState(ed)), out);
+        else if (kind == P::HierMenuCreate) HierPanelMenu(ed, nullptr, oked::hiermenu::CreatePopup(HierEmptyState(ed)), out);
+    };
+    if (const ImGuiPayload* p = ImGui::GetDragDropPayload(); p && p->IsDataType("ASSET_PATH") && p->Data && p->DataSize > 0) {
+        m.externalDragType = "ASSET_PATH";
+        m.externalDragText.assign((const char*)p->Data, strnlen((const char*)p->Data, (std::size_t)p->DataSize));
+        m.externalDragReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    }
+    P::HierarchyIntent in;
+    if (!oked::DrawHierarchyOkayUI(&g_showHierarchy, m, st, in)) return false;
+    std::snprintf(g_hierFilter, sizeof g_hierFilter, "%s", st.filter);
+
+    // ---- carry out what was asked (the same as the Dear ImGui body)
+    auto obj = [&](std::uint64_t id) -> GameObject* {   // an id back to a live object
+        if (!id) return nullptr;
+        GameObject* g = (GameObject*)(std::uintptr_t)id;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g) return g;
+        return nullptr;
+    };
+    if (GameObject* g = obj(in.select)) ed.Select(g);
+    if (GameObject* g = obj(in.toggle)) ed.ToggleSelect(g);
+    if (GameObject* g = obj(in.rangeTo)) {
+        const std::vector<GameObject*> range = P::HierRange(visRows, ed.selected(), g);
+        if (range.empty()) ed.Select(g);
+        else for (GameObject* r : range) if (!ed.IsSelected(r)) ed.ToggleSelect(r);
+    }
+    if (in.selectAll) {
+        const std::vector<GameObject*>& list = m.searching ? hits : visRows;
+        if (!list.empty()) { ed.Select(list[0]); for (std::size_t i = 1; i < list.size(); ++i) if (!ed.IsSelected(list[i])) ed.ToggleSelect(list[i]); }
+    }
+    if (GameObject* g = obj(in.toggleActive)) { ed.PushUndo(); SetActiveRecursive(g, !g->active); ed.dirty = true; }
+    if (GameObject* g = obj(in.toggleLock)) { ed.PushUndo(); SetLockedRecursive(g, !g->editorLocked); ed.dirty = true; }
+    if (GameObject* g = obj(in.openId)) { if (in.open == 0 || g->transform->ChildCount() > 0) { g_hierOpenNode = g; g_hierOpenVal = in.open == 1 ? 1 : 0; } }
+    if (GameObject* g = obj(in.frame)) { Vec3 p = g->transform->Position(); ed.camTarget = p; ed.cameraPos = {p.x, p.y}; }
+    if (GameObject* g = obj(in.renameId)) { if (!in.renameTo.empty()) { g->name = in.renameTo; ed.dirty = true; } }
+    if (in.dropWhere >= 0 && in.dragged) {
+        GameObject* dragged = obj(in.dragged);
+        if (in.dropWhere == P::HierDropRoot) HierDropObjectsToRoot(ed, dragged);
+        else if (GameObject* t = obj(in.dropTarget))
+            HierDropObjects(ed, dragged, t, in.dropWhere == P::HierDropBefore ? oked::DropWhere::Before
+                                          : in.dropWhere == P::HierDropAfter ? oked::DropWhere::After : oked::DropWhere::Inside);
+    }
+    if (!in.dropAsset.empty()) {
+        if (in.dropWhere == P::HierDropRoot || !in.dropTarget) HierDropAssetToRoot(ed, in.dropAsset);
+        else if (GameObject* t = obj(in.dropTarget))
+            HierDropAssetOnRow(ed, t, in.dropAsset, in.dropWhere == P::HierDropBefore ? 0.1f : in.dropWhere == P::HierDropAfter ? 0.9f : 0.5f);
+    }
+    if (!in.menuId.empty()) {
+        const std::string& id = in.menuId;
+        GameObject* node = in.menuKind == P::HierMenuRow ? obj(in.menuRow) : nullptr;
+        if (id.rfind("create.", 0) == 0 && id.find('/') == std::string::npos) {   // a create category: the editor's list of it
+            g_hierCreateSlot = id; g_hierCreateParent = node; g_hierCreateSlotOpen = true;
+        } else if (in.menuKind == P::HierMenuRow && node) {
+            if (id.rfind("h.parentto/", 0) == 0 || id.rfind("h.modeltools/", 0) == 0) {   // an item recorded from a slot: replay it
+                const bool parentTo = id.rfind("h.parentto/", 0) == 0;
+                oked::menubar::SlotReplayer rep(parentTo ? "h.parentto" : "h.modeltools", id);
+                if (parentTo) HierParentToSlot(ed, node, rep); else HierModelToolsSlot(ed, node, rep);
+            } else if (id == "h.rename") {
+                st.renameId = (std::uint64_t)(std::uintptr_t)node; st.renameAge = 0;
+                std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", node->name.c_str());
+            } else {
+                HierRowResult rr;
+                HierRowAction(ed, node, id, rr);
+                if (rr.cut) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
+                else if (rr.deleteSelection) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                if (rr.deleteChildren) {
+                    const int n = ed.DeleteChildrenOfSelected();
+                    ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");
+                }
+                if (rr.revealSelection) g_hierRevealFor = nullptr;
+            }
+        } else if (id == "h.sortaz") g_hierSort = !g_hierSort;
+        else if (id == "h.expandall") g_hierExpand = 1;
+        else if (id == "h.collapseall") g_hierExpand = 2;
+        else HierEmptyAction(ed, id);
+    }
+    oked::RunPrefabRequests(ed);   // Prefab menu of a row: Revert All / Apply All / Unpack / Update All
+    HierPrefabSaveModal(ed);
+    return true;
+}
+
+// A create category picked in an OkayUI menu: the editor's own list of it, at the pointer (Create Child puts the new object inside).
+// Drawn every frame the OkayUI port is on, also the frames the Dear ImGui body draws instead: this popup covers the panel, which
+// is exactly when OkayUI steps aside, and a popup that is not submitted for a frame never shows.
+static void HierCreateSlotPopup(EditorState& ed) {
+    if (g_hierCreateSlotOpen) { ImGui::OpenPopup("##hiercreateslot"); g_hierCreateSlotOpen = false; }
+    if (ImGui::BeginPopup("##hiercreateslot")) {
+        GameObject* parent = g_hierCreateParent;
+        bool alive = !parent;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == parent) { alive = true; break; }
+        DrawCreateSlot(ed, g_hierCreateSlot, alive ? parent : nullptr);
+        ImGui::EndPopup();
+    } else { g_hierCreateSlot.clear(); g_hierCreateParent = nullptr; }
+}
+
 void DrawHierarchy(EditorState& ed) {
+    if (UseOkayUIHierarchy()) {   // the OkayUI port (above), preview only: OKAY_UI_HIERARCHY=okayui; Dear ImGui stays the default
+        const bool drawn = DrawHierarchyWithOkayUI(ed);
+        HierCreateSlotPopup(ed);
+        if (drawn) return;
+    }
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
     if (!ImGui::Begin("Hierarchy", &g_showHierarchy)) { ImGui::End(); return; }
@@ -20611,11 +21042,18 @@ void DrawHierarchy(EditorState& ed) {
         std::unordered_set<const GameObject*> pathHits;
         if (!filter.PathText().empty())
             for (GameObject* g : ed.scene().FindAllByPath(filter.PathText())) pathHits.insert(g);
-        int hits = 0;
-        for (const auto& up : ed.scene().Objects()) {
-            GameObject* go = up.get();
-            if (!filter.Matches(*go, &pathHits)) continue;
-            ++hits;
+        std::vector<GameObject*> hitList;
+        for (const auto& up : ed.scene().Objects())
+            if (filter.Matches(*up, &pathHits)) hitList.push_back(up.get());
+        const int hits = (int)hitList.size();
+        // Only the results in view are drawn (each is one text line, placed at its own y), as in the tree below.
+        const float rowH = ImGui::GetTextLineHeightWithSpacing();
+        const float listX = ImGui::GetCursorPosX(), listY = ImGui::GetCursorPosY();
+        const oked::hierrows::ClipRange clip =
+            oked::hierrows::VisibleRange(hits, rowH, ImGui::GetScrollY() - listY, ImGui::GetWindowHeight());
+        for (int hi = clip.first; hi < clip.last; ++hi) {
+            GameObject* go = hitList[(std::size_t)hi];
+            ImGui::SetCursorPos(ImVec2(listX, listY + hi * rowH));
             bool sel = ed.IsSelected(go);
             ImGui::PushID(go);
             const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x -
@@ -20655,6 +21093,7 @@ void DrawHierarchy(EditorState& ed) {
             DrawObjectDiagMarker(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopID();
         }
+        ImGui::SetCursorPos(ImVec2(listX, listY + hits * rowH));   // below the last result, drawn or not
         if (hits == 0) ImGui::TextDisabled("No objects match '%s'.", g_hierFilter);
         else           ImGui::TextDisabled("%d match(es)", hits);
         ImGui::EndChild();
@@ -20662,330 +21101,238 @@ void DrawHierarchy(EditorState& ed) {
         return;
     }
 
-    const auto& objs = ed.scene().Objects();
-    // Roots only (children render under their parent); optionally A->Z sorted.
-    std::vector<GameObject*> roots;
-    for (const auto& up : objs)
-        if (up->transform->Parent() == nullptr) roots.push_back(up.get());
-    if (roots.empty()) {
+    // The rows are a flat list kept by a model (editor/HierarchyRowModel.hpp) and rebuilt only when the scene's
+    // objects or parents, the open state or the sort change; only the rows inside the scrolled view are drawn
+    // (Finding 99: drawing all 3,000 rows of a big scene cost about 5 ms every frame).
+    oked::hierrows::Model& rowsModel = HierRowsModel();
+    HierApplyOpenRequests(ed, rowsModel);   // one-frame open / close requests (menus, arrow keys, a drop)
+    // The selection changed this frame: open its parents once so it's visible.
+    GameObject* revealSel = nullptr;
+    if (ed.selected() != g_hierRevealFor) { g_hierRevealFor = ed.selected(); revealSel = g_hierRevealFor; }
+    if (revealSel) rowsModel.OpenAncestors(revealSel);
+    rowsModel.Refresh(ed.scene(), g_hierSort);
+    const std::vector<oked::hierrows::Row>& rows = rowsModel.Rows();
+    const std::vector<GameObject*>& visRows = rowsModel.ObjectRows();   // listed rows in order (arrow keys, Shift+click, Ctrl+A)
+    if (visRows.empty()) {
         EmptyState("o", "Empty scene",
                    "Add objects from the GameObject menu, or right-click here.");
         // Right-click the empty area still offers the usual create menu below.
     }
-    if (g_hierSort)
-        std::sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
-            return a->name < b->name;
-        });
-    // Combined scenes: when the scene contains objects merged from others, group the
-    // roots by source scene (the host/main scene first) and draw a labeled divider at
-    // each boundary, so you can see where every combined scene starts and ends.
-    bool anyMerged = false;
-    for (GameObject* r : roots) if (!r->sourceScene.empty()) { anyMerged = true; break; }
-    if (anyMerged)
-        std::stable_sort(roots.begin(), roots.end(), [](GameObject* a, GameObject* b) {
-            return a->sourceScene < b->sourceScene;   // "" (main) sorts first; groups stay contiguous
-        });
-    int hierRow = 0;                        // visible-row counter for the zebra striping
-    std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
     GameObject* rangeClick = nullptr;       // Shift+click target — resolved after the draw
     bool cutPending = false;                // menu Cut: delete the selection after the draw
     bool deletePending = false;             // menu Delete: the same
     bool deleteKidsPending = false;         // menu Delete Children: done after the draw (the rows below are still being walked)
-    std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
-    // The selection changed this frame: open its parents once so it's visible.
-    static GameObject* s_revealFor = nullptr;
-    GameObject* revealSel = nullptr;
-    if (ed.selected() != s_revealFor) { s_revealFor = ed.selected(); revealSel = s_revealFor; }
-    for (GameObject* go : roots) {
-        if (anyMerged && go->sourceScene != curSceneSection) {
-            curSceneSection = go->sourceScene;
-            std::string lbl = go->sourceScene.empty()
+    // Every row is one text line tall and is placed at its own y, so the rows out of view can be skipped and
+    // the scrollbar still covers the whole list.
+    const float rowH = ImGui::GetTextLineHeightWithSpacing();
+    const float listX = ImGui::GetCursorPosX(), listY = ImGui::GetCursorPosY();
+    const float viewH = ImGui::GetWindowHeight();
+    if (revealSel) {   // selected in the Scene view: scroll the list so its row shows
+        const float rel = ImGui::GetScrollY() - listY;
+        const float want = oked::hierrows::RevealScroll(rowsModel.RowOf(revealSel), rowH, rel, viewH);
+        if (want != rel) ImGui::SetScrollY(want + listY);
+    }
+    const oked::hierrows::ClipRange clip =
+        oked::hierrows::VisibleRange((int)rows.size(), rowH, ImGui::GetScrollY() - listY, viewH);
+    for (int ri = clip.first; ri < clip.last; ++ri) {
+        const oked::hierrows::Row& row = rows[(std::size_t)ri];
+        ImGui::SetCursorPos(ImVec2(listX, listY + ri * rowH));
+        if (row.header) {   // a combined scene's group title
+            std::string lbl = row.section.empty()
                 ? (ed.scene().Name().empty() ? std::string("Main Scene")
                                              : ed.scene().Name() + " (main)")
-                : go->sourceScene;
-            ImU32 col = go->sourceScene.empty() ? IM_COL32(150, 152, 160, 255)
-                                                : IM_COL32(120, 190, 255, 255);
-            ImGui::Spacing();
+                : row.section;
+            ImU32 col = row.section.empty() ? IM_COL32(150, 152, 160, 255)
+                                            : IM_COL32(120, 190, 255, 255);
             ImGui::PushStyleColor(ImGuiCol_Text, col);
             ImGui::TextUnformatted(("    " + lbl).c_str());   // scene section header
             ImGui::PopStyleColor();
-            {   // drawn ▾ in the leading space (the glyph is tofu in the UI font)
-                ImVec2 hmn = ImGui::GetItemRectMin();
+            {   // drawn ▾ in the leading space (the glyph is tofu in the UI font), and a rule under the title
+                ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
                 float fs2 = ImGui::GetFontSize();
                 float cy2 = hmn.y + ImGui::GetTextLineHeight() * 0.52f;
-                ImGui::GetWindowDrawList()->AddTriangleFilled(
+                ImDrawList* hdl = ImGui::GetWindowDrawList();
+                hdl->AddTriangleFilled(
                     ImVec2(hmn.x + 2.0f, cy2 - fs2 * 0.14f),
                     ImVec2(hmn.x + 2.0f + fs2 * 0.42f, cy2 - fs2 * 0.14f),
                     ImVec2(hmn.x + 2.0f + fs2 * 0.21f, cy2 + fs2 * 0.22f), col);
+                hdl->AddLine(ImVec2(hmn.x, hmx.y + 1.0f), ImVec2(hmn.x + ImGui::GetContentRegionAvail().x, hmx.y + 1.0f),
+                             ImGui::GetColorU32(ImGuiCol_Separator));
             }
-            ImGui::Separator();
+            continue;
         }
-        // folding: top-level objects start open, everything deeper starts
-        // closed (a prebuilt UI screen or an imported model no longer floods the list),
-        // and selecting an object opens its parents so it's visible (revealSel, above).
-        std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
+        GameObject* node = row.go;
+        ImGui::SetCursorPosX(listX + row.depth * ImGui::GetStyle().IndentSpacing);
+        {
+            // Rows are drawn flat (no tree push): the model already decided which rows show.
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                       ImGuiTreeNodeFlags_SpanAvailWidth;
-            if (!node->transform->Parent()) flags |= ImGuiTreeNodeFlags_DefaultOpen;
+                                       ImGuiTreeNodeFlags_SpanAvailWidth |
+                                       ImGuiTreeNodeFlags_NoTreePushOnOpen;
             if (ed.IsSelected(node)) flags |= ImGuiTreeNodeFlags_Selected;
             int childCount = node->transform->ChildCount();
             if (childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
-            if (revealSel && childCount > 0 && revealSel != node && revealSel->IsSelfOrDescendantOf(node))
-                ImGui::SetNextItemOpen(true);
-            // Expand All / Collapse All applies to nodes that actually have children.
-            if (g_hierExpand && childCount > 0) ImGui::SetNextItemOpen(g_hierExpand == 1);
-            if (g_hierExpandRoot && childCount > 0 && node->IsSelfOrDescendantOf(g_hierExpandRoot))
-                ImGui::SetNextItemOpen(g_hierExpandRootVal == 1);
-            // Left/Right arrow expand/collapse request from last frame's key press.
-            if (node == g_hierOpenNode && childCount > 0)
-                ImGui::SetNextItemOpen(g_hierOpenVal == 1);
-            if (node == g_hierDropOpen && childCount > 0) { ImGui::SetNextItemOpen(true); g_hierDropOpenSeen = true; }
-            // Dim inactive objects; grey the whole row (and its subtree label).
-            // Isolation dims everything outside the isolated subtree the same way.
-            bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
-            const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
-            if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
-            else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
-            visRows.push_back(node);   // for arrow-key navigation, in draw order
-            // Zebra striping: a whisper-faint band on every other row keeps deep
-            // hierarchies scannable (the count is per visible row, top to bottom).
-            {
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                if ((hierRow++ & 1) != 0)
-                    ImGui::GetWindowDrawList()->AddRectFilled(
-                        ImVec2(ImGui::GetWindowPos().x, p.y),
-                        ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + ImGui::GetFrameHeight()),
-                        IM_COL32(255, 255, 255, 5));
-            }
-            // Show a child count on parents, plus an (off) marker.
-            // The name stops before the eye, the lock and the error badge.
-            char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
-            const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
-            const bool diag = ObjectHasDiag(node);
-            const float nameRoom = ImGui::GetContentRegionAvail().x
-                - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
-                - ImGui::CalcTextSize("     ").x
-                - ImGui::CalcTextSize(tail.c_str()).x
-                - kHierEyeW * 2.0f - 8.0f
-                - (diag ? 22.0f : 0.0f);
-            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
-            bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
-            if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
-            if (dim || prefabRoot) ImGui::PopStyleColor();
-            ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
-            if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
-            {   // drawn type icon in the leading space (after the tree arrow zone)
-                float isz = ImGui::GetFontSize();
-                float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
-                const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
-                HierKindIcon(node, ip, isz, ImGui::GetWindowDrawList());
-                HierPrefabBadge(node, ip, isz, ImGui::GetWindowDrawList());
-            }
-            // Accent bar on the selected row — matches the Inspector's component cards
-            // so the selection reads consistently across the editor.
-            if (ed.IsSelected(node))
+        // Dim inactive objects; grey the whole row (and its subtree label).
+        // Isolation dims everything outside the isolated subtree the same way.
+        bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
+        const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
+        if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+        else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
+        // Zebra striping: a whisper-faint band on every other row keeps deep
+        // hierarchies scannable (the count is per listed row, top to bottom).
+        {
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            if ((row.objectIndex & 1) != 0)
                 ImGui::GetWindowDrawList()->AddRectFilled(
-                    rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            {   // badges only where the name leaves room
-                const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
-                                       ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
-                HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
-            }
-            DrawObjectDiagMarker(node, rowMin, rowMax);
-            HierEye(node, rowMin, rowMax);
-            HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
-            float mx = ImGui::GetIO().MousePos.x;
-            bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
-            bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
-            if (ImGui::IsItemHovered() && inEye)
-                ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
-                                               : "Show (activate) this object and its children");
-            if (ImGui::IsItemHovered() && inLock)
-                ImGui::SetTooltip(node->editorLocked
-                    ? "Unlock: allow selecting this object in the Scene view again"
-                    : "Lock: this object (and children) can't be click-selected in the Scene view");
-            if (ImGui::IsItemClicked()) {
-                if (inEye) {   // the eye hotspot toggles active instead of selecting
-                    ed.PushUndo();
-                    SetActiveRecursive(node, !node->active);
-                    ed.dirty = true;
-                } else if (inLock) {   // the padlock hotspot toggles scene-view lock
-                    ed.PushUndo();
-                    SetLockedRecursive(node, !node->editorLocked);
-                    ed.dirty = true;
-                } else if (ImGui::GetIO().KeyShift && ed.selected()) {
-                    rangeClick = node;   // range select, resolved after the draw pass
-                } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
-                else if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) g_hierPressedMulti = node;   // may turn into a drag of the whole selection: decide on release
-                else ed.Select(node);                                       // single select
-            }
-            // A plain click on one of several selected rows (no drag) selects just that row, on release.
-            if (g_hierPressedMulti == node && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-                const ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 4.0f);   // zero unless it went past the drag threshold
-                if (ImGui::IsItemHovered() && moved.x == 0.0f && moved.y == 0.0f) ed.Select(node);
-                g_hierPressedMulti = nullptr;
-            }
-            // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
-            // it as a sibling (above/below), or onto the middle to RE-PARENT it.
-            if (ImGui::BeginDragDropSource()) {
-                ImGui::SetDragDropPayload("GO_PTR", &node, sizeof(GameObject*));
-                // Dragging a row that's part of a multi-selection carries the whole
-                // group (the drop handler expands it) — say so on the drag label.
-                if (ed.IsSelected(node) && ed.MultiSelection().size() > 1)
-                    ImGui::Text("%s  (+%d more)", node->name.c_str(), (int)ed.MultiSelection().size() - 1);
-                else
-                    ImGui::TextUnformatted(node->name.c_str());
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::BeginDragDropTarget()) {
-                // Where it would land: a line above / below the row (beside it), or the whole row outlined (inside it).
-                // Red when a row would end up inside itself.
-                float ty = (ImGui::GetIO().MousePos.y - rowMin.y) / (rowMax.y - rowMin.y);
-                {
-                    const ImGuiPayload* live = ImGui::GetDragDropPayload();
-                    bool bad = false;
-                    if (live && live->IsDataType("GO_PTR") && live->Data) {
-                        GameObject* dg = *(GameObject**)live->Data;
-                        bad = dg && (dg == node || node->IsSelfOrDescendantOf(dg));
-                    }
-                    const ImU32 col = bad ? IM_COL32(235, 90, 80, 255) : ImGui::GetColorU32(AccentCol(1.0f));
-                    ImDrawList* ddl = ImGui::GetWindowDrawList();
-                    if (ty < 0.30f || ty > 0.70f) {
-                        const float ly = ty < 0.30f ? rowMin.y : rowMax.y;
-                        ddl->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly), col, 2.5f);
-                        ddl->AddCircleFilled(ImVec2(rowMin.x + 4.0f, ly), 3.5f, col);
-                    } else {
-                        ddl->AddRectFilled(rowMin, rowMax, (col & 0x00FFFFFF) | 0x30000000, 3.0f);
-                        ddl->AddRect(rowMin, rowMax, col, 3.0f, 0, 2.0f);
-                    }
+                    ImVec2(ImGui::GetWindowPos().x, p.y),
+                    ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + rowH),
+                    IM_COL32(255, 255, 255, 5));
+        }
+        // Show a child count on parents, plus an (off) marker.
+        // The name stops before the eye, the lock and the error badge.
+        char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
+        const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
+        const bool diag = ObjectHasDiag(node);
+        const float nameRoom = ImGui::GetContentRegionAvail().x
+            - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
+            - ImGui::CalcTextSize("     ").x
+            - ImGui::CalcTextSize(tail.c_str()).x
+            - kHierEyeW * 2.0f - 8.0f
+            - (diag ? 22.0f : 0.0f);
+        const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+        if (childCount > 0) ImGui::SetNextItemOpen(row.open, ImGuiCond_Always);   // the model owns the open state
+        const bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
+        if (childCount > 0 && open != row.open) rowsModel.SetOpen(node, open);   // the arrow was clicked: rows change next frame
+        if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
+        if (dim || prefabRoot) ImGui::PopStyleColor();
+        ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
+        {   // drawn type icon in the leading space (after the tree arrow zone)
+            float isz = ImGui::GetFontSize();
+            float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
+            const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
+            HierKindIcon(node, ip, isz, ImGui::GetWindowDrawList());
+            HierPrefabBadge(node, ip, isz, ImGui::GetWindowDrawList());
+        }
+        // Accent bar on the selected row — matches the Inspector's component cards
+        // so the selection reads consistently across the editor.
+        if (ed.IsSelected(node))
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
+        {   // badges only where the name leaves room
+            const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
+                                   ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
+            HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+        }
+        DrawObjectDiagMarker(node, rowMin, rowMax);
+        HierEye(node, rowMin, rowMax);
+        HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
+        float mx = ImGui::GetIO().MousePos.x;
+        bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
+        bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
+        if (ImGui::IsItemHovered() && inEye)
+            ImGui::SetTooltip(node->active ? "Hide (deactivate) this object and its children"
+                                           : "Show (activate) this object and its children");
+        if (ImGui::IsItemHovered() && inLock)
+            ImGui::SetTooltip(node->editorLocked
+                ? "Unlock: allow selecting this object in the Scene view again"
+                : "Lock: this object (and children) can't be click-selected in the Scene view");
+        if (ImGui::IsItemClicked()) {
+            if (inEye) {   // the eye hotspot toggles active instead of selecting
+                ed.PushUndo();
+                SetActiveRecursive(node, !node->active);
+                ed.dirty = true;
+            } else if (inLock) {   // the padlock hotspot toggles scene-view lock
+                ed.PushUndo();
+                SetLockedRecursive(node, !node->editorLocked);
+                ed.dirty = true;
+            } else if (ImGui::GetIO().KeyShift && ed.selected()) {
+                rangeClick = node;   // range select, resolved after the draw pass
+            } else if (ImGui::GetIO().KeyCtrl) ed.ToggleSelect(node);   // add/remove from the set
+            else if (ed.IsSelected(node) && ed.MultiSelection().size() > 1) g_hierPressedMulti = node;   // may turn into a drag of the whole selection: decide on release
+            else ed.Select(node);                                       // single select
+        }
+        // A plain click on one of several selected rows (no drag) selects just that row, on release.
+        if (g_hierPressedMulti == node && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            const ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 4.0f);   // zero unless it went past the drag threshold
+            if (ImGui::IsItemHovered() && moved.x == 0.0f && moved.y == 0.0f) ed.Select(node);
+            g_hierPressedMulti = nullptr;
+        }
+        // Drag a row to rearrange: drop near a row's top/bottom edge to REORDER
+        // it as a sibling (above/below), or onto the middle to RE-PARENT it.
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("GO_PTR", &node, sizeof(GameObject*));
+            // Dragging a row that's part of a multi-selection carries the whole
+            // group (the drop handler expands it) — say so on the drag label.
+            if (ed.IsSelected(node) && ed.MultiSelection().size() > 1)
+                ImGui::Text("%s  (+%d more)", node->name.c_str(), (int)ed.MultiSelection().size() - 1);
+            else
+                ImGui::TextUnformatted(node->name.c_str());
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+            // Where it would land: a line above / below the row (beside it), or the whole row outlined (inside it).
+            // Red when a row would end up inside itself.
+            float ty = (ImGui::GetIO().MousePos.y - rowMin.y) / (rowMax.y - rowMin.y);
+            {
+                const ImGuiPayload* live = ImGui::GetDragDropPayload();
+                bool bad = false;
+                if (live && live->IsDataType("GO_PTR") && live->Data) {
+                    GameObject* dg = *(GameObject**)live->Data;
+                    bad = dg && (dg == node || node->IsSelfOrDescendantOf(dg));
                 }
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                    GameObject* dragged = *(GameObject**)p->Data;
-                    // Dragging a member of a multi-selection moves the WHOLE selection, in hierarchy order
-                    // (a selected parent brings its children). Checks and ordering: InspectorModel.cpp.
-                    std::vector<GameObject*> group;
-                    if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
-                    else if (dragged) group.push_back(dragged);
-                    const oked::DropWhere where = ty < 0.30f ? oked::DropWhere::Before
-                                                : ty > 0.70f ? oked::DropWhere::After : oked::DropWhere::Inside;
-                    if (!oked::PlanDrop(ed.scene(), group, node, where).empty()) {
-                        ed.PushUndo();
-                        // Re-parenting a UI widget: its pixel offset is resolved WITHIN its parent, so a plain
-                        // re-parent makes it jump on screen. Remember its screen rect, then nudge its offset back.
-                        const float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
-                        const float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
-                        std::unordered_map<GameObject*, Vec2> oldOrigin;
-                        oked::DropHooks hooks;
-                        if (where == oked::DropWhere::Inside) {
-                            hooks.before = [&](GameObject* mv) {
-                                Vec2 o, sz;
-                                if (cw > 1.0f && GetUIScreenRect(mv, cw, ch, o, sz)) oldOrigin[mv] = o;
-                            };
-                            hooks.after = [&](GameObject* mv) {
-                                auto it = oldOrigin.find(mv);
-                                if (it == oldOrigin.end()) return;
-                                UIRect rr = GetUIRect(mv);
-                                Vec2 newO, newSz;
-                                if (rr.valid && rr.position && GetUIScreenRect(mv, cw, ch, newO, newSz)) {
-                                    float sc = UIScaleFor(mv, cw, ch); if (sc < 1e-3f) sc = 1.0f;
-                                    rr.position->x += (it->second.x - newO.x) / sc;
-                                    rr.position->y += (it->second.y - newO.y) / sc;
-                                }
-                            };
-                        }
-                        oked::ApplyDrop(ed.scene(), group, node, where, hooks);
-                        if (where == oked::DropWhere::Inside) { g_hierDropOpen = node; g_hierDropOpenSeen = false; }   // open it next frame to show where they went
-                        ed.dirty = true;
-                    }
+                const ImU32 col = bad ? IM_COL32(235, 90, 80, 255) : ImGui::GetColorU32(AccentCol(1.0f));
+                ImDrawList* ddl = ImGui::GetWindowDrawList();
+                if (ty < 0.30f || ty > 0.70f) {
+                    const float ly = ty < 0.30f ? rowMin.y : rowMax.y;
+                    ddl->AddLine(ImVec2(rowMin.x, ly), ImVec2(rowMax.x, ly), col, 2.5f);
+                    ddl->AddCircleFilled(ImVec2(rowMin.x + 4.0f, ly), 3.5f, col);
+                } else {
+                    ddl->AddRectFilled(rowMin, rowMax, (col & 0x00FFFFFF) | 0x30000000, 3.0f);
+                    ddl->AddRect(rowMin, rowMax, col, 3.0f, 0, 2.0f);
                 }
-                // Drop a Project asset onto an object: a .okaymat applies its look
-                // to the object's Mesh Renderer; an image sets the texture on a
-                // Mesh/Sprite Renderer.
-                if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                    std::string path((const char*)ap->Data);
-                    std::string ext;
-                    if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
-                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-                    if (ext == ".okaymat") {
-                        if (auto* mr = node->GetComponent<MeshRenderer>()) {
-                            Material m; if (Material::LoadFromFile(path, m)) {
-                                ed.PushUndo(); m.ApplyTo(*mr); ed.dirty = true;
-                                ConsoleLog("Applied material to " + node->name);
-                            }
-                        } else ConsoleLog(node->name + " has no Mesh Renderer for the material");
-                    } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
-                        ed.PushUndo();
-                        if (auto* im = node->GetComponent<UIImage>())             im->texture = path;
-                        else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
-                        else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
-                        ed.dirty = true; ConsoleLog("Set texture on " + node->name);
-                    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script
-                        AttachScriptAsset(ed, node, path);
-                        ed.Select(node);
-                    } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
-                        ed.PushUndo();
-                        if (auto* tr = node->GetComponent<TextRenderer>())   tr->fontPath = path;
-                        else if (auto* bt = node->GetComponent<UIButton>())  bt->fontPath = path;
-                        ed.dirty = true; ConsoleLog("Set font on " + node->name);
-                    } else if (ext == ".okayscene") {      // MERGE the scene into this one
-                        MergeSceneIntoCurrent(ed, path);
-                    } else if (const char* k = ImportKindLabel(ext); (k && std::strcmp(k, "model") == 0) || ext == ".okayprefab") {
-                        // Drop a model onto a player/NPC: it becomes THE character —
-                        // imported as a child, sized/grounded/faced, locomotion clips
-                        // wired, and the blocky body hidden.
-                        if (k && ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
-                        else if (GameObject* made = HierInstantiateAsset(ed, path)) {
-                            // Anywhere else: a new object. Middle of the row = its child, near an edge = beside it.
-                            if (ty >= 0.30f && ty <= 0.70f) {
-                                made->transform->SetParent(node->transform, false);
-                                g_hierDropOpen = node; g_hierDropOpenSeen = false;
-                            } else oked::ApplyDrop(ed.scene(), {made}, node, ty < 0.30f ? oked::DropWhere::Before : oked::DropWhere::After);
-                            ed.Select(made);
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
             }
-            // Double-click a row to rename it inline (not on the eye/lock toggles).
-            if (ImGui::IsItemHovered() && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                g_hierRename = node; g_hierRenameOpen = true;
-                std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
-                g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+                const oked::DropWhere where = ty < 0.30f ? oked::DropWhere::Before
+                                            : ty > 0.70f ? oked::DropWhere::After : oked::DropWhere::Inside;
+                HierDropObjects(ed, *(GameObject**)p->Data, node, where);
             }
-            // Right-click context menu per item.
-            if (ImGui::BeginPopupContextItem()) {
-                if (!ed.IsSelected(node)) ed.Select(node);   // keep a multi-selection intact
-                const oked::hiermenu::RowState rowState = HierRowState(ed, node, ImGui::IsWindowAppearing());
-                HierRowResult rowResult;
-                oked::menubar::Host rowHost;
-                rowHost.run = [&](const oked::menubar::Entry& e) { HierRowAction(ed, node, e.id, rowResult); };
-                rowHost.slot = [&](const oked::menubar::Entry& e) {
-                    if (e.id == "h.parentto") HierParentToSlot(ed, node);
-                    else if (e.id == "h.modeltools") HierModelToolsSlot(ed, node);
-                    else if (e.id.rfind("create.", 0) == 0) DrawCreateSlot(ed, e.id, node);   // Create Child >
-                };
-                oked::menubar::DrawEntries(oked::hiermenu::RowMenu(rowState), rowHost);
-                if (rowResult.cut) cutPending = true;                       // deleted after the tree is drawn
-                if (rowResult.deleteSelection) deletePending = true;
-                if (rowResult.deleteChildren) deleteKidsPending = true;
-                if (rowResult.revealSelection) s_revealFor = nullptr;       // open their parents so they show
-                ImGui::EndPopup();
-            }
-            if (open) {
-                std::vector<Transform*> kids(node->transform->Children().begin(),
-                                             node->transform->Children().end());
-                if (g_hierSort)
-                    std::sort(kids.begin(), kids.end(), [](Transform* a, Transform* b) {
-                        return a->gameObject->name < b->gameObject->name;
-                    });
-                for (Transform* child : kids) drawNode(child->gameObject);
-                ImGui::TreePop();
-            }
-        };
-        drawNode(go);
+            // Drop a Project asset onto an object: a .okaymat applies its look
+            // to the object's Mesh Renderer; an image sets the texture on a
+            // Mesh/Sprite Renderer.
+            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
+                HierDropAssetOnRow(ed, node, std::string((const char*)ap->Data), ty);
+            ImGui::EndDragDropTarget();
+        }
+        // Double-click a row to rename it inline (not on the eye/lock toggles).
+        if (ImGui::IsItemHovered() && !inEye && !inLock && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            g_hierRename = node; g_hierRenameOpen = true;
+            std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
+            g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
+        }
+        // Right-click context menu per item.
+        if (ImGui::BeginPopupContextItem()) {
+            if (!ed.IsSelected(node)) ed.Select(node);   // keep a multi-selection intact
+            const oked::hiermenu::RowState rowState = HierRowState(ed, node, ImGui::IsWindowAppearing());
+            HierRowResult rowResult;
+            oked::menubar::Host rowHost;
+            rowHost.run = [&](const oked::menubar::Entry& e) { HierRowAction(ed, node, e.id, rowResult); };
+            rowHost.slot = [&](const oked::menubar::Entry& e) {
+                oked::menubar::ImGuiSlotUI ui;
+                if (e.id == "h.parentto") HierParentToSlot(ed, node, ui);
+                else if (e.id == "h.modeltools") HierModelToolsSlot(ed, node, ui);
+                else if (e.id.rfind("create.", 0) == 0) DrawCreateSlot(ed, e.id, node);   // Create Child >
+            };
+            oked::menubar::DrawEntries(oked::hiermenu::RowMenu(rowState), rowHost);
+            if (rowResult.cut) cutPending = true;                       // deleted after the tree is drawn
+            if (rowResult.deleteSelection) deletePending = true;
+            if (rowResult.deleteChildren) deleteKidsPending = true;
+            if (rowResult.revealSelection) g_hierRevealFor = nullptr;       // open their parents so they show
+            ImGui::EndPopup();
+        }
+        }
     }
-    g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
-    if (g_hierDropOpenSeen) { g_hierDropOpen = nullptr; g_hierDropOpenSeen = false; }
+    ImGui::SetCursorPos(ImVec2(listX, listY + rows.size() * rowH));   // below the last row, drawn or not
+    // Pressed on a multi-selected row that has since scrolled out of view: the release no longer reaches it.
+    if (g_hierPressedMulti && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) g_hierPressedMulti = nullptr;
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     else if (deletePending) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
     if (deleteKidsPending) {
@@ -21044,32 +21391,13 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::BeginDragDropTarget()) {
             ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(AccentCol(0.8f)), 4.0f, 0, 2.0f);   // "drop here"
             // A row dropped here goes to the top level; a scene merges; a prefab, model or picture is added.
-            if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                GameObject* dragged = *(GameObject**)gp->Data;
-                std::vector<GameObject*> group;   // a multi-selection moves together
-                if (dragged && ed.IsSelected(dragged) && ed.MultiSelection().size() > 1) group = ed.MultiSelection();
-                else if (dragged) group.push_back(dragged);
-                bool anyChild = false;
-                for (GameObject* g : group) if (g && g->transform && g->transform->Parent()) anyChild = true;
-                if (anyChild) {
-                    ed.PushUndo();
-                    for (GameObject* g : oked::PlanDrop(ed.scene(), group, nullptr, oked::DropWhere::Inside))
-                        if (g->transform->Parent()) g->transform->SetParent(nullptr, true);
-                    ed.dirty = true;
-                }
-            }
-            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
-                std::string path((const char*)ap->Data);
-                std::string ext;
-                if (auto d = path.find_last_of('.'); d != std::string::npos) ext = Lower(path.substr(d));
-                if (ext == ".okayscene") MergeSceneIntoCurrent(ed, path);
-                else if (GameObject* r = HierInstantiateAsset(ed, path)) ed.Select(r);
-            }
+            if (const ImGuiPayload* gp = ImGui::AcceptDragDropPayload("GO_PTR", ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
+                HierDropObjectsToRoot(ed, *(GameObject**)gp->Data);
+            if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH", ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
+                HierDropAssetToRoot(ed, std::string((const char*)ap->Data));
             ImGui::EndDragDropTarget();
         }
     }
-    g_hierExpand = 0;   // expand/collapse-all is a one-frame request
-    g_hierExpandRoot = nullptr;
     // Right-click empty space to create objects.
     if (ImGui::BeginPopupContextWindow("HierarchyCtx",
             ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {
@@ -21111,40 +21439,7 @@ void DrawHierarchy(EditorState& ed) {
         }
     }
 
-    // Save-as-Prefab modal: writes a .okayprefab into the project's Assets so it
-    // can be dragged back in / instantiated anywhere.
-    if (g_prefabSaveTarget) {
-        bool alive = false;
-        for (const auto& up : ed.scene().Objects()) if (up.get() == g_prefabSaveTarget) { alive = true; break; }
-        if (!alive) g_prefabSaveTarget = nullptr;
-    }
-    if (g_prefabSaveTarget) {
-        if (!ImGui::IsPopupOpen("Save As Prefab")) ImGui::OpenPopup("Save As Prefab");   // open once
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("Save As Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            namespace fs = std::filesystem;
-            std::error_code ec;
-            fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
-                                                   : fs::path(ed.projectDir()) / "Assets";
-            ImGui::Text("Folder: %s", dir.string().c_str());
-            ImGui::SetKeyboardFocusHere();
-            bool enter = ImGui::InputText("Name", g_prefabNameBuf, sizeof(g_prefabNameBuf),
-                                          ImGuiInputTextFlags_EnterReturnsTrue);
-            if (enter || ImGui::Button("Save", ImVec2(110, 0))) {
-                if (g_prefabNameBuf[0]) {
-                    fs::create_directories(dir, ec);
-                    fs::path out = dir / (std::string(g_prefabNameBuf) + ".okayprefab");
-                    if (oked::SaveAsPrefabFile(*g_prefabSaveTarget, out.string()))
-                        ConsoleLog("Saved prefab " + out.string());
-                    else ConsoleLog("Prefab save failed");
-                }
-                g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(110, 0))) { g_prefabSaveTarget = nullptr; ImGui::CloseCurrentPopup(); }
-            ImGui::EndPopup();
-        }
-    }
+    HierPrefabSaveModal(ed);
     ImGui::EndChild();   // ##hiertree
     ImGui::End();
 }
@@ -50281,7 +50576,17 @@ int main(int argc, char** argv) {
                 if (e.type == ET::MouseButtonDown && e.windowId == mainWin.Id() && !mainWin.IsFocused()) mainWin.SetInputFocus();
                 const bool mouseEv = e.type == ET::MouseMove || e.type == ET::MouseButtonDown || e.type == ET::MouseButtonUp ||
                                      e.type == ET::MouseWheel;
-                if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge)) g_edPlat->ProcessEvent(e);
+                // A press or the wheel over an open OkayUI menu or list is OkayUI's alone (as on the SDL path below).
+                static int s_lastMx = 0, s_lastMy = 0;
+                if (e.type == ET::MouseMove && e.windowId == mainWin.Id()) { s_lastMx = e.x; s_lastMy = e.y; }
+                bool okayOverlay = false;
+#ifdef OKAY_HAVE_OKAYUI
+                if (UseOkayUIBackend() && (e.type == ET::MouseButtonDown || e.type == ET::MouseWheel) && e.windowId == mainWin.Id()) {
+                    const int ox = e.type == ET::MouseButtonDown ? e.x : s_lastMx, oy = e.type == ET::MouseButtonDown ? e.y : s_lastMy;
+                    okayOverlay = g_okayRegion.OwnsOverlay((float)ox, (float)oy);
+                }
+#endif
+                if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay) g_edPlat->ProcessEvent(e);
                 if (e.type == ET::Quit) g_quitRequested = true;
                 if (e.type == ET::GamepadAdded) g_pads.Add(e.deviceId);
                 if (e.type == ET::GamepadRemoved) g_pads.Remove(e.deviceId);
@@ -50329,7 +50634,18 @@ int main(int argc, char** argv) {
             // button and stops the game. The game still reads relative motion.
             const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
                 || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
-            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
+            // A press or the wheel over an open OkayUI menu or list (a hosted panel's popup, which OkayUI draws over every ImGui
+            // window) is OkayUI's: ImGui does not get it too, so choosing a menu row over the Scene view does not also click the scene.
+            bool okayOverlay = false;
+#ifdef OKAY_HAVE_OKAYUI
+            if (UseOkayUIBackend() && (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL)) {
+                int ox = 0, oy = 0;
+                if (e.type == SDL_MOUSEBUTTONDOWN) { ox = e.button.x; oy = e.button.y; } else SDL_GetMouseState(&ox, &oy);
+                const Uint32 wid = e.type == SDL_MOUSEBUTTONDOWN ? e.button.windowID : e.wheel.windowID;
+                okayOverlay = wid == mainWin.Id() && g_okayRegion.OwnsOverlay((float)ox, (float)oy);
+            }
+#endif
+            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge) && !okayOverlay)
                 g_edPlat->ProcessSdlEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);
@@ -50721,10 +51037,18 @@ int main(int argc, char** argv) {
                 const bool owns = HostsOkayUI() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
                 const bool keys = HostsOkayUI() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & plat::MouseMask(plat::MouseRight)) != 0, blocked, keys);
+                // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
+                // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
+                const bool held = HostsOkayUI() && !keys && !io.WantTextInput;
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & plat::MouseMask(plat::MouseRight)) != 0, blocked, keys || held);
                 if (HostsOkayUI()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
+                    else if (held) {
+                        std::memcpy(uin.keyDown, h.keyDown, sizeof uin.keyDown);
+                        uin.ctrl = h.ctrl; uin.shift = h.shift;
+                    }
+                    uin.displayW = io.DisplaySize.x; uin.displayH = io.DisplaySize.y;   // popups and menus are kept inside the window
                 }
             }
             OkayUI::SetFont(OkayUI::FontDefault());

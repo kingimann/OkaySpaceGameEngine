@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -73,7 +74,7 @@ bool LineButton(const char* label) {
 }
 
 // The editor's Slate theme values (shared/OkayTheme.hpp) that OkayUI's launcher look does not have, as bytes.
-const UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 251);         // Mix(kRaised, kBase, 0.35), alpha 0.985
+const UI::Color32 kPopupBg = UI::RGBA(35, 39, 48, 255);         // Mix(kRaised, kBase, 0.35), opaque (what lies under a menu must not show through)
 const UI::Color32 kHeader = UI::RGBA(53, 68, 95);               // Mix(kControl, accent, 0.18): a selected row
 const UI::Color32 kHeaderHovered = UI::RGBA(65, 70, 84);        // Mix(kControl, white, 0.07)
 const UI::Color32 kHeaderActive = UI::RGBA(55, 85, 131);        // Mix(kControl, accent, 0.45)
@@ -1106,6 +1107,457 @@ RenderingSettingsResult DrawRenderingSettings(RenderingSettingsModel& m, float x
         res.apply = UI::GetItemRect();
         res.contentHeight = ContentHeight(top);
         UI::PopStyleVar();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Hierarchy -------------------------------------------------------------------------------------------------------------------
+// Written from what the editor's Hierarchy draws and does (editor/main.cpp DrawHierarchy, its row helpers and Dear ImGui's tree
+// node geometry as the editor uses it); the rows, the icons and the rules come from shared/HierarchyPanelModel.hpp.
+
+namespace {
+
+// The Pen of HierarchyPanelModel.hpp on OkayUI's window draw list.
+struct OkPen {
+    const UI::DrawList& dl;
+    void line(float x0, float y0, float x1, float y1, std::uint32_t c, float t) { dl.AddLine(UI::Vec2{x0, y0}, UI::Vec2{x1, y1}, c, t); }
+    void rect(float x0, float y0, float x1, float y1, std::uint32_t c, float r, float t) { dl.AddRect(UI::Vec2{x0, y0}, UI::Vec2{x1, y1}, c, r, t); }
+    void rectFilled(float x0, float y0, float x1, float y1, std::uint32_t c, float r) { dl.AddRectFilled(UI::Vec2{x0, y0}, UI::Vec2{x1, y1}, c, r); }
+    void circle(float cx, float cy, float r, std::uint32_t c, int seg, float t) { dl.AddCircle(UI::Vec2{cx, cy}, r, c, seg, t); }
+    void circleFilled(float cx, float cy, float r, std::uint32_t c, int seg) { dl.AddCircleFilled(UI::Vec2{cx, cy}, r, c, seg); }
+    void triangleFilled(float ax, float ay, float bx, float by, float cx, float cy, std::uint32_t c) {
+        dl.AddTriangleFilled(UI::Vec2{ax, ay}, UI::Vec2{bx, by}, UI::Vec2{cx, cy}, c);
+    }
+    void polyline(const float* xy, int n, std::uint32_t c, bool closed, float t) {
+        UI::Vec2 pts[16];
+        n = std::min(n, 16);
+        for (int i = 0; i < n; ++i) pts[i] = UI::Vec2{xy[i * 2], xy[i * 2 + 1]};
+        dl.AddPolyline(pts, n, c, closed, t);
+    }
+    void arc(float cx, float cy, float r, float a0, float a1, int seg, std::uint32_t c, float t) {
+        dl.PathClear(); dl.PathArcTo(UI::Vec2{cx, cy}, r, a0, a1, seg); dl.PathStroke(c, false, t);
+    }
+    void text(float x, float y, std::uint32_t c, const char* s) { dl.AddText(UI::Vec2{x, y}, c, s); }
+};
+
+// The toolbar's square icon buttons: a frame-tall button with a drawn plus or three dots (editor/EditorWidgets.cpp IconButton),
+// the accent fill while `active`.
+bool ToolIconButton(const char* id, bool plus, bool active, UI::Rect& rect) {
+    const float fh = UI::GetFrameHeight();
+    if (active) {
+        UI::PushStyleColor(UI::Col_Button, UI::ColorMulAlpha(kAccent, 0.90f));
+        UI::PushStyleColor(UI::Col_ButtonHovered, kAccent);
+        UI::PushStyleColor(UI::Col_ButtonActive, UI::ColorMulAlpha(kAccent, 0.80f));
+    }
+    const bool hit = UI::Button(id, UI::Vec2{fh, fh});
+    if (active) UI::PopStyleColor(3);
+    rect = UI::GetItemRect();
+    const bool hot = UI::IsItemHovered();
+    const UI::Color32 col = active ? UI::RGBA(255, 255, 255) : UI::GetColorU32(UI::Col_Text, hot ? 1.0f : 0.8f);
+    const UI::DrawList& dl = UI::GetWindowDrawList();
+    const float cx = rect.x + rect.w * 0.5f, cy = rect.y + rect.h * 0.5f, s = fh * 0.5f;
+    if (plus) {
+        dl.AddLine(UI::Vec2{cx - s * 0.4f, cy}, UI::Vec2{cx + s * 0.4f, cy}, col, 2.0f);
+        dl.AddLine(UI::Vec2{cx, cy - s * 0.4f}, UI::Vec2{cx, cy + s * 0.4f}, col, 2.0f);
+    } else {
+        for (int i = -1; i <= 1; ++i) dl.AddCircleFilled(UI::Vec2{cx + i * s * 0.36f, cy}, s * 0.1f, col);
+    }
+    return hit;
+}
+
+// How wide a menu of these entries is, in Dear ImGui's columns: the longest label, the spacing and the longest shortcut, the spacing
+// (MenuLook adds the padding and the room for a check mark or an arrow).
+float PanelMenuWidth(const std::vector<PanelMenuEntry>& es) {
+    float label = 0.0f, shortcut = 0.0f;
+    for (const PanelMenuEntry& e : es) {
+        label = std::max(label, UI::CalcTextWidth(e.label.c_str()));
+        if (!e.shortcut.empty()) shortcut = std::max(shortcut, UI::CalcTextWidth(e.shortcut.c_str()));
+    }
+    return label + (shortcut > 0.0f ? 12.0f + shortcut : 0.0f) + 12.0f;
+}
+
+// A menu's entries, drawn with OkayUI: rows in the popup body (MenuItem inside a popup), sub-menus to the right (BeginMenu). `top`:
+// the popup's own rows (their ids and rectangles go into the result). The chosen item's id goes to `chosen`.
+void DrawPanelMenu(const std::vector<PanelMenuEntry>& es, std::string& chosen, HierarchyResult* top) {
+    for (const PanelMenuEntry& e : es) {
+        switch (e.kind) {
+        case PanelMenuSeparator:
+            if (top) Divider(); else UI::MenuSeparator();
+            break;
+        case PanelMenuHeading:
+            if (top) UI::TextDisabled(e.label.c_str());
+            else UI::MenuItem(e.label.c_str(), nullptr, false, false);
+            break;
+        case PanelMenuSub:
+            if (!e.enabled) { UI::MenuItem(e.label.c_str(), nullptr, false, false); break; }
+            if (UI::BeginMenu(e.label.c_str())) {
+                if (top) { top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect()); }
+                UI::PushStyleVar(UI::StyleVar_PopupWidth, PanelMenuWidth(e.children) + 40.0f);
+                DrawPanelMenu(e.children, chosen, nullptr);
+                UI::PopStyleVar();
+                UI::EndMenu();
+            } else if (top) { top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect()); }
+            break;
+        default: {
+            const bool hit = UI::MenuItem(e.label.c_str(), e.shortcut.empty() ? nullptr : e.shortcut.c_str(), e.kind == PanelMenuToggle && e.checked, e.enabled);
+            if (top) {
+                top->menuIds.push_back(e.id); top->menuRows.push_back(UI::GetItemRect());
+                if (UI::IsItemHovered() || (!e.enabled && UI::IsMouseHoveringRect(UI::GetItemRectMin(), UI::GetItemRectMax()))) {
+                    if (!e.enabled && !e.reason.empty()) UI::SetTooltip("%s", e.reason.c_str());
+                    else if (!e.tip.empty()) UI::SetTooltip("%s", e.tip.c_str());
+                }
+            }
+            if (hit && e.enabled) chosen = e.id;
+            break;
+        }
+        }
+    }
+}
+
+const UI::Color32 kDimText = UI::RGBA(140, 140, 140);           // ImVec4(0.55, 0.55, 0.55): an object that is off or outside the isolated one
+const UI::Color32 kPrefabText = UI::RGBA(140, 194, 255);        // ImVec4(0.55, 0.76, 1.0): a prefab instance's root
+const UI::Color32 kHeaderMain = UI::RGBA(150, 152, 160);
+const UI::Color32 kHeaderOther = UI::RGBA(120, 190, 255);
+const float kRowTextDy = 1.0f;   // OkayUI's glyphs sit a pixel higher in the line than Dear ImGui's (measured on the comparison pictures)
+
+} // namespace
+
+HierarchyResult DrawHierarchy(const HierarchyModel& m, HierarchyState& st, float x, float y, float w, float h) {
+    HierarchyResult res;
+    HierarchyIntent& in = res.intent;
+    st.rowsFilled = 0;
+    UI::BareNextWindow();
+    if (UI::Begin("Hierarchy##okayui", x, y, w, h)) {
+        EditorRows rows_;
+        const float fh = UI::GetFrameHeight(), fs = UI::GetFontSize();
+        bool openMenu = false;
+        // ---- the toolbar: [+] [search......] [...]
+        if (ToolIconButton("##hcreate", true, false, res.createButton)) { st.menuKind = HierMenuCreate; st.menuRow = 0; openMenu = true; }
+        if (UI::IsItemHovered()) UI::SetTooltip("Create object");
+        UI::SameLine();
+        {
+            FieldColors fc_;
+            const float sw = UI::GetContentRegionAvail().x - (fh + 12.0f);
+            if (UI::SearchField("##hfilter", "Search", st.filter, (int)sizeof st.filter, sw)) in.filterChanged = true;
+            res.search = UI::GetItemRect();
+            if (!st.filter[0] && UI::IsMouseHoveringRect(UI::Vec2{res.search.x, res.search.y}, UI::Vec2{res.search.x + res.search.w, res.search.y + res.search.h}))
+                UI::SetTooltip("%s", kHierSearchTip);
+        }
+        UI::SameLine();
+        if (ToolIconButton("##hmore", false, m.sortAZ, res.optionsButton)) { st.menuKind = HierMenuOptions; st.menuRow = 0; openMenu = true; }
+        if (UI::IsItemHovered()) UI::SetTooltip("Hierarchy options");
+        // ---- the scene strip: its name (and the unsaved marker), the object count at the right
+        UI::Dummy(0.0f, 0.0f);
+        {
+            const std::string title = HierSceneTitle(m.sceneName, m.dirty);
+            UI::TextUnformatted(title.c_str());
+            const UI::Rect tr = UI::GetItemRect();
+            OkPen pen{UI::GetWindowDrawList()};
+            if (m.sceneDiag > 0) {
+                const UI::Vec2 bang = UI::CalcTextSize("!");
+                const float cx = tr.x + UI::CalcTextWidth(title.c_str()) + 16.0f, cy = tr.y + tr.h * 0.5f;
+                HierDrawDiag(pen, m.sceneDiag, cx, cy, bang.x, bang.y);
+                if (!m.sceneDiagTip.empty() && UI::IsMouseHoveringRect(UI::Vec2{cx - 9.0f, cy - 9.0f}, UI::Vec2{cx + 9.0f, cy + 9.0f})) UI::SetTooltip("%s", m.sceneDiagTip.c_str());
+            }
+            char cnt[24]; std::snprintf(cnt, sizeof cnt, "%d", m.objectCount);
+            const float cw = UI::CalcTextWidth(cnt);
+            UI::SameLine();
+            UI::SetCursorScreenPos(UI::Vec2{x + w - 16.0f - cw, tr.y});
+            UI::TextDisabled(cnt);
+            const UI::Rect cr = UI::GetItemRect();
+            if (UI::IsMouseHoveringRect(UI::Vec2{cr.x, cr.y}, UI::Vec2{cr.x + cr.w, cr.y + cr.h})) UI::SetTooltip("Objects in the scene");
+        }
+        Divider();
+        // ---- the list: only the rows in view are asked for and drawn, each at its own y, so the scroll bar covers them all
+        UI::BeginChild("##hiertree", UI::Vec2{0.0f, 0.0f}, UI::ChildFlags_None);
+        // The cursor starts scrolled with the content: the visible top is where it would be unscrolled, the view what is left of it.
+        const float scroll = UI::GetScrollY();
+        const UI::Vec2 at = UI::GetCursorScreenPos();
+        const UI::Vec2 origin{at.x, at.y + scroll};
+        const float listW = UI::GetContentRegionAvail().x, viewH = std::max(0.0f, UI::GetContentRegionAvail().y - scroll);
+        res.list = UI::Rect{origin.x, origin.y, listW, viewH};
+        const float rowH = fs + 8.0f;          // a text line and the spacing (Dear ImGui's GetTextLineHeightWithSpacing)
+        res.rowHeight = rowH;
+        if (m.revealRow >= 0 && !m.searching) {
+            const float want = HierRevealScroll(m.revealRow, rowH, scroll, viewH);
+            if (want != scroll) UI::SetScrollY(want);   // takes effect next frame (the child measures this frame's content first)
+        }
+        res.scrollY = st.scrollY = scroll;
+        const UI::DrawList& dl = UI::GetWindowDrawList();
+        OkPen pen{dl};
+        const float spaceW = UI::CalcTextWidth("     ");
+        const UI::Vec2 bang = UI::CalcTextSize("!");
+        const bool shift = UI::IsKeyDown(UI::KeyId_Shift), ctrl = UI::IsKeyDown(UI::KeyId_Ctrl);
+        const UI::Vec2 mouse = UI::GetMousePos();
+        const UI::DragPayload* live = UI::GetDragDropPayload();
+        const bool liveRow = live && std::strcmp(live->type, "GO_PTR") == 0 && live->size == (int)sizeof(std::uint64_t);
+        std::uint64_t liveId = 0;
+        if (liveRow) std::memcpy(&liveId, live->data, sizeof liveId);
+        // An outside drag (a file from the Project panel): handed to OkayUI's drag and drop for this frame.
+        if (!m.externalDragType.empty() && !(live && !UI::IsDragDropExternal()))
+            UI::SetExternalDragDrop(m.externalDragType.c_str(), m.externalDragText.c_str(), (int)m.externalDragText.size() + 1, m.externalDragReleased);
+        bool overRow = false;
+        HierRow row;
+        const HierClipRange clip = HierVisibleRange(m.rowCount, rowH, scroll, viewH);
+        if (m.rowCount == 0 && !m.searching) {   // the editor's empty-panel note: a diamond, the title, the hint wrapped, all centred
+            res.empty = true;
+            float ty = origin.y + viewH * 0.34f;
+            if (viewH >= 40.0f) {
+                const float gs = fs * 1.6f, cx = origin.x + listW * 0.5f, cy = ty + gs * 0.6f;
+                const UI::Color32 gc = UI::RGBA(102, 107, 120);   // (0.40, 0.42, 0.47)
+                dl.AddQuad(UI::Vec2{cx, cy - gs * 0.55f}, UI::Vec2{cx + gs * 0.55f, cy}, UI::Vec2{cx, cy + gs * 0.55f}, UI::Vec2{cx - gs * 0.55f, cy}, gc, 2.0f);
+                dl.AddCircleFilled(UI::Vec2{cx, cy}, gs * 0.14f, gc);
+                ty += gs * 1.3f + 16.0f;
+                auto centred = [&](const char* t, UI::Color32 c) {
+                    for (const std::string& l : HierWrapWords(t, std::max(40.0f, listW - 16.0f), [](const std::string& x) { return UI::CalcTextWidth(x.c_str()); })) {
+                        dl.AddText(UI::Vec2{origin.x + std::max(0.0f, (listW - UI::CalcTextWidth(l.c_str())) * 0.5f), ty + kRowTextDy}, c, l.c_str());
+                        ty += fs + 8.0f;
+                    }
+                };
+                centred(kHierEmptyTitle, UI::RGBA(168, 173, 184));   // (0.66, 0.68, 0.72)
+                ty += 8.0f;
+                centred(kHierEmptyHint, UI::RGBA(117, 120, 130));    // (0.46, 0.47, 0.51)
+            } else dl.AddText(UI::Vec2{origin.x, origin.y + kRowTextDy}, UI::GetColorU32(UI::Col_TextDisabled), kHierEmptyTitle);
+        }
+        for (int ri = clip.first; ri < clip.last; ++ri) {
+            row = HierRow();
+            if (m.fillRow) m.fillRow(ri, row);
+            ++st.rowsFilled;
+            const float ry = origin.y + ri * rowH - scroll;
+            if (row.header) {   // a combined scene's group title, a rule under it
+                const UI::Color32 hc = row.headerMain ? kHeaderMain : kHeaderOther;
+                dl.AddText(UI::Vec2{origin.x + spaceW * 0.8f, ry}, hc, row.name.c_str());
+                const float cy = ry + fs * 0.52f;
+                dl.AddTriangleFilled(UI::Vec2{origin.x + 2.0f, cy - fs * 0.14f}, UI::Vec2{origin.x + 2.0f + fs * 0.42f, cy - fs * 0.14f},
+                                     UI::Vec2{origin.x + 2.0f + fs * 0.21f, cy + fs * 0.22f}, hc);
+                dl.AddLine(UI::Vec2{origin.x, ry + fs + 1.0f}, UI::Vec2{origin.x + listW, ry + fs + 1.0f}, UI::GetColorU32(UI::Col_Separator), 1.0f);
+                continue;
+            }
+            const float rx = m.searching ? origin.x : origin.x + row.depth * 22.0f;   // Dear ImGui's IndentSpacing in the editor
+            const float rw = origin.x + listW - rx;
+            UI::PushID(ri);
+            UI::SetCursorScreenPos(UI::Vec2{m.searching ? rx - 6.0f : rx, m.searching ? ry - 4.0f : ry});
+            UI::InvisibleButton("##row", m.searching ? rw + 6.0f : rw, m.searching ? fs + 8.0f : fs);
+            const UI::Rect rr = UI::GetItemRect();
+            const bool hovered = UI::IsItemHovered();
+            const bool held = UI::IsItemActive();
+            overRow = overRow || hovered;
+            res.rowIndex.push_back(ri); res.rows.push_back(rr);
+            const float x1 = rr.x + rr.w;
+            const bool inEye = !m.searching && mouse.x >= x1 - kHierEyeW && mouse.x <= x1;
+            const bool inLock = !m.searching && mouse.x >= x1 - kHierEyeW * 2.0f && mouse.x < x1 - kHierEyeW;
+            const bool inArrow = !m.searching && row.childCount > 0 && mouse.x >= rx && mouse.x < rx + fs + 24.0f;
+            res.arrows.push_back(row.childCount > 0 && !m.searching ? UI::Rect{rx, rr.y, fs + 24.0f, rr.h} : UI::Rect{});
+            res.eyes.push_back(m.searching ? UI::Rect{} : UI::Rect{x1 - kHierEyeW, rr.y, kHierEyeW, rr.h});
+            res.locks.push_back(m.searching ? UI::Rect{} : UI::Rect{x1 - kHierEyeW * 2.0f, rr.y, kHierEyeW, rr.h});
+            // the band, the highlight, the arrow
+            if (!m.searching && (row.objectIndex & 1) != 0)
+                dl.AddRectFilled(UI::Vec2{origin.x, ry}, UI::Vec2{origin.x + listW, ry + rowH}, UI::RGBA(255, 255, 255, 5));
+            if (hovered || row.selected)
+                dl.AddRectFilled(UI::Vec2{rr.x, rr.y}, UI::Vec2{x1, rr.y + rr.h}, (held && hovered) ? kHeaderActive : hovered ? kHeaderHovered : kHeader);
+            const UI::Color32 tc = row.dim ? kDimText : row.prefabBlue ? kPrefabText : UI::GetColorU32(UI::Col_Text);
+            float iconX, textX;
+            if (m.searching) { iconX = rx + 2.0f; textX = rx; }
+            else {
+                if (row.childCount > 0) {   // Dear ImGui's arrow: 0.7 of a text line, 12 pixels in
+                    const float r = fs * 0.40f * 0.70f, acx = rx + 12.0f + fs * 0.5f, acy = ry + fs * 0.15f + fs * 0.5f * 0.70f;
+                    if (row.open) dl.AddTriangleFilled(UI::Vec2{acx, acy + 0.750f * r}, UI::Vec2{acx - 0.866f * r, acy - 0.750f * r}, UI::Vec2{acx + 0.866f * r, acy - 0.750f * r}, tc);
+                    else dl.AddTriangleFilled(UI::Vec2{acx + 0.750f * r, acy}, UI::Vec2{acx - 0.750f * r, acy + 0.866f * r}, UI::Vec2{acx - 0.750f * r, acy - 0.866f * r}, tc);
+                }
+                iconX = rx + fs + 24.0f; textX = iconX;
+            }
+            // the name, cut before the eye, the padlock and the problems marker
+            const std::string tail = m.searching ? std::string() : HierTail(row.childCount, row.active);
+            const float room = m.searching ? rw - spaceW - (row.diag ? 28.0f : 6.0f)
+                                           : rw - (fs + 24.0f) - spaceW - UI::CalcTextWidth(tail.c_str()) - kHierEyeW * 2.0f - 8.0f - (row.diag ? 22.0f : 0.0f);
+            const bool renaming = st.renameId != 0 && st.renameId == row.id;
+            const std::string shown = HierEllipsize(row.name, room, [](const std::string& t) { return UI::CalcTextWidth(t.c_str()); });
+            if (!renaming) {
+                const std::string label = shown + tail;
+                dl.AddText(UI::Vec2{textX + spaceW, ry + kRowTextDy}, tc, label.c_str());
+            }
+            if (shown != row.name && hovered && !renaming) UI::SetTooltip("%s", row.name.c_str());
+            {   // the type icon and the prefab mark
+                const float iy = m.searching ? ry : rr.y + (rr.h - fs) * 0.5f;
+                HierDrawIcon(pen, row.icon, iconX, iy, fs);
+                float hv[4];
+                HierDrawPrefabMark(pen, row, iconX, iy, fs, hv);
+                if (hv[2] > hv[0] && !row.prefabTip.empty() && UI::IsMouseHoveringRect(UI::Vec2{hv[0], hv[1]}, UI::Vec2{hv[2], hv[3]})) UI::SetTooltip("%s", row.prefabTip.c_str());
+            }
+            const float ty0 = m.searching ? ry : rr.y, ty1 = m.searching ? ry + fs : rr.y + rr.h;
+            if (m.searching) {   // the parents after the name, dim, so same-named results can be told apart
+                if (!row.path.empty()) {
+                    const float nx = rx + UI::CalcTextWidth(("     " + shown).c_str()) + 12.0f;
+                    dl.AddText(UI::Vec2{nx, ry + 1.0f + kRowTextDy}, UI::GetColorU32(UI::Col_TextDisabled, 0.75f), ("in " + row.path).c_str());
+                }
+                HierDrawBadges(pen, row.badges, x1, ty0, ty1, 0.0f);
+                HierDrawDiag(pen, row.diag, x1 - 48.0f, (ty0 + ty1) * 0.5f, bang.x, bang.y);
+            } else {
+                if (row.selected) dl.AddRectFilled(UI::Vec2{rr.x, rr.y}, UI::Vec2{rr.x + 3.0f, rr.y + rr.h}, kAccent);   // the accent bar
+                const float labelEnd = rx + fs + 24.0f + UI::CalcTextWidth(("     " + shown + tail).c_str()) + 8.0f;
+                HierDrawBadges(pen, row.badges, x1 - kHierEyeW * 2.0f, ty0, ty1, labelEnd);
+                HierDrawDiag(pen, row.diag, x1 - 48.0f, (ty0 + ty1) * 0.5f, bang.x, bang.y);
+                HierDrawEye(pen, row.active, x1, ty0, ty1);
+                HierDrawLock(pen, row.locked, hovered, x1, ty0, ty1);
+                if (hovered && inEye) UI::SetTooltip("%s", HierEyeTip(row.active));
+                if (hovered && inLock) UI::SetTooltip("%s", HierLockTip(row.locked));
+            }
+            if (!row.diagTip.empty() && row.diag > 0 && UI::IsMouseHoveringRect(UI::Vec2{x1 - 57.0f, ty0}, UI::Vec2{x1 - 39.0f, ty1})) UI::SetTooltip("%s", row.diagTip.c_str());
+            // ---- the mouse on the row
+            if (renaming) {   // the name becomes a field: Enter or leaving it renames, Escape gives up
+                UI::SetCursorScreenPos(UI::Vec2{textX + spaceW - 4.0f, ry - 2.0f});
+                FieldColors fc_;
+                UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{4.0f, 1.0f});
+                UI::SetNextItemWidth(std::max(60.0f, x1 - kHierEyeW * 2.0f - (textX + spaceW - 4.0f)));
+                if (st.renameAge == 0) UI::SetKeyboardFocusHere();
+                const bool enter = UI::InputText("##rename", st.renameBuf, (int)sizeof st.renameBuf, UI::InputText_EnterReturnsTrue);
+                UI::PopStyleVar();
+                res.renameField = UI::GetItemRect();
+                const bool escape = UI::GetFrameInput().escape;
+                if (enter || (st.renameAge > 0 && !UI::IsItemFocused() && !escape)) {
+                    if (st.renameBuf[0]) { in.renameId = row.id; in.renameTo = st.renameBuf; }
+                    st.renameId = 0;
+                } else if (escape) st.renameId = 0;
+                else ++st.renameAge;
+            } else if (UI::IsItemClicked(0)) {
+                if (m.searching) {
+                    if (ctrl) in.toggle = row.id; else in.select = row.id;
+                } else {
+                    if (inArrow) { in.openId = row.id; in.open = row.open ? 0 : 1; }
+                    if (inEye) in.toggleActive = row.id;
+                    else if (inLock) in.toggleLock = row.id;
+                    else if (shift && m.activeRow >= 0) in.rangeTo = row.id;
+                    else if (ctrl) in.toggle = row.id;
+                    else if (row.selected && m.selectedCount > 1) { st.pressedMulti = row.id; st.pressX = mouse.x; st.pressY = mouse.y; }   // maybe a drag of them all: decided on release
+                    else in.select = row.id;
+                }
+            }
+            if (!renaming && st.pressedMulti == row.id && UI::IsMouseReleased(0)) {   // a plain click on one of several selected rows
+                const float dx = mouse.x - st.pressX, dy = mouse.y - st.pressY;
+                if (hovered && dx * dx + dy * dy < 16.0f && st.dragging == 0) in.select = row.id;   // Dear ImGui's 4-pixel drag threshold
+                st.pressedMulti = 0;
+            }
+            if (!renaming && hovered && UI::IsMouseDoubleClicked(0)) {
+                if (m.searching) in.frame = row.id;
+                else if (!inEye && !inLock && !inArrow) {
+                    st.renameId = row.id; st.renameAge = 0; in.renameBegan = row.id;
+                    std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", row.name.c_str());
+                }
+            }
+            if (!renaming && hovered && UI::IsMouseReleased(1) && st.menuKind == HierMenuNone) {   // its right-click menu (it selects the row first)
+                if (!row.selected) in.select = row.id;
+                st.menuKind = HierMenuRow; st.menuRow = row.id; openMenu = true;
+            }
+            // ---- drag and drop: a row is a source; a row takes a dropped row (above, inside or below) or a file
+            if (!renaming && !inEye && !inLock && UI::BeginDragDropSource()) {
+                UI::SetDragDropPayload("GO_PTR", &row.id, (int)sizeof row.id);
+                UI::SetDragDropPreview(HierDragLabel(row.name, row.selected, m.selectedCount).c_str());
+                st.dragging = row.id;
+                UI::EndDragDropSource();
+            }
+            if (!m.searching && UI::BeginDragDropTarget(UI::DragDrop_NoDefaultRect)) {
+                const float t = (mouse.y - rr.y) / std::max(1.0f, rr.h);
+                const int where = HierDropZone(t);
+                const bool bad = liveRow && liveId == row.id;   // onto itself (the host refuses a drop into its own children too)
+                const UI::Color32 col = bad ? UI::RGBA(235, 90, 80) : kAccent;
+                if (where != HierDropInside) {   // a line above or below the row, or the row outlined
+                    const float ly = where == HierDropBefore ? rr.y : rr.y + rr.h;
+                    dl.AddLine(UI::Vec2{rr.x, ly}, UI::Vec2{x1, ly}, col, 2.5f);
+                    dl.AddCircleFilled(UI::Vec2{rr.x + 4.0f, ly}, 3.5f, col);
+                } else {
+                    dl.AddRectFilled(UI::Vec2{rr.x, rr.y}, UI::Vec2{x1, rr.y + rr.h}, (col & 0x00FFFFFFu) | 0x30000000u, 3.0f);
+                    dl.AddRect(UI::Vec2{rr.x, rr.y}, UI::Vec2{x1, rr.y + rr.h}, col, 3.0f, 2.0f);
+                }
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("GO_PTR")) {
+                    if (p->size == (int)sizeof(std::uint64_t)) {
+                        std::uint64_t dragged = 0; std::memcpy(&dragged, p->data, sizeof dragged);
+                        in.dragged = dragged; in.dropTarget = row.id; in.dropWhere = where;
+                    }
+                }
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) {
+                    in.dropAsset.assign((const char*)p->data, strnlen((const char*)p->data, (std::size_t)std::max(0, p->size)));
+                    in.dropTarget = row.id; in.dropWhere = where;
+                }
+                UI::EndDragDropTarget();
+            }
+            UI::PopID();
+        }
+        // below the last row, drawn or not: the footer of the search, or the space that takes drops to the top level
+        UI::SetCursorScreenPos(UI::Vec2{origin.x, origin.y + m.rowCount * rowH - scroll});
+        if (m.searching) {
+            const std::string foot = HierSearchFooter(m.rowCount, st.filter);
+            UI::TextDisabled(foot.c_str());
+        } else {
+            const float avail = origin.y + viewH - (origin.y + m.rowCount * rowH - scroll);
+            UI::InvisibleButton("##hierempty", std::max(1.0f, listW), std::max(24.0f, avail - 24.0f));   // (Dear ImGui: the room less twice the spacing, and its own)
+            res.emptyArea = UI::GetItemRect();
+            if (UI::BeginDragDropTarget(UI::DragDrop_NoDefaultRect)) {
+                const UI::Rect er = res.emptyArea;
+                dl.AddRect(UI::Vec2{er.x, er.y}, UI::Vec2{er.x + er.w, er.y + er.h}, UI::ColorMulAlpha(kAccent, 0.8f), 4.0f, 2.0f);
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("GO_PTR")) {
+                    if (p->size == (int)sizeof(std::uint64_t)) { std::memcpy(&in.dragged, p->data, sizeof in.dragged); in.dropTarget = 0; in.dropWhere = HierDropRoot; }
+                }
+                if (const UI::DragPayload* p = UI::AcceptDragDropPayload("ASSET_PATH")) {
+                    in.dropAsset.assign((const char*)p->data, strnlen((const char*)p->data, (std::size_t)std::max(0, p->size)));
+                    in.dropTarget = 0; in.dropWhere = HierDropRoot;
+                }
+                UI::EndDragDropTarget();
+            }
+            // right-click the empty space: the create menu
+            if (!overRow && st.menuKind == HierMenuNone && UI::IsMouseReleased(1) &&
+                UI::IsMouseHoveringRect(UI::Vec2{origin.x, origin.y}, UI::Vec2{origin.x + listW, origin.y + viewH})) {
+                st.menuKind = HierMenuEmpty; st.menuRow = 0; openMenu = true;
+            }
+        }
+        if (!UI::IsMouseDown(0)) st.dragging = 0;
+        if (st.pressedMulti && UI::IsMouseReleased(0)) st.pressedMulti = 0;   // the pressed row scrolled away
+        UI::EndChild();
+        // ---- the keys, while the panel has the keyboard and no field does
+        if (m.focused && st.renameId == 0 && !UI::WantsTextInput() && m.rowCount > 0) {
+            if (!m.searching && m.activeRow >= 0) {
+                auto objectAt = [&](int from, int step) -> std::uint64_t {   // the next object row (headers skipped)
+                    for (int i = from + step; i >= 0 && i < m.rowCount; i += step) {
+                        HierRow r; if (m.fillRow) m.fillRow(i, r); ++st.rowsFilled;
+                        if (!r.header) return r.id;
+                    }
+                    return 0;
+                };
+                if (UI::IsKeyPressed(UI::KeyId_Down)) { if (std::uint64_t id = objectAt(m.activeRow, 1)) in.select = id; }
+                else if (UI::IsKeyPressed(UI::KeyId_Up)) { if (std::uint64_t id = objectAt(m.activeRow, -1)) in.select = id; }
+                HierRow cur; if (m.fillRow) m.fillRow(m.activeRow, cur); ++st.rowsFilled;
+                if (UI::IsKeyPressed(UI::KeyId_Right) && cur.childCount > 0) { in.openId = cur.id; in.open = 1; }
+                else if (UI::IsKeyPressed(UI::KeyId_Left)) { in.openId = cur.id; in.open = 0; }
+                if (UI::IsKeyPressed(UI::KeyId_F2, false)) {
+                    st.renameId = cur.id; st.renameAge = 0; in.renameBegan = cur.id;
+                    std::snprintf(st.renameBuf, sizeof st.renameBuf, "%s", cur.name.c_str());
+                }
+            }
+            if (UI::IsKeyDown(UI::KeyId_Ctrl) && UI::IsKeyPressed(UI::KeyId_A, false)) in.selectAll = true;
+        }
+        // ---- the open menu (one popup: the row menu, the empty-space menu, the [+] menu or the options)
+        if (openMenu) UI::OpenPopup("##hiermenu");
+        if (st.menuKind != HierMenuNone) {
+            std::vector<PanelMenuEntry> entries;
+            if (st.menuKind == HierMenuOptions) entries = HierOptionsMenu(m.sortAZ);
+            else if (m.buildMenu) m.buildMenu(st.menuKind, st.menuRow, entries);
+            MenuLook look_(PanelMenuWidth(entries));
+            UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{12.0f, 8.0f});
+            UI::PushStyleVar(UI::StyleVar_PopupPadding, UI::Vec2{16.0f, 12.0f});   // Dear ImGui's popup padding (the rows reach half the spacing past it)
+            if (UI::BeginPopup("##hiermenu")) {
+                std::string chosen;
+                DrawPanelMenu(entries, chosen, &res);
+                res.menu = UI::Rect{};
+                if (!res.menuRows.empty()) {
+                    const UI::Rect a = res.menuRows.front(), b = res.menuRows.back();
+                    res.menu = UI::Rect{a.x, a.y, a.w, b.y + b.h - a.y};
+                }
+                if (!chosen.empty()) { in.menuId = chosen; in.menuKind = st.menuKind; in.menuRow = st.menuRow; }
+                UI::EndPopup();
+            }
+            UI::PopStyleVar(2);
+            if (!UI::IsPopupOpen("##hiermenu")) { st.menuKind = HierMenuNone; st.menuRow = 0; }
+        }
     }
     UI::End();
     return res;

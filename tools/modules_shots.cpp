@@ -4,12 +4,12 @@
 // SDL surface: no window, no editor, no GPU. The look is ImGui's default dark style and built-in font, NOT the editor's
 // own skin; the rows, the order, what is locked and the texts are the real ones. Not part of the CMake build; build and
 // run it by hand (<imgui> is the folder CMake fetched Dear ImGui into, for example build/_deps/imgui-src; <build> a
-// configured build tree holding libokay_engine.a and libokay_crypto.a):
+// configured build tree; only its engine/modules_enabled.cpp is used, so no engine build is needed):
 //
 //   g++ -std=c++17 -O1 -Ieditor -Iengine/include -Ishared -isystem /usr/include/SDL2 -isystem <imgui> -isystem <imgui>/backends \
 //       tools/modules_shots.cpp <imgui>/imgui.cpp <imgui>/imgui_draw.cpp <imgui>/imgui_tables.cpp <imgui>/imgui_widgets.cpp \
-//       <imgui>/backends/imgui_impl_sdlrenderer2.cpp <build>/engine/libokay_engine.a <build>/engine/libokay_crypto.a \
-//       -lSDL2 -lsodium -lpthread -ldl -o modules_shots
+//       <imgui>/backends/imgui_impl_sdlrenderer2.cpp engine/src/Modules/ModuleManifest.cpp engine/src/Modules/ModuleRegistry.cpp <build>/engine/modules_enabled.cpp \
+//       -lSDL2 -o modules_shots
 //   mkdir -p out && ./modules_shots out                       # writes out/*.bmp
 //   for b in out/*.bmp; do convert "$b" -fuzz 1% -trim +repage -bordercolor "#1a1c20" -border 14 "${b%.bmp}.png"; done
 //
@@ -18,6 +18,7 @@
 #include <imgui.h>
 #include "imgui_impl_sdlrenderer2.h"
 #include "ModulesPanelUI.hpp"
+#include "OkayTheme.hpp"   // the editor's own Slate skin (shared/OkayTheme.hpp)
 
 #include <cfloat>
 #include <cstdio>
@@ -26,7 +27,7 @@
 
 static SDL_Surface* g_surface = nullptr;
 static SDL_Renderer* g_renderer = nullptr;
-static const int W = 960, H = 640;
+static const int W = 960, H = 820;
 static std::string g_outDir;
 
 static void Capture(const std::string& file, const std::function<void()>& body) {
@@ -71,6 +72,15 @@ int main(int argc, char** argv) {
     ImFontConfig fc; fc.SizePixels = 16.0f;
     io.Fonts->AddFontDefault(&fc);
     ImGui::StyleColorsDark();
+    {   // the editor's own look: ApplyTheme() in editor/main.cpp (Slate metrics and colours, default "Classic" accent)
+        ImGuiStyle& s = ImGui::GetStyle();
+        s.WindowPadding = ImVec2(16, 12); s.FramePadding = ImVec2(12, 8); s.ItemSpacing = ImVec2(12, 8);
+        s.ItemInnerSpacing = ImVec2(8, 6); s.CellPadding = ImVec2(10, 6); s.IndentSpacing = 22.0f;
+        s.ScrollbarSize = 14.0f; s.GrabMinSize = 16.0f; s.WindowBorderSize = 0.0f; s.FrameBorderSize = 0.0f; s.PopupBorderSize = 1.0f;
+        okaytheme::ApplySlateMetrics(s);
+        okaytheme::ApplySlateColors(s, ImVec4(0.235f, 0.475f, 0.800f, 1.0f));
+        s.Colors[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
+    }
     ImGui_ImplSDLRenderer2_Init(g_renderer);
 
     auto& reg = okay::ModuleRegistry::Get();
@@ -118,8 +128,8 @@ int main(int argc, char** argv) {
                 okaymod::DrawPresetButtons(sel);
                 ImGui::TextDisabled("%s", okaymod::SummaryText(sel, total).c_str());
                 okaymod::DrawChecklist(sel, &usage, note, 440.0f);
-                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "%s", note.c_str());
-                ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f),
+                okaymod::WrappedColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), note);
+                okaymod::WrappedColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f),
                                    "The open scene uses 1 object(s) of a module that is off: Networking. They stay in the scene and are left out of the exported game.");
             });
         });

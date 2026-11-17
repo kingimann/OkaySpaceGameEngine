@@ -27,7 +27,16 @@ inline bool DrawPresetButtons(Selection& sel) {
     return changed;
 }
 
-/// "27 of 40 modules are on" and which preset that is.
+/// Text in a colour, wrapped to the window (long messages are never clipped).
+inline void WrappedColored(const ImVec4& col, const std::string& text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+}
+
+/// "27 of 40 modules are on" (the always-on core counts) and which preset that is.
 inline std::string SummaryText(const Selection& sel, size_t total) {
     size_t on = 0;
     for (auto& r : sel.Rows()) if (r.on) ++on;
@@ -80,12 +89,6 @@ inline bool DrawChecklist(Selection& sel, const std::map<std::string, int>* usag
             if (!needs.empty()) tip += "\nAlso needs: " + needs;
             ImGui::SetTooltip("%s", tip.c_str());
         }
-        ImGui::SameLine(250.0f);
-        {   // one line: long descriptions are cut here and shown whole in the tooltip above
-            std::string d = r.description;
-            if (d.size() > 52) d = d.substr(0, 49) + "...";
-            ImGui::TextDisabled("%s", d.c_str());
-        }
         if (usage) {
             auto it = usage->find(r.name);
             if (it != usage->end()) {
@@ -93,6 +96,12 @@ inline bool DrawChecklist(Selection& sel, const std::map<std::string, int>* usag
                 ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.95f, 1.0f), "  used by %d object%s", it->second, it->second == 1 ? "" : "s");
             }
         }
+        // The description on its own line under the title, wrapped to the list width (never cut).
+        ImGui::Indent(26.0f);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", r.description.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Unindent(26.0f);
         ImGui::PopID();
     }
     ImGui::EndChild();

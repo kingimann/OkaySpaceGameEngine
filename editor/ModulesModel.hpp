@@ -142,7 +142,7 @@ public:
         std::vector<Row> rows;
         for (auto& e : reg_->All()) {
             const auto& m = e.manifest;
-            if (m.core) continue;     // core is not listed
+            if (m.core) continue;     // core goes first, below
             Row r;
             r.name = m.name; r.title = m.title; r.area = m.area; r.description = m.description;
             r.requires_ = m.requires_;
@@ -161,6 +161,15 @@ public:
         }
         std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
             return a.area != b.area ? a.area < b.area : a.title < b.title; });
+        // The core is always on: shown first, ticked and greyed, with the reason as its tooltip.
+        for (auto& e : reg_->All()) {
+            if (!e.manifest.core) continue;
+            Row r;
+            r.name = e.manifest.name; r.title = e.manifest.title; r.area = "Always on";
+            r.description = e.manifest.description; r.on = true; r.core = true; r.locked = true;
+            r.lockReason = "Always on: every other module is built on the core, so it cannot be turned off.";
+            rows.insert(rows.begin(), r);
+        }
         return rows;
     }
     /// "also needs: Health and damage, Interaction" for a row (titles, not ids).

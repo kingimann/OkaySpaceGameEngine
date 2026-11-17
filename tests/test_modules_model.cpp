@@ -43,10 +43,11 @@ int main() {
         CHECK(sel.Set("weapons", false).ok);
         CHECK(sel.Set("health_damage", false).ok && !sel.IsOn("health_damage"));
         CHECK(!sel.Set("no_such_module", true).ok);
-        CHECK(sel.IsOn("core"));                           // core cannot be switched off (not even listed)
+        CHECK(sel.IsOn("core"));                           // core cannot be switched off
         auto rows = sel.Rows();
         CHECK(!rows.empty());
-        for (auto& r : rows) CHECK(r.name != "core");
+        CHECK(rows[0].name == "core" && rows[0].on && rows[0].locked && !rows[0].lockReason.empty());   // core: first, ticked, greyed
+        CHECK(!sel.Set("core", false).ok && sel.IsOn("core"));
         sel.Set("weapons", true);
         bool sawLocked = false;
         for (auto& r : sel.Rows()) if (r.name == "health_damage") sawLocked = r.locked && r.lockReason.find("weapons") != std::string::npos;

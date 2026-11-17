@@ -19567,7 +19567,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
         ImGui::TextDisabled("%s", okaymod::SummaryText(sel, sel.Rows().size()).c_str());
         if (ImGui::TreeNode("Choose modules one by one##npmods")) {
             changed |= okaymod::DrawChecklist(sel, nullptr, f.modulesNote, 120.0f);
-            if (!f.modulesNote.empty()) ImGui::TextColored(amber, "%s", f.modulesNote.c_str());
+            if (!f.modulesNote.empty()) okaymod::WrappedColored(amber, f.modulesNote);
             ImGui::TreePop();
         }
         if (changed) { f.modules = sel.ToText(); f.modulesTouched = true; }
@@ -19975,10 +19975,13 @@ static void DrawModulesSettings(EditorState& ed) {
     bool changed = okaymod::DrawPresetButtons(sel);
     ImGui::TextDisabled("%s", okaymod::SummaryText(sel, sel.Rows().size()).c_str());
     changed |= okaymod::DrawChecklist(sel, &usage, g_modulesNote, 260.0f);
-    if (!g_modulesNote.empty()) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "%s", g_modulesNote.c_str());
-    for (auto& u : okaymod::UsedButOff(sel, usage))
-        ImGui::TextColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f), "The open scene uses %d object(s) of a module that is off: %s. They stay in the scene and are left out of the exported game.",
-                           u.second, okay::ModuleRegistry::Get().Find(u.first) ? okay::ModuleRegistry::Get().Find(u.first)->manifest.title.c_str() : u.first.c_str());
+    if (!g_modulesNote.empty()) okaymod::WrappedColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), g_modulesNote);
+    for (auto& u : okaymod::UsedButOff(sel, usage)) {
+        const auto* mi = okay::ModuleRegistry::Get().Find(u.first);
+        okaymod::WrappedColored(ImVec4(0.96f, 0.55f, 0.50f, 1.0f),
+            "The open scene uses " + std::to_string(u.second) + " object(s) of a module that is off: " + (mi ? mi->manifest.title : u.first) +
+            ". They stay in the scene and are left out of the exported game.");
+    }
     if (changed) { g_project.modules = sel.ToText(); SaveProjectSettings(); }
     if (g_project.modules.empty()) ImGui::TextDisabled("Every module is on (the saved file has no modules line, like a project from before modules).");
 }

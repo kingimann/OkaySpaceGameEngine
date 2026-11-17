@@ -579,6 +579,9 @@ int main() {
             chk("muted on panel", th.muted, th.panel); chk("muted on panel bottom", th.muted, th.panelBottom);
             chk("button text on button", th.buttonText, th.button); chk("button text on hover", th.buttonText, th.buttonHover);
             chk("button text on pressed", th.buttonText, th.buttonPressed);
+            if (t.name == "Military" || t.name == "Glass") {   // these two ask for more: labels at 7 : 1
+                for (const Color& bg : {th.button, th.buttonHover, th.buttonPressed}) if (UITheme::Contrast(th.buttonText, bg) < 7.0f) { ++bad; std::printf("  look %s: button label %.2f, wants 7\n", t.name.c_str(), UITheme::Contrast(th.buttonText, bg)); }
+            }
             // and on the real widgets of a screen built with the look
             for (const char* id : {"main_menu", "settings", "hud_shooter"}) {
                 Scene sc("c"); UIScreens::Build(sc, id, 0, t.name);

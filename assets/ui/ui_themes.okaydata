@@ -42,10 +42,12 @@ tags = neon,glow,cyber
 
 [theme Glass]
 preset = Glass
+labelContrast = 7
 tags = glass,blur,soft
 
 [theme Military]
 preset = Military
+labelContrast = 7
 tags = military,olive,tactical
 
 [theme Horror]

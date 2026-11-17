@@ -267,5 +267,23 @@ int main(int argc, char** argv) {
         CHECK(sheetB.SavePNG(dir + "/screens-contact-sheet-varied-looks.png"));
     }
 
+    {   // a phone screen drawn below 1x canvas scale: a button's body is one flat fill, with no stripes of edge or shadow rows inside it (they were drawn as
+        // whole-pixel rows scaled to several pixels each)
+        Shot sh = Render(720, 1280, [&](Scene& s) { UIScreens::Build(s, "mobile_menu", 0, "Midnight Blue"); });
+        CHECK(sh.ok);
+        if (sh.ok) {
+            for (const std::pair<int, int>& band : {std::make_pair(524, 576), std::make_pair(828, 856), std::make_pair(608, 650)}) {   // Play, Quit, Levels (x = 230: left of the label)
+                int lo = 255, hi = 0;
+                for (int y = band.first; y <= band.second; ++y) {
+                    const Color c = sh.img.GetPixel(230, y);
+                    const int v = (int)(c.b * 255.0f + 0.5f);
+                    lo = std::min(lo, v); hi = std::max(hi, v);
+                }
+                std::printf("  mobile_menu button rows %d..%d: blue channel %d..%d\n", band.first, band.second, lo, hi);
+                CHECK(hi - lo <= 8);
+            }
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

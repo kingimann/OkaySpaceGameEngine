@@ -153,7 +153,10 @@ struct FloatRun {
             Rect q{(int)std::lround(x), (int)std::lround(y), (int)std::lround(w), (int)std::lround(h)};
             if (q.w > 0 && q.h > 0) ren->FillRect(&q);
         } else {
-            FRect q{x, y, w, h};
+            // A hundredth of a device pixel of bias, as in FillCoverage: a software renderer truncates float rects, and x / S * S can land just below x,
+            // which left a one-pixel gap between neighbouring strips (hairlines across gradient bars and panels at 3x).
+            const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+            FRect q{x + 0.01f / S, y + 0.01f / S, w + 0.01f / S, h + 0.01f / S};
             ren->FillRectF(&q);
         }
         on = false;
@@ -1118,6 +1121,12 @@ public:
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override {
         m_r = r; m_g = g; m_b = b; m_a = a;
         m_in.SetDrawColor(r, g, b, a);
+    }
+    // A float rect (the one-device-pixel runs of every anti-aliased shape) goes straight through when no UI Frame transform is active. Without this the
+    // base class turned it into a whole-pixel rect and every soft edge became a block as wide as the canvas scale.
+    void FillRectF(const FRect* r) override {
+        if (!m_on) { m_in.FillRectF(r); return; }
+        Painter::FillRectF(r);
     }
     void FillRect(const Rect* r) override {
         if (!m_on || !r) { m_in.FillRect(r); return; }

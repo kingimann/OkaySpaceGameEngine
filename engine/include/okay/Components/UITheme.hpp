@@ -90,6 +90,7 @@ public:
     bool  gradient = true;
     int   gradientDir = (int)UIPanel::GradientDir::Vertical;
     bool  shadow = true;
+    float labelContrast = 4.5f; ///< button labels below this are moved to labelContrast + 1.5 (a look can ask for 7 : 1)
     bool  textShadow = false;   ///< a soft 1 px low-alpha shadow under text; off by default so text stays crisp
     float shadowSoftness = 18.0f;
     Vec2  shadowOffset{0.0f, 10.0f};
@@ -501,13 +502,14 @@ public:
         // 85 percent of the fill.
         for (Color* bgp : {&button, &buttonHover, &buttonPressed}) if (bgp->a < 0.85f) bgp->a = 0.85f;
         for (int pass = 0; pass < 2; ++pass) {
-            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) buttonText = Fixed(buttonText, *bgp, 6.5f, kTextContrast);
+            const float need = labelContrast > kTextContrast ? labelContrast : kTextContrast;
+            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) buttonText = Fixed(buttonText, *bgp, need + 1.5f > 6.5f ? need + 1.5f : 6.5f, need);
             bool ok = true;
-            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) ok = ok && Contrast(buttonText, *bgp) >= kTextContrast;
+            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) ok = ok && Contrast(buttonText, *bgp) >= need;
             if (ok) break;
             const Color away = Luminance(buttonText) > 0.4f ? Color(0.0f, 0.0f, 0.0f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f);
             for (Color* bgp : {&button, &buttonHover, &buttonPressed})
-                for (int i = 1; i <= 30 && Contrast(buttonText, *bgp) < 5.5f; ++i) { const float a = bgp->a; *bgp = Mix(*bgp, away, 0.06f); bgp->a = a; }
+                for (int i = 1; i <= 40 && Contrast(buttonText, *bgp) < (need > 5.5f ? need : 5.5f); ++i) { const float a = bgp->a; *bgp = Mix(*bgp, away, 0.06f); bgp->a = a; }
         }
     }
 private:

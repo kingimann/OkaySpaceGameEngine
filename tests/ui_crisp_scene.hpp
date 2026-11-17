@@ -46,7 +46,8 @@ inline void Build(Scene& scene, const std::string& texturePath, bool pixelLook =
 
     auto* title = add("Title")->AddComponent<TextRenderer>();
     title->screenSpace = true; title->text = "Crisp UI 123";
-    title->screenPos = {16, 14}; title->size = {120, 12}; title->pixelSize = 1.5f;
+    title->screenPos = {16, 14}; title->size = {120, 12};
+    title->pixelSize = pixelLook ? 1.2f : 1.5f;   // the 8x8 font is wider than the smooth one: at 1.5 the pixel-look title ran under the picture
     title->color = Color::White; title->shadow = false; title->outline = false;
 
     auto* btn = add("Play")->AddComponent<UIButton>();

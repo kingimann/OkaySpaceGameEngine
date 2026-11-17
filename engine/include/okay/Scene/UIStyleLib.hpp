@@ -310,7 +310,7 @@ inline const uilib::DataSection* FindTheme(const std::string& name) {
 inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     const uilib::DataSection* s = FindTheme(name);
     if (!s) return false;
-    if (const std::string* p = s->Get("preset")) { th.ApplyPreset(UITheme::PresetFromName(*p)); th.themeName = s->name; th.MakeReadable(); return true; }
+    if (const std::string* p = s->Get("preset")) { th.ApplyPreset(UITheme::PresetFromName(*p)); th.themeName = s->name; th.labelContrast = s->Num("labelContrast", th.labelContrast); th.MakeReadable(); return true; }
     th.preset = (int)UITheme::Preset::Custom; th.themeName = s->name;
     th.panel = Hex(s->Str("panel"), th.panel); th.panelBottom = Hex(s->Str("panelBottom"), th.panelBottom);
     th.accent = Hex(s->Str("accent"), th.accent); th.text = Hex(s->Str("text"), th.text); th.muted = Hex(s->Str("muted"), th.muted);
@@ -333,6 +333,7 @@ inline bool ApplyThemeData(UITheme& th, const std::string& name) {
     // that is a project file path, and the shipped font is not a file of the player's project. The built-in font is used.
     th.fontPath.clear();
     th.textShadow = s->Num("textShadow", 0) > 0;
+    th.labelContrast = s->Num("labelContrast", th.labelContrast);
     th.MakeReadable();
     return true;
 }

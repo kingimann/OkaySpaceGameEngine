@@ -53,6 +53,9 @@ Before a compile that is going to run, okay-build preprocesses that file and bui
 
 A hit copies the stored object and its depfile back and does not compile. A miss compiles and stores both under `.okaybuild/cache/<key>/`. Changing the source, a header that the preprocessor sees, the command line, or the compiler file produces a different key, so the old entry is simply not used. `--cache-max N` (bytes, or a `k`/`m`/`g` suffix) evicts the least recently used entries until the total fits. One entry that is itself bigger than the limit is kept. `okay-build cache stats` prints the entry count, the bytes, and the limit. `okay-build cache clean` deletes the cache.
 
+## Report history and test check counts
+Each build keeps a copy under `.okaybuild/reports/N.txt`. The last 20 are kept. `okay-build report history` lists how many. `okay-build test` reads a line such as `4 checks, 1 failed` from the program's output and repeats those counts next to PASS or FAIL.
+
 ## Diagnostics
 Each step that runs records its kind, its description, how long it took, and whether the compiler cache hit, missed, or was not involved. The build writes that to `.okaybuild/report`. `okay-build report` prints the step count, the cache hit rate, the slowest steps (up to ten), and the summed time. `--profile` still prints the older plan/dirty/command/wall line. The report is the per-step view.
 

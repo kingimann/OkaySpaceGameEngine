@@ -670,6 +670,27 @@ static void testWindowsHost() {
     check(rc != 0 && fs::exists(gRoot / "good.txt") && !fs::exists(gRoot / "dep.txt"), "wine -k runs the independent step and skips the dependent", o);
 }
 
+static void testHistoryAndChecks() {
+    printf("test: report history keeps builds, and test output yields check counts\n");
+    fresh("hist");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "first build for history", o);
+    o = sh("report history", &rc);
+    check(rc == 0 && o.find("history: 1") != string::npos, "one build is remembered", o);
+    write("a.cpp", "int main(){return 1;}\n");
+    o = sh("-j1", &rc);
+    check(rc == 0, "second build for history", o);
+    o = sh("report history", &rc);
+    check(rc == 0 && o.find("history: 2") != string::npos, "two builds are remembered", o);
+    fresh("checks");
+    write("t.cpp", "#include <cstdio>\nint main(){printf(\"4 checks, 1 failed\\n\"); return 1;}\n");
+    write("build.okay", "target test_counts exe\n sources = t.cpp\n test = on\nend\n");
+    o = sh("test -j1", &rc);
+    check(rc == 1 && o.find("checks 4") != string::npos && o.find("failed 1") != string::npos, "a test's own check line is reported", o);
+}
+
 static void testPackage() {
     printf("test: okay-build package lays out an exe, runtime files and assets\n");
     fresh("pack");
@@ -888,6 +909,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -1195,6 +1195,7 @@ static void noteStep(const string& kind, const string& desc, long long ns, const
     string d = desc; for (char& c : d) if (c == '\t' || c == '\n') c = ' ';
     OK_LOCK(l, gStateMu); gSteps.push_back(StepNote{ns, kind, cache, d});
 }
+static void archiveReport();
 static void writeReport() {
     fs::create_directories(under(".okaybuild"));
     string tmp = under(".okaybuild/report.tmp");
@@ -1203,6 +1204,35 @@ static void writeReport() {
       for (auto& s : gSteps) f << s.ns << '\t' << s.kind << '\t' << s.cache << '\t' << s.desc << '\n';
       f << "hits\t" << gCacheHit.load() << "\nmisses\t" << gCacheMiss.load() << "\n"; }
     fs::rename(tmp, under(".okaybuild/report"));
+    archiveReport();
+}
+static int gReportKeep = 20;
+static void archiveReport() {
+    if (gReportKeep < 1) return;
+    string dir = under(".okaybuild/reports");
+    fs::create_directories(dir);
+    int seq = 1; { std::ifstream in(dir + "/seq"); if (in) in >> seq; if (seq < 1) seq = 1; }
+    fs::copy_file(under(".okaybuild/report"), dir + "/" + std::to_string(seq) + ".txt", fs::copy_options::overwrite_existing);
+    { std::ofstream o(dir + "/seq", std::ios::trunc); o << (seq + 1) << "\n"; }
+    vector<int> ids;
+    for (auto& e : fs::directory_iterator(dir)) {
+        string n = e.path().filename().generic_string();
+        if (n.size() > 4 && n.compare(n.size() - 4, 4, ".txt") == 0) ids.push_back(atoi(n.c_str()));
+    }
+    std::sort(ids.begin(), ids.end());
+    while ((int)ids.size() > gReportKeep) { fs::remove(dir + "/" + std::to_string(ids.front()) + ".txt"); ids.erase(ids.begin()); }
+}
+static int showHistory() {
+    string dir = under(".okaybuild/reports");
+    vector<int> ids; std::error_code ec;
+    if (fs::exists(dir, ec)) for (auto& e : fs::directory_iterator(dir, ec)) {
+        string n = e.path().filename().generic_string();
+        if (n.size() > 4 && n.compare(n.size() - 4, 4, ".txt") == 0) ids.push_back(atoi(n.c_str()));
+    }
+    std::sort(ids.begin(), ids.end());
+    printf("history: %zu\n", ids.size());
+    for (int id : ids) printf("%d\n", id);
+    return 0;
 }
 static int showReport() {
     std::ifstream in(under(".okaybuild/report"));
@@ -1729,7 +1759,14 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
 #endif
 }
 
-static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code) {
+static int numberBefore(const string& s, const string& word) {
+    auto p = s.find(word); if (p == string::npos) return -1;
+    size_t i = p; while (i > 0 && isspace((unsigned char)s[i - 1])) --i;
+    size_t end = i; while (i > 0 && isdigit((unsigned char)s[i - 1])) --i;
+    if (i == end) return -1;
+    return atoi(s.c_str() + i);
+}
+static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code, const vector<string>& outs) {
     vector<int> order(tests.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
     std::sort(order.begin(), order.end(), [&](int a, int b) { return tests[a].first < tests[b].first; });
@@ -1738,8 +1775,13 @@ static int printTestReport(const vector<std::pair<string, string>>& tests, const
     std::ofstream rep(under(".okaybuild/test-report"), std::ios::trunc);
     rep << "okaybuild-test 1\n";
     for (int i : order) {
-        if (code[i] == 0) { printf("PASS %s\n", tests[i].first.c_str()); rep << "PASS\t" << tests[i].first << "\t0\n"; }
-        else { printf("FAIL %s exit %d\n", tests[i].first.c_str(), code[i]); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\n"; ++failed; }
+        int checks = i < (int)outs.size() ? numberBefore(outs[i], "checks") : -1;
+        int bad = i < (int)outs.size() ? numberBefore(outs[i], "failed") : -1;
+        string extra;
+        if (checks >= 0) extra += " checks " + std::to_string(checks);
+        if (bad >= 0) extra += " failed " + std::to_string(bad);
+        if (code[i] == 0) { printf("PASS %s%s\n", tests[i].first.c_str(), extra.c_str()); rep << "PASS\t" << tests[i].first << "\t0\t" << checks << "\t" << bad << "\n"; }
+        else { printf("FAIL %s exit %d%s\n", tests[i].first.c_str(), code[i], extra.c_str()); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\t" << checks << "\t" << bad << "\n"; ++failed; }
     }
     printf("%zu tests, %d failed\n", tests.size(), failed);
     return failed ? 1 : 0;
@@ -1748,6 +1790,7 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
     if (tests.empty()) return 0;
     if (jobs < 1) jobs = 1;
     vector<int> code(tests.size(), 1);
+    vector<string> outs(tests.size());
 #ifdef _WIN32
     if (jobs > 64) jobs = 64;
     vector<int> left; for (int i = (int)tests.size() - 1; i >= 0; --i) left.push_back(i);
@@ -1770,6 +1813,7 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
         DWORD c = 1; GetExitCodeProcess(live[idx].proc.proc, &c);
         CloseHandle(live[idx].proc.proc); if (live[idx].proc.pipe) CloseHandle(live[idx].proc.pipe);
         code[live[idx].index] = (int)c;
+        outs[live[idx].index] = live[idx].proc.out;
         live.erase(live.begin() + idx);
     }
 #else
@@ -1779,12 +1823,12 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
     for (int t = 0; t < jobs; ++t) th.emplace_back([&] {
         for (;;) {
             int i = next++; if (i >= (int)tests.size()) return;
-            string out; code[i] = runCmd({tests[i].second}, out, false);
+            string out; code[i] = runCmd({tests[i].second}, out, false); outs[i] = out;
         }
     });
     for (auto& t : th) t.join();
 #endif
-    return printTestReport(tests, code);
+    return printTestReport(tests, code, outs);
 }
 static void copyTreeFiles(const fs::path& from, const fs::path& to, const string& prefix, vector<string>& listed) {
     fs::create_directories(to);
@@ -2325,7 +2369,7 @@ int main(int argc, char** argv) {
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);
-        if (cmd == "report") return showReport();
+        if (cmd == "report") return (!want.empty() && want[0] == "history") ? showHistory() : showReport();
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);
         if (cmd == "test") return cmdTest(m, o);

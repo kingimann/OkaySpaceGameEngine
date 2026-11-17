@@ -1741,7 +1741,7 @@ private:
                 }
                 r.type = cloneType(*inner.type->inner);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
                 return r;
             }
             ET inner = decay(checkExpr(*e.kids[0]));
@@ -1829,7 +1829,7 @@ private:
             }
             r.type = cloneType(*ptr->type->inner);
             r.lvalue = true;
-            r.mod = isIntish(*r.type) || isPtr(*r.type);
+            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
             return r;
         }
         case Expr::Kind::Member: {
@@ -1853,7 +1853,7 @@ private:
                 if (f.name != fname || !f.type) continue;
                 r.type = cloneType(*f.type);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
                 return r;
             }
             err(e.line, e.col, "struct has no field '" + fname + "'");
@@ -3079,7 +3079,9 @@ private:
             if (!e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Name) {
                 if (Sym* s = find(e.kids[0]->text)) inner = s->inner;
             }
-            return loadAddr(a, inner, e.checked && e.checked->unsign);
+            Val loaded = loadAddr(a, inner, e.checked && e.checked->unsign);
+            if (e.checked) loaded.fpw = fpWidthOf(e.checked.get());
+            return loaded;
         }
         case Expr::Kind::Member: {
             Addr a = lowerAddr(e);
@@ -3556,6 +3558,15 @@ private:
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
+        if (lhs.checked && isFp(*lhs.checked)) {
+            int w = fpWidthOf(lhs.checked.get());
+            if (rhs.fpw != w) rhs = cvtFp(rhs, rhs.fpw, w);
+            storeBits(a.op, rhs.op, 8);
+            Val out;
+            out.op = rhs.op;
+            out.fpw = w;
+            return out;
+        }
         bool destUns = lhs.checked && lhs.checked->unsign;
         Operand val = narrow(rhs.op, a.width, destUns);
         Inst in;

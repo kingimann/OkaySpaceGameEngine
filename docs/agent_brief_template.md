@@ -68,6 +68,8 @@ default for a decision that is the owner's, say what you picked, and carry on.
 - [ ] Rule 4a material: a way to try it in the Windows release (menu, template, shipped example scene, setting), exact
       steps and what to expect in `docs/try_it.md`; screenshots for visual work (headless renders are fine, say so).
 - [ ] Docs updated in the same change; generated files regenerated (`python3 scripts/gen_feature_map.py --check`).
+- [ ] `bash scripts/preflight.sh` printed `PREFLIGHT OK` right before every push (merge conflicts with main, rule 21a includes, MinGW
+      syntax check of changed Windows files, feature map, test registration; about a minute, no build; docs/preflight.md).
 - [ ] No forbidden includes; `python3 scripts/branch_lint.py all` and `python3 scripts/bug_patterns.py` are clean or each
       finding is explained.
 - [ ] `python3 scripts/collision_check.py --offline --branch {{BRANCH}}` shows no overlap you did not discuss.
@@ -92,7 +94,7 @@ default for a decision that is the owner's, say what you picked, and carry on.
    "Unverified" is a fine word.
 9. **Stale claims.** Test counts, file lists and "not done" notes in docs that the change just made wrong. Grep for them.
 10. **Windows-only breakage seen late.** Thread headers (see section 4), `strtok_r`, POSIX-only calls, `%zu`, paths with
-    backslashes, network-share paths. Run `python3 scripts/branch_lint.py mingw` if MinGW is installed.
+    backslashes, network-share paths. Run `bash scripts/preflight.sh` (it runs the MinGW check) if MinGW is installed.
 11. **Hostile input.** Every reader and parser: truncated, huge counts, recursion, cycles, NaN, overflow in size math.
 12. **Same lines as another branch.** Two branches editing one function or one generated file. Run the collision check.
 

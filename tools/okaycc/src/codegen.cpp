@@ -263,9 +263,14 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             s += kArgReg[i];
             s += "\n";
         }
-        s += "  call ";
-        s += in.func;
-        s += "\n";
+        if (in.func == "write") {
+            // Linux write syscall. rax = 1, arguments already in rdi, rsi, rdx.
+            s += "  movq $1, %rax\n  syscall\n";
+        } else {
+            s += "  call ";
+            s += in.func;
+            s += "\n";
+        }
         if (nstack) {
             int bytes = 8 * (nstack + (nstack % 2));
             s += "  addq $";

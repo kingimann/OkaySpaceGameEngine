@@ -24,6 +24,7 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_ir tests/test_ir.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_codegen tests/test_codegen.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_elf tests/test_elf.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_diff tests/test_diff.cpp "${objs[@]}"
 
 ./build/test_lexer
 ./build/test_preproc
@@ -32,4 +33,5 @@ done
 ./build/test_ir
 ./build/test_codegen
 ./build/test_elf
+./build/test_diff
 tests/test_plan.sh

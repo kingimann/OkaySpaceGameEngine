@@ -443,7 +443,13 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             loadRax(im, in.args[static_cast<std::size_t>(i)]);
             movReg(im, kArg[i], Rax);
         }
-        callRel(im, in.func);
+        if (in.func == "write") {
+            movImm(im, Rax, 1);
+            u8(im, 0x0F);
+            u8(im, 0x05);
+        } else {
+            callRel(im, in.func);
+        }
         if (nstack) {
             int bytes = 8 * (nstack + (nstack % 2));
             aluImm(im, Rsp, bytes, 0);

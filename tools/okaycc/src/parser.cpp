@@ -1,11 +1,14 @@
 #include "parser.hpp"
 
 #include "files.hpp"
+#include "ir.hpp"
 #include "preproc.hpp"
 #include "token.hpp"
 
 #include <cstdio>
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>
@@ -1554,6 +1557,514 @@ private:
     }
 };
 
+class Lowerer {
+public:
+    explicit Lowerer(Diagnostics& diags) : diags_(diags) {}
+
+    Module run(Tu& tu) {
+        for (auto& d : tu.decls) {
+            if (!d) continue;
+            if (!d->function) {
+                err(d->line, d->col, "globals are not lowered yet");
+                continue;
+            }
+            if (d->body) lowerFunc(*d);
+        }
+        return std::move(mod_);
+    }
+
+private:
+    Diagnostics& diags_;
+    Module mod_;
+    Function fn_;
+    int cur_ = -1;
+    int nextReg_ = 0;
+    int whileN_ = 0;
+    int ifN_ = 0;
+    int forN_ = 0;
+    int tmpN_ = 0;
+    std::vector<std::map<std::string, int>> scopes_;
+    struct Loop {
+        std::string cont;
+        std::string brk;
+    };
+    std::vector<Loop> loops_;
+
+    void err(int line, int col, const std::string& msg) { diags_.error("t.c", line, col, msg); }
+    void startBlock(const std::string& name) {
+        fn_.blocks.push_back(Block{});
+        fn_.blocks.back().name = name;
+        cur_ = static_cast<int>(fn_.blocks.size()) - 1;
+    }
+    void emit(Inst in) { fn_.blocks[static_cast<std::size_t>(cur_)].code.push_back(std::move(in)); }
+    int fresh() { return nextReg_++; }
+    std::string lab(const std::string& prefix) { return prefix + std::to_string(tmpN_++); }
+
+    int lookup(const std::string& name, int line, int col) {
+        for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
+            auto it = scopes_[static_cast<std::size_t>(i)].find(name);
+            if (it != scopes_[static_cast<std::size_t>(i)].end()) return it->second;
+        }
+        err(line, col, "not lowered: " + name);
+        return 0;
+    }
+
+    void emitMov(int dst, Operand src) {
+        Inst in;
+        in.op = Inst::Op::Mov;
+        in.dst = dst;
+        in.a = src;
+        emit(in);
+    }
+    void emitJmp(const std::string& label) {
+        Inst in;
+        in.op = Inst::Op::Jmp;
+        in.label = label;
+        emit(in);
+    }
+    void emitBr(int cond, const std::string& t, const std::string& f) {
+        Inst in;
+        in.op = Inst::Op::Br;
+        in.a = Operand::vreg(cond);
+        in.label = t;
+        in.label2 = f;
+        emit(in);
+    }
+    void emitBin(Inst::Op op, int dst, Operand a, Operand b) {
+        Inst in;
+        in.op = op;
+        in.dst = dst;
+        in.a = a;
+        in.b = b;
+        emit(in);
+    }
+    int asReg(Operand o) {
+        if (o.kind == Operand::Kind::Reg) return o.reg;
+        int t = fresh();
+        emitMov(t, o);
+        return t;
+    }
+
+    bool fold(const std::string& op, std::int64_t x, std::int64_t y, std::int64_t& out) {
+        if (op == "+") {
+            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) + static_cast<std::uint64_t>(y));
+            return true;
+        }
+        if (op == "-") {
+            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) - static_cast<std::uint64_t>(y));
+            return true;
+        }
+        if (op == "*") {
+            out = static_cast<std::int64_t>(static_cast<std::uint64_t>(x) * static_cast<std::uint64_t>(y));
+            return true;
+        }
+        if (op == "/" || op == "%") {
+            if (y == 0) return false;
+            if (x == std::numeric_limits<std::int64_t>::min() && y == -1) return false;
+            out = op == "/" ? x / y : x % y;
+            return true;
+        }
+        if (op == "&") { out = x & y; return true; }
+        if (op == "|") { out = x | y; return true; }
+        if (op == "^") { out = x ^ y; return true; }
+        if (op == "<<" || op == ">>") {
+            if (y < 0 || y >= 63) return false;
+            auto ux = static_cast<std::uint64_t>(x);
+            unsigned s = static_cast<unsigned>(y);
+            out = static_cast<std::int64_t>(op == "<<" ? (ux << s) : (ux >> s));
+            return true;
+        }
+        if (op == "==") { out = x == y; return true; }
+        if (op == "!=") { out = x != y; return true; }
+        if (op == "<") { out = x < y; return true; }
+        if (op == "<=") { out = x <= y; return true; }
+        if (op == ">") { out = x > y; return true; }
+        if (op == ">=") { out = x >= y; return true; }
+        if (op == "&&") { out = (x != 0) && (y != 0); return true; }
+        if (op == "||") { out = (x != 0) || (y != 0); return true; }
+        return false;
+    }
+
+    Inst::Op binOp(const std::string& op) {
+        if (op == "+") return Inst::Op::Add;
+        if (op == "-") return Inst::Op::Sub;
+        if (op == "*") return Inst::Op::Mul;
+        if (op == "/") return Inst::Op::Div;
+        if (op == "%") return Inst::Op::Mod;
+        if (op == "&") return Inst::Op::And;
+        if (op == "|") return Inst::Op::Or;
+        if (op == "^") return Inst::Op::Xor;
+        if (op == "<<") return Inst::Op::Shl;
+        if (op == ">>") return Inst::Op::Shr;
+        if (op == "==") return Inst::Op::Ceq;
+        if (op == "!=") return Inst::Op::Cne;
+        if (op == "<") return Inst::Op::Clt;
+        if (op == "<=") return Inst::Op::Cle;
+        if (op == ">") return Inst::Op::Cgt;
+        if (op == ">=") return Inst::Op::Cge;
+        return Inst::Op::Add;
+    }
+
+    Operand lowerLogic(Expr& e, bool isAnd) {
+        int dst = fresh();
+        std::string rhsL = lab(isAnd ? "and_rhs" : "or_rhs");
+        std::string skL = lab(isAnd ? "and_false" : "or_true");
+        std::string endL = lab(isAnd ? "and_end" : "or_end");
+        int left = asReg(lowerExpr(*e.kids[0]));
+        if (isAnd) emitBr(left, rhsL, skL);
+        else emitBr(left, skL, rhsL);
+        startBlock(rhsL);
+        emitMov(dst, lowerExpr(*e.kids[1]));
+        emitJmp(endL);
+        startBlock(skL);
+        emitMov(dst, Operand::number(isAnd ? 0 : 1));
+        emitJmp(endL);
+        startBlock(endL);
+        return Operand::vreg(dst);
+    }
+
+    Operand lowerExpr(Expr& e) {
+        switch (e.kind) {
+        case Expr::Kind::Int:
+        case Expr::Kind::Char:
+            return Operand::number(static_cast<std::int64_t>(e.ival));
+        case Expr::Kind::String:
+        case Expr::Kind::Index:
+        case Expr::Kind::Brace:
+            err(e.line, e.col, "not lowered");
+            return Operand::number(0);
+        case Expr::Kind::Name:
+            return Operand::vreg(lookup(e.text, e.line, e.col));
+        case Expr::Kind::Cast:
+            if (e.kids.empty() || !e.kids[0]) return Operand::number(0);
+            return lowerExpr(*e.kids[0]);
+        case Expr::Kind::Comma: {
+            Operand last = Operand::number(0);
+            for (auto& k : e.kids)
+                if (k) last = lowerExpr(*k);
+            return last;
+        }
+        case Expr::Kind::Unary:
+            return lowerUnary(e);
+        case Expr::Kind::Pre:
+            return lowerInc(e, true);
+        case Expr::Kind::Post:
+            return lowerInc(e, false);
+        case Expr::Kind::Bin:
+            if (e.text == "&&" || e.text == "||") {
+                if (e.kids.size() == 2 && e.kids[0] && e.kids[1] &&
+                    (e.kids[0]->kind == Expr::Kind::Int || e.kids[0]->kind == Expr::Kind::Char) &&
+                    (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Char)) {
+                    std::int64_t folded = 0;
+                    fold(e.text, static_cast<std::int64_t>(e.kids[0]->ival),
+                         static_cast<std::int64_t>(e.kids[1]->ival), folded);
+                    return Operand::number(folded);
+                }
+                return lowerLogic(e, e.text == "&&");
+            }
+            return lowerBin(e);
+        case Expr::Kind::Assign:
+            return lowerAssign(e);
+        case Expr::Kind::Cond:
+            return lowerCond(e);
+        case Expr::Kind::Call:
+            return lowerCall(e);
+        }
+        err(e.line, e.col, "not lowered");
+        return Operand::number(0);
+    }
+
+    Operand lowerUnary(Expr& e) {
+        if (e.text == "&" || e.text == "*") {
+            err(e.line, e.col, "not lowered");
+            return Operand::number(0);
+        }
+        if (e.kids.empty() || !e.kids[0]) return Operand::number(0);
+        if (e.text == "+") return lowerExpr(*e.kids[0]);
+        Operand a = lowerExpr(*e.kids[0]);
+        if (e.text == "-") {
+            if (a.kind == Operand::Kind::Imm && a.imm != std::numeric_limits<std::int64_t>::min())
+                return Operand::number(-a.imm);
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::Neg;
+            in.dst = dst;
+            in.a = a;
+            emit(in);
+            return Operand::vreg(dst);
+        }
+        if (e.text == "!") {
+            if (a.kind == Operand::Kind::Imm) return Operand::number(a.imm == 0 ? 1 : 0);
+            int dst = fresh();
+            emitBin(Inst::Op::Ceq, dst, a, Operand::number(0));
+            return Operand::vreg(dst);
+        }
+        if (e.text == "~") {
+            if (a.kind == Operand::Kind::Imm) return Operand::number(~a.imm);
+            int dst = fresh();
+            Inst in;
+            in.op = Inst::Op::Not;
+            in.dst = dst;
+            in.a = a;
+            emit(in);
+            return Operand::vreg(dst);
+        }
+        err(e.line, e.col, "not lowered");
+        return Operand::number(0);
+    }
+
+    Operand lowerInc(Expr& e, bool pre) {
+        if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
+            err(e.line, e.col, "not lowered");
+            return Operand::number(0);
+        }
+        int slot = lookup(e.kids[0]->text, e.line, e.col);
+        Operand one = Operand::number(e.text == "--" ? -1 : 1);
+        if (pre) {
+            emitBin(Inst::Op::Add, slot, Operand::vreg(slot), one);
+            return Operand::vreg(slot);
+        }
+        int old = fresh();
+        emitMov(old, Operand::vreg(slot));
+        emitBin(Inst::Op::Add, slot, Operand::vreg(slot), one);
+        return Operand::vreg(old);
+    }
+
+    Operand lowerBin(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return Operand::number(0);
+        Operand a = lowerExpr(*e.kids[0]);
+        Operand b = lowerExpr(*e.kids[1]);
+        std::int64_t folded = 0;
+        if (a.kind == Operand::Kind::Imm && b.kind == Operand::Kind::Imm && fold(e.text, a.imm, b.imm, folded))
+            return Operand::number(folded);
+        int dst = fresh();
+        emitBin(binOp(e.text), dst, a, b);
+        return Operand::vreg(dst);
+    }
+
+    Operand lowerAssign(Expr& e) {
+        if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return Operand::number(0);
+        if (e.kids[0]->kind != Expr::Kind::Name || e.text != "=") {
+            err(e.line, e.col, "not lowered");
+            return Operand::number(0);
+        }
+        int slot = lookup(e.kids[0]->text, e.line, e.col);
+        Operand rhs = lowerExpr(*e.kids[1]);
+        emitMov(slot, rhs);
+        return Operand::vreg(slot);
+    }
+
+    Operand lowerCond(Expr& e) {
+        if (e.kids.size() < 3 || !e.kids[0] || !e.kids[1] || !e.kids[2]) return Operand::number(0);
+        int dst = fresh();
+        std::string tL = lab("cond_then");
+        std::string fL = lab("cond_else");
+        std::string eL = lab("cond_end");
+        emitBr(asReg(lowerExpr(*e.kids[0])), tL, fL);
+        startBlock(tL);
+        emitMov(dst, lowerExpr(*e.kids[1]));
+        emitJmp(eL);
+        startBlock(fL);
+        emitMov(dst, lowerExpr(*e.kids[2]));
+        emitJmp(eL);
+        startBlock(eL);
+        return Operand::vreg(dst);
+    }
+
+    Operand lowerCall(Expr& e) {
+        if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
+            err(e.line, e.col, "not lowered");
+            return Operand::number(0);
+        }
+        std::vector<Operand> args;
+        for (std::size_t i = 1; i < e.kids.size(); ++i)
+            if (e.kids[i]) args.push_back(lowerExpr(*e.kids[i]));
+        int dst = fresh();
+        Inst in;
+        in.op = Inst::Op::Call;
+        in.dst = dst;
+        in.func = e.kids[0]->text;
+        in.args = std::move(args);
+        emit(in);
+        return Operand::vreg(dst);
+    }
+
+    void lowerStmt(Stmt& s) {
+        switch (s.kind) {
+        case Stmt::Kind::Block:
+            scopes_.emplace_back();
+            for (auto& st : s.stmts)
+                if (st) lowerStmt(*st);
+            scopes_.pop_back();
+            break;
+        case Stmt::Kind::Empty:
+            break;
+        case Stmt::Kind::Expr:
+            if (s.expr) lowerExpr(*s.expr);
+            break;
+        case Stmt::Kind::Return: {
+            Inst in;
+            in.op = Inst::Op::Ret;
+            if (s.expr) in.a = lowerExpr(*s.expr);
+            emit(in);
+            break;
+        }
+        case Stmt::Kind::If:
+            lowerIf(s);
+            break;
+        case Stmt::Kind::While:
+            lowerWhile(s);
+            break;
+        case Stmt::Kind::For:
+            lowerFor(s);
+            break;
+        case Stmt::Kind::Break:
+            if (loops_.empty()) err(s.line, s.col, "break is not inside a loop");
+            else emitJmp(loops_.back().brk);
+            break;
+        case Stmt::Kind::Continue:
+            if (loops_.empty()) err(s.line, s.col, "continue is not inside a loop");
+            else emitJmp(loops_.back().cont);
+            break;
+        case Stmt::Kind::Decl:
+            if (s.decl) lowerLocal(*s.decl);
+            break;
+        }
+    }
+
+    void lowerLocal(Decl& d) {
+        if (d.type && (d.type->kind == Type::Kind::Pointer || d.type->kind == Type::Kind::Array)) {
+            err(d.line, d.col, "not lowered");
+            return;
+        }
+        int slot = fresh();
+        if (!d.name.empty()) scopes_.back()[d.name] = slot;
+        if (d.init) emitMov(slot, lowerExpr(*d.init));
+    }
+
+    void lowerIf(Stmt& s) {
+        int id = ifN_++;
+        std::string thenL = "if" + std::to_string(id) + "_then";
+        std::string elseL = "if" + std::to_string(id) + "_else";
+        std::string endL = "if" + std::to_string(id) + "_end";
+        int cond = s.expr ? asReg(lowerExpr(*s.expr)) : asReg(Operand::number(0));
+        emitBr(cond, thenL, s.elseS ? elseL : endL);
+        startBlock(thenL);
+        if (s.thenS) lowerStmt(*s.thenS);
+        emitJmp(endL);
+        if (s.elseS) {
+            startBlock(elseL);
+            lowerStmt(*s.elseS);
+            emitJmp(endL);
+        }
+        startBlock(endL);
+    }
+
+    void lowerWhile(Stmt& s) {
+        int id = whileN_++;
+        std::string cL = "while" + std::to_string(id) + "_cond";
+        std::string bL = "while" + std::to_string(id) + "_body";
+        std::string eL = "while" + std::to_string(id) + "_end";
+        emitJmp(cL);
+        startBlock(cL);
+        int cond = s.expr ? asReg(lowerExpr(*s.expr)) : asReg(Operand::number(0));
+        emitBr(cond, bL, eL);
+        startBlock(bL);
+        loops_.push_back(Loop{cL, eL});
+        if (s.body) lowerStmt(*s.body);
+        loops_.pop_back();
+        emitJmp(cL);
+        startBlock(eL);
+    }
+
+    void lowerFor(Stmt& s) {
+        int id = forN_++;
+        std::string cL = "for" + std::to_string(id) + "_cond";
+        std::string bL = "for" + std::to_string(id) + "_body";
+        std::string sL = "for" + std::to_string(id) + "_step";
+        std::string eL = "for" + std::to_string(id) + "_end";
+        scopes_.emplace_back();
+        if (s.init) {
+            if (s.init->kind == Stmt::Kind::Block) {
+                for (auto& st : s.init->stmts)
+                    if (st) lowerStmt(*st);
+            } else {
+                lowerStmt(*s.init);
+            }
+        }
+        emitJmp(cL);
+        startBlock(cL);
+        if (s.expr) emitBr(asReg(lowerExpr(*s.expr)), bL, eL);
+        else emitJmp(bL);
+        startBlock(bL);
+        loops_.push_back(Loop{s.expr2 ? sL : cL, eL});
+        if (s.body) lowerStmt(*s.body);
+        loops_.pop_back();
+        emitJmp(s.expr2 ? sL : cL);
+        if (s.expr2) {
+            startBlock(sL);
+            lowerExpr(*s.expr2);
+            emitJmp(cL);
+        }
+        startBlock(eL);
+        scopes_.pop_back();
+    }
+
+    void lowerFunc(Decl& d) {
+        fn_ = Function();
+        fn_.name = d.name;
+        fn_.params = d.type ? static_cast<int>(d.type->params.size()) : 0;
+        nextReg_ = 0;
+        scopes_.clear();
+        scopes_.emplace_back();
+        loops_.clear();
+        if (d.type) {
+            for (const Param& p : d.type->params) {
+                int id = nextReg_++;
+                if (!p.name.empty()) scopes_.back()[p.name] = id;
+            }
+        }
+        startBlock("entry");
+        if (d.body && d.body->kind == Stmt::Kind::Block) {
+            for (auto& st : d.body->stmts)
+                if (st) lowerStmt(*st);
+        } else if (d.body) {
+            lowerStmt(*d.body);
+        }
+        mod_.funcs.push_back(std::move(fn_));
+    }
+};
+
+Module lowerProgram(const std::string& source, Diagnostics& diags) {
+    MemoryFiles files;
+    files.add("t.c", source);
+    std::vector<Token> raw = preprocessTokens(files, "t.c", {}, diags);
+    if (!diags.ok()) return {};
+    std::string file = "t.c";
+    int line = 1;
+    int col = 1;
+    if (!raw.empty()) {
+        line = raw.back().line;
+        col = raw.back().column;
+        if (!raw.back().file.empty()) file = raw.back().file;
+    }
+    std::vector<Token> toks;
+    for (Token& t : raw) {
+        if (t.kind != Tok::Newline) toks.push_back(std::move(t));
+    }
+    Token end;
+    end.kind = Tok::End;
+    end.file = std::move(file);
+    end.line = line;
+    end.column = col;
+    toks.push_back(std::move(end));
+    Parser parser(std::move(toks), diags);
+    Tu tu = parser.parseTu();
+    if (!diags.ok()) return {};
+    Lowerer lowerer(diags);
+    return lowerer.run(tu);
+}
+
 void typecheckTu(Tu& tu, Diagnostics& diags) {
     Checker checker(diags);
     checker.check(tu);
@@ -1625,5 +2136,7 @@ void checkSource(const std::string& source, Diagnostics& diags) {
     if (!diags.ok()) return;
     typecheckTu(tu, diags);
 }
+
+Module lowerSource(const std::string& source, Diagnostics& diags) { return lowerProgram(source, diags); }
 
 }  // namespace okaycc

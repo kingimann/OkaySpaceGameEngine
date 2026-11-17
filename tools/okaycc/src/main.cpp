@@ -1,5 +1,6 @@
 #include "diag.hpp"
 #include "files.hpp"
+#include "ir.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
 #include "preproc.hpp"
@@ -24,8 +25,9 @@ void usage(std::ostream& out) {
         << "okay-cc --pp [-I dir]... [file]\n"
         << "okay-cc --ast [-I dir]... [file]\n"
         << "okay-cc --check [file]\n"
+        << "okay-cc --ir [file]\n"
         << "  --lex prints tokens, --pp runs the preprocessor, --ast prints the tree,\n"
-        << "  --check type-checks the subset and prints nothing when the program is legal.\n"
+        << "  --check type-checks the subset, --ir prints three-address code.\n"
         << "  With no file, read standard input.\n";
 }
 
@@ -36,6 +38,7 @@ int main(int argc, char** argv) {
     bool pp = false;
     bool ast = false;
     bool check = false;
+    bool ir = false;
     std::string path;
     std::vector<std::string> includes;
     for (int i = 1; i < argc; ++i) {
@@ -48,6 +51,8 @@ int main(int argc, char** argv) {
             ast = true;
         } else if (a == "--check") {
             check = true;
+        } else if (a == "--ir") {
+            ir = true;
         } else if (a == "-I") {
             if (i + 1 >= argc) {
                 std::cerr << "-I needs a directory\n";
@@ -67,7 +72,8 @@ int main(int argc, char** argv) {
             path = a;
         }
     }
-    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) != 1) {
+    if (static_cast<int>(lex) + static_cast<int>(pp) + static_cast<int>(ast) + static_cast<int>(check) +
+            static_cast<int>(ir) != 1) {
         usage(std::cerr);
         return 2;
     }
@@ -86,7 +92,9 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
-    if (check) {
+    if (ir) {
+        std::cout << okaycc::irText(src, diags);
+    } else if (check) {
         okaycc::checkSource(src, diags);
     } else if (ast) {
         if (path.empty()) {

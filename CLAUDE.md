@@ -42,8 +42,11 @@ then this file gets updated. Keep this file short and true.
     refuses a picture under `docs/` or at the repo root. Make pictures outside the repo (`OKAY_SHOT_DIR` or a temp folder), show
     them to the owner in chat, and describe them in words in docs. Only pictures that a test compares against stay
     (`tests/`, `okayui/tests/`, `assets/`, `examples/`). Keep `docs/README.md` (the index) in step when a guide is added.
-5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
-   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
+5. **Docs are for our own use only.** (Owner rule, 2026-11-17: "No more guides, tutorials or anything, documents are for
+   our use only".) Do not write guides, tutorials, how-tos, quick starts or player/user-facing pages, and do not add new
+   ones. Keep only the internal records, short and in the same change as the code: the feature map
+   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/UNFINISHED.md` rows, and design or audit
+   notes when a decision needs one. Existing guides stay until the owner says to delete them; do not extend them.
 
 ## Pull requests and CI
 

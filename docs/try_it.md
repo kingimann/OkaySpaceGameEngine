@@ -110,6 +110,7 @@ release job or the installer build for this change.
 | 11g | Player with no SDL, game resolutions on our own code | `Tools\OkaySpacePlayer.exe` (section "Player with no SDL") | Run on Linux under Xvfb only; Windows unverified |
 | 11h | Launcher background work on our own threads | `OkaySpace.exe` (section "Launcher: threads on our own code") | Tested on Linux only |
 | 11i | Launcher window calls through our platform layer; voice clips on our own WAV decoder | `OkaySpace.exe`, chat voice messages | Tested on Linux only |
+| 11j | Editor panels dragged out into their own windows on our own code (on with our own platform, the default on this branch) | `Tools\OkayEngine.exe`; drag a panel's tab (for example Project) outside the editor window (section "Editor: panels in their own windows on our own code") | The panel opens in its own window and works there (search, clicks, pictures); dragged back it docks again; Linux/Xvfb only, **unverified on Windows** |
 | ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
@@ -154,6 +155,9 @@ on SDL by itself (the old path). You then see the line `our own ... could not st
    `editor: own: platform, renderer, wav, fonts, code editor, okayui screens; third party: libsodium (...)`.
 4. Open any script (double-click a `.okayscript` or a C# file): the code box is our own editor. Type, select with the mouse,
    undo (Ctrl+Z), find (Ctrl+F), hover a built-in name for its help. Press Play on a scene with sound: you hear it.
+   Drag the **Project** tab outside the editor window and let go: it becomes its own window (made and drawn by our own
+   code), with its file pictures; drag it back onto the tab bar to dock it again (`set OKAY_EDITOR_OWN_VIEWPORTS=0` keeps
+   panels inside the editor). Section 11j has the details.
 5. Export or open a game and run `Tools\OkaySpacePlayer.exe <scene>` from a Command Prompt: the line
    `player: own: platform, wav; third party: libsodium (...)` appears in that window.
 6. **The old code, to compare.** Close everything. Open a Command Prompt:
@@ -2174,7 +2178,7 @@ Steps (Windows, from the release, once this branch is in one):
    windowed, borderless and fullscreen switch the window (fullscreen is the desktop size here: no resolution change yet).
 7. Close the editor with the X: it closes normally.
 
-Known differences with the switches on (on purpose, for now): no multi-window panels; the game's resolution list shows only the
+Known differences with the switches on (on purpose, for now): no multi-window panels (they work since stage E4, section 11j); the game's resolution list shows only the
 desktop size and "fullscreen" does not change the monitor's resolution; no touch-screen input.
 
 **Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor, with a trap that stops the program on any SDL call
@@ -2279,6 +2283,37 @@ which are within 2 steps of 32,768 because the old launcher code truncated where
 window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
 dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
 syntax check. Not run on Windows: the steps above are unverified until you run them.
+
+## Editor: panels in their own windows on our own code
+
+What changed (SDL removal, editor stage E4, `docs/sdl_removal_plan.md`; branch `claude2/sdl-editor-viewports`): on our own platform
+code and our own renderer (the default since "Testing our own replacements", section 0b), a panel dragged out of the editor becomes
+**its own window**, made and drawn by our own code. Before, those panels stayed inside the editor. A panel window drawn by our code
+also shows pictures (thumbnails, the Scene and Game views). **Fixed on the old path too:** with `OKAY_THIRD_PARTY=1` (SDL) the panel
+windows showed those pictures as empty grey boxes; now they show them. The Project panel's type filter no longer cuts "All types" to
+"All typ".
+
+* **Switches.** None: it follows our own platform and renderer. `OKAY_EDITOR_OWN_VIEWPORTS=0` keeps the panels inside the editor
+  again; `OKAY_THIRD_PARTY=1` (or `OKAY_EDITOR_PLATFORM=sdl`) gives SDL's panel windows.
+* **How you can tell it is on.** The Console's first lines say `editor: platform own (...; main window and events on own; panel
+  windows on)`.
+
+Steps (Windows, from the release, once this is in one):
+
+1. Start `Tools\OkayEngine.exe` (from the launcher, or a Command Prompt in `%LOCALAPPDATA%\OkaySpace`). Open a project (for example
+   the physics example).
+2. Press and hold the mouse on the **Project** tab and drag it outside the editor window (onto the desktop or a second monitor), then
+   let go. Expect: the Project panel in its own window, with its folders and file pictures (not empty boxes).
+3. Click into that window's search box and type a few letters (for example `crate`): the list filters as you type.
+4. Drag the window by its tab or title bar back over the editor and drop it on the tab bar where it was: it docks again and its window
+   goes away.
+5. Close the editor with the X: it closes normally.
+6. Do steps 1 to 5 again after `set OKAY_THIRD_PARTY=1` in the Command Prompt: the same, on SDL, with the pictures too.
+
+**Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor (steps 2 to 4, with screenshots, and with the SDL
+trap: no SDL call), and the test program `editor_viewports` (own, sdl2 and two monitors). **Never run on Windows: steps 1 to 6 are
+unverified there until you run them.** On Windows our window position now means the corner of the inside of the window (not of its
+frame), as SDL does.
 
 ## Checks run for this page
 

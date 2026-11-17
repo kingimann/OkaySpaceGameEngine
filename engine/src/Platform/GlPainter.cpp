@@ -128,6 +128,7 @@ public:
         Sync(true);
     }
     ~GlPainter() override {
+        m_target = &m_win;
         m_win.MakeCurrent();
         g_current = this;
         ReleaseCachedTextures();
@@ -325,7 +326,19 @@ public:
     }
 
     // ---- the frame ------------------------------------------------------------------------------
-    void Present() override { Use(); m_win.SwapBuffers(); }
+    void Present() override { Use(); m_target->SwapBuffers(); }
+    // Another window with this painter's context (Window::MakeCurrentWithContextOf): the textures are the same objects, only the
+    // drawable changes, so the viewport and projection follow the new window's size (Sync).
+    bool SetTarget(Window* w) override {
+        Window* t = w ? w : &m_win;
+        bool ok = true;
+        if (t == &m_win) ok = m_win.MakeCurrent();
+        else if (!t->MakeCurrentWithContextOf(m_win)) { m_win.MakeCurrent(); t = &m_win; ok = false; }
+        m_target = t;
+        g_current = this;
+        Sync(true);
+        return w ? ok && t == w : true;
+    }
     bool SetVSync(bool on) override { Use(); return m_win.SetSwapInterval(on ? 1 : 0) && on; }
     bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) override {
         Use();
@@ -341,14 +354,18 @@ public:
     }
 
 private:
-    void Use() { if (g_current != this) { m_win.MakeCurrent(); g_current = this; } }
+    void Use() {
+        if (g_current == this) return;
+        if (m_target == &m_win || !m_target->MakeCurrentWithContextOf(m_win)) { m_target = &m_win; m_win.MakeCurrent(); }
+        g_current = this;
+    }
     GTex* T(ui2d::Tex t) const {
         GTex* s = (GTex*)t;
         return s && m_texs.count(s) ? s : nullptr;
     }
     void Sync(bool force) {
         int w = 0, h = 0;
-        m_win.GetDrawableSize(w, h);
+        m_target->GetDrawableSize(w, h);
         if (!force && w == m_w && h == m_h) return;
         m_w = w; m_h = h;
         m_gl.Viewport(0, 0, w > 0 ? w : 0, h > 0 ? h : 0);
@@ -422,6 +439,7 @@ private:
     }
 
     Window& m_win;
+    Window* m_target = &m_win;   // where the painter draws: its own window, or one given to SetTarget
     Gl m_gl;
     int m_w = 0, m_h = 0, m_maxTex = 2048;
     float m_sx = 1.0f, m_sy = 1.0f;

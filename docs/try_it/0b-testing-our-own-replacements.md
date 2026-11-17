@@ -43,6 +43,9 @@ on SDL by itself (the old path). You then see the line `our own ... could not st
    `editor: own: platform, renderer, wav, fonts, code editor, okayui screens; third party: libsodium (...)`.
 4. Open any script (double-click a `.okayscript` or a C# file): the code box is our own editor. Type, select with the mouse,
    undo (Ctrl+Z), find (Ctrl+F), hover a built-in name for its help. Press Play on a scene with sound: you hear it.
+   Drag the **Project** tab outside the editor window and let go: it becomes its own window (made and drawn by our own
+   code), with its file pictures; drag it back onto the tab bar to dock it again (`set OKAY_EDITOR_OWN_VIEWPORTS=0` keeps
+   panels inside the editor). Section 11j has the details.
 5. Export or open a game and run `Tools\OkaySpacePlayer.exe <scene>` from a Command Prompt: the line
    `player: own: platform, wav; third party: libsodium (...)` appears in that window.
 6. **The old code, to compare.** Close everything. Open a Command Prompt:

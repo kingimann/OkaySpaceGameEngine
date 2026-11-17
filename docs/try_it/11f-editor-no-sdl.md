@@ -28,7 +28,7 @@ Steps (Windows, from the release, once this branch is in one):
    windowed, borderless and fullscreen switch the window (fullscreen is the desktop size here: no resolution change yet).
 7. Close the editor with the X: it closes normally.
 
-Known differences with the switches on (on purpose, for now): no multi-window panels; the game's resolution list shows only the
+Known differences with the switches on (on purpose, for now): no multi-window panels (they work since stage E4, section 11j); the game's resolution list shows only the
 desktop size and "fullscreen" does not change the monitor's resolution; no touch-screen input.
 
 **Status.** Run on Linux only, under Xvfb with software OpenGL, as the whole editor, with a trap that stops the program on any SDL call

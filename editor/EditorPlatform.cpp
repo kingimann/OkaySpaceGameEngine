@@ -9,6 +9,9 @@
 //    (text input, cursor shapes and the clipboard must act on that window). Events: either okay::platform events straight from that
 //    backend (stage E3), or main.cpp reads SDL's queue and each SDL_Event is turned into an okay::platform::Event
 //    (TranslateSdl2Event) before the glue sees it.
+//  * Multi-window panels (stage E4): with the OpenGL main window (stage E3) the glue makes ImGui's panel windows itself, on the main
+//    window's backend, each able to carry the main window's GL context (ImGuiPlatformGlue::EnableViewports(true)); the drawing seam
+//    draws them (EditorGfx.cpp). OKAY_EDITOR_OWN_VIEWPORTS=0 keeps the panels inside the editor.
 //  * The views' OpenGL context: a hidden window and a GL context from okay::platform::Default(), so with OKAY_PLATFORM_BACKEND=own it
 //    is our own GLX (Linux) or WGL (Windows) code. When SDL_Renderer draws with OpenGL (Linux), its context is given back through
 //    SDL after each use (SdlRestoreGL), as SDL keeps its own record of what is current. When our painter draws the main window
@@ -62,7 +65,8 @@ public:
     std::string Describe() const override {
         std::string s = "own (ImGui glue on okay::platform; viewport GL on ";
         s += m_glBackend ? m_glBackend->Name() : BackendName(plat::DefaultKind());
-        if (m_platEvents) s += std::string("; main window and events on ") + (m_winB ? m_winB->Name() : "?") + ")";
+        if (m_platEvents) s += std::string("; main window and events on ") + (m_winB ? m_winB->Name() : "?") +
+                               (SupportsImGuiViewports() ? "; panel windows on" : "; panel windows off") + ")";
         else s += "; the main window is an SDL window)";
         return s;
     }
@@ -103,6 +107,8 @@ public:
         // did with ImGui's SDL2 backend: do not switch it off between ImGui text fields.
         m_glue->SetTextInputAlwaysOn(true);
         m_glue->SetInputLog(m_log, "editor-input");
+        // Stage E4: panels dragged out of the editor become windows of the main window's backend, drawn with its GL context.
+        if (SupportsImGuiViewports()) m_glue->EnableViewports(true);
         return true;
     }
     void ShutdownImGui() override { m_glue.reset(); }
@@ -114,7 +120,11 @@ public:
     }
     bool ProcessEvent(const plat::Event& e) override { return m_glue ? m_glue->ProcessEvent(e) : false; }
     void NewFrame() override { if (m_glue) m_glue->NewFrame(); }
-    bool SupportsImGuiViewports() const override { return false; }
+    bool SupportsImGuiViewports() const override {
+        if (!m_platEvents || !m_win) return false;   // SDL_Renderer draws the main window (stages E1 / E2): no panel windows on own
+        const char* v = std::getenv("OKAY_EDITOR_OWN_VIEWPORTS");
+        return !(v && std::strcmp(v, "0") == 0);
+    }
     void SetInputLog(bool on) override {
         m_log = on;
         if (m_glue) m_glue->SetInputLog(on, "editor-input");

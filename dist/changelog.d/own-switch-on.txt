@@ -33,3 +33,8 @@ roadmap: Our own replacements are the default (platform, renderers, WAV, fonts, 
   left of the Game view (and the PLAYING label) move to the bottom left
   when the game's own text is drawn there, instead of being drawn on top
   of it. The Scene view's stats line does the same.
+- Editor: drag a panel's tab (for example Project) outside the editor
+  window and it becomes its own window, now on our own code too; drag it
+  back to dock it again. set OKAY_EDITOR_OWN_VIEWPORTS=0 keeps panels
+  inside the editor. On the old code (OKAY_THIRD_PARTY=1) those panel
+  windows now show pictures instead of empty grey boxes.

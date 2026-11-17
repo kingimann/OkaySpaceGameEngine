@@ -10592,7 +10592,12 @@ void DrawProject(EditorState& ed) {
     // row now and draw it at the end of the function.
     const float tbFh = ImGui::GetFrameHeight();
     const bool tbNarrow = ImGui::GetContentRegionAvail().x < 860.0f;   // a small dock: shorter search box, no slider (it is in "...")
-    const float tbSearchW = tbNarrow ? 130.0f : 170.0f, tbFilterW = tbNarrow ? 92.0f : 104.0f;
+    const float tbSearchW = tbNarrow ? 130.0f : 170.0f;
+    // The type filter is as wide as its longest choice plus the arrow, so "All types" is never cut ("All typ" before: a fixed 92 / 104).
+    float tbFilterW = 0.0f;
+    for (const char* t : {"All types", "Scripts", "Images", "Scenes", "Materials", "Prefabs", "Data", "Audio", "Models"})
+        tbFilterW = std::max(tbFilterW, ImGui::CalcTextSize(t).x);
+    tbFilterW += ImGui::GetStyle().FramePadding.x * 2.0f + tbFh + 2.0f;
     const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
     const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !tbNarrow) ? 78.0f : 0.0f;
     const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbScopeW + tbSliderW +
@@ -49505,17 +49510,26 @@ static bool PollHandoff(bool& raiseWindow) {
 // ImGui spawns (a panel/tab dragged outside the editor) gets its own
 // SDL_Renderer, plus per-renderer copies of the ImGui-managed textures (the
 // font atlas) uploaded from the CPU pixels ImGui retains. SDL textures cannot
-// be shared across renderers, so editor images (Scene/Game views, thumbnails)
-// are skipped in secondary windows — dock those panels back into the main
-// window to see their content; text/vector panels (Hierarchy, Inspector,
-// Console, Script Editor, Flow Graph, ...) work fully on any monitor.
-// On when g_multiWindow is set and both backends can do it (ViewportsSupported; g_multiWindow is declared
+// be shared across renderers, so each panel window is drawn by the MAIN
+// renderer into an off-screen target, read back and shown by the panel's own
+// renderer (OkayVp_RenderViaMain): editor images (Scene/Game views, thumbnails)
+// show in panel windows too. (Before 2026-11-17 they were skipped and showed as
+// empty boxes.) If the main renderer cannot draw into a target or read it back,
+// the old per-window drawing is used, without those images.
+// Toggled by g_multiWindow (View ▸ Multi-Window Panels, persisted, declared
 // with the other editor settings).
 
 #ifdef OKAY_PLATFORM_HAVE_SDL2   // (the multi-window panels are SDL_Renderer only; not in a build without SDL)
 struct OkayVpData {
     SDL_Renderer* ren = nullptr;
     std::unordered_map<ImTextureData*, SDL_Texture*> texes;   // per-renderer copies
+    // The panel drawn by the MAIN renderer (so every editor picture shows: thumbnails, the Scene / Game views), off screen, read
+    // back and shown here. `target` belongs to the main renderer, `shown` to this window's; `px` is the read-back.
+    SDL_Texture* target = nullptr;
+    SDL_Texture* shown = nullptr;
+    int tw = 0, th = 0;
+    std::vector<std::uint8_t> px;
+    bool viaMainFailed = false;   // the main renderer cannot draw into a target / read it back: the old per-window path
 };
 
 // Fetch (creating/updating as needed) this renderer's copy of an ImGui-managed
@@ -49557,6 +49571,8 @@ static void OkayVp_CreateWindow(ImGuiViewport* vp) {
 
 static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
     if (OkayVpData* d = (OkayVpData*)vp->RendererUserData) {
+        if (d->target) SDL_DestroyTexture(d->target);
+        if (d->shown) SDL_DestroyTexture(d->shown);
         for (auto& kv : d->texes) SDL_DestroyTexture(kv.second);
         if (d->ren) SDL_DestroyRenderer(d->ren);
         delete d;
@@ -49628,9 +49644,49 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
     SDL_RenderSetClipRect(ren, nullptr);
 }
 
+// A panel window's picture through the main renderer: SDL textures cannot cross renderers, so a panel window's own renderer could not
+// draw the editor's pictures (thumbnails and 3D views showed as empty boxes). Instead the main renderer draws the panel's draw data
+// into an off-screen target of the panel's size (every texture resolves as in the main window), reads it back
+// (SDL_RenderReadPixels) and the panel's renderer shows it as one texture. False when the main renderer cannot (no target support,
+// or the read-back fails): the caller draws the old way.
+static bool OkayVp_RenderViaMain(OkayVpData* d, ImDrawData* dd) {
+    SDL_Renderer* main = g_sdlRenderer;
+    if (!main || d->viaMainFailed) return false;
+    const int w = (int)(dd->DisplaySize.x * dd->FramebufferScale.x), h = (int)(dd->DisplaySize.y * dd->FramebufferScale.y);
+    if (w <= 0 || h <= 0) return true;
+    if (!d->target || d->tw != w || d->th != h) {
+        if (d->target) SDL_DestroyTexture(d->target);
+        if (d->shown) SDL_DestroyTexture(d->shown);
+        d->target = SDL_CreateTexture(main, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h);
+        d->shown = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+        d->tw = w; d->th = h;
+        if (!d->target || !d->shown) { d->viaMainFailed = true; return false; }
+    }
+    SDL_Texture* prev = SDL_GetRenderTarget(main);
+    if (SDL_SetRenderTarget(main, d->target) != 0) { d->viaMainFailed = true; return false; }
+    float psx = 1.0f, psy = 1.0f;
+    SDL_RenderGetScale(main, &psx, &psy);
+    SDL_RenderSetScale(main, 1.0f, 1.0f);
+    SDL_SetRenderDrawColor(main, 15, 16, 20, 255);
+    SDL_RenderClear(main);
+    OkayRenderDrawData(dd, main, nullptr);   // the main renderer: every texture is its own
+    SDL_RenderSetScale(main, 1.0f, 1.0f);
+    d->px.resize((std::size_t)w * (std::size_t)h * 4);
+    const bool read = SDL_RenderReadPixels(main, nullptr, SDL_PIXELFORMAT_ABGR8888, d->px.data(), w * 4) == 0;
+    SDL_SetRenderTarget(main, prev);
+    SDL_RenderSetScale(main, psx, psy);
+    if (!read) { d->viaMainFailed = true; return false; }
+    SDL_UpdateTexture(d->shown, nullptr, d->px.data(), w * 4);
+    SDL_RenderSetScale(d->ren, 1.0f, 1.0f);
+    SDL_RenderSetClipRect(d->ren, nullptr);
+    SDL_RenderCopy(d->ren, d->shown, nullptr, nullptr);
+    return true;
+}
+
 static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     OkayVpData* d = (OkayVpData*)vp->RendererUserData;
     if (!d || !d->ren || !vp->DrawData) return;
+    if (OkayVp_RenderViaMain(d, vp->DrawData)) { SDL_RenderPresent(d->ren); return; }
 
     // Drop cached copies of textures ImGui destroyed this frame.
     for (auto it = d->texes.begin(); it != d->texes.end();) {
@@ -49664,13 +49720,12 @@ static void OkayVpInstall() {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
 }
 #endif // OKAY_PLATFORM_HAVE_SDL2
-// Both ImGui backends can open extra OS windows (multi-window panels): SDL's on the sdl platform side; never on our own glue yet.
+// Both ImGui backends can open extra OS windows (multi-window panels): SDL's on the sdl platform side (with the OkayVp*
+// renderer hooks), our glue and our renderer on the own side (stage E4). Asked after both backends are installed.
 static bool EditorViewportsSupported() {
-#ifdef OKAY_PLATFORM_HAVE_SDL2
-    return g_edPlat && g_edPlat->SupportsImGuiViewports() && ViewportsSupported();
-#else
-    return false;
-#endif
+    if (!g_edPlat || !g_edPlat->SupportsImGuiViewports()) return false;
+    const ImGuiBackendFlags f = ImGui::GetIO().BackendFlags;
+    return (f & ImGuiBackendFlags_PlatformHasViewports) && (f & ImGuiBackendFlags_RendererHasViewports);
 }
 
 // ---- Launcher handshake: "save your project and close" ---------------------------
@@ -50118,7 +50173,9 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     // Multi-window panels (ImGuiConfigFlags_ViewportsEnable) are turned on below, once the platform and renderer
-    // backends are installed and have said whether they can open extra OS windows.
+    // backends are installed and have said whether they can open extra OS windows. With OKAY_EDITOR_PLATFORM=own: only
+    // with our own renderer (OKAY_EDITOR_RENDERER=own, stage E4), where our glue makes the panel windows and our renderer
+    // draws them (shared/ImGuiOwnPlatform.*, ImGuiOwnRenderer.*); OKAY_EDITOR_OWN_VIEWPORTS=0 turns them off.
     io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
     // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
@@ -50304,7 +50361,7 @@ int main(int argc, char** argv) {
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
     // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
     // ImGui turns the flag off in its first frame otherwise (and asserts if it is turned back on in the second).
-    // (Not on our own platform side and renderer: our glue has no platform windows yet; panels stay inside the editor.)
+    // (On our own platform side only with our own renderer, which draws the panel windows: stage E4.)
     if (g_multiWindow) {
         if (EditorViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else if (g_edPlat->SupportsImGuiViewports()) {
@@ -52089,7 +52146,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         g_gfx->BeginFrame(io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y, 30, 30, 34);   // scale, clear
 #ifdef OKAY_PLATFORM_HAVE_SDL2
-        if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) && renderer) {   // (multi-window needs SDL_Renderer: sdl only)
+        if ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) && renderer) {   // (sdl; on own our ImGui renderer takes DisplayPos itself)
             // Multi-window mode: draw data is in absolute desktop coordinates,
             // which the stock SDL_Renderer backend can't offset — process the
             // texture updates it owns, then draw through our rebasing renderer.
@@ -52189,7 +52246,10 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("Present"); g_gfx->Present(); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
-        // dragged out of the editor).
+        // dragged out of the editor). Also applies a runtime toggle from the
+        // View menu — flipping the flag between frames is supported by ImGui.
+        // sdl: ImGui's SDL2 backend + the OkayVp* SDL_Renderer code; own (stage E4): our glue's okay::platform windows, drawn by
+        // our GL painter with the main window's context (each panel is drawn, then the main window's context is current again).
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();

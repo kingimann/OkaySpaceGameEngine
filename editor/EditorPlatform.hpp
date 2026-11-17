@@ -17,7 +17,9 @@
 // own X11 / Win32 code with OKAY_PLATFORM_BACKEND=own) with an OpenGL context for our painter, and main.cpp reads its events from
 // that backend (PollEvent) instead of SDL's queue (EventsFromPlatform). With OKAY_PLATFORM_BACKEND=own too, the editor makes no
 // SDL call at all (scripts/editor_no_sdl_check.sh proves it).
-// `own` has no ImGui multi-viewport windows (panels dragged out of the editor stay inside it).
+// Multi-window panels (ImGui viewports) on `own`: only with the OpenGL main window (stage E4): the shared glue makes the panel windows
+// on the main window's backend (ImGuiPlatformGlue::EnableViewports) and the drawing seam draws them with the main window's GL
+// context. With SDL_Renderer drawing on `own` (stages E1 / E2) panels stay inside the editor.
 //
 // OWN CODE, NOT READY: `own` is off by default until the owner approves it (rule 17). Written from the okay::platform interfaces
 // and imgui.h's contract; no code from ImGui's example backends or from SDL.
@@ -75,7 +77,8 @@ public:
     virtual bool ProcessEvent(const okay::platform::Event& e) { (void)e; return false; }
     /// Before ImGui::NewFrame.
     virtual void NewFrame() = 0;
-    /// Whether ImGui panels can become their own OS windows (ImGuiConfigFlags_ViewportsEnable). False on `own`.
+    /// Whether ImGui panels can become their own OS windows (ImGuiConfigFlags_ViewportsEnable). `sdl`: true. `own`: true with the
+    /// OpenGL main window (stage E4) unless OKAY_EDITOR_OWN_VIEWPORTS=0; false while SDL_Renderer draws the main window.
     virtual bool SupportsImGuiViewports() const = 0;
     /// OKAY_EDITOR_INPUT_LOG=1 on `own`: every mouse button, key and text event ImGui is given goes to stderr ("editor-input: ...").
     virtual void SetInputLog(bool on) { (void)on; }

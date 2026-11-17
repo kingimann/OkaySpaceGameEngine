@@ -13,8 +13,10 @@
 // `own` needs OKAY_EDITOR_PLATFORM=own too (the platform seam then makes the main window with an OpenGL context); with the sdl
 // platform the editor says so in the log and stays on `sdl`.
 //
-// What the own side does not do yet (they keep SDL_Renderer and only run on `sdl`): multi-window panels (they are off with the own
-// platform anyway), the Direct3D 11 views drawn straight into SDL's textures on Windows (on `own` the views use the read-back path),
+// Multi-window panels on `own` (stage E4): our ImGui renderer draws each panel window with this painter, retargeted to the panel's
+// window (Painter::SetTarget) with the main window's GL context, so a panel window shows every texture (the sdl side's panel windows
+// have an SDL_Renderer each and skip the editor's pictures). What the own side does not do yet (it keeps SDL_Renderer and only runs
+// on `sdl`): the Direct3D 11 views drawn straight into SDL's textures on Windows (on `own` the views use the read-back path),
 // and the OkayUI test overlay is drawn with OkayUI's own painter backend when the build has it.
 //
 // The 3D views render with OpenGL in a separate hidden context (EditorPlatform's viewport GL) and are read back into RGBA pixels,
@@ -80,6 +82,11 @@ public:
     virtual void RenderImGui(ImDrawData* dd) = 0;
     /// Honour one ImGui texture request without drawing (the multi-window path draws the draw data itself).
     virtual void UpdateImGuiTexture(ImTextureData* t) = 0;
+    /// Whether this side draws ImGui's panel windows itself (ImGuiBackendFlags_RendererHasViewports, set by InitImGui): `own` with our
+    /// GL painter (stage E4). The sdl side's panel windows are main.cpp's SDL_Renderer code (OkayVp*): false here.
+    virtual bool SupportsImGuiViewports() const { return false; }
+    /// Panel-window draws so far (own; 0 on sdl). For the log.
+    virtual int PanelsDrawn() const { return 0; }
 
     // ---- the frame (the same on both: the painter does it) ------------------------------------------------
     /// Ask for vertical sync (View > VSync).

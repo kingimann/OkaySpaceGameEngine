@@ -250,7 +250,10 @@ public:
     uint32_t Id() const override { return (uint32_t)(uintptr_t)m_hwnd; }
     void* NativeHandle() const override { return m_hwnd; }
     void GetSize(int& w, int& h) const override { RECT r; GetClientRect(m_hwnd, &r); w = r.right; h = r.bottom; }
-    void GetPosition(int& x, int& y) const override { RECT r; GetWindowRect(m_hwnd, &r); x = r.left; y = r.top; }
+    // The client area's top-left corner on the desktop, as SDL gives it (and our X11 backend): the frame and title bar are not
+    // counted, so a position read here and given back to SetPosition puts the window where it was, and mouse positions
+    // (ClientToScreen) line up with it (Dear ImGui's multi-window panels rely on that).
+    void GetPosition(int& x, int& y) const override { POINT p = {0, 0}; ClientToScreen(m_hwnd, &p); x = p.x; y = p.y; }
     void SetTitle(const std::string& t) override { SetWindowTextW(m_hwnd, Wide(t).c_str()); }
     void SetSize(int w, int h) override {
         RECT r = {0, 0, w, h};
@@ -262,11 +265,16 @@ public:
             RECT r; GetWindowRect(m_hwnd, &r);
             if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - (r.right - r.left)) / 2;
             if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - (r.bottom - r.top)) / 2;
+            SetWindowPos(m_hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return;
         }
-        SetWindowPos(m_hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        // x / y are where the client area goes (GetPosition): move the frame by the difference between the two corners.
+        RECT wr; GetWindowRect(m_hwnd, &wr);
+        POINT c = {0, 0}; ClientToScreen(m_hwnd, &c);
+        SetWindowPos(m_hwnd, nullptr, x - (c.x - wr.left), y - (c.y - wr.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     void SetMinimumSize(int w, int h) override { m_minW = w; m_minH = h; }
-    void Show() override { ShowWindow(m_hwnd, SW_SHOW); }
+    void Show() override { ShowWindow(m_hwnd, m_noActivate ? SW_SHOWNA : SW_SHOW); }
     void Hide() override { ShowWindow(m_hwnd, SW_HIDE); }
     void Raise() override { SetForegroundWindow(m_hwnd); SetFocus(m_hwnd); }
     void Minimize() override { ShowWindow(m_hwnd, SW_MINIMIZE); }
@@ -335,6 +343,35 @@ public:
         if (m_dc) { ReleaseDC(m_hwnd, m_dc); m_dc = nullptr; }
     }
     bool MakeCurrent() override { return m_rc && wglMakeCurrent(m_dc, m_rc); }
+    // Microsoft's documentation of wglMakeCurrent: the device context must have the same pixel format as the one the context was
+    // made for. So this window takes the owner's pixel format (SetPixelFormat, once: a window's format cannot change) and the
+    // owner's context is made current on this window's DC.
+    bool MakeCurrentWithContextOf(Window& owner) override {
+        WinWindow* o = dynamic_cast<WinWindow*>(&owner);
+        if (!o || !o->m_rc || !o->m_dc) return false;
+        if (!m_dc) m_dc = GetDC(m_hwnd);
+        if (!m_dc) return false;
+        if (!m_formatSet) {
+            const int fmt = GetPixelFormat(o->m_dc);
+            PIXELFORMATDESCRIPTOR pfd; std::memset(&pfd, 0, sizeof(pfd));
+            if (!fmt || !DescribePixelFormat(o->m_dc, fmt, sizeof(pfd), &pfd)) return false;
+            if (GetPixelFormat(m_dc) != fmt && !SetPixelFormat(m_dc, fmt, &pfd)) return false;
+            m_formatSet = true;
+        }
+        return wglMakeCurrent(m_dc, o->m_rc) != FALSE;
+    }
+    // A layered window (WS_EX_LAYERED) with one alpha for the whole window (SetLayeredWindowAttributes, LWA_ALPHA); fully opaque
+    // takes the layered style off again.
+    bool SetOpacity(float alpha) override {
+        const LONG ex = GetWindowLongW(m_hwnd, GWL_EXSTYLE);
+        if (!(alpha < 1.0f)) {
+            if (ex & WS_EX_LAYERED) SetWindowLongW(m_hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+            return true;
+        }
+        if (!(ex & WS_EX_LAYERED)) SetWindowLongW(m_hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        const BYTE a = (BYTE)(alpha <= 0.0f ? 0 : (int)(alpha * 255.0f + 0.5f));
+        return SetLayeredWindowAttributes(m_hwnd, 0, a, LWA_ALPHA) != FALSE;
+    }
     void SwapBuffers() override { if (m_dc) ::SwapBuffers(m_dc); }
     bool SetSwapInterval(int i) override {
         typedef BOOL (WINAPI *Fn)(int);
@@ -347,6 +384,8 @@ public:
     HWND m_hwnd;
     HDC m_dc = nullptr;
     HGLRC m_rc = nullptr;
+    bool m_formatSet = false;   // MakeCurrentWithContextOf set the owner's pixel format on m_dc
+    bool m_noActivate = false;  // WindowDesc::noActivate: Show() does not activate the window
     int m_minW = 0, m_minH = 0;
     bool m_full = false;
     LONG m_style = 0;
@@ -472,13 +511,16 @@ public:
     std::unique_ptr<Window> MakeWindow(const WindowDesc& d) override {
         if (!Init(InitFlags())) return nullptr;
         DWORD style = d.borderless ? WS_POPUP : (d.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX));
+        // A tool window has no task-bar button; a topmost one stays above the others (CreateWindowEx extended styles).
+        const DWORD exStyle = (d.skipTaskbar ? WS_EX_TOOLWINDOW : 0) | (d.topmost ? WS_EX_TOPMOST : 0);
         RECT r = {0, 0, d.width, d.height};
-        AdjustWindowRectEx(&r, style, FALSE, 0);
+        AdjustWindowRectEx(&r, style, FALSE, exStyle);
         int x = d.x, y = d.y;
         const int ww = r.right - r.left, wh = r.bottom - r.top;
-        if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
-        if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
-        HWND h = CreateWindowExW(0, L"OkaySpacePlatformWindow", Wide(d.title).c_str(), style, x, y, ww, wh,
+        // A given x / y is where the client area goes (as GetPosition reads it): the frame starts r.left / r.top before it.
+        if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2; else x += r.left;
+        if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2; else y += r.top;
+        HWND h = CreateWindowExW(exStyle, L"OkaySpacePlatformWindow", Wide(d.title).c_str(), style, x, y, ww, wh,
                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!h) { m_err = "CreateWindowEx failed"; return nullptr; }
         DragAcceptFiles(h, TRUE);
@@ -487,8 +529,9 @@ public:
         // WM_TOUCH is asked for only where the pointer functions do not exist (Windows 7).
         if (!m_touchApi.HasPointer() && m_touchApi.HasTouch()) m_touchApi.registerTouchWindow(h, 0);
         auto* w = new WinWindow(this, h);
+        w->m_noActivate = d.noActivate;
         m_wins[h] = w;
-        if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : SW_SHOW);
+        if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : d.noActivate ? SW_SHOWNA : SW_SHOW);
         if (d.fullscreen) w->SetFullscreen(true);
         return std::unique_ptr<Window>(w);
     }
@@ -846,6 +889,7 @@ public:
         case WM_MOUSEMOVE: {
             e.type = EventType::MouseMove; e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp);
             e.fromTouch = MouseMessageFromTouch((LPARAM)GetMessageExtraInfo());
+            { POINT p = {e.x, e.y}; ClientToScreen(h, &p); e.hasScreenPos = true; e.screenX = p.x; e.screenY = p.y; }
             if (b->m_relative) {
                 RECT r; GetClientRect(h, &r);
                 const int cx = r.right / 2, cy = r.bottom / 2;
@@ -867,6 +911,7 @@ public:
                      : (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) ? MouseRight
                      : (HIWORD(wp) == XBUTTON1 ? MouseX1 : MouseX2);
             e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp); e.clicks = 1;
+            { POINT p = {e.x, e.y}; ClientToScreen(h, &p); e.hasScreenPos = true; e.screenX = p.x; e.screenY = p.y; }
             e.fromTouch = MouseMessageFromTouch((LPARAM)GetMessageExtraInfo());
             if (down) SetCapture(h); else ReleaseCapture();
             b->m_pending.push_back(e);

@@ -356,7 +356,16 @@ private:
 class Preprocessor {
 public:
     Preprocessor(FileStore& files, Diagnostics& diags, std::vector<std::string> includes)
-        : files_(files), diags_(diags), includes_(std::move(includes)) {}
+        : files_(files), diags_(diags), includes_(std::move(includes)) {
+        Macro builtin;
+        builtin.name = "__okaycc__";
+        Token one;
+        one.kind = Tok::Int;
+        one.text = "1";
+        one.uval = 1;
+        builtin.body.push_back(one);
+        macros_["__okaycc__"] = std::move(builtin);
+    }
 
     std::vector<Token> run(const std::string& path) {
         if (!pushFile(path, nullptr)) {

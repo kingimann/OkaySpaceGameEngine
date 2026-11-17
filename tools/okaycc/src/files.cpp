@@ -54,9 +54,11 @@ void MemoryFiles::add(std::string path, std::string contents) {
 
 bool MemoryFiles::read(const std::string& path, std::string& out) const {
     auto it = files_.find(normalizePath(path));
-    if (it == files_.end()) return false;
-    out = it->second;
-    return true;
+    if (it != files_.end()) {
+        out = it->second;
+        return true;
+    }
+    return DiskFiles{}.read(path, out);
 }
 
 bool DiskFiles::read(const std::string& path, std::string& out) const {

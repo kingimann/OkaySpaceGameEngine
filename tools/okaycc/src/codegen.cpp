@@ -281,11 +281,13 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
         }
         if (in.func.empty()) {
             load(s, in.a, "%rax");
-            s += "  call *%rax\n";
+            if (in.va) s += "  movq %rax, %r11\n  xorl %eax, %eax\n  call *%r11\n";
+            else s += "  call *%rax\n";
         } else if (in.func == "syscall") {
             // Linux syscall. The C arguments are number, a, b, c in rdi, rsi, rdx, rcx.
             s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  syscall\n";
         } else {
+            if (in.va) s += "  xorl %eax, %eax\n";
             s += "  call ";
             s += in.func;
             s += "\n";
@@ -439,6 +441,16 @@ std::string emitFunction(const Function& f) {
             auto end = s.find(", %rsp\n", pos);
             if (end != std::string::npos)
                 s.replace(pos, end - pos, "subq $" + std::to_string(memFrame));
+        }
+    }
+    if (f.vaNamed >= 0 && !localOff.empty()) {
+        int base = localOff[0];
+        for (int i = 0; i < 6; ++i) {
+            s += "  movq ";
+            s += kArgReg[i];
+            s += ", ";
+            s += std::to_string(base + 8 * i);
+            s += "(%rbp)\n";
         }
     }
     int localIndex = 0;

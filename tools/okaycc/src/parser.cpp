@@ -57,6 +57,7 @@ struct Type {
     std::unique_ptr<Type> inner;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
+    bool variadic = false;
     std::vector<Param> params;
     Type();
     ~Type();
@@ -137,6 +138,7 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->tag = t.tag;
     n->unsign = t.unsign;
     n->unsized = t.unsized;
+    n->variadic = t.variadic;
     if (t.inner) n->inner = cloneType(*t.inner);
     if (t.bound) n->bound = cloneExpr(*t.bound);
     for (const Param& p : t.params) {
@@ -387,6 +389,7 @@ struct Mod {
     enum class Kind { Ptr, Arr, Func } kind = Kind::Ptr;
     std::unique_ptr<Expr> bound;
     bool unsized = false;
+    bool variadic = false;
     std::vector<Param> params;
 };
 
@@ -738,7 +741,7 @@ private:
             if (eatP("(")) {
                 Mod m;
                 m.kind = Mod::Kind::Func;
-                m.params = parseParams();
+                m.variadic = parseParams(m.params);
                 d.mods.push_back(std::move(m));
                 continue;
             }
@@ -762,13 +765,18 @@ private:
         return t;
     }
 
-    std::vector<Param> parseParams() {
-        std::vector<Param> params;
-        if (eatP(")")) return params;
+    bool parseParams(std::vector<Param>& params) {
+        bool variadic = false;
+        if (isP("...")) {
+            advance();
+            expectP(")", ")");
+            return true;
+        }
+        if (eatP(")")) return false;
         if (isKw("void")) {
             std::size_t save = i_;
             advance();
-            if (eatP(")")) return params;
+            if (eatP(")")) return false;
             i_ = save;
         }
         while (!atEnd()) {
@@ -784,11 +792,18 @@ private:
             p.type = adjustParam(apply(std::move(base), d.mods));
             params.push_back(std::move(p));
             if (eatP(")")) break;
-            if (eatP(",")) continue;
-            err("expected ')'");
-            break;
+            if (!eatP(",")) {
+                err("expected ')'");
+                break;
+            }
+            if (isP("...")) {
+                advance();
+                expectP(")", ")");
+                variadic = true;
+                break;
+            }
         }
-        return params;
+        return variadic;
     }
 
     std::unique_ptr<Type> apply(std::unique_ptr<Type> base, std::vector<Mod>& mods) {
@@ -807,6 +822,7 @@ private:
                 t->kind = Type::Kind::Function;
                 t->inner = std::move(base);
                 t->params = std::move(m.params);
+                t->variadic = m.variadic;
             }
             base = std::move(t);
         }
@@ -1384,6 +1400,7 @@ bool sameType(const Type& a, const Type& b) {
         return a.inner && b.inner && sameType(*a.inner, *b.inner);
     }
     if (a.kind == Type::Kind::Function) {
+        if (a.variadic != b.variadic) return false;
         if (!a.inner || !b.inner || !sameType(*a.inner, *b.inner) || a.params.size() != b.params.size())
             return false;
         for (std::size_t i = 0; i < a.params.size(); ++i) {
@@ -1847,7 +1864,13 @@ private:
             return bad(e.line, e.col);
         }
         const Type& fn = *callee.type->inner;
-        if (e.kids.size() - 1 != fn.params.size()) {
+        std::size_t nargs = e.kids.size() - 1;
+        if (fn.variadic) {
+            if (nargs < fn.params.size()) {
+                err(e.line, e.col, "too few arguments");
+                return bad(e.line, e.col);
+            }
+        } else if (nargs != fn.params.size()) {
             err(e.line, e.col, "wrong number of arguments");
             return bad(e.line, e.col);
         }
@@ -1858,6 +1881,12 @@ private:
                 err(e.line, e.col, "cannot assign argument");
                 return bad(e.line, e.col);
             }
+        }
+        for (std::size_t i = fn.params.size(); i < nargs; ++i) {
+            ET arg = decay(checkExpr(*e.kids[i + 1]));
+            if (arg.bad) return bad(e.line, e.col);
+            if (arg.type && (arg.type->kind == Type::Kind::Char || arg.type->kind == Type::Kind::Short))
+                e.kids[i + 1]->checked = prim(Type::Kind::Int);
         }
         ET r;
         r.line = e.line;
@@ -2074,6 +2103,7 @@ private:
     int tmpN_ = 0;
     int strN_ = 0;
     int retWidth_ = 8;
+    int vaSave_ = -1;
     bool retUns_ = false;
     bool retStruct_ = false;
     int hiddenReg_ = -1;
@@ -2671,6 +2701,10 @@ private:
             emitBin(Inst::Op::Add, dst, base.op, off.op);
             a.op = Operand::vreg(dst);
             a.width = base.step;
+            if (e.checked && (e.checked->kind == Type::Kind::Struct || e.checked->kind == Type::Kind::Union)) {
+                a.fields = layoutOf(e.checked.get());
+                a.agg = true;
+            }
             a.ok = true;
             return a;
         }
@@ -3256,6 +3290,54 @@ private:
         return Val{Operand::vreg(dst), 0, 0};
     }
 
+    Val lowerVa(Expr& e, const std::string& fname) {
+        if (e.kids.size() < 2 || !e.kids[1]) return {};
+        Operand ap = lowerExpr(*e.kids[1]).op;
+        if (fname == "__va_start") {
+            int named = fn_.vaNamed < 0 ? 0 : fn_.vaNamed;
+            storeBits(ap, Operand::number(named * 8), 4);
+            storeBits(addAddr(ap, 4), Operand::number(48), 4);
+            storeBits(addAddr(ap, 8), frameAddr(16), 8);
+            storeBits(addAddr(ap, 16), Operand::vreg(vaSave_), 8);
+            return {};
+        }
+        int step = 8;
+        if (e.kids.size() >= 3 && e.kids[2]) {
+            Operand sz = lowerExpr(*e.kids[2]).op;
+            if (sz.kind == Operand::Kind::Imm && sz.imm > 8) step = (static_cast<int>(sz.imm) + 7) & ~7;
+        }
+        std::string id = std::to_string(tmpN_++);
+        std::string regL = "va" + id + "_reg";
+        std::string stkL = "va" + id + "_stk";
+        std::string endL = "va" + id + "_end";
+        Operand gp = loadBits(ap, 4);
+        int cmp = fresh();
+        emitBin(Inst::Op::Cge, cmp, gp, Operand::number(48), true);
+        emitBr(cmp, stkL, regL);
+        int result = fresh();
+        startBlock(regL);
+        Operand save = loadBits(addAddr(ap, 16), 8);
+        int ptr = fresh();
+        emitBin(Inst::Op::Add, ptr, save, gp);
+        int gp2 = fresh();
+        emitBin(Inst::Op::Add, gp2, gp, Operand::number(8));
+        storeBits(ap, Operand::vreg(gp2), 4);
+        emitMov(result, Operand::vreg(ptr));
+        emitJmp(endL);
+        startBlock(stkL);
+        Operand ov = loadBits(addAddr(ap, 8), 8);
+        emitMov(result, ov);
+        int ov2 = fresh();
+        emitBin(Inst::Op::Add, ov2, ov, Operand::number(step));
+        storeBits(addAddr(ap, 8), Operand::vreg(ov2), 8);
+        emitJmp(endL);
+        startBlock(endL);
+        Val out;
+        out.op = Operand::vreg(result);
+        out.step = 1;
+        return out;
+    }
+
     Val lowerCall(Expr& e, const Operand* retSlotIn = nullptr) {
         if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
@@ -3271,6 +3353,7 @@ private:
                 fname = e.kids[0]->text;
             }
         }
+        if (direct && (fname == "__va_start" || fname == "__va_arg")) return lowerVa(e, fname);
         if (!direct) target = lowerExpr(*e.kids[0]).op;
         int reg = 0;
         bool retRec = e.checked &&
@@ -3346,6 +3429,11 @@ private:
         in.args = std::move(regs);
         in.stack = std::move(stack);
         if (hi >= 0) in.b = Operand::vreg(hi);
+        if (e.kids[0]->checked) {
+            const Type* t = e.kids[0]->checked.get();
+            if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Function) t = t->inner.get();
+            if (t->kind == Type::Kind::Function && t->variadic) in.va = true;
+        }
         emit(in);
         if (retMem) {
             Val out;
@@ -3710,8 +3798,18 @@ private:
             }
         }
         fn_.params = reg;
+        fn_.vaNamed = d.type && d.type->variadic ? reg : -1;
         nextReg_ = reg;
         startBlock("entry");
+        if (fn_.vaNamed >= 0) {
+            int save = fresh();
+            Inst loc;
+            loc.op = Inst::Op::Local;
+            loc.dst = save;
+            loc.a = Operand::number(48);
+            emit(loc);
+            vaSave_ = save;
+        }
         if (d.type) {
             for (std::size_t i = 0; i < d.type->params.size(); ++i) {
                 const Param& p = d.type->params[i];
@@ -3767,10 +3865,11 @@ private:
 
 void typecheckTu(Tu& tu, Diagnostics& diags);
 
-Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName) {
+Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName,
+                     const std::vector<std::string>& includes) {
     MemoryFiles files;
     files.add(fileName, source);
-    std::vector<Token> raw = preprocessTokens(files, fileName, {}, diags);
+    std::vector<Token> raw = preprocessTokens(files, fileName, includes, diags);
     if (!diags.ok()) return {};
     std::string file = "t.c";
     int line = 1;
@@ -3871,8 +3970,9 @@ void checkSource(const std::string& source, Diagnostics& diags, const std::strin
     typecheckTu(tu, diags);
 }
 
-Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file) {
-    return lowerProgram(source, diags, file);
+Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file,
+                   const std::vector<std::string>& includes) {
+    return lowerProgram(source, diags, file, includes);
 }
 
 }  // namespace okaycc

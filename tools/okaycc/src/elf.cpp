@@ -473,8 +473,19 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         }
         if (in.func.empty()) {
             loadRax(im, in.a);
-            u8(im, 0xFF);
-            u8(im, 0xD0);
+            if (in.va) {
+                u8(im, 0x49);
+                u8(im, 0x89);
+                u8(im, 0xC3);
+                u8(im, 0x31);
+                u8(im, 0xC0);
+                u8(im, 0x41);
+                u8(im, 0xFF);
+                u8(im, 0xD3);
+            } else {
+                u8(im, 0xFF);
+                u8(im, 0xD0);
+            }
         } else if (in.func == "syscall") {
             // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
             movReg(im, Rax, Rdi);
@@ -484,6 +495,10 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             u8(im, 0x0F);
             u8(im, 0x05);
         } else {
+            if (in.va) {
+                u8(im, 0x31);
+                u8(im, 0xC0);
+            }
             callRel(im, in.func);
         }
         if (nstack) {
@@ -590,6 +605,15 @@ void emitFunction(Image& im, const Function& f) {
         u8(im, modrm(2, Rax, Rbp));
         i32(im, disp);
         movSlotRax(im, i);
+    }
+    if (f.vaNamed >= 0 && !localOff.empty()) {
+        int base = localOff[0];
+        for (int i = 0; i < 6; ++i) {
+            rexW(im, kArg[i], Rbp);
+            u8(im, 0x89);
+            u8(im, modrm(2, kArg[i], Rbp));
+            i32(im, base + 8 * i);
+        }
     }
     int localIndex = 0;
     for (const Block& b : f.blocks) {
@@ -926,8 +950,9 @@ std::vector<unsigned char> wrapElf(const std::vector<unsigned char>& payload, st
 
 }  // namespace
 
-std::vector<unsigned char> compileToObject(const std::string& source, Diagnostics& diags, const std::string& file) {
-    Module m = lowerSource(source, diags, file);
+std::vector<unsigned char> compileToObject(const std::string& source, Diagnostics& diags, const std::string& file,
+                                      const std::vector<std::string>& includes) {
+    Module m = lowerSource(source, diags, file, includes);
     if (!diags.ok()) return {};
     Image im;
     for (const Function& f : m.funcs) emitFunction(im, f);
@@ -940,8 +965,9 @@ std::vector<unsigned char> compileToObject(const std::string& source, Diagnostic
     return writeObject(im);
 }
 
-std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags, const std::string& file) {
-    Module m = lowerSource(source, diags, file);
+std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags, const std::string& file,
+                                   const std::vector<std::string>& includes) {
+    Module m = lowerSource(source, diags, file, includes);
     if (!diags.ok()) return {};
     Image im;
     for (const Function& f : m.funcs) emitFunction(im, f);

@@ -48,6 +48,7 @@ struct Inst {
     std::string func;
     std::vector<Operand> args;
     std::vector<Operand> stack;  // outgoing stack image, low address first, 8-byte chunks
+    bool va = false;             // variadic call: the caller sets al to 0
 };
 
 struct Block {
@@ -58,6 +59,7 @@ struct Block {
 struct Function {
     std::string name;
     int params = 0;
+    int vaNamed = -1;  // named general registers before "...", or -1 when the function is not variadic
     std::vector<Block> blocks;
 };
 
@@ -77,7 +79,8 @@ struct Module {
 std::string printModule(const Module& m);
 
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
-Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
+Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c",
+                   const std::vector<std::string>& includes = {});
 std::string irText(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
 
 }  // namespace okaycc

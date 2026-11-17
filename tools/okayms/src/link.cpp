@@ -209,13 +209,11 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         return Result<std::vector<uint8_t>>::fail("image base must be a multiple of 64 KiB");
     }
 
-    for (const ObjectFile& object : objects) {
-        for (const Section& section : object.sections) {
-            if ((section.characteristics & kScnLnkComdat) != 0) {
-                return Result<std::vector<uint8_t>>::fail("COMDAT sections are not supported");
-            }
-        }
-    }
+    struct ComdatKept {
+        uint8_t selection = 0;
+        uint32_t size = 0;
+    };
+    std::map<std::string, ComdatKept> comdat_kept;
 
     std::vector<OutSection> outs;
     std::map<std::string, uint32_t> section_index;
@@ -227,6 +225,38 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         for (size_t si = 0; si < object.sections.size(); ++si) {
             const Section& section = object.sections[si];
             if ((section.characteristics & kScnLnkRemove) != 0) continue;
+            if ((section.characteristics & kScnLnkComdat) != 0) {
+                uint8_t selection = 0;
+                std::string key;
+                for (const Symbol& symbol : object.symbols) {
+                    if (symbol.section != static_cast<int16_t>(si + 1)) continue;
+                    if (key.empty() && symbol.storage == kClassExternal && !symbol.name.empty()) key = symbol.name;
+                    if (selection == 0 && symbol.aux.size() >= 15 &&
+                        (symbol.storage == kClassStatic || symbol.storage == kClassSection)) {
+                        selection = symbol.aux[14];
+                    }
+                }
+                if (key.empty()) return Result<std::vector<uint8_t>>::fail("COMDAT section has no symbol");
+                if (selection != 2 && selection != 3) {
+                    return Result<std::vector<uint8_t>>::fail("COMDAT selection is not supported");
+                }
+                const uint32_t comdat_size = section.data.empty() ? section.virtual_size
+                                                                  : static_cast<uint32_t>(section.data.size());
+                const auto found_comdat = comdat_kept.find(key);
+                if (found_comdat != comdat_kept.end()) {
+                    if (found_comdat->second.selection != selection) {
+                        return Result<std::vector<uint8_t>>::fail("COMDAT selections disagree for " + key);
+                    }
+                    if (selection == 3 && found_comdat->second.size != comdat_size) {
+                        return Result<std::vector<uint8_t>>::fail("COMDAT section size does not match for " + key);
+                    }
+                    continue;
+                }
+                ComdatKept kept;
+                kept.selection = selection;
+                kept.size = comdat_size;
+                comdat_kept.emplace(key, kept);
+            }
             // A '$' in a COFF section name groups contributions. The image
             // section keeps only the part before the '$'.
             std::string base_name = section.name;
@@ -517,6 +547,8 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 }
                 const Contrib& contrib = contribs[oi][static_cast<size_t>(symbol.section) - 1u];
                 if (!contrib.present) {
+                    const Section& home = object.sections[static_cast<size_t>(symbol.section) - 1u];
+                    if ((home.characteristics & kScnLnkComdat) != 0) continue;
                     return Result<std::vector<uint8_t>>::fail("symbol is in a section that was not linked");
                 }
                 if (symbol.value > 0xFFFFFFFFu - contrib.offset) {
@@ -554,6 +586,46 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
                 at_thunk.offset = slot.thunk_at;
                 globals[slot.name] = at_thunk;
             }
+        }
+    }
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ObjectFile& object = objects[oi];
+        std::vector<int32_t> raw_to_logical;
+        for (size_t si = 0; si < object.symbols.size(); ++si) {
+            if (raw_to_logical.size() > 1000000u) break;
+            raw_to_logical.push_back(static_cast<int32_t>(si));
+            const size_t aux_records = object.symbols[si].aux.size() / 18u;
+            raw_to_logical.insert(raw_to_logical.end(), aux_records, -1);
+        }
+        for (size_t si = 0; si < object.symbols.size(); ++si) {
+            const Symbol& symbol = object.symbols[si];
+            if (symbol.storage != kClassWeakExternal) continue;
+            if (globals.find(symbol.name) != globals.end()) continue;
+            if (symbol.aux.size() < 8) {
+                return Result<std::vector<uint8_t>>::fail("weak external is missing its auxiliary record");
+            }
+            const uint32_t tag = static_cast<uint32_t>(symbol.aux[0]) | (static_cast<uint32_t>(symbol.aux[1]) << 8) |
+                                 (static_cast<uint32_t>(symbol.aux[2]) << 16) | (static_cast<uint32_t>(symbol.aux[3]) << 24);
+            if (tag >= raw_to_logical.size() || raw_to_logical[tag] < 0) {
+                return Result<std::vector<uint8_t>>::fail("weak external tag is outside the symbol table");
+            }
+            const uint32_t logical = static_cast<uint32_t>(raw_to_logical[tag]);
+            const Symbol& alt = object.symbols[logical];
+            Placed target;
+            if (alt.section > 0 || alt.section == kSectionAbsolute) {
+                target = placed[oi][logical];
+            } else if (alt.storage == kClassExternal) {
+                const auto found = globals.find(alt.name);
+                if (found == globals.end()) {
+                    return Result<std::vector<uint8_t>>::fail("undefined symbol " + alt.name);
+                }
+                target = found->second;
+            } else {
+                return Result<std::vector<uint8_t>>::fail("weak external tag is not a symbol");
+            }
+            if (!target.defined) return Result<std::vector<uint8_t>>::fail("undefined symbol " + alt.name);
+            globals[symbol.name] = target;
+            placed[oi][si] = target;
         }
     }
     if (edata_section >= 0) {
@@ -610,8 +682,17 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         }
         const Symbol& symbol = object.symbols[symbol_index];
         if (symbol.storage == kClassWeakExternal) {
-            *err = "weak externals are not supported";
-            return false;
+            if (placed[oi][symbol_index].defined) {
+                *out = placed[oi][symbol_index];
+                return true;
+            }
+            const auto found = globals.find(symbol.name);
+            if (found == globals.end() || !found->second.defined) {
+                *err = "undefined symbol " + symbol.name;
+                return false;
+            }
+            *out = found->second;
+            return true;
         }
         if (symbol.section > 0 || symbol.section == kSectionAbsolute) {
             *out = placed[oi][symbol_index];

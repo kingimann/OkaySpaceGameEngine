@@ -80,7 +80,7 @@ struct Toolchain {
 };
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
-    string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int line = 0;
+    string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
 };
 struct Target {
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
@@ -239,6 +239,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); x.depfile = v[0]; }
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "restat") x.restat = oneFlag(v, k);
+            else if (k == "memory") { if (v.size() != 1) throw err("memory takes one value"); x.memory = atoi(v[0].c_str()); if (x.memory < 0) throw err("memory must be 0 or more"); }
             else if (k == "inputs") add(x.inputs); else if (k == "after") add(x.after);
             else throw err("unknown action key '" + k + "'");
         } else if (mode == BUILDFILE) {
@@ -374,7 +375,7 @@ static string hashArgv(const vector<string>& a) { uint64_t h = 14695981039346656
 // ---------------------------------------------------------------- graph
 struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
-    vector<int> deps, rdeps; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false;
+    vector<int> deps, rdeps; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
 struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
 static string gBuildDir = ".";
@@ -472,7 +473,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     // Every declared output is an edge source. `after` names the spelling used in the manifest.
     std::map<string, int> byOut, byRawName;
     for (auto& r : m.actions) {
-        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat;
+        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat; a.memory = r.memory;
         vector<string> outs;
         if (!r.output.empty()) outs.push_back(resolve(r.dir, r.output));
         for (auto& o : r.outputs) { string p = resolve(r.dir, o); if (std::find(outs.begin(), outs.end(), p) == outs.end()) outs.push_back(p); }
@@ -796,6 +797,12 @@ static int captureStdout(const vector<string>& argv, string& out, string& err) {
 static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
 static std::atomic<int> gCacheHit{0}, gCacheMiss{0};
 static bool gUseCache = true;
+static int gMemLimit = 0;
+static void rejectOversized(const Graph& g) {
+    if (gMemLimit <= 0) return;
+    for (auto& a : g.acts) if (a.memory > gMemLimit)
+        throw Fail("step '" + a.desc + "' needs " + std::to_string(a.memory) + " memory but the limit is " + std::to_string(gMemLimit));
+}
 static long long nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 struct Opts { int jobs = 0; bool dry = false, explain = false, verbose = false, profile = false, keep = false; string file = "build.okay"; };
 
@@ -1148,7 +1155,7 @@ static string commandLineFor(const Action& a, string& err) {
     return line;
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
-    long long tStart = nowNs(); Graph g = plan(m, want); loadState();
+    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g); loadState();
     long long tPlan = nowNs() - tStart;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
     bool anyFail = false, stop = false;
@@ -1184,13 +1191,17 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     if (jobs > total && total > 0) jobs = total;
     if (jobs < 1) jobs = 1;
     if (jobs > 64) jobs = 64; // WaitForMultipleObjects accepts at most 64 handles
-    auto blocked = [&](int id) { int p = poolIdx[id]; return p >= 0 && pools[p].used >= pools[p].depth; };
+    int memUsed = 0;
+    auto blocked = [&](int id) {
+        int p = poolIdx[id]; if (p >= 0 && pools[p].used >= pools[p].depth) return true;
+        return gMemLimit > 0 && memUsed + g.acts[id].memory > gMemLimit;
+    };
     auto take = [&]() -> int {
         for (int i = (int)ready.size() - 1; i >= 0; --i) if (!blocked(ready[i])) { int id = ready[i]; ready.erase(ready.begin() + i); return id; }
         return -1;
     };
     auto done = [&](int id, bool ok, const string& msg, bool held) {
-        if (held && poolIdx[id] >= 0) --pools[poolIdx[id]].used;
+        if (held) { if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; }
         ++finished;
         if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(msg.c_str(), stderr); } }
         else if (!stop) for (int r : g.acts[id].rdeps) if (--pending[r] == 0) ready.push_back(r);
@@ -1234,6 +1245,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 Live L; L.id = id; L.cacheKey = cacheKey; L.cacheTag = tag; L.began = tStep;
                 if (!spawnLive(line, a.dir, stream, L, err)) { done(id, false, err, false); continue; }
                 if (poolIdx[id] >= 0) ++pools[poolIdx[id]].used;
+                memUsed += a.memory;
                 live.push_back(L);
             } catch (const std::exception& e) { done(id, false, string("okay-build: ") + e.what() + "\n", false); }
         }
@@ -1277,7 +1289,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
 #ifdef _WIN32
     return buildOnWindows(m, want, o);
 #else
-    long long tStart = nowNs(); Graph g = plan(m, want); loadState();
+    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g); loadState();
     long long tPlan = nowNs() - tStart;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
     bool anyFail = false, stop = false;
@@ -1314,7 +1326,11 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     if (jobs > total && total > 0) jobs = total;
     if (jobs < 1) jobs = 1;
-    auto blocked = [&](int id) { int p = poolIdx[id]; return p >= 0 && pools[p].used >= pools[p].depth; };
+    int memUsed = 0;
+    auto blocked = [&](int id) {
+        int p = poolIdx[id]; if (p >= 0 && pools[p].used >= pools[p].depth) return true;
+        return gMemLimit > 0 && memUsed + g.acts[id].memory > gMemLimit;
+    };
     auto take = [&]() -> int {
         for (int i = (int)ready.size() - 1; i >= 0; --i) if (!blocked(ready[i])) { int id = ready[i]; ready.erase(ready.begin() + i); return id; }
         return -1;
@@ -1335,6 +1351,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
             }
             ++running; bool stream = false;
             if (poolIdx[id] >= 0) { ++pools[poolIdx[id]].used; stream = pools[poolIdx[id]].name == "console"; }
+            memUsed += g.acts[id].memory;
             const Action& a = g.acts[id]; lk.unlock();
             string why, out; bool d = false, ok = true; vector<std::pair<string, FileSig>> oldProduced;
             try {
@@ -1373,7 +1390,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                     } else wouldRun[id] = 1;
                 } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
             } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
-            lk.lock(); --running; if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; ++finished;
+            lk.lock(); --running; if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; ++finished;
             if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
             else if (!stop) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);
             cv.notify_all();
@@ -1841,6 +1858,7 @@ int main(int argc, char** argv) {
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;
+            else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
             else if (a == "--config" && i + 1 < argc) configName = argv[++i];

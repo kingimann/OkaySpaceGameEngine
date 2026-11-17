@@ -56,6 +56,9 @@ Each step that runs records its kind, its description, how long it took, and whe
 ## Testing
 `okay-build test` builds every exe marked `test = on` (a library cannot be a test) and then runs those programs. If none are marked, it runs exe targets whose names start with `test`. Anything else is left alone. The runs use `-j`, the same limit as the build. On Windows the wait is `WaitForMultipleObjects`, so the tool still does not use `<thread>`. The command prints `PASS` or `FAIL name exit N`, then `N tests, M failed`, and writes the same facts to `.okaybuild/test-report`. Exit status is 1 when a test fails.
 
+## Scheduler memory limit
+An action may say `memory = N` (a plain integer, the unit is whatever the manifest author means). `--memory N` is the budget. The scheduler will not start a step whose memory would push the running total over that budget, on top of the existing pools. A step that by itself needs more than the budget is refused before anything runs. With no `--memory`, nothing is counted and the old behaviour stays. Ctrl+C, a killed-build journal, and a jobserver are still missing.
+
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
 - Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`

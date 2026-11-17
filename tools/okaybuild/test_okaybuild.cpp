@@ -429,6 +429,31 @@ static void testConfigsAndToolchains() {
     }
 }
 
+static void testMemoryLimit() {
+    printf("test: a memory limit keeps heavy steps from overlapping\n");
+    auto three = [&](const string& name) {
+        fresh(name);
+        string man;
+        for (int i = 0; i < 3; ++i)
+            man += "action\n  cmd = sleep 0.3 && echo x > o" + std::to_string(i) + "\n  output = o" + std::to_string(i) + "\n  memory = 60\nend\n";
+        write("build.okay", man);
+    };
+    three("memlim");
+    auto t0 = std::chrono::steady_clock::now();
+    int rc; string o = sh("--memory 100 -j4", &rc);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    check(rc == 0 && ms >= 700, "three steps of 60 stay serial under a limit of 100", o + "\nms=" + std::to_string(ms));
+    three("memfree");
+    t0 = std::chrono::steady_clock::now();
+    o = sh("-j4", &rc);
+    ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    check(rc == 0 && ms < 550, "without a limit the same steps overlap", o + "\nms=" + std::to_string(ms));
+    fresh("memtoobig");
+    write("build.okay", "action\n  cmd = echo x > big\n  output = big\n  memory = 500\nend\n");
+    o = sh("--memory 100", &rc);
+    check(rc == 2 && o.find("500") != string::npos && o.find("100") != string::npos, "a step bigger than the limit is refused", o);
+}
+
 static void testOwnTests() {
     printf("test: okay-build test discovers executables and runs them in parallel\n");
     fresh("trun");
@@ -620,6 +645,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

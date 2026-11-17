@@ -108,9 +108,12 @@ void AvatarNow(const UI::DrawList& dl, float x, float y, float size, const unsig
     const UI::Vec2 ts = UI::CalcTextSize(init);
     Txt(dl, V(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), Rgb(255, 255, 255), init);
 }
-void Avatar(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+// With a profile picture (`picture`), the picture in a circle instead, as the launcher's DrawAvatar.
+void Avatar(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name,
+            SDL_Texture* picture = nullptr) {
     const char init0 = name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]);
     if (g_layoutOnly) return;
+    if (picture) { dl.AddImageRounded(picture, V(x, y), V(x + size, y + size), size * 0.5f); return; }
     struct Args { const UI::DrawList* dl; float x, y, size; const unsigned char* rgb; char init; } a{&dl, x, y, size, rgb, init0};
     const unsigned long long key = LookKey({0x61767472u, FloatBits(size), FloatBits(UI::GetTextLineHeight()),
                                             (unsigned)rgb[0] | ((unsigned)rgb[1] << 8) | ((unsigned)rgb[2] << 16), (unsigned char)init0});
@@ -430,7 +433,7 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
             if (m.feed.empty()) DrawWrapped(dl, px, yy, iw, "It's quiet\xE2\x80\xA6 nothing new from friends yet.", cDim);
             for (int i = 0; i < n; ++i) {
                 const FeedRow& e = m.feed[(std::size_t)i];
-                Avatar(dl, px, yy, 28.0f, e.avatar, e.who);
+                Avatar(dl, px, yy, 28.0f, e.avatar, e.who, e.picture);
                 const float gx = px + 38.0f, gy = yy - 1.0f, gw = std::max(1.0f, px + iw - gx);
                 const float th = DrawWrapped(dl, gx, gy, gw, e.text, cText);
                 float gh = th;
@@ -493,7 +496,7 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                         res.followRows.push_back(UI::GetItemRect());
                         const bool hov = UI::IsItemHovered();
                         if (hov) dl.AddRectFilled(rp, V(rp.x + lw, rp.y + rowH), Rgb(255, 255, 255, 8), 10.0f);
-                        Avatar(dl, rp.x + 10.0f, rp.y + (rowH - A) * 0.5f, A, e.avatar, e.display);
+                        Avatar(dl, rp.x + 10.0f, rp.y + (rowH - A) * 0.5f, A, e.avatar, e.display, e.picture);
                         const UI::Vec2 pd = V(rp.x + 10.0f + A * 0.85f, rp.y + (rowH + A) * 0.5f - A * 0.15f);
                         dl.AddCircleFilled(pd, 6.5f, CBase(), 16);
                         dl.AddCircleFilled(pd, 4.5f, e.online ? CGreen() : CGrey(), 16);
@@ -653,7 +656,7 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                         if (UI::IsItemVisible() || true) {
                             if (rowHov) dl.AddRectFilled(rp, V(rp.x + lw, rp.y + rowH), Rgb(255, 255, 255, 11), 10.0f);
                             const UI::Vec2 ap = V(rp.x + 10.0f, rp.y + (rowH - A) * 0.5f);
-                            Avatar(dl, ap.x, ap.y, A, f.avatar, f.name);
+                            Avatar(dl, ap.x, ap.y, A, f.avatar, f.name, f.picture);
                             if (accepted || sec.kind == 1) PresenceDot(dl, V(ap.x + A * 0.85f, ap.y + A * 0.85f), CBase(), f.online ? CGreen() : CGrey());
                             if (f.favorite) Star10(dl, V(ap.x + 3.0f, ap.y + 3.0f), 6.0f, Rgb(250, 200, 70));
                             const float tx = rp.x + 10.0f + A + 12.0f, ty = rp.y + 12.0f;
@@ -774,7 +777,10 @@ void IconTileNow(const UI::DrawList& dl, float x, float y, float size, const uns
     const UI::Vec2 ts = UI::CalcTextSize(init);
     Txt(dl, V(x + (size - ts.x) * 0.5f, y + (size - ts.y) * 0.5f), Rgb(224, 230, 240), init);
 }
-void IconTile(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name) {
+// With cover art (`cover`), the picture with rounded corners instead, as the launcher's DrawGameIcon.
+void IconTile(const UI::DrawList& dl, float x, float y, float size, const unsigned char rgb[3], const std::string& name,
+              SDL_Texture* cover = nullptr) {
+    if (cover) { dl.AddImageRounded(cover, V(x, y), V(x + size, y + size), size * 0.22f); return; }
     const char init0 = name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]);
     struct Args { const UI::DrawList* dl; float x, y, size; const unsigned char* rgb; char init; } a{&dl, x, y, size, rgb, init0};
     const unsigned long long key = LookKey({0x74696c65u, FloatBits(size), FloatBits(UI::GetTextLineHeight()),
@@ -1028,7 +1034,7 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
                     dl.AddRect(cp, V(cp.x + cardW, cp.y + cardH), Rgb(255, 255, 255, 30), 10.0f, 1.0f);
                 }
                 const float A = 52.0f;
-                IconTile(dl, cp.x + 14.0f, cp.y + 14.0f, A, it.tile, it.title);
+                IconTile(dl, cp.x + 14.0f, cp.y + 14.0f, A, it.tile, it.title, it.cover);
                 const float tx = cp.x + 14.0f + A + 12.0f, tr = cp.x + cardW - 14.0f;
                 Txt(dl, V(tx, cp.y + 16.0f), cText, FitTextCached(it.title, tr - tx).c_str());
                 Txt(dl, V(tx, cp.y + 37.0f), accLt, FitTextCached(it.meta, tr - tx).c_str());

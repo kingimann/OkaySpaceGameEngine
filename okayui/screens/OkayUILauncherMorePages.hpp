@@ -25,15 +25,18 @@ struct FriendRow {
     std::string playing, customStatus, lastOnline;   // lastOnline: "Last online 3h ago", or empty
     long lastSeen = 0;                   // unix time last online (orders the offline friends, most recent first)
     unsigned char avatar[3] = {80, 80, 110};         // the initial's disc colour
+    SDL_Texture* picture = nullptr;      // the profile picture (drawn round instead of the disc), or null
 };
 struct FollowRow {
     std::string id, username, display, seen;   // seen: "seen 3h ago", or empty
     bool online = false;
     unsigned char avatar[3] = {80, 80, 110};
+    SDL_Texture* picture = nullptr;      // the profile picture, or null
 };
 struct FeedRow {
     std::string who, text, ago;          // text: the whole sentence ("Maya Chen is playing Neon Drift")
     unsigned char avatar[3] = {80, 80, 110};
+    SDL_Texture* picture = nullptr;      // the profile picture, or null
 };
 
 struct FriendsModel {
@@ -96,6 +99,7 @@ struct CommunityItem {
     std::string meta;                    // "Game  ·  1.2 MB"
     std::string ago;                     // "3 d ago", or empty
     unsigned char tile[3] = {100, 110, 130};   // the initial tile's colour (the launcher's muted name colour)
+    SDL_Texture* cover = nullptr;        // the game's cover art (drawn with rounded corners instead of the tile), or null
 };
 struct CommunityTemplate {
     std::string name, desc;

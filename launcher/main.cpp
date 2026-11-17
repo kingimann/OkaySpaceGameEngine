@@ -21695,6 +21695,9 @@ int main(int argc, char** argv) {
                     cm.templates.push_back(ct);
                 }
             }
+            // Cover art: looked up every frame (GameCover keeps its own cache), as the Dear ImGui page does.
+            for (std::size_t i = 0; i < cm.items.size() && i < cmItems.size(); ++i)
+                cm.items[i].cover = cmItems[i].first < scenes.size() ? GameCover(scenes[cmItems[i].first].string()) : nullptr;
             cm.havePlayer = !player.empty(); cm.haveEditor = !editor.empty();
             static okayuiscreens::CommunityState cs;
             cs.libFilter = commFilter; cs.libCap = (int)sizeof(commFilter);
@@ -24294,6 +24297,18 @@ int main(int argc, char** argv) {
             fm.addError = fd.err; fm.addOk = fd.ok;
             static unsigned fmRev = 0;
             fm.revision = ++fmRev;
+            }
+            // Profile pictures: looked up every frame (the texture cache can change under the model), as the Dear ImGui page does.
+            {
+                auto pic = [](const std::string& url) -> SDL_Texture* { return url.empty() ? nullptr : AvatarTexture(url); };
+                for (std::size_t i = 0; i < fm.friends.size() && i < fd.list.size(); ++i) fm.friends[i].picture = pic(fd.list[i].avatar);
+                for (std::size_t i = 0; i < fm.following.size() && i < fd.following.size(); ++i) fm.following[i].picture = pic(fd.following[i].avatar);
+                for (std::size_t i = 0; i < fm.followers.size() && i < fd.followers.size(); ++i) fm.followers[i].picture = pic(fd.followers[i].avatar);
+                for (std::size_t i = 0; i < fm.feed.size() && i < fd.feed.size(); ++i) {
+                    SDL_Texture* t = nullptr;
+                    for (const okay::Friend& f : fd.list) if (f.username == fd.feed[i].actor) { t = pic(f.avatar); break; }
+                    fm.feed[i].picture = t;
+                }
             }
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();

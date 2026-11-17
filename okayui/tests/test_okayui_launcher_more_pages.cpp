@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -629,6 +630,30 @@ int main() {
         auto rig = MakeRig(600, 600, [&] { S::DrawVersions(m, 0, 0, 600, 0, 0); S::DrawVersions(m, 0, -300, 600, 0, 600); });
         rig.Frames(3);
         CHECK(UI::DroppedGeometry() == 0);
+    }
+    // ================= Pictures =================
+    {   // a profile picture or a cover is drawn as a textured shape instead of the disc or the tile (and only then)
+        SDL_Texture* pic = (SDL_Texture*)(std::uintptr_t)0x2000, *cover = (SDL_Texture*)(std::uintptr_t)0x3000;
+        auto usesTexture = [](const void* t) {
+            const UI::DrawData d = UI::GetDrawData();
+            for (int k = 0; k < d.cmdCount; ++k) if (d.cmds[k].texture == t) return true;
+            return false;
+        };
+        S::FriendsModel fm = Friends(); S::FriendsState fst;
+        auto rig = MakeRig(1000, 640, [&] { S::DrawFriends(fm, fst, 0, 0, 1000, 640); });
+        rig.Frames(2);
+        CHECK(!usesTexture(pic));
+        fm.friends[0].picture = pic; fm.feed[0].picture = pic;
+        rig.Frames(2);
+        CHECK(usesTexture(pic) && UI::DroppedGeometry() == 0);
+        S::CommunityModel cm = Community(); char lib[128] = "", tpl[128] = "";
+        S::CommunityState cst; cst.libFilter = lib; cst.libCap = 128; cst.tplFilter = tpl; cst.tplCap = 128;
+        auto rig2 = MakeRig(1000, 700, [&] { S::DrawCommunity(cm, cst, 0, 0, 1000, 700); });
+        rig2.Frames(2);
+        CHECK(!usesTexture(cover));
+        cm.items[0].cover = cover;
+        rig2.Frames(2);
+        CHECK(usesTexture(cover) && UI::DroppedGeometry() == 0);
     }
     }   // !benchOnly
     // ================= Speed: per-frame CPU time of each page (headless; information, not a check) =================

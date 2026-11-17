@@ -956,6 +956,10 @@ struct DrawList {
     /// skips textured commands.
     void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
                   Color32 tint = 0xffffffffu) const;
+    /// The same with rounded corners (`rounding` at most half the shorter side: a circle for a square at half its side), a
+    /// fan of 1 + 4 x 7 points whose texture coordinates follow the position. For profile pictures and game covers.
+    void AddImageRounded(SDL_Texture* tex, Vec2 min, Vec2 max, float rounding, Vec2 uv0 = Vec2{0.0f, 0.0f},
+                         Vec2 uv1 = Vec2{1.0f, 1.0f}, Color32 tint = 0xffffffffu) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).

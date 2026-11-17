@@ -5888,6 +5888,40 @@ void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, 
     texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
 }
 
+void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, float rounding, Vec2 uv0, Vec2 uv1, Color32 tint) const {
+    if (!tex || !finite2(mn) || !finite2(mx) || !finite2(uv0) || !finite2(uv1) || mx.x <= mn.x || mx.y <= mn.y) return;
+    const float w = mx.x - mn.x, h = mx.y - mn.y;
+    float r = finite1(rounding) && rounding > 0.0f ? rounding : 0.0f;
+    if (r > 0.5f * std::min(w, h)) r = 0.5f * std::min(w, h);
+    if (r < 0.5f) { AddImage(tex, mn, mx, uv0, uv1, tint); return; }
+    if (culledY(mn.y, mx.y)) return;
+    if (g_cullRow) return;
+    ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
+    constexpr int kSteps = 6;                                   // each corner: 7 points, 0 to 90 degrees
+    const int n = 4 * (kSteps + 1);
+    if (g_nv + n + 1 > kMaxVerts || g_ni + n * 3 > kMaxIdx) { noteDrop(); return; }
+    setTexture(tex);
+    const SDL_Color sc = toColor(c);
+    auto put = [&](float x, float y) {
+        SDL_Vertex v; v.color = sc; v.position.x = x; v.position.y = y;
+        v.tex_coord.x = uv0.x + (uv1.x - uv0.x) * (x - mn.x) / w; v.tex_coord.y = uv0.y + (uv1.y - uv0.y) * (y - mn.y) / h;
+        g_verts[g_nv++] = v;
+    };
+    const int base = g_nv;
+    put(mn.x + w * 0.5f, mn.y + h * 0.5f);
+    // Corners clockwise from the top left, each from its start angle through a quarter turn (screen y grows downwards).
+    const float cx[4] = {mn.x + r, mx.x - r, mx.x - r, mn.x + r}, cy[4] = {mn.y + r, mn.y + r, mx.y - r, mx.y - r};
+    for (int q = 0; q < 4; ++q) {
+        const float a0 = 3.14159265f * (1.0f + 0.5f * (float)q);
+        for (int i = 0; i <= kSteps; ++i) {
+            const float a = a0 + 1.57079633f * (float)i / (float)kSteps;
+            put(cx[q] + r * SDL_cosf(a), cy[q] + r * SDL_sinf(a));
+        }
+    }
+    for (int i = 0; i < n; ++i) { g_idx[g_ni++] = base; g_idx[g_ni++] = base + 1 + i; g_idx[g_ni++] = base + 1 + (i + 1) % n; }
+    setTexture(g_defTex);
+}
+
 void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
     OkayUI::PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
 }

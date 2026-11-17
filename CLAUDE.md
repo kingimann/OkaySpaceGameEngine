@@ -166,8 +166,9 @@ then this file gets updated. Keep this file short and true.
     Cryptography findings follow rule 18 as well.
 24a. **Exception: Grok may write our own build tool and our own compiler (owner 2026-11-17: "Yes please", then "start
     building our own MSVC and Clang too ... we are not replacing them any time soon, its so i have something to do").**
-    Only in `tools/okaybuild/` (build tool, `docs/own_build_plan.md`) and `tools/okaycc/` (compiler research project,
-    `docs/own_compiler_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
+    Only in `tools/okaybuild/` (build tool, `docs/own_build_plan.md`), `tools/okaycc/` (our own Clang-style compiler,
+    `docs/own_compiler_plan.md`) and `tools/okayms/` (our own MSVC-style compiler, linker and Windows toolchain,
+    `docs/own_msvc_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
     holds for the rest of the repository, and rule 18 still holds (no cryptography). The code must be its own, written
     from language standards, object-file and CPU manuals and general compiler ideas, with no code taken from CMake,
     Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and

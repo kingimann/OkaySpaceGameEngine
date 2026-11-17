@@ -255,6 +255,37 @@ int main() {
     }
     {
         const char* src =
+            "class Animal {\n"
+            "public:\n"
+            "  virtual int legs() { return 0; }\n"
+            "  virtual int ears() { return 2; }\n"
+            "};\n"
+            "class Dog : public Animal {\n"
+            "public:\n"
+            "  int legs() { return 4; }\n"
+            "};\n"
+            "int ask(Animal *a) { return a->legs() * 10 + a->ears(); }\n"
+            "int main() {\n"
+            "  Dog d;\n"
+            "  Animal a;\n"
+            "  if (ask(&a) != 2) return 1;\n"
+            "  return ask(&d);\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        // The vtable is _ZTV<class>: offset-to-top, type info (we write 0), then the slots in order.
+        bool table = as.find("_ZTV3Dog:") != std::string::npos && as.find("_ZTV6Animal:") != std::string::npos &&
+                     as.find(".quad _ZN3Dog4legsEv") != std::string::npos &&
+                     as.find(".quad _ZN6Animal4earsEv") != std::string::npos;
+        if (got != 42 || !table) {
+            std::fprintf(stderr, "FAIL virtual call exit %d table %d\n%s\n", got, table ? 1 : 0, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
             "int main() {\n"
             "  bool b;\n"
             "  int *p;\n"

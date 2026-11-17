@@ -1251,6 +1251,7 @@ private:
         }
         T.needCtor = needCtor;
         T.needDtor = needDtor;
+        if (!c.ctors.empty() || c.dtorDeclared || T.hasVptr || needCtor || needDtor) T.nonpod = true;
         Token at;
         at.line = c.dtorPos.line;
         at.column = c.dtorPos.col;
@@ -2922,8 +2923,10 @@ public:
     void check(Tu& tu) {
         scopes_.emplace_back();
         // Declare every function first, so a call may come before the definition (class members).
-        for (auto& d : tu.decls)
+        for (auto& d : tu.decls) {
             if (d && d->function && d->type) add(d->name, cloneType(*d->type), true, d->line, d->col);
+            else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
+        }
         for (auto& d : tu.decls) {
             if (!d) continue;
             if (d->function) checkFunction(*d);
@@ -3713,13 +3716,14 @@ private:
 
     void checkVar(Decl& d) {
         if (!d.type) return;
+        if (!d.vt.empty()) return;  // a vtable: already declared
         if (d.type->kind == Type::Kind::Reference) {
             if (!d.init || !d.type->inner) {
                 err(d.line, d.col, "a reference must be initialized");
             } else {
                 ET src = checkExpr(*d.init);
                 if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
-                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type))
+                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type) && !derivedFrom(*src.type, *d.type->inner))
                     err(d.line, d.col, "cannot bind this reference");
             }
             add(d.name, cloneType(*d.type), false, d.line, d.col);

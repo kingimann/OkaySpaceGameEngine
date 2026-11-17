@@ -26,12 +26,17 @@ enum Body : int { BodyLight = 0, BodyCamera, BodyRigidbody, BodyBoxCollider, Bod
                   BodyCurves,
                   // stage 5 (section 18): Procedural Object Holding, Holdable Object, Character, First-person settings, View toggle and the
                   // Animator state machine (two states, the first one's transitions open)
-                  BodyObjHolding, BodyHoldable, BodyCharacter, BodyFirstPerson, BodyPlayerView, BodyAnimSM, BodyCount };
+                  BodyObjHolding, BodyHoldable, BodyCharacter, BodyFirstPerson, BodyPlayerView, BodyAnimSM,
+                  // stage 6 (section 19): Item Pickup (an unknown item id), Hold Prompt, Water, Flashlight, Pause Menu, Hand (legacy),
+                  // Voxel Digger, Voxel Terrain (materials on)
+                  BodyItemPickup, BodyHoldPrompt, BodyWater, BodyFlashlight, BodyPauseMenu, BodyFpHand, BodyVoxelDigger, BodyVoxelTerrain, BodyCount };
 inline const char* const kBodyNames[BodyCount] = {"light", "camera", "rigidbody", "boxcollider", "script", "meshrest", "generic",
                                                   "sprite", "audio", "box2d", "edge2d", "particles", "controller3d", "animator",
                                                   "text", "canvas", "uibutton", "uiimage", "uislider", "uitoggle", "uiinput", "layout",
                                                   "navagent", "terrain", "curves",
-                                                  "objholding", "holdable", "character", "firstperson", "playerview", "animsm"};
+                                                  "objholding", "holdable", "character", "firstperson", "playerview", "animsm",
+                                                  "itempickup", "holdprompt", "water", "flashlight", "pausemenu", "fphand", "voxeldigger",
+                                                  "voxelterrain"};
 
 struct Values {
     // Light (a Spot light, colour mode)
@@ -155,6 +160,22 @@ struct Values {
     // the Animator state machine
     std::string smS0 = "Idle", smS1 = "Walk", smParam = "speed"; int smEntry = 0, smClip0 = 0, smClip1 = 1, smTo = 1, smCond = 1; bool smLoop0 = true, smLoop1 = true;
     float smSpd0 = 1.0f, smSpd1 = 1.0f, smVal = 0.1f, smBlendT = 0.2f, smSC = 0.3f, smCP = 0.5f, smPS = 0.8f, smIW = 0.2f, smWR = 0.2f, smGA = 0.1f, smAG = 0.1f;
+
+    // stage 6
+    int ipItem = -1, ipCount = 1; std::string ipTag = "Player", ipKey = "e"; bool ipTouch = false, ipHold = true; float ipAuto = 0.0f, ipRange = 3.0f, ipMagnet = 0.0f;
+    std::string hpDrop = "e", hpAlt = "g", hpPrompt = "Hold Prompt"; bool hpLoc = false;
+    float waCol[4] = {0.15f, 0.4f, 0.6f, 0.8f}, waSize = 50.0f, waDepth = 3.0f, waDens = 1000.0f, waDrag = 1.0f, waH = 0.3f, waL = 8.0f, waS = 1.0f, waRefl = 0.6f, waGlint = 0.5f;
+    float waFlow[2] = {0.02f, 0.0f}; int waDetail = 32;
+    std::string flKey = "f"; bool flOn = true; float flRange = 25.0f, flAngle = 40.0f, flInt = 2.0f, flCol[3] = {1.0f, 0.95f, 0.85f};
+    bool pmLoc = false, pmResume = true, pmQuit = true; std::string pmTitle = "Paused", pmScene; int pmKey = 0; float pmDim[4] = {0, 0, 0, 0.5f}, pmPanel[4] = {0.1f, 0.1f, 0.15f, 0.9f};
+    int fhBtn = 0, fhSide = 0; bool fhHold = true, fhFollow = true, fhBob = true, fhSteady = false, fhRun = false; float fhRaise = -96.0f, fhElbow = 16.0f;
+    int vdMode = 0, vdBtn = 0, vdAbtn = 1, vdPreset = 0, vdCollect = 2, vdShape = 0, vdSpan = 6, vdPasses = 4, vdDebris = 120; float vdRad = 2.0f, vdStr = 4.0f, vdReach = 40.0f;
+    bool vdBrush = true, vdNeeds = true, vdCreative = false, vdSnap = false, vdSlump = true, vdCollapse = true, vdGive = true, vdTools = false, vdBuild = false;
+    float vdPower = 3.0f, vdHard = 1.0f, vdDepth = -1.0f, vdBed = -1.0f, vdLife = 20.0f; std::string vdPour = "f", vdHud;
+    float vtCol[4] = {0.5f, 0.45f, 0.4f, 1.0f}, vtDims[3] = {64, 32, 64}, vtSize = 1.0f, vtSurf = 0.5f, vtAmp = 8.0f, vtCaves = 0.3f, vtTop = 0.3f, vtDirt = 3.0f, vtSlope = 0.6f, vtOre = 0.1f;
+    bool vtAuto = true, vtCatch = true, vtFoot = false, vtFluid = false; std::string vtTex; int vtSeed = 1234, vtVeins = 12; float vtCatchD = 4.0f;
+    std::string vtMName[2] = {"Grass", "Stone"}, vtMDrop[2] = {"dirt", "stone"}; float vtMCol[2][4] = {{0.3f, 0.6f, 0.25f, 1}, {0.5f, 0.5f, 0.5f, 1}};
+    float vtMHard[2] = {1.0f, 4.0f}, vtMDens[2] = {1500.0f, 2600.0f}, vtMPer[2] = {1.0f, 1.0f}; bool vtMLoose[2] = {true, false};
 
     // what the rows asked for
     int tipAsked = 0, choicesAsked = 0, prefabMenuAsked = 0;
@@ -1081,6 +1102,126 @@ inline P::InspFieldList Rows(Body b, Values& v) {
         L.Note("Set parameters from a script: anim_set_float(\"speed\", v),\nanim_set_bool(\"armed\", 1), anim_trigger(\"attack\"); anim_state() reads back.", false, true);
         break;
     }
+
+    case BodyItemPickup: {
+        static const char* const kItems[] = {"Apple", "Crate", "Wood Plank", "Stone"};
+        L.Note("An item in the world. Walk into it (trigger), come close, or press the key.", false, true);
+        L.Combo("Item##pk", &v.ipItem, kItems, 4); L.Last().width = 160.0f; L.Last().preview = "crate_heavy_wooden_box"; L.Last().color = P::HierCol(255, 153, 76);
+        L.DragInt("Count##pk", &v.ipCount, 0.2f, 1, 99999);
+        L.Text("Collector Tag##pk", &v.ipTag);
+        L.Check("Pick Up On Touch##pk", &v.ipTouch);
+        L.Drag("Auto Radius##pk", &v.ipAuto, 1, 0.05f, 0.0f, 50.0f);
+        L.Text("Interact Key##pk", &v.ipKey);
+        L.Drag("Interact Range##pk", &v.ipRange, 1, 0.05f, 0.1f, 50.0f);
+        L.Check("Hold In Hands##pk", &v.ipHold);
+        L.Note("The key picks it up with Procedural Object Holding (if the player has it).", false, true);
+        L.Drag("Magnet Radius##pk", &v.ipMagnet, 1, 0.05f, 0.0f, 50.0f);
+        break;
+    }
+    case BodyHoldPrompt:
+        L.Note("E picks a hold-in-hands item up. E again, or G, puts it down.", false, true);
+        L.Text("Drop Key##hp", &v.hpDrop); L.Text("Alt Drop Key##hp", &v.hpAlt); L.Text("Prompt Object##hp", &v.hpPrompt);
+        L.Check("Localized##hp", &v.hpLoc);
+        L.SmallButton("Remove##hp");
+        break;
+    case BodyWater:
+        L.Note("A living, reflective water surface with rolling waves.", false, true);
+        L.Color("Color##wat", v.waCol, 4); L.Drag("Size##wat", &v.waSize, 1, 1.0f, 1.0f, 1000000.0f);
+        L.Drag("Depth##wat", &v.waDepth, 1, 0.1f, 0.0f, 200.0f); L.Drag("Density##wat", &v.waDens, 1, 0.01f, 0.0f, 20.0f);
+        L.Drag("Drag##wat", &v.waDrag, 1, 0.05f, 0.0f, 20.0f); L.SliderInt("Detail##wat", &v.waDetail, 4, 128);
+        L.Section("Waves");
+        L.Drag("Height##wat", &v.waH, 1, 0.01f, 0.0f, 5.0f); L.Drag("Length##wat", &v.waL, 1, 0.1f, 0.5f, 60.0f); L.Drag("Speed##wat", &v.waS, 1, 0.05f, 0.0f, 8.0f);
+        L.Section("Surface");
+        L.Slider("Reflectivity##wat", &v.waRefl, 0.0f, 1.0f); L.Slider("Glint##wat", &v.waGlint, 0.0f, 1.0f);
+        L.Drag("Flow##wat", v.waFlow, 2, 0.005f, -1.0f, 1.0f);
+        L.SmallButton("Remove##wat");
+        break;
+    case BodyFlashlight:
+        L.Note("A spot light that follows your view \xE2\x80\x94 see inside caves. Toggle in Play.", false, true);
+        L.Text("Toggle Key##fl", &v.flKey); L.Check("On##fl", &v.flOn);
+        L.Drag("Range##fl", &v.flRange, 1, 0.5f, 1.0f, 200.0f); L.Slider("Cone Angle##fl", &v.flAngle, 10.0f, 120.0f, "%.0f deg");
+        L.Drag("Intensity##fl", &v.flInt, 1, 0.05f, 0.0f, 8.0f); L.Color("Color##fl", v.flCol, 3);
+        L.Note("Mount on the player or its camera; the beam aims where you look.", false, true);
+        L.SmallButton("Remove##fl");
+        break;
+    case BodyPauseMenu: {
+        static const char* const kPk[] = {"Escape", "P", "Tab"};
+        L.Note("Editable UI is under 'PauseMenu UI' \xE2\x80\x94 select its parts to restyle.", false, true);
+        L.Note("Press the toggle key in Play to pause; Resume / Quit buttons appear.", false, true);
+        L.Check("Localized##pm", &v.pmLoc); L.Text("Title##pm", &v.pmTitle);
+        L.Combo("Toggle Key##pm", &v.pmKey, kPk, 3);
+        L.Check("Resume button##pm", &v.pmResume); L.Check("Quit button##pm", &v.pmQuit);
+        L.Text("Main Menu Scene##pm", &v.pmScene);
+        L.Color("Backdrop##pm", v.pmDim, 4); L.Color("Panel##pm", v.pmPanel, 4);
+        L.SmallButton("Remove##pm");
+        break;
+    }
+    case BodyFpHand: {
+        static const char* const kSides[] = {"Right arm", "Left arm"};
+        L.Note("Shows your character's OWN arm in first person. Your body is\nhidden from your camera only (others see all of it) and never\nduplicated. Click to punch.");
+        L.SliderInt("Attack Button##fh", &v.fhBtn, 0, 2); L.Check("Swing while held##fh", &v.fhHold);
+        L.Combo("Arm side##fh", &v.fhSide, kSides, 2); L.Check("Follow camera look##fh", &v.fhFollow); L.Check("Bobbing##fh", &v.fhBob);
+        L.Check("Steady arm (ignore lean/crouch/prone)##fh", &v.fhSteady); L.Check("Show While Running##fh", &v.fhRun);
+        L.Section("Manual adjust");
+        L.Drag("Raise##fh", &v.fhRaise, 1, 0.5f, -180.0f, 180.0f, "%.0f deg"); L.Drag("Elbow##fh", &v.fhElbow, 1, 0.5f, -180.0f, 180.0f, "%.0f deg");
+        L.SmallButton("Reset arm pose##fh"); L.SmallButton("Remove##fh");
+        break;
+    }
+    case BodyVoxelDigger: {
+        static const char* const kM[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
+        static const char* const kB[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+        static const char* const kPr[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+        static const char* const kCo[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+        static const char* const kSh[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+        L.Note("Aim with the camera and hold to carve caves/tunnels (or add material).", false, true);
+        L.Combo("Primary##vdg", &v.vdMode, kM, 4); L.Combo("Primary Button##vdg", &v.vdBtn, kB, 4); L.Combo("Opposite Button##vdg", &v.vdAbtn, kB, 4);
+        L.Drag("Brush Radius##vdg", &v.vdRad, 1, 0.1f, 0.25f, 30.0f); L.Drag("Strength / sec##vdg", &v.vdStr, 1, 0.1f, 0.1f, 100.0f);
+        L.Drag("Reach##vdg", &v.vdReach, 1, 0.5f, 1.0f, 500.0f); L.Check("Show brush marker##vdg", &v.vdBrush);
+        L.Section("Real life");
+        L.Combo("Preset##vdg", &v.vdPreset, kPr, 4); L.Combo("Dug Ground##vdg", &v.vdCollect, kCo, 4);
+        L.Check("Building needs material##vdg", &v.vdNeeds); L.SameLineOrWrap(); L.Check("Creative (unlimited)##vdg", &v.vdCreative);
+        L.Drag("Tool Power##vdg", &v.vdPower, 1, 0.1f, 0.0f, 1.0e9f, "%.1f"); L.Drag("Hardness Scale##vdg", &v.vdHard, 1, 0.05f, 0.1f, 20.0f);
+        L.Combo("Brush Shape##vdg", &v.vdShape, kSh, 4);
+        L.Drag("Depth Limit##vdg", &v.vdDepth, 1, 0.1f, -1.0f, 200.0f, "%.1f"); L.Drag("Bedrock Height##vdg", &v.vdBed, 1, 0.1f, -1.0f, 500.0f, "%.1f");
+        L.Check("Snap to grid##vdg", &v.vdSnap); L.SameLineOrWrap(); L.Check("Slump loose ground##vdg", &v.vdSlump);
+        L.Text("Pour Key##vdg", &v.vdPour); L.SliderInt("Cave-in Span##vdg", &v.vdSpan, 0, 24);
+        L.SliderInt("Slump Passes##vdg", &v.vdPasses, 1, 32); L.SameLineOrWrap(); L.Check("Collapse##vdg", &v.vdCollapse);
+        L.SliderInt("Debris Limit##vdg", &v.vdDebris, 0, 300); L.Drag("Debris Life (s)##vdg", &v.vdLife, 1, 0.5f, 1.0f, 120.0f);
+        L.Check("Give inventory items##vdg", &v.vdGive); L.Check("Tools from inventory##vdg", &v.vdTools); L.Check("Build from items##vdg", &v.vdBuild);
+        L.Text("Count Text Object##vdg", &v.vdHud);
+        L.Note("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.", false, true);
+        L.SmallButton("Remove##vdg");
+        break;
+    }
+    case BodyVoxelTerrain:
+        L.Note("Smooth marching-cubes voxels: real caves, tunnels & overhangs.", false, true);
+        L.Color("Color##vox", v.vtCol, 4); L.Check("Auto-color (height/slope)##vox", &v.vtAuto);
+        L.Drag("Grid (X,Y,Z)##vox", v.vtDims, 3, 1.0f, 4.0f, 512.0f, "%.0f"); L.Drag("Voxel Size##vox", &v.vtSize, 1, 0.05f, 0.1f, 10.0f);
+        L.Text("Texture##vox", &v.vtTex); L.Last().pick = P::InspPickList; L.Last().dropKind = "";
+        L.Section("Generate");
+        L.Drag("Surface##vox", &v.vtSurf, 1, 0.01f, 0.1f, 0.95f); L.Drag("Relief##vox", &v.vtAmp, 1, 0.2f, 0.0f, 40.0f); L.Slider("Caves##vox", &v.vtCaves, 0.0f, 1.0f);
+        L.InputInt("Seed##vox", &v.vtSeed); L.SameLineOrWrap(); L.SmallButton("Random##voxseed");
+        L.Button("Generate##voxgen"); L.SameLineOrWrap(); L.Button("Solid Slab##voxgen"); L.SameLineOrWrap(); L.Button("Clear##voxgen");
+        L.Note("Add a Voxel Digger to carve it live in Play.", false, true);
+        L.Section("Materials");
+        L.Drag("Topsoil (m)##voxlay", &v.vtTop, 1, 0.05f, 0.0f, 10.0f); L.Drag("Dirt Depth (m)##voxlay", &v.vtDirt, 1, 0.1f, 0.0f, 40.0f);
+        L.Slider("Rock Slope##voxlay", &v.vtSlope, 0.1f, 1.0f); L.Slider("Ore Pockets##voxlay", &v.vtOre, 0.0f, 0.5f); L.SliderInt("Ore Veins##voxlay", &v.vtVeins, 0, 80);
+        for (int mi = 0; mi < 2; ++mi) {
+            L.Text("##mname", &v.vtMName[mi]); L.Last().width = 90.0f;
+            L.SameLineOrWrap(); L.Color("##mcol", v.vtMCol[mi], 4); L.Last().noInputs = true;
+            L.SameLineOrWrap(); L.Drag("hard##mh", &v.vtMHard[mi], 1, 0.05f, 0.1f, 50.0f, "%.1f"); L.Last().width = 60.0f;
+            L.SameLineOrWrap(); L.Drag("kg/m3##md", &v.vtMDens[mi], 1, 10.0f, 1.0f, 30000.0f, "%.0f"); L.Last().width = 70.0f;
+            L.SameLineOrWrap(); L.Check("loose##ml", &v.vtMLoose[mi]);
+            L.Text("drop item##mdr", &v.vtMDrop[mi]); L.Last().width = 90.0f;
+            L.SameLineOrWrap(); L.Drag("per m3##mpm", &v.vtMPer[mi], 1, 0.5f, 0.0f, 1000.0f, "%.1f"); L.Last().width = 60.0f;
+        }
+        L.SmallButton("Regenerate layers##voxmat"); L.SameLineOrWrap(); L.SmallButton("Materials off##voxmat");
+        L.Note("Ground volume: 41230 m3. Dug ground keeps its material; built ground uses the digger's Build Material.", false, true);
+        L.Check("Catch bodies that fall out of the world##vox", &v.vtCatch); L.Drag("Catch Depth##vox", &v.vtCatchD, 1, 0.1f, 0.0f, 100.0f);
+        L.Check("Footprints and tracks##voxft", &v.vtFoot); L.Check("Water / lava flow in holes##voxfl", &v.vtFluid);
+        L.Note("Drawn as one mesh. Last build: 64 of 64 chunks, 12.40 ms.", false, true);
+        L.SmallButton("Remove##vox");
+        break;
     default: break;
     }
     return L;

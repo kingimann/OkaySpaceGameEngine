@@ -1489,7 +1489,12 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
         case InspRowCombo: {
             int* cur = r.I();
             const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (*cur >= 0 && *cur < r.count && r.items) ? r.items[*cur] : "";
-            if (ImGui::BeginCombo(r.label, preview)) {
+            const std::string fitted = InspFitText(preview, ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+                                                   [](const char* t) { return ImGui::CalcTextSize(t).x; });
+            if (r.color) ImGui::PushStyleColor(ImGuiCol_Text, FromU32(r.color));
+            const bool comboOpen = ImGui::BeginCombo(r.label, fitted.c_str());
+            if (r.color) ImGui::PopStyleColor();
+            if (comboOpen) {
                 for (int q = 0; q < r.count; ++q) {
                     if (r.heads && r.heads[q]) SectionHeaderImGui(r.heads[q], hooks);
                     ImGui::PushID(q);
@@ -1832,6 +1837,10 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             if (ImGui::SmallButton("x") && !v->empty()) { v->clear(); r.changed = true; r.activated = true; }
             break;
         }
+        case InspRowInputInt:
+            if (ImGui::InputInt(r.label, r.I())) r.changed = true;
+            if (ImGui::IsItemActivated()) r.activated = true;
+            break;
         case InspRowRadio:
             if (ImGui::RadioButton(r.label, r.I(), r.iv)) r.changed = true;
             break;

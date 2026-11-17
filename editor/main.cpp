@@ -103,6 +103,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdarg>
 #include <map>
 #include <memory>
 #include <future>
@@ -1399,7 +1400,9 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
     std::string preview = cur && !cur->loose ? cur->DisplayName() : id;
     if (unknown) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.3f, 1.0f));
     ImGui::SetNextItemWidth(width);
-    const bool open = ImGui::BeginCombo(label, preview.c_str(), ImGuiComboFlags_HeightLarge);
+    const std::string fitted = okaypanels::InspFitText(preview.c_str(), width - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+                                                       [](const char* t) { return ImGui::CalcTextSize(t).x; });   // cut before the arrow
+    const bool open = ImGui::BeginCombo(label, fitted.c_str(), ImGuiComboFlags_HeightLarge);
     if (unknown) ImGui::PopStyleColor();
     if (unknown && ImGui::IsItemHovered()) ImGui::SetTooltip("\"%s\" isn't in the Item Database (it still works as a plain name).", id.c_str());
     if (open) {
@@ -27151,6 +27154,19 @@ static float FieldW(float w, const char* label) {
     const float tw = ImGui::CalcTextSize(label, nullptr, true).x;
     return w + (tw > 0.0f ? ImGui::GetStyle().ItemInnerSpacing.x + tw : 0.0f);
 }
+// A combo's closed text for a box `boxW` wide: cut before the arrow with "..." (stage 6: long names ran under the arrow).
+static std::string FitPreview(const char* text, float boxW) {
+    return okaypanels::InspFitText(text, boxW - ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().FramePadding.x,
+                                   [](const char* t) { return ImGui::CalcTextSize(t).x; });
+}
+// A grey note wrapped at the Inspector's edge (stage 6: notes of the Item Pickup, Hold Prompt and others ran past it).
+static void WrappedNote(const char* fmt, ...) {
+    char buf[512];
+    va_list ap; va_start(ap, fmt); std::vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", buf);
+    ImGui::PopTextWrapPos();
+}
 // A check box with its label, for SameLineOrWrap.
 static float CheckW(const char* label) { return FieldW(ImGui::GetFrameHeight(), label); }
 
@@ -33573,6 +33589,423 @@ static bool DrawAnimStateMachineWithOkayUI(EditorState& ed, GameObject* go, Anim
     return true;
 }
 
+// ---- The Inspector's OkayUI parts, stage 6 (docs/own_ui_toolkit.md section 19) --------------------------------------------------------
+// Item Pickup and Hold Prompt (their notes were cut in both toolkits), then the next most used bodies of the example scenes: Water, Flashlight,
+// Pause Menu, Hand (legacy), Voxel Digger and Voxel Terrain.
+
+// ItemPicker as a row: the item database's names in a list 160 wide (its search field is Dear ImGui's only), an id the database does not
+// know shown in orange with the tooltip.
+struct ItemRow { int row = -1, idx = -1; std::vector<std::string> ids, names; std::vector<const char*> items; std::string preview; };
+static void AddItemPickerRow(okaypanels::InspFieldList& L, const char* label, const std::string& id, ItemRow& ir, float width = 160.0f) {
+    okay::ItemDatabase& db = okay::ItemDatabase::Get();
+    for (const auto& d : db.Items()) { if (d.loose) continue; ir.ids.push_back(d.id); ir.names.push_back(d.DisplayName()); }
+    for (std::size_t i = 0; i < ir.names.size(); ++i) { ir.items.push_back(ir.names[i].c_str()); if (ir.ids[i] == id) ir.idx = (int)i; }
+    const okay::ItemDefinition* cur = db.Find(id);
+    const bool unknown = !id.empty() && (!cur || cur->loose);
+    ir.preview = cur && !cur->loose ? cur->DisplayName() : id;
+    ir.row = L.Combo(label, &ir.idx, ir.items.data(), (int)ir.items.size()); L.Last().width = width; L.Last().preview = ir.preview.c_str();
+    if (unknown) { L.Last().color = RowCol(1.0f, 0.6f, 0.3f); ir.preview += ""; }
+    if (unknown) L.Tip("This id isn't in the Item Database (it still works as a plain name).");
+}
+static bool RunItemPickerRow(okaypanels::InspFieldList& L, std::string& id, const ItemRow& ir) {
+    if (ir.row < 0 || !L[ir.row].changed || ir.idx < 0) return false;
+    id = ir.ids[(std::size_t)ir.idx];
+    return true;
+}
+// A one-letter key field ("Interact Key", "Toggle Key"): the row's text, the key back.
+static void KeyFromText(char& key, const std::string& t) { key = t.empty() ? 0 : t[0]; }
+
+static bool DrawItemPickupWithOkayUI(EditorState& ed, ItemPickup* pk) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    L.Note("An item in the world. Walk into it (trigger), come close, or press the key.", false, true);
+    ItemRow ir;
+    AddItemPickerRow(L, "Item##pk", pk->item, ir);
+    L.DragInt("Count##pk", &pk->count, 0.2f, 1, 99999); L.TipLookup();
+    L.Text("Collector Tag##pk", &pk->collectorTag); L.TipLookup();
+    L.Check("Pick Up On Touch##pk", &pk->pickupOnTouch); L.TipLookup();
+    L.Drag("Auto Radius##pk", &pk->autoRadius, 1, 0.05f, 0.0f, 50.0f); L.TipLookup();
+    std::string key(pk->interactKey ? 1 : 0, pk->interactKey);
+    const int kKey = L.Text("Interact Key##pk", &key); L.TipLookup();
+    if (pk->interactKey) {
+        L.Drag("Interact Range##pk", &pk->interactRange, 1, 0.05f, 0.1f, 50.0f);
+        L.Check("Hold In Hands##pk", &pk->holdInHands);
+        if (pk->holdInHands) L.Note("The key picks it up with Procedural Object Holding (if the player has it).", false, true);
+    }
+    L.Drag("Magnet Radius##pk", &pk->magnetRadius, 1, 0.05f, 0.0f, 50.0f); L.TipLookup();
+    if (pk->magnetRadius > 0.0f) L.Drag("Magnet Speed##pk", &pk->magnetSpeed, 1, 0.1f, 0.1f, 100.0f);
+    if (!DrawRowsOkayUI(pk, "##okayui_itempickup", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    RunItemPickerRow(L, pk->item, ir);
+    if (L[kKey].changed) KeyFromText(pk->interactKey, key);
+    return true;
+}
+
+static bool DrawHoldPromptWithOkayUI(EditorState& ed, HoldPrompt* hp, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Note("E picks a hold-in-hands item up. E again, or G, puts it down.", false, true);
+    std::string dk(hp->dropKey ? 1 : 0, hp->dropKey), ak(hp->altDropKey ? 1 : 0, hp->altDropKey);
+    const int kDrop = L.Text("Drop Key##hp", &dk); L.TipLookup();
+    const int kAlt = L.Text("Alt Drop Key##hp", &ak); L.TipLookup();
+    L.Text("Prompt Object##hp", &hp->promptObject); L.Tip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
+    bool loc = hp->localized;
+    const int kLoc = L.Check("Localized##hp", &loc); L.Tip(kHoldLocalizedTip);
+    const int kRemove = L.SmallButton("Remove##hp");
+    if (!DrawRowsOkayUI(hp, "##okayui_holdprompt", L)) return false;
+    if (L[kDrop].changed) { KeyFromText(hp->dropKey, dk); ed.dirty = true; }
+    if (L[kAlt].changed) { KeyFromText(hp->altDropKey, ak); ed.dirty = true; }
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kLoc].changed) LocalizedSwitchApply(ed, hp, loc);
+    if (L[kRemove].clicked) toRemove = hp;
+    return true;
+}
+
+static bool DrawWaterWithOkayUI(EditorState& ed, Water* w, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(20);
+    L.Note("A living, reflective water surface with rolling waves.", false, true);
+    float c[4] = {w->color.r, w->color.g, w->color.b, w->opacity};
+    const int kCol = L.Color("Color##wat", c, 4); L.TipLookup();
+    const int kSize = L.Drag("Size##wat", &w->size, 1, 1.0f, 1.0f, 1000000.0f); L.TipLookup();
+    L.Drag("Depth##wat", &w->depth, 1, 0.1f, 0.0f, 200.0f);
+    L.Tip("Metres below the surface. 0 is a visual plane.\nDeeper than the waist, the player swims. Props float or sink by density.");
+    L.Drag("Density##wat", &w->fluidDensity, 1, 0.01f, 0.0f, 20.0f); L.Tip("Mass per cubic metre. A 1 m cube of this mass floats halfway.");
+    L.Drag("Drag##wat", &w->linearDrag, 1, 0.05f, 0.0f, 20.0f); L.TipLookup();
+    const int kDetail = L.SliderInt("Detail##wat", &w->resolution, 4, 128); L.TipLookup();
+    L.Section("Waves");
+    L.Drag("Height##wat", &w->waveHeight, 1, 0.01f, 0.0f, 5.0f); L.TipLookup();
+    L.Drag("Length##wat", &w->waveLength, 1, 0.1f, 0.5f, 60.0f); L.TipLookup();
+    L.Drag("Speed##wat", &w->waveSpeed, 1, 0.05f, 0.0f, 8.0f); L.TipLookup();
+    L.Section("Surface");
+    const int kRefl = L.Slider("Reflectivity##wat", &w->reflectivity, 0.0f, 1.0f); L.TipLookup();
+    const int kGlint = L.Slider("Glint##wat", &w->specular, 0.0f, 1.0f); L.TipLookup();
+    const int kFlow = L.Drag("Flow##wat", &w->flow.x, 2, 0.005f, -1.0f, 1.0f); L.Tip("UV scroll speed \xE2\x80\x94 the current the surface drifts at.");
+    const int kRemove = L.SmallButton("Remove##wat");
+    if (!DrawRowsOkayUI(w, "##okayui_water", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kCol].changed) { w->color = {c[0], c[1], c[2], c[3]}; w->opacity = c[3]; }
+    for (int k : {kCol, kSize, kDetail, kRefl, kGlint, kFlow}) if (L[k].changed) { w->Apply(); break; }
+    if (L[kRemove].clicked) toRemove = w;
+    return true;
+}
+
+static bool DrawFlashlightWithOkayUI(EditorState& ed, Flashlight* fl, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(12);
+    L.Note("A spot light that follows your view \xE2\x80\x94 see inside caves. Toggle in Play.", false, true);
+    std::string key(fl->toggleKey ? 1 : 0, fl->toggleKey);
+    const int kKey = L.Text("Toggle Key##fl", &key); L.Tip("Key to switch the beam on/off (blank = none).");
+    const int kOn = L.Check("On##fl", &fl->on); L.TipLookup();
+    L.Drag("Range##fl", &fl->range, 1, 0.5f, 1.0f, 200.0f); L.TipLookup();
+    L.Slider("Cone Angle##fl", &fl->angle, 10.0f, 120.0f, "%.0f deg"); L.TipLookup();
+    L.Drag("Intensity##fl", &fl->intensity, 1, 0.05f, 0.0f, 8.0f); L.TipLookup();
+    float c[3] = {fl->color.r, fl->color.g, fl->color.b};
+    const int kCol = L.Color("Color##fl", c, 3); L.TipLookup();
+    L.Note("Mount on the player or its camera; the beam aims where you look.", false, true);
+    const int kRemove = L.SmallButton("Remove##fl");
+    if (!DrawRowsOkayUI(fl, "##okayui_flashlight", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kKey].changed) KeyFromText(fl->toggleKey, key);
+    if (L[kOn].changed) fl->SetOn(fl->on);
+    if (L[kCol].changed) fl->color = {c[0], c[1], c[2], 1.0f};
+    if (L[kRemove].clicked) toRemove = fl;
+    return true;
+}
+
+static bool DrawPauseMenuWithOkayUI(EditorState& ed, PauseMenu* pm, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kKeys[] = {"Escape", "P", "Tab"};
+    static const char kCodes[] = {27, 'p', 9};
+    InspFieldList L;
+    L.rows.reserve(16);
+    int kCreate = -1;
+    if (!pm->HasUI()) { L.Note("No menu UI in the scene yet."); kCreate = L.Button("Create Editable Menu UI##pm"); }
+    else L.Note("Editable UI is under 'PauseMenu UI' \xE2\x80\x94 select its parts to restyle.", false, true);
+    L.Note("Press the toggle key in Play to pause; Resume / Quit buttons appear.", false, true);
+    bool loc = pm->localized;
+    const int kLoc = L.Check("Localized##pm", &loc); L.Tip(kPauseLocalizedTip);
+    if (!pm->localized) L.Text("Title##pm", &pm->title);
+    int ki = 0; for (int i = 0; i < 3; ++i) if (pm->toggleKey == kCodes[i]) ki = i;
+    const int kKey = L.Combo("Toggle Key##pm", &ki, kKeys, 3); L.TipLookup();
+    L.Check("Resume button##pm", &pm->showResume); L.TipLookup();
+    L.Check("Quit button##pm", &pm->showQuit); L.TipLookup();
+    L.Text("Main Menu Scene##pm", &pm->mainMenuScene); L.Tip("Optional .okayscene to load from a 'Main Menu' button (blank = no button).");
+    L.Color("Backdrop##pm", &pm->dimColor.r, 4); L.TipLookup();
+    L.Color("Panel##pm", &pm->panelColor.r, 4); L.TipLookup();
+    const int kRemove = L.SmallButton("Remove##pm");
+    if (!DrawRowsOkayUI(pm, "##okayui_pausemenu", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (kCreate >= 0 && L[kCreate].clicked) { pm->EnsureBuilt(); ed.dirty = true; }
+    if (L[kLoc].changed) LocalizedSwitchApply(ed, pm, loc);
+    if (L[kKey].changed) pm->toggleKey = kCodes[ki];
+    if (L[kRemove].clicked) toRemove = pm;
+    return true;
+}
+
+static bool DrawFirstPersonHandWithOkayUI(EditorState& ed, FirstPersonHand* fh, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kSides[] = {"Right arm", "Left arm"};
+    InspFieldList L;
+    L.rows.reserve(16);
+    L.Note("Shows your character's OWN arm in first person. Your body is\nhidden from your camera only (others see all of it) and never\nduplicated. Click to punch.");
+    L.SliderInt("Attack Button##fh", &fh->attackButton, 0, 2); L.Tip("Mouse button that swings: 0 = left, 1 = right, 2 = middle.");
+    L.Check("Swing while held##fh", &fh->holdToSwing); L.Tip("Keep swinging while the button is held (Minecraft mining).");
+    int si = fh->showLeftArm ? 1 : 0;
+    const int kSide = L.Combo("Arm side##fh", &si, kSides, 2); L.TipLookup();
+    L.Check("Follow camera look##fh", &fh->followPitch); L.Tip("The arm tilts up/down with your view (Minecraft-style).");
+    L.Check("Bobbing##fh", &fh->bobbing); L.Tip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
+    L.Check("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm); L.TipLookup();
+    L.Check("Show While Running##fh", &fh->showWhileRunning);
+    L.Tip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");   // Dear ImGui's later tip
+    L.Section("Manual adjust");
+    L.Drag("Raise##fh", &fh->armRaise, 1, 0.5f, -180.0f, 180.0f, "%.0f deg"); L.Tip("Upper-arm angle: how high the hand sits in view.");
+    L.Drag("Elbow##fh", &fh->armElbow, 1, 0.5f, -180.0f, 180.0f, "%.0f deg"); L.Tip("Forearm bend: hand closeness / height.");
+    const int kReset = L.SmallButton("Reset arm pose##fh");
+    const int kRemove = L.SmallButton("Remove##fh");
+    if (!DrawRowsOkayUI(fh, "##okayui_fphand", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kSide].changed) fh->showLeftArm = (si == 1);
+    if (L[kReset].clicked) { fh->armRaise = -96.0f; fh->armElbow = 16.0f; ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = fh;
+    return true;
+}
+
+static bool DrawVoxelDiggerWithOkayUI(EditorState& ed, VoxelDigger* vd, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    static const char* const kModes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
+    static const char* const kBtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+    static const char* const kPresets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+    static const char* const kCollect[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+    static const char* const kShapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+    InspFieldList L;
+    L.rows.reserve(60);
+    RowText T;
+    L.Note("Aim with the camera and hold to carve caves/tunnels (or add material).", false, true);
+    int md = (int)vd->mode;
+    const int kMode = L.Combo("Primary##vdg", &md, kModes, 4); L.TipLookup();
+    int bi = (vd->button < 0 || vd->button > 2) ? 3 : vd->button, abi = (vd->addButton < 0 || vd->addButton > 2) ? 3 : vd->addButton;
+    const int kBtn = L.Combo("Primary Button##vdg", &bi, kBtns, 4); L.TipLookup();
+    const int kAbtn = L.Combo("Opposite Button##vdg", &abi, kBtns, 4); L.Tip("Does the opposite of Primary, so one digger both digs AND raises. Default right mouse.");
+    L.Drag("Brush Radius##vdg", &vd->radius, 1, 0.1f, 0.25f, 30.0f); L.TipLookup();
+    L.Drag("Strength / sec##vdg", &vd->strength, 1, 0.1f, 0.1f, 100.0f); L.TipLookup();
+    L.Drag("Reach##vdg", &vd->range, 1, 0.5f, 1.0f, 500.0f); L.TipLookup();
+    L.Check("Show brush marker##vdg", &vd->showBrush); L.TipLookup();
+    L.Section("Real life");
+    int pi = 0;
+    const int kPreset = L.Combo("Preset##vdg", &pi, kPresets, 4);
+    L.Tip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
+    int ci = (int)vd->collect;
+    const int kCollectRow = L.Combo("Dug Ground##vdg", &ci, kCollect, 4); L.Tip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
+    L.Check("Building needs material##vdg", &vd->needsMaterial);
+    L.SameLineOrWrap(); L.Check("Creative (unlimited)##vdg", &vd->creative);
+    VoxelTerrain* tv = vd->FindVoxel();
+    std::vector<const char*> matNames;
+    int am = 0, kMat = -1;
+    if (tv && tv->UseMaterials()) {
+        for (const auto& m : tv->materials) matNames.push_back(m.name.c_str());
+        am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
+        kMat = L.Combo("Build Material##vdg", &am, matNames.data(), (int)matNames.size());
+    }
+    L.Drag("Tool Power##vdg", &vd->power, 1, 0.1f, 0.0f, 1.0e9f, "%.1f"); L.Last().logarithmic = true;
+    L.Tip("Materials harder than this cannot be dug. 1e9 = everything.");
+    L.Drag("Hardness Scale##vdg", &vd->hardnessScale, 1, 0.05f, 0.1f, 20.0f); L.Tip("Multiplies every material's hardness: higher = slower digging.");
+    int shp = (int)vd->shape;
+    const int kShape = L.Combo("Brush Shape##vdg", &shp, kShapes, 4);
+    L.Drag("Depth Limit##vdg", &vd->depthLimit, 1, 0.1f, -1.0f, 200.0f, "%.1f"); L.Tip("Metres a stroke may go below where it started. -1 = no limit.");
+    L.Drag("Bedrock Height##vdg", &vd->protectBelow, 1, 0.1f, -1.0f, 500.0f, "%.1f"); L.Tip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
+    L.Check("Snap to grid##vdg", &vd->snapToGrid);
+    L.SameLineOrWrap(); L.Check("Slump loose ground##vdg", &vd->slump);
+    std::string pour(vd->pourKey ? 1 : 0, vd->pourKey);
+    const int kPour = L.Text("Pour Key##vdg", &pour); L.Tip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on.");
+    L.SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24);
+    L.Tip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
+    if (vd->slump) {
+        L.SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32);
+        L.Tip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
+    }
+    L.SameLineOrWrap(); L.Check("Collapse##vdg", &vd->collapse); L.Tip("Pieces a dig cuts loose fall as debris and land back in the ground.");
+    L.SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300);
+    L.Drag("Debris Life (s)##vdg", &vd->debrisLife, 1, 0.5f, 1.0f, 120.0f);
+    L.Check("Give inventory items##vdg", &vd->giveItems);
+    L.Check("Tools from inventory##vdg", &vd->toolsFromInventory);
+    L.Tip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
+    if (vd->toolsFromInventory) {
+        L.Text("Tools##vdg", &vd->tools); L.Tip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
+        L.Drag("Bare Hands Power##vdg", &vd->bareHandsPower, 1, 0.05f, 0.0f, 20.0f);
+    }
+    L.Check("Build from items##vdg", &vd->buildFromItems);
+    L.Tip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
+    L.Text("Count Text Object##vdg", &vd->hudTarget); L.Tip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
+    if (tv && tv->UseMaterials()) {
+        char line[96];
+        for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
+            if (vd->store[k] > 0.005) { std::snprintf(line, sizeof line, "Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]); L.Note(T(line)); }
+    }
+    L.Note("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.", false, true);
+    const int kRemove = L.SmallButton("Remove##vdg");
+    if (!DrawRowsOkayUI(vd, "##okayui_voxeldigger", L)) return false;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kMode].changed) vd->mode = (VoxelDigger::Mode)md;
+    if (L[kBtn].changed) vd->button = (bi == 3) ? -1 : bi;
+    if (L[kAbtn].changed) vd->addButton = (abi == 3) ? -1 : abi;
+    if (L[kPreset].changed && pi > 0) vd->ApplyPreset((VoxelDigger::Preset)pi);
+    if (L[kCollectRow].changed) vd->collect = (VoxelDigger::Collect)ci;
+    if (kMat >= 0 && L[kMat].changed) vd->addMaterial = am;
+    if (L[kShape].changed) vd->shape = (VoxelTerrain::EditOptions::Shape)shp;
+    if (L[kPour].changed) KeyFromText(vd->pourKey, pour);
+    if (L[kRemove].clicked) toRemove = vd;
+    return true;
+}
+
+static bool DrawVoxelTerrainWithOkayUI(EditorState& ed, VoxelTerrain* v, okay::Component*& toRemove) {
+    using namespace okaypanels;
+    InspFieldList L;
+    L.rows.reserve(100);
+    RowText T;
+    std::vector<int> applyRows;
+    auto ap = [&](int k) { applyRows.push_back(k); return k; };
+    L.Note("Smooth marching-cubes voxels: real caves, tunnels & overhangs.", false, true);
+    ap(L.Color("Color##vox", &v->color.r, 4)); L.TipLookup();
+    ap(L.Check("Auto-color (height/slope)##vox", &v->autoColor)); L.TipLookup();
+    float dims[3] = {(float)v->nx, (float)v->ny, (float)v->nz};
+    const int kDims = L.Drag("Grid (X,Y,Z)##vox", dims, 3, 1.0f, 4.0f, 512.0f, "%.0f");
+    L.Tip("Sample resolution. Resizing clears the field \xE2\x80\x94 regenerate after.");
+    ap(L.Drag("Voxel Size##vox", &v->voxelSize, 1, 0.05f, 0.1f, 10.0f)); L.TipLookup();
+    ap(PathFieldRow(L, "Texture##vox", &v->texture));
+    L.Tip("Triplanar ground texture (no seams on cave walls / overhangs). Empty = auto-colours only.");
+    int kTexClear = -1;
+    if (!v->texture.empty()) {
+        L.SameLine(); kTexClear = L.SmallButton("Clear##voxtex");
+        ap(L.Drag("Tex Scale##vox", &v->textureTiling, 1, 0.005f, 0.005f, 2.0f, "%.3f")); L.TipLookup();
+    }
+    L.Section("Generate");
+    L.Drag("Surface##vox", &g_voxSurface, 1, 0.01f, 0.1f, 0.95f); L.Tip("Fraction of the height the ground surface sits at.");
+    L.Drag("Relief##vox", &g_voxAmp, 1, 0.2f, 0.0f, 40.0f);
+    L.Slider("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+    L.InputInt("Seed##vox", &g_voxSeed);
+    L.Tip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
+    L.SameLineOrWrap(); const int kRandom = L.SmallButton("Random##voxseed");
+    const int kGen = L.Button("Generate##voxgen");
+    L.SameLineOrWrap(); const int kSlab = L.Button("Solid Slab##voxgen");
+    L.SameLineOrWrap(); const int kClearGen = L.Button("Clear##voxgen");
+    L.Note("Add a Voxel Digger to carve it live in Play.", false, true);
+    L.Section("Materials");
+    L.Drag("Topsoil (m)##voxlay", &g_voxRules.topsoil, 1, 0.05f, 0.0f, 10.0f);
+    L.Drag("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 1, 0.1f, 0.0f, 40.0f);
+    L.Slider("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f); L.Tip("Steepness above which the surface is bare stone.");
+    L.Slider("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
+    L.SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
+    L.Tip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
+    int kLayered = -1, kDirt = -1, kRegen = -1, kMatOff = -1;
+    std::vector<int> matRows;   // per material: name, colour, hardness (the rows that rebuild the materials)
+    std::vector<std::array<float, 4>> matCol(v->materials.size());
+    if (!v->UseMaterials()) {
+        L.Note("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.", false, true);
+        kLayered = L.Button("Layered ground##voxmat");
+        L.Tip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
+        L.SameLineOrWrap(); kDirt = L.Button("All Dirt##voxmat");
+    } else {
+        for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
+            VoxelTerrain::VoxelMaterial& m = v->materials[mi];
+            matRows.push_back(L.Text("##mname", &m.name)); L.Last().width = 90.0f;
+            matCol[mi] = {m.color.r, m.color.g, m.color.b, m.color.a};
+            L.SameLineOrWrap(); matRows.push_back(L.Color("##mcol", matCol[mi].data(), 4)); L.Last().noInputs = true;
+            L.SameLineOrWrap(); matRows.push_back(L.Drag("hard##mh", &m.hardness, 1, 0.05f, 0.1f, 50.0f, "%.1f")); L.Last().width = 60.0f;
+            L.Tip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
+            L.SameLineOrWrap(); L.Drag("kg/m3##md", &m.density, 1, 10.0f, 1.0f, 30000.0f, "%.0f"); L.Last().width = 70.0f;
+            L.SameLineOrWrap(); L.Check("loose##ml", &m.loose);
+            L.Tip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
+            L.Text("drop item##mdr", &m.drop); L.Last().width = 90.0f;
+            L.Tip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
+            L.SameLineOrWrap(); L.Drag("per m3##mpm", &m.dropPerM3, 1, 0.5f, 0.0f, 1000.0f, "%.1f"); L.Last().width = 60.0f;
+        }
+        kRegen = L.SmallButton("Regenerate layers##voxmat");
+        L.SameLineOrWrap(); kMatOff = L.SmallButton("Materials off##voxmat");
+        char line[160];
+        std::snprintf(line, sizeof line, "Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+        L.Note(T(line), false, true);
+    }
+    L.Check("Catch bodies that fall out of the world##vox", &v->catchFalling);
+    L.Tip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
+    if (v->catchFalling) L.Drag("Catch Depth##vox", &v->catchMargin, 1, 0.1f, 0.0f, 100.0f);
+    L.Check("Footprints and tracks##voxft", &v->footprints);
+    L.Tip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
+    if (v->footprints) {
+        L.Text("Who (tag)##voxft", &v->footprintTag);
+        L.Check("Also rigid bodies##voxft", &v->footprintBodies);
+        L.Drag("Step (m)##voxft", &v->footprintStep, 1, 0.05f, 0.1f, 5.0f);
+        L.Drag("Print Size##voxft", &v->footprintRadius, 1, 0.02f, 0.05f, 3.0f);
+        L.Drag("Print Depth##voxft", &v->footprintDepth, 1, 0.01f, 0.02f, 1.0f);
+    }
+    L.Check("Water / lava flow in holes##voxfl", &v->fluidOn);
+    L.Tip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
+    int kLava = -1, kWaterP = -1, kClearFluid = -1;
+    if (v->fluidOn) {
+        L.DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000);
+        L.DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000);
+        L.Drag("Flow Speed (steps/s)##voxfl", &v->fluidRate, 1, 0.5f, 0.1f, 60.0f);
+        L.Color("Fluid Color##voxfl", &v->fluidColor.r, 4);
+        L.Check("Glow (lava)##voxfl", &v->fluidGlow);
+        kLava = L.SmallButton("Lava preset##voxfl");
+        L.SameLineOrWrap(); kWaterP = L.SmallButton("Water preset##voxfl");
+        L.SameLineOrWrap(); kClearFluid = L.SmallButton("Clear fluid##voxfl");
+        char line[96]; std::snprintf(line, sizeof line, "Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
+        L.Note(T(line));
+    }
+    {
+        const auto& st = v->lastStats;
+        char line[160];
+        if (v->UsesChunkObjects())
+            std::snprintf(line, sizeof line, "Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+        else std::snprintf(line, sizeof line, "Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+        L.Note(T(line), false, true);
+        if (VoxelTerrain::OldRemeshActive()) L.Note("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.", false, true);
+    }
+    const int kRemove = L.SmallButton("Remove##vox");
+    if (!DrawRowsOkayUI(v, "##okayui_voxelterrain", L)) return false;
+    bool apply = false;
+    for (int k : applyRows) if (L[k].changed) apply = true;
+    if (L.AnyChanged()) ed.dirty = true;
+    if (L[kDims].changed) {
+        int d[3] = {(int)std::lround(dims[0]), (int)std::lround(dims[1]), (int)std::lround(dims[2])};
+        for (int& x : d) if (x < 4) x = 4;
+        if (d[0] != v->nx || d[1] != v->ny || d[2] != v->nz) v->Resize(d[0], d[1], d[2]);
+    }
+    if (kTexClear >= 0 && L[kTexClear].clicked) { v->texture.clear(); apply = true; }
+    if (L[kRandom].clicked) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
+    if (L[kGen].clicked) {
+        v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
+        if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
+        apply = true;
+    }
+    if (L[kSlab].clicked) { v->FillSlab(0.5f); apply = true; }
+    if (L[kClearGen].clicked) { v->Resize(v->nx, v->ny, v->nz); apply = true; }
+    if (kLayered >= 0 && L[kLayered].clicked) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); apply = true; }
+    if (kDirt >= 0 && L[kDirt].clicked) { v->EnableMaterials(0); apply = true; }
+    bool matChanged = false;
+    for (std::size_t mi = 0; mi < v->materials.size() && mi < matCol.size(); ++mi) {
+        const std::size_t base = mi * 3;
+        if (base + 2 < matRows.size()) {
+            if (L[matRows[base + 1]].changed) v->materials[mi].color = {matCol[mi][0], matCol[mi][1], matCol[mi][2], matCol[mi][3]};
+            if (L[matRows[base]].changed || L[matRows[base + 1]].changed || L[matRows[base + 2]].changed) matChanged = true;
+        }
+    }
+    if (matChanged) { v->MaterialsChanged(); apply = true; }
+    if (kRegen >= 0 && L[kRegen].clicked) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); apply = true; }
+    if (kMatOff >= 0 && L[kMatOff].clicked) { v->DisableMaterials(); apply = true; }
+    if (kLava >= 0 && L[kLava].clicked) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
+    if (kWaterP >= 0 && L[kWaterP].clicked) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
+    if (kClearFluid >= 0 && L[kClearFluid].clicked) v->ClearFluid();
+    if (apply) { v->Apply(); ed.dirty = true; }
+    if (L[kRemove].clicked) toRemove = v;
+    return true;
+}
+
 // What draws the Nav Mesh Agent's rows (NavigationWindow.cpp): this file's DrawRowsOkayUI, behind the preview switch.
 static bool NavRowsOkayUI(okay::Component* comp, const char* id, okaypanels::InspFieldList& L) { return UseOkayUIBackend() && DrawRowsOkayUI(comp, id, L); }
 static const bool s_navRowsRegistered = (oked::SetNavRowsDrawer(&NavRowsOkayUI), true);
@@ -34918,8 +35351,8 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* v = dynamic_cast<VoxelTerrain*>(curComp)) {
-        if (CompHeader("Voxel Terrain", v, &toRemove)) {
-            ImGui::TextDisabled("Smooth marching-cubes voxels: real caves, tunnels & overhangs.");
+        if (CompHeader("Voxel Terrain", v, &toRemove) && !(UseOkayUIBackend() && DrawVoxelTerrainWithOkayUI(ed, v, toRemove))) {   // OkayUI's with the preview switch (section 19)
+            WrappedNote("Smooth marching-cubes voxels: real caves, tunnels & overhangs.");
             float c[4] = {v->color.r, v->color.g, v->color.b, v->color.a};
             if (ImGui::ColorEdit4("Color##vox", c)) { v->color = {c[0],c[1],c[2],c[3]}; v->Apply(); ed.dirty = true; }
             oked::FieldTip("Color##vox");
@@ -34951,18 +35384,18 @@ void DrawInspector(EditorState& ed) {
             ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
             ImGui::InputInt("Seed##vox", &g_voxSeed);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Random##voxseed"));
             if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
                 v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
                 if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
                 v->Apply(); ed.dirty = true;
             }
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Solid Slab##voxgen"));
             if (ImGui::Button("Solid Slab##voxgen")) { v->FillSlab(0.5f); v->Apply(); ed.dirty = true; }
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Clear##voxgen"));
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
-            ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            WrappedNote("Add a Voxel Digger to carve it live in Play.");
             SectionHeader("Materials");
             ImGui::DragFloat("Topsoil (m)##voxlay", &g_voxRules.topsoil, 0.05f, 0.0f, 10.0f);
             ImGui::DragFloat("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 0.1f, 0.0f, 40.0f);
@@ -34972,10 +35405,10 @@ void DrawInspector(EditorState& ed) {
             ImGui::SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
             if (!v->UseMaterials()) {
-                ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
+                WrappedNote("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
                 if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("All Dirt##voxmat"));
                 if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
             } else {
                 bool changed = false;
@@ -34985,30 +35418,30 @@ void DrawInspector(EditorState& ed) {
                     char nm[64]; std::strncpy(nm, m.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
                     ImGui::SetNextItemWidth(90);
                     if (ImGui::InputText("##mname", nm, sizeof(nm))) { m.name = nm; changed = true; }
-                    ImGui::SameLine();
+                    SameLineOrWrap(ImGui::GetFrameHeight());
                     float mc[4] = {m.color.r, m.color.g, m.color.b, m.color.a};
                     if (ImGui::ColorEdit4("##mcol", mc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) { m.color = {mc[0], mc[1], mc[2], mc[3]}; changed = true; }
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    SameLineOrWrap(FieldW(60.0f, "hard##mh")); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("hard##mh", &m.hardness, 0.05f, 0.1f, 50.0f, "%.1f")) { changed = true; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    SameLineOrWrap(FieldW(70.0f, "kg/m3##md")); ImGui::SetNextItemWidth(70);
                     if (ImGui::DragFloat("kg/m3##md", &m.density, 10.0f, 1.0f, 30000.0f, "%.0f")) ed.dirty = true;
-                    ImGui::SameLine();
+                    SameLineOrWrap(CheckW("loose##ml"));
                     if (ImGui::Checkbox("loose##ml", &m.loose)) ed.dirty = true;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
                     char dr[64]; std::strncpy(dr, m.drop.c_str(), sizeof(dr) - 1); dr[sizeof(dr) - 1] = '\0';
                     ImGui::SetNextItemWidth(90);
                     if (ImGui::InputText("drop item##mdr", dr, sizeof(dr))) { m.drop = dr; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    SameLineOrWrap(FieldW(60.0f, "per m3##mpm")); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("per m3##mpm", &m.dropPerM3, 0.5f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
                     ImGui::PopID();
                 }
                 if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
                 if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Materials off##voxmat"));
                 if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
-                ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+                WrappedNote("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
             }
             if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
@@ -35033,26 +35466,26 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Fluid Color##voxfl", fc)) { v->fluidColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
                 if (ImGui::Checkbox("Glow (lava)##voxfl", &v->fluidGlow)) ed.dirty = true;
                 if (ImGui::SmallButton("Lava preset##voxfl")) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Water preset##voxfl"));
                 if (ImGui::SmallButton("Water preset##voxfl")) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Clear fluid##voxfl"));
                 if (ImGui::SmallButton("Clear fluid##voxfl")) v->ClearFluid();
                 ImGui::TextDisabled("Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
             }
             {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
                 const auto& st = v->lastStats;
                 if (v->UsesChunkObjects())
-                    ImGui::TextDisabled("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                    WrappedNote("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
                 else
-                    ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
-                if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
+                    WrappedNote("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                if (VoxelTerrain::OldRemeshActive()) WrappedNote("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
             }
             if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }
     if (auto* vd = dynamic_cast<VoxelDigger*>(curComp)) {
-        if (CompHeader("Voxel Digger", vd, &toRemove)) {
-            ImGui::TextDisabled("Aim with the camera and hold to carve caves/tunnels (or add material).");
+        if (CompHeader("Voxel Digger", vd, &toRemove) && !(UseOkayUIBackend() && DrawVoxelDiggerWithOkayUI(ed, vd, toRemove))) {   // OkayUI's with the preview switch (section 19)
+            WrappedNote("Aim with the camera and hold to carve caves/tunnels (or add material).");
             const char* modes[] = {"Dig (remove)", "Add (build)", "Smooth", "Box (rectangular)"};
             int md = (int)vd->mode;
             if (ImGui::Combo("Primary##vdg", &md, modes, 4)) { vd->mode = (VoxelDigger::Mode)md; ed.dirty = true; }
@@ -35083,7 +35516,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Dug Ground##vdg", &ci, cols, 4)) { vd->collect = (VoxelDigger::Collect)ci; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
                 if (ImGui::Checkbox("Building needs material##vdg", &vd->needsMaterial)) ed.dirty = true;
-                ImGui::SameLine();
+                SameLineOrWrap(CheckW("Creative (unlimited)##vdg"));
                 if (ImGui::Checkbox("Creative (unlimited)##vdg", &vd->creative)) ed.dirty = true;
                 VoxelTerrain* tv = vd->FindVoxel();
                 if (tv && tv->UseMaterials()) {
@@ -35106,7 +35539,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Bedrock Height##vdg", &vd->protectBelow, 0.1f, -1.0f, 500.0f, "%.1f")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
                 if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
-                ImGui::SameLine();
+                SameLineOrWrap(CheckW("Slump loose ground##vdg"));
                 if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
                 { int pk = (int)(unsigned char)vd->pourKey; char pkb[2] = {pk ? (char)pk : '\0', '\0'};
                   if (ImGui::InputText("Pour Key##vdg", pkb, sizeof(pkb))) { vd->pourKey = pkb[0]; ed.dirty = true; }
@@ -35115,7 +35548,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
                 if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
                 if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
-                ImGui::SameLine();
+                SameLineOrWrap(CheckW("Collapse##vdg"));
                 if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");
                 if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
@@ -35138,14 +35571,14 @@ void DrawInspector(EditorState& ed) {
                     for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
                         if (vd->store[k] > 0.005) ImGui::TextDisabled("Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]);
                 }
-                ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
+                WrappedNote("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
             }
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
     if (auto* w = dynamic_cast<Water*>(curComp)) {
-        if (CompHeader("Water", w, &toRemove)) {
-            ImGui::TextDisabled("A living, reflective water surface with rolling waves.");
+        if (CompHeader("Water", w, &toRemove) && !(UseOkayUIBackend() && DrawWaterWithOkayUI(ed, w, toRemove))) {   // OkayUI's with the preview switch (section 19)
+            WrappedNote("A living, reflective water surface with rolling waves.");
             float c[4] = {w->color.r, w->color.g, w->color.b, w->opacity};
             if (ImGui::ColorEdit4("Color##wat", c)) { w->color = {c[0],c[1],c[2],c[3]}; w->opacity = c[3]; w->Apply(); ed.dirty = true; }
             oked::FieldTip("Color##wat");
@@ -35177,8 +35610,8 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fl = dynamic_cast<Flashlight*>(curComp)) {
-        if (CompHeader("Flashlight", fl, &toRemove)) {
-            ImGui::TextDisabled("A spot light that follows your view — see inside caves. Toggle in Play.");
+        if (CompHeader("Flashlight", fl, &toRemove) && !(UseOkayUIBackend() && DrawFlashlightWithOkayUI(ed, fl, toRemove))) {   // OkayUI's with the preview switch (section 19)
+            WrappedNote("A spot light that follows your view — see inside caves. Toggle in Play.");
             char kb[2] = {fl->toggleKey, 0};
             if (ImGui::InputText("Toggle Key##fl", kb, sizeof(kb))) { fl->toggleKey = kb[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to switch the beam on/off (blank = none).");
@@ -35193,7 +35626,7 @@ void DrawInspector(EditorState& ed) {
             float c[3] = {fl->color.r, fl->color.g, fl->color.b};
             if (ImGui::ColorEdit3("Color##fl", c)) { fl->color = {c[0],c[1],c[2],1.0f}; ed.dirty = true; }
             oked::FieldTip("Color##fl");
-            ImGui::TextDisabled("Mount on the player or its camera; the beam aims where you look.");
+            WrappedNote("Mount on the player or its camera; the beam aims where you look.");
             if (ImGui::SmallButton("Remove##fl")) toRemove = fl;
         }
     }
@@ -35587,7 +36020,7 @@ void DrawInspector(EditorState& ed) {
             {
                 const char* cur = sm->entry.empty() ? "(first state)" : sm->entry.c_str();
                 ImGui::SetNextItemWidth(200);
-                if (ImGui::BeginCombo("Entry##asm", cur)) {
+                if (ImGui::BeginCombo("Entry##asm", FitPreview(cur, 200.0f).c_str())) {
                     if (ImGui::Selectable("(first state)", sm->entry.empty())) { sm->entry.clear(); ed.dirty = true; }
                     for (const auto& st : sm->states)
                         if (ImGui::Selectable(st.name.c_str(), sm->entry == st.name)) { sm->entry = st.name; ed.dirty = true; }
@@ -35636,7 +36069,7 @@ void DrawInspector(EditorState& ed) {
                 if (st.blendTree) {
                     ImGui::TextDisabled("blend tree, %d clips", (int)st.motions.size());
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open Animator Graph to edit its motions.");
-                } else if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
+                } else if ((ma || body) && ImGui::BeginCombo("##asmclip", FitPreview(st.clip.empty() ? "(clip)" : st.clip.c_str(), 150.0f).c_str())) {
                     for (const auto& cn : ma ? ma->ClipNames() : bodyClips)
                         if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
                     ImGui::EndCombo();
@@ -35685,7 +36118,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID(5000 + ti);
                     ImGui::TextDisabled("  ->"); ImGui::SameLine();
                     ImGui::SetNextItemWidth(120);
-                    if (ImGui::BeginCombo("##trto", tr.to.empty() ? "(state)" : tr.to.c_str())) {
+                    if (ImGui::BeginCombo("##trto", FitPreview(tr.to.empty() ? "(state)" : tr.to.c_str(), 120.0f).c_str())) {
                         for (const auto& st2 : sm->states)
                             if (ImGui::Selectable(st2.name.c_str(), tr.to == st2.name)) { tr.to = st2.name; ed.dirty = true; }
                         ImGui::EndCombo();
@@ -35693,7 +36126,11 @@ void DrawInspector(EditorState& ed) {
                     SameLineOrWrap(110.0f);
                     int cd = (int)tr.cond;
                     ImGui::SetNextItemWidth(110);
-                    if (ImGui::Combo("##trcond", &cd, kCondNames, 6)) { tr.cond = (okay::AnimStateMachine::Cond)cd; ed.dirty = true; }
+                    if (ImGui::BeginCombo("##trcond", FitPreview(kCondNames[cd < 0 || cd > 5 ? 0 : cd], 110.0f).c_str())) {
+                        for (int q = 0; q < 6; ++q)
+                            if (ImGui::Selectable(kCondNames[q], q == cd)) { tr.cond = (okay::AnimStateMachine::Cond)q; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
                     oked::FieldTip("##trcond");
                     if (tr.cond != AnimStateMachine::Cond::OnClipEnd) {
                         SameLineOrWrap(90.0f);
@@ -35744,7 +36181,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
-        if (CompHeader("Hand (legacy)", fh, &toRemove)) {
+        if (CompHeader("Hand (legacy)", fh, &toRemove) && !(UseOkayUIBackend() && DrawFirstPersonHandWithOkayUI(ed, fh, toRemove))) {   // OkayUI's with the preview switch (section 19)
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
                                 "hidden from your camera only (others see all of it) and never\n"
                                 "duplicated. Click to punch.");
@@ -36073,16 +36510,16 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
-        if (CompHeader("Pause Menu", pm, &toRemove)) {
+        if (CompHeader("Pause Menu", pm, &toRemove) && !(UseOkayUIBackend() && DrawPauseMenuWithOkayUI(ed, pm, toRemove))) {   // OkayUI's with the preview switch (section 19)
             // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
             // so you can restyle it — it isn't spawned at Play. Create it if missing.
             if (!pm->HasUI()) {
                 ImGui::TextDisabled("No menu UI in the scene yet.");
                 if (ImGui::Button("Create Editable Menu UI##pm")) { pm->EnsureBuilt(); ed.dirty = true; }
             } else {
-                ImGui::TextDisabled("Editable UI is under 'PauseMenu UI' — select its parts to restyle.");
+                WrappedNote("Editable UI is under 'PauseMenu UI' — select its parts to restyle.");
             }
-            ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
+            WrappedNote("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
             const bool pmLoc = LocalizedSwitch(ed, pm);   // its words from the pause.* keys
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", pm->title.c_str());
             if (!pmLoc && ImGui::InputText("Title##pm", tbuf, sizeof(tbuf))) { pm->title = tbuf; ed.dirty = true; }
@@ -37847,8 +38284,8 @@ void DrawInspector(EditorState& ed) {
             }
         }
         if (auto* hp = dynamic_cast<HoldPrompt*>(curComp)) {
-            if (CompHeader("Hold Prompt", hp, &toRemove)) {
-                ImGui::TextDisabled("E picks a hold-in-hands item up. E again, or G, puts it down.");
+            if (CompHeader("Hold Prompt", hp, &toRemove) && !(UseOkayUIBackend() && DrawHoldPromptWithOkayUI(ed, hp, toRemove))) {   // OkayUI's with the preview switch (section 19)
+                WrappedNote("E picks a hold-in-hands item up. E again, or G, puts it down.");
                 char dk[2] = {hp->dropKey, 0};
                 if (ImGui::InputText("Drop Key##hp", dk, sizeof(dk))) { hp->dropKey = dk[0]; ed.dirty = true; }
                 oked::FieldTip("Drop Key##hp");
@@ -39461,8 +39898,8 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
-        if (CompHeader("Item Pickup", pk, &toRemove)) {
-            ImGui::TextDisabled("An item in the world. Walk into it (trigger), come close, or press the key.");
+        if (CompHeader("Item Pickup", pk, &toRemove) && !(UseOkayUIBackend() && DrawItemPickupWithOkayUI(ed, pk))) {   // OkayUI's with the preview switch (section 19)
+            WrappedNote("An item in the world. Walk into it (trigger), come close, or press the key.");
             if (ItemPicker("Item##pk", pk->item, 160)) ed.dirty = true;
             if (ImGui::DragInt("Count##pk", &pk->count, 0.2f, 1, 99999)) ed.dirty = true;
             oked::FieldTip("Count##pk");
@@ -39478,7 +39915,7 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Interact Key##pk");
             if (pk->interactKey && ImGui::DragFloat("Interact Range##pk", &pk->interactRange, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
             if (pk->interactKey && ImGui::Checkbox("Hold In Hands##pk", &pk->holdInHands)) ed.dirty = true;
-            if (pk->interactKey && pk->holdInHands) ImGui::TextDisabled("The key picks it up with Procedural Object Holding (if the player has it).");
+            if (pk->interactKey && pk->holdInHands) WrappedNote("The key picks it up with Procedural Object Holding (if the player has it).");
             if (ImGui::DragFloat("Magnet Radius##pk", &pk->magnetRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Magnet Radius##pk");
             if (pk->magnetRadius > 0.0f && ImGui::DragFloat("Magnet Speed##pk", &pk->magnetSpeed, 0.1f, 0.1f, 100.0f)) ed.dirty = true;

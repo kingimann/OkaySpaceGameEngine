@@ -64,6 +64,7 @@ enum InspRowKind : std::uint8_t {
     InspRowSlot,          ///< the editor's AssetSlot: the file's name (or "None (<hint>)") on a button 28 short of the region, an "x"
                           ///< small button that clears it; only a drop from the Project panel (dropKind) sets it
     InspRowRadio,         ///< Dear ImGui's RadioButton: on when *i == iv; a click sets *i = iv
+    InspRowInputInt,      ///< Dear ImGui's InputInt: a number field with - and + buttons (stage 6: the Voxel Terrain's Seed)
     InspRowRange,         ///< Dear ImGui's DragFloatRange2: two drag cells (f[0] low, f[1] high, each kept on its side of the other);
                           ///< fmt and hint are the two formats
 };
@@ -287,6 +288,7 @@ struct InspFieldList {
         InspRow& r = rows.back(); r.s = v; r.hint = kind; r.dropKind = dropKind;
         return k;
     }
+    int InputInt(const char* label, int* v) { const int k = Add(InspRowInputInt, label); rows.back().i = v; return k; }
     int Radio(const char* label, int* v, int value) { const int k = Add(InspRowRadio, label); rows.back().i = v; rows.back().iv = value; return k; }
     int Range(const char* label, float* lowHigh, float speed, float lo, float hi, const char* fmtLow, const char* fmtHigh = nullptr) {
         const int k = Add(InspRowRange, label);
@@ -427,6 +429,21 @@ inline void InspRemoveAt(float* data, int& count, int stride, int i) {
     if (i < 0 || i >= count) return;
     for (int k = i; k + 1 < count; ++k) for (int c = 0; c < stride; ++c) data[k * stride + c] = data[(k + 1) * stride + c];
     --count;
+}
+
+/// A combo's closed text cut to fit `maxW` with "..." at its end (whole characters), as both versions draw it (stage 6: "Bool false" and
+/// "CrouchWalk" ran under the arrow in Dear ImGui and were cut mid-letter in OkayUI).
+template <class Measure>
+std::string InspFitText(const char* text, float maxW, Measure measure) {
+    std::string s(text ? text : "");
+    if (s.empty() || measure(s.c_str()) <= maxW) return s;
+    while (!s.empty()) {
+        do { s.pop_back(); } while (!s.empty() && ((unsigned char)s.back() & 0xC0) == 0x80);   // a whole character
+        if (!s.empty() && ((unsigned char)s.back() & 0x80)) s.pop_back();                    // the lead byte of a cut character
+        const std::string t = s + "...";
+        if (measure(t.c_str()) <= maxW) return t;
+    }
+    return "...";
 }
 
 /// The blue of a field changed from its prefab (the editor's PrefabFieldMark: a 3-pixel bar 5 pixels left of the region).

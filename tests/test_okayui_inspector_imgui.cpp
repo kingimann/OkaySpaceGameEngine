@@ -254,6 +254,11 @@ int main() {
     // ================= stage 2: the component bodies (pictures and speed; the same input does the same) =================
     for (int bi = 0; bi < inspbody::BodyCount; ++bi) {
         const inspbody::Body b = (inspbody::Body)bi;
+        // the bodies taller than the usual canvas get one tall enough that Dear ImGui adds no scroll bar (which narrowed its value column
+        // and made the UI Button 4.54% different, section 19)
+        const bool tall = b == inspbody::BodyButton || b == inspbody::BodyTerrain || b == inspbody::BodyVoxelDigger || b == inspbody::BodyVoxelTerrain;
+        kH = tall ? 2700 : 1480;
+        const float bh = (float)kH - 2 * kPadY;
         inspbody::Values imv, okv;
         ImGuiRig im; OkayRig ok; Raster ras;
         oked::PanelViewHooks h = hooks; h.headingFont = im.heading;

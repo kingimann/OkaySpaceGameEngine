@@ -2647,7 +2647,11 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const float bx = UI::GetCursorScreenPos().x;
                 int picked = -1;
                 const char* preview = r.mixed ? "Mixed" : r.preview ? r.preview : (c >= 0 && r.items ? r.items[c] : "");
-                const bool open = UI::BeginCombo(r.label, preview);
+                // the closed text cut before the arrow with "...", and tinted when the host asks (an unknown item id)
+                const std::string fitted = InspFitText(preview, frameW - fh - 2.0f * g_metrics.framePadding.x, [](const char* t) { return UI::CalcTextWidth(t); });
+                if (r.color) UI::PushStyleColor(UI::Col_Text, r.color | 0xff000000u);
+                const bool open = UI::BeginCombo(r.label, fitted.c_str());
+                if (r.color) UI::PopStyleColor();
                 const UI::Rect box = UI::GetItemRect();
                 if (open && r.heads) {   // a list with the editor's section headings inside it (the UI Button's Function): every row drawn
                     res.listRows.assign((std::size_t)r.count, UI::Rect{});
@@ -3263,6 +3267,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 UI::SameLine();
                 if (InspSmallButton("x") && !v->empty()) { v->clear(); r.changed = true; r.activated = true; }
                 UI::PopID();
+                break;
+            }
+            case InspRowInputInt: {   // Dear ImGui's InputInt: the field, then - and + buttons a frame tall
+                UI::SetNextItemWidth(WithLabel(frameW, r.label));
+                if (UI::InputInt(r.label, r.I(), 1)) r.changed = true;
+                if (UI::IsItemActivated()) r.activated = true;
                 break;
             }
             case InspRowRadio: {   // Dear ImGui's RadioButton

@@ -1486,6 +1486,35 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
 
+## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+
+All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+
+1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
+   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
+   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
+2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
+   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
+   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
+3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
+   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
+   UV **tile** field.
+4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
+   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
+5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
+   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
+   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
+   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
+   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
+   the same reader but was not tried by hand.)
+6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
+   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
+   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+
+What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
+`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
+Mesh (it creates a second object).
+
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 
 The **UI Notify** prebuilt screen froze the editor when the fifth toast was pushed into its stack of four. Fixed: a toast that is

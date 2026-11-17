@@ -48,13 +48,14 @@ int main() {
         CHECK(std::fabs(m.vertices[1].z + 1.0f) < 1e-3f);
     }
 
-    // ---- Solidify: a flat surface gains a back face (counts double) ----
+    // ---- Solidify: a flat surface gains a back face (vertices double) and a rim along its 4 open edges
+    //      (2 triangles each; #888 finding 137: before, the sides were left open) ----
     {
         Mesh m = Mesh::Quad(1.0f);
         int v0 = (int)m.vertices.size(), t0 = m.TriangleCount();
         m.Solidify(0.1f);
         CHECK((int)m.vertices.size() == v0 * 2);
-        CHECK(m.TriangleCount() == t0 * 2);
+        CHECK(m.TriangleCount() == t0 * 2 + 4 * 2);
     }
 
     // ---- Taper: top collapses toward the axis, bottom keeps its width ----

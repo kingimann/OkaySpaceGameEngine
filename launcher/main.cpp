@@ -27,6 +27,7 @@
 #include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
+#include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
@@ -1889,25 +1890,14 @@ static bool IsOfficialDir(const fs::directory_entry& e) {
 }
 
 // Scan a few likely folders for built games (*.okayscene).
+// The folders overlap (the launcher's folder holds the other three), so each file is listed once
+// (shared/LibraryScan.hpp); it used to show every community game twice.
 std::vector<fs::path> FindScenes() {
-    std::vector<fs::path> out;
-    std::error_code ec;
-    auto scan = [&](const fs::path& dir) {
-        if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
-        for (auto it = fs::recursive_directory_iterator(dir, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (IsOfficialDir(*it)) { it.disable_recursion_pending(); continue; }
-            if (it->is_regular_file(ec) && it->path().extension() == ".okayscene")
-                out.push_back(it->path());
-        }
-    };
     fs::path base(g_exeDir);
-    scan(base);
-    scan(base / "games");
-    scan(base / "Projects");
-    scan(base / "community");     // installed/shared community content
-    for (const auto& d : g_libraryDirs) scan(fs::path(d));   // user-added libraries
-    return out;
+    std::vector<fs::path> roots = {base, base / "games", base / "Projects",
+                                   base / "community"};   // installed/shared community content
+    for (const auto& d : g_libraryDirs) roots.push_back(fs::path(d));   // user-added libraries
+    return okaylib::FindScenesUnder(roots, [](const fs::directory_entry& e) { return IsOfficialDir(e); });
 }
 
 // Scan the same folders for HTML5 / JavaScript web games — a folder containing

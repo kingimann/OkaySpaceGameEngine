@@ -1101,6 +1101,30 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         bin.op = op;
         bin.kids.push_back(std::move(*out));
         bin.kids.push_back(std::move(right));
+        if (bin.kind == Node::Binary && bin.kids[0].kind == Node::IntLit && bin.kids[1].kind == Node::IntLit) {
+            const uint64_t left = bin.kids[0].number;
+            const uint64_t right_n = bin.kids[1].number;
+            bool folded = true;
+            uint64_t result = 0;
+            if (op == TPlus) result = left + right_n;
+            else if (op == TMinus) result = left - right_n;
+            else if (op == TStar) result = left * right_n;
+            else if (op == TSlash || op == TPercent) {
+                if (right_n == 0) {
+                    error = "division by zero";
+                    return false;
+                }
+                result = op == TSlash ? left / right_n : left % right_n;
+            } else {
+                folded = false;
+            }
+            if (folded) {
+                bin = Node{};
+                bin.kind = Node::IntLit;
+                bin.number = result;
+                bin.type.base = 1;
+            }
+        }
         *out = std::move(bin);
     }
     return true;

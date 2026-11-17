@@ -2004,6 +2004,10 @@ if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
     add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
     set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
+    # The one-dispatch fast release (scripts/fast_release.py, .github/workflows/fast-release.yml): version, CI gate, changelog entries, stamp,
+    # after-check with fake data, the workflows read as YAML, and every real entry in dist/changelog.d checked.
+    add_test(NAME fast_release_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fast_release.py)
+    set_tests_properties(fast_release_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -3895,3 +3899,14 @@ add_test(NAME guided_perf COMMAND test_guided_perf)
 add_executable(test_controller_mapping test_controller_mapping.cpp)
 target_link_libraries(test_controller_mapping PRIVATE okay::engine)
 add_test(NAME controller_mapping COMMAND test_controller_mapping)
+
+# Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
+# a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
+# reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
+# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/automated_testing.md "CI speed").
+foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
+                     launcher_download_own launcher_versions native_fetch playfab_own)
+    if(TEST ${_serial_test})
+        set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
+    endif()
+endforeach()

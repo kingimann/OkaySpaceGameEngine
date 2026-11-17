@@ -2283,10 +2283,15 @@ static bool UseOkayUIPreview(const char* var) {
     if (const char* e = std::getenv("OKAY_UI_BACKEND"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
     return false;
 }
-// The Project Settings sections (Player, Physics, Rendering, Tags and Layers): preview only, OKAY_UI_PROJECT_SETTINGS=okayui (their
-// OkayUI ports drew stray letters and overlaps under ImGui windows in front; fixed by claude2/okayui-ps-overdraw, not yet seen fixed
-// in a real editor run here).
-bool UseOkayUIProjectSettings() { return UseOkayUIPreview("OKAY_UI_PROJECT_SETTINGS"); }
+// The Project Settings sections (Player, Physics, Rendering, Tags and Layers) follow the other ported panels (OkayUI by default) now
+// that claude2/okayui-ps-overdraw keeps them from painting over ImGui windows in front (the owner's stray letters); checked in a real
+// editor run under Xvfb. OKAY_UI_PROJECT_SETTINGS=imgui keeps them on Dear ImGui alone.
+bool UseOkayUIProjectSettings() {
+    if (!UseOkayUIBackend()) return false;
+    okayuibackend::Backend b = okayuibackend::Backend::OkayUI;
+    if (const char* e = std::getenv("OKAY_UI_PROJECT_SETTINGS"); e && okayuibackend::Parse(e, b)) return b == okayuibackend::Backend::OkayUI;
+    return true;
+}
 // The Hierarchy: preview only, OKAY_UI_HIERARCHY=okayui (one real-editor round; its keyboard arrows in menus are untested).
 bool UseOkayUIHierarchy() { return UseOkayUIPreview("OKAY_UI_HIERARCHY"); }
 // The script editor's code widget (editor/CodeEditorChoice.hpp): OKAY_CODE_EDITOR=own picks our own OkayUI::CodeEdit.

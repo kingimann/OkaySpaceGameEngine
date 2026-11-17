@@ -49147,7 +49147,7 @@ static bool PollHandoff(bool& raiseWindow) {
 // are skipped in secondary windows — dock those panels back into the main
 // window to see their content; text/vector panels (Hierarchy, Inspector,
 // Console, Script Editor, Flow Graph, ...) work fully on any monitor.
-// Toggled by g_multiWindow (View ▸ Multi-Window Panels, persisted, declared
+// On when g_multiWindow is set and both backends can do it (ViewportsSupported; g_multiWindow is declared
 // with the other editor settings).
 
 #ifdef OKAY_PLATFORM_HAVE_SDL2   // (the multi-window panels are SDL_Renderer only; not in a build without SDL)
@@ -49284,6 +49284,14 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     SDL_RenderPresent(d->ren);
 }
 
+// True when both halves of multi-window panels are there: the platform backend can create OS windows (the
+// SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
+// X11; not Wayland or the headless offscreen driver) and the renderer side (OkayVpInstall) is installed.
+static bool ViewportsSupported() {
+    const ImGuiBackendFlags f = ImGui::GetIO().BackendFlags;
+    return (f & ImGuiBackendFlags_PlatformHasViewports) && (f & ImGuiBackendFlags_RendererHasViewports);
+}
+
 // Install the renderer-side viewport handlers (the SDL2 platform backend
 // already provides the window-side ones).
 static void OkayVpInstall() {
@@ -49294,6 +49302,14 @@ static void OkayVpInstall() {
     ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
 }
 #endif // OKAY_PLATFORM_HAVE_SDL2
+// Both ImGui backends can open extra OS windows (multi-window panels): SDL's on the sdl platform side; never on our own glue yet.
+static bool EditorViewportsSupported() {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return g_edPlat && g_edPlat->SupportsImGuiViewports() && ViewportsSupported();
+#else
+    return false;
+#endif
+}
 
 // ---- Launcher handshake: "save your project and close" ---------------------------
 // The launcher won't exit or install an update while the editor is open. It drops
@@ -49736,11 +49752,8 @@ int main(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // Multi-window panels: drag a tab outside the editor and it becomes its own
-    // OS window — put the Inspector or Console on a second monitor (View menu
-    // toggle; needs our SDL_Renderer viewport layer installed below).
-    // (Not with OKAY_EDITOR_PLATFORM=own: our glue has no platform windows yet; panels stay inside the editor.)
-    if (g_multiWindow && g_edPlat->SupportsImGuiViewports()) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // Multi-window panels (ImGuiConfigFlags_ViewportsEnable) are turned on below, once the platform and renderer
+    // backends are installed and have said whether they can open extra OS windows.
     io.ConfigViewportsNoTaskBarIcon = true;   // panels are satellites, not apps
     // This is a shipping app, not a Dear ImGui demo: don't pop the developer-only
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
@@ -49923,6 +49936,24 @@ int main(int argc, char** argv) {
 #ifdef OKAY_PLATFORM_HAVE_SDL2
     if (renderer) OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels; SDL_Renderer only)
 #endif
+    // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
+    // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
+    // ImGui turns the flag off in its first frame otherwise (and asserts if it is turned back on in the second).
+    // (Not on our own platform side and renderer: our glue has no platform windows yet; panels stay inside the editor.)
+    if (g_multiWindow) {
+        if (EditorViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+        else if (g_edPlat->SupportsImGuiViewports()) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+            const char* drv = SDL_GetCurrentVideoDriver();
+#else
+            const char* drv = nullptr;
+#endif
+            const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
+                                    "' cannot open extra windows here, so panels stay inside the editor window.";
+            std::printf("[okay] %s\n", msg.c_str());
+            ConsoleLog(msg, 1);
+        }
+    }
 
 #ifdef OKAY_HAVE_OKAYUI
     // Install an OkayUI-backed script UI bridge so a playing game's ui_* script
@@ -51764,15 +51795,18 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("Present"); g_gfx->Present(); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
-        // dragged out of the editor). Also applies a runtime toggle from the
-        // View menu — flipping the flag between frames is supported by ImGui.
+        // dragged out of the editor).
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
-        if ((g_multiWindow && g_edPlat->SupportsImGuiViewports()) != ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0)) {
-            if (g_multiWindow && g_edPlat->SupportsImGuiViewports()) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-            else               io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+        // g_multiWindow changed while running (nothing changes it today): flipping the flag between frames is
+        // supported by Dear ImGui, except turning it on for the second frame, and turning it on is only worth it
+        // when both backends can open windows (otherwise Dear ImGui turns it off again in the next NewFrame()).
+        if (g_multiWindow != ((io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0) &&
+            !(g_multiWindow && !EditorViewportsSupported())) {
+            if (!g_multiWindow) io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+            else if (ImGui::GetFrameCount() > 1) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         }
 
         {   // Close out the profiler frame (total wall time incl. present).

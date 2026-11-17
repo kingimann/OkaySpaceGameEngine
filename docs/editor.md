@@ -715,9 +715,17 @@ unchanged.
 - **Multi-window panels (dual monitor)**: drag any tab outside the editor and
   it becomes its own OS window — put the Inspector, Console, Script Editor or
   Flow Graph on a second monitor; drag it back over the editor to re-dock.
-  Toggle with View ▸ Multi-Window Panels (persisted). Note: image-based
+  Always on (there is no toggle any more). Note: image-based
   panels (Scene/Game views, asset thumbnails) only render their pictures
-  while docked in the main window.
+  while docked in the main window. It needs a video driver that can make
+  extra OS windows and read the mouse anywhere on the desktop (Windows,
+  macOS, X11). On others (Linux Wayland with `SDL_VIDEODRIVER=wayland`,
+  the headless `offscreen` driver) the editor starts with panels kept
+  inside its window and says so once in the Console ("Multi-window panels
+  are off ..."). Up to v2.880 it switched the option back on after Dear
+  ImGui had turned it off, which a build with assertions stopped on at the
+  second frame ("Please set ViewportsEnable before the first call to
+  NewFrame()") and a release build redid every frame.
 - **File dialogs**: Open Scene, Save Scene As, Import Model and Instantiate
   Prefab all have a `...` browse button (native picker with the right file
   filter). The path field auto-focuses when the popup opens and **Enter

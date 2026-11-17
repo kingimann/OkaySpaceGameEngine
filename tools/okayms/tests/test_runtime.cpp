@@ -47,7 +47,7 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
     const std::string rt = root + "/tools/okayms/runtime";
     std::system(("rm -rf " + dir + " && mkdir -p " + dir).c_str());
     okayms::Archive archive;
-    for (const char* name : {"string", "printf", "startup"}) {
+    for (const char* name : {"string", "printf", "startup", "mem"}) {
         const std::string src = rt + "/" + name + ".c";
         const std::string obj = dir + "/" + name + ".obj";
         CHECK(tally, run(cl + " /I" + rt + " /c /Fo" + obj + " " + src, dir + "/" + name + ".log") == 0);
@@ -71,7 +71,7 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
     CHECK(tally, write_bytes(dir + "/okayrt.lib", lib.value));
 
     okayms::Archive kernel;
-    for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile"}) {
+    for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile", "GetProcessHeap", "HeapAlloc", "HeapFree"}) {
         okayms::ArchiveMember member;
         member.name = name;
         member.is_import = true;
@@ -91,7 +91,16 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
                             "  memset(buf, 65, 2);\n"
                             "  if (buf[0] != 65 || buf[1] != 65) return 2;\n"
                             "  if (strlen(\"hi\") != 2) return 3;\n"
+                            "  char *p; char small[16];\n"
+                            "  p = malloc(16);\n"
+                            "  if (p == 0) return 4;\n"
+                            "  strcpy(p, \"go\");\n"
+                            "  strcat(p, \"!\");\n"
+                            "  puts(p);\n"
+                            "  snprintf(small, 8, \"%d\", atoi(\"-3\") * -4);\n"
                             "  printf(\"%d %s %x %c %f\\n\", -7, \"ok\", 255, 65, 1.5 + 2.5);\n"
+                            "  printf(\"%s\\n\", small);\n"
+                            "  free(p);\n"
                             "  return 0;\n"
                             "}\n"));
     const int built = run(cl + " /I" + rt + " /ENTRY:mainCRTStartup /Fe" + dir + "/hi.exe " + dir + "/hi.c " + dir +
@@ -105,8 +114,8 @@ static void test_runtime(Tally& tally, const std::string& cl, const std::string&
     const int code = run("WINEDEBUG=-all WINEPREFIX=$HOME/.okayms-wine timeout 60 wine " + dir + "/hi.exe", dir + "/out.txt");
     const std::string out = slurp(dir + "/out.txt");
     CHECK(tally, code == 0);
-    CHECK(tally, out == "-7 ok ff A 4.000000\n");
-    if (out != "-7 ok ff A 4.000000\n") std::fprintf(stderr, "  stdout: [%s]\n", out.c_str());
+    CHECK(tally, out == "go!\n-7 ok ff A 4.000000\n12\n");
+    if (out != "go!\n-7 ok ff A 4.000000\n12\n") std::fprintf(stderr, "  stdout: [%s]\n", out.c_str());
 }
 
 int main(int argc, char** argv) {

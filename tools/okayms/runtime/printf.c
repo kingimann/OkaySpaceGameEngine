@@ -104,3 +104,59 @@ int printf(char *fmt, ...) {
     WriteFile(GetStdHandle(0xFFFFFFF5), out, n, &wrote, 0);
     return n;
 }
+
+int snprintf(char *buf, unsigned int cap, char *fmt, ...) {
+    unsigned int n;
+    va_list ap;
+    if (cap == 0) return 0;
+    n = 0;
+    va_start(ap, fmt);
+    while (fmt[0] != 0 && n + 1 < cap) {
+        if (fmt[0] == '%' && fmt[1] == 'd') {
+            int v;
+            char tmp[16];
+            int i;
+            unsigned int u;
+            v = va_arg(ap, int);
+            if (v < 0 && n + 1 < cap) {
+                buf[n] = '-';
+                n = n + 1;
+                v = -v;
+            }
+            u = v;
+            i = 0;
+            if (u == 0) tmp[i++] = '0';
+            while (u != 0 && i < 16) {
+                tmp[i] = '0' + (u % 10);
+                i = i + 1;
+                u = u / 10;
+            }
+            while (i > 0 && n + 1 < cap) {
+                i = i - 1;
+                buf[n] = tmp[i];
+                n = n + 1;
+            }
+            fmt = fmt + 2;
+        } else if (fmt[0] == '%' && fmt[1] == 's') {
+            char *s;
+            unsigned int i;
+            s = va_arg(ap, char *);
+            i = 0;
+            while (s[i] != 0 && n + 1 < cap) {
+                buf[n] = s[i];
+                n = n + 1;
+                i = i + 1;
+            }
+            fmt = fmt + 2;
+        } else {
+            buf[n] = fmt[0];
+            n = n + 1;
+            fmt = fmt + 1;
+        }
+    }
+    buf[n] = 0;
+    va_end(ap);
+    return n;
+}
+
+int puts(char *s) { return printf("%s\n", s); }

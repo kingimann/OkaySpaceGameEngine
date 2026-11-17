@@ -6,55 +6,55 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "96af032067b143924a13cd03030d7289"
+  guid "85698a9a0f179bfd6f145cf1915ddc69"
   active 1
   parent -1
   transform 0 0 10 0 0 0 1 1 1 1
   camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Canvas"
-  guid "fe0fd61fc6cc404af786ced7179f1d4a"
+  guid "b44b2fed87d2df76de7c753d1b47868d"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
 end
 gameobject 2 "EventSystem"
-  guid "0f8988765e0a77225c80f486027d6ef1"
+  guid "3c7680d9496ce9fb9c642b88a1e6042d"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   eventsystem
 end
 gameobject 3 "UI Library 4"
-  guid "3368e38d4146f8ae88d65ceb607e5d7b"
+  guid "6d10f58ba87dfcb352515e293a850a8b"
   active 1
   parent 1
   transform 0 0 0 0 0 0 1 1 1 1
 end
 gameobject 4 "Backdrop"
-  guid "e86c86c7a123026795172d69e8e76433"
+  guid "4dc92b1c5d2d48fae620500e1a932544"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 0 0 0.07058824 0.078431375 0.101960786 0.98039216 11 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
 gameobject 5 "Title"
-  guid "2d568aeadc693929ba2b8bf49dcbf080"
+  guid "642806d1c7abdc7cff180c7b2ce11769"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   text "UI Library 4" 0.9098039 0.92156863 0.9411765 1 3.75 1 32 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 600 40 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 6 "Subtitle"
-  guid "1b6983c8b3491099bbb744ed61b1d446"
+  guid "785085decad1fbc0ca247efdd3179e49"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   text "Press Play, then click a look on the left: the Sample card changes look and nothing else on the page does. The buttons in the middle use named styles. The grid on the right is vector icons, drawn by our own code." 0.5882353 0.6156863 0.6745098 1 1.625 1 34 50 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1180 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 7 "ThemeCard"
-  guid "c7fa56edcb1b8221835c5d33b1f60d2a"
+  guid "97c178c40db48548d9c6c0320dc03a0f"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
@@ -62,14 +62,14 @@ gameobject 7 "ThemeCard"
   uix pblock=1
 end
 gameobject 8 "Caption"
-  guid "d71f5357e9141f33314797760f44760d"
+  guid "ed9d08551d12d70ab85ceb9a51fa2124"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "Looks (click one)" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 260 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 9 "Theme1"
-  guid "c39db9a0dd1dc29068ab3854d9bbb456"
+  guid "375cecc6074e81ed8948b1c7dc672b3a"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -82,7 +82,7 @@ gameobject 9 "Theme1"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 10 "Theme2"
-  guid "bc7faf411c41ab24f1c3b5b29ec9af98"
+  guid "0e6e7c3e2e9f8707ee98323715a741d6"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -95,7 +95,7 @@ gameobject 10 "Theme2"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 11 "Theme3"
-  guid "7b9cebf131f0b40f15e4fef9e523e576"
+  guid "e6882136df1394b5d4f51026f34d67b9"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -108,7 +108,7 @@ gameobject 11 "Theme3"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 12 "Theme4"
-  guid "504ee3c74b20ef4f0f553e2567a427bb"
+  guid "1eb8fca4139a6688882ebe117a45a1a6"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -121,7 +121,7 @@ gameobject 12 "Theme4"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 13 "Theme5"
-  guid "beba7bceeffa5736cb6db3855720b1b1"
+  guid "fb0bc21458125151b50109efc3b1783b"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -134,7 +134,7 @@ gameobject 13 "Theme5"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 14 "Theme6"
-  guid "e4b31f17195368cbf89ecc9fbc434e92"
+  guid "ec6aace3bec8b2cef40d9a9fdb4d5927"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -147,7 +147,7 @@ gameobject 14 "Theme6"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 15 "Theme7"
-  guid "54e271797e9cf069f61259c6fb3dfdd9"
+  guid "62ee8606cbb4a48d37636e6c6faf2c35"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -160,7 +160,7 @@ gameobject 15 "Theme7"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 16 "Theme8"
-  guid "74e7f56f145ab3cb503923306b8e49f8"
+  guid "f3d402febb1f3a4edefbabe03b86a5d6"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -173,7 +173,7 @@ gameobject 16 "Theme8"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 17 "Theme9"
-  guid "a03af1400dcfdbaa20aa1c273ef94082"
+  guid "3e5cd79f896667c05952cf2431c80023"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -186,7 +186,7 @@ gameobject 17 "Theme9"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 18 "Theme10"
-  guid "618cdc8f6ea7e34d8c6ee9e9f984cdd0"
+  guid "89e882b44cf66f0f35a0e9e2d2ff28c6"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -199,7 +199,7 @@ gameobject 18 "Theme10"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 19 "Theme11"
-  guid "005cc884545d438d595a74e8b7e71a4c"
+  guid "b81555a39e4badb3a56be1eee63091f1"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -212,7 +212,7 @@ gameobject 19 "Theme11"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 20 "Theme12"
-  guid "2b78014e17384011b19586a2f8ee3865"
+  guid "c7aa0032dd38e90397c516686ec9fb01"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -225,7 +225,7 @@ gameobject 20 "Theme12"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 21 "Theme13"
-  guid "909bcf7919e32af120d046b14521b9e1"
+  guid "a37139c414567d72979448b842609b72"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -238,7 +238,7 @@ gameobject 21 "Theme13"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 22 "Theme14"
-  guid "ae78fbfa677447943835c8380e1d7995"
+  guid "e2d94d7d5e5d3341ce84fef38a1dc6bf"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -251,7 +251,7 @@ gameobject 22 "Theme14"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 23 "Theme15"
-  guid "5b24895b93eee4fa08a6a6c9ef3edc94"
+  guid "f2a17c77c105d975aa78535503595018"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -264,7 +264,7 @@ gameobject 23 "Theme15"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 24 "Theme16"
-  guid "9f295fde8850bc0a1681f0f6c8fde871"
+  guid "9d7353710d579608ec1c5726b732bfdd"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
@@ -277,56 +277,56 @@ gameobject 24 "Theme16"
   comporder "UIButton" "UIStyleVariant" "ScriptComponent"
 end
 gameobject 25 "Sample"
-  guid "183a180e8f754965930d189b347d96a3"
+  guid "77532115a2a27181357d8696a47a31df"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 20 352 260 150 0.14901961 0.16470589 0.20784314 1 0 10 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
 gameobject 26 "SampleTitle"
-  guid "648d7afac77d3a930d18728e0f17c457"
+  guid "8fa872643c8b98084a7ae21677c778ac"
   active 1
   parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   text "Sample card" 0.9098039 0.92156863 0.9411765 1 2 1 12 8 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 236 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 27 "SampleButton"
-  guid "f019d7a701a7828b729c239ab94b247e"
+  guid "678157ecc409f8b94101ba4d848ece9f"
   active 1
   parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "Play" 12 40 110 32 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 2 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 28 "SampleButton2"
-  guid "e423ffe632d7a5bb2932e1b14784a185"
+  guid "9f0cf9dc8bea491466804294d38caefc"
   active 1
   parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "More" 132 40 110 32 0.18039216 0.2 0.2509804 1 0.22745098 0.2509804 0.3137255 1 0.9098039 0.92156863 0.9411765 1 0 0.14901961 0.16470589 0.20784314 1 0.2 0.21960784 0.2784314 1 1 1 8 2 1 1 1 1 0.08627451 1 "" 0 0.9098039 0.92156863 0.9411765 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 29 "SampleSlider"
-  guid "30b4e491a8594c9a74af87a61e066d17"
+  guid "d129cb2b60bf36ce7a04c66ac49d1af4"
   active 1
   parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   uislider 12 92 200 10 0.6 0 1 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 0.9607843 0.96862745 0.9882353 1 0 3 0.6 0 1 1 1 1 0 1 0 1 1 0 0 0.47058824 0.8235294 1 1 -1 ""
 end
 gameobject 30 "SampleBar"
-  guid "bd08ca81bf5f7388a0d1ce2ab32589fc"
+  guid "22276ef4d0b1df1e143fe9bca1fb80a5"
   active 1
   parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   uiprogress 12 116 200 12 0.7 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 0 3 0 1 1 1 1 0 1 0 0.8235294 0.78431374 0.3529412 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
 end
 gameobject 31 "ThemeNote2"
-  guid "18bfd77b19280681987dc3ba00a5aa1f"
+  guid "ba2d6a8ec1205ac500f25469987336cb"
   active 1
   parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "A look belongs to one screen or widget. Script: ui_set_look(\"Sample\", \"Neon\"). The Styles and Icons cards keep their own look." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 516 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 260 70 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 32 "StyleCard"
-  guid "4e6d5a78757a21a3fcaf85eef65b3886"
+  guid "dd419d84a29585c1ea47e76b6bf40ce9"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
@@ -334,14 +334,14 @@ gameobject 32 "StyleCard"
   uix pblock=1
 end
 gameobject 33 "Caption"
-  guid "21ed4fb8480eff6bbbc644191e3b566e"
+  guid "70969a6cbba34aae8a809a9b77a15b5c"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
   text "Styles (same button, 12 looks)" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 430 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 34 "Style1"
-  guid "e7b6eb61b866384f122eb14e0556be58"
+  guid "729b9751f00f571b4aac8d7a3d244dc4"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -349,7 +349,7 @@ gameobject 34 "Style1"
   uivariant variant=0 vstyle="Flat Pill"
 end
 gameobject 35 "Style2"
-  guid "65bc38338dc85fb7f67044941f0064d9"
+  guid "b725a3655d206e5c85b610f61b95b2ca"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -357,7 +357,7 @@ gameobject 35 "Style2"
   uivariant variant=0 vstyle="Neon Pill"
 end
 gameobject 36 "Style3"
-  guid "c32ff7255c06423887864b36e21042e2"
+  guid "2e829893aaee737c107edcf45bde8d4f"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -365,7 +365,7 @@ gameobject 36 "Style3"
   uivariant variant=0 vstyle="Glass"
 end
 gameobject 37 "Style4"
-  guid "92206e06c12de4bb4a3952aa20e68f9c"
+  guid "8b00cff233c7102f4a51c5f4ffc82fb1"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -373,7 +373,7 @@ gameobject 37 "Style4"
   uivariant variant=0 vstyle="Pixel"
 end
 gameobject 38 "Style5"
-  guid "0cae510cdb9533b675387bf15b113577"
+  guid "4ff7eb367ac7261be64338e2dc087c6d"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -381,7 +381,7 @@ gameobject 38 "Style5"
   uivariant variant=0 vstyle="Chamfer"
 end
 gameobject 39 "Style6"
-  guid "b213a02db3f47e8d1e8effe6f21b0475"
+  guid "e7483489bd2f7e856581212acad82c69"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -389,7 +389,7 @@ gameobject 39 "Style6"
   uivariant variant=0 vstyle="Bevel"
 end
 gameobject 40 "Style7"
-  guid "86d9b584ad1b7c14b2fdb67a6c46c894"
+  guid "24a659850b05c81bfaf45d667863ca6c"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -397,7 +397,7 @@ gameobject 40 "Style7"
   uivariant variant=0 vstyle="Brutal"
 end
 gameobject 41 "Style8"
-  guid "2864df4d2ca1554721d0d5cbfd0388d6"
+  guid "984f1dceebeb64f7b9306b16a4062f0f"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -405,7 +405,7 @@ gameobject 41 "Style8"
   uivariant variant=0 vstyle="Game Button"
 end
 gameobject 42 "Style9"
-  guid "694bb78207cc5624b7f964db2b4a0512"
+  guid "2e8a838745fb930f23b0f132a108f817"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -413,7 +413,7 @@ gameobject 42 "Style9"
   uivariant variant=0 vstyle="Bubble"
 end
 gameobject 43 "Style10"
-  guid "64a55b0a71b7c72ead31894741088668"
+  guid "276f6af9d883bf8839495e7e0e78c651"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -421,7 +421,7 @@ gameobject 43 "Style10"
   uivariant variant=0 vstyle="Cartoon"
 end
 gameobject 44 "Style11"
-  guid "10c569ae8288ca97d60fb5ede4c9f779"
+  guid "da6bbacc3870acf74e6aa2a1119c7bba"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -429,7 +429,7 @@ gameobject 44 "Style11"
   uivariant variant=0 vstyle="Frosted"
 end
 gameobject 45 "Style12"
-  guid "005fe783f231ce1aed1475089466a4fb"
+  guid "e39d07dbc4bf266b44c297c3b8b02469"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
@@ -437,14 +437,14 @@ gameobject 45 "Style12"
   uivariant variant=0 vstyle="Hex"
 end
 gameobject 46 "StyleNote"
-  guid "e405c9d442b22ad87c013b97c4a8f517"
+  guid "23c166293971350851a9b4b00cd1299a"
   active 1
   parent 32
   transform 0 0 0 0 0 0 1 1 1 1
   text "A style is a mix of shape, fill, border, effect and four state looks (hover, pressed, disabled, focus). Hover and press the buttons." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 266 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 430 50 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 47 "SizeCard"
-  guid "6e3f8a8e36f28fbb19543f5c18049dec"
+  guid "c279bff865bbaee4f10379deb7d3722e"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
@@ -452,14 +452,14 @@ gameobject 47 "SizeCard"
   uix pblock=1
 end
 gameobject 48 "Caption"
-  guid "1ae605fd55914f9de42d0442756aa5b8"
+  guid "db3897ebd8d9a424f32d32c945621ac1"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
   text "Sizes XS to XL" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 430 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 49 "Size1"
-  guid "3ef79e9834649d391c9108e2d05783e2"
+  guid "507dfef6325cd0f20e74c759d79220a0"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
@@ -467,7 +467,7 @@ gameobject 49 "Size1"
   uivariant variant=1 vstyle="Flat Pill" vsize="xs"
 end
 gameobject 50 "Size2"
-  guid "77940ed415b3d274d7338ee30ac2ca0a"
+  guid "b3e856dddeda51e4932c38638884ee25"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
@@ -475,7 +475,7 @@ gameobject 50 "Size2"
   uivariant variant=1 vstyle="Flat Pill" vsize="s"
 end
 gameobject 51 "Size3"
-  guid "407b71fe79ebb569e06ffe68e441768a"
+  guid "54995012b979f949e44b1264c086cc6b"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
@@ -483,7 +483,7 @@ gameobject 51 "Size3"
   uivariant variant=1 vstyle="Flat Pill" vsize="m"
 end
 gameobject 52 "Size4"
-  guid "c288998853f96576d7dcc42c9378a3e2"
+  guid "cc1ea27cd81d7c8c6e63bf80d3808050"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
@@ -491,7 +491,7 @@ gameobject 52 "Size4"
   uivariant variant=1 vstyle="Flat Pill" vsize="l"
 end
 gameobject 53 "Size5"
-  guid "0f611a9b1432e2684defee39c67b816e"
+  guid "3b06077b62090d13991d9d7b8c509fcd"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
@@ -499,14 +499,14 @@ gameobject 53 "Size5"
   uivariant variant=1 vstyle="Flat Pill" vsize="xl"
 end
 gameobject 54 "SizeNote"
-  guid "2dcc25a8f389ae7fa2442480093a8726"
+  guid "3ef8de448383d83a7215966429654ffa"
   active 1
   parent 47
   transform 0 0 0 0 0 0 1 1 1 1
   text "Five sizes (XS to XL) and four densities (compact, cosy, comfortable, spacious) for any style." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 150 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 430 50 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 55 "IconCard"
-  guid "7d3885b5817ec64d30c0fd7230f6d2c4"
+  guid "b960846caae1e48b55f5b17ff931d3bf"
   active 1
   parent 3
   transform 0 0 0 0 0 0 1 1 1 1
@@ -514,294 +514,294 @@ gameobject 55 "IconCard"
   uix pblock=1
 end
 gameobject 56 "Caption"
-  guid "653b19f9d217e03228a24a4ba8d3ac79"
+  guid "2760590f3e8b69b7f67887daf6c92ad7"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   text "Icons (371 to choose from)" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 390 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 57 "Icon1"
-  guid "7212e831910b8e19022b1522fd03176f"
+  guid "7340a7285963fe7263a5a47698c48c3e"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 16 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:heart" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 58 "Icon2"
-  guid "e8d30c33fe67f55a2643aed99dfbc382"
+  guid "74573ec836de2b9499d954a24644ad10"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 65 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:star" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 59 "Icon3"
-  guid "6a441b401cea17bed016b286ccf78cd5"
+  guid "43c8ae0ef84b13bb7cbc2d7d88817e93"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 114 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:coin" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 60 "Icon4"
-  guid "ecff472c75d2dc64f7efef8e93779559"
+  guid "d53d87a0ff726c078913b15cd21d9bea"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 163 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:sword" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 61 "Icon5"
-  guid "2bfddd632f0f369053d66d8db8ad4b7e"
+  guid "a34cda8a6600d15f6c7b1edbed59baa3"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 212 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:shield" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 62 "Icon6"
-  guid "362e15e48287ee0c136664b35668c25c"
+  guid "415276524ad8e5f37e13de608001b955"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 261 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:potion" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 63 "Icon7"
-  guid "7cb90196aebc828390454b50b8dcab5c"
+  guid "9116ce15e3fcc0b1f9092461ff204bd9"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 310 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:key" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 64 "Icon8"
-  guid "119658b706f18d8645997ab9eb3f866b"
+  guid "b90b6fa7688e44848c99cc39c158d86c"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 359 56 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:map" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 65 "Icon9"
-  guid "8cf66cbb0973f291020dd3d42cb4c7dd"
+  guid "3bd3a76e2178d056ef35f168df59728b"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 16 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:bag" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 66 "Icon10"
-  guid "ef22fedbbe21a79b041db980a58c877b"
+  guid "f4865adecd9d5f93aa8a12165fb24095"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 65 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:chat" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 67 "Icon11"
-  guid "c0419657f87fe1a61e046cb9b7345d73"
+  guid "08ac8282361f9e513d5ce90a0d703910"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 114 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:mail" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 68 "Icon12"
-  guid "b3fe9f3fb840860c4dfca7459b1c61f2"
+  guid "cd692f7a657038f64587491a1598a1d6"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 163 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:lock" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 69 "Icon13"
-  guid "618d6019225922eea60035fbc5235010"
+  guid "2391d5c34f19b72e4b860391402fff1a"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 212 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:play" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 70 "Icon14"
-  guid "151364a6149533fcc57c142099f96254"
+  guid "669d37735555df2fc5526e29722555fa"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 261 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:pause" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 71 "Icon15"
-  guid "e4d2a8f58547853ac4eaf814cfef0c2f"
+  guid "55b286a230da78a8649f3af179414718"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 310 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:gear" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 72 "Icon16"
-  guid "dec5013e7b4687536bb2720bc9007e25"
+  guid "00fcf5a5bbba589619b41a0f651b5fcb"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 359 105 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:home" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 73 "Icon17"
-  guid "c7e3a9bae0119fc3067a7d9bae6fe75d"
+  guid "ba1b6aaeedb8e381e0672eabdfd554d1"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 16 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:user" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 74 "Icon18"
-  guid "e33e5ab089c03da4da437b50fb887c46"
+  guid "4aaf4d0b09282c79249e89a7292aa55d"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 65 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:flag" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 75 "Icon19"
-  guid "50032ff9dd612b69f3610d8ba6e86254"
+  guid "fdcd97a65f9dd41fa903de28417c95f2"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 114 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:clock" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 76 "Icon20"
-  guid "1ef10eb3d1d9ad8883237ab52503aeac"
+  guid "695a93503094f67b43e986d7257ea090"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 163 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:bell" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 77 "Icon21"
-  guid "330fa7bceff210b555f36bdf9d9029d2"
+  guid "6e3fa80cf4a7c47ad09ad3e2f6c1dd27"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 212 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:trophy" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 78 "Icon22"
-  guid "f2575db574a72626508c9975393e3943"
+  guid "0b8ad95697e6cebfbb1cc55a82dd8d30"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 261 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:gem" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 79 "Icon23"
-  guid "d6cdaee8a8357550f54beae0b2307fe6"
+  guid "e74b81b752bb143c631dfc1d667f670a"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 310 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:crown" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 80 "Icon24"
-  guid "2d6522fcd1c8b484be25593ca7d6b37f"
+  guid "21b562af10a25594573ac5d954691cff"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 359 154 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:skull" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 81 "Icon25"
-  guid "8a007ad905efddf0ad2fa2a89741d11b"
+  guid "db151d6563fdfb0a56eb2562789e874c"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 16 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:bomb" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 82 "Icon26"
-  guid "050f0d6ee542c2a0c582719c278111da"
+  guid "a5c5f96dacbf6d410ea00f8ea965889a"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 65 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:fire" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 83 "Icon27"
-  guid "e95a11194ddfc08ff40b780daec770af"
+  guid "d3b8d5ccafd0ca2a5549dabb3bf81dc1"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 114 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:lightning" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 84 "Icon28"
-  guid "86babf9e7f3f4eccf73e7eda64a90ab4"
+  guid "4b31e75d3a8070e76784fe14bbf2db1d"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 163 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:sun" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 85 "Icon29"
-  guid "53fd70340ec140cdae817277a0c136b8"
+  guid "fb2a361b8a0ee20c39f39d128ba47221"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 212 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:moon" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 86 "Icon30"
-  guid "b1475ec4a8682640c16e5c73a3c95004"
+  guid "e3dfe46cf5aba6bdfc19cd32117dd3dc"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 261 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:cloud" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 87 "Icon31"
-  guid "f297869b3810fabc95fe9a697926f284"
+  guid "c4ce57dba32cf502366a2068dd989ef1"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 310 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:tree" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 88 "Icon32"
-  guid "86c9906825a2dcc7ccc71deb4b0b6c81"
+  guid "963483bd65852a3fe5af9db24f4c85bd"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 359 203 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:fish" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 89 "Icon33"
-  guid "1766b0830aefd4efcc0099917b390eb5"
+  guid "380fde76308cdc672ab5c605dfdfea21"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 16 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:car" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 90 "Icon34"
-  guid "c7e32465ab8b79b9e8feb8002a7e30d5"
+  guid "f5778c66235214175476d874817db2ee"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 65 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:rocket" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 91 "Icon35"
-  guid "49f4ed3c00efd7fb17b7d4e839d24d4b"
+  guid "46907479b238a6a169697e5283fc2c19"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 114 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:gamepad" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 92 "Icon36"
-  guid "af1a7c945d95a21c1aca473fcf2f7a4b"
+  guid "c59f077db94c3f6f9ad4a717552ce6a3"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 163 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:camera" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 93 "Icon37"
-  guid "4861fad5c09c5d331f25d3f8a9b237e5"
+  guid "3b291f245ecc3fee92debd02569092c5"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 212 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:music" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 94 "Icon38"
-  guid "2e406c101cf05d4755abf1334fd8c627"
+  guid "2d396c2f89aea643feef5a6fb190da1b"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 261 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:globe" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 95 "Icon39"
-  guid "5d5a6d5a49034ccda2605bcf43c8139a"
+  guid "54e92e3137078a24f61daa958a50c74f"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 310 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:search" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 96 "Icon40"
-  guid "147940f63df135dd333c8aa2ba045828"
+  guid "8409585010d57a2985537d738bfb3157"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1
   uibutton "" 359 252 52 36 0 0 0 0 0 0 0 0 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0 0 0 0 0 0 2 0 1 1 1 0.3137255 1 "icon:check" 36 0.9098039 0.92156863 0.9411765 1 0 0 0 0 0 0 0.4 0.12 0 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
 end
 gameobject 97 "IconNote"
-  guid "b5f2bf9384e7d8ceeab33c489d1a2cdc"
+  guid "3844a0799354983d7288305e1edd08ed"
   active 1
   parent 55
   transform 0 0 0 0 0 0 1 1 1 1

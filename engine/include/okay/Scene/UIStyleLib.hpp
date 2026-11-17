@@ -17,6 +17,8 @@
 #include "okay/UI/UILibData.hpp"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <functional>
 #include <fstream>
 #include <sstream>
 #include <map>
@@ -221,12 +223,23 @@ inline int ApplyStyleOne(GameObject* go, const StyleSpec& sp, const Palette& pal
     }
     return n;
 }
-/// The same, for `root` and everything under it.
-inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal) {
+/// Parts of a screen that a whole-screen style leaves alone, because giving them a card's shape and fill would spoil them: icon pictures (buttons that
+/// cannot be clicked), round panels (avatars, the map), tiny panels (badges, dividers), see-through containers (tab pages), full-screen backdrops.
+inline bool StyleSkips(GameObject* go) {
+    if (auto* b = go->GetComponent<UIButton>()) if (!b->interactable) return true;
+    if (auto* p = go->GetComponent<UIPanel>()) {
+        if (AnchorIsStretch(p->anchor) || p->color.a < 0.02f) return true;
+        if (p->shape == UIShape::Circle) return true;
+        if (std::min(p->size.x, p->size.y) <= 24.0f) return true;
+    }
+    return false;
+}
+/// The same, for `root` and everything under it (the parts StyleSkips names are left as they are; `root` itself is always styled).
+inline int ApplyStyle(GameObject* root, const StyleSpec& sp, const Palette& pal, bool isRoot = true) {
     if (!root) return 0;
-    int n = ApplyStyleOne(root, sp, pal);
+    int n = (isRoot || !StyleSkips(root)) ? ApplyStyleOne(root, sp, pal) : 0;
     if (root->transform)
-        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal);
+        for (Transform* c : root->transform->Children()) if (c && c->gameObject) n += ApplyStyle(c->gameObject, sp, pal, false);
     return n;
 }
 
@@ -326,7 +339,27 @@ inline bool ApplyLook(GameObject* root, const std::string& look, const std::stri
     if ((!look.empty() && !ls) || (!style.empty() && !FindStyle(style))) return false;
     auto* sv = root->GetComponent<UIStyleVariant>();
     if (!sv) sv = root->AddComponent<UIStyleVariant>();
-    if (ls) { sv->themeName = ls->name; UITheme tmp; ApplyThemeData(tmp, ls->name); tmp.ApplyTo(root); }
+    if (ls) {
+        sv->themeName = ls->name;
+        // The look recolours every panel and button under `root`. Icon pictures (buttons that cannot be clicked) and see-through containers (tab pages,
+        // a crosshair frame) must keep what they had, so their fields are saved first and put back after.
+        std::vector<std::function<void()>> restore;
+        std::function<void(GameObject*)> keep = [&](GameObject* g) {
+            if (auto* b = g->GetComponent<UIButton>(); b && !b->interactable) {
+                const Color col = b->color, hov = b->hoverColor, prs = b->pressedColor, dis = b->disabledColor, tx = b->textColor, htx = b->hoverTextColor;
+                const float bw = b->borderWidth, hs = b->hoverScale; const bool sh = b->shadow; const UIShape shp = b->shape;
+                restore.push_back([=] { b->color = col; b->hoverColor = hov; b->pressedColor = prs; b->disabledColor = dis; b->textColor = tx; b->hoverTextColor = htx; b->borderWidth = bw; b->hoverScale = hs; b->shadow = sh; b->shape = shp; });
+            }
+            if (auto* p = g->GetComponent<UIPanel>(); p && p->color.a < 0.02f) {
+                const Color col = p->color; const bool gr = p->useGradient, sh = p->shadow, hl = p->topHighlight; const float bw = p->borderWidth, ow = p->outlineWidth;
+                restore.push_back([=] { p->color = col; p->useGradient = gr; p->shadow = sh; p->topHighlight = hl; p->borderWidth = bw; p->outlineWidth = ow; });
+            }
+            for (Transform* c : g->transform->Children()) if (c && c->gameObject) keep(c->gameObject);
+        };
+        keep(root);
+        UITheme tmp; ApplyThemeData(tmp, ls->name); tmp.ApplyTo(root);
+        for (auto& r : restore) r();
+    }
     sv->style = style; sv->styleSize = size; sv->styleDensity = density;
     if (!style.empty()) ApplyStyle(root, SpecOf(style, size.empty() ? "m" : size, density.empty() ? "cosy" : density), PaletteFor(sv));
     return true;
@@ -346,6 +379,17 @@ inline GameObject* ScreenRootOf(GameObject* go) {
     return cur;
 }
 
+/// The preset files in a folder: every .okaylook and .okaytheme path, sorted by file name (for the Inspector's preset list).
+inline std::vector<std::string> ListPresetFiles(const std::string& dir) {
+    std::vector<std::string> v;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        const std::string ext = e.path().extension().string();
+        if (e.is_regular_file(ec) && (ext == ".okaylook" || ext == ".okaytheme")) v.push_back(e.path().string());
+    }
+    std::sort(v.begin(), v.end());
+    return v;
+}
 /// A look and style saved to a small text file (.okaylook), so a favourite combination can be shared between projects.
 struct LookPreset { std::string look, style, size, density; };
 inline std::string PresetToText(const LookPreset& p) {
@@ -376,6 +420,15 @@ inline bool LoadPreset(const std::string& path, LookPreset& out) {
 inline bool ApplyThemeFileAsLook(GameObject* root, const std::string& path) {
     UITheme tmp; if (!root || !LoadUIThemeAsset(tmp, path)) return false;
     tmp.ApplyTo(root); return true;
+}
+
+/// Apply a preset file (.okaylook or .okaytheme) from ListPresetFiles to one screen or widget. false when it cannot be read or names an unknown look.
+inline bool ApplyPresetFile(GameObject* root, const std::string& path) {
+    if (path.size() >= 9 && path.compare(path.size() - 9, 9, ".okaylook") == 0) {
+        LookPreset p;
+        return LoadPreset(path, p) && ApplyLook(root, p.look, p.style, p.size, p.density);
+    }
+    return ApplyThemeFileAsLook(root, path);
 }
 
 }} // namespace okay::UIStyleLib

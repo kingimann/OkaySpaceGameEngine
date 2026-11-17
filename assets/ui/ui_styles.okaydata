@@ -1689,3 +1689,183 @@ hover = grow
 press = inset
 disabled = fade
 focus = ring
+
+[style Soft Glow]
+family = Neon
+shape = squircle
+fill = tint
+border = glow
+effect = glow
+role = accent
+hover = glow
+press = none
+disabled = fade
+focus = soft-ring
+
+[style Glass Hex]
+family = Glass
+shape = hexagon
+fill = glass
+border = hairline
+effect = soft-shadow
+role = accent
+hover = tint
+press = inset
+disabled = fade
+focus = ring
+
+[style Flat Hex]
+family = Flat
+shape = hexagon
+fill = solid
+border = none
+effect = none
+role = accent
+hover = lighten
+press = darken
+disabled = fade
+focus = ring
+
+[style Flat Slant]
+family = Flat
+shape = slanted
+fill = solid
+border = none
+effect = none
+role = accent
+hover = tint
+press = darken
+disabled = fade
+focus = ring
+
+[style Flat Chamfer]
+family = Flat
+shape = chamfered
+fill = solid
+border = hairline
+effect = none
+role = accent
+hover = lighten
+press = darken
+disabled = fade
+focus = ring
+
+[style Card Tab]
+family = Elevated
+shape = tab
+fill = dark
+border = hairline
+effect = soft-shadow
+role = neutral
+hover = tint
+press = none
+disabled = fade
+focus = ring
+
+[style Pill Glass Glow]
+family = Glass
+shape = pill
+fill = glass
+border = glow
+effect = glow
+role = accent
+hover = glow
+press = inset
+disabled = fade
+focus = glow
+
+[style Pixel Pill Dark]
+family = Retro
+shape = pill
+fill = dark
+border = thick
+effect = hard-shadow
+role = neutral
+hover = lighten
+press = inset
+disabled = grey
+focus = thick-ring
+
+[style Sci-fi Tab]
+family = Sci-fi
+shape = tab
+fill = gradient
+border = thin
+effect = emboss
+role = accent
+hover = lighten
+press = darken
+disabled = fade
+focus = ring
+
+[style Rune Square]
+family = Fantasy
+shape = square
+fill = dark
+border = double
+effect = glow
+role = warning
+hover = glow
+press = darken
+disabled = fade
+focus = glow
+
+[style Toy]
+family = Playful
+shape = round-large
+fill = gloss
+border = double
+effect = hard-shadow
+role = success
+hover = grow
+press = shrink
+disabled = fade
+focus = thick-ring
+
+[style Chip Dark]
+family = Game
+shape = pill
+fill = dark
+border = thin
+effect = none
+role = neutral
+hover = tint
+press = none
+disabled = dim
+focus = ring
+
+[style Ribbon Gloss]
+family = Game
+shape = trapezoid
+fill = gloss
+border = thin
+effect = soft-shadow
+role = danger
+hover = lighten
+press = darken
+disabled = fade
+focus = ring
+
+[style Minimal Pill Fill]
+family = Minimal
+shape = pill
+fill = light
+border = none
+effect = none
+role = neutral
+hover = darken
+press = darken
+disabled = fade
+focus = ring
+
+[style Underline Neon]
+family = Neon
+shape = square
+fill = ghost
+border = accent-line
+effect = glow
+role = accent
+hover = glow
+press = none
+disabled = fade
+focus = glow

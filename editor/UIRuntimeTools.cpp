@@ -390,12 +390,19 @@ bool DrawRuntimeUIComponentInspector(Component* comp, EditorState& ed, Component
                     std::error_code ec; fs::create_directories(dir, ec);
                     ConsoleLog(S::SavePreset((dir / (std::string(presetName) + ".okaylook")).string(), {sv->themeName, sv->style, sv->styleSize, sv->styleDensity}) ? "Saved the preset " + std::string(presetName) : "Could not save the preset", 0);
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("Load preset##uisv")) {
-                    S::LookPreset lp;
-                    if (S::LoadPreset((dir / (std::string(presetName) + ".okaylook")).string(), lp)) { ed.PushUndo(); S::ApplyLook(sv->gameObject, lp.look, lp.style, lp.size, lp.density); ed.dirty = true; }
-                    else if (S::ApplyThemeFileAsLook(sv->gameObject, (dir / (std::string(presetName) + ".okaytheme")).string())) { ed.PushUndo(); ed.dirty = true; ConsoleLog("Used the old theme file as a look"); }
-                    else ConsoleLog("No preset or theme file named " + std::string(presetName) + " in Assets/UI", 1);
+                // The preset browser: every .okaylook and .okaytheme in Assets/UI, one click puts it on this object and what is under it.
+                if (ImGui::TreeNode("Presets in Assets/UI##uisv")) {
+                    const std::vector<std::string> files = S::ListPresetFiles(dir.string());
+                    if (files.empty()) ImGui::TextDisabled("None yet. Type a name and press Save preset.");
+                    for (const std::string& f : files) {
+                        const std::string stem = fs::path(f).stem().string(), ext = fs::path(f).extension().string();
+                        if (ImGui::Selectable((stem + (ext == ".okaytheme" ? "   (old theme file)" : "   (look + style)")).c_str())) {
+                            ed.PushUndo();
+                            if (S::ApplyPresetFile(sv->gameObject, f)) { ed.dirty = true; ConsoleLog("Applied the preset " + stem); }
+                            else ConsoleLog("Could not apply " + stem, 1);
+                        }
+                    }
+                    ImGui::TreePop();
                 }
             }
             if (ImGui::Button("Randomise within the theme##uisv")) {

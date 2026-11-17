@@ -9,6 +9,7 @@
 #include "okay/UI/UIPainterSDL.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Components/UINavigation.hpp"
 #include <SDL.h>
 #include <cstdlib>
 #include <filesystem>
@@ -154,6 +155,24 @@ int main(int argc, char** argv) {
         Shot sh = Render(1280, 720, [&](Scene& s) { UILibrary::BuildMixStyles(s); });
         CHECK(sh.ok);
         CHECK(sh.img.SavePNG(dir + "/mix-styles.png"));
+    }
+
+    {   // keyboard / gamepad focus: the ring on the focused button
+        Shot sh = Render(1280, 720, [&](Scene& s) {
+            UIScreens::Build(s, "main_menu", 0, "Midnight Blue");
+            if (GameObject* g = s.Find("SettingsButton")) SetWidgetFocused(g, true);
+        });
+        CHECK(sh.ok);
+        CHECK(sh.img.SavePNG(dir + "/focus-ring.png"));
+    }
+
+    {   // the Controls screen with a key box waiting for a key
+        Shot sh = Render(1280, 720, [&](Scene& s) {
+            UIScreens::Build(s, "rebinding", 0, "Midnight Blue");
+            if (GameObject* g = s.Find("Fire")) if (auto* kb = g->GetComponent<UIKeybindField>()) kb->Listen();
+        });
+        CHECK(sh.ok);
+        CHECK(sh.img.SavePNG(dir + "/controls-listening.png"));
     }
 
     {   // a picture of every screen built from data (1280 x 720, saved at half size) and a contact sheet of them

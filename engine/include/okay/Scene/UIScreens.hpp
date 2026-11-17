@@ -22,6 +22,8 @@
 #include "okay/Components/UITheme.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/UIKeybindField.hpp"
+#include "okay/Input/InputActions.hpp"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -250,6 +252,7 @@ inline std::string ActionScript(const std::string& acts, const char* event, cons
             const std::size_t k = arg.find(':');
             if (k != std::string::npos) body += "  ui_set_tab(\"" + arg.substr(0, k) + "\", " + arg.substr(k + 1) + ");\n";
         }
+        else if (verb == "resetkeys") body += "  reset_controls();\n";
         else if (verb == "volume") body += "  set_volume(slider_value());\n";
     }
     body += last;
@@ -369,6 +372,14 @@ inline GameObject* BuildNode(Scene& s, GameObject* parent, const Node& n, const 
         tb->shape = UIShape::Rounded;
         tb->sizing = n.Get("fit") == "1" ? UITabs::Sizing::FitText : UITabs::Sizing::Equal;
         tb->selected = slate::Accent(); tb->background = slate::Card();
+    } else if (k == "keybind") {   // keybind Name "label" action=Jump def=key:space,pad:a pad=1: a field that really rebinds an input action
+        g = Child(s, parent, n.name.c_str());
+        auto* kb = g->AddComponent<UIKeybindField>();
+        kb->anchor = an; kb->position = pos; kb->size = size;
+        kb->action = n.text; kb->inputAction = n.Get("action"); kb->gamepad = n.Get("pad") == "1"; kb->textSize = n.Num("px", 14.0f) / 8.0f;
+        kb->background = slate::Field(); kb->keyColor = slate::Accent(); kb->textColor = slate::Text();
+        const std::vector<std::string> def = uilib::Split(n.Get("def"), ',');
+        if (!kb->inputAction.empty() && !def.empty() && !InputActions::Has(kb->inputAction)) InputActions::Define(kb->inputAction, def);   // the action exists for the screen to rebind
     } else if (k == "icon") {
         g = AddIconPicture(s, parent, n.name.c_str(), n.text, an, pos, n.Has("size") ? size.x : 32.0f, Role(n.Get("color"), slate::Text()));
     }

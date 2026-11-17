@@ -204,6 +204,7 @@ void Say(const std::string& msg) { g_status = msg; oked::ConsoleLog(msg); }
 } // namespace
 
 void OpenUIGalleryWindow() { g_open = true; }
+bool& UIGalleryOpenFlag() { return g_open; }
 void CurrentScreenLook(std::string& look, std::string& style) {
     static const std::vector<S::ThemeInfo> themes = S::Themes();
     look = g_theme > 0 && g_theme <= (int)themes.size() ? themes[(std::size_t)g_theme - 1].name : std::string();

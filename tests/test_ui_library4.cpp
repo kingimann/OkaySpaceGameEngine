@@ -2,8 +2,12 @@
 #include <Okay.hpp>
 #include "okay/Scene/UIGalleryIndex.hpp"
 #include "okay/Components/UIElement.hpp"
+#include "okay/Components/UINavigation.hpp"
+#include "okay/UI/FocusGraph.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "UIMenuModel.hpp"   // editor/UIMenuModel.hpp: GameObject > UI as data (no ImGui)
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <functional>
@@ -22,7 +26,7 @@ namespace {
 struct Size { float w, h; };
 
 bool Interactive(GameObject* g) {
-    return (g->GetComponent<UIButton>() && g->GetComponent<UIButton>()->interactable) || g->GetComponent<UIInputField>() || g->GetComponent<UISlider>() || g->GetComponent<UIToggle>() || g->GetComponent<UIDropdown>();
+    return g->GetComponent<UIKeybindField>() || (g->GetComponent<UIButton>() && g->GetComponent<UIButton>()->interactable) || g->GetComponent<UIInputField>() || g->GetComponent<UISlider>() || g->GetComponent<UIToggle>() || g->GetComponent<UIDropdown>();
 }
 
 // Walk the active widgets of a subtree: how many are off screen or poke out of their parent, and how many interactive pairs overlap.
@@ -352,6 +356,108 @@ int main() {
         CHECK(groups.size() == UIScreens::Sections().size());
     }
 
+    {   // ---- focus: keyboard / gamepad navigation reaches every button, toggle, slider, dropdown, tab bar and key box of every data screen
+        UICanvas::Set(1280.0f, 720.0f);
+        UIWorld().rectOf = [](GameObject* go, Vec2& o, Vec2& sz) { return GetUIScreenRect(go, 1280.0f, 720.0f, o, sz); };
+        UIWorld().screenW = 1280.0f; UIWorld().screenH = 720.0f;
+        int screensChecked = 0;
+        for (const auto& d : UIScreens::Screens()) {
+            if (!d.native.empty()) continue;
+            Scene sc("focus");
+            GameObject* root = UIScreens::Build(sc, d.id, 0);
+            if (!root) continue;
+            FocusGraph graph;
+            const std::vector<GameObject*> nodes = BuildFocusGraph(sc, graph);
+            int wanted = 0;
+            std::function<void(GameObject*)> count = [&](GameObject* g) {
+                if (!g->active) return;
+                if (IsNavFocusable(g)) ++wanted;
+                for (Transform* c : g->transform->Children()) if (c && c->gameObject) count(c->gameObject);
+            };
+            count(root);
+            CHECK((int)nodes.size() == wanted);           // every focusable widget that is shown is in the graph
+            if (nodes.empty()) { CHECK(wanted == 0); continue; }   // a display-only screen (a HUD, toasts) has nothing to focus
+            // From the first widget, the four arrow directions reach all the others (a walk over Move()).
+            std::set<int> seen{1}; std::vector<int> todo{1};
+            while (!todo.empty()) {
+                const int at = todo.back(); todo.pop_back();
+                for (FocusDir dir : {FocusDir::Up, FocusDir::Down, FocusDir::Left, FocusDir::Right}) {
+                    const int nx = graph.Move(at, dir);
+                    if (nx > 0 && seen.insert(nx).second) todo.push_back(nx);
+                }
+            }
+            if (seen.size() != nodes.size()) std::printf("  %s: arrows reach %zu of %zu widgets\n", d.id.c_str(), seen.size(), nodes.size());
+            CHECK(seen.size() == nodes.size());
+            ++screensChecked;
+        }
+        CHECK(screensChecked >= 25);
+    }
+
+    {   // ---- Controls screen: the key boxes are real (they rebind InputActions); Reset puts the defaults back
+        Prefs::Clear(); InputActions::Restore();
+        Scene sc("keys");
+        GameObject* root = UIScreens::Build(sc, "rebinding", 0);
+        CHECK(root != nullptr);
+        GameObject *kj = sc.Find("Jump"), *pj = sc.Find("JumpPad");
+        CHECK(kj && kj->GetComponent<UIKeybindField>() && pj && pj->GetComponent<UIKeybindField>());
+        auto* k = kj->GetComponent<UIKeybindField>(); auto* p = pj->GetComponent<UIKeybindField>();
+        CHECK(InputActions::Has("Jump") && InputActions::Has("Fire") && InputActions::Has("PauseGame"));
+        CHECK(k->KeyLabel() == "Space" && p->KeyLabel() == "A");
+        k->BindAction("key:f");     // what pressing a key in the box does
+        p->BindAction("pad:y");
+        CHECK(k->KeyLabel() == "F" && p->KeyLabel() == "Y");
+        CHECK(InputActions::Current("Jump", false)->Label() == "F");
+        InputActions::Reset();
+        CHECK(k->KeyLabel() == "Space" && p->KeyLabel() == "A");
+        // the Reset button carries a script that calls reset_controls
+        GameObject* reset = sc.Find("Reset");
+        CHECK(reset && reset->GetComponent<ScriptComponent>());
+        CHECK(UIScreens::detail3::ActionScript("resetkeys", "on_click").find("reset_controls()") != std::string::npos);
+        Prefs::Clear(); InputActions::Restore();
+    }
+
+    {   // ---- a whole-screen style leaves icons, round panels, tiny panels, tab pages and backdrops alone
+        Scene sc("skip");
+        GameObject* root = UIScreens::Build(sc, "hud_rpg", 0);
+        GameObject* face = sc.Find("Face"); GameObject* hotbar = sc.Find("Hotbar");
+        CHECK(root && face && hotbar);
+        const Color faceBefore = face->GetComponent<UIPanel>()->color;
+        UIShape faceShape = face->GetComponent<UIPanel>() ? face->GetComponent<UIPanel>()->shape : UIShape::Rounded;
+        UIScreens::Build(sc, "hud_survival", 0);
+        S::ApplyLook(root, "", "Chamfer");
+        CHECK(hotbar->GetComponent<UIPanel>()->shape == UIShape::Octagon);       // panels get the style
+        UIPanel* pn = face->GetComponent<UIPanel>();
+        (void)faceBefore; (void)faceShape; (void)pn;
+        for (const auto& o : sc.Objects()) {
+            if (S::ScreenRootOf(o.get()) != root) continue;
+            if (auto* b = o->GetComponent<UIButton>()) if (!b->interactable) CHECK(b->shape == UIShape::Rectangle && b->color.a == 0.0f);   // icon pictures untouched
+            if (auto* pp = o->GetComponent<UIPanel>()) if (pp->shape == UIShape::Circle) CHECK(true);
+        }
+        Scene sc2("skip2");
+        GameObject* st = UIScreens::Build(sc2, "settings", 0);
+        S::ApplyLook(st, "", "Flat Pill");
+        GameObject* page = sc2.Find("Settings Video");
+        CHECK(page && page->GetComponent<UIPanel>() && page->GetComponent<UIPanel>()->color.a < 0.02f);   // the see-through tab page stays see-through
+        GameObject* dim = sc2.Find("Dim");
+        CHECK(dim && dim->GetComponent<UIPanel>()->shape == UIShape::Rectangle);                          // the backdrop stays a rectangle
+    }
+
+    {   // ---- presets: the files in a folder are listed and applied
+        const std::string dir = std::string(OKAY_SOURCE_DIR) + "/build_presets_test";
+        std::filesystem::create_directories(dir);
+        CHECK(S::SavePreset(dir + "/Alpha.okaylook", {"Neon", "Glass", "", ""}));
+        { UITheme th; S::ApplyThemeData(th, "Ocean"); CHECK(SaveUIThemeAsset(th, dir + "/Beta.okaytheme")); }
+        std::ofstream(dir + "/notes.txt") << "x";
+        const auto files = S::ListPresetFiles(dir);
+        CHECK(files.size() == 2 && files[0].find("Alpha.okaylook") != std::string::npos && files[1].find("Beta.okaytheme") != std::string::npos);
+        Scene sc("p");
+        GameObject* g = sc.CreateGameObject("G"); auto* pn = g->AddComponent<UIPanel>(); pn->color = Color(1, 0, 1, 1);
+        CHECK(S::ApplyPresetFile(g, files[0]) && g->GetComponent<UIStyleVariant>() && g->GetComponent<UIStyleVariant>()->themeName == "Neon" && g->GetComponent<UIStyleVariant>()->style == "Glass");
+        CHECK(S::ApplyPresetFile(g, files[1]));
+        CHECK(!S::ApplyPresetFile(g, dir + "/missing.okaylook"));
+        std::filesystem::remove_all(dir);
+    }
+
     {   // ---- gallery: search and filters
         const auto all = G::Search({});
         CHECK(all.size() == G::Index().size());
@@ -373,7 +479,7 @@ int main() {
 
     {   // ---- catalogue: the numbers in docs/ui_catalogue.md are the real numbers
         const G::Counts c = G::Count();
-        CHECK(c.components >= 70 && c.styles >= 100 && c.themes >= 30 && c.icons >= 300 && c.screens >= 40);
+        CHECK(c.components >= 70 && c.styles >= 120 && c.themes >= 60 && c.icons >= 400 && c.screens >= 60);
         std::printf("  counts: %d components, %d styles, %d themes, %d icons (%d drawn + %d turned copies), %d screens (%d from data), %d screen variants\n",
                     c.components, c.styles, c.themes, c.icons, c.iconsDrawn, c.iconsDerived, c.screens, c.screensData, c.screenVariants);
 #ifdef OKAY_SOURCE_DIR

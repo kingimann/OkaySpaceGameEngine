@@ -298,9 +298,9 @@ a small set of readers, and text files in `assets/ui/` that the engine embeds at
 and a new look is a few lines.
 
 **The numbers** (counted by `python3 scripts/gen_ui_catalogue.py` from those files, and checked against what the engine loads by the test
-`ui_library4`; see [ui_catalogue.md](ui_catalogue.md) for the rules): 77 components, 111 named styles, 54 looks, 371 icons (348 drawn from
-shapes and 23 made by turning or mirroring another), 56 screens in 9 sections (34 described in data, 22 older ones still built by their C++
-function) with 88 layout variants. The style axes (14 shapes, 12 fills, 9 borders, 9 effects, 5 sizes, 4 densities, 17 state looks) can be mixed
+`ui_library4`; see [ui_catalogue.md](ui_catalogue.md) for the rules): 77 components, 126 named styles, 62 looks, 408 icons (385 drawn from
+shapes and 23 made by turning or mirroring another), 62 screens in 9 sections (40 described in data, 22 older ones still built by their C++
+function) with 100 layout variants. The style axes (14 shapes, 12 fills, 9 borders, 9 effects, 5 sizes, 4 densities, 17 state looks) can be mixed
 freely, which is 13,608 shape/fill/border/effect looks (272,160 with size and density): that is a computed product of the axes, not a count of
 hand-made styles. A "variant" means a distinct selectable look or layout; renamed copies are not counted (a test checks that no two styles are
 the same mix).
@@ -366,3 +366,21 @@ project's code, themes, icons or fonts were used or copied.
 **Tests.** `ui_library4` (data reader, 111 styles, 54 looks and theme switching with an override, 371 icons and their pixels, every screen at
 all the sizes, the menu, the gallery search and the catalogue numbers), `ui_library4_example` (loads and plays both new example scenes: a theme
 click, and the whole Starter Pack flow), `ui_library4_shots` (the pictures), and the updated `menu_bar_model`.
+
+### Round 3 additions
+
+- **Keyboard and gamepad focus.** Every data screen is tested so that the four arrow directions reach every focusable widget (buttons, toggles, sliders,
+  dropdowns, tab bars, key boxes) from the first one (`FocusGraph::Move`), and every focusable widget that is shown is in the graph. This uses the existing
+  focus code; no input-system change was needed. Text fields are not part of the arrow walk (typing owns the keyboard).
+- **Controls rebinding is real.** The Controls screen has a keyboard box and a controller box for Jump, Fire, Use, Reload, Crouch, Sprint, Map and Pause. They are
+  Key Binding fields bound to `InputActions` (the actions are defined with these defaults when the game has not defined them), saved to the player's prefs;
+  Backspace restores a default and **Reset to defaults** calls `reset_controls()`. This is the existing action system; whether the new input system has merged was
+  not checked.
+- **Preset browser.** The Style Variant Inspector lists every `.okaylook` and `.okaytheme` file in Assets/UI; one click applies it to the object and what is under it.
+- **View > Editors & Tools > UI Gallery** opens the Gallery (a check-mark entry; the old Window menu no longer exists).
+- **Whole-screen style.** A style put on a whole screen now leaves alone icon pictures, round panels (avatars, the map), tiny panels (badges, dividers),
+  see-through containers (tab pages) and full-screen backdrops. The root of the screen is always styled.
+- **More choice.** 15 new styles, 8 new looks, 37 new icons and 6 new screens (Level Complete, Achievements, Server Browser, Profile Card, Party Invite,
+  Tutorial Tip); counts are in [ui_catalogue.md](ui_catalogue.md).
+- **Fonts per look: skipped.** The shipped fonts are the built-in pixel font and DejaVu Sans, and DejaVu is not a file in a player's project, so a look cannot
+  point at it without a font path that resolves. Every look draws with the built-in font.

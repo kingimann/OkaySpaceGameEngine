@@ -3889,6 +3889,7 @@ struct OkayScriptVM::Impl {
         };
         b["define_action"]    = [define](std::vector<Value>& a) { return define(a, false); };
         b["define_direction"] = [define](std::vector<Value>& a) { return define(a, true); };
+        b["reset_controls"] = [](std::vector<Value>&) { InputActions::Reset(); return Value{}; };   // every action back to its defaults (the Controls screen's Reset button)
         b["rebind"] = [](std::vector<Value>& a) {
             return Value{a.size() >= 2 && InputActions::Rebind(a[0].AsString(), a[1].AsString())};
         };

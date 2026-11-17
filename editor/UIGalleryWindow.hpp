@@ -11,6 +11,8 @@ namespace okay::editor {
 
 /// Open (or focus) the window.
 void OpenUIGalleryWindow();
+/// The open/closed flag, for the View > Editors & Tools > UI Gallery check mark.
+bool& UIGalleryOpenFlag();
 /// Draw it when open (called once per frame from the editor's main loop).
 void DrawUIGalleryWindow(EditorState& ed);
 /// The look and style picked in the Gallery for new screens ("" = none). GameObject > UI screens use them too; there is no scene-wide theme.

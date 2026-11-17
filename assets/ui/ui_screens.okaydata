@@ -126,21 +126,33 @@ group Settings
 [screen rebinding]
 name = Controls Rebinding
 section = menus
-desc = A list of actions with the key that runs each, a Rebind button per row and Reset to defaults.
+desc = Eight actions with a keyboard box and a controller box each: click one, press a key or button, and the action really changes. Reset puts every default back.
 tags = keybinds, keys, controls, input, remap
 variants = Centered|Left side|Right side
 group Controls Rebinding
   dim Dim a=0.5
   panel Card card=1 anchor=center size=560,560 lift=1 cr=16 block=1
     text Title "Controls" pos=28,18 size=504,36 px=28 bold=1
-    caption Hint "CLICK REBIND, THEN PRESS A KEY" pos=28,60 size=504,18
-    rep n=8 cols=1 dy=50
-      panel Row pos=28,88 size=504,42 fill=card cr=8
-        text Action "Action {i}" pos=14,0 size=240,42 px=16
-        panel Key pos=270,6 size=120,30 fill=field cr=6
-          text KeyText "Key" pos=0,0 size=120,30 px=14 align=c
-        button Rebind "Rebind" pos=398,5 size=96,32 btn=secondary px=14
-    button Reset "Reset to defaults" pos=28,500 size=250,40 btn=secondary
+    text Hdr1 "KEYBOARD AND MOUSE" pos=40,66 size=250,16 px=12 color=accent up=1
+    text Hdr2 "CONTROLLER" pos=326,66 size=180,16 px=12 color=accent up=1
+    keybind Jump "Jump" anchor=topleft pos=28,88 size=270,32 action=Jump def=key:space,pad:a
+    keybind JumpPad " " anchor=topleft pos=310,88 size=222,32 action=Jump pad=1
+    keybind Fire "Fire" pos=28,130 size=270,32 action=Fire def=key:f,pad:rt
+    keybind FirePad " " pos=310,130 size=222,32 action=Fire pad=1
+    keybind Interact "Use" pos=28,172 size=270,32 action=Interact def=key:e,pad:x
+    keybind InteractPad " " pos=310,172 size=222,32 action=Interact pad=1
+    keybind Reload "Reload" pos=28,214 size=270,32 action=Reload def=key:r,pad:y
+    keybind ReloadPad " " pos=310,214 size=222,32 action=Reload pad=1
+    keybind Crouch "Crouch" pos=28,256 size=270,32 action=Crouch def=key:c,pad:b
+    keybind CrouchPad " " pos=310,256 size=222,32 action=Crouch pad=1
+    keybind Sprint "Sprint" pos=28,298 size=270,32 action=Sprint def=key:shift,pad:ls
+    keybind SprintPad " " pos=310,298 size=222,32 action=Sprint pad=1
+    keybind Map "Map" pos=28,340 size=270,32 action=OpenMap def=key:m,pad:back
+    keybind MapPad " " pos=310,340 size=222,32 action=OpenMap pad=1
+    keybind Pause "Pause" pos=28,382 size=270,32 action=PauseGame def=key:p,pad:start
+    keybind PausePad " " pos=310,382 size=222,32 action=PauseGame pad=1
+    text Tip "Click a box, then press the key or button you want. Backspace puts the default back." pos=28,426 size=504,40 px=13 color=dim wrap=1
+    button Reset "Reset all" pos=28,500 size=250,40 btn=secondary act=resetkeys
     button Done "Done" pos=290,500 size=242,40 act="hide:rebinding"
 
 [screen credits]
@@ -224,7 +236,7 @@ group HUD Shooter
   panel Cross anchor=center pos=0,0 size=24,24 fill=none cr=0
     divider H pos=0,11 size=24,2
   text Timer "02:45" anchor=topcenter pos=0,16 size=160,34 px=28 bold=1 align=c
-  button Pause "Pause" anchor=topright pos=-20,16 size=96,38 btn=secondary act="show:pause_menu;pause:1" icon=pause
+  button Pause "Pause" anchor=topright pos=-20,16 size=124,38 btn=secondary act="show:pause_menu;pause:1" icon=pause
 
 [screen hud_rpg]
 name = HUD RPG
@@ -739,6 +751,120 @@ group Mobile Menu
     button Shop "Shop" pos=40,500 size=520,100 btn=secondary px=32
     button Settings "Settings" pos=40,630 size=520,100 btn=secondary px=32 act="show:settings"
     button Quit "Quit" pos=40,760 size=520,80 btn=ghost px=26 act=quit
+
+[screen results]
+name = Level Complete
+section = menus
+desc = The results after a level: three stars, time, score and coins, with Next level, Replay and Menu buttons.
+tags = results, win, stars, score, victory, complete
+variants = Centered|Dimmed backdrop
+group Level Complete
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=460,470 lift=1 cr=16
+    text Title "LEVEL COMPLETE" pos=24,24 size=412,44 px=34 bold=1 align=c color=success
+    icon S1 "star" pos=118,84 size=56,56 color=warning
+    icon S2 "star" pos=202,76 size=56,56 color=warning
+    icon S3 "star" pos=286,84 size=56,56 color=dim
+    rep n=3 cols=1 dy=40
+      panel Row pos=40,168 size=380,34 fill=card cr=8
+        text Key "Stat {i}" pos=12,0 size=180,34 px=15 color=dim
+        text Value "0:42" pos=200,0 size=168,34 px=16 bold=1 align=r
+    button Next "Next level" pos=40,308 size=380,46 act="hide:results" icon=arrow-right
+    button Replay "Replay" pos=40,364 size=184,40 btn=secondary icon=redo
+    button Menu "Menu" pos=236,364 size=184,40 btn=ghost act="hide:results;show:main_menu" icon=home
+
+[screen achievements]
+name = Achievements
+section = menus
+desc = A list of achievements with an icon, a description, a progress bar and a locked or unlocked mark.
+tags = trophies, progress, unlocks, rewards
+variants = Centered|Left side|Right side
+group Achievements
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=560,520 lift=1 cr=16 block=1
+    text Title "Achievements" pos=24,18 size=300,36 px=28 bold=1
+    badge Count "3 / 12" anchor=topright pos=-24,24
+    rep n=5 cols=1 dy=74
+      panel Item pos=24,68 size=512,66 fill=card cr=10
+        icon Icon "trophy" pos=14,16 size=32,32 color=warning
+        text Name "Achievement {i}" pos=64,8 size=300,24 px=17 bold=1
+        text Desc "Do the thing a few times." pos=64,32 size=300,20 px=13 color=dim
+        bar Progress pos=372,28 size=124,10 value=0.6 fill=accent
+    button Close "Close" pos=24,468 size=512,40 btn=ghost act="hide:achievements"
+
+[screen server_browser]
+name = Server Browser
+section = social
+desc = A table of game servers with name, players and ping, a filter box, Refresh and Join.
+tags = servers, multiplayer, join, list, ping
+variants = Centered|Dimmed backdrop
+group Server Browser
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=700,500 lift=1 cr=16
+    text Title "Servers" pos=24,18 size=300,36 px=28 bold=1
+    input Filter pos=330,22 size=240,34 hint="Filter..."
+    button Refresh "Refresh" pos=580,22 size=96,34 btn=secondary icon=refresh
+    caption H1 "NAME" pos=44,72 size=240,16
+    caption H2 "PLAYERS" pos=380,72 size=100,16
+    caption H3 "PING" pos=520,72 size=100,16
+    rep n=6 cols=1 dy=50
+      panel Row pos=24,94 size=652,42 fill=card cr=8
+        text Name "Server {i}" pos=20,0 size=300,42 px=16
+        text Players "12 / 32" pos=356,0 size=120,42 px=15 color=dim
+        text Ping "28 ms" pos=496,0 size=100,42 px=15 color=success
+    button Join "Join" pos=24,440 size=326,40
+    button Close "Back" pos=362,440 size=314,40 btn=secondary act="hide:server_browser"
+
+[screen profile_card]
+name = Profile Card
+section = social
+desc = A player profile: avatar, name, level, a few stats, badges and Add friend and Message buttons.
+tags = profile, player, account, stats, badges
+variants = Centered|Left side|Right side
+group Profile Card
+  panel Card card=1 anchor=center size=420,470 lift=1 cr=16
+    avatar Face "Hero" pos=32,28 d=84
+    text Name "Hero" pos=134,30 size=250,32 px=26 bold=1
+    text Level "Level 24   Gold league" pos=134,68 size=250,22 px=15 color=dim
+    badge B1 "Founder" pos=134,98
+    divider Line pos=32,140 size=356,1
+    rep n=3 cols=3 dx=120
+      panel Stat pos=32,158 size=116,70 fill=card cr=10
+        text Value "128" pos=0,8 size=116,32 px=26 bold=1 align=c
+        text Key "Stat {i}" pos=0,42 size=116,20 px=13 color=dim align=c
+    caption C1 "BADGES" pos=32,250 size=356,16
+    rep n=5 cols=5 dx=70
+      panel Badge pos=32,274 size=60,60 fill=card cr=30 shape=circle
+        icon Mark "medal" pos=14,14 size=32,32 color=warning
+    button Add "Add friend" pos=32,368 size=170,42 icon=user-plus
+    button Msg "Message" pos=218,368 size=170,42 btn=secondary icon=chat
+    button Close "Close" pos=32,420 size=356,34 btn=ghost act="hide:profile_card"
+
+[screen party_invite]
+name = Party Invite
+section = popups
+desc = A small invite popup with an avatar, who invited you, and Accept and Decline buttons.
+tags = invite, party, friends, request, join
+group Party Invite
+  panel Card card=1 anchor=bottomright pos=-24,-24 size=360,170 lift=1 cr=14
+    avatar Face "Ada" pos=18,18 d=52
+    text Title "Ada invited you" pos=82,18 size=260,26 px=18 bold=1
+    text Sub "Join her party for Level 4?" pos=82,46 size=260,22 px=14 color=dim
+    button Accept "Accept" pos=18,100 size=150,42 btn=primary act="hide:party_invite" icon=check
+    button Decline "Decline" pos=182,100 size=150,42 btn=secondary act="hide:party_invite" icon=cross
+
+[screen tutorial_tip]
+name = Tutorial Tip
+section = popups
+desc = A hint card pointing at something: a title, a short text, a key hint and a Got it button.
+tags = tutorial, help, hint, onboarding, tip
+group Tutorial Tip
+  panel Card card=1 anchor=topcenter pos=0,40 size=480,160 lift=1 cr=14
+    icon Mark "lightbulb" pos=20,20 size=34,34 color=warning
+    text Title "Jump over gaps" pos=70,18 size=390,30 px=22 bold=1
+    text Body "Hold the jump key longer to jump higher." pos=70,54 size=390,44 px=15 color=dim wrap=1
+    button Ok "Got it" pos=20,108 size=140,38 act="hide:tutorial_tip"
+    badge Key "Space" anchor=topright pos=-20,116
 
 # ------------------------------------------------------------------ Older screens, kept as they were (built by their C++ function)
 [screen save_slots]

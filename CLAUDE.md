@@ -164,6 +164,12 @@ then this file gets updated. Keep this file short and true.
     "unconfirmed". Every bug goes to Claude 2 (a bug fix may touch any file, with a failing test and a claim marked
     `Kind: bug`); the coordinator's agents fix a bug only inside a feature branch they are finishing.
     Cryptography findings follow rule 18 as well.
+24a. **Exception: Grok may write the own build tool (owner 2026-11-17: "Yes please").** Only the build tool in
+    `tools/okaybuild/` (our replacement for CMake and Ninja, `docs/own_build_plan.md`), on a `grok/*` branch it pushes
+    itself, never on main. Everything else in rule 24 still holds for the rest of the repository, and rule 18 still holds
+    (no cryptography). The code must be its own, written from build-system ideas and our plan, with no code taken from
+    CMake, Ninja, Make, Meson, Bazel or any other project (rule 19a). The coordinator's agents run the tests, read the
+    result, and open and merge the PR; it stays OFF by default and out of CI and releases until the owner says so.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

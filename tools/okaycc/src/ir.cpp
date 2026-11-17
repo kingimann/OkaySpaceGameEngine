@@ -41,6 +41,7 @@ const char* opName(Inst::Op op) {
     case Inst::Op::Store: return "store";
     case Inst::Op::GLoad: return "gload";
     case Inst::Op::GStore: return "gstore";
+    case Inst::Op::Cvt: return "cvt";
     }
     return "?";
 }
@@ -68,6 +69,7 @@ bool pure(Inst::Op op) {
     case Inst::Op::LeaSym:
     case Inst::Op::LeaFrame:
     case Inst::Op::Local:
+    case Inst::Op::Cvt:
         return true;
     default:
         return false;
@@ -103,6 +105,7 @@ bool cmpFold(Inst::Op op, std::uint64_t x, std::uint64_t y, bool uns, bool& out)
 }
 
 bool foldInst(const Inst& in, std::int64_t& out) {
+    if (in.fp) return false;
     std::int64_t x = 0;
     std::int64_t y = 0;
     if (in.op == Inst::Op::Mov && asImm(in.a, x)) {
@@ -286,6 +289,7 @@ void optimizeModule(Module& m) {
                 rewrite(in.b, known);
                 for (Operand& arg : in.args) rewrite(arg, known);
                 for (Operand& word : in.stack) rewrite(word, known);
+                for (Operand& x : in.xmm) rewrite(x, known);
                 std::int64_t folded = 0;
                 if (in.dst >= 0 && foldInst(in, folded)) {
                     in.op = Inst::Op::Mov;
@@ -312,6 +316,7 @@ void optimizeModule(Module& m) {
                 add(in.b);
                 for (const Operand& arg : in.args) add(arg);
                 for (const Operand& word : in.stack) add(word);
+                for (const Operand& x : in.xmm) add(x);
             }
         }
         bool again = true;
@@ -328,6 +333,7 @@ void optimizeModule(Module& m) {
                     drop(in.b);
                     for (const Operand& arg : in.args) drop(arg);
                     for (const Operand& word : in.stack) drop(word);
+                    for (const Operand& x : in.xmm) drop(x);
                     b.code.erase(b.code.begin() + i);
                     again = true;
                 }
@@ -361,8 +367,20 @@ RegHomes assignRegs(const Function& f) {
             for (const Operand& word : in.stack)
                 if (word.kind == Operand::Kind::Reg) touch(word.reg);
             if (in.op == Inst::Op::Lea && in.a.kind == Operand::Kind::Reg) markMem(in.a.reg);
+            if (in.fp) {
+                if (in.a.kind == Operand::Kind::Reg && in.extra != 0) markMem(in.a.reg);
+                if (in.b.kind == Operand::Kind::Reg) markMem(in.b.reg);
+                bool fpDst = in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul ||
+                             in.op == Inst::Op::Div || in.op == Inst::Op::Mov || in.op == Inst::Op::Call;
+                if (in.op == Inst::Op::Cvt && (in.b.kind == Operand::Kind::Imm && (in.b.imm == 4 || in.b.imm == 8)))
+                    fpDst = true;
+                if (fpDst) markMem(in.dst);
+            }
+            for (const Operand& x : in.xmm)
+                if (x.kind == Operand::Kind::Reg) markMem(x.reg);
         }
     }
+    for (int s : f.xmmSlot) markMem(s);
     RegHomes h;
     h.home.assign(used.size(), -1);
     for (int i = 0; i < static_cast<int>(used.size()) && h.count < 3; ++i) {

@@ -244,7 +244,7 @@ int main() {
              ")\n");
 
     checkErr("missing semi", "int x\n", "';'");
-    checkErr("not in subset", "float x;\n", "not in this subset");
+    checkErr("not in subset", "inline x;\n", "not in this subset");
     checkErr("bad paren", "int f( {\n}\n", "')'");
 
     okaycc_test::gPass += gOk;

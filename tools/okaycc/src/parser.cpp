@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -34,7 +35,8 @@ struct Param {
 
 struct Expr {
     enum class Kind {
-        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Member, Cast, Comma, Brace
+        Int, Char, String, Name, Unary, Pre, Post, Bin, Assign, Cond, Call, Index, Member, Cast, Comma, Brace,
+        Float
     } kind = Kind::Int;
     std::string text;
     std::uint64_t ival = 0;
@@ -51,7 +53,8 @@ struct Expr {
 };
 
 struct Type {
-    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union } kind = Kind::Int;
+    enum class Kind { Void, Char, Short, Int, Long, Pointer, Array, Function, Struct, Union, Float, Double } kind =
+        Kind::Int;
     std::string tag;
     bool unsign = false;
     std::unique_ptr<Type> inner;
@@ -179,6 +182,8 @@ std::string typeStr(const Type& t) {
     case Type::Kind::Short: return "short";
     case Type::Kind::Int: return "int";
     case Type::Kind::Long: return "long";
+    case Type::Kind::Float: return "float";
+    case Type::Kind::Double: return "double";
     case Type::Kind::Pointer: return "(ptr " + typeStr(*t.inner) + ")";
     case Type::Kind::Array: {
         std::string b = (t.unsized || !t.bound) ? "*" : exprStr(*t.bound);
@@ -208,6 +213,7 @@ std::string exprStr(const Expr& e) {
     auto kid = [&](std::size_t i) { return i < e.kids.size() && e.kids[i] ? exprStr(*e.kids[i]) : "(int 0)"; };
     switch (e.kind) {
     case Expr::Kind::Int: return "(int " + std::to_string(e.ival) + ")";
+    case Expr::Kind::Float: return "(float " + std::to_string(e.ival) + ")";
     case Expr::Kind::Char: return "(char " + std::to_string(e.ival) + ")";
     case Expr::Kind::String: return "(string \"" + esc(e.text) + "\")";
     case Expr::Kind::Name: return "(name " + e.text + ")";
@@ -472,7 +478,7 @@ private:
     bool isTypeKw(const Token& t) const {
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
             isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
-            isKwTok(t, "extern") ||
+            isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
             isKwTok(t, "typedef"))
             return true;
@@ -583,6 +589,8 @@ private:
                 any = true;
                 continue;
             }
+            if (eatKw("float")) return ty(Type::Kind::Float);
+            if (eatKw("double")) return ty(Type::Kind::Double);
             break;
         }
         if (any) {
@@ -1357,6 +1365,24 @@ private:
             advance();
             return e;
         }
+        if (cur().kind == Tok::Float) {
+            auto e = ex(Expr::Kind::Float, cur());
+            double dv = cur().fval;
+            if (cur().floatRank == 1) {
+                float fv = static_cast<float>(dv);
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &fv, 4);
+                e->ival = bits;
+                e->litRank = 1;
+            } else {
+                std::uint64_t bits = 0;
+                std::memcpy(&bits, &dv, 8);
+                e->ival = bits;
+                e->litRank = 0;
+            }
+            advance();
+            return e;
+        }
         if (cur().kind == Tok::CharLit) {
             auto e = ex(Expr::Kind::Char, cur());
             e->ival = cur().charValue;
@@ -1389,6 +1415,13 @@ private:
 bool isIntish(const Type& t) {
     return t.kind == Type::Kind::Char || t.kind == Type::Kind::Short || t.kind == Type::Kind::Int ||
            t.kind == Type::Kind::Long;
+}
+bool isFp(const Type& t) { return t.kind == Type::Kind::Float || t.kind == Type::Kind::Double; }
+int fpWidthOf(const Type* t) {
+    if (!t) return 0;
+    if (t->kind == Type::Kind::Float) return 4;
+    if (t->kind == Type::Kind::Double) return 8;
+    return 0;
 }
 bool isPtr(const Type& t) { return t.kind == Type::Kind::Pointer; }
 bool isVoidPtr(const Type& t) {
@@ -1537,11 +1570,11 @@ private:
         return e;
     }
 
-    bool scalar(const Type& t) const { return isIntish(t) || isPtr(t); }
+    bool scalar(const Type& t) const { return isIntish(t) || isPtr(t) || isFp(t); }
 
     bool canAssign(const Type& dst, const ET& src) {
         if (src.bad || !src.type) return true;
-        if (isIntish(dst) && isIntish(*src.type)) return true;
+        if ((isIntish(dst) || isFp(dst)) && src.type && (isIntish(*src.type) || isFp(*src.type))) return true;
         if (dst.kind == Type::Kind::Struct && src.type->kind == Type::Kind::Struct && sameType(dst, *src.type))
             return true;
         if (isPtr(dst) && src.nullc) return true;
@@ -1557,6 +1590,7 @@ private:
         case Expr::Kind::Int:
         case Expr::Kind::Char:
         case Expr::Kind::String:
+        case Expr::Kind::Float:
             return true;
         case Expr::Kind::Unary:
             return !e.kids.empty() && e.kids[0] && isConst(*e.kids[0]);
@@ -1586,6 +1620,9 @@ private:
             if (e.litUnsigned || (e.litRank == 0 && e.ival > 0xffffffffull)) r.type->unsign = true;
             if (e.litUnsigned && e.ival > 0xffffffffull) r.type->kind = Type::Kind::Long;
             r.nullc = e.ival == 0;
+            return r;
+        case Expr::Kind::Float:
+            r.type = prim(e.litRank == 1 ? Type::Kind::Float : Type::Kind::Double);
             return r;
         case Expr::Kind::Char:
             r.type = prim(Type::Kind::Int);
@@ -1804,6 +1841,20 @@ private:
             r.col = e.col;
             return r;
         };
+        int aw = fpWidthOf(a.type.get());
+        int bw = fpWidthOf(b.type.get());
+        if ((aw || bw) && (op == "+" || op == "-" || op == "*" || op == "/" || op == "<" || op == ">" || op == "<=" ||
+                           op == ">=" || op == "==" || op == "!=")) {
+            bool aok = aw || isIntish(*a.type);
+            bool bok = bw || isIntish(*b.type);
+            if (aok && bok) {
+                if (op == "+" || op == "-" || op == "*" || op == "/") {
+                    int w = (aw == 8 || bw == 8) ? 8 : 4;
+                    return result(prim(w == 8 ? Type::Kind::Double : Type::Kind::Float));
+                }
+                return result(prim(Type::Kind::Int));
+            }
+        }
         if (op == "+" ) {
             if (isIntish(*a.type) && isIntish(*b.type)) return result(prim(Type::Kind::Int));
             if (isPtr(*a.type) && isIntish(*b.type)) return result(cloneType(*a.type));
@@ -2056,6 +2107,7 @@ private:
         int step = 0;
         int inner = 0;
         bool pair = false;
+        int fpw = 0;
         std::vector<FieldOff> fields;
         Val() = default;
         Val(Operand o, int s, int i) : op(std::move(o)), step(s), inner(i) {}
@@ -2077,6 +2129,7 @@ private:
         bool mem = false;
         bool zext = false;
         bool func = false;
+        int fpw = 0;
         std::string gname;
         int width = 8;
         int step = 0;
@@ -2103,6 +2156,7 @@ private:
     int tmpN_ = 0;
     int strN_ = 0;
     int retWidth_ = 8;
+    bool retFp_ = false;
     int vaSave_ = -1;
     bool retUns_ = false;
     bool retStruct_ = false;
@@ -2135,7 +2189,9 @@ private:
         switch (t->kind) {
         case Type::Kind::Char: return 1;
         case Type::Kind::Short: return 2;
-        case Type::Kind::Int: return 4;
+        case Type::Kind::Int:
+        case Type::Kind::Float: return 4;
+        case Type::Kind::Double:
         case Type::Kind::Long:
         case Type::Kind::Pointer: return 8;
         case Type::Kind::Array: return alignOf(t->inner.get());
@@ -2157,7 +2213,9 @@ private:
         switch (t->kind) {
         case Type::Kind::Char: return 1;
         case Type::Kind::Short: return 2;
-        case Type::Kind::Int: return 4;
+        case Type::Kind::Int:
+        case Type::Kind::Float: return 4;
+        case Type::Kind::Double:
         case Type::Kind::Long:
         case Type::Kind::Pointer: return 8;
         case Type::Kind::Array: {
@@ -2269,6 +2327,7 @@ private:
         s.inner = innerOf(t);
         s.objSize = sizeOf(t);
         s.zext = t->unsign;
+        s.fpw = fpWidthOf(t);
         if (t->kind == Type::Kind::Array && t->inner) s.zext = t->inner->unsign;
         if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
             s.agg = true;
@@ -2575,7 +2634,11 @@ private:
             emit(in);
             return Val{Operand::vreg(dst), 0, 0};
         }
-        if (s->mem) return loadMem(s->reg, s->width, s->zext);
+        if (s->mem) {
+            Val v = loadMem(s->reg, s->width, s->zext);
+            v.fpw = s->fpw;
+            return v;
+        }
         if (s->array || s->agg) {
             if (s->global) {
                 int dst = fresh();
@@ -2612,6 +2675,7 @@ private:
             v.step = s->step;
             v.inner = s->inner;
             v.fields = s->fields;
+            v.fpw = s->fpw;
             return v;
         }
         Val v;
@@ -2619,6 +2683,7 @@ private:
         v.step = s->step;
         v.inner = s->inner;
         v.fields = s->fields;
+        v.fpw = s->fpw;
         return v;
     }
 
@@ -2858,6 +2923,12 @@ private:
         case Expr::Kind::Int:
         case Expr::Kind::Char:
             return Val{Operand::number(static_cast<std::int64_t>(e.ival)), 0, 0};
+        case Expr::Kind::Float: {
+            Val v;
+            v.op = Operand::number(static_cast<std::int64_t>(e.ival));
+            v.fpw = e.litRank == 1 ? 4 : 8;
+            return v;
+        }
         case Expr::Kind::String: {
             std::string name = addString(e.text);
             int dst = fresh();
@@ -3143,10 +3214,75 @@ private:
         return Val{Operand::vreg(old), s->step, s->inner};
     }
 
+    Val cvtFp(Val v, int src, int dstW) {
+        if (src == dstW && src != 0) return v;
+        if (src == 0 && v.op.kind == Operand::Kind::Imm && dstW != 0) {
+            double d = static_cast<double>(v.op.imm);
+            Val o;
+            o.fpw = dstW;
+            if (dstW == 4) {
+                float f = static_cast<float>(d);
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &f, 4);
+                o.op = Operand::number(bits);
+            } else {
+                std::uint64_t bits = 0;
+                std::memcpy(&bits, &d, 8);
+                o.op = Operand::number(static_cast<std::int64_t>(bits));
+            }
+            return o;
+        }
+        int t = fresh();
+        Inst in;
+        in.op = Inst::Op::Cvt;
+        in.fp = true;
+        in.dst = t;
+        in.a = v.op;
+        in.extra = src;
+        in.b = Operand::number(dstW);
+        emit(in);
+        Val o;
+        o.op = Operand::vreg(t);
+        o.fpw = dstW == 4 || dstW == 8 ? dstW : 0;
+        return o;
+    }
+
     Val lowerBin(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return {};
         Val a = lowerExpr(*e.kids[0]);
         Val b = lowerExpr(*e.kids[1]);
+        int aw = a.fpw ? a.fpw : fpWidthOf(e.kids[0]->checked.get());
+        int bw = b.fpw ? b.fpw : fpWidthOf(e.kids[1]->checked.get());
+        if (aw || bw) {
+            if (e.text == "%" || e.text == "&" || e.text == "|" || e.text == "^" || e.text == "<<" || e.text == ">>") {
+                err(e.line, e.col, "not lowered");
+                return {};
+            }
+            int dw = (aw == 8 || bw == 8) ? 8 : 4;
+            if (!aw) a = cvtFp(a, 0, dw);
+            else if (aw != dw) a = cvtFp(a, aw, dw);
+            if (!bw) b = cvtFp(b, 0, dw);
+            else if (bw != dw) b = cvtFp(b, bw, dw);
+            bool cmp = e.text == "<" || e.text == ">" || e.text == "<=" || e.text == ">=" || e.text == "==" ||
+                       e.text == "!=";
+            int dst = fresh();
+            Inst in;
+            in.fp = true;
+            in.extra = dw;
+            in.dst = dst;
+            in.a = a.op;
+            in.b = b.op;
+            if (cmp) in.op = binOp(e.text);
+            else if (e.text == "+") in.op = Inst::Op::Add;
+            else if (e.text == "-") in.op = Inst::Op::Sub;
+            else if (e.text == "*") in.op = Inst::Op::Mul;
+            else in.op = Inst::Op::Div;
+            emit(in);
+            Val r;
+            r.op = Operand::vreg(dst);
+            if (!cmp) r.fpw = dw;
+            return r;
+        }
         std::int64_t folded = 0;
         if (a.step == 0 && b.step == 0 && a.op.kind == Operand::Kind::Imm && b.op.kind == Operand::Kind::Imm &&
             fold(e.text, a.op.imm, b.op.imm, folded))
@@ -3223,6 +3359,23 @@ private:
             if (!s) {
                 err(e.line, e.col, "not lowered: " + lhs.text);
                 return {};
+            }
+            if (s->fpw) {
+                if (rhs.fpw != s->fpw) rhs = cvtFp(rhs, rhs.fpw, s->fpw);
+                if (s->global) {
+                    Inst in;
+                    in.op = Inst::Op::GStore;
+                    in.func = s->gname;
+                    in.a = rhs.op;
+                    in.extra = s->fpw;
+                    emit(in);
+                } else {
+                    emitMov(s->reg, rhs.op, 8);
+                }
+                Val out;
+                out.op = s->global ? rhs.op : Operand::vreg(s->reg);
+                out.fpw = s->fpw;
+                return out;
             }
             if (s->array) {
                 err(e.line, e.col, "not lowered");
@@ -3379,10 +3532,38 @@ private:
             regs.push_back(retSlot);
             reg = 1;
         }
+        const Type* fnty = nullptr;
+        if (e.kids[0]->checked) {
+            const Type* t = e.kids[0]->checked.get();
+            if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Function) t = t->inner.get();
+            if (t->kind == Type::Kind::Function) fnty = t;
+        }
+        int xmn = 0;
+        std::vector<Operand> xmm;
+        std::vector<int> xmmW;
         for (std::size_t i = 1; i < e.kids.size(); ++i) {
             if (!e.kids[i]) continue;
             Val v = lowerExpr(*e.kids[i]);
             const Type* t = e.kids[i]->checked.get();
+            int argi = static_cast<int>(i - 1);
+            const Type* declared = nullptr;
+            bool varExtra = fnty && fnty->variadic && argi >= static_cast<int>(fnty->params.size());
+            if (fnty && argi < static_cast<int>(fnty->params.size())) declared = fnty->params[static_cast<std::size_t>(argi)].type.get();
+            int want = declared ? fpWidthOf(declared) : 0;
+            if (varExtra && (v.fpw || fpWidthOf(t))) want = 8;
+            if (!declared && (v.fpw || fpWidthOf(t))) want = v.fpw ? v.fpw : fpWidthOf(t);
+            if (want) {
+                int src = v.fpw ? v.fpw : fpWidthOf(t);
+                if (src != want) v = cvtFp(v, src, want);
+                if (xmn < 8) {
+                    xmm.push_back(v.op);
+                    xmmW.push_back(want);
+                    ++xmn;
+                } else {
+                    stack.push_back(v.op);
+                }
+                continue;
+            }
             int sz = 0;
             bool memClass = false;
             int nreg = structPieces(t, sz, memClass);
@@ -3428,11 +3609,17 @@ private:
         else in.a = target;
         in.args = std::move(regs);
         in.stack = std::move(stack);
+        in.xmm = std::move(xmm);
+        in.xmmW = std::move(xmmW);
         if (hi >= 0) in.b = Operand::vreg(hi);
         if (e.kids[0]->checked) {
             const Type* t = e.kids[0]->checked.get();
             if (t->kind == Type::Kind::Pointer && t->inner && t->inner->kind == Type::Kind::Function) t = t->inner.get();
             if (t->kind == Type::Kind::Function && t->variadic) in.va = true;
+        }
+        if (e.checked && isFp(*e.checked)) {
+            in.fp = true;
+            in.extra = fpWidthOf(e.checked.get());
         }
         emit(in);
         if (retMem) {
@@ -3442,6 +3629,7 @@ private:
             return out;
         }
         Val out{Operand::vreg(dst), 0, 0};
+        if (e.checked && isFp(*e.checked)) out.fpw = fpWidthOf(e.checked.get());
         if (retPair) {
             out.pair = true;
             out.hi = Operand::vreg(hi);
@@ -3521,9 +3709,12 @@ private:
                 }
             }
             if (s.expr) {
-                in.a = lowerExpr(*s.expr).op;
+                Val v = lowerExpr(*s.expr);
+                if (retFp_ && v.fpw != retWidth_) v = cvtFp(v, v.fpw, retWidth_);
+                in.a = v.op;
                 in.extra = retWidth_;
                 in.uns = retUns_ || retStruct_;
+                in.fp = retFp_;
             }
             emit(in);
             break;
@@ -3590,9 +3781,15 @@ private:
         if (!d.name.empty() && addr_.count(d.name)) s.mem = true;
         if (!d.name.empty()) scopes_.back()[d.name] = s;
         if (d.init) {
-            Operand val = narrow(lowerExpr(*d.init).op, s.width, s.zext);
-            if (s.mem) storeMem(slot, val, s.width);
-            else emitMov(slot, val, s.width, s.zext);
+            Val v = lowerExpr(*d.init);
+            if (s.fpw) {
+                if (v.fpw != s.fpw) v = cvtFp(v, v.fpw, s.fpw);
+                emitMov(slot, v.op, 8);
+            } else {
+                Operand val = narrow(v.op, s.width, s.zext);
+                if (s.mem) storeMem(slot, val, s.width);
+                else emitMov(slot, val, s.width, s.zext);
+            }
         }
     }
 
@@ -3748,6 +3945,7 @@ private:
         loops_.clear();
         addr_.clear();
         retWidth_ = 8;
+        retFp_ = false;
         retUns_ = false;
         retStruct_ = false;
         hiddenReg_ = -1;
@@ -3757,6 +3955,10 @@ private:
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
                 r->kind == Type::Kind::Long)
                 retWidth_ = sizeOf(r);
+            if (r->kind == Type::Kind::Float || r->kind == Type::Kind::Double) {
+                retFp_ = true;
+                retWidth_ = sizeOf(r);
+            }
             if (r->kind == Type::Kind::Struct || r->kind == Type::Kind::Union) {
                 retStruct_ = true;
                 retWidth_ = sizeOf(r);
@@ -3770,9 +3972,12 @@ private:
             int stackOff = 0;
             int size = 8;
             bool isStruct = false;
+            bool isFp = false;
+            int xmmAt = -1;
         };
         std::vector<PPlan> plans;
         int reg = 0;
+        int xm = 0;
         int stack = 0;
         if (retStruct_ && retWidth_ > 16) {
             hiddenReg_ = 0;
@@ -3782,6 +3987,20 @@ private:
             for (const Param& p : d.type->params) {
                 PPlan plan;
                 bool memClass = false;
+                if (p.type && (p.type->kind == Type::Kind::Float || p.type->kind == Type::Kind::Double)) {
+                    plan.isFp = true;
+                    plan.size = sizeOf(p.type.get());
+                    if (xm >= 8) {
+                        plan.memory = true;
+                        stack = alignUp(stack, 8);
+                        plan.stackOff = stack;
+                        stack += 8;
+                    } else {
+                        plan.xmmAt = xm++;
+                    }
+                    plans.push_back(plan);
+                    continue;
+                }
                 plan.nreg = structPieces(p.type.get(), plan.size, memClass);
                 plan.isStruct = p.type && (p.type->kind == Type::Kind::Struct || p.type->kind == Type::Kind::Union);
                 if (memClass || reg + plan.nreg > 6) {
@@ -3838,6 +4057,16 @@ private:
                     }
                     s.reg = addr;
                     s.agg = true;
+                } else if (plan.isFp && !plan.memory) {
+                    s.reg = fresh();
+                    s.fpw = plan.size;
+                    s.width = plan.size;
+                    if (static_cast<int>(fn_.xmmSlot.size()) <= plan.xmmAt) {
+                        fn_.xmmSlot.resize(static_cast<std::size_t>(plan.xmmAt + 1), -1);
+                        fn_.xmmWidth.resize(static_cast<std::size_t>(plan.xmmAt + 1), 8);
+                    }
+                    fn_.xmmSlot[static_cast<std::size_t>(plan.xmmAt)] = s.reg;
+                    fn_.xmmWidth[static_cast<std::size_t>(plan.xmmAt)] = plan.size;
                 } else if (plan.memory) {
                     int w = p.type ? sizeOf(p.type.get()) : 8;
                     bool uns = p.type && p.type->unsign;

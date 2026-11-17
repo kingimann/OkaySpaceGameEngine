@@ -1,5 +1,6 @@
 #include "codegen.hpp"
 
+#include <cstdint>
 #include <string>
 
 namespace okaycc {
@@ -50,6 +51,45 @@ void load(std::string& s, const Operand& o, const char* reg) {
     s += h >= 0 ? kPhys[h] : slot(o.reg);
     s += ", ";
     s += reg;
+    s += "\n";
+}
+
+std::string hex64(std::uint64_t v) {
+    static const char* d = "0123456789abcdef";
+    std::string o = "0x";
+    bool any = false;
+    for (int i = 60; i >= 0; i -= 4) {
+        int n = static_cast<int>((v >> i) & 0xfu);
+        if (!any && n == 0 && i) continue;
+        any = true;
+        o.push_back(d[n]);
+    }
+    if (!any) o.push_back('0');
+    return o;
+}
+
+void loadXmm(std::string& s, const Operand& o, int xmm, int width) {
+    std::string x = "%xmm" + std::to_string(xmm);
+    if (o.kind == Operand::Kind::Imm) {
+        s += "  movabsq $";
+        s += hex64(static_cast<std::uint64_t>(o.imm));
+        s += ", %rax\n  movq %rax, ";
+        s += x;
+        s += "\n";
+        return;
+    }
+    s += width <= 4 ? "  movss " : "  movsd ";
+    s += slot(o.reg);
+    s += ", ";
+    s += x;
+    s += "\n";
+}
+
+void storeXmm(std::string& s, int xmm, int dst, int width) {
+    s += width <= 4 ? "  movss %xmm" : "  movsd %xmm";
+    s += std::to_string(xmm);
+    s += ", ";
+    s += slot(dst);
     s += "\n";
 }
 
@@ -159,6 +199,53 @@ const char* setcc(Inst::Op op, bool uns) {
 }
 
 void emitInst(std::string& s, const Function& f, const Inst& in) {
+    if (in.fp && in.op == Inst::Op::Cvt) {
+        int src = in.extra;
+        int dstW = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        if (src == 0) {
+            load(s, in.a, "%rax");
+            s += dstW <= 4 ? "  cvtsi2ss %rax, %xmm0\n" : "  cvtsi2sd %rax, %xmm0\n";
+            storeXmm(s, 0, in.dst, dstW);
+        } else if (dstW == 0) {
+            loadXmm(s, in.a, 0, src);
+            s += src <= 4 ? "  cvttss2si %xmm0, %rax\n" : "  cvttsd2si %xmm0, %rax\n";
+            store(s, "%rax", in.dst);
+        } else {
+            loadXmm(s, in.a, 0, src);
+            if (src <= 4 && dstW == 8) s += "  cvtss2sd %xmm0, %xmm0\n";
+            else if (src == 8 && dstW <= 4) s += "  cvtsd2ss %xmm0, %xmm0\n";
+            storeXmm(s, 0, in.dst, dstW);
+        }
+        return;
+    }
+    if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
+        loadXmm(s, in.a, 0, in.extra);
+        loadXmm(s, in.b, 1, in.extra);
+        const char* m = "add";
+        if (in.op == Inst::Op::Sub) m = "sub";
+        else if (in.op == Inst::Op::Mul) m = "mul";
+        else if (in.op == Inst::Op::Div) m = "div";
+        s += "  ";
+        s += m;
+        s += in.extra <= 4 ? "ss %xmm1, %xmm0\n" : "sd %xmm1, %xmm0\n";
+        storeXmm(s, 0, in.dst, in.extra);
+        return;
+    }
+    if (in.fp && (in.op == Inst::Op::Ceq || in.op == Inst::Op::Cne || in.op == Inst::Op::Clt || in.op == Inst::Op::Cle ||
+                  in.op == Inst::Op::Cgt || in.op == Inst::Op::Cge)) {
+        loadXmm(s, in.a, 0, in.extra);
+        loadXmm(s, in.b, 1, in.extra);
+        s += in.extra <= 4 ? "  ucomiss %xmm1, %xmm0\n" : "  ucomisd %xmm1, %xmm0\n";
+        if (in.op == Inst::Op::Ceq) s += "  sete %al\n  setnp %cl\n  andb %cl, %al\n";
+        else if (in.op == Inst::Op::Cne) s += "  setne %al\n  setp %cl\n  orb %cl, %al\n";
+        else if (in.op == Inst::Op::Clt) s += "  setb %al\n  setnp %cl\n  andb %cl, %al\n";
+        else if (in.op == Inst::Op::Cle) s += "  setbe %al\n  setnp %cl\n  andb %cl, %al\n";
+        else if (in.op == Inst::Op::Cgt) s += "  seta %al\n";
+        else s += "  setae %al\n";
+        s += "  movzbq %al, %rax\n";
+        store(s, "%rax", in.dst);
+        return;
+    }
     auto bin = [&](const char* mnemonic) {
         load(s, in.a, "%rax");
         if (in.b.kind == Operand::Kind::Imm && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub)) {
@@ -296,7 +383,13 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             // Linux syscall. The C arguments are number, a, b, c in rdi, rsi, rdx, rcx.
             s += "  movq %rdi, %rax\n  movq %rsi, %rdi\n  movq %rdx, %rsi\n  movq %rcx, %rdx\n  syscall\n";
         } else {
-            if (in.va) s += "  xorl %eax, %eax\n";
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(s, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
+            if (in.va) {
+                s += "  movl $";
+                s += std::to_string(in.xmm.size() < 8 ? in.xmm.size() : 8);
+                s += ", %eax\n";
+            }
             s += "  call ";
             s += in.func;
             s += "\n";
@@ -307,11 +400,19 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
             s += std::to_string(bytes);
             s += ", %rsp\n";
         }
-        if (in.dst >= 0) store(s, "%rax", in.dst);
+        if (in.fp && in.dst >= 0) storeXmm(s, 0, in.dst, in.extra);
+        else if (in.dst >= 0) store(s, "%rax", in.dst);
         if (in.b.kind == Operand::Kind::Reg) store(s, "%rdx", in.b.reg);
         break;
     }
     case Inst::Op::Ret:
+        if (in.fp) {
+            loadXmm(s, in.a, 0, in.extra);
+            s += "  jmp ";
+            s += f.name;
+            s += "_epilogue\n";
+            break;
+        }
         if (in.b.kind != Operand::Kind::None) load(s, in.b, "%rdx");
         if (in.a.kind != Operand::Kind::None) {
             load(s, in.a, "%rax");
@@ -328,6 +429,7 @@ void emitInst(std::string& s, const Function& f, const Inst& in) {
     case Inst::Op::Store:
     case Inst::Op::GLoad:
     case Inst::Op::GStore:
+    case Inst::Op::Cvt:
         break;
     }
 }
@@ -379,6 +481,8 @@ void emitMem(std::string& s, const Inst& in, int localOff) {
         s += ", ";
         s += in.func;
         s += "(%rip)\n";
+        break;
+    case Inst::Op::Cvt:
         break;
     default:
         break;
@@ -440,6 +544,14 @@ std::string emitFunction(const Function& f) {
         s += std::to_string(disp);
         s += "(%rbp), %rax\n";
         store(s, "%rax", i);
+    }
+    for (std::size_t i = 0; i < f.xmmSlot.size(); ++i) {
+        int w = i < f.xmmWidth.size() ? f.xmmWidth[i] : 8;
+        s += w <= 4 ? "  movss %xmm" : "  movsd %xmm";
+        s += std::to_string(i);
+        s += ", ";
+        s += slot(f.xmmSlot[i]);
+        s += "\n";
     }
     if (f.vaNamed >= 0 && !localOff.empty()) {
         int base = localOff[0];

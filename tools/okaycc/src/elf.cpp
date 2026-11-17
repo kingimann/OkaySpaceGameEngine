@@ -387,7 +387,124 @@ void emitBin(Image& im, const Inst& in) {
     movSlotRax(im, in.dst);
 }
 
+void xmmMem(Image& im, int xmm, int disp, int width, bool store) {
+    u8(im, width <= 4 ? 0xF3 : 0xF2);
+    u8(im, 0x0F);
+    u8(im, store ? 0x11 : 0x10);
+    u8(im, modrm(2, xmm, Rbp));
+    i32(im, disp);
+}
+
+void movqXmmRax(Image& im, int xmm, bool toXmm) {
+    u8(im, 0x66);
+    u8(im, 0x48);
+    u8(im, 0x0F);
+    u8(im, 0x6E);
+    // 6E is movq xmm, r/m when toXmm. 7E is movq r/m, xmm.
+    if (!toXmm) im.bytes.back() = 0x7E;
+    u8(im, modrm(3, xmm, Rax));
+}
+
+void loadXmm(Image& im, const Operand& o, int xmm, int width) {
+    if (o.kind == Operand::Kind::Imm) {
+        movImm(im, Rax, o.imm);
+        movqXmmRax(im, xmm, true);
+        return;
+    }
+    xmmMem(im, xmm, slotDisp(o.reg), width, false);
+}
+
+void storeXmm(Image& im, int xmm, int dst, int width) { xmmMem(im, xmm, slotDisp(dst), width, true); }
+
+void fpBin(Image& im, int width, int opcode) {
+    u8(im, width <= 4 ? 0xF3 : 0xF2);
+    u8(im, 0x0F);
+    u8(im, opcode);
+    u8(im, modrm(3, 0, 1));
+}
+
 void emitInst(Image& im, const Function& f, const Inst& in) {
+    if (in.fp && in.op == Inst::Op::Cvt) {
+        int src = in.extra;
+        int dstW = in.b.kind == Operand::Kind::Imm ? static_cast<int>(in.b.imm) : 8;
+        if (src == 0) {
+            loadRax(im, in.a);
+            u8(im, dstW <= 4 ? 0xF3 : 0xF2);
+            u8(im, 0x48);
+            u8(im, 0x0F);
+            u8(im, 0x2A);
+            u8(im, modrm(3, 0, Rax));
+            storeXmm(im, 0, in.dst, dstW);
+        } else if (dstW == 0) {
+            loadXmm(im, in.a, 0, src);
+            u8(im, src <= 4 ? 0xF3 : 0xF2);
+            u8(im, 0x48);
+            u8(im, 0x0F);
+            u8(im, 0x2C);
+            u8(im, modrm(3, Rax, 0));
+            movSlotRax(im, in.dst);
+        } else {
+            loadXmm(im, in.a, 0, src);
+            if (src <= 4 && dstW == 8) {
+                u8(im, 0xF3);
+                u8(im, 0x0F);
+                u8(im, 0x5A);
+                u8(im, modrm(3, 0, 0));
+            } else if (src == 8 && dstW <= 4) {
+                u8(im, 0xF2);
+                u8(im, 0x0F);
+                u8(im, 0x5A);
+                u8(im, modrm(3, 0, 0));
+            }
+            storeXmm(im, 0, in.dst, dstW);
+        }
+        return;
+    }
+    if (in.fp && (in.op == Inst::Op::Add || in.op == Inst::Op::Sub || in.op == Inst::Op::Mul || in.op == Inst::Op::Div)) {
+        loadXmm(im, in.a, 0, in.extra);
+        loadXmm(im, in.b, 1, in.extra);
+        int op = 0x58;
+        if (in.op == Inst::Op::Sub) op = 0x5C;
+        else if (in.op == Inst::Op::Mul) op = 0x59;
+        else if (in.op == Inst::Op::Div) op = 0x5E;
+        fpBin(im, in.extra, op);
+        storeXmm(im, 0, in.dst, in.extra);
+        return;
+    }
+    if (in.fp && (in.op == Inst::Op::Ceq || in.op == Inst::Op::Cne || in.op == Inst::Op::Clt || in.op == Inst::Op::Cle ||
+                  in.op == Inst::Op::Cgt || in.op == Inst::Op::Cge)) {
+        loadXmm(im, in.a, 0, in.extra);
+        loadXmm(im, in.b, 1, in.extra);
+        if (in.extra <= 4) u8(im, 0x0F);
+        else {
+            u8(im, 0x66);
+            u8(im, 0x0F);
+        }
+        u8(im, 0x2E);
+        u8(im, modrm(3, 0, 1));
+        auto setOne = [&](int cc) {
+            u8(im, 0x0F);
+            u8(im, cc);
+            u8(im, modrm(3, 0, Rax));
+        };
+        if (in.op == Inst::Op::Ceq || in.op == Inst::Op::Cne || in.op == Inst::Op::Clt || in.op == Inst::Op::Cle) {
+            int cc = in.op == Inst::Op::Ceq ? 0x94 : in.op == Inst::Op::Cne ? 0x95 : in.op == Inst::Op::Clt ? 0x92 : 0x96;
+            setOne(cc);
+            u8(im, 0x0F);
+            u8(im, in.op == Inst::Op::Cne ? 0x9A : 0x9B);
+            u8(im, modrm(3, 0, Rcx));
+            u8(im, in.op == Inst::Op::Cne ? 0x08 : 0x20);
+            u8(im, modrm(3, Rcx, Rax));
+        } else {
+            setOne(in.op == Inst::Op::Cgt ? 0x97 : 0x93);
+        }
+        u8(im, 0x48);
+        u8(im, 0x0F);
+        u8(im, 0xB6);
+        u8(im, modrm(3, Rax, Rax));
+        movSlotRax(im, in.dst);
+        return;
+    }
     switch (in.op) {
     case Inst::Op::Mov:
         loadRax(im, in.a);
@@ -509,9 +626,12 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             u8(im, 0x0F);
             u8(im, 0x05);
         } else {
+            for (std::size_t i = 0; i < in.xmm.size() && i < 8; ++i)
+                loadXmm(im, in.xmm[i], static_cast<int>(i), i < in.xmmW.size() ? in.xmmW[i] : 8);
             if (in.va) {
-                u8(im, 0x31);
-                u8(im, 0xC0);
+                int n = static_cast<int>(in.xmm.size() < 8 ? in.xmm.size() : 8);
+                u8(im, 0xB8);
+                u32(im, static_cast<std::uint32_t>(n));
             }
             callRel(im, in.func);
         }
@@ -519,7 +639,8 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
             int bytes = in.stack.empty() ? 8 * (nstack + (nstack % 2)) : 8 * nstack;
             aluImm(im, Rsp, bytes, 0);
         }
-        if (in.dst >= 0) movSlotRax(im, in.dst);
+        if (in.fp && in.dst >= 0) storeXmm(im, 0, in.dst, in.extra);
+        else if (in.dst >= 0) movSlotRax(im, in.dst);
         if (in.b.kind == Operand::Kind::Reg) {
             int h = homeOf(in.b.reg);
             if (h >= 0) movReg(im, kPhys[h], Rdx);
@@ -533,6 +654,11 @@ void emitInst(Image& im, const Function& f, const Inst& in) {
         break;
     }
     case Inst::Op::Ret:
+        if (in.fp) {
+            loadXmm(im, in.a, 0, in.extra);
+            jmpRel(im, f.name + "_epilogue");
+            break;
+        }
         if (in.b.kind != Operand::Kind::None) {
             if (in.b.kind == Operand::Kind::Imm) movImm(im, Rdx, in.b.imm);
             else if (homeOf(in.b.reg) >= 0) movReg(im, Rdx, kPhys[homeOf(in.b.reg)]);
@@ -638,6 +764,10 @@ void emitFunction(Image& im, const Function& f) {
         u8(im, modrm(2, Rax, Rbp));
         i32(im, disp);
         movSlotRax(im, i);
+    }
+    for (std::size_t i = 0; i < f.xmmSlot.size(); ++i) {
+        int w = i < f.xmmWidth.size() ? f.xmmWidth[i] : 8;
+        xmmMem(im, static_cast<int>(i), slotDisp(f.xmmSlot[i]), w, true);
     }
     if (f.vaNamed >= 0 && !localOff.empty()) {
         int base = localOff[0];

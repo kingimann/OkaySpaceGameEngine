@@ -36,11 +36,12 @@ struct Inst {
     enum class Op {
         Mov, Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not,
         Ceq, Cne, Clt, Cle, Cgt, Cge, Jmp, Br, Call, Ret,
-        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore
+        Local, Lea, LeaSym, LeaFrame, Load, Store, GLoad, GStore, Cvt
     } op = Op::Mov;
     int dst = -1;
     int extra = 8;  // byte width for a load, store, or narrowing move
     bool uns = false;  // zero-extend, or unsigned compare
+    bool fp = false;   // floating-point op; extra is 4 (float) or 8 (double)
     Operand a;
     Operand b;
     std::string label;
@@ -48,7 +49,9 @@ struct Inst {
     std::string func;
     std::vector<Operand> args;
     std::vector<Operand> stack;  // outgoing stack image, low address first, 8-byte chunks
-    bool va = false;             // variadic call: the caller sets al to 0
+    std::vector<Operand> xmm;    // SSE arguments, xmm0 onward
+    std::vector<int> xmmW;       // 4 or 8 for each SSE argument
+    bool va = false;             // variadic call: the caller sets al to the xmm count
 };
 
 struct Block {
@@ -60,6 +63,8 @@ struct Function {
     std::string name;
     int params = 0;
     int vaNamed = -1;  // named general registers before "...", or -1 when the function is not variadic
+    std::vector<int> xmmSlot;   // vreg that receives xmm0, xmm1, ...
+    std::vector<int> xmmWidth;  // 4 or 8 for each of those
     std::vector<Block> blocks;
 };
 

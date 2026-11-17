@@ -20,13 +20,14 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.1.8 Safe Area - `Components/UISafeArea` - keeps HUD clear of the notch and home bar; the host supplies the insets
   - 12.1.9 Per-frame layout pass - `UI/UILayoutUpdate` - settles frames, fits scroll extents, re-arranges flex, rebinds list rows; shared by player and editor
   - 12.1.10 Layout tools - `Scene/UILayoutTools` - wrap in panel, fit to children, match size, stack, avoid overlap (used by the editor)
+  - 12.1.11 Aspect Ratio box - `Components/UIAspectRatio` - a container that keeps a fixed width : height inside its parent or the screen (Fit, Fill, Width controls, Height controls, alignment, padding); children lay out inside it
 - **Code:** `Components/Canvas`, `Components/UIAnchor`, `Components/UIFrame`, `Components/UIElement`, `Components/UILayoutGroup`, `Components/UIFlexItem`, `Components/UIMask`, `Components/UISafeArea`, `Components/UIWorldContext`, `UI/UILayoutUpdate`, `Scene/UILayoutTools`, `editor/UIInspectorLayout.*`
 - **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`, `UIFrameCorners`; script: `ui_set_*` by widget name, plus `ui_get_rotation` / `ui_set_rotation` / `ui_get_scale` / `ui_set_scale` (see 12.13)
 - **Editor:** Inspector cards for Canvas, Layout Group, Scroll View, UI Frame, UI Flex Item, UI Mask; UI view toolbar (Align, Match size, Stack, Wrap in Panel, Fit to Children)
 - **Docs:** `docs/game_ui.md` (Styling and layout tools, Phones and tablets), `docs/engine_api.md`
-- **Tests:** `ui_frame`, `ui_layout_containers`, `ui_system`, `ui_layer_table`, `ui_layering`
+- **Tests:** `ui_frame`, `ui_layout_containers`, `ui_system`, `ui_layer_table`, `ui_layering`, `ui_library`
 - **Status:** Works - the components are implemented and the tests above cover anchor math, frame conversion, flex, mask clipping and the layer table
-- **Open:** aspect-ratio and responsive containers from the component-library request are not present as components. UI Frame rotation and scale are in (children inherit them; old scenes load with no turn and a scale of 1)
+- **Open:** the aspect-ratio container is `UIAspectRatio` (12.1.11; it does not yet follow a world-space Canvas). UI Frame rotation and scale are in (children inherit them; old scenes load with no turn and a scale of 1)
 - **Related:** 12.9, 12.10, 12.11, 12.6
 - **Words:** canvas, CanvasScaler, anchors, anchors (UI), anchor preset, stretch, margins, UI Frame, UIFrame, pivot, flex, flexbox, layout group, grid layout, mask, safe area, notch, reference resolution, Screen Match, Expand, Shrink, sort order
 - **Seen as:** a HUD is the wrong size on another resolution; a menu is cut off on a phone; a button drifts when the window resizes; children overlap in a row or column; a scroll list shows items outside its box; text sits under the notch
@@ -68,11 +69,13 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.3.5 Stepper - `Components/UIStepper` - [-] value [+] with step and range
   - 12.3.6 Keybind field - `Components/UIKeybindField` - listen for a key, Escape cancels, Backspace resets, saves to Prefs
   - 12.3.7 Colour picker - `Components/UIColorPicker` - swatch strip built from child buttons and a preview panel
-- **Code:** `Components/UISlider`, `Components/UIToggle`, `Components/UIInputField`, `Components/UIDropdown`, `Components/UIStepper`, `Components/UIKeybindField`, `Components/UIColorPicker`, `editor/UIInspectorOverlay.*`
-- **API:** `UISlider`, `UIToggle`, `UIInputField`, `UIDropdown`, `UIStepper`, `UIKeybindField`, `UIColorPicker`; script handlers `on_change`, `on_toggle`, `on_submit`, `on_keybind_change`; `ui_slider_value`, `ui_set_slider`, `ui_toggle_value`, `ui_dropdown_value`
+  - 12.3.8 Range slider - `Components/UIRangeSlider` - one track, two handles (low and high), step, whole numbers, minimum gap, nearest-handle drag, keys swap handles, on_change()
+  - 12.3.9 Input validator - `Components/UIInputValidator` - rules for the UI Input Field on the same object (required, length, email, whole number, number range, letters, must equal another field), red ring and message, on_valid() and on_invalid()
+- **Code:** `Components/UISlider`, `Components/UIToggle`, `Components/UIInputField`, `Components/UIDropdown`, `Components/UIStepper`, `Components/UIKeybindField`, `Components/UIColorPicker`, `Components/UIRangeSlider`, `Components/UIInputValidator`, `editor/UIInspectorOverlay.*`, `editor/UIInspectorWidgetsMore.*`
+- **API:** `UISlider`, `UIToggle`, `UIInputField`, `UIDropdown`, `UIStepper`, `UIKeybindField`, `UIColorPicker`, `UIRangeSlider` (SetRange, SetLow, SetHigh, Low, High), `UIInputValidator` (Check, IsValid, Error); script handlers `on_change`, `on_toggle`, `on_submit`, `on_keybind_change`; `ui_slider_value`, `ui_set_slider`, `ui_toggle_value`, `ui_dropdown_value`
 - **Editor:** Inspector headers for each (UI Slider, UI Toggle, UI Input Field, UI Dropdown, UI Stepper, UI Color Picker); Create > UI > Controls
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
-- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
+- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`, `ui_library`, `ui_library_example`, `ui_library_shots`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
 - **Open:** radio buttons exist: `UIToggle` with Style = Radio and a group name (`radioGroup`; picking one clears the others in its group, see `docs/ui_runtime.md`). Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
 - **Related:** 12.2, 12.4, 12.12, 8.3

@@ -978,6 +978,58 @@ EngineApi Build() {
         api.types.push_back(std::move(w));
     }
     {
+        ApiType w; w.name = "UIRangeSlider"; w.isComponent = true;
+        w.doc = "A track with two handles that pick a low and a high value. on_change fires when either moves.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIRangeSlider>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIRangeSlider* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIRangeSlider>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Range Slider", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetRange", {tFloat, tFloat}, {"low", "high"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRange(F(a[0]), F(a[1])); return Value{}; },
+            "Move both handles. The values are snapped to the step and held inside the track."));
+        w.methods.push_back(method("SetLow", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetLow(F(a[0])); return Value{}; },
+            "Move the left handle. It stops at the right handle."));
+        w.methods.push_back(method("SetHigh", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetHigh(F(a[0])); return Value{}; },
+            "Move the right handle. It stops at the left handle."));
+        ApiMethod lo = method("Low", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->low}; },
+            "The value of the left handle.");
+        lo.pure = true; w.methods.push_back(std::move(lo));
+        ApiMethod hi = method("High", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->high}; },
+            "The value of the right handle.");
+        hi.pure = true; w.methods.push_back(std::move(hi));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIInputValidator"; w.isComponent = true;
+        w.doc = "Rules for the UI Input Field on the same object. on_valid and on_invalid fire when the answer changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIInputValidator>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIInputValidator* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIInputValidator>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Input Validator", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("Check", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Check()}; },
+            "Check the field now and answer true when the text is acceptable. Use it before you accept a form."));
+        ApiMethod v = method("IsValid", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsValid()}; },
+            "True when the text passed at the last check.");
+        v.pure = true; w.methods.push_back(std::move(v));
+        ApiMethod e = method("Error", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Error()}; },
+            "The sentence that says what is wrong, or an empty string.");
+        e.pure = true; w.methods.push_back(std::move(e));
+        api.types.push_back(std::move(w));
+    }
+    {
         ApiType w; w.name = "UIBottomSheet"; w.isComponent = true;
         w.doc = "A panel that slides up from the bottom. on_change fires when it opens or closes.";
         w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIBottomSheet>() : nullptr; };

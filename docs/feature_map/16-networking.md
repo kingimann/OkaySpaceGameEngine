@@ -132,7 +132,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Docs:** `docs/anticheat.md`, `docs/launcher-multiplayer.md` (Server authority, Anti-cheat)
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph2`, `net_anticheat_ph3`, `net_anticheat_ph4`, `net_anticheat_components`, `net_anticheat_p2`, `net_token_policy`, `net_lagcomp`
 - **Status:** Works - nine test files cover each phase; all 14 hardening items are on main per `git log` (#350, #357, #360, #363, #365, #368, #372, #376, #384, #392, #394)
-- **Open:** ROADMAP.md still shows hardening items 5, 6, 8, 9, 10, 12, 13, 14 unchecked and the old map says 5, 6, 8, 9, 10, 14 wait: both are stale; respawns are not replicated (docs: the server's Health respawns on its own); `maxClockDrift` needs every player updated (older clients never answer)
+- **Open:** the audit table is `docs/anticheat_hardening_status.md` (items 5 and 6 are code on main but not deployed); respawns are not replicated (docs: the server's Health respawns on its own); `maxClockDrift` needs every player updated (older clients never answer)
 - **Related:** 39.1, 39.3, 39.5, 16.2, 17.9
 - **Words:** anti-cheat, cheat, speed hack, kick, violation, refusal, hit claim, ClaimHit, NetValidator, AntiCheatConfig, .okayac, allowlist, forged syncvar, rpc rejected, hit rejected, clock drift, budget, cooldown
 - **Seen as:** a player is kicked for "speed hack"; "forged syncvar" or "rpc rejected" in the log; players can't shoot (no known weapon); a shared ball kicks players; a kicked player can't rejoin for a minute

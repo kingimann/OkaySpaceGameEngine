@@ -6,6 +6,9 @@ cd "$(dirname "$0")"
 
 CXX="${CXX:-g++}"
 FLAGS=(-std=c++17 -Wall -Wextra -Wpedantic -Wshadow -g -O0 -I src)
+if [[ "${SAN:-}" == "1" ]]; then
+  FLAGS+=(-fsanitize=address,undefined -fno-omit-frame-pointer)
+fi
 
 mkdir -p build
 

@@ -10,6 +10,7 @@ Every line is written here from the documents named below. No copied compiler so
 - The intermediate form is three-address code. Integers, calls, control flow, pointers, arrays, globals, string literals, and structs are lowered. Object sizes follow the System V AMD64 data model: `char` 1, `short` 2, `int` 4, `long` and pointers 8. Struct fields are aligned to those sizes. A struct of at most 8 bytes is passed and returned in a register. Multi-dimensional arrays use the element size as the step. A pointer to the struct being defined carries that struct's fields.
 - The x86-64 code generator emits System V assembly for that subset. Tests assemble it with the system assembler and link it with the system linker (`gcc`). Narrow integers are sign-extended when loaded. An `int *` steps by 4. A `char *` steps by 1.
 - A call to `write` is the Linux write system call, so a program can print without a C library. The same programs are compiled with the system gcc and the exit code and standard output are compared.
+- The whole test suite has been run with AddressSanitizer and UndefinedBehaviorSanitizer on the compiler (`SAN=1 tools/okaycc/build.sh`). That run was clean.
 - The optimizer is not started. The ELF writer encodes x86-64 instructions itself and writes a static executable (one read/write/execute load at address 0x400000), so those tests do not use the system assembler or the system linker. The assembly path still does. A COFF writer and a general linker are not started. The driver is `okay-cc`.
 
 ## Written from

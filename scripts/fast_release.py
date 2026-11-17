@@ -161,6 +161,15 @@ def ci_jobs_decision(jobs):
     return {"ok": not bad, "bad": bad, "count": len(jobs)}
 
 
+def ci_jobs_failed(jobs):
+    """Jobs of a CI run that is still going which already ended red or cancelled (so waiting longer cannot make that run green)."""
+    if isinstance(jobs, dict):
+        jobs = jobs.get("jobs", [])
+    bad = ["%s: %s" % (j.get("name", "?"), j.get("conclusion")) for j in jobs
+           if j.get("conclusion") in ("failure", "cancelled", "timed_out", "startup_failure", "action_required")]
+    return {"ok": not bad, "bad": bad, "count": len(jobs)}
+
+
 # ---- changelog entries ---------------------------------------------------------------------------------------------
 def natural_key(s):
     return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", s)]
@@ -446,6 +455,7 @@ def main(argv):
     a.add_argument("--sha", required=True)
     a = sub.add_parser("ci-jobs")
     a.add_argument("--jobs", required=True)
+    a.add_argument("--failed-only", action="store_true", help="only look for jobs that already ended red/cancelled (a run still in progress)")
     a = sub.add_parser("notes")
     a.add_argument("--entries-dir", default=os.path.join(ROOT, "dist", "changelog.d"))
     a.add_argument("--released-list")
@@ -489,7 +499,7 @@ def main(argv):
             print(json.dumps(d))
             return 0 if d["state"] == "pass-run" else 1
         elif args.cmd == "ci-jobs":
-            d = ci_jobs_decision(_read_json(args.jobs) or [])
+            d = (ci_jobs_failed if args.failed_only else ci_jobs_decision)(_read_json(args.jobs) or [])
             print(json.dumps(d))
             return 0 if d["ok"] else 1
         elif args.cmd == "notes":

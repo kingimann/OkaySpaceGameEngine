@@ -101,6 +101,9 @@ j = fr.ci_jobs_decision({"jobs": [{"name": "Build & test (Ubuntu)", "conclusion"
 check(not j["ok"] and j["bad"] == ["own-http: failure"], "a failed job is named")
 check(not fr.ci_jobs_decision([{"name": "x", "conclusion": None, "status": "in_progress"}])["ok"], "an unfinished job fails")
 check(not fr.ci_jobs_decision([])["ok"], "no jobs listed fails")
+check(fr.ci_jobs_failed([{"name": "a", "conclusion": "success"}, {"name": "b", "conclusion": None, "status": "in_progress"}])["ok"], "running jobs are not 'already red'")
+check(not fr.ci_jobs_failed([{"name": "a", "conclusion": "cancelled"}])["ok"], "a cancelled job in a running run stops the wait")
+check(not fr.ci_jobs_failed({"jobs": [{"name": "a", "conclusion": "failure"}]})["ok"], "a failed job in a running run stops the wait")
 
 # ---- entries -----------------------------------------------------------------------------------------------------
 GOOD = "section: Sandbox\npr: 12, #13\nroadmap: Digging is faster\n---\n- Digging is faster now.\n- Second line of\n  the second bullet.\n"

@@ -45,6 +45,11 @@ Typed options are one line, the same shape in the manifest and in `config.okay`:
 
 `okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
 
+## Compiler cache
+Before a compile that is going to run, okay-build preprocesses that file and builds a cache key from three pieces: the preprocessed text, the compile command, and the compiler file's own bytes. The hash is FNV-1a 64-bit. It is not collision-safe. Two different inputs can land on the same key. The cache is a speed-up, not a security boundary, and it is not a cryptographic check. `--no-cache` turns it off.
+
+A hit copies the stored object and its depfile back and does not compile. A miss compiles and stores both under `.okaybuild/cache/<key>/`. Changing the source, a header that the preprocessor sees, the command line, or the compiler file produces a different key, so the old entry is simply not used. The entry is not deleted. There is no cache size limit yet.
+
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
 - Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`

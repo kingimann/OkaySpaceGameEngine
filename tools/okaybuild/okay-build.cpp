@@ -38,6 +38,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <poll.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -631,7 +632,7 @@ struct Live {
     HANDLE proc = nullptr;
     HANDLE pipe = nullptr;
     int id = -1;
-    string out;
+    string out, cacheKey;
     bool stream = false;
     long long started = 0;
 };
@@ -709,6 +710,36 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     out += L.out;
     return (int)code;
 }
+static int captureStdout(const vector<string>& argv, string& out, string& err) {
+    SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE;
+    HANDLE orr = nullptr, owr = nullptr, errr = nullptr, ewr = nullptr;
+    if (!CreatePipe(&orr, &owr, &sa, 1 << 20) || !CreatePipe(&errr, &ewr, &sa, 1 << 20)) return 127;
+    SetHandleInformation(orr, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(errr, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si{}; si.cb = sizeof si; si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE); si.hStdOutput = owr; si.hStdError = ewr;
+    std::wstring wcmd = widen(winJoin(argv));
+    std::vector<wchar_t> buf(wcmd.begin(), wcmd.end()); buf.push_back(0);
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(owr); CloseHandle(ewr);
+    if (!ok) { CloseHandle(orr); CloseHandle(errr); return 127; }
+    CloseHandle(pi.hThread);
+    auto drain = [&](HANDLE h, string& dest) {
+        for (;;) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
+            char b[4096]; DWORD n = 0; DWORD chunk = avail > sizeof b ? (DWORD)sizeof b : avail;
+            if (!ReadFile(h, b, chunk, &n, nullptr) || n == 0) break;
+            dest.append(b, n);
+        }
+    };
+    for (;;) { drain(orr, out); drain(errr, err); if (WaitForSingleObject(pi.hProcess, 20) == WAIT_OBJECT_0) break; }
+    drain(orr, out); drain(errr, err);
+    DWORD code = 1; GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess); CloseHandle(orr); CloseHandle(errr);
+    return (int)code;
+}
 #else
 static int waitChild(pid_t pid) {
     int st = 0; while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) return 128; }
@@ -729,11 +760,131 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     close(fd[1]); char b[4096]; ssize_t n; while ((n = read(fd[0], b, sizeof b)) > 0) out.append(b, (size_t)n);
     close(fd[0]); return waitChild(pid);
 }
+static int captureStdout(const vector<string>& argv, string& out, string& err) {
+    int op[2], ep[2];
+    if (pipe(op) || pipe(ep)) return 127;
+    pid_t pid = fork();
+    if (pid < 0) { close(op[0]); close(op[1]); close(ep[0]); close(ep[1]); return 127; }
+    if (pid == 0) {
+        dup2(op[1], 1); dup2(ep[1], 2);
+        close(op[0]); close(op[1]); close(ep[0]); close(ep[1]);
+        vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
+        execvp(av[0], av.data()); _exit(127);
+    }
+    close(op[1]); close(ep[1]);
+    fcntl(op[0], F_SETFL, O_NONBLOCK); fcntl(ep[0], F_SETFL, O_NONBLOCK);
+    int openPipes = 2;
+    while (openPipes > 0) {
+        pollfd pf[2]; int nfd = 0, map[2];
+        if (op[0] >= 0) { pf[nfd].fd = op[0]; pf[nfd].events = POLLIN; map[nfd] = 0; ++nfd; }
+        if (ep[0] >= 0) { pf[nfd].fd = ep[0]; pf[nfd].events = POLLIN; map[nfd] = 1; ++nfd; }
+        if (poll(pf, (nfds_t)nfd, -1) < 0) { if (errno == EINTR) continue; break; }
+        for (int i = 0; i < nfd; ++i) {
+            if (!(pf[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            string& dest = map[i] == 0 ? out : err;
+            char b[4096]; ssize_t k = read(pf[i].fd, b, sizeof b);
+            if (k > 0) dest.append(b, (size_t)k);
+            else { close(pf[i].fd); if (map[i] == 0) op[0] = -1; else ep[0] = -1; --openPipes; }
+        }
+    }
+    return waitChild(pid);
+}
 #endif
 
 static std::atomic<long long> gNsDirty{0}, gNsSpawn{0}, gNsPost{0}, gNsPrint{0};
+static std::atomic<int> gCacheHit{0}, gCacheMiss{0};
+static bool gUseCache = true;
 static long long nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 struct Opts { int jobs = 0; bool dry = false, explain = false, verbose = false, profile = false, keep = false; string file = "build.okay"; };
+
+// Compiler cache. The key is FNV-1a of the preprocessed source, the command line, and the compiler
+// file's bytes. FNV-1a is not collision-safe: two different inputs can share a key. This is a speed
+// cache, not a security check. A miss stores the object and its depfile. A hit copies them back.
+// A changed source, command, or compiler file is a different key, so the old entry is left unused.
+static string resolveTool(const string& bin) {
+    if (bin.find('/') != string::npos || bin.find('\\') != string::npos) return bin;
+    const char* env = getenv("PATH"); if (!env) return bin;
+    string cur; char sep =
+#ifdef _WIN32
+        ';';
+#else
+        ':';
+#endif
+    auto found = [&](const string& dir) -> string {
+        string p = dir; if (!p.empty() && p.back() != '/' && p.back() != '\\') p += '/'; p += bin;
+#ifdef _WIN32
+        std::error_code ec; return fs::is_regular_file(p, ec) ? p : string();
+#else
+        return access(p.c_str(), X_OK) == 0 ? p : string();
+#endif
+    };
+    for (char c : string(env)) {
+        if (c == sep) { if (!cur.empty()) { string p = found(cur); if (!p.empty()) return p; } cur.clear(); }
+        else cur += c;
+    }
+    if (!cur.empty()) { string p = found(cur); if (!p.empty()) return p; }
+    return bin;
+}
+static string compilerIdentity(const string& bin) {
+    string path = resolveTool(bin); FileSig sig;
+    if (!hashFile(path, sig)) return "missing\n" + bin;
+    return path + "\n" + sig.hash;
+}
+static vector<string> preprocessArgv(const Action& a) {
+    vector<string> p; if (a.argv.empty()) return p;
+    p.push_back(a.argv[0]); p.push_back("-E");
+    for (size_t i = 1; i < a.argv.size(); ++i) {
+        const string& s = a.argv[i];
+        if (s == "-MMD") continue;
+        if (s == "-c") continue;
+        if (s == "-MF" || s == "-MT" || s == "-o") { if (i + 1 < a.argv.size()) ++i; continue; }
+        p.push_back(s);
+    }
+    return p;
+}
+static string cacheDirOf(const string& key) { return under(".okaybuild/cache/" + key); }
+// 1 hit, 0 miss, -1 could not preprocess.
+static int lookupCache(const Action& a, string& key, string& errOut) {
+    vector<string> pp = preprocessArgv(a);
+    string out, err; int rc = captureStdout(pp, out, err);
+    if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
+    string id = compilerIdentity(a.argv[0]); string cmd = hashArgv(a.argv);
+    uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
+    key = hex64(h);
+    string dir = cacheDirOf(key), meta = dir + "/meta";
+    if (!fs::is_regular_file(dir + "/obj") || !fs::is_regular_file(meta)) return 0;
+    if (!a.depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
+    std::ifstream in(meta); string l1, l2; std::getline(in, l1); std::getline(in, l2);
+    if (l1 != "okaybuild-cache 1" || l2 != key) return 0;
+    std::error_code ec;
+    fs::copy_file(dir + "/obj", a.output, fs::copy_options::overwrite_existing, ec);
+    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
+    return 1;
+}
+static void storeCache(const Action& a, const string& key) {
+    if (key.empty() || a.output.empty() || !fs::is_regular_file(a.output)) return;
+    string dir = cacheDirOf(key); fs::create_directories(dir); std::error_code ec;
+    fs::copy_file(a.output, dir + "/obj", fs::copy_options::overwrite_existing, ec);
+    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) fs::copy_file(a.depfile, dir + "/dep", fs::copy_options::overwrite_existing, ec);
+    std::ofstream m(dir + "/meta", std::ios::trunc); m << "okaybuild-cache 1\n" << key << "\n";
+}
+static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string, FileSig>>& oldProduced) {
+    if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
+    long long ts = nowNs();
+    Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
+    if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
+    for (auto& pth : a.outputs) forgetHash(pth);
+    for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, sig}); }
+    if (ok) noteOutputs(a, rec, oldProduced, out, ok);
+    if (ok) { OK_LOCK(l, gStateMu); gState[a.output] = rec; }
+    else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+    gNsPost += nowNs() - ts;
+}
+static void printCache() {
+    int h = gCacheHit.load(), m = gCacheMiss.load();
+    if (h + m > 0) printf("okay-build: cache %d hit, %d miss\n", h, m);
+}
 
 // ---------------------------------------------------------------- importer (Stage B)
 // Source of commands: `ninja -t commands [targets]` of an already configured CMake build dir (every compile, archive, link and
@@ -1022,8 +1173,21 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (a.kind == "AR" && !a.output.empty()) fs::remove(a.output);
                 string err; string line = commandLineFor(a, err);
                 if (!err.empty()) { done(id, false, err, false); continue; }
+                string cacheKey;
+                if (gUseCache && a.kind == "CC") {
+                    int cr = lookupCache(a, cacheKey, out);
+                    if (cr < 0) { done(id, false, out, false); continue; }
+                    if (cr == 1) {
+                        ++gCacheHit; printf("        cache hit\n"); fflush(stdout);
+                        bool ok = true; vector<std::pair<string, FileSig>> old;
+                        if (a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) old = it->second.produced; }
+                        commitStep(a, out, ok, old);
+                        done(id, ok, out, false); continue;
+                    }
+                    ++gCacheMiss; printf("        cache miss\n"); fflush(stdout);
+                }
                 bool stream = poolIdx[id] >= 0 && pools[poolIdx[id]].name == "console";
-                Live L; L.id = id;
+                Live L; L.id = id; L.cacheKey = cacheKey;
                 if (!spawnLive(line, a.dir, stream, L, err)) { done(id, false, err, false); continue; }
                 if (poolIdx[id] >= 0) ++pools[poolIdx[id]].used;
                 live.push_back(L);
@@ -1047,22 +1211,15 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         gNsSpawn += nowNs() - L.started;
         const Action& a = g.acts[L.id];
         bool ok = code == 0; string out = L.out;
-        if (ok && !a.outputs.empty()) {
-            long long ts = nowNs();
-            Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
-            if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
-            for (auto& pth : a.outputs) forgetHash(pth);
-            for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, sig}); }
-            vector<std::pair<string, FileSig>> oldProduced;
-            if (ok && a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
-            if (ok) noteOutputs(a, rec, oldProduced, out, ok);
-            if (ok) gState[a.output] = rec;
-            gNsPost += nowNs() - ts;
-        } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+        if (ok && !L.cacheKey.empty()) storeCache(a, L.cacheKey);
+        vector<std::pair<string, FileSig>> oldProduced;
+        if (ok && a.restat && !a.output.empty()) { auto it = gState.find(a.output); if (it != gState.end()) oldProduced = it->second.produced; }
+        commitStep(a, out, ok, oldProduced);
         done(L.id, ok, out, true);
     }
     if (!o.dry) saveState();
-    if (anyFail) { fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
     if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
@@ -1153,16 +1310,18 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                             for (size_t i = a.rspHead; i < a.argv.size(); ++i) { for (char c : a.argv[i]) { if (c == '\\' || c == '"' || c == ' ') r << '\\'; r << c; } r << '\n'; }
                             argv.resize(a.rspHead); argv.push_back("@" + rf);
                         }
-                        long long ts = nowNs(); int rc = runCmd(argv, out, stream); ok = rc == 0; gNsSpawn += nowNs() - ts; ts = nowNs();
-                        if (ok && !a.outputs.empty()) {
-                            Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
-                            if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
-                            for (auto& pth : a.outputs) forgetHash(pth);
-                            for (auto& pth : ins) { FileSig h; if (!hashFile(pth, h)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({pth, h}); }
-                            if (ok) noteOutputs(a, rec, oldProduced, out, ok);
-                            if (ok) { std::lock_guard<std::mutex> sl(gStateMu); gState[a.output] = rec; }
-                            gNsPost += nowNs() - ts;
-                        } else if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+                        string cacheKey; bool cached = false;
+                        if (gUseCache && a.kind == "CC") {
+                            int cr = lookupCache(a, cacheKey, out);
+                            if (cr < 0) ok = false;
+                            else if (cr == 1) { cached = true; ++gCacheHit; std::lock_guard<std::mutex> pl(mu); printf("        cache hit\n"); fflush(stdout); }
+                            else { ++gCacheMiss; std::lock_guard<std::mutex> pl(mu); printf("        cache miss\n"); fflush(stdout); }
+                        }
+                        long long ts = nowNs();
+                        if (ok && !cached) { int rc = runCmd(argv, out, stream); ok = rc == 0; }
+                        gNsSpawn += nowNs() - ts;
+                        if (ok && !cached && !cacheKey.empty()) storeCache(a, cacheKey);
+                        commitStep(a, out, ok, oldProduced);
                     } else wouldRun[id] = 1;
                 } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
             } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
@@ -1175,7 +1334,8 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
     if (!o.dry) saveState();
-    if (anyFail) { fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
+    printCache();
     printf("okay-build: ran %d of %d steps (%d up to date)%s\n", ran, total, upToDate, o.dry ? " [dry run]" : "");
     if (o.profile) printf("okay-build: plan+state load %lld ms\n", tPlan / 1000000);
     if (o.profile) printf("okay-build: profile (summed over workers, ms): dirty-check %lld, run command %lld, depfile+hash %lld; wall %lld\n", gNsDirty / 1000000, gNsSpawn / 1000000, gNsPost / 1000000, (nowNs() - tStart) / 1000000);
@@ -1554,6 +1714,7 @@ int main(int argc, char** argv) {
             else if (a == "--profile") o.profile = true;
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
+            else if (a == "--no-cache") gUseCache = false;
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
             else if (a == "--config" && i + 1 < argc) configName = argv[++i];

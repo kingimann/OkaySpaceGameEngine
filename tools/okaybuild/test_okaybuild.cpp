@@ -429,6 +429,36 @@ static void testConfigsAndToolchains() {
     }
 }
 
+static void testCompilerCache() {
+    printf("test: compiler cache hits, misses, and invalidation\n");
+    fresh("cache");
+    write("cxxwrap", "#!/bin/sh\necho \"$0 $*\" >> runs.log\nexec g++ \"$@\"\n");
+    fs::permissions(gRoot / "cxxwrap", fs::perms::owner_all);
+    write("main.cpp", "int main(){return 0;}\n");
+    write("build.okay", "toolchain\n cxx = ./cxxwrap\n cc = ./cxxwrap\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "first compile is a cache miss", o);
+    int lines = countLines(gRoot / "runs.log");
+    check(lines == 3, "miss runs preprocess, compile, and link", o + "\nlines=" + std::to_string(lines));
+    fs::remove(gRoot / ".okaybuild/obj/app/main.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/app/main.cpp.o.d");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "deleted object is restored from the cache", o);
+    check(countLines(gRoot / "runs.log") == lines + 1, "a hit preprocesses and does not compile", "lines=" + std::to_string(countLines(gRoot / "runs.log")));
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "restored program runs");
+    write("main.cpp", "int main(){return 1;}\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "a changed source is a cache miss", o);
+    write("cxxwrap", "#!/bin/sh\n# identity changed\necho \"$0 $*\" >> runs.log\nexec g++ \"$@\"\n");
+    fs::permissions(gRoot / "cxxwrap", fs::perms::owner_all);
+    fs::remove(gRoot / ".okaybuild/obj/app/main.cpp.o");
+    fs::remove(gRoot / ".okaybuild/obj/app/main.cpp.o.d");
+    int before = countLines(gRoot / "runs.log");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "a changed compiler identity misses", o);
+    check(countLines(gRoot / "runs.log") >= before + 2, "identity miss compiles again", "lines=" + std::to_string(countLines(gRoot / "runs.log")));
+}
+
 static void testAuditHelp() {
     printf("test: --help names the audit note and the commands that exist\n");
     fresh("audit"); write("a.cpp", "int main(){return 0;}\n");
@@ -545,6 +575,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

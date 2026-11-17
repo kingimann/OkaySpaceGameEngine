@@ -33600,15 +33600,16 @@ static void AddItemPickerRow(okaypanels::InspFieldList& L, const char* label, co
     okay::ItemDatabase& db = okay::ItemDatabase::Get();
     for (const auto& d : db.Items()) { if (d.loose) continue; ir.ids.push_back(d.id); ir.names.push_back(d.DisplayName()); }
     for (std::size_t i = 0; i < ir.names.size(); ++i) { ir.items.push_back(ir.names[i].c_str()); if (ir.ids[i] == id) ir.idx = (int)i; }
+    if (ir.items.empty()) ir.items.push_back("(no items yet)");   // an empty list opened as a bare sliver (they are made in Items, Loot & Recipes)
     const okay::ItemDefinition* cur = db.Find(id);
     const bool unknown = !id.empty() && (!cur || cur->loose);
     ir.preview = cur && !cur->loose ? cur->DisplayName() : id;
     ir.row = L.Combo(label, &ir.idx, ir.items.data(), (int)ir.items.size()); L.Last().width = width; L.Last().preview = ir.preview.c_str();
-    if (unknown) { L.Last().color = RowCol(1.0f, 0.6f, 0.3f); ir.preview += ""; }
+    if (unknown) L.Last().color = RowCol(1.0f, 0.6f, 0.3f);
     if (unknown) L.Tip("This id isn't in the Item Database (it still works as a plain name).");
 }
 static bool RunItemPickerRow(okaypanels::InspFieldList& L, std::string& id, const ItemRow& ir) {
-    if (ir.row < 0 || !L[ir.row].changed || ir.idx < 0) return false;
+    if (ir.row < 0 || !L[ir.row].changed || ir.idx < 0 || (std::size_t)ir.idx >= ir.ids.size()) return false;
     id = ir.ids[(std::size_t)ir.idx];
     return true;
 }

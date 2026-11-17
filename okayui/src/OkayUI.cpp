@@ -3608,7 +3608,7 @@ void framedComboBox(float x, float y, float w, float h, bool hovered, const char
     rrect(bx, y, bw, h, rd, bc);
     if (rd > 0.0f) quad(bx, y, rd, h, bc);   // square on its left, where it meets the field
     const float padX = g_framePadX >= 0.0f ? g_framePadX : 6.0f;
-    PushClipRect(x, y, std::max(1.0f, w - bw - padX * 0.5f), h);
+    PushClipRect(x, y, std::max(1.0f, w - bw), h);   // to the arrow, as Dear ImGui clips it (the editor fits a long text with "...")
     drawText(x + padX, y + (h - textH()) * 0.5f, text ? text : "", g_theme.textScale, g_theme.text);
     PopClipRect();
     const float fs = textH(), cx = bx + bw * 0.5f, cy = y + h * 0.5f, r = fs * 0.37f;

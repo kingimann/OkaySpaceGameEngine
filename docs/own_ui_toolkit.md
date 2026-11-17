@@ -2342,10 +2342,98 @@ Object). Pictures in `<scratchpad>/shots/oi5/`. Looked at:
 
 Seen and not changed: a combo's closed text that is longer than its box is cut inside the box in OkayUI and drawn under the arrow in Dear
 ImGui ("Bool false", "CrouchWalk"); Dear ImGui's lists open left of the Inspector under Xvfb; Item Pickup and Hold Prompt (not ported) have
-notes cut in both toolkits.
+notes cut in both toolkits. (Stage 6, section 19, fixed the first and the last.)
 
 ### 18.7 Not verified
 
 Windows; other UI scales and densities; the character model tools with a real model (Fix Facing, Turn, Fit Collider), the clip preview
 transport and Edit clip in the real editor; a Player whose View is one view only; Play mode (the state machine's current state, the holding
 lines); the Third-person collision layer list typed in the real editor.
+
+## 19. The Inspector, stage 6: Item Pickup, Hold Prompt, Water, Flashlight, Pause Menu, Hand, Voxel Digger, Voxel Terrain
+
+The next most used bodies by example-scene count (each of Water, Voxel Terrain, Voxel Digger, Pause Menu, Hand (legacy) and Flashlight is
+in 4 example scenes; Item Pickup and Hold Prompt were seen in the stage 5 pictures with notes cut off), as field rows behind the same
+developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`); Dear ImGui stays the default and the fallback. Written from the editor's own
+Dear ImGui bodies (`editor/main.cpp` DrawInspector, ItemPicker; `editor/LocalizationWindow.cpp` LocalizedSwitch) and measurements of both
+pictures; no code from any other project.
+
+### 19.1 What is ported
+
+| Component | Builder (`editor/main.cpp`) | Notes |
+|---|---|---|
+| Item Pickup | `DrawItemPickupWithOkayUI` | every row; the item list (`AddItemPickerRow`) is a plain list of the Item Database's names, orange with a tip when the id is not in it, "(no items yet)" when the database is empty. Dear ImGui's list has a search box; OkayUI's has not |
+| Hold Prompt | `DrawHoldPromptWithOkayUI` | every row; Localized goes through `LocalizedSwitchApply` (new, shared with Dear ImGui's LocalizedSwitch) |
+| Water | `DrawWaterWithOkayUI` | every row |
+| Flashlight | `DrawFlashlightWithOkayUI` | every row |
+| Pause Menu | `DrawPauseMenuWithOkayUI` | every row, Localized as above |
+| Hand (legacy) | `DrawFirstPersonHandWithOkayUI` | every row, Reset arm pose |
+| Voxel Digger | `DrawVoxelDiggerWithOkayUI` | every row; Tool Power is a plain drag in OkayUI (Dear ImGui's is logarithmic) |
+| Voxel Terrain | `DrawVoxelTerrainWithOkayUI` | every row: Generate, the seed (a new whole-number row, `InputInt`, with - and +), Random, Generate / Solid Slab / Clear, the material layers and each material's row, footprints, fluid, the build line |
+
+**Counts.** Ported to field rows: **49** (41 after stage 5, and these 8). Generic card: 8. Still Dear ImGui: **about 174**. Next by
+example-scene count: the Behaviour Tree runner and Inventory (2 scenes each), First Person Hands (2), World UI 3D and Vehicle Seat (1).
+
+### 19.2 Found and fixed
+
+- **Notes cut off, both toolkits:** Item Pickup's, Hold Prompt's, Water's, Flashlight's, Pause Menu's, Voxel Digger's and Voxel Terrain's
+  notes, the Hand's (three lines with hard breaks wider than a docked Inspector) and the Player Controller's "Mouse look + WASD..." now wrap
+  at the panel edge (`WrappedNote` in Dear ImGui, wrapping notes in the rows). The digger's and terrain's button rows use SameLineOrWrap.
+- **A combo's long closed text, both toolkits:** "CrouchWalk" and "Bool false" ran under the arrow in Dear ImGui and were cut mid-letter in
+  OkayUI. Both now cut the text at whole characters and end it with "..." so it fits the room Dear ImGui gives it (box minus arrow minus one
+  frame padding; `InspFitText` in `shared/InspectorFieldsModel.hpp`): the rows' combos, the item list, the state machine's Entry, clip,
+  target and condition. OkayUI's combo now clips at the arrow, as Dear ImGui does (it clipped half a padding earlier and lost the last dot).
+- **OkayUI layout:** a field after a labelled field on one line (the material row's "kg/m3" after "hard") sat 8 pixels low: the label is
+  centred on the field, and the next SameLine item took the label's lowered top. The line's top is now kept for the next item (a small
+  button and a text after the label still sit on the label's line, as in Dear ImGui).
+- **UI Button 4.54%:** the comparison canvas was shorter than the body, so Dear ImGui added a scroll bar and narrowed its column. The tall
+  bodies get a 2700-pixel canvas: the UI Button is now **1.50%**, Terrain 3.75% (was 3.90%).
+
+### 19.3 Tests
+
+- `okayui_inspector` (439 checks; 3 new golden images: `inspector_itempickup`, `_voxelterrain`, `_voxeldigger`): the "..." fit (whole
+  UTF-8 characters); the item list's pick; the seed typed in; no row of the eight bodies runs past the region.
+- `okayui_inspector_imgui` (64 checks): 8 more bodies in both toolkits.
+- `ctest -R "okayui|ui_backend|hierarchy|inspector|prefab"`: 46 of 47 pass. `prefab_variants` fails one check (line 284) only when
+  `TMPDIR` is a very long path (this machine's scratch folder, 96 characters); it passes with a short one and does not use any changed
+  file. Syntax-only checks as in section 18.4.
+
+### 19.4 Speed and pixels
+
+Instructions per frame (callgrind, 200 frames): Item Pickup 142,682 against 96,940 (32% fewer), Hold Prompt 72,621 against 44,239 (39%),
+Water 186,054 against 134,547 (28%), Flashlight 131,546 against 92,080 (30%), Pause Menu 174,706 against 130,787 (25%), Hand 151,096
+against 102,149 (32%), Voxel Digger 312,773 against 227,657 (27%), Voxel Terrain 439,778 against 331,442 (25%).
+
+| Body | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Clearly different pixels |
+|---|---:|---:|---:|---:|---:|
+| Item Pickup | 105.5 us | 38.2 us | 48.9 ms | 5.5 ms | 1.12% |
+| Hold Prompt | 85.3 us | 27.7 us | 47.9 ms | 3.5 ms | 0.48% |
+| Water | 118.1 us | 44.2 us | 52.0 ms | 8.5 ms | 0.84% |
+| Flashlight | 112.0 us | 39.6 us | 47.8 ms | 4.7 ms | 0.85% |
+| Pause Menu | 125.2 us | 47.6 us | 51.9 ms | 5.8 ms | 1.05% |
+| Hand (legacy) | 102.9 us | 39.5 us | 48.0 ms | 5.2 ms | 1.33% |
+| Voxel Digger | 132.8 us | 74.3 us | 97.1 ms | 15.6 ms | 1.49% |
+| Voxel Terrain | 162.7 us | 95.8 us | 98.3 ms | 16.0 ms | 1.67% |
+| UI Button (taller canvas) | 170.4 us | 144.5 us | 101.3 ms | 23.2 ms | 1.50% |
+
+Every picture is under 4%; the highest is Terrain at 3.75%.
+
+### 19.5 In the real editor
+
+Under Xvfb at 1920 x 1200, both toolkits side by side; pictures in `<scratchpad>/shots/oi6/`. Looked at:
+
+- `examples/voxel/voxel_sandbox.okayscene`: Water (`side-10-water.png`, `side-11-water-low.png`), Terrain's Voxel Terrain and Voxel
+  Digger (`side-20` to `side-25`), FPS Camera's Flashlight and Hand (`side-32-cam-c.png`), Pause Menu (`side-40-pause.png`). The same in both,
+  apart from the Hand's note, which was cut in both and now wraps.
+- **Character: Shirt** Long sleeve to Short sleeve, then Ctrl+Z: the same in both (`side-53-shirt-short.png`, `side-54-shirt-undo.png`).
+- **First-person settings: Sprint Key** Shift to Ctrl, then Ctrl+Z: the same in both (`side-80-sprint-open.png`, `side-8x-sprint.png`).
+- `examples/fp_hand/fp_hand_test.okayscene`: Block's Item Pickup (`side-92-block-b.png`; "block" is not in this project's empty Item
+  Database, so it is orange), Player's Hold Prompt (`side-95-player-end.png`), Localized on and Ctrl+Z (`side-9x-holdprompt-localized.png`).
+- The state machine: Idle's first condition to Bool false: "Bool fal..." and "CrouchW..." in both (`zoom-B4-ellipsis.png`).
+
+Seen and not changed: Dear ImGui's lists still open left of their box under Xvfb (also in stage 5).
+
+### 19.6 Not verified
+
+Windows; other UI scales and densities; the item list with a filled Item Database in the real editor; Generate, Random and the material
+rows' edits in the real editor (tried headless); Play mode for all eight; the Voxel Digger's Tool Power drag feel (plain in OkayUI).

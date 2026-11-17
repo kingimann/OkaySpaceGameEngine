@@ -110,8 +110,9 @@ int main(int argc, char** argv) {
     }
 
     okaycc::Diagnostics diags;
+    std::string name = path.empty() ? "<stdin>" : path;
     if (elf) {
-        std::vector<unsigned char> bin = okaycc::compileToElf(src, diags);
+        std::vector<unsigned char> bin = okaycc::compileToElf(src, diags, name);
         if (diags.ok()) {
             std::ofstream out(elfOut, std::ios::binary);
             if (!out) {
@@ -121,11 +122,11 @@ int main(int argc, char** argv) {
             out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
         }
     } else if (asmm) {
-        std::cout << okaycc::compileToAssembly(src, diags);
+        std::cout << okaycc::compileToAssembly(src, diags, name);
     } else if (ir) {
-        std::cout << okaycc::irText(src, diags);
+        std::cout << okaycc::irText(src, diags, name);
     } else if (check) {
-        okaycc::checkSource(src, diags);
+        okaycc::checkSource(src, diags, name);
     } else if (ast) {
         if (path.empty()) {
             okaycc::MemoryFiles mem;

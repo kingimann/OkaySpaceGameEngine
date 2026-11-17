@@ -485,8 +485,8 @@ std::string emitAssembly(const Module& m) {
     return s;
 }
 
-std::string compileToAssembly(const std::string& source, Diagnostics& diags) {
-    Module m = lowerSource(source, diags);
+std::string compileToAssembly(const std::string& source, Diagnostics& diags, const std::string& file) {
+    Module m = lowerSource(source, diags, file);
     if (!diags.ok()) return {};
     return emitAssembly(m);
 }

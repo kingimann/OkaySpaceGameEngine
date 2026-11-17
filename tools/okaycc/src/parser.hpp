@@ -15,6 +15,6 @@ std::string astOfFile(FileStore& files, const std::string& path,
                       const std::vector<std::string>& includePaths, Diagnostics& diags);
 
 // Parse and type-check the subset. Errors land in diags.
-void checkSource(const std::string& source, Diagnostics& diags);
+void checkSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
 
 }  // namespace okaycc

@@ -76,7 +76,7 @@ struct Module {
 std::string printModule(const Module& m);
 
 // Lower a C subset program: integers, pointers, arrays, globals, strings, and structs.
-Module lowerSource(const std::string& source, Diagnostics& diags);
-std::string irText(const std::string& source, Diagnostics& diags);
+Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
+std::string irText(const std::string& source, Diagnostics& diags, const std::string& file = "t.c");
 
 }  // namespace okaycc

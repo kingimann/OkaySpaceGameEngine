@@ -645,13 +645,13 @@ std::vector<unsigned char> wrapElf(const std::vector<unsigned char>& payload, st
 
 }  // namespace
 
-std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags) {
-    Module m = lowerSource(source, diags);
+std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& diags, const std::string& file) {
+    Module m = lowerSource(source, diags, file);
     if (!diags.ok()) return {};
     Image im;
     for (const Function& f : m.funcs) emitFunction(im, f);
     if (!im.labels.count("main")) {
-        diags.error("t.c", 1, 1, "missing main");
+        diags.error(file, 1, 1, "missing main");
         return {};
     }
     std::size_t entry = im.bytes.size();
@@ -663,7 +663,7 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     u8(im, 0x05);
     emitData(im, m);
     if (!patch(im)) {
-        diags.error("t.c", 1, 1, im.why);
+        diags.error(file, 1, 1, im.why);
         return {};
     }
     return wrapElf(im.bytes, entry);

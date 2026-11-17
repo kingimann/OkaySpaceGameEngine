@@ -43,6 +43,16 @@ int main() {
     ok("global const", "int x = 1; int *p = 0; char *s = \"hi\";\n");
 
     bad("undeclared", "int main(){return y;}\n", "undeclared");
+    {
+        okaycc::Diagnostics d;
+        okaycc::checkSource("int main(){\nreturn z;\n}\n", d, "sample.c");
+        if (d.format().find("sample.c:2:") == std::string::npos) {
+            std::fprintf(stderr, "FAIL file name\n%s", d.format().c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
     bad("redef", "int main(){int x; int x; return x;}\n", "redefined");
     bad("param redef", "int f(int x, int x){return x;}\n", "redefined");
     bad("use after block", "int main(){{int x; x = 1;} return x;}\n", "undeclared");

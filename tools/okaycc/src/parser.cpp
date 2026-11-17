@@ -42,6 +42,7 @@ struct Expr {
     int litRank = 0;
     int line = 1;
     int col = 1;
+    std::string file;
     std::vector<std::unique_ptr<Expr>> kids;
     std::unique_ptr<Type> ty;
     std::unique_ptr<Type> checked;
@@ -69,6 +70,7 @@ struct Decl {
     bool function = false;
     int line = 1;
     int col = 1;
+    std::string file;
     Decl();
     ~Decl();
 };
@@ -77,6 +79,7 @@ struct Stmt {
     enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl } kind = Kind::Empty;
     int line = 1;
     int col = 1;
+    std::string file;
     std::vector<std::unique_ptr<Stmt>> stmts;
     std::unique_ptr<Expr> expr;
     std::unique_ptr<Expr> expr2;
@@ -118,6 +121,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& e) {
     n->litRank = e.litRank;
     n->line = e.line;
     n->col = e.col;
+    n->file = e.file;
     for (const auto& k : e.kids)
         if (k) n->kids.push_back(cloneExpr(*k));
     if (e.ty) n->ty = cloneType(*e.ty);
@@ -373,6 +377,7 @@ struct Parsed {
     std::string name;
     int line = 1;
     int col = 1;
+    std::string file;
     std::vector<Mod> mods;
 };
 
@@ -482,6 +487,7 @@ private:
         e->kind = k;
         e->line = at.line;
         e->col = at.column;
+        e->file = at.file;
         return e;
     }
     std::unique_ptr<Expr> leafName(const Token& t) {
@@ -660,6 +666,7 @@ private:
             d.name = cur().text;
             d.line = cur().line;
             d.col = cur().column;
+            d.file = cur().file;
             advance();
         } else if (needName) {
             err("expected a name");
@@ -759,6 +766,7 @@ private:
         decl->name = d.name;
         decl->line = d.line;
         decl->col = d.col;
+        decl->file = d.file;
         decl->type = std::move(type);
         decl->init = std::move(init);
         decl->function = decl->type && decl->type->kind == Type::Kind::Function;
@@ -1308,11 +1316,14 @@ private:
     };
 
     Diagnostics& diags_;
+    std::string file_;
     std::vector<std::map<std::string, Sym>> scopes_;
     int loops_ = 0;
     const Type* ret_ = nullptr;
 
-    void err(int line, int col, const std::string& msg) { diags_.error("t.c", line, col, msg); }
+    void err(int line, int col, const std::string& msg) {
+        diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
+    }
 
     std::unique_ptr<Type> prim(Type::Kind k) {
         auto t = std::make_unique<Type>();
@@ -1637,6 +1648,7 @@ private:
     }
 
     ET checkExpr(Expr& e) {
+        if (!e.file.empty()) file_ = e.file;
         ET r = checkExprBody(e);
         if (r.type) e.checked = cloneType(*r.type);
         return r;
@@ -1776,6 +1788,7 @@ private:
     }
 
     void checkStmt(Stmt& s) {
+        if (!s.file.empty()) file_ = s.file;
         switch (s.kind) {
         case Stmt::Kind::Block:
             scopes_.emplace_back();
@@ -1896,6 +1909,7 @@ private:
     };
 
     Diagnostics& diags_;
+    std::string file_;
     Module mod_;
     Function fn_;
     int cur_ = -1;
@@ -1913,7 +1927,9 @@ private:
     std::map<std::string, Sym> globals_;
     std::vector<Loop> loops_;
 
-    void err(int line, int col, const std::string& msg) { diags_.error("t.c", line, col, msg); }
+    void err(int line, int col, const std::string& msg) {
+        diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
+    }
     void startBlock(const std::string& name) {
         fn_.blocks.push_back(Block{});
         fn_.blocks.back().name = name;
@@ -2483,6 +2499,7 @@ private:
     }
 
     Val lowerExpr(Expr& e) {
+        if (!e.file.empty()) file_ = e.file;
         switch (e.kind) {
         case Expr::Kind::Int:
         case Expr::Kind::Char:
@@ -2931,6 +2948,7 @@ private:
     }
 
     void lowerStmt(Stmt& s) {
+        if (!s.file.empty()) file_ = s.file;
         switch (s.kind) {
         case Stmt::Kind::Block:
             scopes_.emplace_back();
@@ -3184,10 +3202,10 @@ private:
 
 void typecheckTu(Tu& tu, Diagnostics& diags);
 
-Module lowerProgram(const std::string& source, Diagnostics& diags) {
+Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName) {
     MemoryFiles files;
-    files.add("t.c", source);
-    std::vector<Token> raw = preprocessTokens(files, "t.c", {}, diags);
+    files.add(fileName, source);
+    std::vector<Token> raw = preprocessTokens(files, fileName, {}, diags);
     if (!diags.ok()) return {};
     std::string file = "t.c";
     int line = 1;
@@ -3259,10 +3277,10 @@ std::string astOfFile(FileStore& files, const std::string& path, const std::vect
     return astFromRaw(preprocessTokens(files, path, includePaths, diags), diags);
 }
 
-void checkSource(const std::string& source, Diagnostics& diags) {
+void checkSource(const std::string& source, Diagnostics& diags, const std::string& fileName) {
     MemoryFiles files;
-    files.add("t.c", source);
-    std::vector<Token> raw = preprocessTokens(files, "t.c", {}, diags);
+    files.add(fileName, source);
+    std::vector<Token> raw = preprocessTokens(files, fileName, {}, diags);
     if (!diags.ok()) return;
     std::string file = "t.c";
     int line = 1;
@@ -3288,6 +3306,8 @@ void checkSource(const std::string& source, Diagnostics& diags) {
     typecheckTu(tu, diags);
 }
 
-Module lowerSource(const std::string& source, Diagnostics& diags) { return lowerProgram(source, diags); }
+Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file) {
+    return lowerProgram(source, diags, file);
+}
 
 }  // namespace okaycc

@@ -157,8 +157,8 @@ std::string printModule(const Module& m) {
     return s;
 }
 
-std::string irText(const std::string& source, Diagnostics& diags) {
-    return printModule(lowerSource(source, diags));
+std::string irText(const std::string& source, Diagnostics& diags, const std::string& file) {
+    return printModule(lowerSource(source, diags, file));
 }
 
 }  // namespace okaycc

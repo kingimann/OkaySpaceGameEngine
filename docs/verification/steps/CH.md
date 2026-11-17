@@ -4,7 +4,7 @@
 - **Map:** 4.1, 4.2
 - **Where:** editor
 - **Steps:**
-  1. Choose **File > New Project...** and the **First / Third Person** template (or **GameObject > Player > Player Controller**), then press **V** once to go to the eyes (or set View to First Person in the Player Controller panel).
+  1. Choose **File > New Project...** and the **First and Third Person** template (or **GameObject > Player > Player Controller**), then press **V** once to go to the eyes (or set View to First Person in the Player Controller panel).
   2. Press Play (Ctrl+P). Walk with W A S D and look with the mouse.
   3. Press Ctrl to crouch and Z to go prone (crouch toggles with a tap by default; prone key is Z).
 - **See:** you walk and look in first person; the camera lowers when you crouch and lowers more when prone; running is off while crouched or prone.
@@ -15,7 +15,7 @@
 - **Map:** 4.1, 4.2
 - **Where:** editor
 - **Steps:**
-  1. Choose the **First / Third Person** template (or **GameObject > Player > Third Person**).
+  1. Choose the **First and Third Person** template (or **GameObject > Player > Third Person**).
   2. Press Play. Move with W A S D, look with the mouse, jump with Space.
   3. Press Z for prone and Ctrl for crouch.
 - **See:** the character walks, the camera orbits behind it, and the crouch and prone stances change its height.

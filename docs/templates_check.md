@@ -40,7 +40,7 @@ build/tests/test_examples_work
 
 The interaction checks, by family:
 
-* First / Third Person (it replaced the separate First Person and Third Person templates on 2026-11-17; the old titles still build for old --template arguments), Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
+* First and Third Person (it replaced the separate First Person and Third Person templates on 2026-11-17; the old titles still build for old --template arguments, as this one), Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
   it slows down; Space jumps and gravity brings it back; moving the mouse turns the view.  Third Person Shooter also holds the left mouse button and the targets lose health.
 * Platformer, 2.5D Platformer: D moves, Space jumps and lands; 2.5D: W hops to the layer behind, S back.
 * Top-Down: D moves, and the walls stop the player. Top-Down Shooter: it moves, Space dashes, the left mouse button fires and
@@ -153,7 +153,7 @@ suite stays green. A listed failure that stops happening fails the test, so the 
 * **Two scenes nothing offers.** `NewPlatformer3D` and `NewTerrainSandbox` in `EditorState` are not reachable from the launcher or
   any editor menu (see "Scenes nothing offers" above). They work and are tested; whether to offer or delete them is the owner's
   call.
-* **Duplicate names in the Problems panel.** Brand new First / Third Person, Third Person Shooter, Top-Down Shooter, Point
+* **Duplicate names in the Problems panel.** Brand new First and Third Person, Third Person Shooter, Top-Down Shooter, Point
   and Click, Vehicle (3D), Vehicle (get in and drive), Vehicle (2D) and Coin Collector projects show one or more
   "N objects are named 'Crate' at the scene root" warnings (Crate, Target, Target Dummy, Cover, Block, Lane Dash, Cone, Coin, Step). They are
   warnings, not errors, and the scripts and tests look the objects up by those names, so they were not renamed.

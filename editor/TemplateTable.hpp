@@ -35,7 +35,7 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
         {"3D Scene",                   &E::NewScene3D},
         {"2D Scene",                   &E::NewScene2D},
         {"Empty",                      &E::NewScene},
-        {"First / Third Person",       &E::NewThirdPerson},
+        {"First and Third Person",       &E::NewThirdPerson},
         {"Third Person Shooter",       &E::NewThirdPersonShooter},
         {"Platformer",                 &E::NewPlatformer},
         {"Top-Down",                   &E::NewTopDown},
@@ -56,8 +56,8 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
 /// not know would otherwise silently become a 3D Scene).
 inline TemplateBuilder FindBuilder(const std::string& title) {
     // The two titles this one replaced (2.880 and older launchers, scripts and saved --template arguments still pass them).
-    // They are not in the table: the table is what the New Project list shows. NewFPS stays for "First Person".
-    if (title == "First Person") return &okay::editor::EditorState::NewFPS;
+    // They are not in the table: the table is what the New Project list shows.
+    if (title == "First Person") return &okay::editor::EditorState::NewThirdPerson;   // starts behind the player; V goes to the eyes
     if (title == "Third Person") return &okay::editor::EditorState::NewThirdPerson;
     for (const TemplateEntry& e : TemplateTable())
         if (title == e.title) return e.build;

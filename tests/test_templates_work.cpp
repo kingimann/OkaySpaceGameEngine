@@ -690,7 +690,7 @@ std::vector<Spec> MakeSpecs() {
         {"3D Scene",                   true,  false, "", "", fixed(&DriveStatic)},
         {"2D Scene",                   false, true,  "", "", fixed(&DriveStatic)},
         {"Empty",                      false, false, "", "", fixed(&DriveStatic)},
-        {"First / Third Person",       true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
+        {"First and Third Person",       true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
         {"Third Person Shooter",       true,  false, "Player", "ThirdPersonShooterController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), shoot})},
         {"Platformer",                 false, true,  "Player", "CharacterController2D", mover({"Player", {'d'}, false, true, 1.0f})},
         {"Top-Down",                   false, true,  "Player", "TopDownController2D", mover({"Player", {'d'}, false, false, 1.0f}, {fixed(&CheckWalls)})},
@@ -1018,13 +1018,13 @@ void CheckTable() {
         bool hasOne = false, hasOld = false;
         for (const okayproj::TemplateInfo& t : okayproj::Templates()) {
             const std::string n = t.title;
-            hasOne = hasOne || n == "First / Third Person";
+            hasOne = hasOne || n == "First and Third Person";
             hasOld = hasOld || n == "First Person" || n == "Third Person" || n == "Humanoid";
         }
         CHECK(hasOne);
         CHECK(!hasOld);
-        CHECK(oked::FindBuilder("First / Third Person") == &EditorState::NewThirdPerson);
-        CHECK(oked::FindBuilder("First Person") == &EditorState::NewFPS);
+        CHECK(oked::FindBuilder("First and Third Person") == &EditorState::NewThirdPerson);
+        CHECK(oked::FindBuilder("First Person") == &EditorState::NewThirdPerson);   // starts behind the player; V goes to the eyes
         CHECK(oked::FindBuilder("Third Person") == &EditorState::NewThirdPerson);
         CHECK(oked::FindBuilder("Humanoid") == nullptr);   // gone: it falls back to the 3D Scene with the "unknown" notice
     }

@@ -28742,6 +28742,7 @@ void DrawModeling(EditorState& ed) {
         if (mr->mesh.uvs.empty())
             ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
 
+        SectionHeader("Symmetry, deform and shell");
         // Whole-mesh modeling ops (symmetry / deform / shell).
         if (ImGui::Button("Mirror X##model")) ModelOp(ed, mr, "Mirror X", [&](Mesh& m) { m.Mirror(0); });
         ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) ModelOp(ed, mr, "Mirror Y", [&](Mesh& m) { m.Mirror(1); });
@@ -29112,6 +29113,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::TextDisabled("Click in the 3D view to select. G move, R rotate, S scale\n"
                                 "(then X/Y/Z to lock an axis, type a value, Ctrl to snap,\n"
                                 "Enter or click to confirm, Esc or right-click to cancel).");
+            SectionHeader("Pick parts");
             ImGui::RadioButton("Vertices##me", &g_meshSelMode, 0); ImGui::SameLine();
             ImGui::RadioButton("Edges##me", &g_meshSelMode, 2); ImGui::SameLine();
             ImGui::RadioButton("Faces##me", &g_meshSelMode, 1);
@@ -29193,6 +29195,7 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
             }
 
+            SectionHeader("Faces");
             ImGui::Spacing();
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##extdist", &g_extrudeDist, 0.01f, -10.0f, 10.0f, "%.2f");
@@ -29262,6 +29265,7 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One click clean-up: merge doubled vertices, drop collapsed triangles, cap holes and\nmake every face point outward. Painted colours and material slots stay. The result is in the Console.");
+            SectionHeader("Corners and edges");
             static float s_bevelAmt = 0.15f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
@@ -29442,6 +29446,7 @@ void DrawModeling(EditorState& ed) {
             // Edge-loop tools on the polygons (quads and n-gons). The interactive
             // versions run in the 3D view: Ctrl+R loop cut, G G slide, Ctrl+B bevel, K knife.
             ImGui::SeparatorText("Edge loops");
+            SectionHeader("Edge loops and joins");
             {
                 namespace pmo = okay::modeling;
                 const bool haveEdges = !SelectedPolyEdges(mr->mesh).empty();

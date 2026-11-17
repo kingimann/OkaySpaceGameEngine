@@ -19,7 +19,7 @@ int main() {
         CHECK(pg.insert(p.legacy).second);
         CHECK(p.legacy >= 0 && p.legacy <= 7);
         if (p.job != lastJob) { CHECK(jobsSeen.insert(p.job).second); lastJob = p.job; }   // a job heading never comes back twice
-        CHECK(std::string(p.desc).size() > 8);
+        CHECK(std::string(p.desc).size() > 8 && std::string(p.desc).size() <= 26);   // fits the sidebar without being cut
     }
     CHECK(pg.size() == 8 && jobsSeen.size() == 5);
 
@@ -48,6 +48,8 @@ int main() {
     CHECK(FindPage(Search("loop cut")[0].tool->page) != nullptr && std::string(FindPage(Search("loop cut")[0].tool->page)->name) == "Edit Mesh");
     CHECK(Has(Search("edit mesh", 300), "Loop Cut"));                                       // the page name is searchable too
 
+    // Sections are the headings the window really shows (the old Edit page put Mirror and Spherify under "UV Unwrap").
+    for (const Tool& t : Tools()) { if (std::string(t.name) == "Mirror X") CHECK(std::string(t.section) == "Symmetry, deform and shell"); if (std::string(t.name) == "Bevel") CHECK(std::string(t.section) == "Edge loops and joins"); if (std::string(t.name) == "Extrude Faces") CHECK(std::string(t.section) == "Faces"); }
     // Highlight lookup by the ImGui label.
     CHECK(FindByLabel(5, "Bevel##me") != nullptr && FindByLabel(2, "Bevel##me") == nullptr);
     CHECK(HighlightLabel(5, "Bevel##me", "bevel") && !HighlightLabel(5, "Knife##me", "bevel") && !HighlightLabel(5, "Bevel##me", ""));

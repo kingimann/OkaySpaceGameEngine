@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.881.0
+  New things
+  - Anti-cheat hardening for multiplayer games: the server can keep a ban
+    list, writes an audit log of what it decided and why, caps how many
+    packets one player can send, and spots bots and macros by how
+    regular their inputs are. For testing there is a cheat simulator:
+    run the player with --cheat-sim to see the server catch fake players.
+  - In-game UI library, first part: a range slider (two handles), input
+    validation for text fields, an aspect-ratio box that keeps its shape on
+    any screen, and more building blocks for your game's menus and HUD.
+  - Missing from the last notes (it was already in v2.880.0): player
+    controller presets (Classic, Modern, Arcade, Realistic, Shooter) with
+    camera and gamepad options, a per-system frame cost readout, and faster
+    scene queries.
+
 v2.880.0
   Fixes and new things
   - File > Examples now works in the Windows release: clicking an example

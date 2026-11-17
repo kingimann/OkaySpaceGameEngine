@@ -167,5 +167,81 @@ int main(int argc, char** argv) {
                 "  return 4;\n"
                 "}\n",
                 true, 4);
-    return tally.finish(2);
+    compare_one(tally, dir, cl, rt, "cont",
+                "int main(void) {\n"
+                "  int n; int i; n = 0;\n"
+                "  for (i = 0; i < 5; i = i + 1) { if (i == 2) continue; n = n + i; }\n"
+                "  return n;\n"
+                "}\n",
+                false, 8);
+    compare_one(tally, dir, cl, rt, "dowhile",
+                "int main(void) {\n"
+                "  int i; int n; i = 0; n = 0;\n"
+                "  do { i = i + 1; if (i == 2) continue; n = n + i; } while (i < 4);\n"
+                "  return n;\n"
+                "}\n",
+                false, 8);
+    compare_one(tally, dir, cl, rt, "nest",
+                "int main(void) {\n"
+                "  int i; int j; int s; s = 0;\n"
+                "  for (i = 0; i < 3; i = i + 1)\n"
+                "    for (j = 0; j < 3; j = j + 1) s = s + i + j;\n"
+                "  return s;\n"
+                "}\n",
+                false, 18);
+    compare_one(tally, dir, cl, rt, "arr",
+                "int main(void) {\n"
+                "  int a[4]; a[0] = 1; a[3] = 6; return a[0] + a[3];\n"
+                "}\n",
+                false, 7);
+    compare_one(tally, dir, cl, rt, "rank",
+                "int main(void) {\n"
+                "  int g[2][2][2][2]; g[1][0][1][1] = 9; return g[1][0][1][1] + sizeof(g);\n"
+                "}\n",
+                false, 73);
+    compare_one(tally, dir, cl, rt, "ptr",
+                "int main(void) {\n"
+                "  int x; int *p; x = 6; p = &x; *p = 11; return x;\n"
+                "}\n",
+                false, 11);
+    compare_one(tally, dir, cl, rt, "fact",
+                "int f(int n) { if (n < 2) return 1; return n * f(n - 1); }\n"
+                "int main(void) { return f(5); }\n",
+                false, 120);
+    compare_one(tally, dir, cl, rt, "sw",
+                "int main(void) {\n"
+                "  int n; n = 2;\n"
+                "  switch (n) { case 1: return 1; case 2: return 20; default: return 3; }\n"
+                "}\n",
+                false, 20);
+    compare_one(tally, dir, cl, rt, "glob",
+                "int g;\n"
+                "int bump(void) { g = g + 1; return g; }\n"
+                "int main(void) { g = 3; return bump() + bump(); }\n",
+                false, 9);
+    compare_one(tally, dir, cl, rt, "shadow",
+                "int main(void) {\n"
+                "  int x; int y; x = 1; y = 0; { int x; x = 4; y = x; } return x * 10 + y;\n"
+                "}\n",
+                false, 14);
+    compare_one(tally, dir, cl, rt, "comma",
+                "int main(void) { int x; x = (1, 2, 7); return x; }\n",
+                false, 7);
+    compare_one(tally, dir, cl, rt, "logic",
+                "int main(void) {\n"
+                "  int a; a = 1; if (a && 0) return 1; if (0 || a) return 6; return 2;\n"
+                "}\n",
+                false, 6);
+    compare_one(tally, dir, cl, rt, "tern",
+                "int main(void) { int a; a = 0; return a ? 1 : 8; }\n",
+                false, 8);
+    compare_one(tally, dir, cl, rt, "st",
+                "struct P { int x; int y; };\n"
+                "int main(void) { struct P a; struct P b; a.x = 3; a.y = 4; b = a; return b.x * 10 + b.y; }\n",
+                false, 34);
+    compare_one(tally, dir, cl, rt, "hello",
+                "#include <stdio.h>\n"
+                "int main(void) { printf(\"hi %d\\n\", 3); return 0; }\n",
+                true, 0);
+    return tally.finish(16);
 }

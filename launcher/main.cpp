@@ -19470,7 +19470,10 @@ int main(int argc, char** argv) {
         const bool upAvail = !g_upAvailable.empty() && !upBusy && st != Up_Updated;
         const bool upNote = upBusy || st == Up_Updated || st == Up_Failed || upAvail;
         const float profH = g_navCollapsed ? 44.0f : 52.0f;
-        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
+        // The card's button is a full frame tall (text + padding): a fixed 24 px button cut the bottom off
+        // "Install now" at the launcher's text size. The card grows to hold it.
+        const float upBtnH = std::max(24.0f, ImGui::GetFrameHeight());
+        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 50.0f + upBtnH + 18.0f : 58.0f)) : 0.0f;
         const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
         const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
@@ -19561,7 +19564,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
                 if (upAvail) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Install now", ImVec2(w - 48, 24))) StartUpdateCheck(true);
+                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) StartUpdateCheck(true);
                 } else if (st == Up_Failed) {
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
@@ -19569,7 +19572,7 @@ int main(int argc, char** argv) {
                 }
                 if (g_upRelaunchNeeded && st == Up_Updated) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
+                    if (PrimaryButton("Restart now", ImVec2(w - 48, upBtnH))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
                 ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
             }

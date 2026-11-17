@@ -20532,7 +20532,7 @@ static void HierPrefabSaveModal(EditorState& ed) {
             fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
                                                    : fs::path(ed.projectDir()) / "Assets";
             ImGui::Text("Folder: %s", dir.string().c_str());
-            ImGui::SetKeyboardFocusHere();
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();   // once: every frame it took the click from Save and Cancel
             bool enter = ImGui::InputText("Name", g_prefabNameBuf, sizeof(g_prefabNameBuf),
                                           ImGuiInputTextFlags_EnterReturnsTrue);
             if (enter || ImGui::Button("Save", ImVec2(110, 0))) {
@@ -20795,7 +20795,13 @@ static bool DrawHierarchyWithOkayUI(EditorState& ed) {
     }
     oked::RunPrefabRequests(ed);   // Prefab menu of a row: Revert All / Apply All / Unpack / Update All
     HierPrefabSaveModal(ed);
-    // A create category picked in an OkayUI menu: the editor's own list of it, at the pointer (Create Child puts the new object inside).
+    return true;
+}
+
+// A create category picked in an OkayUI menu: the editor's own list of it, at the pointer (Create Child puts the new object inside).
+// Drawn every frame the OkayUI port is on, also the frames the Dear ImGui body draws instead: this popup covers the panel, which
+// is exactly when OkayUI steps aside, and a popup that is not submitted for a frame never shows.
+static void HierCreateSlotPopup(EditorState& ed) {
     if (g_hierCreateSlotOpen) { ImGui::OpenPopup("##hiercreateslot"); g_hierCreateSlotOpen = false; }
     if (ImGui::BeginPopup("##hiercreateslot")) {
         GameObject* parent = g_hierCreateParent;
@@ -20804,11 +20810,14 @@ static bool DrawHierarchyWithOkayUI(EditorState& ed) {
         DrawCreateSlot(ed, g_hierCreateSlot, alive ? parent : nullptr);
         ImGui::EndPopup();
     } else { g_hierCreateSlot.clear(); g_hierCreateParent = nullptr; }
-    return true;
 }
 
 void DrawHierarchy(EditorState& ed) {
-    if (UseOkayUIBackend() && DrawHierarchyWithOkayUI(ed)) return;   // the opt-in OkayUI port (above); Dear ImGui stays the default
+    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (above); Dear ImGui stays the default
+        const bool drawn = DrawHierarchyWithOkayUI(ed);
+        HierCreateSlotPopup(ed);
+        if (drawn) return;
+    }
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
     if (!ImGui::Begin("Hierarchy", &g_showHierarchy)) { ImGui::End(); return; }
@@ -50384,10 +50393,18 @@ int main(int argc, char** argv) {
                 const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
                 const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
+                // No field (ImGui's or OkayUI's) is typing: the held keys still go to OkayUI, so a hosted panel sees Ctrl/Shift on a
+                // click and its own keys (the Hierarchy's arrows, F2, Ctrl+A act only while its window has the focus).
+                const bool held = UseOkayUIBackend() && !keys && !io.WantTextInput;
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys || held);
                 if (UseOkayUIBackend()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
+                    else if (held) {
+                        std::memcpy(uin.keyDown, h.keyDown, sizeof uin.keyDown);
+                        uin.ctrl = h.ctrl; uin.shift = h.shift;
+                    }
+                    uin.displayW = io.DisplaySize.x; uin.displayH = io.DisplaySize.y;   // popups and menus are kept inside the window
                 }
             }
             OkayUI::SetFont(OkayUI::FontDefault());

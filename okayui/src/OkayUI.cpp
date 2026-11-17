@@ -4112,11 +4112,12 @@ bool BeginMenu(const char* label) {
         if (ih) { g_hot = id; *open = true; if (pk) pk->idx = ord; }          // hovering the row opens it (and highlights it)
         const bool ksel = pk && pk->idx == ord && !pk->childOpen;
         if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
+        const bool wasOverlay = g_toOverlay;   // inside a popup (a context menu's sub-menu) the popup's later rows stay on top too
         g_toOverlay = true;
         quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
         drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
         drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, pick(Col_TextDisabled, g_theme.textDim));
-        g_toOverlay = false;
+        g_toOverlay = wasOverlay;
         if (!*open) { kbSlot(id)->idx = -1; return false; }
         if (pk) pk->childOpenNext = true;
         g_menuStack[g_menuDepth++] = g_curMenu;
@@ -4221,6 +4222,7 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
         for (int i = 0; i < g_menuDepth; ++i)
             if (g_menuStack[i].popupId != 0) { if (PopupSlot* ps = popupSlot(g_menuStack[i].popupId, false)) ps->open = false; }
     const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
+    const bool wasOverlay = g_toOverlay;   // a sub-menu of a popup: the popup's rows after it must stay on top
     g_toOverlay = true;
     quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
     if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
@@ -4229,7 +4231,7 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
         const float sw = labelW(shortcut), sx = x + w - sw - 10.0f;
         if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
     }
-    g_toOverlay = false;
+    g_toOverlay = wasOverlay;
     return clicked;
 }
 } // namespace
@@ -4241,10 +4243,11 @@ void MenuSeparator() {
     if (!g_lay.active || !g_curMenu.active) return;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
     g_curMenu.itemY += h;
+    const bool wasOverlay = g_toOverlay;
     g_toOverlay = true;
     quad(x, y, w, h, pick(Col_PopupBg, g_theme.panel));
     quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, pick(Col_Separator, g_theme.border));
-    g_toOverlay = false;
+    g_toOverlay = wasOverlay;
 }
 
 void EndMenu() {
@@ -4383,7 +4386,7 @@ void EndPopup() {
     PopupCtx& c = g_popupStack[--g_popupTop];
     *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
     if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
-    g_toOverlay = false;
+    g_toOverlay = g_popupTop > 0;   // back in the popup this one was opened from: still on top
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
     if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {

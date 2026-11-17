@@ -3764,6 +3764,58 @@ void prop_node(Node* node, std::map<std::string, uint64_t>* known, const std::se
     }
 }
 
+bool contains_call(const Node& node) {
+    if (node.kind == Node::Call) return true;
+    for (const Node& kid : node.kids)
+        if (contains_call(kid)) return true;
+    return false;
+}
+
+const Node* single_return(const Node& body) {
+    if (body.kind != Node::Block || body.kids.size() != 1) return nullptr;
+    const Node& stmt = body.kids[0];
+    if (stmt.kind != Node::Return || stmt.kids.size() != 1) return nullptr;
+    if (contains_call(stmt.kids[0])) return nullptr;
+    return &stmt.kids[0];
+}
+
+void subst_names(Node* node, const std::map<std::string, Node>& repl) {
+    if (node->kind == Node::Name) {
+        const auto found = repl.find(node->text);
+        if (found != repl.end()) *node = found->second;
+        return;
+    }
+    for (Node& kid : node->kids) subst_names(&kid, repl);
+}
+
+void inline_node(Node* node, const std::vector<FuncDecl>& funcs) {
+    if (node->kind == Node::Call && !node->text.empty()) {
+        const FuncDecl* fn = nullptr;
+        for (const FuncDecl& item : funcs)
+            if (item.name == node->text && item.defined) fn = &item;
+        const bool simple = fn != nullptr && !fn->vararg && !fn->sret &&
+                            static_cast<int>(node->kids.size()) == fn->nparams &&
+                            static_cast<int>(fn->locals.size()) == fn->nparams;
+        bool args_ok = simple;
+        if (simple) {
+            for (const Node& arg : node->kids) {
+                if (arg.kind != Node::IntLit && arg.kind != Node::Name) args_ok = false;
+            }
+        }
+        const Node* expr = simple && args_ok ? single_return(fn->body) : nullptr;
+        if (expr != nullptr) {
+            std::map<std::string, Node> repl;
+            for (int i = 0; i < fn->nparams; ++i) repl[fn->param_names[static_cast<size_t>(i)]] = node->kids[static_cast<size_t>(i)];
+            Node next = *expr;
+            subst_names(&next, repl);
+            *node = std::move(next);
+            inline_node(node, funcs);
+            return;
+        }
+    }
+    for (Node& kid : node->kids) inline_node(&kid, funcs);
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
                     int opt_level, std::string* error, CompileOutput* out) {
@@ -3781,6 +3833,12 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     };
     std::vector<PlacedFn> placed;
     std::vector<uint32_t> unwind_offs;
+    if (opt_level >= 2) {
+        for (int pass = 0; pass < 4; ++pass) {
+            for (FuncDecl& fn : funcs)
+                if (fn.defined) inline_node(&fn.body, funcs);
+        }
+    }
     for (FuncDecl& fn : funcs) {
         if (!fn.defined) continue;
         std::map<std::string, int> name_count;

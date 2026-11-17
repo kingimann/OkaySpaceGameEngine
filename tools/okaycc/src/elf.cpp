@@ -881,6 +881,21 @@ void emitData(Image& im, const Module& m) {
             f.target = g.reloc;
             im.fixes.push_back(f);
             u64(im, 0);
+        } else if (!g.relocs.empty()) {
+            int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
+            for (int off = 0; off < total; off += 8) {
+                std::string sym;
+                for (const auto& r : g.relocs)
+                    if (r.first == off) sym = r.second;
+                if (!sym.empty()) {
+                    Fix f;
+                    f.kind = FixKind::Abs64;
+                    f.at = im.bytes.size();
+                    f.target = sym;
+                    im.fixes.push_back(f);
+                }
+                u64(im, 0);
+            }
         } else if (!g.bytes.empty()) {
             bool zero = true;
             for (unsigned char c : g.bytes)

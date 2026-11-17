@@ -230,6 +230,31 @@ int main() {
     }
     {
         const char* src =
+            "int total;\n"
+            "class Foo {\n"
+            "public:\n"
+            "  int v;\n"
+            "  Foo(int a) : v(a) { total = total + a; }\n"
+            "  ~Foo() { total = total * 2; }\n"
+            "};\n"
+            "int main() {\n"
+            "  {\n"
+            "    Foo f(3);\n"
+            "    if (f.v != 3) return 1;\n"
+            "  }\n"
+            "  return total;\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        if (got != 6 || as.find("_ZN3FooC1Ei") == std::string::npos || as.find("_ZN3FooD1Ev") == std::string::npos) {
+            std::fprintf(stderr, "FAIL class ctor/dtor exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
             "int main() {\n"
             "  bool b;\n"
             "  int *p;\n"

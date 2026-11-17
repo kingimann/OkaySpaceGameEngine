@@ -29,6 +29,7 @@ done
 "$CXX" "${FLAGS[@]}" -o build/test_codegen tests/test_codegen.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_elf tests/test_elf.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_diff tests/test_diff.cpp "${objs[@]}"
+"$CXX" "${FLAGS[@]}" -o build/test_cppdiff tests/test_cppdiff.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_link tests/test_link.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_libc tests/test_libc.cpp "${objs[@]}"
 "$CXX" "${FLAGS[@]}" -o build/test_var tests/test_var.cpp "${objs[@]}"
@@ -42,6 +43,7 @@ done
 ./build/test_codegen
 ./build/test_elf
 ./build/test_diff
+./build/test_cppdiff
 ./build/test_link
 ./build/test_libc
 ./build/test_var

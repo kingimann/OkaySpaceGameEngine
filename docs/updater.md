@@ -137,9 +137,10 @@ that carries the new public key (the full installer is the recovery path). If th
 
 **What this does not do.**
 
-- It does not stop a **replay**: an attacker who serves an older signed `versions.json` offers only versions that were really
-  published and checked, but can hide a newer one (a "freeze") or offer an older one. The launcher still only installs a version newer
-  than its own on the automatic path; there is no signed timestamp or expiry yet.
+- It does not stop a **freeze**: an attacker who keeps serving the current signed `versions.json` can hide a newer one; there is
+  no signed timestamp or expiry yet. A **replay** of an older signed list is refused since SEC1: each program remembers the newest
+  version a validly signed list named (`okay_update_floor.txt`, `shared/UpdateGuard.hpp`) and refuses an older list. See
+  [security.md](security.md#3-updater-signing).
 - It does not sign the executables (item 2 of the old design: code signing for the OS and scanners). That needs a purchased
   certificate and a release-workflow step.
 - A mismatch while a publish is in flight (the new `versions.json` is up and `versions.json.sig` is not yet) makes a launcher that

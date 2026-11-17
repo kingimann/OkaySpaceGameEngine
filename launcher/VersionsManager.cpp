@@ -351,6 +351,16 @@ Index LoadIndex(const Sources& src, const FetchTextFn& fetch) {
             }
             Index idx = ParseIndex(body);
             idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
+            if (idx.ok && idx.signedByPublisher && !src.floorFile.empty()) {   // a replayed old (but really signed) list is refused; a newer one raises the floor
+                const std::string floor = okayupdate::ReadFloor(src.floorFile);
+                if (const std::string replay = okayupdate::ReplayProblem(floor, idx.latest); !replay.empty()) {
+                    Index refused;
+                    refused.signatureRefused = true;
+                    refused.error = replay;
+                    return refused;
+                }
+                if (floor.empty() || okayver::CompareVersions(idx.latest, floor) > 0) okayupdate::WriteFloor(src.floorFile, idx.latest);
+            }
             if (idx.ok) {
                 if (idx.archive.empty()) idx.archive = src.archiveTemplate.compare(0, 8, "https://") == 0 ? src.archiveTemplate : std::string();
                 const std::string v = ParseVersionTxt(Fetch(fetch, base + "VERSION.txt")), l = ParseVersionTxt(Fetch(fetch, base + "LTS.txt"));

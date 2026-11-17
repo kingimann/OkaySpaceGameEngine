@@ -3887,3 +3887,26 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+# Engine modules: manifest parser, ModuleRegistry, the generated module list (docs/modular_engine.md)
+add_executable(test_modules test_modules.cpp)
+target_link_libraries(test_modules PRIVATE okay::engine)
+add_test(NAME modules COMMAND test_modules)
+set_tests_properties(modules PROPERTIES LABELS "module:core")
+
+# Shared gameplay contracts: health/damage/hit zones, interaction, seats (docs/modular_engine.md)
+add_executable(test_health_contract test_health_contract.cpp)
+target_link_libraries(test_health_contract PRIVATE okay::engine)
+add_test(NAME health_contract COMMAND test_health_contract)
+set_tests_properties(health_contract PROPERTIES LABELS "module:health_damage")
+add_executable(test_interact_contract test_interact_contract.cpp)
+target_link_libraries(test_interact_contract PRIVATE okay::engine)
+add_test(NAME interact_contract COMMAND test_interact_contract)
+set_tests_properties(interact_contract PROPERTIES LABELS "module:interaction")
+
+# New Project / Project Settings module pages: the model behind them (editor/ModulesModel.hpp), no drawing
+add_executable(test_modules_model test_modules_model.cpp)
+target_link_libraries(test_modules_model PRIVATE okay::engine)
+target_include_directories(test_modules_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME modules_model COMMAND test_modules_model)
+set_tests_properties(modules_model PROPERTIES LABELS "module:core")

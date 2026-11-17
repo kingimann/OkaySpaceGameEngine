@@ -331,6 +331,21 @@ if(OKAY_OWN_FBX)
 endif()
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
+# ---- engine modules (docs/modular_engine.md) ----
+# The manifests under engine/modules/ and the OKAY_MODULES option become modules_enabled.cpp.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayModules.cmake)
+okay_modules_generate("${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp")
+target_sources(okay_engine PRIVATE
+    src/Modules/ModuleManifest.cpp
+    src/Modules/ModuleRegistry.cpp
+    src/Modules/Health.cpp
+    src/Modules/Interact.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/modules_enabled.cpp"
+    ${OKAY_MODULES_REGISTER_SOURCES})
+list(LENGTH OKAY_MODULES_ENABLED _okay_mod_on)
+list(LENGTH OKAY_MODULES_DISABLED _okay_mod_off)
+message(STATUS "OkaySpace: modules ${OKAY_MODULES} (${_okay_mod_on} on, ${_okay_mod_off} off)")
+
 target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )

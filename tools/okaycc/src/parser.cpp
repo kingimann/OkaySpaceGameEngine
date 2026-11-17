@@ -426,17 +426,18 @@ public:
         Tu tu;
         if (tscopes_.empty()) tscopes_.emplace_back();
         while (!atEnd()) {
+            std::size_t before = i_;
             if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
-                continue;
-            }
-            if (!isTypeKw(cur())) {
+            } else if (!isTypeKw(cur())) {
                 err("expected a declaration");
                 syncSemi();
-                continue;
+            } else {
+                parseExternal(tu);
             }
-            parseExternal(tu);
+            if (stop_) break;
+            if (i_ == before) advance();
         }
         return tu;
     }
@@ -446,6 +447,8 @@ private:
     Diagnostics& diags_;
     std::size_t i_ = 0;
     bool reported_ = false;
+    bool stop_ = false;
+    int depth_ = 0;
     std::map<std::string, std::unique_ptr<Type>> structs_;
     std::map<std::string, std::int64_t> enums_;
     bool enumDef_ = false;
@@ -468,7 +471,7 @@ private:
     }
 
     const Token& cur() const { return toks_[i_]; }
-    bool atEnd() const { return i_ >= toks_.size() || toks_[i_].kind == Tok::End; }
+    bool atEnd() const { return stop_ || i_ >= toks_.size() || toks_[i_].kind == Tok::End; }
     void advance() {
         if (i_ < toks_.size()) ++i_;
     }
@@ -512,10 +515,35 @@ private:
         return true;
     }
     void err(const std::string& msg) {
+        if (stop_) return;
+        if (diags_.items().size() >= 32) {
+            stop_ = true;
+            const Token& t = i_ < toks_.size() ? toks_[i_] : toks_.back();
+            diags_.error(t.file.empty() ? "t.c" : t.file, t.line, t.column, "too many errors");
+            return;
+        }
         const Token& t = i_ < toks_.size() ? toks_[i_] : toks_.back();
         diags_.error(t.file.empty() ? "t.c" : t.file, t.line, t.column, msg);
         reported_ = true;
     }
+    struct Guard {
+        Parser& self;
+        bool live;
+        explicit Guard(Parser& host) : self(host), live(false) {
+            if (self.stop_) return;
+            if (self.depth_ >= 64) {
+                self.err("nesting is too deep");
+                self.stop_ = true;
+                return;
+            }
+            ++self.depth_;
+            live = true;
+        }
+        ~Guard() {
+            if (live && self.depth_ > 0) --self.depth_;
+        }
+        explicit operator bool() const { return live; }
+    };
     void expectP(const char* s, const char* what) {
         if (!eatP(s)) err(std::string("expected '") + what + "'");
     }
@@ -731,6 +759,8 @@ private:
     }
 
     Parsed parseDeclarator(bool needName) {
+        Guard nest(*this);
+        if (!nest) return Parsed();
         int stars = 0;
         while (!atEnd()) {
             if (eatKw("const") || eatKw("volatile")) continue;
@@ -879,6 +909,8 @@ private:
     }
 
     void parseExternal(Tu& tu) {
+        Guard nest(*this);
+        if (!nest) return;
         bool ext = eatKw("extern");
         bool st = eatKw("static");
         bool td = eatKw("typedef");
@@ -1001,6 +1033,12 @@ private:
     }
 
     std::unique_ptr<Stmt> parseCompound() {
+        Guard nest(*this);
+        if (!nest) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Block;
+            return s;
+        }
         auto saved = cur();
         expectP("{", "{");
         tscopes_.emplace_back();
@@ -1009,16 +1047,17 @@ private:
         s->line = saved.line;
         s->col = saved.column;
         while (!atEnd() && !isP("}")) {
+            std::size_t before = i_;
             if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
-                continue;
-            }
-            if (!atEnd() && isTypeKw(cur())) {
+            } else if (!atEnd() && isTypeKw(cur())) {
                 parseDeclInto(s->stmts, false);
-                continue;
+            } else {
+                s->stmts.push_back(parseStmt());
             }
-            s->stmts.push_back(parseStmt());
+            if (stop_) break;
+            if (i_ == before) advance();
         }
         expectP("}", "}");
         if (!tscopes_.empty()) tscopes_.pop_back();
@@ -1026,6 +1065,8 @@ private:
     }
 
     std::unique_ptr<Stmt> parseStmt() {
+        Guard nest(*this);
+        if (!nest) return std::make_unique<Stmt>();
         if (!atEnd() && cur().kind == Tok::Ident && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Punct &&
             toks_[i_ + 1].text == ":") {
             auto s = std::make_unique<Stmt>();
@@ -1203,6 +1244,8 @@ private:
     }
 
     std::unique_ptr<Expr> parseExpr() {
+        Guard nest(*this);
+        if (!nest) return zeroAt();
         auto e = parseAssign();
         if (!isP(",")) return e;
         auto c = std::make_unique<Expr>();

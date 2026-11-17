@@ -22,6 +22,18 @@ static void checkAst(const char* name, const std::string& src, const std::string
     else ++okaycc_test::gFail;
 }
 
+static void checkBounded(const char* name, const std::string& src, const char* needle) {
+    okaycc::Diagnostics d;
+    okaycc::astOf(src, d);
+    if (d.items().empty() || d.items().size() > 40 || d.format().find(needle) == std::string::npos) {
+        std::fprintf(stderr, "FAIL %s errors %zu missing '%s'\n%s", name, d.items().size(), needle,
+                     d.format().c_str());
+        ++okaycc_test::gFail;
+    } else {
+        ++gOk;
+    }
+}
+
 static void checkErr(const char* name, const std::string& src, const char* err) {
     okaycc::Diagnostics d;
     okaycc::astOf(src, d);
@@ -242,6 +254,18 @@ int main() {
              "    )\n"
              "  )\n"
              ")\n");
+
+    checkBounded("cpp bail",
+                 "namespace N {\nclass Foo {\npublic:\n  void bar(int& x);\n};\n}\n",
+                 "expected a declaration");
+    {
+        std::string deep = "int f(){return ";
+        for (int i = 0; i < 80; ++i) deep += "(";
+        deep += "1";
+        for (int i = 0; i < 80; ++i) deep += ")";
+        deep += ";}\n";
+        checkBounded("deep parens", deep, "nesting is too deep");
+    }
 
     checkErr("missing semi", "int x\n", "';'");
     checkErr("not in subset", "inline x;\n", "not in this subset");

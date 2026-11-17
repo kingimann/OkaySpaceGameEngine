@@ -78,11 +78,16 @@ bool HostSection(const char* itemId, Draw draw) {
     OkayUIRegion().Offer(x0, y0, x1 - x0, y1 - y0, hovered);
     OkayUI::PushTextScale(g_uiScale * okayuiscreens::kEditorTextScale);
     OkayUI::PushClipRect(x0, y0, x1 - x0, y1 - y0);
+    const int overlays = OkayUI::GetOverlayCount();
     const SectionDrawn d = draw(p.x, p.y, w, h + 400.0f);   // room below: the height is measured, not cut
     OkayUI::PopClipRect();
     OkayUI::PopTextScale();
     if (d.height > 1.0f && std::isfinite(d.height)) *height = std::min(d.height, 20000.0f);
     if (d.popup.w > 0.0f && d.popup.h > 0.0f) OkayUIRegion().Offer(d.popup.x, d.popup.y, d.popup.w, d.popup.h, true);   // it is drawn over everything
+    for (int i = overlays; i < OkayUI::GetOverlayCount(); ++i) {   // an open combo list hangs out of the section: it takes the mouse too
+        const OkayUI::Rect r = OkayUI::GetOverlayRect(i);
+        if (r.w > 0.0f && r.h > 0.0f) OkayUIRegion().Offer(r.x, r.y, r.w, r.h, true);
+    }
     return true;
 }
 

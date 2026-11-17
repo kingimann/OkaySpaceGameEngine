@@ -1288,7 +1288,11 @@ int main(int argc, char** argv) {
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules") cmd = a;
-            else if (a == "-h" || a == "--help") { puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules] [-f build.okay] [-j N] [-k] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [target...]"); return 0; }
+            else if (a == "-h" || a == "--help") {
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules] [-f build.okay] [-j N] [-k] [--build-dir DIR] [--no-stat] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
+                return 0;
+            }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);
             else want.push_back(a);
         }

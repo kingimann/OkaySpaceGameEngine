@@ -372,6 +372,15 @@ static string capture(const string& cmd, int* rc = nullptr) {
 }
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testAuditHelp() {
+    printf("test: --help names the audit note and the commands that exist\n");
+    fresh("audit"); write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target a exe\n sources = a.cpp\nend\n");
+    string o = sh("--help");
+    check(o.find("audit: docs/own_build_plan.md") != string::npos, "help points at the audit", o);
+    check(o.find("modules") != string::npos && o.find("compdb") != string::npos && o.find("import") != string::npos, "help lists the commands the audit calls present", o);
+}
+
 static void testModules() {
     printf("test: module files generate a manifest that builds\n");
     fresh("mods");
@@ -479,6 +488,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

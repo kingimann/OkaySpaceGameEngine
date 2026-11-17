@@ -2,7 +2,41 @@
 
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
-No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
+No code from CMake, Ninja, Make, Meson, Bazel, MSBuild, ccache or sccache was read or used (rule 19a).
+
+## Audit at 29e1b2b8 (owner brief: 12 subsystems, one build system)
+Read of `tools/okaybuild/okay-build.cpp` and `test_okaybuild.cpp` on `grok/okaybuild-1` at `29e1b2b8`. One executable, one manifest format (`build.okay`), one state file (`.okaybuild/state`). Nothing here is wired into CMake, CI or releases.
+
+Dependency map, in the order a build walks them:
+
+1. **CLI** (`main`) picks a command and the options (`-f`, `-j`, `-k`, `--config` is not implemented yet, `--build-dir`, `--dry-run`, `--explain`, `-v`, `--profile`, `--no-stat`).
+2. **Manifest parser** reads `build.okay`: `toolchain`, `target`, `action`, `pool`, `buildfile`, `outdir`. `okay-build modules` writes that same manifest from `*.okaymodule` files. `okay-build import` writes it from an existing Ninja build.
+3. **Buildfile regen** (optional) reruns a command when declared inputs change, then the parser runs again.
+4. **Planner** turns targets and actions into a graph: compile, archive, link, or a raw command. It orders links, reports target cycles and action cycles, and wires generator outputs.
+5. **Incremental check** loads `.okaybuild/state` and decides each step from the output, the command-line hash, depfile headers, and a size+mtime shortcut. The hash is FNV-1a 64-bit. It is for change detection only. It is not collision-safe for security.
+6. **Scheduler** runs the dirty steps. POSIX uses a worker pool (`<thread>`, `<mutex>`, `<condition_variable>`), which the Windows build does not include. Windows waits on `CreateProcessW` handles with `WaitForMultipleObjects`. Both honour pools and `-k`.
+7. **Compdb** reads the same graph and writes `compile_commands.json`, including imported compiles.
+
+There is no second copy of any of those. Configurations, a compiler cache, a test runner, packages, assets and packaging are not in that chain yet.
+
+Claude's 12-row table, confirmed or corrected:
+
+| # | System | Audit |
+|---|---|---|
+| 1 | Configuration manager | Partial, as Claude said. `build.okay` has toolchain and target blocks, and `modules` can generate that file. No named Debug/Release/custom configuration, no typed options, no `config.okay`. |
+| 2 | Build graph | Exists, as Claude said. Compile, archive, link, raw actions, computed link order, target cycles and action cycles, generator outputs, `needs`. |
+| 3 | Scheduler | Exists, as Claude said: worker pool on POSIX, handle wait on Windows, pools, `-k`. Missing: a memory limit, Ctrl+C cancellation, recovery after a killed build. |
+| 4 | Incremental | Exists. Content hashes, depfiles, the stat shortcut, restat. A changed command line rebuilds that step. There is no separate "build settings" record beyond the command line. |
+| 5 | Compiler cache | Missing, as Claude said. Incremental rebuild is not a cache: deleting the object compiles it again. |
+| 6 | Toolchain manager | Partial, as Claude said. Hand-written `gcc`, `clang` and `mingw` presets. No detection. No MSVC. |
+| 7 | Packages | Missing, as Claude said. |
+| 8 | Testing | Missing, as Claude said. Discovering and running test executables is not a command. |
+| 9 | Asset pipeline | Missing, as Claude said. An engine change would be asked on the issue before any of it is built. |
+| 10 | Packaging | Missing in okay-build, as Claude said. `scripts/build-windows-dist.sh` is the engine's packager and is not called from here. |
+| 11 | Diagnostics | Partial. Claude said there is no timing report. `--profile` does print plan, dirty-check, command, hash and wall time, and `-v` / `--explain` name the reason for a step. There is still no per-step report, no cache hit rate, and no `okay-build report`. |
+| 12 | CLI | Partial. Claude's list missed `modules`, which is on this head. Commands today: `build`, `clean`, `compdb`, `import`, `graph`, `targets`, `modules`. No `test`, `report`, `package`, or `toolchains`. |
+
+Order after this audit, set by the owner and the coordinator together: configurations and toolchain detection, then the compiler cache, then diagnostics, then the test runner. Packages, assets and packaging stay later. The scheduler gaps (memory, Ctrl+C, a killed build) stay later too.
 
 ## Stage A (done, prototype): `tools/okaybuild/`
 - `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
@@ -17,8 +51,9 @@ No code from CMake, Ninja, Make, Meson or Bazel was read or used (rule 19a).
   it was recorded; `--no-stat` turns it off; `-v` prints hashed/trusted counts), response files for long link/archive lines
   (`rsp_threshold` in the toolchain block, default 30000 chars), quoted words so paths may contain spaces, `--build-dir DIR`
   (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
-- Still not done: Windows host (fork/exec only), FNV-1a 64-bit hash (fine for change detection, not cryptographic).
-  Structured targets use -MMD (system headers not tracked), imported ones keep CMake's -MD.
+- The Windows host is now in this file (see the later note). The hash is still FNV-1a 64-bit: fine for change
+  detection, not collision-safe for security. Structured targets use -MMD (system headers not tracked),
+  imported ones keep CMake's -MD.
 
 ## No-op speed (2026-11-17, measured on this machine)
 The old "27 ms vs Ninja 8 ms on 51 files" was before the -O2 and stat work. Re-measured here, median of several runs,

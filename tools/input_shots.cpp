@@ -1,4 +1,4 @@
-// Headless pictures of the input windows (docs/images/input/): the REAL drawing code of editor/InputActionsWindow.hpp and
+// Headless pictures of the input windows (written outside the repository, see tools/input_shots.sh): the REAL drawing code of editor/InputActionsWindow.hpp and
 // editor/InputDebugger.hpp, Dear ImGui's default scalable font, drawn by ImGui's SDL renderer backend onto a software SDL surface
 // (no window, no editor, no GPU). The look is ImGui's default dark style, NOT the editor's own skin; the rows, order and texts are
 // the real ones. Also the controller screens (button names, Controls screen, Controller station), the phase timeline and the

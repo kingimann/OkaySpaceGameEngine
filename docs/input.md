@@ -390,7 +390,7 @@ artwork from another project was used; the tables are in `engine/src/Input/Gamep
 - **OkayScript:** `pad_name`, `pad_family`, `pad_ids`, `pad_mapping` ("built-in", "generic", "user"), `pad_info`, `pad_raw`,
   `pad_battery`, `pad_button_name("a", slot)`, `input_button_name("jump")`, `pad_event()`, `pad_setup_start / active / prompt /
   skip / back / cancel / save / clear`, `pad_lightbar`, `pad_trigger_rumble`, `pad_swap`, `pad_touch`, `pad_gyro`.
-- **Pictures** (software renders, not a real window or pad): `docs/images/input/` (`glyph-sheet-*`, `controller-station-*` and `rebinding-*` for DualSense, Xbox Series, Switch Pro and an unknown generic pad, drawn by `tools/input_shots.cpp` with ImGui from the same engine data the Controller station shows). The **Controller** station (H) is in the input playground.
+- **Pictures** are not kept in the repository. `tools/input_shots.sh <imgui folder> [output folder]` redraws them (button-name sheet, Controller station and Controls screen for DualSense, Xbox Series, Switch Pro and an unknown generic pad) with ImGui in a headless software rasteriser; the output folder defaults to `$OKAY_SHOT_DIR`. The **Controller** station (H) is in the input playground.
 - **Checked with fake devices only:** `tests/test_controller_mapping.cpp` (classifier table, generic layout, trigger range, dead
   zone, Setup, saved round trip, names, slots, toasts) and the station in `tests/test_input_playground.cpp`. No real PS5, Xbox or
   other pad, and nothing on Windows, has been run.
@@ -434,15 +434,14 @@ idea of action maps, in our own words and format; no code, text or tests from an
   `ia_poll_join()`, `ia_x/ia_y/ia_z/ia_value(action[,player])`, `ia_down/ia_pressed/ia_released`, `ia_started/ia_performed/ia_canceled`,
   `ia_progress`, `ia_phase`, `ia_event()` (one "Jump:performed" per call), `ia_map(name,on)`, `ia_map_enabled`, `ia_scheme()`, `ia_set_scheme`,
   `ia_rebind`, `ia_conflicts`, `ia_reset_bindings`, `ia_save`, `ia_label(action)` (names follow the connected controller), `ia_players`, `ia_leave`.
-- **Tests** (headless, real `Input` fed by hand): `action_set`, `action_phases`, `input_asset`, `input_script_api`. Pictures (software renders by `tools/input_shots.cpp`):
-  `docs/images/input/action-set-*`, `action-phases-*`, `input-players-*`, `glyph-sheet-*`, `rebinding-*`, `controller-station-*` (each at 1280x720 and 1920x1080).
+- **Tests** (headless, real `Input` fed by hand): `action_set`, `action_phases`, `input_asset`, `input_script_api`. Pictures (action sets, phase timeline, local players, button names, rebinding, Controller station, at 1280x720 and 1920x1080) are made on demand by `tools/input_shots.sh` and not stored in the repository.
 - **Editor:** **View > Editors & Tools > Input Actions** (`editor/InputActionsWindow.hpp`) authors an asset: schemes, maps, actions with a type, bindings
   (single, 2D vector, 3D vector, 1D axis, chord) with group and processors, interactions, a Check tab (`ActionEditor::Validate`), a Live tab, Load / Save /
   New from default / Migrate Input Actions / Use in game. **View > Panels > Input** gained a "Controllers and typed actions" section (controller family,
   ids, mapping source, battery; every local player's actions with value, phase and the binding that drives it; "active" = held steady, no phase change).
   The logic is `Input/ActionEditor.hpp` (tested headless: `action_editor`); the ImGui drawing was only compile-checked, never run in a real editor window.
-  Pictures: `docs/images/input/input-actions-window-{action,check,live}-<size>.png`, `input-panel-<size>.png` and `controllers-typed-actions-<size>.png` are drawn with
-  the REAL ImGui code of those two headers in a headless software rasteriser (`tools/input_shots.cpp`, built by hand with `tools/input_shots.sh`; ImGui's default
+  Pictures (not stored in the repository; `tools/input_shots.sh` regenerates them) of the Input Actions window, the Input panel and its
+  \"Controllers and typed actions\" section are drawn with the REAL ImGui code of those two headers in a headless software rasteriser (`tools/input_shots.cpp`, built by hand with `tools/input_shots.sh`; ImGui's default
   look and scalable font, not the editor's own skin; 1280x720 and 1920x1080). They are not screenshots of the running editor.
 - **Not done yet:** the Inspector Player Input component, visual-script nodes for the `ia_*` calls, a ready in-game rebinding screen for this system (the existing `RemapModel` / keybind field cover `InputActions`),
   a hook that copies the default asset into new projects, touch scheme bindings (the scheme exists, no touch leaf inputs yet), and

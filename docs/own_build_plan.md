@@ -63,10 +63,10 @@ build tool's code was read.
   worker exception fails that step instead of killing the process.
 
 ## What Ninja/Make do that okay-build does not yet
-Pools (limit link jobs), `restat` for generators, generator rules (custom commands with declared outputs), `-k` keep going,
-`-t` tools (graph, targets, compdb of any rule), console pool, response files for huge command lines, jobserver, regeneration
-of the build file when it changes, Windows process handling, very fast no-op checks on huge trees (Ninja ~8 ms vs ours ~27 ms
-on 51 files; the gap is hashing and process start, and grows with tree size).
+This list is the gap as of the first prototype. Later sections on this page land pools, restat, generator outputs,
+`-k`, `graph`/`targets`, the console pool, manifest regeneration and a faster no-op. Still open after that: compdb of
+imported commands, a jobserver, and a Windows host (see the design note). The old timing (27 ms vs Ninja 8 ms on 51
+files) is replaced by the measurements in "No-op speed".
 
 ## Stage B: CMake importer (done as prototype)
 `okay-build import <cmake build dir> [--run-dir DIR] [-o build.okay] [ninja targets/objects...]` runs `ninja -t commands` in an
@@ -113,6 +113,38 @@ Built with `okay-build -j2` into a separate directory so Ninja's tree stayed put
 Byte comparison of every `.o`, the three archives (`libokay_engine.a`, `libokay_crypto.a`, `libokay_platform.a`)
 and `tests/test_math`: 339 files, 339 identical. The okay-build program also printed `15 checks, 0 failures`.
 `libokay_engine.a` is 463,143,278 bytes on both sides. No-op of that tree was not re-timed.
+
+## Windows host design note (2026-11-17, checked, not implemented)
+The `toolchain mingw` block already names `x86_64-w64-mingw32-gcc-win32`, `g++-win32` and `x86_64-w64-mingw32-ar`,
+object suffix `.o`, executable suffix `.exe`. On this machine that compiler linked a two-file static library and a
+program. `file` reported `PE32+ executable (console) x86-64, for MS Windows`. The program was not run (no Wine).
+The same shape is locked in by `testMingwSlice` in `tools/okaybuild/test_okaybuild.cpp`.
+
+`okay-build.cpp` does not compile as a Windows program. Both the win32 and the posix MinGW g++ stop at
+`#include <sys/wait.h>`. The tool runs commands with `fork`, `execvp`, `pipe` and `sh -c`. A Windows host has to
+replace that, not just switch compilers.
+
+What was checked about threads, because rule 21a says the win32 thread model cannot compile `<thread>`, `<mutex>`
+or `<condition_variable>`: a small program that creates a thread, a mutex and a condition variable compiled and
+linked with BOTH `x86_64-w64-mingw32-g++-win32` and `g++-posix` (MinGW-w64 gcc 13.2 on this machine). The win32
+exe imported KERNEL32, msvcrt, libgcc and libstdc++. The posix exe also imported libwinpthread-1.dll. Neither exe
+was run. This does not change rule 21a for the launcher, editor and player. It only says this particular compiler
+accepted those headers. The build tool stays a POSIX program until the process code is replaced.
+
+Replacement, when it is written (still not in this branch):
+- `runCmd` becomes CreateProcessW. The working directory is the process argument (`dir` in the manifest), not a
+  `cd` glued onto the command. Stdout and stderr come back through an inheritable pipe. Wait with
+  WaitForSingleObject. One job at a time needs no thread header. A worker pool on the win32 compiler can use the
+  threads that compiler accepted here, or a loop that waits on several process handles.
+- Raw actions on Windows go through `cmd.exe /C`, because imported CMake lines use shell syntax (`: && ... && :`).
+  A command with no shell metacharacters can be an argv array instead.
+- Paths in the manifest already use `/`. Keep that until a tool rejects it.
+- The command-line limit is 32767 characters. Response files already exist and the default threshold (30000) is
+  under that limit. A Windows host should keep the threshold below 32767.
+- Modification times: NTFS ticks are 100 ns, FAT is 2 seconds. The sub-millisecond shortcut is for stamps that
+  actually change on every write. On a coarse Windows filesystem the 2 second rule is the one that is correct.
+  That choice is part of writing the host, not something this note turns on.
+- No cryptography. The change-detection hash stays a non-cryptographic 64-bit mix.
 
 ## Windows host plan (not implemented)
 Replace `runCmd` (fork/exec/pipe) with CreateProcessW and an inheritable pipe; run raw actions with `cmd /C` instead of `sh -c`

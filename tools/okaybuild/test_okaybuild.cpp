@@ -101,6 +101,24 @@ static void testManifestErrors() {
     write("build.okay", "target a exe\n sources = a.cpp\n deps = zzz\nend\n"); o = sh("", &rc);
     check(rc == 2 && o.find("unknown target 'zzz'") != string::npos, "unknown dep", o);
 }
+static void testMingwSlice() {
+    printf("test: mingw toolchain links a library and an exe\n");
+    if (system("x86_64-w64-mingw32-g++-win32 -v >/dev/null 2>&1") != 0) { printf("  skipped (no mingw)\n"); return; }
+    fresh("mwslice");
+    write("add.cpp", "int add(int a, int b){return a+b;}\n");
+    write("mul.cpp", "int mul(int a, int b){return a*b;}\n");
+    write("main.cpp", "int add(int,int); int mul(int,int); int main(){return add(2,3)==5 && mul(2,3)==6 ? 0 : 1;}\n");
+    write("build.okay",
+          "toolchain mingw\n  flags = -std=c++17 -O0\nend\n"
+          "target math lib\n  sources = add.cpp mul.cpp\nend\n"
+          "target app exe\n  sources = main.cpp\n  deps = math\nend\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/app.exe") && fs::exists(gRoot / "build/libmath.a"), "mingw lib and exe linked", o);
+    FILE* f = popen(("file '" + (gRoot / "build/app.exe").string() + "'").c_str(), "r");
+    char b[256] = {}; if (f) { size_t n = fread(b, 1, sizeof b - 1, f); pclose(f); b[n] = 0; }
+    check(std::string(b).find("PE32+") != std::string::npos, "exe is a Windows PE32+ program", b);
+}
+
 static void testMingwCompdb() {
     printf("test: mingw toolchain preset (plan only, compdb)\n"); fresh("mingw"); write("a.cpp", "int main(){}\n");
     write("build.okay", "toolchain mingw\n flags = -std=c++17\nend\ntarget a exe\n sources = a.cpp\nend\n");
@@ -370,7 +388,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
-    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
+    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

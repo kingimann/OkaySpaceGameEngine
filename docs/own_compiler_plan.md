@@ -10,10 +10,12 @@ have something of our own to build toward. It does not replace them.
 
 ## Status of this branch
 
-- Lexer: implemented in `tools/okaycc/` (`okay-cc --lex`). Tested: identifiers, keywords,
-  integer and floating constants, character and string literals, punctuators, comments,
-  line splices, and header names.
-- Preprocessor, parser, type checker, and every later stage: not started.
+- Lexer: implemented (`okay-cc --lex`).
+- Preprocessor: implemented (`okay-cc --pp`, `-I`). `#include` with quote and angle
+  search, object-like and function-like macros including `#` and `##`, `#undef`, the
+  `#if` family with `defined` and constant expressions, `#error`, `__LINE__` and `__FILE__`.
+  Nesting stops at 64 includes.
+- Parser, type checker, and every later stage: not started.
 
 ## Rules for the code
 

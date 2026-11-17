@@ -614,6 +614,10 @@ add_executable(test_script_net test_script_net.cpp)
 target_link_libraries(test_script_net PRIVATE okay::engine)
 add_test(NAME script_net COMMAND test_script_net)
 
+add_executable(test_path_safety test_path_safety.cpp)
+target_include_directories(test_path_safety PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME path_safety COMMAND test_path_safety)
+
 add_executable(test_net_relay test_net_relay.cpp)
 target_link_libraries(test_net_relay PRIVATE okay::engine)
 add_test(NAME net_relay COMMAND test_net_relay)
@@ -793,6 +797,16 @@ add_executable(test_ui_widgets_more test_ui_widgets_more.cpp)
 target_link_libraries(test_ui_widgets_more PRIVATE okay::engine)
 add_test(NAME ui_widgets_more COMMAND test_ui_widgets_more)
 
+add_executable(test_ui_library test_ui_library.cpp)
+target_link_libraries(test_ui_library PRIVATE okay::engine)
+add_test(NAME ui_library COMMAND test_ui_library)
+
+# The shipped sample scene examples/ui_library/ui_library_1.okayscene, loaded and played
+add_executable(test_ui_library_example test_ui_library_example.cpp)
+target_link_libraries(test_ui_library_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library_example COMMAND test_ui_library_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -859,6 +873,12 @@ add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+# Issue #888 findings 140 (particle fade), 141 (Scene Manager rename keeps unsaved edits in memory),
+# 142 (quit request while another modal is open) and 131 (UIInputField repeat, Delete, caret).
+add_executable(test_fix_140_141_142_131 test_fix_140_141_142_131.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_fix_140_141_142_131 PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_fix_140_141_142_131 PRIVATE okay::engine)
+add_test(NAME fix_140_141_142_131 COMMAND test_fix_140_141_142_131)
 add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
 target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
@@ -1987,6 +2007,14 @@ target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/l
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
 
+# SEC1 item 3: the update path against a hostile release server (tampered / truncated / mixed-up files, damaged and replayed signed lists, the
+# signature ON/OFF status line). A map of address -> bytes plays the server; throwaway keys; no network.
+add_executable(test_update_security test_update_security.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_update_security PRIVATE cxx_std_17)
+target_link_libraries(test_update_security PRIVATE okay::crypto)
+target_include_directories(test_update_security PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+add_test(NAME update_security COMMAND test_update_security)
+
 # Test builds (the dev channel; shared/TestBuild.hpp, LoadDevIndex in launcher/VersionsManager.cpp, scripts/dev_index.py): the order of a four-number version, the
 # real list and VERSION.txt ignoring such versions, the dev list read from dev/ only and signed like the real one, ChooseTarget (what the update check installs),
 # the "Get test builds" setting (off by default, nothing written when off) and the same install rules. No window, no network; python3 is run when it is there.
@@ -2004,11 +2032,16 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    add_test(NAME sign_release_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_release.sh)
     # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
     add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
     # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
     add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
     set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
+    # The one-dispatch fast release (scripts/fast_release.py, .github/workflows/fast-release.yml): version, CI gate, changelog entries, stamp,
+    # after-check with fake data, the workflows read as YAML, and every real entry in dist/changelog.d checked.
+    add_test(NAME fast_release_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fast_release.py)
+    set_tests_properties(fast_release_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -2149,6 +2182,10 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME reactions_sql_static COMMAND ${OKAY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql_static.py)
+    # docs/sql/reactions_privacy.sql (SEC1 item 4) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME reactions_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql.sh)
+    set_tests_properties(reactions_sql PROPERTIES SKIP_RETURN_CODE 77)
     # scripts/sign-windows.sh (Authenticode signing of the Windows programs) with a throwaway certificate; needs osslsigncode, openssl and MinGW.
     add_test(NAME sign_windows COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_windows.sh)
     set_tests_properties(sign_windows PROPERTIES SKIP_RETURN_CODE 77)
@@ -2273,6 +2310,12 @@ add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
 target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
 add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
 
+# Modeling fixes from issue #888 findings 134-139: pivot ops saved, one undo step per button, NaN guards,
+# Solidify rim, OBJ export round trip (colours, polygons, normals, precision), one implementation per tool
+add_executable(test_modeling_fixes_134_139 test_modeling_fixes_134_139.cpp)
+target_link_libraries(test_modeling_fixes_134_139 PRIVATE okay::engine)
+add_test(NAME modeling_fixes_134_139 COMMAND test_modeling_fixes_134_139)
+
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
 target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)
@@ -2334,6 +2377,12 @@ if(SDL2_FOUND)
     target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
     target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
+
+    add_executable(test_ui_library_shots test_ui_library_shots.cpp)
+    target_link_libraries(test_ui_library_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
@@ -3932,3 +3981,14 @@ add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINA
 add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
+# a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
+# reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
+# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/automated_testing.md "CI speed").
+foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
+                     launcher_download_own launcher_versions native_fetch playfab_own)
+    if(TEST ${_serial_test})
+        set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
+    endif()
+endforeach()

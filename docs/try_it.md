@@ -7,6 +7,10 @@ useless." This page lists each thing that is shipped (or finished and waiting fo
 in the release you run (`OkaySpace.exe`, `Tools\OkayEngine.exe`, `Tools\OkaySpacePlayer.exe`, the installer or the
 zip), and how to tell it worked. CLAUDE.md rule 4a keeps it current: every change adds its row here.
 
+**File > Examples is gone (owner request, 2026-11-17).** Where an entry below still says "File > Examples", open the same scene with
+**File > Open Scene...** instead: the example scenes still ship in the `examples` folder beside the program (for example
+`examples\input\...`, `examples\ui_library\...`). The older wording will be corrected as entries are touched.
+
 Honest status words used below:
 
 * **Verified here** means a command was run on the Linux machine that wrote this page, and the result was seen.
@@ -60,6 +64,7 @@ release job or the installer build for this change.
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
+| 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
@@ -82,7 +87,9 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
+| security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -93,6 +100,7 @@ release job or the installer build for this change.
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
 | 15c | Blender reader: Subdivision Surface options of Blender 2.9+ (UV Smooth, Boundary Smooth keep corners, limit surface, creases by DeRose's rules) | `OKAY_OWN_BLEND=1`, `examples\own_readers\subsurf_options_42.blend` | Tests only (Linux); synthetic file, not written by Blender |
+| ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
 
@@ -644,6 +652,34 @@ player run in step 10 (the player's drawing code was only syntax-checked, never 
 the folder (the example-copy block of `scripts/build-windows-dist.sh` was run alone and does put `examples/ui_text/ui_text.okayscene`
 in the output; `bash -n` of the whole script is clean). The editor code for the new Inspector rows and
 menu entry was only syntax-checked, not run. The pictures are headless renders, not screenshots of a window.
+
+## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
+
+**What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
+([ui_library.md](ui_library.md); [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
+
+**Steps.**
+1. Open the editor. **File > Examples > UI library (every in-game UI part) > ui_library_1**. (Or **File > Open...** with
+   `<install folder>\examples\ui_library\ui_library_1.okayscene`; the installer puts it in `%LOCALAPPDATA%\OkaySpace\examples\ui_library\`.)
+2. Press **Play**. The Game view shows "Range slider", "Input validation" and "Aspect ratio box (16:9)" cards with hints.
+3. Drag the handles of "Price range". The numbers above the track read `$120 to $380` and change in steps of 10. The handles
+   never cross. Drag the "Level range" handles: whole numbers, at least 3 apart.
+4. Click the Email box and type `ada@`. A red ring and a short sentence appear under the box. Type `lovelace.org`: the ring
+   turns green. Type `7` in Age: "Between 13 and 120". Type a short password, then repeat it differently: "That is not the
+   same password".
+5. Make the Game view taller, wider or a phone shape: the blue frame stays 16:9.
+6. Stop Play. Select the `Price` object: the Inspector shows **UI Range Slider**. Select `Email`: **UI Input Field** and
+   **UI Input Validator**. Select `Area`: **UI Aspect Ratio**. To add them to another scene: **GameObject > UI > Controls >
+   Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
+
+**What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
+other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+
+**Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
+The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
+were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
+world-space Canvas yet.
 
 ## 7r. The walk looks like a walk, Shift looks like a run
 
@@ -1360,12 +1396,85 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## fast1. Fast release: one dispatch, no version-bump PR
+
+**What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
+refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
+The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
+then "Release Windows build") still works. Everything: `docs/fast_release.md`.
+
+**Steps (the dry run, safe: builds and publishes nothing).**
+1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.
+   Or in a terminal: `gh workflow run fast-release.yml --ref main -f dry_run=true`.
+2. Open the run and read its summary page.
+
+**What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
+("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
+new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
+(missing, still running, red). That is the safety check working, not a failure of the tool.
+
+**Steps (the first real release through it).**
+1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
+2. Actions > Fast release > Run workflow, branch `main`, dry_run off.
+3. Wait for the three jobs: Plan, Build and publish (release.yml), Check the release. The last one prints a table; every row must say "ok".
+
+**What you should see.** A new GitHub release `v<version>` that is "latest", the launcher offering that version, and in the run summary the
+check table (release published, tag on the tested commit, three programs with a SHA-256 in versions.json that equals the one on GitHub).
+
+**To add a changelog entry (every PR).** Copy `dist/changelog.d/fast-release.txt`, change the text, run
+`python3 scripts/fast_release.py check-entries`.
+
+**Status.** Tested offline only: `python3 tests/scripts/test_fast_release.py` (ctest `fast_release_lint`) with fake GitHub data and a
+throw-away git repo; the workflows parse as YAML and every shell block passes `bash -n`. Not run on GitHub Actions. Unverified there:
+calling `release.yml` as a reusable workflow with `secrets: inherit`, `body_path` together with `generate_release_notes`, and GitHub's
+asset `digest` field. The first dry run and the first real release are the proof.
+
 ## File > Examples opens the examples (fix)
 
 1. Open the editor from the Windows release (also when it was started from a project folder).
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## Bug fixes: particle fade, Scene Manager rename, Exit after a dialog, text box editing (#888: 140, 141, 142, 131)
+
+**140. Particle "Fade Out" now lasts the whole lifetime.** Before, a plain Particle System faded out in a fraction of a
+second (faster at higher frame rates), because the fade was multiplied again on every frame.
+
+1. Windows editor: **GameObject > Effects > Particle System**. In the Inspector set **Lifetime** to 4 and leave
+   **Fade Out** on and **Color Over Life** off. Press **Play**.
+2. You should see each particle fade smoothly over its full 4 seconds (half visible at 2 s). It looks the same with
+   VSync on or off.
+
+**141. Scene Manager > Rename no longer saves your unsaved edits or deletes the saved file.**
+
+1. Windows editor: save a scene (for example `MyLevel`). Change something without saving; the title says unsaved.
+2. **View > Panels > Scene Manager**, click **Rename** on that scene. The dialog now says "The file is renamed as last
+   saved. Your unsaved changes stay unsaved." Enter `MyLevel2` and click **Rename**.
+3. You should see: the title still says unsaved, your change is still in the scene, and `MyLevel2.okayscene` on disk
+   holds the last *saved* version (open it from the Project panel in another way, or press **File > Open** and choose
+   **Don't Save** to see it). Nothing was written until you press Save.
+
+**142. File > Exit and the window's close button keep working after a quit arrives while another dialog is open.**
+
+1. Windows editor: change the scene without saving. Open another scene (Project panel or **File > Open**) so the
+   "Save changes?" dialog is up.
+2. While it is up, click the window's close button (X). Then press **Cancel** in "Save changes?".
+3. You should see the "Unsaved Changes" quit prompt appear as soon as the first dialog closes. Press **Cancel**.
+4. Now **File > Exit**: the "Unsaved Changes" prompt appears again (before the fix, Exit and the X did nothing for the
+   rest of the session).
+
+**131. In-game text boxes: hold Backspace/Delete, the Delete key, and a movable caret.**
+
+1. Windows editor: **GameObject > UI > Input Field**, press **Play**, click the box and type `hello world`.
+2. Press **Left** five times, type `X`: you get `hello Xworld`, and the caret is drawn where you are typing.
+3. **Delete** removes the character after the caret, **Backspace** the one before it. **Home** / **End** jump to the
+   start / end. Holding Backspace or Delete keeps deleting (after a short pause, like a normal text box); holding Left
+   or Right keeps moving.
+
+Test: `ctest -R fix_140_141_142_131` (runs each repro headless: fade at 30, 60 and 144 fps; rename with a real
+EditorState and files on disk; the quit prompt's state machine; the input field with a real Input feed).
+Not verified on Windows; the editor GUI steps above were not run here (the editor files were only syntax-checked).
 
 ## hygiene1. Repository hygiene: one account config file, no built programs in git
 
@@ -1407,6 +1516,34 @@ Not in the Windows release: it needs a build with `-DOKAY_USE_ASSIMP=ON` and Ass
    where our reader and Assimp disagree on counts and bounds.
 
 What to expect and the latest numbers: `docs/own_readers_speed.md`.
+
+## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
+
+Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+
+**Script file paths (try it in the editor).**
+
+1. Open the editor from the Windows release, **File > Open...**, open `examples\security_paths\script_paths.okayscene` (in the `examples`
+   folder next to the program) and press Play.
+2. Open the Console. You should see seven lines: the first six file names (`NUL`, `con.txt`, `C:/x`, `slot.okaysave:hidden`,
+   `../escape.okaysave`, `/etc/evil.okaysave`) end with `false`, and `slot_ok.okaysave` ends with `true`. Above them the Console
+   shows `[script] save file: refusing file 'NUL': a reserved device name (CON, NUL, COM1 ...)` and one like it per refused name.
+
+**Update signature status (visible now, OFF until you add a key).**
+
+1. Open the launcher, **Settings > About**: under the version you should see `update signature check: OFF (no key configured)` in amber.
+   In the editor, **Help > About** shows the same line. (Start the launcher from a terminal, or open `okay_update.log` beside
+   `OkaySpace.exe`, to see it printed at start-up too.)
+2. To turn it ON: add the GitHub secret `OKAY_UPDATE_SIGNING_SEED` and the variable `OKAY_UPDATE_TRUSTED_KEYS` (steps in security.md section 3),
+   release, install that release: the line turns green and says `ON (1 key built in)`.
+
+**Relay caps and reactions SQL (owner steps, nothing to click in the Windows release).** The relay is a Linux server program; its new
+caps are checked by `ctest -R relay_security`. The reactions fix is `docs/sql/reactions_privacy.sql`: Supabase dashboard > SQL Editor >
+paste it > Run. Check it with `select * from public.reaction_counts('dm', array[1]);` (no user column in the answer).
+
+**Unverified.** Checked on Linux only: the tests `path_safety`, `script_paths`, `update_security`, `update_signature`, `relay_security`,
+`sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
+in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
 
 ## Team tooling (not part of the Windows release)
 
@@ -1735,6 +1872,40 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## ci1. CI and release speed-up: how to tell it worked
+
+**This change has nothing to click in the editor, launcher or player.** It only changes how GitHub builds and tests
+(`.github/workflows/ci.yml`, `.github/workflows/release.yml`, the end of `tests/CMakeLists.txt`). The way to "try" it is
+to read the Actions page. **The speed-up is UNVERIFIED until a real CI run has happened.** The first run after this
+merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR run restores whatever `main` last saved.
+
+**Steps.**
+1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
+   about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
+2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
+   means the build was cold.
+4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
+   90 percent; the first run after a change is expected to be lower.
+5. Open "Test". The `ctest` line must show `-j4 --timeout 300` and the summary must say 100 percent passed, with the
+   same count (about 805 tests) as before. No test is skipped or loosened.
+6. After the merge, open the push-to-main run. Every job that builds C++ now has a last step "Save compiler cache (main
+   only)"; it runs only there. On a PR run that step shows as skipped.
+7. Repository Settings > Actions > Caches: the `ccache-*` entries should be one recent entry per job, not a long list of
+   old sha keys. Total under 10 GB.
+8. Release (`release.yml`): the first step of the "Cross-compile Windows exes" job is "Refuse a version that is already
+   released". On a version that already has a GitHub release it must fail in seconds with "already released". Two
+   release runs started together must queue (the second shows "Waiting"), not run at the same time. The "Make the release
+   visible (latest)" job runs only if the Linux server job succeeded.
+
+**What you should see.** A faster "Build & test (Ubuntu)" (target: well under an hour; the real number is unknown until
+measured) and the same tests passing. All other jobs still run on every PR and on main, with the same names.
+
+**Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
+CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
+passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+out.
 
 ## Five starter templates removed from New Project
 

@@ -199,12 +199,50 @@ void DrawSheet(Painter& p, UIBottomSheet* w, const Vec2& o, const Vec2& sz, floa
     Words(p, "x", o.x + sz.x - 22.0f, y + 2.0f, w->textColor, op);
 }
 
+void DrawRange(Painter& p, UIRangeSlider* w, const Vec2& o, float op) {
+    const float h = w->size.y, tw = w->size.x;
+    const float trackH = std::max(6.0f, h * 0.35f);
+    const float ty = o.y + (h - trackH) * 0.5f;
+    const float knobD = std::max(12.0f, std::min(h, 26.0f));
+    const float usable = std::max(1.0f, tw - knobD);                 // handle centres run inside the ends
+    const float lx = o.x + knobD * 0.5f + usable * w->LowFraction();
+    const float hx = o.x + knobD * 0.5f + usable * w->HighFraction();
+    Box(p, o.x, ty, tw, trackH, w->background, w->cornerRadius, op);
+    Box(p, lx, ty, hx - lx, trackH, w->fill, w->cornerRadius, op);
+    const float ky = o.y + (h - knobD) * 0.5f;
+    for (int i = 0; i < 2; ++i) {
+        const float cx = i == 0 ? lx : hx;
+        const bool picked = (w->IsFocused() || w->IsDragging()) && w->ActiveHandle() == i;
+        if (picked) Box(p, cx - knobD * 0.5f - 2.0f, ky - 2.0f, knobD + 4.0f, knobD + 4.0f, w->fill, knobD, op * 0.55f);
+        Box(p, cx - knobD * 0.5f, ky, knobD, knobD, w->knob, knobD, op);
+    }
+    if (w->showValue) {
+        const std::string t = w->FormatValue();
+        const float tx = o.x + (tw - UITextW(t, kPx)) * 0.5f;
+        Words(p, t, tx, o.y - Font8x8::Height * kPx - 4.0f, w->textColor, op);
+    }
+}
+
+void DrawValidation(Painter& p, UIInputValidator* v, UIInputField* in, const Vec2& o, float op) {
+    const bool bad = v->ShowsError(), good = v->ShowsOk();
+    if (!bad && !good) return;
+    const Color& c = bad ? v->errorColor : v->okColor;
+    Rect box{(int)o.x, (int)o.y, (int)in->size.x, (int)in->size.y};
+    FillUIRing(p, box, in->shape, in->cornerRadius, c, 2, op);
+    if (bad && v->showMessage && !v->Error().empty()) {
+        float px = 1.5f;                                              // smaller than body text, shrunk until the sentence fits the field
+        while (px > 0.75f && UITextW(v->Error(), px) > in->size.x - 4.0f) px -= 0.25f;
+        DrawUIText(p, v->Error(), o.x + 2.0f, o.y + in->size.y + 4.0f, px, Ink(c, op));
+    }
+}
+
 } // namespace
 
 bool DrawMoreUIWidget(int kind, GameObject* go, Painter& p, float logicalW, float logicalH, float opacity) {
     using namespace uilayers;
     const bool ours = kind == K_Search || kind == K_DateTime || kind == K_FilePicker || kind == K_Accordion
-        || kind == K_Breadcrumbs || kind == K_Pagination || kind == K_Skeleton || kind == K_BottomSheet;
+        || kind == K_Breadcrumbs || kind == K_Pagination || kind == K_Skeleton || kind == K_BottomSheet
+        || kind == K_RangeSlider || kind == K_Validator;
     if (!ours) return false;
     if (!go || !go->active || UIHidden(go)) return true;
     UIRect rect = GetUIRect(go);
@@ -220,6 +258,8 @@ bool DrawMoreUIWidget(int kind, GameObject* go, Painter& p, float logicalW, floa
     else if (kind == K_Breadcrumbs) { if (auto* w = go->GetComponent<UIBreadcrumbs>()) { DrawCrumbs(p, w, o, op); if (!w->interactable) Grey(p, o.x, o.y, sz.x, sz.y); } }
     else if (kind == K_Pagination) { if (auto* w = go->GetComponent<UIPagination>()) { DrawPages(p, w, o, op); if (!w->interactable) Grey(p, o.x, o.y, sz.x, sz.y); } }
     else if (kind == K_Skeleton) { if (auto* w = go->GetComponent<UISkeleton>()) DrawSkeleton(p, w, o, op); }
+    else if (kind == K_RangeSlider) { if (auto* w = go->GetComponent<UIRangeSlider>()) { DrawRange(p, w, o, op); if (!w->interactable) Grey(p, o.x, o.y, sz.x, sz.y); } }
+    else if (kind == K_Validator) { auto* v = go->GetComponent<UIInputValidator>(); auto* in = go->GetComponent<UIInputField>(); if (v && in) DrawValidation(p, v, in, o, op); }
     else if (kind == K_BottomSheet) { if (auto* w = go->GetComponent<UIBottomSheet>()) DrawSheet(p, w, o, sz, logicalW, logicalH, op); }
     return true;
 }

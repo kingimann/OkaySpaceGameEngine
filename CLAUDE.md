@@ -74,6 +74,22 @@ then this file gets updated. Keep this file short and true.
     sending out releases even if the previous one isn't out yet, so I can keep testing"): every release has its own new
     version, and the publish step is serialized by a lock and never moves "latest" backwards (branch
     `claude/release-parallel`; until it is merged, check that no other release is publishing before you dispatch).
+11a. **Releases are fast. The owner does not wait hours.** (Owner rule, 2026-11-17: "i want faster releases, even if
+    they're small, i don't want to wait for big releases", then "make that a rule, i have said that to you so many
+    times, i don't wanna wait hours".)
+    - **Ship what is green now.** The moment a change is merged and green, it goes into a release. Never hold a
+      release to wait for another PR or to make it "bigger", and never batch. A one-change release is fine.
+    - **Start the release at once.** Open the version PR as soon as there is something to ship, in parallel with
+      everything else. If something is waiting on a slow job, do not sit and wait for it: start the next release
+      step or the next piece of work.
+    - **A slow release path is a bug to fix first.** If getting a release to the owner takes more than about 30
+      minutes of waiting on CI or on manual steps, fixing that is the top-priority job until it is fast (CI speed:
+      `claude/ci-speed-1`; one-dispatch releases with no version PR: `claude/fast-release-1`). Use the fast path as
+      soon as it is merged and tested.
+    - **Say the time.** Tell the owner what the release is waiting on and roughly how long, in plain words, and
+      tell them as soon as it is published so they can test.
+    - This rule does not weaken rules 6, 12 and 13: never merge or publish anything red, never re-run an existing
+      version, always check the checksums. Speed comes from a shorter pipeline, not from skipping checks.
 12. **Never re-run the release workflow for a version that already exists.** It rebuilds the programs and changes
     their checksums.
 13. **Check the release really worked**: the Supabase publish step, the "make latest" step, and `versions.json`

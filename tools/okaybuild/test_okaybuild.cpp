@@ -372,6 +372,22 @@ static string capture(const string& cmd, int* rc = nullptr) {
 }
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testSharedInput() {
+    printf("test: one changed input rebuilds every action that lists it\n");
+    fresh("share");
+    write("h.h", "#define V 1\n");
+    string man;
+    for (int i = 0; i < 6; ++i) {
+        write("o" + std::to_string(i) + ".in", "x\n");
+        man += "action\n  cmd = cp h.h o" + std::to_string(i) + ".out\n  output = o" + std::to_string(i) + ".out\n  inputs = h.h\nend\n";
+    }
+    write("build.okay", man);
+    int rc; string o = sh("-j2", &rc); check(rc == 0 && ran(o) == 6, "six copies", o);
+    check(ran(sh()) == 0, "shared input no-op");
+    write("h.h", "#define V 2\n");
+    o = sh("--explain"); check(ran(o) == 6, "editing the shared input rebuilds all six", o);
+}
+
 static void testImportedCompdb() {
     printf("test: compdb lists imported compile commands, not the link\n");
     fresh("icdb");
@@ -444,6 +460,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testImportedCompdb(); testWindowsHost(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

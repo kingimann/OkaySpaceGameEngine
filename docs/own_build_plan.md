@@ -113,7 +113,11 @@ libsodium found (packet encryption on). C files used clang (`/usr/bin/cc`), C++ 
 Built with `okay-build -j2` into a separate directory so Ninja's tree stayed put. 339 of 339 steps, exit 0.
 Byte comparison of every `.o`, the three archives (`libokay_engine.a`, `libokay_crypto.a`, `libokay_platform.a`)
 and `tests/test_math`: 339 files, 339 identical. The okay-build program also printed `15 checks, 0 failures`.
-`libokay_engine.a` is 463,143,278 bytes on both sides. No-op of that tree was not re-timed.
+`libokay_engine.a` is 463,143,278 bytes on both sides.
+
+No-op of that same 339-step import, measured after a clean okay-build so every stamp matched (median of 5, process start included):
+okay-build 66 ms, Ninja 24 ms. Inside okay-build: plan+state load 42 ms, dirty check 9 ms, wall 52 ms, hashed 0, trusted 1835.
+The state file is 11 MB and 105,057 rows because every compile records every header. A rewrite that interned paths and stored hashes as integers was not faster (state load about 54 ms, wall about 67 ms), so it was not kept. The gap with Ninja is that table, not re-reading file bytes.
 
 ## Windows host (2026-11-17, implemented, POSIX path unchanged)
 `okay-build.cpp` compiles with `x86_64-w64-mingw32-g++-win32` (`-std=c++17 -O2 -static-libgcc -static-libstdc++`).

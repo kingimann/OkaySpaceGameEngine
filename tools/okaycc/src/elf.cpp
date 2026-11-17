@@ -822,7 +822,7 @@ void emitFunction(Image& im, const Function& f) {
     p.sec = 1;
     p.size = static_cast<int>(im.bytes.size() - start);
     p.func = true;
-    p.global = true;
+    p.global = !f.localSym;
     im.pubs.push_back(p);
 }
 

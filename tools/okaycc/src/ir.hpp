@@ -64,6 +64,7 @@ struct Function {
     int params = 0;
     int vaNamed = -1;  // named general registers before "...", or -1 when the function is not variadic
     int vaXmm = 0;     // named xmm registers before "..."
+    bool localSym = false;
     std::vector<int> xmmSlot;   // vreg that receives xmm0, xmm1, ...
     std::vector<int> xmmWidth;  // 4 or 8 for each of those
     std::vector<Block> blocks;

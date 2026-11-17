@@ -515,9 +515,11 @@ std::string emitFunction(const Function& f) {
     std::vector<int> saveDisp;
     for (int i = 0; i < homes.count; ++i) saveDisp.push_back(-(saveBase + 8 * (i + 1)));
     std::string s;
-    s += ".globl ";
-    s += f.name;
-    s += "\n";
+    if (!f.localSym) {
+        s += ".globl ";
+        s += f.name;
+        s += "\n";
+    }
     s += f.name;
     s += ":\n  pushq %rbp\n  movq %rsp, %rbp\n";
     if (memFrame) {

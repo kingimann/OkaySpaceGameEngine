@@ -73,6 +73,7 @@ struct Decl {
     std::unique_ptr<Stmt> body;
     bool function = false;
     bool isExtern = false;
+    bool isStatic = false;
     int line = 1;
     int col = 1;
     std::string file;
@@ -81,7 +82,7 @@ struct Decl {
 };
 
 struct Stmt {
-    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl, Switch, Case } kind =
+    enum class Kind { Block, Expr, Empty, Return, If, While, For, Break, Continue, Decl, Switch, Case, Goto, Label } kind =
         Kind::Empty;
     int line = 1;
     int col = 1;
@@ -378,6 +379,12 @@ void printStmt(Pr& p, int ind, const Stmt& st) {
         if (st.body) printStmt(p, ind + 1, *st.body);
         p.line(ind, ")");
         break;
+    case Stmt::Kind::Goto:
+        p.line(ind, "(goto " + (st.expr ? st.expr->text : "?") + ")");
+        break;
+    case Stmt::Kind::Label:
+        p.line(ind, "(label " + (st.expr ? st.expr->text : "?") + ")");
+        break;
     }
 }
 
@@ -479,6 +486,7 @@ private:
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
             isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
+            isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") ||
             isKwTok(t, "typedef"))
             return true;
@@ -487,7 +495,7 @@ private:
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
         return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") &&
-               !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch");
+               !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto");
     }
     bool eatP(const char* s) {
         if (!isP(s)) return false;
@@ -581,6 +589,10 @@ private:
             }
             if (eatKw("char")) {
                 sawChar = true;
+                any = true;
+                continue;
+            }
+            if (eatKw("const") || eatKw("volatile")) {
                 any = true;
                 continue;
             }
@@ -710,7 +722,14 @@ private:
 
     Parsed parseDeclarator(bool needName) {
         int stars = 0;
-        while (eatP("*")) ++stars;
+        while (!atEnd()) {
+            if (eatKw("const") || eatKw("volatile")) continue;
+            if (eatP("*")) {
+                ++stars;
+                continue;
+            }
+            break;
+        }
         Parsed d = parseDirect(needName);
         for (int n = 0; n < stars; ++n) {
             Mod m;
@@ -851,6 +870,7 @@ private:
 
     void parseExternal(Tu& tu) {
         bool ext = eatKw("extern");
+        bool st = eatKw("static");
         bool td = eatKw("typedef");
         auto base = parseBase();
         if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
@@ -872,6 +892,7 @@ private:
             else {
                 auto decl = makeDecl(d, std::move(type), std::move(init));
                 if (ext && !decl->init) decl->isExtern = true;
+                decl->isStatic = st;
                 tu.decls.push_back(std::move(decl));
             }
         };
@@ -879,6 +900,7 @@ private:
         auto type = apply(cloneType(*base), d.mods);
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
             auto decl = makeDecl(d, std::move(type), nullptr);
+            decl->isStatic = st;
             decl->body = parseCompound();
             tu.decls.push_back(std::move(decl));
             return;
@@ -906,6 +928,7 @@ private:
     }
 
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
+        bool st = eatKw("static");
         bool td = eatKw("typedef");
         auto base = parseBase();
         if (base && (base->kind == Type::Kind::Struct || base->kind == Type::Kind::Union) && isP(";")) {
@@ -929,14 +952,22 @@ private:
         std::unique_ptr<Expr> init;
         if (eatP("=")) init = parseInitializer();
         if (td) addTypedef(d.name, std::move(type));
-        else out.push_back(declStmt(makeDecl(d, std::move(type), std::move(init))));
+        else {
+            auto decl = makeDecl(d, std::move(type), std::move(init));
+            decl->isStatic = st;
+            out.push_back(declStmt(std::move(decl)));
+        }
         while (eatP(",")) {
             Parsed d2 = parseDeclarator(true);
             auto t2 = apply(cloneType(*base), d2.mods);
             std::unique_ptr<Expr> init2;
             if (eatP("=")) init2 = parseInitializer();
             if (td) addTypedef(d2.name, std::move(t2));
-            else out.push_back(declStmt(makeDecl(d2, std::move(t2), std::move(init2))));
+            else {
+                auto decl = makeDecl(d2, std::move(t2), std::move(init2));
+                decl->isStatic = st;
+                out.push_back(declStmt(std::move(decl)));
+            }
         }
         expectP(";", ";");
         (void)forInit;
@@ -985,6 +1016,33 @@ private:
     }
 
     std::unique_ptr<Stmt> parseStmt() {
+        if (!atEnd() && cur().kind == Tok::Ident && i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Punct &&
+            toks_[i_ + 1].text == ":") {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Label;
+            s->line = cur().line;
+            s->col = cur().column;
+            s->file = cur().file;
+            s->expr = leafName(cur());
+            advance();
+            advance();
+            return s;
+        }
+        if (isKw("goto")) {
+            auto s = std::make_unique<Stmt>();
+            s->kind = Stmt::Kind::Goto;
+            s->line = cur().line;
+            s->col = cur().column;
+            advance();
+            if (!atEnd() && cur().kind == Tok::Ident) {
+                s->expr = leafName(cur());
+                advance();
+            } else {
+                err("expected a label");
+            }
+            expectP(";", ";");
+            return s;
+        }
         if (isP("{")) return parseCompound();
         if (isKw("if")) return parseIf();
         if (isKw("while")) return parseWhile();
@@ -2075,6 +2133,8 @@ private:
             if (s.decl) checkVar(*s.decl);
             break;
         case Stmt::Kind::Case:
+        case Stmt::Kind::Goto:
+        case Stmt::Kind::Label:
             break;
         }
     }
@@ -3842,11 +3902,36 @@ private:
         case Stmt::Kind::Decl:
             if (s.decl) lowerLocal(*s.decl);
             break;
+        case Stmt::Kind::Goto:
+            if (s.expr) emitJmp("lab_" + s.expr->text);
+            break;
+        case Stmt::Kind::Label:
+            if (s.expr) startBlock("lab_" + s.expr->text);
+            break;
         }
     }
 
     void lowerLocal(Decl& d) {
         if (!d.type) return;
+        if (d.isStatic) {
+            std::string gname = ".Ls" + std::to_string(strN_++) + "_" + d.name;
+            Global g;
+            g.name = gname;
+            int sz = sizeOf(d.type.get());
+            if (sz < 1) sz = 1;
+            g.size = sz;
+            g.bytes.assign(static_cast<std::size_t>(sz), 0);
+            if (d.init && (d.init->kind == Expr::Kind::Int || d.init->kind == Expr::Kind::Char)) {
+                putAt(g.bytes, 0, static_cast<std::int64_t>(d.init->ival), sz > 8 ? 8 : sz);
+            }
+            mod_.globals.push_back(std::move(g));
+            Sym s;
+            s.global = true;
+            s.gname = gname;
+            describe(s, d.type.get());
+            if (!d.name.empty()) scopes_.back()[d.name] = s;
+            return;
+        }
         Sym s;
         describe(s, d.type.get());
         if (d.type->kind == Type::Kind::Array || d.type->kind == Type::Kind::Struct ||
@@ -4048,6 +4133,7 @@ private:
     void lowerFunc(Decl& d) {
         fn_ = Function();
         fn_.name = d.name;
+        fn_.localSym = d.isStatic;
         fn_.params = d.type ? static_cast<int>(d.type->params.size()) : 0;
         nextReg_ = 0;
         scopes_.clear();

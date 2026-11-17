@@ -1,0 +1,45 @@
+okayguided 1
+template creature 1
+param bodyHeight 0.29999999999999999
+param bodyLength 0.5
+param detail 1
+param headSize 0.16
+param legLength 0.25
+param legThickness 0.02
+param neckLength 0.29999999999999999
+param plan 3
+param tailLength 0.10000000000000001
+param wingSpan 0.5
+slot abdomen round
+slot antennae feelers
+slot body oval
+slot ears none
+slot eyes small
+slot head mandible
+slot horns none
+slot legs thin
+slot neck round
+slot tail none
+slot wings insect
+color abdomen 0.150000006 0.300000012 0.200000003 1
+color antennae 0.100000001 0.100000001 0.109999999 1
+color body 0.150000006 0.300000012 0.200000003 1
+color ears 0.319999993 0.200000003 0.119999997 1
+color eyes 0.100000001 0.100000001 0.109999999 1
+color head 0.150000006 0.300000012 0.200000003 1
+color horns 0.920000017 0.920000017 0.899999976 1
+color legs 0.100000001 0.100000001 0.109999999 1
+color neck 0.319999993 0.200000003 0.119999997 1
+color tail 0.319999993 0.200000003 0.119999997 1
+color wings 0.150000006 0.300000012 0.200000003 1
+material abdomen 5
+material antennae 4
+material body 0
+material ears 0
+material eyes 1
+material head 0
+material horns 2
+material legs 0
+material neck 0
+material tail 0
+material wings 3

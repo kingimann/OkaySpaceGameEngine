@@ -1,0 +1,18 @@
+okayguided 1
+template container 1
+param depth 0.55000000000000004
+param detail 1
+param height 0.55000000000000004
+param width 0.90000000000000002
+slot bands metal
+slot body chest
+slot handle side
+slot lid none
+color bands 0.349999994 0.360000014 0.400000006 1
+color body 0.550000012 0.379999995 0.219999999 1
+color handle 0.349999994 0.360000014 0.400000006 1
+color lid 0.550000012 0.379999995 0.219999999 1
+material bands 2
+material body 0
+material handle 3
+material lid 1

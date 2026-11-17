@@ -118,6 +118,32 @@ struct AntiCheatSettings {
     /// slack allow for, however slow a client makes its pings look.
     float maxRewindRtt = 0.3f;
 
+    /// Packets of any type a joined client may send per second (0 = unlimited; -1 = automatic: 600 on a
+    /// dedicated server, unlimited elsewhere, so a game that bursts many messages isn't cut off). Past it, packets are
+    /// dropped and the flood is reported as an "rpc flood" once a second. Message types with a limit
+    /// of their own (RPCs, SyncVars) keep it as well. A normal client sends 30 to 150 a second.
+    int   maxPacketsPerSecond = -1;
+
+    // ---- Bans and the audit log (okay/Net/AntiCheatLog.hpp) ----
+    /// A text file of banned identities. "" = no file: bans last only until the
+    /// server stops (a kick still has its rejoin cooldown). The server reads it
+    /// at its first join, refuses a banned identity at the join, and adds to it
+    /// when the detection engine asks for a ban or one identity is kicked
+    /// `banAfterKicks` times. A dedicated server with the anti-cheat on uses
+    /// "okay_bans.txt" in its folder unless this names another file.
+    std::string banFile;
+    /// Kicks of one identity in this run before it is banned (0 = kicks never become bans).
+    int   banAfterKicks = 3;
+    /// How long an automatic ban lasts, in hours (0 = until an admin removes the line).
+    float banHours = 168.0f;
+    /// A detection-engine ban request (risk past detect.banAt) is written to the ban file.
+    bool  banOnRequest = true;
+    /// Append what the anti-cheat saw and did to this file: refusals, kicks, bans, refused joins.
+    /// Players appear only as a short one-way tag, never a name, address or account id; the
+    /// file stays on this machine. "" = off. A dedicated server with the anti-cheat on uses
+    /// "okay_anticheat_audit.log" unless this names another file.
+    std::string auditLog;
+
     // ---- Detection engine (okay/Net/CheatDetect.hpp): behavioural detectors, a
     // risk score and graduated responses. Off unless detect.enabled; the
     // .okayac keys are "detect.<key> <value>" (see docs/anticheat.md).
@@ -181,6 +207,8 @@ public:
     CheatDetector detector;
     /// A peer's risk crossed a rung of the response ladder (log ... ban request).
     std::function<void(const DetectResponse&)> onDetectResponse;
+    /// The same event for the server's own audit log (NetworkManager sets it; a game's onDetectResponse is not replaced).
+    std::function<void(const DetectResponse&)> onDetectAudit;
     /// Copy settings.detect into the detector (keeps its per-player state).
     void ApplyDetectSettings();
     bool DetectOn() const { return settings.enabled && settings.detect.enabled; }

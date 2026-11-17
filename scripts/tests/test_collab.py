@@ -219,6 +219,24 @@ class Lint(unittest.TestCase):
         f = self.lint({"engine/src/Core/X.cpp": "#if !defined(_WIN32)\n#include <thread>\n#endif\n#include <mutex>  // lint-allow: win32-thread\n"}, BL.check_includes)
         self.assertEqual([x["sev"] for x in f], ["warning"])
 
+    def test_binaries(self):
+        big = "\0" + "x" * (210 * 1024)
+        # a built program or library is refused at any size, an archive too
+        f = self.lint({"dist/OkaySpace.exe": "MZ\0\0", "dist/SDL2.dll": "MZ\0", "lib/libfoo.so": "\0ELF", "out/game.zip": "PK\0\0"}, BL.check_binaries)
+        self.assertEqual(sorted(x["file"] for x in f), ["dist/OkaySpace.exe", "dist/SDL2.dll", "lib/libfoo.so", "out/game.zip"])
+        self.assertTrue(all(x["sev"] == "error" for x in f))
+        # a big binary with an unknown extension is refused; a big png, font, mesh or anything in docs/images is fine
+        self.r.close(); self.r = Repo()
+        f = self.lint({"tools/blob.dat": big, "assets/a.png": big, "assets/f.ttf": big, "examples/m.okaymesh": big, "docs/images/shot.dll": big}, BL.check_binaries)
+        self.assertEqual([x["file"] for x in f], ["tools/blob.dat"])
+        # small binaries and big TEXT files (source, scene json, docs) are fine
+        self.r.close(); self.r = Repo()
+        f = self.lint({"tools/small.dat": "\0" * 100, "docs/big.md": "word " * 100000, "dist/CHANGELOG.txt": "text\n" * 50000}, BL.check_binaries)
+        self.assertEqual(f, [])
+        # the real tree has none to start with
+        tracked = subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout.split("\n")
+        self.assertEqual([p for p in tracked if p.lower().endswith(BL.PROGRAM_EXT) and os.path.exists(os.path.join(ROOT, p))], [])
+
     def test_secrets(self):
         f = self.lint({"editor/a.cpp": 'const char* k = "ghp_' + "a" * 36 + '";\n// -----BEGIN RSA ' + 'PRIVATE KEY-----\nconst char* apiKey = "' + "Ab1" * 14 + '";\n',
                        "tests/t.cpp": 'const char* key = "' + "ab" * 32 + '";\n'}, BL.check_secrets)

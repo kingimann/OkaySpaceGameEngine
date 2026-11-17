@@ -1,0 +1,25 @@
+okayguided 1
+template stairs 1
+param detail 1
+param gap 0.10000000000000001
+param postEvery 3
+param railHeight 0.90000000000000002
+param railLeft 1
+param railRight 1
+param steps 12
+param totalHeight 2.7999999999999998
+param treadDepth 0.28000000000000003
+param treadThickness 0.050000000000000003
+param turn 300
+param turnLeft 1
+param type 0
+param width 1
+slot rail post_rail
+slot stringer side
+slot tread block
+color rail 0.25 0.170000002 0.119999997 1
+color stringer 0.550000012 0.379999995 0.219999999 1
+color tread 0.550000012 0.379999995 0.219999999 1
+material rail 2
+material stringer 1
+material tread 0

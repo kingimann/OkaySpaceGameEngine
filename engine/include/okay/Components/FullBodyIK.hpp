@@ -23,6 +23,7 @@
 // animation driver. Each frame starts from the animated pose: what this solver
 // wrote last frame is taken back off first (IKRestore), so nothing builds up.
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -206,6 +207,7 @@ public:
 
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.IK");
         // Corrections are layered on this frame's animated pose: last frame's writes
         // come off first wherever nothing re-posed the bone since (no animation on it).
         m_restore.Restore();

@@ -1,0 +1,410 @@
+okayscene 3
+name "Guided environment"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 40 -0.5 40 0 0 0 1 400 1 400
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Tree Oak"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_oak.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Tree Pine"
+  active 1
+  parent -1
+  transform 16 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_pine.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Tree Spruce"
+  active 1
+  parent -1
+  transform 32 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_spruce.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Tree Birch"
+  active 1
+  parent -1
+  transform 48 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_birch.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Tree Palm"
+  active 1
+  parent -1
+  transform 64 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_palm.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Tree Willow"
+  active 1
+  parent -1
+  transform 80 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_willow.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Tree Dead tree"
+  active 1
+  parent -1
+  transform 96 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_dead.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Tree Apple tree"
+  active 1
+  parent -1
+  transform 112 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_apple.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Tree Blossom tree"
+  active 1
+  parent -1
+  transform 128 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tree_blossom.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Rock Boulder"
+  active 1
+  parent -1
+  transform 0 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_boulder.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Rock Rock pile"
+  active 1
+  parent -1
+  transform 16 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_pile.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Rock Flat stones"
+  active 1
+  parent -1
+  transform 32 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_flat_stones.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Rock Rock spikes"
+  active 1
+  parent -1
+  transform 48 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_spikes.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Rock Basalt columns"
+  active 1
+  parent -1
+  transform 64 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_basalt.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Rock Standing stone"
+  active 1
+  parent -1
+  transform 80 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_standing.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Rock Pebbles"
+  active 1
+  parent -1
+  transform 96 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_pebbles.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Rock Mossy rocks"
+  active 1
+  parent -1
+  transform 112 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_mossy.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Rock Rock stack"
+  active 1
+  parent -1
+  transform 128 0 22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "rock_cliff_stack.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Road Street"
+  active 1
+  parent -1
+  transform 0 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_street.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Road Country road"
+  active 1
+  parent -1
+  transform 16 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_country.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Road Dirt path"
+  active 1
+  parent -1
+  transform 32 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_dirt_path.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Road Cobblestone street"
+  active 1
+  parent -1
+  transform 48 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_cobble.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Road Highway"
+  active 1
+  parent -1
+  transform 64 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_highway.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Road Footpath"
+  active 1
+  parent -1
+  transform 80 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_footpath.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Road Railway"
+  active 1
+  parent -1
+  transform 96 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_railway.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Road Gravel drive"
+  active 1
+  parent -1
+  transform 112 0 44 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "road_gravel_drive.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Bridge Footbridge"
+  active 1
+  parent -1
+  transform 0 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_footbridge.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Bridge Stone arch"
+  active 1
+  parent -1
+  transform 16 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_stone_arch.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 30 "Bridge Rope bridge"
+  active 1
+  parent -1
+  transform 32 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_rope_bridge.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 31 "Bridge Suspension bridge"
+  active 1
+  parent -1
+  transform 48 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_suspension.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 32 "Bridge Truss bridge"
+  active 1
+  parent -1
+  transform 64 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_truss.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 33 "Bridge Log bridge"
+  active 1
+  parent -1
+  transform 80 0 66 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "bridge_log.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 34 "Hedge Clipped box hedge"
+  active 1
+  parent -1
+  transform 0 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_box.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 35 "Hedge Rounded hedge"
+  active 1
+  parent -1
+  transform 16 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_rounded.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 36 "Hedge Tall screen"
+  active 1
+  parent -1
+  transform 32 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_tall_screen.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 37 "Hedge Low border"
+  active 1
+  parent -1
+  transform 48 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_low_border.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 38 "Hedge Domed hedge"
+  active 1
+  parent -1
+  transform 64 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_domed.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 39 "Hedge Hedge with balls"
+  active 1
+  parent -1
+  transform 80 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_topiary_balls.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 40 "Hedge Hedge with cones"
+  active 1
+  parent -1
+  transform 96 0 88 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "hedge_topiary_cones.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 41 "Plant Bush"
+  active 1
+  parent -1
+  transform 0 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_bush.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 42 "Plant Flower patch"
+  active 1
+  parent -1
+  transform 16 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_flowers.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 43 "Plant Sunflowers"
+  active 1
+  parent -1
+  transform 32 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_sunflowers.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 44 "Plant Ferns"
+  active 1
+  parent -1
+  transform 48 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_ferns.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 45 "Plant Cactus"
+  active 1
+  parent -1
+  transform 64 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_cactus.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 46 "Plant Mushrooms"
+  active 1
+  parent -1
+  transform 80 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_mushrooms.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 47 "Plant Reeds"
+  active 1
+  parent -1
+  transform 96 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_reeds.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 48 "Plant Grass"
+  active 1
+  parent -1
+  transform 112 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_grass.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 49 "Plant Potted plant"
+  active 1
+  parent -1
+  transform 128 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_potted.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 50 "Plant Planter box"
+  active 1
+  parent -1
+  transform 144 0 110 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "plant_planter.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 51 "Street lamp Victorian"
+  active 1
+  parent -1
+  transform 0 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_victorian.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 52 "Street lamp Modern"
+  active 1
+  parent -1
+  transform 16 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_modern.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 53 "Street lamp Garden bollard"
+  active 1
+  parent -1
+  transform 32 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_bollard.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 54 "Street lamp Double lamp"
+  active 1
+  parent -1
+  transform 48 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_double_arm.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 55 "Street lamp Lantern post"
+  active 1
+  parent -1
+  transform 64 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_lantern_post.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 56 "Street lamp Rural lamp"
+  active 1
+  parent -1
+  transform 80 0 132 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "streetlamp_rural.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 57 "Main Camera"
+  active 1
+  parent -1
+  transform 72 66.8 296.4 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

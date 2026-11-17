@@ -5,6 +5,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Render/TexturePath.hpp"
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <functional>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <sstream>
@@ -27,6 +29,9 @@ namespace okay {
 /// describe 3D geometry; the editor renders these as wireframes and a future
 /// GPU backend can upload them directly. `name` tags built-in primitives so they
 /// can be serialized compactly.
+/// A subdivision crease: the edge between vertices a and b stays sharp for `w` levels of subdivision (1 = one level).
+struct EdgeCrease { int a = 0, b = 0; float w = 0.0f; };
+
 struct Mesh {
     std::string       name;       // "Cube"/"Pyramid"/"Quad" for primitives
     std::vector<Vec3> vertices;
@@ -46,6 +51,24 @@ struct Mesh {
     std::vector<std::pair<int, int>> seams;  // UV seam edges (vertex index pairs): unwrapping
                                   // cuts the surface open along them. A pair that isn't an
                                   // edge of the mesh is ignored.
+    std::vector<EdgeCrease> bevelWeights; // per-edge bevel weights (0..1, scaling the Bevel modifier's width when it is set to use weights)
+    std::vector<EdgeCrease> creases; // subdivision creases (vertex pairs + sharpness); the Subdivision modifier keeps those edges sharp.
+                                  // A pair that isn't an edge of the mesh is ignored.
+    std::vector<Color> vertexColors; // optional per-vertex colours (parallel to vertices); the renderers blend them smoothly
+                                  // across each face and multiply them with the face colour and material colour.
+                                  // Ignored when its size doesn't match the vertex count.
+    std::vector<int>  triSlot;    // optional per-triangle material slot (parallel to faces).
+                                  // Ignored when its size doesn't match the triangle count.
+    std::vector<Color> slotColors;// the colour of each material slot (slot i -> slotColors[i]).
+                                  // ApplySlotColors() paints triColors from the two lists.
+    // Hidden geometry (Hide / Isolate in mesh edit mode): triangles taken out of the mesh and kept here by
+    // value (corner positions, not vertex numbers, so later edits that renumber the vertices cannot break
+    // them). Renderers, colliders and tools never see them; RevealHidden() puts them back.
+    std::vector<Vec3>  hiddenPos;    // 3 per hidden triangle
+    std::vector<Vec2>  hiddenUV;     // 3 per hidden triangle, or empty when the mesh had no UVs
+    std::vector<int>   hiddenSlot;   // 1 per hidden triangle (-1 = none)
+    std::vector<int>   hiddenPoly;   // 1 per hidden triangle: its polygon id (-1 = none)
+    std::vector<Color> hiddenColor;  // 1 per hidden triangle, or empty when the mesh had no face colours
     std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
                                   // when present the renderer smooth (Gouraud) shades.
     float autoSmoothAngle = 0.0f; // >0: normals came from ComputeAutoSmoothNormals(angle)
@@ -53,9 +76,460 @@ struct Mesh {
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    /// Set (w > 0, at most 1) or clear (w <= 0) the bevel weight of the edge between vertices a and b.
+    void SetBevelWeight(int a, int b, float w) {
+        if (a == b || a < 0 || b < 0 || !std::isfinite(w)) return;
+        if (a > b) std::swap(a, b);
+        for (std::size_t i = 0; i < bevelWeights.size(); ++i)
+            if (bevelWeights[i].a == a && bevelWeights[i].b == b) { if (w > 0.0f) bevelWeights[i].w = std::min(w, 1.0f); else bevelWeights.erase(bevelWeights.begin() + i); return; }
+        if (w > 0.0f) bevelWeights.push_back({a, b, std::min(w, 1.0f)});
+    }
+    /// Set (w > 0) or clear (w <= 0) the subdivision crease on the edge between vertices a and b.
+    void SetCrease(int a, int b, float w) {
+        if (a == b || a < 0 || b < 0 || !std::isfinite(w)) return;
+        if (a > b) std::swap(a, b);
+        for (std::size_t i = 0; i < creases.size(); ++i)
+            if (creases[i].a == a && creases[i].b == b) { if (w > 0.0f) creases[i].w = std::min(w, 10.0f); else creases.erase(creases.begin() + i); return; }
+        if (w > 0.0f) creases.push_back({a, b, std::min(w, 10.0f)});
+    }
+    bool HasVertexColors() const { return !vertexColors.empty() && vertexColors.size() == vertices.size(); }
+    /// Colour of corner vertex `v` (white without vertex colours).
+    Color VertexColorOf(int v) const {
+        return (HasVertexColors() && v >= 0 && v < (int)vertexColors.size()) ? vertexColors[v] : Color{1, 1, 1, 1};
+    }
+    /// Paint vertex colours: every vertex within `radius` of `centre` blends toward `c` by `strength` (0..1)
+    /// times a smooth falloff (1 at the centre, 0 at the edge; `hardness` 0..1 keeps the centre solid longer).
+    /// Creates the colour list (white) on first use. Returns how many vertices changed.
+    int PaintVertices(const Vec3& centre, float radius, const Color& c, float strength, float hardness = 0.0f) {
+        if (!(radius > 0.0f) || !std::isfinite(radius + centre.x + centre.y + centre.z) || !(strength > 0.0f) || vertices.empty()) return 0;
+        strength = std::min(strength, 1.0f); hardness = std::clamp(hardness, 0.0f, 0.99f);
+        if (!HasVertexColors()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        int n = 0;
+        const float r2 = radius * radius;
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const float d2 = (vertices[i] - centre).SqrMagnitude();
+            if (d2 > r2) continue;
+            float t = 1.0f - std::sqrt(d2) / radius;                       // 1 at the centre
+            t = hardness > 0.0f ? std::min(1.0f, t / (1.0f - hardness)) : t;
+            const float w = strength * t * t * (3.0f - 2.0f * t);          // smoothstep
+            Color& o = vertexColors[i];
+            o.r += (c.r - o.r) * w; o.g += (c.g - o.g) * w; o.b += (c.b - o.b) * w; o.a += (c.a - o.a) * w;
+            ++n;
+        }
+        return n;
+    }
+    /// After a tool added vertices (extrude, inset ...) the colour list is shorter than the vertex list: pad it with white so the
+    /// paint is not thrown away. A list that is LONGER (vertices were removed or renumbered) cannot be matched up and is dropped.
+    /// Returns true if the list was changed.
+    bool SyncVertexColors() {
+        if (vertexColors.empty() || vertexColors.size() == vertices.size()) return false;
+        if (vertexColors.size() < vertices.size()) vertexColors.resize(vertices.size(), Color{1, 1, 1, 1});
+        else vertexColors.clear();
+        return true;
+    }
+    /// Set the given vertices to exactly `c`. Returns how many were set.
+    int FillVertexColors(const std::vector<int>& verts, const Color& c) {
+        if (vertices.empty()) return 0;
+        if (!HasVertexColors()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        int n = 0;
+        for (int v : verts) if (v >= 0 && v < (int)vertices.size()) { vertexColors[v] = c; ++n; }
+        return n;
+    }
+    /// Blend every vertex colour toward the average of the vertices it shares a triangle with, `passes` times.
+    void SmoothVertexColors(int passes = 1) {
+        if (!HasVertexColors()) return;
+        for (int p = 0; p < std::clamp(passes, 0, 20); ++p) {
+            std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0}); std::vector<float> asum(vertices.size(), 0.0f); std::vector<int> cnt(vertices.size(), 0);
+            for (int t = 0; t < TriangleCount(); ++t) {
+                const int a = triangles[t * 3], b = triangles[t * 3 + 1], c = triangles[t * 3 + 2];
+                if (a < 0 || b < 0 || c < 0 || a >= (int)vertices.size() || b >= (int)vertices.size() || c >= (int)vertices.size()) continue;
+                const int idx[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) for (int j = 0; j < 3; ++j) if (j != k) {
+                    const Color& o = vertexColors[idx[j]];
+                    sum[idx[k]] += Vec3{o.r, o.g, o.b}; asum[idx[k]] += o.a; ++cnt[idx[k]];
+                }
+            }
+            for (std::size_t i = 0; i < vertices.size(); ++i) if (cnt[i]) {
+                Color& o = vertexColors[i];
+                o.r = (o.r + sum[i].x / (float)cnt[i]) * 0.5f; o.g = (o.g + sum[i].y / (float)cnt[i]) * 0.5f;
+                o.b = (o.b + sum[i].z / (float)cnt[i]) * 0.5f; o.a = (o.a + asum[i] / (float)cnt[i]) * 0.5f;
+            }
+        }
+    }
+    int HiddenTriangleCount() const { return (int)(hiddenPos.size() / 3); }
+    bool HasHidden() const { return !hiddenPos.empty(); }
+    /// True when the hidden lists are consistent with each other (a damaged file could break that).
+    bool HiddenConsistent() const {
+        const std::size_t n = hiddenPos.size() / 3;
+        return hiddenPos.size() % 3 == 0 && hiddenSlot.size() == n && hiddenPoly.size() == n &&
+               (hiddenUV.empty() || hiddenUV.size() == n * 3) && (hiddenColor.empty() || hiddenColor.size() == n);
+    }
+    /// Take the given triangles out of the mesh and keep them hidden. Returns how many were hidden.
+    /// Vertices only they used stay in the vertex list (nothing is renumbered), unused.
+    int HideTriangles(const std::vector<int>& tris) {
+        AttrGuard attrGuard_(*this);
+        if (!HiddenConsistent()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); }
+        const int nt = TriangleCount();
+        std::vector<char> hide((std::size_t)nt, 0);
+        int count = 0;
+        for (int t : tris) {
+            if (t < 0 || t >= nt || hide[t]) continue;
+            bool ok = true;
+            for (int k = 0; k < 3; ++k) { const int v = triangles[t * 3 + k]; if (v < 0 || v >= (int)vertices.size()) ok = false; }
+            if (!ok) continue;
+            hide[t] = 1; ++count;
+        }
+        if (!count) return 0;
+        const bool uvv = HasUVs(), cuv = HasCornerUVs(), fc = HasFaceColors(), sl = HasSlots();
+        const bool pf = (int)polyFace.size() == nt && !polyFace.empty();
+        // Keep the UV list in step: it is either complete (every hidden triangle has it) or empty.
+        const bool keepUV = uvv || cuv;
+        if (keepUV && hiddenUV.empty() && !hiddenPos.empty()) hiddenUV.assign(hiddenPos.size(), Vec2{0, 0});
+        if (!keepUV && !hiddenUV.empty()) hiddenUV.insert(hiddenUV.end(), (std::size_t)count * 3, Vec2{0, 0});
+        if (fc && hiddenColor.empty() && !hiddenPos.empty()) hiddenColor.assign(hiddenPos.size() / 3, Color{1, 1, 1, 1});
+        std::vector<int> tri2, slot2, poly2; std::vector<Color> col2; std::vector<Vec2> cuv2;
+        for (int t = 0; t < nt; ++t) {
+            if (hide[t]) {
+                for (int k = 0; k < 3; ++k) {
+                    const int v = triangles[t * 3 + k];
+                    hiddenPos.push_back(vertices[v]);
+                    if (keepUV) hiddenUV.push_back(cuv ? cornerUVs[t * 3 + k] : uvs[v]);
+                }
+                hiddenSlot.push_back(sl ? triSlot[t] : -1);
+                hiddenPoly.push_back(pf ? polyFace[t] : -1);
+                if (fc || !hiddenColor.empty()) hiddenColor.push_back(fc ? triColors[t] : Color{1, 1, 1, 1});
+                continue;
+            }
+            tri2.insert(tri2.end(), {triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2]});
+            if (sl) slot2.push_back(triSlot[t]);
+            if (pf) poly2.push_back(polyFace[t]);
+            if (fc) col2.push_back(triColors[t]);
+            if (cuv) cuv2.insert(cuv2.end(), {cornerUVs[t * 3], cornerUVs[t * 3 + 1], cornerUVs[t * 3 + 2]});
+        }
+        triangles = std::move(tri2);
+        if (sl) triSlot = std::move(slot2);
+        if (pf) polyFace = std::move(poly2);
+        if (fc) triColors = std::move(col2);
+        if (cuv) cornerUVs = std::move(cuv2);
+        name = "";
+        return count;
+    }
+    /// Hide every triangle except the given ones (local view). Returns how many were hidden.
+    int IsolateTriangles(const std::vector<int>& keep) {
+        AttrGuard attrGuard_(*this);
+        const int nt = TriangleCount();
+        std::vector<char> k((std::size_t)nt, 0);
+        for (int t : keep) if (t >= 0 && t < nt) k[t] = 1;
+        std::vector<int> rest;
+        for (int t = 0; t < nt; ++t) if (!k[t]) rest.push_back(t);
+        return HideTriangles(rest);
+    }
+    /// Put every hidden triangle back (appended after the visible ones). Corners that match an existing
+    /// vertex position reuse it, so the revealed faces join up with what is there. Returns the numbers of the
+    /// triangles it added (so the editor can select them).
+    std::vector<int> RevealHidden() {
+        AttrGuard attrGuard_(*this);
+        std::vector<int> added;
+        if (!HiddenConsistent() || hiddenPos.empty()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); return added; }
+        const int n = HiddenTriangleCount();
+        std::map<std::tuple<long, long, long>, int> at;
+        auto key = [](const Vec3& p) { return std::make_tuple((long)std::lround(p.x * 1e5f), (long)std::lround(p.y * 1e5f), (long)std::lround(p.z * 1e5f)); };
+        for (int v = 0; v < (int)vertices.size(); ++v) at.emplace(key(vertices[v]), v);
+        const bool uvv = HasUVs(), cuvWanted = HasCornerUVs(), sl = HasSlots(), fc = HasFaceColors();
+        const bool hadPoly = (int)polyFace.size() == TriangleCount() && !polyFace.empty();
+        int polyBase = 0;
+        if (hadPoly) for (int id : polyFace) polyBase = std::max(polyBase, id + 1);
+        const bool hasHidUV = !hiddenUV.empty();
+        if (!uvv && !uvs.empty()) uvs.clear();
+        const bool padUV = uvv;                               // new vertices need a UV entry too
+        const bool padNrm = HasNormals();
+        const bool padVC = HasVertexColors();
+        const int firstNew = TriangleCount();
+        std::map<int, int> polyMap;                            // hidden polygon id -> id in this mesh
+        const bool anyHiddenPoly = std::any_of(hiddenPoly.begin(), hiddenPoly.end(), [](int p) { return p >= 0; });
+        for (int t = 0; t < n; ++t) {
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& p = hiddenPos[t * 3 + k];
+                auto it = at.find(key(p));
+                int v;
+                if (it == at.end()) {
+                    v = (int)vertices.size();
+                    vertices.push_back(p);
+                    if (padUV) uvs.push_back(hasHidUV ? hiddenUV[t * 3 + k] : Vec2{0, 0});
+                    if (padNrm) normals.push_back(Vec3{0, 1, 0});
+                    if (padVC) vertexColors.push_back(Color{1, 1, 1, 1});
+                    at.emplace(key(p), v);
+                } else v = it->second;
+                triangles.push_back(v);
+                if (cuvWanted) cornerUVs.push_back(hasHidUV ? hiddenUV[t * 3 + k] : Vec2{0, 0});
+            }
+            if (sl) triSlot.push_back(hiddenSlot[t] >= 0 ? hiddenSlot[t] : 0);
+            if (fc) triColors.push_back(hiddenColor.empty() ? Color{1, 1, 1, 1} : hiddenColor[t]);
+            if (hadPoly || anyHiddenPoly) {
+                int id = hiddenPoly[t];
+                if (id >= 0) { auto it = polyMap.find(id); if (it == polyMap.end()) it = polyMap.emplace(id, polyBase + (int)polyMap.size()).first; id = it->second; }
+                else id = polyBase + 100000 + t;
+                if ((int)polyFace.size() == TriangleCount() - 1) polyFace.push_back(id);
+            }
+            added.push_back(firstNew + t);
+        }
+        // A mesh whose polygon list could not be kept in step falls back to recovering quads from the triangles.
+        if (!polyFace.empty() && (int)polyFace.size() != TriangleCount()) polyFace.clear();
+        hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear();
+        name = "";
+        RefreshNormals();
+        return added;
+    }
+    bool HasSlots() const { return !triSlot.empty() && (int)triSlot.size() == TriangleCount(); }
+    /// Number of material slots in use: the table size, or one past the highest slot assigned.
+    int SlotCount() const {
+        int n = (int)slotColors.size();
+        if (HasSlots()) for (int s : triSlot) n = std::max(n, s + 1);
+        return n;
+    }
+    /// Give the chosen triangles to `slot` (creating the triangle list, all in slot 0,
+    /// on first use) and grow the colour table (white) to hold it. Returns how many
+    /// triangles changed slot. Out-of-range triangle numbers and negative slots are ignored.
+    int AssignSlot(const std::vector<int>& tris, int slot) {
+        if (slot < 0 || slot > 255) return 0;
+        if (!HasSlots()) triSlot.assign((std::size_t)TriangleCount(), 0);
+        while ((int)slotColors.size() <= slot) slotColors.push_back(Color{1, 1, 1, 1});
+        int n = 0;
+        for (int t : tris)
+            if (t >= 0 && t < TriangleCount() && triSlot[t] != slot) { triSlot[t] = slot; ++n; }
+        return n;
+    }
+    /// The triangles grouped by material slot (stable: within a slot they keep their order): `order` lists the triangle
+    /// numbers slot by slot, `groups` has {slot, first position in `order`, count} for each slot present, smallest slot
+    /// first. Without slots there is one group (slot 0) holding every triangle. The OpenGL renderer draws one range per
+    /// group so each slot can have its own picture.
+    struct SlotGroups { std::vector<int> order; std::vector<std::array<int, 3>> groups; };
+    SlotGroups GroupBySlot() const {
+        SlotGroups g;
+        const int nt = TriangleCount();
+        g.order.resize((std::size_t)nt);
+        for (int t = 0; t < nt; ++t) g.order[t] = t;
+        if (HasSlots()) std::stable_sort(g.order.begin(), g.order.end(), [&](int x, int y) { return triSlot[x] < triSlot[y]; });
+        for (int i = 0; i < nt; ++i) {
+            const int slot = HasSlots() ? triSlot[g.order[i]] : 0;
+            if (g.groups.empty() || g.groups.back()[0] != slot) g.groups.push_back({slot, i, 0});
+            ++g.groups.back()[2];
+        }
+        return g;
+    }
+    /// Triangles in `slot`.
+    std::vector<int> TrianglesInSlot(int slot) const {
+        std::vector<int> r;
+        if (HasSlots()) for (int t = 0; t < TriangleCount(); ++t) if (triSlot[t] == slot) r.push_back(t);
+        return r;
+    }
+    /// Paint every triangle with its slot's colour (triColors). Slot colours beyond the table are white.
+    /// Does nothing without slots. This is how the renderers (which all draw triColors) show slots.
+    void ApplySlotColors() {
+        if (!HasSlots()) return;
+        triColors.resize(triSlot.size());
+        for (std::size_t t = 0; t < triSlot.size(); ++t) {
+            const int s = triSlot[t];
+            triColors[t] = (s >= 0 && s < (int)slotColors.size()) ? slotColors[s] : Color{1, 1, 1, 1};
+        }
+    }
+    /// Remove all slot data (the triangle list and the colour table).
+    void ClearSlots() { triSlot.clear(); slotColors.clear(); }
+    /// Remove one material slot: its faces fall back to slot 0 (or slot 1, which becomes 0, when slot 0 is the one removed),
+    /// later slots move down by one and the colour list loses that entry. The last slot left cannot be removed (use
+    /// ClearSlots). Returns false when `slot` is not a slot or is the only one.
+    bool RemoveSlot(int slot) {
+        const int n = std::max(SlotCount(), (int)slotColors.size());
+        if (slot < 0 || slot >= n || n <= 1) return false;
+        for (int& t : triSlot) { if (t == slot) t = 0; else if (t > slot) --t; }
+        if (slot < (int)slotColors.size()) slotColors.erase(slotColors.begin() + slot);
+        return true;
+    }
+    /// Move slot `from` to position `to` (the slots in between shift by one); faces keep their slot, so what they look like
+    /// does not change. False when either number is not a slot.
+    bool MoveSlot(int from, int to) {
+        const int n = std::max(SlotCount(), (int)slotColors.size());
+        if (from < 0 || to < 0 || from >= n || to >= n) return false;
+        if (from == to) return true;
+        std::vector<int> map((size_t)n);                      // old slot -> new slot
+        std::vector<int> order; for (int i = 0; i < n; ++i) if (i != from) order.push_back(i);
+        order.insert(order.begin() + to, from);               // order[newSlot] = oldSlot
+        for (int ns = 0; ns < n; ++ns) map[(size_t)order[(size_t)ns]] = ns;
+        for (int& t : triSlot) if (t >= 0 && t < n) t = map[(size_t)t];
+        if ((int)slotColors.size() == n) { std::vector<Color> c((size_t)n); for (int ns = 0; ns < n; ++ns) c[(size_t)ns] = slotColors[(size_t)order[(size_t)ns]]; slotColors = std::move(c); }
+        return true;
+    }
     bool HasNormals() const { return normals.size() == vertices.size() && !vertices.empty(); }
     bool HasCornerUVs() const { return !cornerUVs.empty() && cornerUVs.size() == triangles.size(); }
     bool HasUVs() const { return uvs.size() == vertices.size() && !uvs.empty(); }
+
+    /// UV seams are vertex pairs, so an operator that renumbers or splits vertices breaks them. Rebuild them from the old
+    /// mesh by position: a seam whose two ends are still vertices at the same places stays a seam, and when an end moved
+    /// to the middle of the old seam (the edge was split) both halves are seams.
+    void RemapSeams(const Mesh& old) {
+        if (old.seams.empty()) return;
+        std::map<std::tuple<float, float, float>, int> at;
+        for (int i = 0; i < (int)vertices.size(); ++i) at.emplace(std::make_tuple(vertices[(size_t)i].x, vertices[(size_t)i].y, vertices[(size_t)i].z), i);
+        auto find = [&](int hint, const Vec3& p) {   // the same index when that vertex did not move, else a vertex at the same place
+            if (hint >= 0 && hint < (int)vertices.size() && vertices[(size_t)hint] == p) return hint;
+            auto it = at.find(std::make_tuple(p.x, p.y, p.z)); return it == at.end() ? -1 : it->second; };
+        std::set<std::pair<int, int>> out;
+        auto add = [&](int a, int b) { if (a >= 0 && b >= 0 && a != b) out.insert({std::min(a, b), std::max(a, b)}); };
+        for (const auto& sm : old.seams) {
+            if (sm.first < 0 || sm.second < 0 || sm.first >= (int)old.vertices.size() || sm.second >= (int)old.vertices.size()) continue;
+            const Vec3 pa = old.vertices[(size_t)sm.first], pb = old.vertices[(size_t)sm.second];
+            const int a = find(sm.first, pa), b = find(sm.second, pb), m = find(-1, (pa + pb) * 0.5f);
+            if (a >= 0 && b >= 0) add(a, b);
+            else if (a >= 0 && b < 0 && m >= 0) add(a, m);
+            else if (b >= 0 && a < 0 && m >= 0) add(m, b);
+            if (a >= 0 && b >= 0 && m >= 0 && m != a && m != b) { out.erase({std::min(a, b), std::max(a, b)}); add(a, m); add(m, b); }
+        }
+        seams.assign(out.begin(), out.end());
+    }
+    /// After an operator that added, removed or reordered vertices or faces: give back what it left at the wrong
+    /// size. `old` is the mesh before the operator. A new vertex takes the UV and vertex colour of the nearest old
+    /// vertex, a new face the material slot and face colour of the old face whose middle is nearest (so extruded,
+    /// inset and subdivided faces keep the look of the face they came from). Vertices and faces that did not move
+    /// keep their own values exactly. Polygon ids and per-corner UVs cannot be carried over this way and are
+    /// dropped (the editor rebuilds polygons from the triangles). Lists that are already the right size are not touched.
+    void InheritAttributes(const Mesh& old) {
+        const int nv = (int)vertices.size(), nt = TriangleCount();
+        if (!polyFace.empty() && (int)polyFace.size() != nt) polyFace.clear();
+        const bool needCU = old.HasCornerUVs() && !HasCornerUVs();
+        if (!needCU && !cornerUVs.empty() && cornerUVs.size() != triangles.size()) cornerUVs.clear();
+        RemapSeams(old);
+        const bool needUV = old.HasUVs() && !HasUVs(), needVC = old.HasVertexColors() && !HasVertexColors();
+        const bool needSlot = old.HasSlots() && !HasSlots(), needFC = old.HasFaceColors() && !HasFaceColors();
+        if (nv == 0 || (!needUV && !needVC && !needSlot && !needFC && !needCU)) return;
+        struct Grid {
+            float cell = 1.0f; std::unordered_map<long long, std::vector<int>> cells; const std::vector<Vec3>* pts = nullptr;
+            long long Key(int x, int y, int z) const { return ((long long)(x & 0x1FFFFF) << 42) ^ ((long long)(y & 0x1FFFFF) << 21) ^ (long long)(z & 0x1FFFFF); }
+            void Build(const std::vector<Vec3>& p) {
+                pts = &p; Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p) { lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)}; hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)}; }
+                const float ext = std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z, 1e-3f});
+                cell = std::max(ext / std::max(1.0f, std::cbrt((float)p.size())), 1e-4f);
+                for (int i = 0; i < (int)p.size(); ++i) cells[Key((int)std::floor(p[i].x / cell), (int)std::floor(p[i].y / cell), (int)std::floor(p[i].z / cell))].push_back(i);
+            }
+            std::vector<int> NearestK(const Vec3& q, int K) const {   // the K points nearest to q (fewer when there are fewer)
+                std::vector<std::pair<float, int>> got;
+                if (!pts || pts->empty()) return {};
+                const int cx = (int)std::floor(q.x / cell), cy = (int)std::floor(q.y / cell), cz = (int)std::floor(q.z / cell);
+                for (int r = 0; r <= 8; ++r) {
+                    for (int x = cx - r; x <= cx + r; ++x) for (int y = cy - r; y <= cy + r; ++y) for (int z = cz - r; z <= cz + r; ++z) {
+                        if (std::max({std::abs(x - cx), std::abs(y - cy), std::abs(z - cz)}) != r) continue;
+                        auto it = cells.find(Key(x, y, z)); if (it == cells.end()) continue;
+                        for (int i : it->second) got.push_back({((*pts)[i] - q).SqrMagnitude(), i});
+                    }
+                    if ((int)got.size() >= K) { std::nth_element(got.begin(), got.begin() + (K - 1), got.end()); if (std::sqrt(got[(size_t)K - 1].first) <= (float)r * cell) break; }
+                }
+                std::sort(got.begin(), got.end());
+                std::vector<int> out; for (size_t i = 0; i < got.size() && (int)i < K; ++i) out.push_back(got[i].second);
+                return out;
+            }
+            int Nearest(const Vec3& q) const {
+                if (!pts || pts->empty()) return -1;
+                const int cx = (int)std::floor(q.x / cell), cy = (int)std::floor(q.y / cell), cz = (int)std::floor(q.z / cell);
+                int best = -1; float bd = 1e30f;
+                for (int r = 0; r <= 6; ++r) {
+                    for (int x = cx - r; x <= cx + r; ++x) for (int y = cy - r; y <= cy + r; ++y) for (int z = cz - r; z <= cz + r; ++z) {
+                        if (std::max({std::abs(x - cx), std::abs(y - cy), std::abs(z - cz)}) != r) continue;   // only the new shell
+                        auto it = cells.find(Key(x, y, z)); if (it == cells.end()) continue;
+                        for (int i : it->second) { const float d = ((*pts)[i] - q).SqrMagnitude(); if (d < bd) { bd = d; best = i; } }
+                    }
+                    if (best >= 0 && std::sqrt(bd) <= (float)r * cell) break;
+                }
+                return best;
+            }
+        };
+        auto centroids = [](const Mesh& m) {
+            std::vector<Vec3> c((size_t)m.TriangleCount());
+            for (int t = 0; t < m.TriangleCount(); ++t) {
+                Vec3 sum{0, 0, 0};
+                for (int k = 0; k < 3; ++k) { const int i = m.triangles[t * 3 + k]; if (i >= 0 && i < (int)m.vertices.size()) sum = sum + m.vertices[i]; }
+                c[(size_t)t] = sum * (1.0f / 3.0f);
+            }
+            return c;
+        };
+        if (needUV || needVC) {
+            Grid g; g.Build(old.vertices);
+            std::vector<Vec2> nu; std::vector<Color> nc;
+            for (int i = 0; i < nv; ++i) {
+                int src = (i < (int)old.vertices.size() && old.vertices[(size_t)i] == vertices[(size_t)i]) ? i : g.Nearest(vertices[(size_t)i]);
+                if (src < 0) src = 0;
+                if (needUV) nu.push_back(old.uvs[(size_t)src]);
+                if (needVC) nc.push_back(old.vertexColors[(size_t)src]);
+            }
+            if (needUV) uvs = std::move(nu);
+            if (needVC) vertexColors = std::move(nc);
+        }
+        if (needSlot || needFC || needCU) {
+            const std::vector<Vec3> oc = centroids(old), nc = centroids(*this);
+            Grid g; g.Build(oc);
+            // The old face a new face grew from: of the few old faces whose middles are nearest, the one whose surface
+            // is closest to the new face's middle (a face on a big flat triangle is not nearest by its middle alone).
+            auto distToOld = [&](int ot, const Vec3& p) {
+                const int i0 = old.triangles[(size_t)ot * 3], i1 = old.triangles[(size_t)ot * 3 + 1], i2 = old.triangles[(size_t)ot * 3 + 2];
+                if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= (int)old.vertices.size() || i1 >= (int)old.vertices.size() || i2 >= (int)old.vertices.size()) return 1e30f;
+                const Vec3 a = old.vertices[(size_t)i0], b = old.vertices[(size_t)i1], c = old.vertices[(size_t)i2];
+                const Vec3 e0 = b - a, e1 = c - a, d = p - a;
+                const float d00 = Vec3::Dot(e0, e0), d01 = Vec3::Dot(e0, e1), d11 = Vec3::Dot(e1, e1), d20 = Vec3::Dot(d, e0), d21 = Vec3::Dot(d, e1);
+                const float den = d00 * d11 - d01 * d01;
+                float v = 0, w = 0;
+                if (std::fabs(den) > 1e-20f) { v = (d11 * d20 - d01 * d21) / den; w = (d00 * d21 - d01 * d20) / den; }
+                float u = std::max(1.0f - v - w, 0.0f); v = std::max(v, 0.0f); w = std::max(w, 0.0f);
+                const float sum = u + v + w; if (sum > 1e-12f) { u /= sum; v /= sum; w /= sum; } else { u = 1; v = w = 0; }
+                return (a * u + b * v + c * w - p).SqrMagnitude();
+            };
+            auto parent = [&](const Vec3& p) {
+                int best = -1; float bd = 1e30f;
+                for (int ot : g.NearestK(p, 12)) { const float d = distToOld(ot, p); if (d < bd) { bd = d; best = ot; } }
+                return best;
+            };
+            std::vector<int> ns; std::vector<Color> nf; std::vector<Vec2> ncu;
+            for (int t = 0; t < nt; ++t) {
+                int src = (t < (int)oc.size() && oc[(size_t)t] == nc[(size_t)t]) ? t : parent(nc[(size_t)t]);
+                if (src < 0) src = 0;
+                if (needCU) {
+                    // Per-corner UVs: a corner that sits where an old corner was keeps its UV; any other point takes the UV
+                    // found by walking the old triangle it grew from (barycentric, clamped to the triangle), so UV islands survive.
+                    const int oi[3] = {old.triangles[(size_t)src * 3], old.triangles[(size_t)src * 3 + 1], old.triangles[(size_t)src * 3 + 2]};
+                    const bool okOld = oi[0] >= 0 && oi[1] >= 0 && oi[2] >= 0 && oi[0] < (int)old.vertices.size() && oi[1] < (int)old.vertices.size() && oi[2] < (int)old.vertices.size();
+                    for (int k = 0; k < 3; ++k) {
+                        const int ni = triangles[(size_t)t * 3 + k];
+                        const Vec3 p = (ni >= 0 && ni < nv) ? vertices[(size_t)ni] : Vec3{0, 0, 0};
+                        Vec2 uv = old.cornerUVs[(size_t)src * 3];
+                        if (okOld) {
+                            const Vec3 a = old.vertices[(size_t)oi[0]], b = old.vertices[(size_t)oi[1]], c = old.vertices[(size_t)oi[2]];
+                            const Vec3 e0 = b - a, e1 = c - a, d = p - a;
+                            const float d00 = Vec3::Dot(e0, e0), d01 = Vec3::Dot(e0, e1), d11 = Vec3::Dot(e1, e1), d20 = Vec3::Dot(d, e0), d21 = Vec3::Dot(d, e1);
+                            const float den = d00 * d11 - d01 * d01;
+                            float v = 0, w = 0;
+                            if (std::fabs(den) > 1e-20f) { v = (d11 * d20 - d01 * d21) / den; w = (d00 * d21 - d01 * d20) / den; }
+                            float u = 1.0f - v - w;
+                            u = std::max(u, 0.0f); v = std::max(v, 0.0f); w = std::max(w, 0.0f);
+                            const float sum = u + v + w; if (sum > 1e-12f) { u /= sum; v /= sum; w /= sum; } else { u = 1; v = w = 0; }
+                            const Vec2 &ua = old.cornerUVs[(size_t)src * 3], &ub = old.cornerUVs[(size_t)src * 3 + 1], &uc = old.cornerUVs[(size_t)src * 3 + 2];
+                            uv = Vec2{ua.x * u + ub.x * v + uc.x * w, ua.y * u + ub.y * v + uc.y * w};
+                        }
+                        ncu.push_back(uv);
+                    }
+                }
+                if (needSlot) ns.push_back(old.triSlot[(size_t)src]);
+                if (needFC) nf.push_back(old.triColors[(size_t)src]);
+            }
+            if (needSlot) { triSlot = std::move(ns); if (slotColors.empty()) slotColors = old.slotColors; }
+            if (needFC) triColors = std::move(nf);
+            if (needCU) cornerUVs = std::move(ncu);
+        }
+    }
+    /// Put at the top of an operator: when the operator returns, whatever it left at the wrong size is rebuilt from
+    /// the mesh as it was (see InheritAttributes). Costs one copy of the mesh, and only when it carries such lists.
+    struct AttrGuard {
+        Mesh& m; std::unique_ptr<Mesh> before;
+        explicit AttrGuard(Mesh& mesh) : m(mesh) { if (m.HasUVs() || m.HasVertexColors() || m.HasSlots() || m.HasFaceColors() || m.HasCornerUVs() || !m.seams.empty()) before.reset(new Mesh(m)); }
+        ~AttrGuard() { if (before) m.InheritAttributes(*before); }
+    };
 
     /// Copy the per-vertex UVs onto the triangle corners (before a weld would
     /// merge vertices that sit on a UV seam). Keeps existing corner UVs.
@@ -98,6 +572,7 @@ struct Mesh {
                 m.vertices.push_back(vertices[v]);
                 m.uvs.push_back(t);
                 if (nrm) m.normals.push_back(normals[v]);
+                if (HasVertexColors()) m.vertexColors.push_back(vertexColors[v]);
             }
             m.triangles[i] = it->second;
         }
@@ -163,13 +638,18 @@ struct Mesh {
         }
         // Corners around each coincident-position vertex.
         std::vector<int> rep = CoincidentReps();
-        std::map<int, std::vector<std::pair<int, int>>> corners;   // rep -> (tri, slot)
+        // Indexed by representative vertex (visited in ascending order, as an ordered map would): no allocation per corner group.
+        std::vector<std::vector<std::pair<int, int>>> corners(vertices.size());   // rep -> (tri, slot)
         for (int t = 0; t < nt; ++t)
             for (int k = 0; k < 3; ++k)
                 corners[rep[triangles[t * 3 + k]]].push_back({t, k});
         Mesh out;
         out.triangles.assign(triangles.size(), 0);
-        for (auto& cv : corners) {
+        out.vertices.reserve(vertices.size() + vertices.size() / 4);
+        out.normals.reserve(vertices.size() + vertices.size() / 4);
+        for (auto& cvv : corners) {
+            if (cvv.empty()) continue;
+            struct { std::vector<std::pair<int, int>>& second; } cv{cvv};
             // Greedy smoothing groups at this vertex: a corner joins the first group
             // whose average normal is within the angle of its face's normal.
             std::vector<Vec3> gSum;
@@ -202,21 +682,25 @@ struct Mesh {
                 Vec3 n = gSum[g]; float m = n.Magnitude();
                 n = m > 1e-12f ? n * (1.0f / m) : Vec3{0, 1, 0};
                 // One output vertex per (group, uv) so texture seams keep their UVs.
-                std::map<std::pair<long, long>, int> byUV;
+                // (Corners are matched by exact position and exact UV: vertices a few thousandths apart share a smoothing group,
+                // but each keeps its own position, so thin features such as wiper blades are not squeezed flat.)
+                struct Made { float ux, uy; Vec3 p; int vi; };
+                std::vector<Made> made;
                 for (auto& tk : gMembers[g]) {
                     int src = triangles[tk.first * 3 + tk.second];
-                    std::pair<long, long> uk{0, 0};
-                    if (hasUV) uk = {std::lround(uvs[src].x * 4096.0f),
-                                     std::lround(uvs[src].y * 4096.0f)};
-                    auto it = byUV.find(uk);
-                    int vi;
-                    if (it == byUV.end()) {
+                    float ux = 0, uy = 0;
+                    if (hasUV) { ux = uvs[src].x; uy = uvs[src].y; }   // exact: a corner keeps the UV it had
+                    const Vec3& sp = vertices[src];
+                    int vi = -1;
+                    for (const Made& m : made)
+                        if (m.ux == ux && m.uy == uy && m.p.x == sp.x && m.p.y == sp.y && m.p.z == sp.z) { vi = m.vi; break; }
+                    if (vi < 0) {
                         vi = (int)out.vertices.size();
-                        out.vertices.push_back(vertices[src]);
+                        out.vertices.push_back(sp);
                         out.normals.push_back(n);
                         if (hasUV) out.uvs.push_back(uvs[src]);
-                        byUV[uk] = vi;
-                    } else vi = it->second;
+                        made.push_back({ux, uy, sp, vi});
+                    }
                     out.triangles[tk.first * 3 + tk.second] = vi;
                 }
             }
@@ -1793,10 +2277,65 @@ public:
     /// Append another mesh into this one (re-indexing its triangles) — build a
     /// compound model (e.g. a snowman) from primitive parts.
     void Combine(const Mesh& other) {
-        int base = (int)vertices.size();
+        const int base = (int)vertices.size();
+        const int tBase = TriangleCount();
+        const bool uvBoth = HasUVs() || other.HasUVs();
+        const bool fcBoth = HasFaceColors() || other.HasFaceColors();
+        const bool slBoth = HasSlots() || other.HasSlots();
+        const bool pfThis = (int)polyFace.size() == tBase && !polyFace.empty();
+        const bool pfOther = (int)other.polyFace.size() == other.TriangleCount() && !other.polyFace.empty();
+        // What each side carries per triangle is filled in for the other so the lists stay in step.
+        std::vector<Color> col;
+        if (fcBoth) {
+            col.reserve((std::size_t)tBase + other.TriangleCount());
+            for (int t = 0; t < tBase; ++t) col.push_back(HasFaceColors() ? triColors[t] : Color{1, 1, 1, 1});
+            for (int t = 0; t < other.TriangleCount(); ++t) col.push_back(other.HasFaceColors() ? other.triColors[t] : Color{1, 1, 1, 1});
+        }
+        std::vector<int> slot;
+        int slotOffset = 0;
+        if (slBoth) {
+            slotOffset = (int)slotColors.size();
+            if (!HasSlots()) slotOffset = std::max(1, (int)slotColors.size());   // this mesh's faces are all slot 0
+            for (int t = 0; t < tBase; ++t) slot.push_back(HasSlots() ? triSlot[t] : 0);
+            for (int t = 0; t < other.TriangleCount(); ++t) slot.push_back(slotOffset + (other.HasSlots() ? other.triSlot[t] : 0));
+        }
+        std::vector<int> poly;
+        if (pfThis && pfOther) {
+            poly = polyFace;
+            int hi = 0; for (int id : polyFace) hi = std::max(hi, id + 1);
+            for (int id : other.polyFace) poly.push_back(id + hi);
+        }
+        std::vector<Vec2> uv2;
+        if (uvBoth) {
+            uv2 = HasUVs() ? uvs : std::vector<Vec2>(vertices.size(), Vec2{0, 0});
+            if (other.HasUVs()) uv2.insert(uv2.end(), other.uvs.begin(), other.uvs.end());
+            else uv2.insert(uv2.end(), other.vertices.size(), Vec2{0, 0});
+        }
+        std::vector<Color> tbl = slotColors;
+        if (slBoth) {
+            if (tbl.empty()) tbl.push_back(Color{1, 1, 1, 1});
+            while ((int)tbl.size() < slotOffset) tbl.push_back(Color{1, 1, 1, 1});
+            tbl.insert(tbl.end(), other.slotColors.begin(), other.slotColors.end());
+            const int need = slotOffset + std::max(1, other.SlotCount());
+            while ((int)tbl.size() < need) tbl.push_back(Color{1, 1, 1, 1});
+        }
+        std::vector<Color> vc;
+        if (HasVertexColors() || other.HasVertexColors()) {
+            vc = HasVertexColors() ? vertexColors : std::vector<Color>(vertices.size(), Color{1, 1, 1, 1});
+            if (other.HasVertexColors()) vc.insert(vc.end(), other.vertexColors.begin(), other.vertexColors.end());
+            else vc.insert(vc.end(), other.vertices.size(), Color{1, 1, 1, 1});
+        }
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
         for (int t : other.triangles) triangles.push_back(t + base);
+        vertexColors = std::move(vc);
+        triColors = std::move(col);
+        triSlot = std::move(slot);
+        slotColors = std::move(tbl);
+        polyFace = std::move(poly);
+        uvs = std::move(uv2);
+        cornerUVs.clear();
+        normals.clear();
         RefreshNormals();
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
@@ -1886,6 +2425,22 @@ public:
         for (int t : copy.triangles) triangles.push_back(t + base);
         if (faceCols && copy.HasFaceColors())
             triColors.insert(triColors.end(), copy.triColors.begin(), copy.triColors.end());
+        // Everything else that runs parallel to the vertices or faces is copied along, so the
+        // mirrored half keeps its UVs, vertex colours, material slots, polygons and edge weights.
+        if (copy.HasUVs() && uvs.size() == (std::size_t)base) uvs.insert(uvs.end(), copy.uvs.begin(), copy.uvs.end());
+        else if (!uvs.empty()) uvs.assign(vertices.size(), Vec2{0, 0});
+        if (copy.HasVertexColors() && vertexColors.size() == (std::size_t)base) vertexColors.insert(vertexColors.end(), copy.vertexColors.begin(), copy.vertexColors.end());
+        else if (!vertexColors.empty()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        if (copy.HasSlots()) triSlot.insert(triSlot.end(), copy.triSlot.begin(), copy.triSlot.end());
+        if (!copy.polyFace.empty() && copy.polyFace.size() == copy.triangles.size() / 3) {
+            int hi = 0; for (int id : polyFace) hi = std::max(hi, id + 1);
+            for (int id : copy.polyFace) polyFace.push_back(id + hi);
+        } else polyFace.clear();
+        if (copy.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), copy.cornerUVs.begin(), copy.cornerUVs.end());
+        else cornerUVs.clear();
+        for (const auto& sm : copy.seams) seams.push_back({sm.first + base, sm.second + base});
+        for (const EdgeCrease& c : copy.creases) creases.push_back({c.a + base, c.b + base, c.w});
+        for (const EdgeCrease& c : copy.bevelWeights) bevelWeights.push_back({c.a + base, c.b + base, c.w});
         normals.clear();
         name = "";
         if (weld) WeldVertices();
@@ -1897,6 +2452,7 @@ public:
     /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
     /// soften a blocky shape. The sphere radius is the average vertex distance.
     void Spherify(float amount = 1.0f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
@@ -1923,6 +2479,7 @@ public:
     /// `degreesPerUnit` × (its distance along the axis from the mesh centre) — the
     /// classic "wring the model" deformer. axis: 0 = X, 1 = Y, 2 = Z.
     void Twist(float degreesPerUnit, int axis = 1) {
+        if (!std::isfinite(degreesPerUnit)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float mid = ((&lo.x)[axis] + (&hi.x)[axis]) * 0.5f;
@@ -1944,6 +2501,7 @@ public:
     /// bottom (min of `axis`) to `endScale` at the top — turn a cylinder into a cone
     /// or a box into a frustum/wedge. axis: 0 = X, 1 = Y, 2 = Z.
     void Taper(int axis = 1, float endScale = 0.5f) {
+        if (!std::isfinite(endScale)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], range = a1 - a0;
@@ -1964,6 +2522,7 @@ public:
     /// `degrees` total over its length along `axis` (0 = X, 1 = Y, 2 = Z). The bend
     /// happens in the plane of `axis` and the next axis. 0 leaves it straight.
     void Bend(float degrees, int axis = 0) {
+        if (!std::isfinite(degrees)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2 || std::fabs(degrees) < 1e-4f) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis], len = a1 - a0;
@@ -1989,6 +2548,7 @@ public:
     /// the (smooth) vertex normals by `thickness`, and flip it so the shell reads
     /// solid from both sides — turn a plane/curved sheet into a slab/bowl wall.
     void Solidify(float thickness = 0.1f) {
+        if (!std::isfinite(thickness)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || triangles.empty()) return;
         Mesh src = *this;
         if (!src.HasNormals()) src.ComputeSmoothNormals();
@@ -2005,6 +2565,15 @@ public:
         vertices.insert(vertices.end(), inner.vertices.begin(), inner.vertices.end());
         for (int t : inner.triangles) triangles.push_back(t + base);
         if (!innerCols.empty()) triColors.insert(triColors.end(), innerCols.begin(), innerCols.end());
+        // The inner shell is a copy of the surface, so it keeps the same UVs, vertex colours, material slots and polygons.
+        if (src.HasUVs()) uvs.insert(uvs.end(), src.uvs.begin(), src.uvs.end()); else uvs.clear();
+        if (src.HasVertexColors()) vertexColors.insert(vertexColors.end(), src.vertexColors.begin(), src.vertexColors.end()); else vertexColors.clear();
+        if (src.HasSlots()) triSlot.insert(triSlot.end(), src.triSlot.begin(), src.triSlot.end()); else triSlot.clear();
+        if (!src.polyFace.empty() && src.polyFace.size() == src.triangles.size() / 3) {
+            int hi = 0; for (int id : src.polyFace) hi = std::max(hi, id + 1);
+            for (int id : src.polyFace) polyFace.push_back(id + hi);
+        } else polyFace.clear();
+        if (src.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), inner.cornerUVs.begin(), inner.cornerUVs.end()); else cornerUVs.clear();
         normals.clear();
         name = "";
     }
@@ -2075,15 +2644,34 @@ public:
         // texture coordinates (previously the stale uvs array was silently dropped,
         // un-texturing the mesh). The kept vertex's UV wins at a merged seam.
         const bool hadUV = uvs.size() == vertices.size();
-        std::vector<Vec2> uniqueUV;
+        const bool hadVC = HasVertexColors();
+        std::vector<Vec2> uniqueUV; std::vector<Color> uniqueVC;
+        if (!(epsilon > 0.0f)) epsilon = 0.0f;   // negative or NaN distance: merge exact repeats only
         float e2 = epsilon * epsilon;
+        // A grid of cells as wide as the distance finds the near vertices without comparing
+        // every pair (the all-pairs search took about 6 s on a 240k-triangle mesh). The first
+        // unique vertex within the distance still wins, as before.
+        const float cellW = std::max(epsilon, 1e-6f);
+        auto cellOf = [&](const Vec3& p) {
+            return std::make_tuple((long long)std::floor(p.x / cellW), (long long)std::floor(p.y / cellW), (long long)std::floor(p.z / cellW));
+        };
+        std::map<std::tuple<long long, long long, long long>, std::vector<int>> grid;
         for (std::size_t i = 0; i < vertices.size(); ++i) {
             int found = -1;
-            for (std::size_t j = 0; j < unique.size(); ++j)
-                if ((unique[j] - vertices[i]).SqrMagnitude() <= e2) { found = (int)j; break; }
+            const auto c = cellOf(vertices[i]);
+            for (long long dx = -1; dx <= 1; ++dx)
+                for (long long dy = -1; dy <= 1; ++dy)
+                    for (long long dz = -1; dz <= 1; ++dz) {
+                        auto it = grid.find(std::make_tuple(std::get<0>(c) + dx, std::get<1>(c) + dy, std::get<2>(c) + dz));
+                        if (it == grid.end()) continue;
+                        for (int j : it->second)
+                            if ((unique[j] - vertices[i]).SqrMagnitude() <= e2 && (found < 0 || j < found)) found = j;
+                    }
             if (found < 0) {
                 found = (int)unique.size(); unique.push_back(vertices[i]);
+                grid[c].push_back(found);
                 if (hadUV) uniqueUV.push_back(uvs[i]);
+                if (hadVC) uniqueVC.push_back(vertexColors[i]);
             }
             remap[i] = found;
         }
@@ -2093,7 +2681,8 @@ public:
         const bool hadFC = HasFaceColors();
         const bool hadPF = (int)polyFace.size() == TriangleCount() && !polyFace.empty();
         const bool hadCUV = HasCornerUVs();
-        std::vector<int>   tris, pf;
+        const bool hadSlots = HasSlots();
+        std::vector<int>   tris, pf, sl;
         std::vector<Color> fc;
         std::vector<Vec2>  cuv;
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
@@ -2102,6 +2691,7 @@ public:
                 tris.insert(tris.end(), {a, b, c}); // skip degenerate
                 if (hadFC) fc.push_back(triColors[i / 3]);
                 if (hadPF) pf.push_back(polyFace[i / 3]);
+                if (hadSlots) sl.push_back(triSlot[i / 3]);
                 if (hadCUV) cuv.insert(cuv.end(), {cornerUVs[i], cornerUVs[i + 1], cornerUVs[i + 2]});
             }
         }
@@ -2114,11 +2704,26 @@ public:
             if (std::find(sm.begin(), sm.end(), std::make_pair(a, b)) == sm.end()) sm.push_back({a, b});
         }
         seams = std::move(sm);
+        for (std::vector<EdgeCrease>* list : {&creases, &bevelWeights}) {   // creases and bevel weights follow their vertices the same way
+            std::vector<EdgeCrease> cr;
+            for (const EdgeCrease& c : *list) {
+                if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
+                int a = remap[c.a], b = remap[c.b];
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                bool merged = false;
+                for (EdgeCrease& e : cr) if (e.a == a && e.b == b) { e.w = std::max(e.w, c.w); merged = true; break; }
+                if (!merged) cr.push_back({a, b, c.w});
+            }
+            *list = std::move(cr);
+        }
         vertices = std::move(unique);
         triangles = std::move(tris);
         if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();
+        if (hadVC) vertexColors = std::move(uniqueVC); else vertexColors.clear();
         if (hadFC) triColors = std::move(fc); else triColors.clear();
         if (hadPF) polyFace = std::move(pf); else polyFace.clear();
+        if (hadSlots) triSlot = std::move(sl); else triSlot.clear();
         if (hadCUV) cornerUVs = std::move(cuv); else cornerUVs.clear();
         if (removed > 0) name = "";
         RefreshNormals();   // rebuild smooth normals at the welded resolution (or stay flat)
@@ -2129,6 +2734,7 @@ public:
     /// adds detail (and, after re-projecting, smooths primitives). Midpoints are
     /// shared between adjacent triangles so the mesh stays welded.
     void Subdivide() {
+        AttrGuard attrGuard_(*this);
         std::vector<int> out;
         std::map<std::pair<int, int>, int> mids;     // edge -> new midpoint index
         auto midpoint = [&](int a, int b) {
@@ -2257,6 +2863,7 @@ public:
     /// from (negative) the average of its edge-connected neighbours. Coincident
     /// vertices are treated as one so seams between welded parts/faces round too.
     void Smooth(float amount = 0.5f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (amount == 0.0f || vertices.empty()) return;
         const std::size_t n = vertices.size();
         // Group coincident vertices (cube faces, joined parts) so smoothing
@@ -2342,6 +2949,7 @@ public:
     /// of its distance to the nearest selected vertex — Blender's proportional
     /// editing. radius <= 0 behaves exactly like MoveVertices.
     void MoveVerticesSoft(const std::vector<int>& verts, const Vec3& delta, float radius) {
+        if (!std::isfinite(radius + delta.x + delta.y + delta.z)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (radius <= 1e-6f) { MoveVertices(verts, delta); return; }
         std::vector<Vec3> anchors;
         anchors.reserve(verts.size());
@@ -2367,6 +2975,7 @@ public:
     /// Laplacian-relax ONLY the listed vertices (the rest stay put) — evens out
     /// a lumpy patch without melting the whole mesh like Smooth() would.
     void SmoothVertices(const std::vector<int>& verts, float amount = 0.5f) {
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (verts.empty() || amount == 0.0f || vertices.empty()) return;
         std::vector<Vec3> sum(vertices.size(), Vec3{0, 0, 0});
         std::vector<int>  cnt(vertices.size(), 0);
@@ -2457,11 +3066,14 @@ public:
                     nv = (int)out.vertices.size(); remap[v] = nv;
                     out.vertices.push_back(vertices[v]);
                     if (hadUV) out.uvs.push_back(uvs[v]);
+                    if (HasVertexColors()) out.vertexColors.push_back(vertexColors[v]);
                 } else nv = it->second;
                 out.triangles.push_back(nv);
             }
             if (hadColors && f < (int)triColors.size()) out.triColors.push_back(triColors[f]);
+            if (HasSlots()) out.triSlot.push_back(triSlot[f]);
         }
+        if (HasSlots() && (int)out.triSlot.size() == out.TriangleCount()) out.slotColors = slotColors; else out.triSlot.clear();
         out.RefreshNormals();
         DeleteFaces(faces);
         return out;
@@ -2473,7 +3085,8 @@ public:
     /// passed `faces` indices stay valid (those slots are re-pointed, not removed),
     /// so the caller's selection still refers to the extruded cap.
     void ExtrudeFaces(const std::vector<int>& faces, float dist) {
-        if (faces.empty()) return;
+        AttrGuard attrGuard_(*this);
+        if (faces.empty() || !std::isfinite(dist)) return;
         // Averaged (area-weighted) normal of the selected faces.
         Vec3 N{0, 0, 0};
         for (int f : faces) {
@@ -2536,7 +3149,8 @@ public:
     /// re-point the selected faces to the inner ring, and bridge the boundary so a
     /// smaller inner cap sits inside the original outline.
     void InsetFaces(const std::vector<int>& faces, float amount) {
-        if (faces.empty()) return;
+        AttrGuard attrGuard_(*this);
+        if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         // Boundary edges (used by exactly one selected triangle).
         std::map<std::pair<int, int>, int> edgeCount;
@@ -2592,6 +3206,7 @@ public:
     /// shared between the selected faces (via an edge->midpoint map) so the region
     /// stays welded; unselected triangles are left untouched.
     void SubdivideFaces(const std::vector<int>& faces) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty()) return;
         std::map<int, bool> sel;
         for (int f : faces) sel[f] = true;
@@ -2626,22 +3241,28 @@ public:
     /// editable centre point); positive spikes it, negative dimples it. Blender's
     /// Poke Faces. Face colors of the poked triangle carry to its three children.
     void PokeFaces(const std::vector<int>& faces, float height = 0.0f) {
+        AttrGuard attrGuard_(*this);
+        if (!std::isfinite(height)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (faces.empty()) return;
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
+        const bool hadSlots = HasSlots();
         std::vector<int> out; out.reserve(triangles.size() * 2);
+        std::vector<int> outS;
         std::vector<Color> outC; if (hadColors) outC.reserve(triColors.size() * 2);
         for (int f = 0, n = TriangleCount(); f < n; ++f) {
             int i = f * 3, a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
             Color fc = (hadColors && f < (int)triColors.size()) ? triColors[f] : Color{1,1,1,1};
-            if (!sel.count(f)) { out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); continue; }
+            if (!sel.count(f)) { out.insert(out.end(), {a, b, c}); if (hadColors) outC.push_back(fc); if (hadSlots) outS.push_back(triSlot[f]); continue; }
             Vec3 ctr = (vertices[a] + vertices[b] + vertices[c]) * (1.0f / 3.0f);
             if (height != 0.0f) ctr += FaceNormal(f) * height;
             int m = (int)vertices.size(); vertices.push_back(ctr);
             out.insert(out.end(), {a, b, m,  b, c, m,  c, a, m});
             if (hadColors) { outC.push_back(fc); outC.push_back(fc); outC.push_back(fc); }
+            if (hadSlots) outS.insert(outS.end(), 3, triSlot[f]);
         }
         triangles = std::move(out);
+        if (hadSlots) triSlot = std::move(outS);
         if (hadColors) triColors = std::move(outC);
         name = "";
         RefreshNormals();
@@ -2652,7 +3273,8 @@ public:
     /// ExtrudeFaces (one connected cap along the averaged normal), each face gets
     /// its own detached cap + side walls. Vertices are duplicated per face.
     void ExtrudeFacesIndividual(const std::vector<int>& faces, float dist) {
-        if (faces.empty() || std::fabs(dist) < 1e-8f) return;
+        AttrGuard attrGuard_(*this);
+        if (faces.empty() || !std::isfinite(dist) || std::fabs(dist) < 1e-8f) return;
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
         std::vector<int> out; out.reserve(triangles.size() * 3);
@@ -2681,7 +3303,8 @@ public:
     /// ring), per face rather than as one shared region — Blender's "Inset
     /// Individual". Pairs with ExtrudeFacesIndividual for panel/greeble looks.
     void InsetFacesIndividual(const std::vector<int>& faces, float amount) {
-        if (faces.empty()) return;
+        AttrGuard attrGuard_(*this);
+        if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
@@ -2711,12 +3334,16 @@ public:
     /// descending so earlier erases don't shift later indices. Orphan vertices are
     /// left in place (harmless).
     void DeleteFaces(std::vector<int> faces) {
+        AttrGuard attrGuard_(*this);
         const bool hadColors = HasFaceColors();
+        const bool hadSlots = HasSlots();
         std::sort(faces.begin(), faces.end(), std::greater<int>());
+        faces.erase(std::unique(faces.begin(), faces.end()), faces.end());   // a repeated number is one face
         for (int f : faces) {
             int i = f * 3;
             if (i < 0 || i + 2 >= (int)triangles.size()) continue;
             triangles.erase(triangles.begin() + i, triangles.begin() + i + 3);
+            if (hadSlots) triSlot.erase(triSlot.begin() + f);
             if (hadColors && f < (int)triColors.size())   // keep per-face colors aligned
                 triColors.erase(triColors.begin() + f);
         }
@@ -2726,6 +3353,7 @@ public:
     /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
     /// faces point the other way, then recompute normals.
     void FlipNormals() {
+        AttrGuard attrGuard_(*this);
         const bool cuv = HasCornerUVs();
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             std::swap(triangles[i + 1], triangles[i + 2]);
@@ -2744,6 +3372,7 @@ public:
     /// Returns how many triangles were flipped. Coincident-vertex aware, so seams
     /// from Separate/Weld/hard-shading still count as connected.
     int OrientFacesOutward() {
+        AttrGuard attrGuard_(*this);
         const int nt = (int)triangles.size() / 3;
         if (nt == 0) return 0;
         std::vector<int> rep = CoincidentReps();
@@ -2885,7 +3514,8 @@ public:
     /// Array modifier: keep the original and append `count-1` more copies, each
     /// shifted a further `offset` along. Great for fences, columns, stairs, gears.
     void Array(int count, const Vec3& offset) {
-        if (count <= 1 || vertices.empty()) return;
+        AttrGuard attrGuard_(*this);
+        if (count <= 1 || vertices.empty() || !std::isfinite(offset.x + offset.y + offset.z)) return;   // a NaN or infinite offset would turn the copies into NaN
         Mesh base = *this;
         for (int i = 1; i < count; ++i)
             Add(base, {offset.x * (float)i, offset.y * (float)i, offset.z * (float)i});
@@ -2898,7 +3528,8 @@ public:
     /// A fast, robust way to cut triangle count on dense/imported meshes. Returns the
     /// new triangle count.
     int Decimate(float cellSize) {
-        if (cellSize <= 1e-6f || vertices.empty()) return TriangleCount();
+        AttrGuard attrGuard_(*this);
+        if (!(cellSize > 1e-6f) || vertices.empty()) return TriangleCount();
         std::map<std::tuple<int, int, int>, int> cell;
         std::vector<Vec3> sum; std::vector<int> cnt; std::vector<int> remap(vertices.size());
         auto key = [&](const Vec3& v) {
@@ -3204,6 +3835,8 @@ public:
     /// bark). `frequency` sets the noise scale, `seed` picks the pattern; both are
     /// deterministic. Subdivide first for finer detail.
     void Displace(float amount, float frequency = 1.0f, int seed = 0) {
+        if (!std::isfinite(amount + frequency)) return;   // a NaN or infinite amount would turn every vertex into NaN
+        amount = std::clamp(amount, -1e6f, 1e6f); frequency = std::clamp(frequency, -1e4f, 1e4f);   // (and absurd ones overflow the noise)
         if (vertices.empty()) return;
         ComputeSmoothNormals();
         Vec3 ctr{0, 0, 0};
@@ -3244,6 +3877,7 @@ public:
     /// Stretch/squash along one axis (0=X,1=Y,2=Z) about the mesh centre. factor > 1
     /// stretches, < 1 squashes, < 0 mirrors. A cheap Simple-Deform stretch.
     void Stretch(int axis, float factor) {
+        if (!std::isfinite(factor)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (vertices.empty() || axis < 0 || axis > 2) return;
         float c = 0.0f;
         for (const Vec3& v : vertices) c += (&v.x)[axis];
@@ -3351,6 +3985,7 @@ public:
     /// are treated as one so unwelded seams don't read as boundaries. Returns the
     /// number of holes closed.
     int FillHoles() {
+        AttrGuard attrGuard_(*this);
         if (triangles.size() < 3 || vertices.empty()) return 0;
         // Representative index per coincident-vertex group.
         std::map<std::tuple<int, int, int>, int> grid;
@@ -3378,6 +4013,7 @@ public:
             if (!edges.count({e.second, e.first}) && !next.count(e.first))
                 next[e.first] = e.second;
         const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
+        const bool hadFC = HasFaceColors(), hadSlots = HasSlots();
         int holes = 0;
         std::set<int> used;
         for (const auto& start : next) {
@@ -3403,11 +4039,40 @@ public:
             ++holes;
         }
         if (holes > 0) {
-            triColors.clear();                           // face records changed
+            // The caps are new faces: they get white and slot 0, and every old face keeps its
+            // paint and slot (audit: filling a hole used to wipe the whole mesh's face colours).
+            if (hadFC) triColors.resize((std::size_t)TriangleCount(), Color{1, 1, 1, 1}); else triColors.clear();
+            if (hadSlots) triSlot.resize((std::size_t)TriangleCount(), 0);
             name = "";
             RefreshNormals();
         }
         return holes;
+    }
+
+    /// What Repair() found and fixed.
+    struct RepairReport {
+        int mergedVerts = 0, holesFilled = 0, flippedFaces = 0;
+        int openEdgesBefore = 0, openEdgesAfter = 0;
+        int nonManifoldBefore = 0, nonManifoldAfter = 0;
+        bool ClosedAfter() const { return openEdgesAfter == 0 && nonManifoldAfter == 0; }
+    };
+    /// One-click clean-up for a broken or imported mesh: merge vertices closer than `weldDist`
+    /// (which also drops collapsed triangles), cap open holes (optional), then make every face
+    /// point the same way, outward on closed shells. Painted colours and material slots stay.
+    RepairReport Repair(float weldDist = 1e-5f, bool fillHoles = true) {
+        AttrGuard attrGuard_(*this);
+        RepairReport r;
+        const TopologyReport before = Topology();
+        r.openEdgesBefore = before.boundaryEdges; r.nonManifoldBefore = before.nonManifoldEdges;
+        r.mergedVerts = WeldVertices(weldDist);
+        r.flippedFaces = OrientFacesOutward();          // consistent first, so hole rims chain up
+        if (fillHoles) {
+            r.holesFilled = FillHoles();
+            if (r.holesFilled > 0) r.flippedFaces += OrientFacesOutward();   // the caps too
+        }
+        const TopologyReport after = Topology();
+        r.openEdgesAfter = after.boundaryEdges; r.nonManifoldAfter = after.nonManifoldEdges;
+        return r;
     }
 
     /// Bridge: if the mesh has EXACTLY two open boundary loops (e.g. two facing
@@ -3489,6 +4154,7 @@ public:
     /// vertex) — remove edge loops, simplify dense areas. Degenerate triangles
     /// are dropped by the weld pass.
     void CollapseEdges(const std::vector<std::pair<int, int>>& es) {
+        AttrGuard attrGuard_(*this);
         if (es.empty()) return;
         for (const auto& e : es) {
             if (e.first < 0 || e.first >= (int)vertices.size() ||
@@ -3506,6 +4172,7 @@ public:
     /// triangle sharing that edge is cut in two — add local detail exactly where
     /// you need it without subdividing whole faces.
     void SplitEdges(const std::vector<std::pair<int, int>>& es) {
+        AttrGuard attrGuard_(*this);
         if (es.empty()) return;
         const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
         for (const auto& e : es) {
@@ -3538,6 +4205,7 @@ public:
     /// Append a detached copy of the listed triangles (new vertices, UVs carried)
     /// and return the indices of the NEW faces — duplicate-and-drag workflows.
     std::vector<int> DuplicateFaces(const std::vector<int>& faces) {
+        AttrGuard attrGuard_(*this);
         std::vector<int> newFaces;
         if (faces.empty()) return newFaces;
         const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
@@ -3570,17 +4238,18 @@ public:
     /// Representative index per coincident-vertex group, so selection ops flow
     /// across unwelded seams the same way Smooth() does.
     std::vector<int> CoincidentReps() const {
-        std::map<std::tuple<int, int, int>, int> grid;
+        // Hashed (not an ordered map): this runs on every smooth-shading pass and on every guided regenerate, on up to a few
+        // hundred thousand vertices. The representative is still the first vertex in each 1/4096 cell.
+        struct Cell { int x, y, z; bool operator==(const Cell& o) const { return x == o.x && y == o.y && z == o.z; } };
+        struct CellHash { std::size_t operator()(const Cell& c) const { return (std::size_t)((unsigned)c.x * 73856093u) ^ (std::size_t)((unsigned)c.y * 19349663u) ^ (std::size_t)((unsigned)c.z * 83492791u); } };
+        std::unordered_map<Cell, int, CellHash> grid;
+        grid.reserve(vertices.size() * 2 + 1);
         std::vector<int> rep(vertices.size());
-        auto key = [](const Vec3& v) {
-            return std::make_tuple((int)std::lround(v.x * 4096.0f),
-                                   (int)std::lround(v.y * 4096.0f),
-                                   (int)std::lround(v.z * 4096.0f));
-        };
         for (std::size_t i = 0; i < vertices.size(); ++i) {
-            auto k = key(vertices[i]);
+            const Vec3& v = vertices[i];
+            const Cell k{(int)std::lround(v.x * 4096.0f), (int)std::lround(v.y * 4096.0f), (int)std::lround(v.z * 4096.0f)};
             auto it = grid.find(k);
-            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            if (it == grid.end()) { grid.emplace(k, (int)i); rep[i] = (int)i; }
             else rep[i] = it->second;
         }
         return rep;
@@ -3801,6 +4470,7 @@ public:
     /// Quantize vertices to a grid of `step` (empty `verts` = whole mesh) — clean
     /// up hand-moved points, make modular kit pieces line up exactly.
     void SnapToGrid(float step, const std::vector<int>& verts = {}) {
+        if (!std::isfinite(step)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (step <= 1e-6f || vertices.empty()) return;
         auto snap = [&](int v) {
             vertices[v] = {std::lround(vertices[v].x / step) * step,
@@ -3877,6 +4547,8 @@ public:
     /// along every edge that meets it and the opening is capped with a flat facet —
     /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.
     void BevelVertices(const std::vector<int>& sel, float amount) {
+        AttrGuard attrGuard_(*this);
+        if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (sel.empty() || amount <= 1e-6f || triangles.empty()) return;
         std::set<int> S;
         for (int v : sel) if (v >= 0 && v < (int)vertices.size()) S.insert(v);

@@ -929,6 +929,57 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Material slots (per-face material: which slot each triangle uses, and each
+        // slot's colour). Separate records so older scenes still load; they follow the
+        // geometry so the triangle count lines up.
+        if (mr->mesh.HasSlots() && !generated) {
+            out << "  meshslots " << mr->mesh.triSlot.size();
+            for (int sl : mr->mesh.triSlot) out << " " << sl;
+            out << "\n  slotcolors " << mr->mesh.slotColors.size();
+            for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Bevel weights (vertex pairs + weight), optional record.
+        if (!mr->mesh.bevelWeights.empty() && !generated) {
+            out << "  meshbevelw " << mr->mesh.bevelWeights.size();
+            for (const EdgeCrease& c : mr->mesh.bevelWeights) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
+        // Subdivision creases (vertex pairs + sharpness), optional record.
+        if (!mr->mesh.creases.empty() && !generated) {
+            out << "  meshcreases " << mr->mesh.creases.size();
+            for (const EdgeCrease& c : mr->mesh.creases) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
+        // Per-vertex colours (smooth painting): optional record, follows the geometry so the count lines up.
+        if (mr->mesh.HasVertexColors() && !generated) {
+            out << "  meshvcolors " << mr->mesh.vertexColors.size();
+            for (const Color& c : mr->mesh.vertexColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Hidden faces (Hide / Isolate in edit mode): kept with the mesh so a saved scene still has them to reveal.
+        if (mr->mesh.HasHidden() && mr->mesh.HiddenConsistent() && !generated) {
+            const int hn = mr->mesh.HiddenTriangleCount();
+            const bool huv = !mr->mesh.hiddenUV.empty(), hco = !mr->mesh.hiddenColor.empty();
+            out << "  meshhidden " << hn << " " << (huv ? 1 : 0) << " " << (hco ? 1 : 0);
+            for (int t = 0; t < hn; ++t) {
+                for (int k = 0; k < 3; ++k) { const Vec3& p = mr->mesh.hiddenPos[t * 3 + k]; out << " " << p.x << " " << p.y << " " << p.z; }
+                out << " " << mr->mesh.hiddenSlot[t] << " " << mr->mesh.hiddenPoly[t];
+                if (huv) for (int k = 0; k < 3; ++k) out << " " << mr->mesh.hiddenUV[t * 3 + k].x << " " << mr->mesh.hiddenUV[t * 3 + k].y;
+                if (hco) { const Color& c = mr->mesh.hiddenColor[t]; out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; }
+            }
+            out << "\n";
+        }
+        // A picture per material slot (optional record; empty entries mean "no picture for this slot").
+        {
+            bool any = false;
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) any = true;
+            if (any) {
+                out << "  slottex " << mr->slotTextures.size();
+                for (const std::string& st : mr->slotTextures) out << " " << Quote(st);
+                out << "\n";
+            }
+        }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
         out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
@@ -998,7 +1049,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("lv", m.levels).b("smooth", m.smoothShading)("th", m.thickness)
              ("w", m.width)("seg", m.segments)("ang", m.angle)
              .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
-             ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+             ("str", m.strength)("freq", m.frequency)("seed", m.seed).b("bw", m.useBevelWeights);
+            if (m.type == MeshModifier::Type::CurveArray) {      // the curve: "x,y,z;x,y,z;..."
+                std::ostringstream pt;
+                for (std::size_t i = 0; i < m.path.size(); ++i)
+                    pt << (i ? ";" : "") << m.path[i].x << "," << m.path[i].y << "," << m.path[i].z;
+                k.b("align", m.align).str("path", pt.str());
+            }
             out << "\n";
         }
     }
@@ -1479,6 +1536,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  fphands2";
         extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
         out << "\n";
+        // Presets, click swing and shirt colours came later. A scene without this line is the Old look.
+        out << "  fphands3 " << (int)hh->preset << " " << (hh->swingOnClick ? 1 : 0) << " " << hh->attackButton
+            << " " << (hh->right.matchShirt ? 1 : 0) << " " << (hh->left.matchShirt ? 1 : 0) << "\n";
     }
     for (auto* ps : go->GetComponents<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -2484,7 +2544,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
              ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
              ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         }
         out << "\n";
     }
@@ -2530,7 +2590,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
          ("walkA", fp->walkAcceleration)("steer", fp->steerRate)
          .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime)
-         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap);
+         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap)
+         ("slope", fp->slopeLimit)("step", fp->stepOffset)("fallY", fp->fallResetY)   // settings that were never saved
+         ("swim", fp->swimSpeed)("swimUp", fp->swimUpSpeed)("swimDown", fp->swimDownSpeed)
+         .b("varJump", fp->variableJump)("jumpCut", fp->jumpCut)("climb", fp->climbSpeed)("hardLand", fp->hardLandSpeed)("preset", fp->controllerPreset)("stickRamp", fp->stickLookRamp);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2570,7 +2633,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
          ("walkA", tp->walkAcceleration)("steer", tp->steerRate)
          .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime)
-         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap);
+         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap)
+         ("slope", tp->slopeLimit)("step", tp->stepOffset)("fallY", tp->fallResetY)   // settings that were never saved
+         ("swim", tp->swimSpeed)("swimUp", tp->swimUpSpeed)("swimDown", tp->swimDownSpeed)
+         .b("varJump", tp->variableJump)("jumpCut", tp->jumpCut)("climb", tp->climbSpeed)("hardLand", tp->hardLandSpeed)("preset", tp->controllerPreset)("stickRamp", tp->stickLookRamp);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2599,7 +2665,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
          ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         out << "\n";
     }
     // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
@@ -3893,6 +3959,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
+        out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
+            << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
     if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
@@ -4137,6 +4206,7 @@ static void ReadPlayerViewKeys(KvIn& k, PlayerView* pv, const char* viewKey) {
     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
     k.f("dist", pv->thirdPersonDistance);
     k.f("shoulder", pv->shoulderOffset);
+    k.b("presetKeys", pv->presetHotkeys);
 }
 
 // Files from before version 3 came from starters whose First Person and Third
@@ -4281,6 +4351,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
+        } else if (token == "refimage") {
+            modeling::RefImageRecord r; int fl = 0, vis = 1;
+            r.path = ReadQuoted(in);
+            in >> r.plane >> r.centre.x >> r.centre.y >> r.centre.z >> r.width >> r.opacity >> fl >> vis;
+            if (clear && in && r.plane >= 0 && r.plane <= 2 && std::isfinite(r.width + r.opacity + r.centre.x + r.centre.y + r.centre.z)) {
+                r.flipX = fl != 0; r.visible = vis != 0; scene.refImages.push_back(r);
+            }
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;
@@ -4623,6 +4700,70 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
                     for (int i = 0; i < cc && in; ++i) {
                         Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
+                    }
+                } else if (field == "meshslots") {
+                    // Per-triangle material slot; ignored later if the count doesn't match.
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    if (!in || !countOk(sc, 1)) return bad("meshslots: bad count");
+                    mr->mesh.triSlot.clear();
+                    mr->mesh.triSlot.reserve(sc > 0 ? sc : 0);
+                    for (int i = 0; i < sc && in; ++i) {
+                        int sl = 0; in >> sl;
+                        mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
+                    }
+                } else if (field == "meshbevelw") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int bn = 0; in >> bn;
+                    if (!in || bn < 0 || !countOk(bn, 6)) return bad("meshbevelw: bad count");
+                    mr->mesh.bevelWeights.clear();
+                    for (int i = 0; i < bn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) { c.w = std::min(c.w, 1.0f); mr->mesh.bevelWeights.push_back(c); } }
+                } else if (field == "meshcreases") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cn = 0; in >> cn;
+                    if (!in || cn < 0 || !countOk(cn, 6)) return bad("meshcreases: bad count");
+                    mr->mesh.creases.clear();
+                    for (int i = 0; i < cn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) mr->mesh.creases.push_back(c); }
+                } else if (field == "meshvcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int vc = 0; in >> vc;
+                    if (!in || vc < 0 || !countOk(vc, 4)) return bad("meshvcolors: bad count");
+                    mr->mesh.vertexColors.clear();
+                    mr->mesh.vertexColors.reserve((std::size_t)vc);
+                    for (int i = 0; i < vc && in; ++i) { Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.vertexColors.push_back(c); }
+                } else if (field == "meshhidden") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int hn = 0, huv = 0, hco = 0; in >> hn >> huv >> hco;
+                    if (!in || hn < 0 || hn > 2000000 || !countOk(hn, 20)) return bad("meshhidden: bad count");
+                    Mesh& hm = mr->mesh;
+                    hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear();
+                    for (int t = 0; t < hn && in; ++t) {
+                        for (int k = 0; k < 3; ++k) { Vec3 p; in >> p.x >> p.y >> p.z; hm.hiddenPos.push_back(p); }
+                        int sl = -1, pl = -1; in >> sl >> pl; hm.hiddenSlot.push_back(sl); hm.hiddenPoly.push_back(pl);
+                        if (huv) for (int k = 0; k < 3; ++k) { Vec2 u; in >> u.x >> u.y; hm.hiddenUV.push_back(u); }
+                        if (hco) { Color c; in >> c.r >> c.g >> c.b >> c.a; hm.hiddenColor.push_back(c); }
+                    }
+                    if (!in || !hm.HiddenConsistent()) { hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear(); return bad("meshhidden: damaged"); }
+                } else if (field == "slottex") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int tc = 0; in >> tc;
+                    if (!in || tc < 0 || tc > 256) return bad("slottex: bad count");
+                    mr->slotTextures.clear();
+                    for (int i = 0; i < tc && in; ++i) { in >> std::ws; mr->slotTextures.push_back(in.peek() == '"' ? ReadQuoted(in) : std::string()); }
+                } else if (field == "slotcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int kc = 0; in >> kc;
+                    if (!in || !countOk(kc, 4) || kc > 256) return bad("slotcolors: bad count");
+                    mr->mesh.slotColors.clear();
+                    for (int i = 0; i < kc && in; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.slotColors.push_back(c);
                     }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
@@ -5172,7 +5313,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.i("lv", m.levels); k.b("smooth", m.smoothShading); k.f("th", m.thickness);
                     k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
                     k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
-                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed); k.b("bw", m.useBevelWeights);
+                    if (m.type == MeshModifier::Type::CurveArray) {
+                        k.b("align", m.align);
+                        std::string pts; k.str("path", pts);
+                        std::stringstream ps(pts); std::string one;
+                        while (std::getline(ps, one, ';') && m.path.size() < 1000) {
+                            Vec3 v; char c1 = 0, c2 = 0;
+                            std::istringstream vs(one);
+                            if (vs >> v.x >> c1 >> v.y >> c2 >> v.z && c1 == ',' && c2 == ',') m.path.push_back(v);
+                        }
+                    }
                     mm->modifiers.push_back(m);
                 } else if (field == "meshenabled") {
                     int en = 1; in >> en;
@@ -6788,6 +6939,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
                         k.f("capSens", c->capturedSensitivity); k.f("capPx", c->capturedPixelCap);
+                        k.f("slope", c->slopeLimit); k.f("step", c->stepOffset); k.f("fallY", c->fallResetY);
+                        k.f("swim", c->swimSpeed); k.f("swimUp", c->swimUpSpeed); k.f("swimDown", c->swimDownSpeed);
+                        k.b("varJump", c->variableJump); k.f("jumpCut", c->jumpCut); k.f("climb", c->climbSpeed); k.f("hardLand", c->hardLandSpeed); k.i("preset", c->controllerPreset); k.f("stickRamp", c->stickLookRamp);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
@@ -7599,6 +7753,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (v.size() >= 7) fh->showWhileRunning = (v[6] != 0.0f);
                 } else if (field == "fphands") {
                     auto* hh = go->AddComponent<FirstPersonHands>();
+                    hh->ApplyPreset(FirstPersonHands::Preset::OldLook);   // a scene saved before presets keeps its look
                     auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
                         int en = 1, col = 0, sl = 0;
                         rs >> en >> s.position.x >> s.position.y >> s.position.z
@@ -7626,6 +7781,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
                        >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
                        >> hh->othersArmLift >> hh->othersArmForward;
+                } else if (field == "fphands3") {
+                    auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    int pr = 5, sw = 0, ab = 0, mr = 0, ml = 0;
+                    in >> pr >> sw >> ab >> mr >> ml;
+                    if (pr < 0 || pr > 5) pr = 5;
+                    hh->preset = (FirstPersonHands::Preset)pr;
+                    hh->swingOnClick = sw != 0;
+                    hh->attackButton = ab < 0 ? 0 : ab > 7 ? 7 : ab;
+                    hh->right.matchShirt = mr != 0;
+                    hh->left.matchShirt = ml != 0;
                 } else if (field == "fphands2") {
                     auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
                     if (!hh) hh = go->AddComponent<FirstPersonHands>();
@@ -9413,7 +9579,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* sr : go->GetComponents<SpriteRenderer>()) add(sr->texture);
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         for (auto* mp : go->GetComponents<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
+        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); for (const std::string& st : mr->slotTextures) add(st); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
         for (auto* terrain : go->GetComponents<Terrain>())         { add(terrain->texture); add(terrain->normalMap); for (const auto& l : terrain->layers) add(l.texture); }
         for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
         for (auto* de : go->GetComponents<Decal>())         add(de->texture);

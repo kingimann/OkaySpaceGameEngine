@@ -6,6 +6,7 @@
 // Delay park themselves; these nodes follow the same rule.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 
@@ -332,12 +333,7 @@ struct RunGraphNode : VsNode {
         sub = std::move(parsed);
         loadedText = r.text;
     }
-    bool Unsafe(const std::string& p) const {
-        if (p.empty()) return true;
-        if (p[0] == '/' || p[0] == '\\') return true;
-        if (p.size() >= 2 && p[1] == ':') return true;
-        return p.find("..") != std::string::npos;
-    }
+    bool Unsafe(const std::string& p) const { return !pathsafety::IsSafeRelative(p); }   // the shared rules (PathSafety.hpp)
     std::string Resolve(NodeGraph& g) const {
         auto exists = [](const std::string& p) { std::ifstream f(p); return f.good(); };
         if (exists(path)) return path;

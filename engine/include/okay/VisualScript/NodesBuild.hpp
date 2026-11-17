@@ -5,6 +5,7 @@
 // Logic Signal) are plain EventNodes that BuildMode and LogicTarget fire.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/Core/ScriptPaths.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -81,6 +82,7 @@ struct BuildCreationNode : VsNode {
         ok = false;
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
         if (!s) return 0;
+        if (!name.empty() && !ScriptPathOk(name, load ? "visual script Load Creation" : "visual script Save Creation")) return 0;
         if (BuildMode* m = VsBuildMode(ctx)) ok = load ? m->LoadCreation(name) : m->SaveCreation(name);
         else ok = load ? BuildCreation::Load(*s, BuildMode::CreationPath(name))
                        : BuildCreation::Save(*s, BuildMode::CreationPath(name));

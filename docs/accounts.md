@@ -53,6 +53,24 @@ hosted auth backend — nothing to run yourself).
                -DOKAY_DEFAULT_ACCOUNT_KEY=YOUR-ANON-PUBLIC-KEY
      ```
 
+### Where the server address and key come from
+
+They live in ONE plain file in the repository: **`config/public-account.json`** (`url` and `key`; see
+`config/README.md`). The key is the Supabase *publishable* (anon) key: public by design, it ends up inside every
+program. Supabase row-level security is what protects the data, so keep those policies correct.
+
+| Who | Where it reads the values |
+|---|---|
+| CMake (every build, including CI releases and test builds) | `cmake -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...` wins, then the environment variables of the same names, then `config/public-account.json` |
+| `scripts/build-windows-dist.sh`, the publish scripts, `crash_to_issue.py`, the numbering step of `dev-build.yml`, the Pages workflow | the same variables if set, else the file |
+| GitHub repository variables `OKAY_DEFAULT_ACCOUNT_URL`, `OKAY_DEFAULT_ACCOUNT_KEY` | **optional** override only; leave them unset to use the file |
+
+To change the server or rotate the key: edit `config/public-account.json` and commit. If the file is missing or empty (and
+nothing overrides it) the build still works, with no online features until `OKAY_ACCOUNT_SERVER` / `OKAY_ACCOUNT_API_KEY` or
+`account_server.txt` / `account_apikey.txt` give it a server; the launcher prints a line saying so. Release and test builds in CI
+stop with a clear error in that case, so nothing ships offline by mistake. The configure output says "Account server baked
+in: yes (from ...)" and never prints a value; in GitHub Actions the key is masked in logs.
+
 With Supabase the identifier is the player's **email**. The anon key is meant to
 be public (it's safe to ship); real protection comes from Supabase's Row Level
 Security on your tables. The client uses Supabase's `auth/v1` REST API

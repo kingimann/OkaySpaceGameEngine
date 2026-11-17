@@ -32,6 +32,10 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
 screen uses them yet, so there is nothing to click.
 
-You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7
-(mostly text edges). Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
-setting) to go back. Unverified: none of this was opened in a real editor window.
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7 and 12.2
+(mostly text edges). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
+spacing), and History and the Profiler open at the size Dear ImGui opens them at. To compare: open Edit > Project Settings with
+`OKAY_UI_BACKEND=okayui` and again with `imgui`; the section headers (Player, Physics, Rendering, Tags and Layers) should be at the same
+heights. Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
+setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 12: every ported panel under 8%
+of pixels clearly different from Dear ImGui's). Unverified: Windows.

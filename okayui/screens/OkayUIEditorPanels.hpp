@@ -16,6 +16,22 @@ namespace okayuiscreens {
 /// 18-pixel Roboto, the size the Dear ImGui versions draw with.
 constexpr float kEditorTextScale = 18.0f / 16.0f;
 
+/// The spacing of the Dear ImGui window a panel is hosted in. The defaults are the editor's own style (editor/main.cpp ApplyTheme at
+/// 100%: items 12 across and 8 down, frames a text line and 8 pixels above and below with the text 12 in, a label 8 after its field).
+/// A host copies the real values from ImGui::GetStyle() before it draws (the Inspector pushes its own: Appearance > Density, the
+/// UI scale), so the rows come out exactly as tall and as far apart as the Dear ImGui version's in that window. `itemWidth` is
+/// Dear ImGui's default field width there (CalcItemWidth); 0 means 65% of the window, Dear ImGui's default for a window.
+struct EditorMetrics {
+    OkayUI::Vec2 itemSpacing{12.0f, 8.0f};
+    OkayUI::Vec2 framePadding{12.0f, 8.0f};
+    OkayUI::Vec2 innerSpacing{8.0f, 6.0f};
+    float itemWidth = 0.0f;
+};
+/// Set the metrics the panels below use until the next call (`EditorMetrics{}` puts the defaults back). Non-finite or negative
+/// values fall back to the defaults one by one.
+void SetEditorMetrics(const EditorMetrics& m);
+const EditorMetrics& GetEditorMetrics();
+
 // ---- Problems ---------------------------------------------------------------------------------------------------------------
 
 struct ProblemsResult {

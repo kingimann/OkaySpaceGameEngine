@@ -8,25 +8,52 @@
 #include "OkayUIHostImGui.hpp"
 #include "OkayUIPanels.hpp"
 #include "OkayUIEditorPanels.hpp"
+#include "EditorPanelViews.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace oked {
 
 namespace {
 
+// The spacing of the ImGui window being drawn (with whatever the window pushed, such as the Inspector's density), for the OkayUI body
+// that stands in for its Dear ImGui version, so rows are as tall and as far apart as Dear ImGui's there. Put back after the body.
+struct MetricsFromImGui {
+    MetricsFromImGui() {
+        const ImGuiStyle& st = ImGui::GetStyle();
+        okayuiscreens::EditorMetrics m;
+        m.itemSpacing = OkayUI::Vec2{st.ItemSpacing.x, st.ItemSpacing.y};
+        m.framePadding = OkayUI::Vec2{st.FramePadding.x, st.FramePadding.y};
+        m.innerSpacing = OkayUI::Vec2{st.ItemInnerSpacing.x, st.ItemInnerSpacing.y};
+        m.itemWidth = ImGui::CalcItemWidth();
+        okayuiscreens::SetEditorMetrics(m);
+    }
+    ~MetricsFromImGui() { okayuiscreens::SetEditorMetrics(okayuiscreens::EditorMetrics{}); }
+    MetricsFromImGui(const MetricsFromImGui&) = delete;
+    MetricsFromImGui& operator=(const MetricsFromImGui&) = delete;
+};
+
 // The ImGui window stays: it is the dock tab and the close box, and hands its free area to OkayUI as one rectangle (the same
 // arrangement as the Console panel). Returns false when an ImGui popup covers the window.
+//
+// The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to an OkayUI body. `fitBody`, when
+// given, is the panel's Dear ImGui body: a window that does not exist yet and has no saved place is fitted by Dear ImGui to what its
+// first frame holds, and that frame is never shown, so the first frame draws the Dear ImGui body and the window opens exactly as big
+// as the Dear ImGui version does; OkayUI draws from the next frame on. Without `fitBody` a new window gets a fixed first size.
 template <class Draw>
-bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
+bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw, const std::function<void()>& fitBody = {}) {
     const ImGuiWindow* cw = ImGui::FindWindowByName(title);
     if (cw && okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) return false;
     if (okayuihost::OutsideMainWindow(cw)) return false;
-    // The body is one placeholder as big as the free area, so ImGui cannot fit a new floating window to its content (the Dear
-    // ImGui versions are fitted): without a size of its own it would open as a tiny empty window.
-    ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
+    if (fitBody && !cw && !ImGui::FindWindowSettingsByID(ImHashStr(title))) {
+        if (ImGui::Begin(title, open)) fitBody();   // the hidden first frame: Dear ImGui measures it, nobody sees it
+        ImGui::End();
+        return true;
+    }
+    if (!fitBody) ImGui::SetNextWindowSize(ImVec2(440.0f * g_uiScale, 340.0f * g_uiScale), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title, open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
         ImVec2 a = ImGui::GetContentRegionAvail();
@@ -35,6 +62,7 @@ bool HostWindow(const char* title, bool* open, const char* itemId, Draw draw) {
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);    // the wheel scrolls the OkayUI body, not the ImGui window
         OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         OkayUI::PushTextScale(g_uiScale);
+        MetricsFromImGui metrics_;
         draw(p, a);
         OkayUI::PopTextScale();
     }
@@ -54,6 +82,7 @@ bool HostSection(const char* itemId, Draw draw) {
     float* height = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID(itemId), -1.0f);   // -1: not measured yet
     const ImVec2 p = okayuihost::ToMainWindowPixels(ImGui::GetCursorScreenPos());   // OkayUI's pixels, not ImGui's desktop ones
     const float w = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
+    MetricsFromImGui metrics_;
     if (*height < 0.0f) {
         // The first frame: draw the body into an empty clip only to learn its height, and place a placeholder that tall. A new
         // window fits itself to this frame's content (with a guessed height Project Settings opened far too tall, and so in its own
@@ -151,7 +180,7 @@ bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypa
         OkayUI::PushTextScale(okayuiscreens::kEditorTextScale);
         intent = okayuiscreens::DrawHistory(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
-    });
+    }, [&] { DrawHistoryBodyImGui(model, PanelViewHooks()); });
 }
 
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent) {
@@ -211,7 +240,7 @@ bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::Profile
         intent = okayuiscreens::DrawProfiler(model, p.x, p.y, a.x, a.y).intent;
         OkayUI::PopTextScale();
         if (intent.copyCsv) ImGui::SetClipboardText(okaypanels::ProfilerCsv(model).c_str());
-    });
+    }, [&] { okaypanels::ProfilerModel model; fill(model); DrawProfilerBodyImGui(model, PanelViewHooks()); });
 }
 
 } // namespace oked

@@ -32,6 +32,7 @@
 #include "../shared/ProjectCreate.hpp"
 #include <Okay.hpp>
 #include "okay/Debug/ProjectDiagnostics.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -313,6 +314,14 @@ int main() {
         CHECK(ed.Load(flat, &err) && !ed.view3D);                                    // orthographic camera: the 2D view
         CHECK(EditorState::SceneViewFor(ed.scene()) == 0);
         CHECK(ed.Load(physics, &err) && ed.view3D);                                  // and back
+        int labels = 0;                                                              // its station labels are 3D text, drawn in the
+        for (const auto& up : ed.scene().Objects()) {                                // 3D view and the game (world text only shows in 2D)
+            if (up->name.size() != 7 || up->name.substr(1) != " Label") continue;
+            const auto* tr = up->GetComponent<TextRenderer>();
+            CHECK(tr && tr->screenSpace && up->GetComponent<WorldSpaceUI>() != nullptr);
+            ++labels;
+        }
+        CHECK(labels == 9);
         Scene empty;
         CHECK(EditorState::SceneViewFor(empty) == -1);                               // no camera: the view is kept
     }

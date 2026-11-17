@@ -372,6 +372,25 @@ static string capture(const string& cmd, int* rc = nullptr) {
 }
 // Cross-compiling okay-build itself used to fail at sys/wait.h. The Windows host must compile with the
 // win32 MinGW g++ and, under Wine, run cmd.exe commands (echo, a dependency edge, a failing step).
+static void testModules() {
+    printf("test: module files generate a manifest that builds\n");
+    fresh("mods");
+    write("util.cpp", "int util(){return 4;}\n");
+    write("main.cpp", "int util(); int main(){return util()==4?0:1;}\n");
+    write("mods/util.okaymodule", "name = util\nkind = lib\nsources = util.cpp\n");
+    write("mods/app.okaymodule", "name = app\nkind = exe\nsources = main.cpp\ndeps = util\n");
+    int rc; string o = sh("modules mods -o build.okay", &rc);
+    check(rc == 0 && o.find("2 module") != string::npos, "two modules written", o);
+    string man = readFile(gRoot / "build.okay");
+    check(man.find("target util lib") != string::npos && man.find("deps = util") != string::npos, "manifest has the lib and the dependency", man);
+    o = sh("-j2", &rc);
+    check(rc == 0 && ran(o) == 4, "generated manifest builds", o);
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "program from modules runs");
+    write("mods/app.okaymodule", "name = app\nkind = exe\nsources = main.cpp\ndeps = missing\n");
+    o = sh("modules mods -o build.okay", &rc);
+    check(rc == 2 && o.find("missing") != string::npos, "unknown module dependency is an error", o);
+}
+
 static void testSharedInput() {
     printf("test: one changed input rebuilds every action that lists it\n");
     fresh("share");
@@ -460,6 +479,6 @@ int main(int argc, char** argv) {
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testGraphTargets();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

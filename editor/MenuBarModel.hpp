@@ -116,6 +116,7 @@ struct State {
     int  recentCount = 0;           // scenes in Open Recent
     bool assimp = false;            // Import Model reads more formats (tooltip only)
     bool isolating = false;         // Isolate mode is on
+    bool darkMode = true;           // the editor is in dark mode (false = light mode)
 };
 
 // ---- GameObject > Create: the categories every "create an object" menu shares ----
@@ -212,10 +213,15 @@ inline std::vector<Entry> EditMenu(const State& s) {
                        s.objectCount > 0, "The scene has no objects."));
     m.push_back(OnlyIf(Item("edit.deselect", "Deselect"), sel, "Nothing is selected."));
     m.push_back(Sep());
-    m.push_back(SlotMenu("edit.preferences", "Preferences", "How the editor looks: UI scale, row density, theme and accent colour."));
+    m.push_back(OnlyIf(Item("edit.darkmode", "Dark Mode", "", "Dark editor colours."), !s.darkMode, "The editor is already in dark mode."));
+    m.push_back(OnlyIf(Item("edit.lightmode", "Light Mode", "", "Light editor colours."), s.darkMode, "The editor is already in light mode."));
     m.push_back(Item("edit.projectsettings", "Project Settings..."));
     return m;
 }
+
+/// Old okay_settings.txt files saved one of three themes (0 Slate, 1 Light, 2 Classic). Only light is a light look; Slate and
+/// Classic are dark, and anything unknown falls back to dark.
+inline bool LegacyThemeIsDark(int oldTheme) { return oldTheme != 1; }
 
 inline std::vector<Entry> GameObjectMenu(const State& s) {
     std::vector<Entry> m;

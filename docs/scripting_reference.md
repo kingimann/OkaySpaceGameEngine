@@ -115,6 +115,16 @@ function update(dt) {
 | `physics_steps()` / `set_physics_steps(n)` | Read or set how many times a second physics runs |
 | `physics_smooth()` / `set_physics_smooth(on)` | Draw bodies between physics steps |
 
+C#-style: `GetComponent<Rigidbody>()` (3D) has `velocity`, `angularVelocity`,
+`mass`, `drag`, `angularDrag`, `gravityScale`, `useGravity`, `isKinematic`,
+`freezeRotation`, `bounciness`, `friction`, `position`, and `AddForce(v [,
+ForceMode.X])`, `AddRelativeForce`, `AddImpulse`, `AddTorque`,
+`AddRelativeTorque`, `AddForceAtPosition`, `AddExplosionForce`, `MovePosition`,
+`MoveRotation`, `WakeUp`, `Sleep`. `GetComponent<Rigidbody2D>()` has the 2D
+versions (`AddForce(v, ForceMode2D.Impulse)`, `AddTorque`, `angularVelocity` in
+degrees per second, `bodyType = RigidbodyType2D.Kinematic`, ...). See
+[scripting.md](scripting.md#rigidbody-3d-from-a-script).
+
 ### Input
 | Function | Description |
 |---|---|
@@ -154,6 +164,17 @@ function update(dt) {
 | `set_bg(r,g,b)` / `set_light(x,y,z)` / `set_ambient(v)` | Background & lighting |
 | `load_scene("file")` | Switch to another scene |
 | `screen_w()` / `screen_h()` | Viewport size in pixels |
+
+**Object references.** `other` in a collision / trigger handler, `gameObject`,
+`GameObject.Find` / `FindWithTag` / `FindGameObjectsWithTag`,
+`GameObject.FindIncludingInactive` and what `spawn` / `spawn3` / `pool_get` /
+`Instantiate` return carry the object's unique id, so they mean exactly that
+object even when copies share a name. They print and compare with text as the
+name. Pass one anywhere a name is taken here (`destroy_obj(other)`,
+`obj_x(other)`, `send_event(other, "Hit", 5)`); a quoted name still means the
+first object with that name. `GameObject.Find`, `FindWithTag` and
+`FindGameObjectsWithTag` return active objects only. Details:
+[scripting.md](scripting.md#object-references).
 
 ### UI (drive widgets by name)
 | Function | Description |
@@ -512,7 +533,7 @@ Intuitive names for common builtins so code reads naturally:
 | `actions_load("text")` | Add an Actions list from its saved text and run it on this object. An exported Actions component is this call; every step in the text runs as it does on the component |
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
-| `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |
+| `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs; returns a reference to the new copy (`false` when it failed) |
 | `pool_get("prefab", x, y [, z])` / `pool_release()` | Spawn from the scene's pool for a prefab (reused objects start fresh) / give this object back to its pool |
 | `pool_prewarm("prefab", n)` / `pool_idle("prefab")` | Make `n` idle objects ahead of time / count the idle ones |
 

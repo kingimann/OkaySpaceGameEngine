@@ -21951,22 +21951,54 @@ int main(int argc, char** argv) {
             };
             // Dashed outline along a rounded rect (ImGui has no dashed primitive):
             // walk the rect's path and emit alternating dash / gap pieces.
+            // The walk below used to be able to run forever, adding lines until the system killed the launcher for lack
+            // of memory (seen on the Community page, now and then): at the end of a side `len - t` can be so small that
+            // `t + step` rounds back to `t`. A step that does not move ends the side now. A rectangle that is not finite
+            // or absurdly large gets a plain outline (logged once), and the walk stops after a fixed number of pieces.
             auto dashedRoundRect = [](ImDrawList* dl, ImVec2 a, ImVec2 b, float r, ImU32 col, float th, float dash, float gap) {
+                const bool sane = std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(b.x) && std::isfinite(b.y) &&
+                                  std::fabs(b.x - a.x) < 100000.0f && std::fabs(b.y - a.y) < 100000.0f &&
+                                  std::fabs(a.x) < 1.0e6f && std::fabs(a.y) < 1.0e6f && dash > 0.5f && gap > 0.5f;
+                if (!sane) {
+                    static bool logged = false;
+                    if (!logged) {
+                        logged = true;
+                        const std::string msg = std::string("launcher: dashed outline skipped, odd rectangle ") + std::to_string(a.x) +
+                                                "," + std::to_string(a.y) + " to " + std::to_string(b.x) + "," + std::to_string(b.y);
+                        std::fprintf(stderr, "%s\n", msg.c_str());
+                        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_launcher.log", msg);
+                    }
+                    if (std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(b.x) && std::isfinite(b.y)) dl->AddRect(a, b, col, r, 0, th);
+                    return;
+                }
                 dl->PathRect(a, b, r);
                 ImVector<ImVec2> pts = dl->_Path;
                 dl->PathClear();
                 if (pts.Size < 2) return;
                 pts.push_back(pts[0]);
                 bool on = true; float left = dash;
-                for (int i = 0; i + 1 < pts.Size; ++i) {
+                int pieces = 0;
+                for (int i = 0; i + 1 < pts.Size && pieces < 20000; ++i) {
                     ImVec2 p = pts[i], q = pts[i + 1];
                     float dx = q.x - p.x, dy = q.y - p.y, len = std::sqrt(dx * dx + dy * dy), t = 0.0f;
-                    while (len > 0.0f && t < len) {
+                    while (len > 0.0f && t < len && ++pieces < 20000) {
                         float step = std::min(left, len - t);
                         if (on) dl->AddLine(ImVec2(p.x + dx * t / len, p.y + dy * t / len),
                                             ImVec2(p.x + dx * (t + step) / len, p.y + dy * (t + step) / len), col, th);
+                        if (!(t + step > t)) break;   // the rest of this side is under float precision: done with it
                         t += step; left -= step;
                         if (left <= 0.001f) { on = !on; left = on ? dash : gap; }
+                    }
+                }
+                if (pieces >= 20000) {
+                    static bool capLogged = false;
+                    if (!capLogged) {
+                        capLogged = true;
+                        const std::string msg = std::string("launcher: dashed outline stopped at 20000 pieces, rectangle ") +
+                                                std::to_string(a.x) + "," + std::to_string(a.y) + " to " + std::to_string(b.x) + "," +
+                                                std::to_string(b.y) + " dash " + std::to_string(dash) + " gap " + std::to_string(gap);
+                        std::fprintf(stderr, "%s\n", msg.c_str());
+                        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_launcher.log", msg);
                     }
                 }
             };

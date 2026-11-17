@@ -837,6 +837,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Contextual help (51.4)
 - continue (14.3, 35.1, 35.2)
 - controller (8.2)
+- Controller families and generic pads (8.2.4)
 - controller glyphs (8.7)
 - Controller hookup (5.10.2)
 - Controller navigation (32.1)

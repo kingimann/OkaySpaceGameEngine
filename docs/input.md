@@ -347,6 +347,54 @@ Not tried on a real AZERTY keyboard.
 is Xbox, PlayStation or Switch (set from the controller's name when it is plugged in). `binding.Label(family)` prints
 "Cross" or "R2" for a PlayStation pad, "B" for the Switch's right button. OkayScript: `input_device()`, `action_label("jump")`.
 
+### Controllers: PS5, Xbox and any other pad
+Written from public USB vendor / product id facts and how each maker names its pads. No mapping database text, code or
+artwork from another project was used; the tables are in `engine/src/Input/GamepadInfo.cpp`.
+
+- **Who is it** (`Input/GamepadInfo.hpp`, pure logic): `ClassifyGamepad(GamepadIdentity)` takes the USB ids, the reported name,
+  the host's controller type and the raw axis / button counts, and returns the family (Xbox 360, One, Series; DualShock 3 / 4;
+  DualSense and Edge; Switch Pro and Joy-Con; Steam Controller and Deck; Stadia, Luna, Shield; generic XInput; generic pad;
+  flight stick; wheel; arcade stick; unknown), how it was decided (`usb id`, `sdl type`, `name`, `shape`) and what the family
+  has (touchpad, gyro, lightbar, player LEDs, adaptive triggers, trigger rumble, HD haptics). An id beats a name, the host's
+  type beats a name, a maker we know with a model we do not still gets that maker's layout, and anything else is a generic
+  controller. Unknown pads are never ignored.
+- **Plain joysticks too.** The SDL backend now also opens a device SDL has no controller layout for (a "raw" joystick), when it
+  looks like a pad (sticks and buttons). Set `OKAY_GENERIC_PADS=0` to go back to the old behaviour (such devices ignored).
+- **Generic layout** (`Input/ControllerMapping.hpp`, `BuildGenericMapping`): from a sample taken with nothing touched. An axis
+  that rests at its minimum is a trigger; the other axes are the sticks in order; face buttons are A B X Y LB RB Back Start L3 R3
+  in raw order; the d-pad is the first hat (or buttons 11 to 14 on a 15-button pad). This is a guess: pads whose real order differs
+  need Controller Setup.
+- **Controller Setup** (`ControllerSetup`, `PadProfiles::BeginSetup`): asks for each control in turn (both sticks, both triggers,
+  A B X Y, bumpers, Back, Start, stick clicks, d-pad), reads the raw input that changed, notes an inverted axis or a trigger that
+  rests low, and lets the player skip or go back. `PadProfiles::SaveSetup` keeps it under `padmap.<vendor>:<product>:aNbNhN` in
+  Prefs and every pad of that model uses it from then on (also a pad the host already maps, so a wrong built-in layout can be
+  overridden). While it listens the game sees a neutral pad. `ClearSaved` goes back to the built-in or generic layout.
+- **Names and pictures by family** (`PadButtonName(button, family)`, `PadProfiles::ButtonName(slot, button)`): Cross / Circle /
+  Square / Triangle, Create (DualSense) / Share (DualShock 4), Options, L1 / R1 / L2 / R2, L3 / R3 on PlayStation pads;
+  A B X Y, View / Menu (One, Series), Back / Start (360), LB / RB / LT / RT on Xbox pads; B A Y X, - / +, L / R, ZL / ZR on Nintendo
+  pads (the right button is A). `PadExtraName` gives PS / Home / Guide, Share / Capture, Touchpad, Mute. The old
+  `InputBinding::Label(family)` is unchanged; the richer names are what `input_button_name("jump")` prints. No glyph artwork is
+  drawn yet: only text names (so nothing needs a licence).
+- **Slots on hot-plug** (`PadSet`, `PadSlotAllocator`): a pad takes its old slot back when that is free, else the first free one;
+  a pad that did not fit is tried again when a slot frees; plain joysticks are opened after real gamepads so they never take
+  player 1. `PadSet::Swap(a, b)` / script `pad_swap(a, b)` exchanges two players' controllers. Each connect and disconnect
+  becomes a `PadEvent` (`PadProfiles::PopEvent`, script `pad_event()`) and calls the toast hook
+  `PadProfiles::SetToastHandler(fn)` with text like "Controller 1 connected: DualSense Wireless Controller".
+- **Extras through the platform layer** (`platform::Gamepad`, optional, default "none"): USB ids, host type, raw axes / buttons /
+  hats, battery level (`pad_battery`), lightbar colour (`pad_lightbar(slot, r, g, b)`), player LED number (set automatically to the
+  slot), trigger motors (`pad_trigger_rumble`, or `PadProfiles::SetMirrorTriggers(true)` to add them to every rumble), touchpad
+  finger (`pad_touch`) and gyro (`pad_gyro`, read only while a script asks each frame). The SDL backend implements them for SDL
+  2.0.14 and newer. **Not exposed:** DualSense adaptive triggers and HD haptics (SDL has only a raw-report call for them, which
+  we do not use), the touchpad click and mute button as separate inputs, and the Edge back paddles; wired / Bluetooth is only
+  visible as "wired" in the battery level. The own evdev and Win32 backends return "unknown" for all of this.
+- **OkayScript:** `pad_name`, `pad_family`, `pad_ids`, `pad_mapping` ("built-in", "generic", "user"), `pad_info`, `pad_raw`,
+  `pad_battery`, `pad_button_name("a", slot)`, `input_button_name("jump")`, `pad_event()`, `pad_setup_start / active / prompt /
+  skip / back / cancel / save / clear`, `pad_lightbar`, `pad_trigger_rumble`, `pad_swap`, `pad_touch`, `pad_gyro`.
+- **Try it:** the **Controller** station (H) of the input playground; steps in `docs/try_it.md`.
+- **Checked with fake devices only:** `tests/test_controller_mapping.cpp` (classifier table, generic layout, trigger range, dead
+  zone, Setup, saved round trip, names, slots, toasts) and the station in `tests/test_input_playground.cpp`. No real PS5, Xbox or
+  other pad, and nothing on Windows, has been run.
+
 ### Recording and replay (`InputRecorder`)
 `InputRecorder::StartRecording()` ... `StopRecording()`, then `StartPlayback(InputRecorder::Text())`. It works inside
 `InputActions::Tick`: recording copies the keys, mouse, wheel and every controller; playback puts the recorded frame back

@@ -3890,3 +3890,8 @@ add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINA
 add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# Controller identification, generic fallback, Controller Setup, saved mapping, glyph names and hot-plug slots, all with fake devices.
+add_executable(test_controller_mapping test_controller_mapping.cpp)
+target_link_libraries(test_controller_mapping PRIVATE okay::engine)
+add_test(NAME controller_mapping COMMAND test_controller_mapping)

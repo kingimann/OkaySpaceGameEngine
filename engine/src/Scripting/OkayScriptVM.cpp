@@ -124,6 +124,7 @@
 #include "okay/Input/Haptics.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/PadProfiles.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/GameSaves.hpp"
 #include "okay/Core/SaveFramework.hpp"
@@ -3922,6 +3923,77 @@ struct OkayScriptVM::Impl {
         b["haptic_strength"] = [](std::vector<Value>& a) { if (!a.empty()) InputHaptics::SetStrength(a[0].AsFloat()); return Value{InputHaptics::Strength()}; };
         // key_positions(true): read letters by key position (US places, so AZERTY players keep W A S D under the same fingers); returns the setting.
         b["key_positions"] = [](std::vector<Value>& a) { if (!a.empty()) Input::SetKeysByPosition(a[0].AsBool()); return Value{Input::KeysByPosition()}; };
+        // Controllers: who is plugged in and how it is mapped. The slot is 0-based (0 = player 1).
+        //   pad_name, pad_family ("DualSense"), pad_ids ("0x054c:0x0ce6"), pad_mapping ("built-in" | "generic" | "user"),
+        //   pad_info (several lines), pad_raw (live axes / buttons / hat), pad_battery, pad_button_name("a", slot),
+        //   input_button_name("jump") (the action's button as the controller in use names it: "Cross", "A", "ZR"),
+        //   pad_event() (the newest connect / disconnect text, once), pad_setup_*, pad_lightbar, pad_swap, pad_touch, pad_gyro.
+        auto padSlot = [](std::vector<Value>& a, size_t i = 0) { return a.size() > i ? SafeInt(a[i].AsFloat()) : 0; };
+        b["pad_name"]    = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::Get(padSlot(a)).id.name}; };
+        b["pad_family"]  = [padSlot](std::vector<Value>& a) { const PadProfile& p = PadProfiles::Get(padSlot(a)); return Value{p.present ? p.info.familyName : std::string()}; };
+        b["pad_ids"]     = [padSlot](std::vector<Value>& a) { const PadProfile& p = PadProfiles::Get(padSlot(a)); return Value{p.present ? FormatUsbId(p.id.vendor, p.id.product) : std::string()}; };
+        b["pad_mapping"] = [padSlot](std::vector<Value>& a) { const PadProfile& p = PadProfiles::Get(padSlot(a)); return Value{p.present ? std::string(MapSourceName(p.mapSource)) : std::string()}; };
+        b["pad_info"]    = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::Describe(padSlot(a))}; };
+        b["pad_raw"]     = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::RawText(padSlot(a))}; };
+        b["pad_battery"] = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::BatteryText(padSlot(a))}; };
+        b["pad_button_name"] = [padSlot](std::vector<Value>& a) {
+            const int btn = a.empty() ? -1 : Input::GamepadButtonFromName(a[0].AsString());
+            return Value{PadProfiles::ButtonName(padSlot(a, 1), btn)};
+        };
+        b["input_button_name"] = [actName](std::vector<Value>& a) {
+            const InputActions::Action* act = InputActions::Find(actName(a));
+            if (!act) return Value{std::string()};
+            const bool pad = Input::LastDevice() == Input::Device::Gamepad;
+            const InputBinding* bnd = InputActions::Current(act->name, pad);
+            if (!bnd) bnd = InputActions::Current(act->name, !pad);
+            if (!bnd) return Value{std::string()};
+            if (bnd->kind == InputBinding::Kind::PadButton) {
+                const int slot = a.size() > 1 ? SafeInt(a[1].AsFloat()) : (bnd->player > 0 ? bnd->player : Input::LastGamepad());
+                return Value{PadProfiles::ButtonName(slot, bnd->code) + (bnd->player > 0 ? " (Pad " + std::to_string(bnd->player + 1) + ")" : std::string())};
+            }
+            return Value{bnd->Label(Input::GamepadFamily(Input::LastGamepad()))};
+        };
+        b["pad_event"] = [](std::vector<Value>&) { PadEvent e; return Value{PadProfiles::PopEvent(e) ? e.text : std::string()}; };
+        // Controller Setup: pad_setup_start(slot) asks for each control in turn; call pad_setup_prompt every frame to show
+        // the question; pad_setup_skip / pad_setup_back / pad_setup_cancel steer it; pad_setup_save keeps the result for this model.
+        b["pad_setup_start"]  = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::BeginSetup(padSlot(a))}; };
+        b["pad_setup_active"] = [padSlot](std::vector<Value>& a) { ControllerSetup* s = PadProfiles::Setup(padSlot(a)); return Value{s && s->Active()}; };
+        b["pad_setup_prompt"] = [padSlot](std::vector<Value>& a) {
+            ControllerSetup* s = PadProfiles::Setup(padSlot(a));
+            if (!s) return Value{std::string()};
+            if (s->Finished()) return Value{std::string("Done. All controls set.")};
+            if (!s->Active()) return Value{std::string()};
+            return Value{"Step " + std::to_string(s->StepIndex() + 1) + " of " + std::to_string(s->StepCount()) + ": " + s->Prompt() +
+                         (s->LastCapture().empty() ? std::string() : "   (last: " + s->LastCapture() + ")")};
+        };
+        b["pad_setup_skip"]   = [padSlot](std::vector<Value>& a) { if (ControllerSetup* s = PadProfiles::Setup(padSlot(a))) s->Skip(); return Value{}; };
+        b["pad_setup_back"]   = [padSlot](std::vector<Value>& a) { if (ControllerSetup* s = PadProfiles::Setup(padSlot(a))) s->Back(); return Value{}; };
+        b["pad_setup_cancel"] = [padSlot](std::vector<Value>& a) { PadProfiles::CancelSetup(padSlot(a)); return Value{}; };
+        b["pad_setup_save"]   = [padSlot](std::vector<Value>& a) { return Value{PadProfiles::SaveSetup(padSlot(a))}; };
+        b["pad_setup_clear"]  = [padSlot](std::vector<Value>& a) { PadProfiles::ClearSaved(padSlot(a)); return Value{}; };
+        b["pad_lightbar"] = [padSlot](std::vector<Value>& a) {   // (slot, r, g, b) 0..255; only pads whose host exposes a lightbar (DualShock 4 / DualSense)
+            PadProfiles::RequestLightbar(padSlot(a), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0, a.size() > 2 ? SafeInt(a[2].AsFloat()) : 0, a.size() > 3 ? SafeInt(a[3].AsFloat()) : 0);
+            return Value{};
+        };
+        b["pad_trigger_rumble"] = [padSlot](std::vector<Value>& a) {   // (slot, left, right, seconds) Xbox One / Series trigger motors
+            PadProfiles::RequestTriggerRumble(padSlot(a), a.size() > 1 ? a[1].AsFloat() : 0.5f, a.size() > 2 ? a[2].AsFloat() : 0.5f, a.size() > 3 ? a[3].AsFloat() : 0.2f);
+            return Value{};
+        };
+        b["pad_swap"] = [padSlot](std::vector<Value>& a) { PadProfiles::RequestSwap(padSlot(a, 0), padSlot(a, 1)); return Value{}; };
+        b["pad_touch"] = [padSlot](std::vector<Value>& a) {   // "x,y" of the first finger on the pad's touchpad (0..1), "" when none / not touching
+            const PadProfile& p = PadProfiles::Get(padSlot(a));
+            if (!p.present || p.touchpads == 0 || !p.finger[0].down) return Value{std::string()};
+            char buf[40]; std::snprintf(buf, sizeof buf, "%.2f,%.2f", p.finger[0].x, p.finger[0].y);
+            return Value{std::string(buf)};
+        };
+        b["pad_gyro"] = [padSlot](std::vector<Value>& a) {   // "x,y,z" rad/s, "" when the pad / host has no gyroscope; ask every frame you want it
+            const int slot = padSlot(a);
+            PadProfiles::Edit(slot).sensorsWanted = true;
+            const PadProfile& p = PadProfiles::Get(slot);
+            if (!p.present || !p.hostGyro) return Value{std::string()};
+            char buf[64]; std::snprintf(buf, sizeof buf, "%.2f,%.2f,%.2f", p.gyro[0], p.gyro[1], p.gyro[2]);
+            return Value{std::string(buf)};
+        };
         b["gamepad_count"] = [](std::vector<Value>&) { return Value{(float)Input::GamepadCount()}; };
         b["gamepad_connected"] = [](std::vector<Value>& a) { return Value{Input::GamepadConnected(a.empty() ? 0 : SafeInt(a[0].AsFloat()))}; };
         b["set_per_player"] = [](std::vector<Value>& a) { if (!a.empty()) InputActions::SetPerPlayer(a[0].AsString(), a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };

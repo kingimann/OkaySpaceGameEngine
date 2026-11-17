@@ -7,6 +7,7 @@
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Input/PlatformGamepad.hpp"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,25 @@
 using namespace okay;
 
 namespace {
+// A controller with raw inputs for the Controller station.
+struct StationPad final : platform::Gamepad {
+    std::int16_t ax[6] = {}; std::uint8_t hat = 0;
+    int InstanceId() const override { return 77; }
+    const char* Name() const override { return "DualSense Wireless Controller"; }
+    std::int16_t Axis(platform::GamepadAxis) const override { return 0; }
+    bool Button(platform::GamepadButton) const override { return false; }
+    bool Rumble(std::uint16_t, std::uint16_t, std::uint32_t) override { return true; }
+    std::uint16_t VendorId() const override { return 0x054C; }
+    std::uint16_t ProductId() const override { return 0x0CE6; }
+    int ControllerType() const override { return 7; }
+    int RawAxisCount() const override { return 6; }
+    int RawButtonCount() const override { return 13; }
+    int RawHatCount() const override { return 1; }
+    std::int16_t RawAxis(int i) const override { return ax[i]; }
+    bool RawButton(int) const override { return false; }
+    std::uint8_t RawHat(int) const override { return hat; }
+    int PowerLevel() const override { return 3; }
+};
 // A painter that keeps the pixels, so a test can save what the game would draw.
 class MemoryPainter : public ui2d::Painter {
 public:
@@ -113,7 +133,7 @@ int main() {
     CHECK(!text.empty());
     CHECK(SceneSerializer::Deserialize(scene, text, &err));
     if (!err.empty()) std::cerr << "  load: " << err << "\n";
-    for (const char* n : {"Setup", "A Devices", "B Timing", "C Chords", "D Curve", "E Rebind", "F Players", "G Record"}) {
+    for (const char* n : {"Setup", "A Devices", "B Timing", "C Chords", "D Curve", "E Rebind", "F Players", "G Record", "H Controller"}) {
         GameObject* g = scene.Find(n);
         CHECK(g != nullptr);
         auto* sc = g ? g->GetComponent<ScriptComponent>() : nullptr;
@@ -212,6 +232,32 @@ int main() {
     Step(scene, {'3'});
     CHECK(Has(TextOf(scene, "G Record"), "playing"));
     InputRecorder::StopPlayback(); InputRecorder::StopRecording();
+
+    // H: the Controller station (a fake DualSense: no real pad was used)
+    {
+        PadProfiles::Reset();
+        CHECK(Has(TextOf(scene, "H Controller"), "H. CONTROLLER"));
+        PadSet pads;
+        CHECK(pads.Attach(std::make_unique<StationPad>()) == 0);
+        std::vector<char> pk; pads.Feed(pk);
+        Step(scene, {});
+        const std::string h = TextOf(scene, "H Controller");
+        CHECK(Has(h, "0x054c:0x0ce6") && Has(h, "family DualSense") && Has(h, "mapping built-in") && Has(h, "battery full"));
+        CHECK(Has(h, "A Cross") && Has(h, "Back Create") && Has(h, "LT L2"));
+        CHECK(Has(h, "last event: Controller 1 connected"));
+        Input::FeedGamepadRaw(0, {}, {}, 0, 0, 1u << Input::PadA, true); InputActions::Tick(1.0f / 60.0f); scene.Update(1.0f / 60.0f);
+        CHECK(Has(TextOf(scene, "H Controller"), "Jump = Cross") || Has(TextOf(scene, "H Controller"), "Jump = "));
+        Step(scene, {'u'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "H Controller"), ">> Step 1 of 20") && Has(TextOf(scene, "H Controller"), "LEFT stick"));
+        Step(scene, {'m'}); Step(scene, {});
+        CHECK(!Has(TextOf(scene, "H Controller"), ">> Step"));
+        Step(scene, {'p'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "H Controller"), "Controller 2: none connected"));
+        for (int k = 0; k < 3; ++k) { Step(scene, {'p'}); Step(scene, {}); }
+        CHECK(Has(TextOf(scene, "H Controller"), "Controller 1: DualSense"));
+        pads.CloseAll();
+        PadProfiles::Reset();
+    }
 
     // A picture (software painter; not a real window)
     {

@@ -1097,6 +1097,7 @@ static okayversions::Sources VersionSources() {
     s.bucketBase = SupabaseReleasesBase();
     s.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
     s.versionTxtUrls = {std::string(kRawBase) + "VERSION.txt"};
+    if (!g_exeDir.empty()) s.floorFile = fs::path(g_exeDir) / okayupdate::kFloorName;   // an old signed list replayed is refused (shared/UpdateGuard.hpp)
     return s;
 }
 // What the in-place updater installs, by channel. Latest: the newest version, as always. LTS: the LTS head from the bucket's LTS.txt, and only
@@ -18376,6 +18377,11 @@ int main(int argc, char** argv) {
         if (self.empty() && argc > 0) self = fs::absolute(argv[0], ec);
         if (!self.empty()) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
     }
+    {   // Is the update signature check on? Said at every start (docs/security.md "Updater signing"): OFF is never silent.
+        const okayupdate::SigStatus sig = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
+        std::fprintf(stderr, "[updater] %s\n", sig.line.c_str());
+        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", sig.line);
+    }
 
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
     if (noSdl) {
@@ -23799,6 +23805,13 @@ int main(int argc, char** argv) {
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + S + 4));
                         ImGui::Dummy(ImVec2(0, 0));
+                        {   // the update signature check: ON, or OFF with the reason (never silent; docs/security.md "Updater signing")
+                            static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
+                            const ImU32 sigCol = sigStatus.state == okayupdate::SigState::On ? IM_COL32(110, 205, 140, 255) : IM_COL32(236, 190, 90, 255);
+                            ImGui::PushStyleColor(ImGuiCol_Text, sigCol);
+                            ImGui::TextUnformatted(sigStatus.line.c_str());
+                            ImGui::PopStyleColor();
+                        }
                     }
                     cardEnd();
 

@@ -1,0 +1,17 @@
+section: Sound
+roadmap: Our own WAV reader is the default everywhere, streamed sounds included
+---
+- Sound files (.wav) now load with our own reader, everywhere: sounds in
+  the editor and in your games, and the launcher's voice clips. It is
+  faster and uses less memory than the old one (about half the memory
+  and up to five times faster in our tests), and it plays files the old
+  one got wrong: A-law and mu-law files no longer sound like loud buzzing,
+  and 64-bit float files are no longer silent. It also reads ADPCM files.
+  The editor's Console says "WAV files load with our own reader" once.
+- If a sound plays wrong, set OKAY_OWN_WAV=0 to go back to the old reader
+  for this release, and tell us which file. Try it: examples/own_wav (open
+  own_wav_test.okayscene and press Play).
+- Streamed sounds (a Music Player, or an Audio Source with Stream ticked)
+  now use our own reader too, so streamed A-law, mu-law and ADPCM files
+  play right instead of as noise, and streaming is about two to three
+  times faster. Try it: examples/own_wav/stream_test.okayscene.

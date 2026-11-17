@@ -88,7 +88,10 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
+| security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
+| vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (**the default** since 2026-11-16), whole and streamed | nothing to set; `OKAY_OWN_WAV=0` for the old one; `examples\own_wav` (`own_wav_test`, and `stream_test` for streaming) | Console line says which reader ran (the launcher writes it to `okay_launcher.log`); Windows sound unverified |
@@ -107,6 +110,7 @@ release job or the installer build for this change.
 | 11g | Player with no SDL, game resolutions on our own code | `Tools\OkaySpacePlayer.exe` (section "Player with no SDL") | Run on Linux under Xvfb only; Windows unverified |
 | 11h | Launcher background work on our own threads | `OkaySpace.exe` (section "Launcher: threads on our own code") | Tested on Linux only |
 | 11i | Launcher window calls through our platform layer; voice clips on our own WAV decoder | `OkaySpace.exe`, chat voice messages | Tested on Linux only |
+| ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
 
@@ -1466,6 +1470,39 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## fast1. Fast release: one dispatch, no version-bump PR
+
+**What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
+refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
+The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
+then "Release Windows build") still works. Everything: `docs/fast_release.md`.
+
+**Steps (the dry run, safe: builds and publishes nothing).**
+1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.
+   Or in a terminal: `gh workflow run fast-release.yml --ref main -f dry_run=true`.
+2. Open the run and read its summary page.
+
+**What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
+("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
+new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
+(missing, still running, red). That is the safety check working, not a failure of the tool.
+
+**Steps (the first real release through it).**
+1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
+2. Actions > Fast release > Run workflow, branch `main`, dry_run off.
+3. Wait for the three jobs: Plan, Build and publish (release.yml), Check the release. The last one prints a table; every row must say "ok".
+
+**What you should see.** A new GitHub release `v<version>` that is "latest", the launcher offering that version, and in the run summary the
+check table (release published, tag on the tested commit, three programs with a SHA-256 in versions.json that equals the one on GitHub).
+
+**To add a changelog entry (every PR).** Copy `dist/changelog.d/fast-release.txt`, change the text, run
+`python3 scripts/fast_release.py check-entries`.
+
+**Status.** Tested offline only: `python3 tests/scripts/test_fast_release.py` (ctest `fast_release_lint`) with fake GitHub data and a
+throw-away git repo; the workflows parse as YAML and every shell block passes `bash -n`. Not run on GitHub Actions. Unverified there:
+calling `release.yml` as a reusable workflow with `secrets: inherit`, `body_path` together with `generate_release_notes`, and GitHub's
+asset `digest` field. The first dry run and the first real release are the proof.
+
 ## File > Examples opens the examples (fix)
 
 1. Open the editor from the Windows release (also when it was started from a project folder).
@@ -1484,6 +1521,34 @@ What changes for you:
 5. New check: a branch that adds an `.exe`/`.dll`/`.so`/archive or a big binary file fails "No built programs or big binary files in git" (`python3 scripts/branch_lint.py binaries`).
 
 **Verified here:** the tests, on Linux. **Unverified:** no release, dev build or Pages run happened (workflows were read and checked as YAML only); nothing was run on Windows.
+
+## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
+
+Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+
+**Script file paths (try it in the editor).**
+
+1. Open the editor from the Windows release, **File > Open...**, open `examples\security_paths\script_paths.okayscene` (in the `examples`
+   folder next to the program) and press Play.
+2. Open the Console. You should see seven lines: the first six file names (`NUL`, `con.txt`, `C:/x`, `slot.okaysave:hidden`,
+   `../escape.okaysave`, `/etc/evil.okaysave`) end with `false`, and `slot_ok.okaysave` ends with `true`. Above them the Console
+   shows `[script] save file: refusing file 'NUL': a reserved device name (CON, NUL, COM1 ...)` and one like it per refused name.
+
+**Update signature status (visible now, OFF until you add a key).**
+
+1. Open the launcher, **Settings > About**: under the version you should see `update signature check: OFF (no key configured)` in amber.
+   In the editor, **Help > About** shows the same line. (Start the launcher from a terminal, or open `okay_update.log` beside
+   `OkaySpace.exe`, to see it printed at start-up too.)
+2. To turn it ON: add the GitHub secret `OKAY_UPDATE_SIGNING_SEED` and the variable `OKAY_UPDATE_TRUSTED_KEYS` (steps in security.md section 3),
+   release, install that release: the line turns green and says `ON (1 key built in)`.
+
+**Relay caps and reactions SQL (owner steps, nothing to click in the Windows release).** The relay is a Linux server program; its new
+caps are checked by `ctest -R relay_security`. The reactions fix is `docs/sql/reactions_privacy.sql`: Supabase dashboard > SQL Editor >
+paste it > Run. Check it with `select * from public.reaction_counts('dm', array[1]);` (no user column in the answer).
+
+**Unverified.** Checked on Linux only: the tests `path_safety`, `script_paths`, `update_security`, `update_signature`, `relay_security`,
+`sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
+in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
 
 ## Team tooling (not part of the Windows release)
 
@@ -1508,6 +1573,31 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## vpa. Multi-window panels: set once, before the first frame
+
+What changed: the editor turns on Dear ImGui's multi-window panels ("viewports") once, before its first frame, and only when the
+video driver can make extra OS windows and read the mouse anywhere on the desktop. It no longer switches them back on at the end of a
+frame after Dear ImGui has turned them off. Up to v2.880 it did, and a build with assertions on stopped at its second frame with
+"Please set ViewportsEnable before the first call to NewFrame()". Release builds ignored that check but flipped the option on and
+off every frame.
+
+Try it on Windows (the Windows driver always supports it, so nothing should change for you):
+1. Start `Tools\OkayEngine.exe` and open any project.
+2. Drag the **Console** tab out of the editor window and let go over the desktop. It becomes its own window. Drag it back over the
+   editor to dock it again.
+3. Open the **Console**: there is no "Multi-window panels are off" line.
+
+What you should see on a system without that support (Linux with `SDL_VIDEODRIVER=wayland`, or `SDL_VIDEODRIVER=offscreen`): the
+editor starts, a dragged tab stays inside the editor window, and the Console says once "Multi-window panels are off: the video driver
+... cannot open extra windows here."
+
+Verified on Linux with an editor built with assertions on (`-O1`, no `NDEBUG`, Dear ImGui included): with `SDL_VIDEODRIVER=offscreen`
+the editor before this change stopped at its second frame every time, in both backends (Dear ImGui and `OKAY_UI_BACKEND=okayui`); with
+it, it ran for the whole 25-second check in both and printed the "Multi-window panels are off" line. Under Xvfb (X11) both versions
+ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
+intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
+Unverified: Windows (not built or run here), a real Wayland session.
 
 ## Switches that are off by default (own code)
 
@@ -1723,9 +1813,13 @@ The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 
 Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
 screen uses them yet, so there is nothing to click.
 
-You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7
-(mostly text edges). Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
-setting) to go back. Unverified: none of this was opened in a real editor window.
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7 and 12.2
+(mostly text edges). Rows are as tall and as far apart as Dear ImGui's in the same window (also in the Inspector, which uses its own
+spacing), and History and the Profiler open at the size Dear ImGui opens them at. To compare: open Edit > Project Settings with
+`OKAY_UI_BACKEND=okayui` and again with `imgui`; the section headers (Player, Physics, Rendering, Tags and Layers) should be at the same
+heights. Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
+setting) to go back. Verified in a real editor window on Linux (Xvfb, `docs/own_ui_toolkit.md` section 12: every ported panel under 8%
+of pixels clearly different from Dear ImGui's). Unverified: Windows.
 
 ### 12b. Our own code editor in the Script Editor (`OKAY_CODE_EDITOR=own`)
 
@@ -2169,6 +2263,40 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## ci1. CI and release speed-up: how to tell it worked
+
+**This change has nothing to click in the editor, launcher or player.** It only changes how GitHub builds and tests
+(`.github/workflows/ci.yml`, `.github/workflows/release.yml`, the end of `tests/CMakeLists.txt`). The way to "try" it is
+to read the Actions page. **The speed-up is UNVERIFIED until a real CI run has happened.** The first run after this
+merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR run restores whatever `main` last saved.
+
+**Steps.**
+1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
+   about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
+2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
+   means the build was cold.
+4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
+   90 percent; the first run after a change is expected to be lower.
+5. Open "Test". The `ctest` line must show `-j4 --timeout 300` and the summary must say 100 percent passed, with the
+   same count (about 805 tests) as before. No test is skipped or loosened.
+6. After the merge, open the push-to-main run. Every job that builds C++ now has a last step "Save compiler cache (main
+   only)"; it runs only there. On a PR run that step shows as skipped.
+7. Repository Settings > Actions > Caches: the `ccache-*` entries should be one recent entry per job, not a long list of
+   old sha keys. Total under 10 GB.
+8. Release (`release.yml`): the first step of the "Cross-compile Windows exes" job is "Refuse a version that is already
+   released". On a version that already has a GitHub release it must fail in seconds with "already released". Two
+   release runs started together must queue (the second shows "Waiting"), not run at the same time. The "Make the release
+   visible (latest)" job runs only if the Linux server job succeeded.
+
+**What you should see.** A faster "Build & test (Ubuntu)" (target: well under an hour; the real number is unknown until
+measured) and the same tests passing. All other jobs still run on every PR and on main, with the same names.
+
+**Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
+CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
+passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+out.
 
 ## Five starter templates removed from New Project
 

@@ -659,6 +659,10 @@ add_executable(test_script_net test_script_net.cpp)
 target_link_libraries(test_script_net PRIVATE okay::engine)
 add_test(NAME script_net COMMAND test_script_net)
 
+add_executable(test_path_safety test_path_safety.cpp)
+target_include_directories(test_path_safety PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME path_safety COMMAND test_path_safety)
+
 add_executable(test_net_relay test_net_relay.cpp)
 target_link_libraries(test_net_relay PRIVATE okay::engine)
 add_test(NAME net_relay COMMAND test_net_relay)
@@ -2084,6 +2088,14 @@ target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/l
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
 
+# SEC1 item 3: the update path against a hostile release server (tampered / truncated / mixed-up files, damaged and replayed signed lists, the
+# signature ON/OFF status line). A map of address -> bytes plays the server; throwaway keys; no network.
+add_executable(test_update_security test_update_security.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_update_security PRIVATE cxx_std_17)
+target_link_libraries(test_update_security PRIVATE okay::crypto)
+target_include_directories(test_update_security PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+add_test(NAME update_security COMMAND test_update_security)
+
 # Test builds (the dev channel; shared/TestBuild.hpp, LoadDevIndex in launcher/VersionsManager.cpp, scripts/dev_index.py): the order of a four-number version, the
 # real list and VERSION.txt ignoring such versions, the dev list read from dev/ only and signed like the real one, ChooseTarget (what the update check installs),
 # the "Get test builds" setting (off by default, nothing written when off) and the same install rules. No window, no network; python3 is run when it is there.
@@ -2101,11 +2113,16 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    add_test(NAME sign_release_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_release.sh)
     # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
     add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
     # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
     add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
     set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
+    # The one-dispatch fast release (scripts/fast_release.py, .github/workflows/fast-release.yml): version, CI gate, changelog entries, stamp,
+    # after-check with fake data, the workflows read as YAML, and every real entry in dist/changelog.d checked.
+    add_test(NAME fast_release_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_fast_release.py)
+    set_tests_properties(fast_release_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -2246,6 +2263,10 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME reactions_sql_static COMMAND ${OKAY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql_static.py)
+    # docs/sql/reactions_privacy.sql (SEC1 item 4) on a LOCAL Postgres, same opt-in as above.
+    add_test(NAME reactions_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_reactions_sql.sh)
+    set_tests_properties(reactions_sql PROPERTIES SKIP_RETURN_CODE 77)
     # scripts/sign-windows.sh (Authenticode signing of the Windows programs) with a throwaway certificate; needs osslsigncode, openssl and MinGW.
     add_test(NAME sign_windows COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_windows.sh)
     set_tests_properties(sign_windows PROPERTIES SKIP_RETURN_CODE 77)

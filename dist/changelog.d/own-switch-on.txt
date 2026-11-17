@@ -1,0 +1,32 @@
+section: Our own code is switched on
+roadmap: Our own replacements are the default (platform, renderers, WAV, fonts, code editor, OkayUI screens), OKAY_THIRD_PARTY=1 goes back, automatic fallback to SDL
+---
+- New on Windows, so it may have bugs there: the launcher, the editor and
+  games now run on our own code wherever we
+  have written a replacement, so you can test it: our own window, keyboard,
+  mouse and sound layer (instead of SDL), our own drawing for the launcher
+  and the editor, our own font drawing (sharper text), our own code box in
+  the Script Editor, and our own UI (OkayUI) for the pages that have been
+  rebuilt: in the launcher What's New, Tips, Downloads, Achievements and
+  Notifications; in the editor Console, Crash Log, Audio Mixer, Problems,
+  Stats, History, Tags and Layers, Physics, Profiler, Import settings,
+  Post-processing, and Player and Rendering settings. Passwords and
+  encryption still use libsodium, as before.
+- How to tell: the launcher writes one line to okay_launcher.log (next to
+  OkaySpace.exe), and the editor shows it in its Console, for example
+  "own: platform, renderer, wav, fonts, code editor, okayui screens;
+  third party: libsodium".
+- If our own window or drawing cannot start on your PC, the program says
+  so in that log or Console and starts the old way by itself.
+- How to go back: open a Command Prompt, type  set OKAY_THIRD_PARTY=1
+  and start OkaySpace.exe from that window. Everything then runs on the
+  old code. To go back for one part only: OKAY_PLATFORM_BACKEND=sdl2,
+  OKAY_LAUNCHER_RENDERER=sdl, OKAY_EDITOR_PLATFORM=sdl,
+  OKAY_EDITOR_RENDERER=sdl, OKAY_OWN_WAV=0, OKAY_OWN_FONT_RASTER=0,
+  OKAY_CODE_EDITOR=imgui or OKAY_UI_BACKEND=imgui.
+- This was built and tried on Linux only. It has never run on Windows, so
+  please tell us what looks or works differently, and whether it still
+  happens with OKAY_THIRD_PARTY=1. Steps: docs/try_it.md, section 0b.
+- The launcher's background work (downloads, news, chat, updates) uses our
+  own threads. The Downloads rows show their buttons in full, and a click
+  right after moving onto a page or chip works the first time.

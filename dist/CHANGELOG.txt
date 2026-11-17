@@ -1,53 +1,19 @@
 OkaySpace Game Engine — Changelog
 
-Unreleased (next version)
-  Our own code is now switched on (new on Windows: it may have bugs there)
-  - The launcher, the editor and games now run on our own code wherever we
-    have written a replacement, so you can test it: our own window, keyboard,
-    mouse and sound layer (instead of SDL), our own drawing for the launcher
-    and the editor, our own WAV reader, our own font drawing (sharper text),
-    our own code box in the Script Editor, and our own UI (OkayUI) for the
-    pages that have been rebuilt: in the launcher What's New, Tips,
-    Downloads, Achievements and Notifications; in the editor Console, Crash
-    Log, Audio Mixer, Problems, Stats, History, Tags and Layers, Physics,
-    Profiler, Import settings, Post-processing, and Player and Rendering
-    settings. Passwords and encryption still use libsodium, as before.
-  - How to tell: the launcher writes one line to okay_launcher.log (next to
-    OkaySpace.exe), and the editor shows it in its Console, for example
-    "own: platform, renderer, wav, fonts, code editor, okayui screens;
-    third party: libsodium".
-  - If our own window or drawing cannot start on your PC, the program says
-    so in that log or Console and starts the old way by itself.
-  - How to go back: open a Command Prompt, type  set OKAY_THIRD_PARTY=1
-    and start OkaySpace.exe from that window. Everything then runs on the
-    old code. To go back for one part only: OKAY_PLATFORM_BACKEND=sdl2,
-    OKAY_LAUNCHER_RENDERER=sdl, OKAY_EDITOR_PLATFORM=sdl,
-    OKAY_EDITOR_RENDERER=sdl, OKAY_OWN_WAV=0, OKAY_OWN_FONT_RASTER=0,
-    OKAY_CODE_EDITOR=imgui or OKAY_UI_BACKEND=imgui.
-  - This was built and tried on Linux only. It has never run on Windows, so
-    please tell us what looks or works differently, and whether it still
-    happens with OKAY_THIRD_PARTY=1. Steps: docs/try_it.md, section 0b.
-  Launcher
-  - Background work (downloads, news, chat, updates) uses our own threads.
-  - Fixes from the OkayUI work: the Downloads rows show their buttons in full,
-    and a click right after moving onto a page or chip works the first time.
-  Sound
-  - Sound files (.wav) now load with our own reader, everywhere: sounds in
-    the editor and in your games, and the launcher's voice clips. It is
-    faster and uses less memory than the old one (about half the memory
-    and up to five times faster in our tests), and it plays files the old
-    one got wrong: A-law and mu-law files no longer sound like loud buzzing,
-    and 64-bit float files are no longer silent. It also reads ADPCM files.
-    The editor's Console says "WAV files load with our own reader" once.
-  - If a sound plays wrong, set OKAY_OWN_WAV=0 to go back to the old reader
-    for this release, and tell us which file. The old reader is removed in
-    the release after this one.
-    Try it: examples/own_wav (open own_wav_test.okayscene and press Play).
-  - Streamed sounds (a Music Player, or an Audio Source with Stream ticked)
-    now use our own reader too, so streamed A-law, mu-law and ADPCM files
-    play right instead of as noise, and streaming is about two to three
-    times faster. The launcher writes which reader it used to
-    okay_launcher.log. Try it: examples/own_wav/stream_test.okayscene.
+v2.881.0
+  New things
+  - Anti-cheat hardening for multiplayer games: the server can keep a ban
+    list, writes an audit log of what it decided and why, caps how many
+    packets one player can send, and spots bots and macros by how
+    regular their inputs are. For testing there is a cheat simulator:
+    run the player with --cheat-sim to see the server catch fake players.
+  - In-game UI library, first part: a range slider (two handles), input
+    validation for text fields, an aspect-ratio box that keeps its shape on
+    any screen, and more building blocks for your game's menus and HUD.
+  - Missing from the last notes (it was already in v2.880.0): player
+    controller presets (Classic, Modern, Arcade, Realistic, Shooter) with
+    camera and gamepad options, a per-system frame cost readout, and faster
+    scene queries.
 
 v2.880.0
   Fixes and new things

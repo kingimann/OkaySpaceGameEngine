@@ -2811,6 +2811,17 @@ bool Gen::gen_expr(const Node& node) {
         b(0x85);
         disp(slot);
         --temp_depth;
+        if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6) && !rhs_fp) {
+            b(last_type.base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x2A);
+            b(0xC0);
+            b(last_type.base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x11);
+            b(0x01);
+            return true;
+        }
         if (last_type.bits >= 0) {
             const int bits = last_type.bits;
             const int bit_off = last_type.bit_off;

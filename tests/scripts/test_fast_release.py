@@ -331,7 +331,7 @@ check(set(FR["jobs"]) == {"plan", "release", "after"}, "three jobs")
 check(FR["jobs"]["release"]["uses"] == "./.github/workflows/release.yml", "the release job calls release.yml")
 check(FR["jobs"]["release"]["needs"] == "plan" and "dry_run" in str(FR["jobs"]["release"]["if"]), "release needs the plan and is skipped on a dry run")
 check(FR["jobs"]["release"]["with"]["channel"] == "latest", "fast releases are the latest channel only (LTS has its own path)")
-check(FR["jobs"]["release"]["permissions"] == {"contents": "write"} and FR["jobs"]["release"]["secrets"] == "inherit", "release job: write + secrets for release.yml")
+check(FR["jobs"]["release"]["permissions"] == {"contents": "write", "actions": "read"} and FR["jobs"]["release"]["secrets"] == "inherit", "release job: write + secrets for release.yml")
 check(FR["jobs"]["plan"]["permissions"].get("actions") == "read", "plan can read CI runs")
 check("contents" in FR["jobs"]["plan"]["permissions"] and FR["jobs"]["plan"]["permissions"]["contents"] == "read", "plan cannot write")
 for name, job in FR["jobs"].items():

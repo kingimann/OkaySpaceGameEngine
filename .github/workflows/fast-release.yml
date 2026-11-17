@@ -229,6 +229,7 @@ jobs:
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
+      actions: read        # release.yml's last step reads this run's artifacts and jobs (the Linux server build)
     uses: ./.github/workflows/release.yml
     with:
       channel: latest

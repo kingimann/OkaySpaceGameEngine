@@ -7,6 +7,11 @@
 #include <filesystem>
 #include <cstdint>
 #include <set>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <string>
 #include <tuple>
 
@@ -233,7 +238,14 @@ int main() {
     }
     // ---- guided_roundtrip: generate, customise, edit by hand, save, reopen, edit again, regenerate -------------------------
     {
-        const std::string dir = (std::filesystem::temp_directory_path() / "okay_guided_roundtrip").string();
+        // The exe is registered twice in CMake (guided_quality and guided_roundtrip), and ctest -j runs both at once:
+        // a shared folder made one remove it while the other wrote to it. One folder per process.
+#ifdef _WIN32
+        const long pid = (long)_getpid();
+#else
+        const long pid = (long)getpid();
+#endif
+        const std::string dir = (std::filesystem::temp_directory_path() / ("okay_guided_roundtrip_" + std::to_string(pid))).string();
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);

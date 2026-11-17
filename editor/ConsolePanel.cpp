@@ -194,10 +194,10 @@ void DrawConsole() {
 
 #ifdef OKAY_HAVE_OKAYUI
     // The opt-in OkayUI backend: the same panel, drawn by OkayUI inside this window. OkayUI draws over every ImGui window, so
-    // while an ImGui popup (a menu, a modal) is over the panel the Dear ImGui version below is drawn instead.
+    // while an ImGui popup (a menu, a modal) or a window in front is over the panel the Dear ImGui version below is drawn instead.
     if (UseOkayUIBackend()) {
         const ImGuiWindow* cw = ImGui::FindWindowByName(conTitle);
-        if (!cw || !okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) {
+        if (!cw || !okayuihost::CoveredInImGui(cw, cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) {
             DrawConsoleOkayUI(conTitle);
             return;
         }

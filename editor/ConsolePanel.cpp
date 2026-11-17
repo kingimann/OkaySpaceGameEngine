@@ -146,7 +146,11 @@ void DrawConsoleOkayUI(const char* title) {
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
     if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        // OkayUI draws and reads the mouse in the editor window's own pixels; with the multi-window viewports on, ImGui's
+        // screen positions are desktop positions, so take the window's position off (the panel was drawn that far down
+        // and to the right of where it belongs, by the editor window's place on the screen).
+        const ImVec2 vpPos = ImGui::GetWindowViewport()->Pos;
+        const ImVec2 p(ImGui::GetCursorScreenPos().x - vpPos.x, ImGui::GetCursorScreenPos().y - vpPos.y);
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton("##okayui_console", a);   // the rectangle: an ImGui item, so ImGui does not move or scroll the window under it

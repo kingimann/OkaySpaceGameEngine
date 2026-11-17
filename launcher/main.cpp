@@ -610,7 +610,7 @@ static void SeedDemoDownloads() {
 
 // For a downloads page that draws without holding the lock (the OkayUI Downloads page): each download's numbers copied under
 // g_dlMutex, and the page's requests run under it. The same mutex and thread handles as the rest of the download manager
-// (the launcher's worker threads are SDL threads: MinGW has no std::thread).
+// (the launcher's worker threads are SDL threads: MinGW's win32 thread model has no standard thread class).
 struct DlView { int id; std::string title, dest; long long received, total; int status; };
 // A copy of the list into `out`, reusing its rows and their strings (no allocation once the list has been seen): the OkayUI
 // page calls this every frame.

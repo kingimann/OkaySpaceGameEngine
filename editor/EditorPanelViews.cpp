@@ -1716,8 +1716,8 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             int sel = r.sel ? *r.sel : 0;
             if (sel >= cnt) sel = cnt - 1;
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f;
-            const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + w, p0.y + h);
+            const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f, lh = ImGui::GetTextLineHeight();
+            const ImVec2 c0 = ImGui::GetCursorScreenPos(), p0(c0.x, c0.y + lh), p1(p0.x + w, p0.y + h);   // the scale label on a line above
             static bool s_drag = false;
             static float s_top = 1.0f;
             const bool dragging = s_drag && ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -1744,11 +1744,11 @@ void DrawFieldListBodyImGui(InspFieldList& list, const PanelViewHooks& hooks) {
             }
             dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
             char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", top);
-            dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
-            ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            dl->AddText(ImVec2(p1.x - ImGui::CalcTextSize(ylab).x - 3.0f, c0.y), IM_COL32(140, 145, 160, 255), ylab);
+            ImGui::InvisibleButton("##curveplot", ImVec2(w, lh + h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
             const ImVec2 m = ImGui::GetIO().MousePos;
             const float mt = std::min(1.0f, std::max(0.0f, (m.x - p0.x) / w)), mv = std::max(0.0f, (p1.y - m.y) / h * top);
-            if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m.y >= p0.y) {
                 r.activated = true;
                 int hit = InspNearestKey(ks, cnt, p0.x, p1.y, w, h, top, m.x, m.y);
                 if (hit < 0) { hit = InspAddKey(ks, cnt, maxKeys, mt, mv); if (hit >= 0) r.changed = true; }

@@ -984,7 +984,7 @@ int main() {
         CHECK(r.v.gCount == 3);
         // the curve: a click in an empty spot adds a key under the pointer; Smooth changes the drawn curve, not the keys
         const UI::Rect c = r.R("pssize");
-        CHECK(std::fabs(c.h - 64.0f) < 0.5f);
+        CHECK(c.h > 64.0f + 10.0f && c.h < 64.0f + 30.0f);                                          // the plot and the scale label's line above it
         r.Click(c.x + c.w * 0.8f, c.y + c.h - 10.0f);
         CHECK(r.v.cCount == 4 && Near(r.v.cKeys[6], 0.8f, 0.01f) && r.v.cKeys[7] > 0.0f && r.v.cKeys[7] < 0.6f);
         r.RightClick(c.x + c.w * 0.8f, c.y + c.h - 10.0f); r.Frame();

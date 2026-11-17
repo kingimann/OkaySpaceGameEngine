@@ -27385,8 +27385,9 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
     if (sel >= c.count) sel = c.count - 1;
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f;
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 64.0f, lh = ImGui::GetTextLineHeight();
+    const ImVec2 c0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p0(c0.x, c0.y + lh);   // the scale label ("x1.8") sits on its own line above the plot's right end: inside the plot it covered the first key
     const ImVec2 p1(p0.x + w, p0.y + h);
     const bool dragging = st->GetInt(dragKey, 0) != 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left);
     float yMax = dragging ? st->GetFloat(yKey, 1.0f) : c.MaxValue() * 1.15f;
@@ -27414,9 +27415,9 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
     }
     dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
     char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", yMax);
-    dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
+    dl->AddText(ImVec2(p1.x - ImGui::CalcTextSize(ylab).x - 3.0f, c0.y), IM_COL32(140, 145, 160, 255), ylab);
 
-    ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    ImGui::InvisibleButton("##curveplot", ImVec2(w, lh + h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const ImVec2 m = ImGui::GetIO().MousePos;
     const float mt = Mathf::Clamp01((m.x - p0.x) / w);
     const float mv = std::max(0.0f, (p1.y - m.y) / h * yMax);
@@ -27429,7 +27430,7 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
         }
         return best;
     };
-    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m.y >= p0.y) {   // not on the label's line
         ed.PushUndo();
         int hit = nearest();
         if (hit < 0) { hit = c.Add(mt, mv); if (hit >= 0) changed = true; }

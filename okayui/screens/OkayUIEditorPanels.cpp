@@ -3120,7 +3120,8 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 const int maxKeys = std::max(1, (int)r.hi);
                 int sel = r.sel ? *r.sel : 0;
                 if (sel >= cnt) sel = cnt - 1;
-                const UI::Vec2 p0 = UI::GetCursorScreenPos();
+                const UI::Vec2 c0 = UI::GetCursorScreenPos();
+                const UI::Vec2 p0{c0.x, c0.y + fs};   // the scale label ("x1.8") sits on its own line above the plot's right end: inside the plot it covered the first key
                 const float gw = std::max(60.0f, regionX + w - p0.x), gh = 64.0f;
                 const UI::Vec2 p1{p0.x + gw, p0.y + gh};
                 static unsigned s_dragId = 0;
@@ -3151,12 +3152,12 @@ FieldListResult DrawFieldList(InspFieldList& list, const char* id, float x, floa
                 }
                 dl.AddRect(p0, p1, UI::RGBA(20, 20, 24), 3.0f, 1.0f);
                 char ylab[16]; std::snprintf(ylab, sizeof ylab, "x%.2g", top);
-                dl.AddText(UI::Vec2{p0.x + 3.0f, p0.y + 1.0f}, UI::RGBA(140, 145, 160), ylab);
-                UI::InvisibleButton("##curveplot", gw, gh);
+                dl.AddText(UI::Vec2{p1.x - UI::CalcTextWidth(ylab) - 3.0f, c0.y}, UI::RGBA(140, 145, 160), ylab);
+                UI::InvisibleButton("##curveplot", gw, fs + gh);
                 const UI::Vec2 m = UI::GetMousePos();
                 const float mt = std::clamp((m.x - p0.x) / gw, 0.0f, 1.0f);
                 const float mv = std::max(0.0f, (p1.y - m.y) / gh * top);
-                if (UI::IsItemActivated()) {
+                if (UI::IsItemActivated() && m.y >= p0.y) {   // not on the label's line
                     r.activated = true;
                     int hit = InspNearestKey(ks, cnt, p0.x, p1.y, gw, gh, top, m.x, m.y);
                     if (hit < 0) { hit = InspAddKey(ks, cnt, maxKeys, mt, mv); if (hit >= 0) r.changed = true; }

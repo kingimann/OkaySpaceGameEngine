@@ -164,12 +164,15 @@ then this file gets updated. Keep this file short and true.
     "unconfirmed". Every bug goes to Claude 2 (a bug fix may touch any file, with a failing test and a claim marked
     `Kind: bug`); the coordinator's agents fix a bug only inside a feature branch they are finishing.
     Cryptography findings follow rule 18 as well.
-24a. **Exception: Grok may write the own build tool (owner 2026-11-17: "Yes please").** Only the build tool in
-    `tools/okaybuild/` (our replacement for CMake and Ninja, `docs/own_build_plan.md`), on a `grok/*` branch it pushes
-    itself, never on main. Everything else in rule 24 still holds for the rest of the repository, and rule 18 still holds
-    (no cryptography). The code must be its own, written from build-system ideas and our plan, with no code taken from
-    CMake, Ninja, Make, Meson, Bazel or any other project (rule 19a). The coordinator's agents run the tests, read the
-    result, and open and merge the PR; it stays OFF by default and out of CI and releases until the owner says so.
+24a. **Exception: Grok may write our own build tool and our own compiler (owner 2026-11-17: "Yes please", then "start
+    building our own MSVC and Clang too ... we are not replacing them any time soon, its so i have something to do").**
+    Only in `tools/okaybuild/` (build tool, `docs/own_build_plan.md`) and `tools/okaycc/` (compiler research project,
+    `docs/own_compiler_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
+    holds for the rest of the repository, and rule 18 still holds (no cryptography). The code must be its own, written
+    from language standards, object-file and CPU manuals and general compiler ideas, with no code taken from CMake,
+    Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and
+    nothing in the engine depends on them, until the owner says so. The coordinator's agents run the tests, read the
+    result, and open and merge the PR.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

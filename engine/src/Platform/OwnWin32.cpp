@@ -20,6 +20,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <vector>
 
 namespace okay::platform {
 namespace {
@@ -75,6 +76,116 @@ uint32_t CurrentMods() {
     if (GetKeyState(VK_CAPITAL) & 1) m |= ModCaps;
     if (GetKeyState(VK_NUMLOCK) & 1) m |= ModNum;
     return m;
+}
+
+// ---- touch: WM_POINTER (Windows 8+) with WM_TOUCH (Windows 7) as the fallback ---------------------------------------------
+// Written from Microsoft's documentation ("Pointer Input Messages and Notifications": WM_POINTERDOWN / UPDATE / UP,
+// GetPointerType, GetPointerTouchInfo, POINTER_INFO, POINTER_TOUCH_INFO, GetPointerDevices, POINTER_DEVICE_INFO; "WM_TOUCH",
+// RegisterTouchWindow, GetTouchInputInfo, CloseTouchInputHandle, TOUCHINPUT; GetMessageExtraInfo's pen / touch signature;
+// GetSystemMetrics SM_DIGITIZER). The structures are declared here from those pages (field order and types) under our own
+// names, so the file does not depend on how new the compiler's headers are; the functions come from user32.dll at run time.
+//
+// Touch contacts become FingerDown / FingerMotion / FingerUp (TouchTracker, without its mouse: Windows itself still makes the
+// mouse messages of the primary contact when the pointer message goes on to DefWindowProc, and those are marked fromTouch).
+// Pen and mouse pointers are left alone: they arrive as the mouse, as with SDL2. EnableMouseInPointer is NOT called: it would
+// move every mouse message onto WM_POINTER for the whole process. STATUS: MinGW syntax check only, never run on Windows.
+constexpr UINT kWmTouch = 0x0240, kWmPointerUpdate = 0x0245, kWmPointerDown = 0x0246, kWmPointerUp = 0x0247;
+constexpr DWORD kPtTouch = 2;                                      // POINTER_INPUT_TYPE PT_TOUCH
+constexpr UINT32 kPointerFlagCanceled = 0x00008000;                // POINTER_FLAG_CANCELED
+constexpr UINT32 kTouchMaskPressure = 0x00000004;                  // TOUCH_MASK_PRESSURE
+constexpr DWORD kTouchEventDown = 0x2, kTouchEventUp = 0x4;   // TOUCHEVENTF_DOWN / _UP (anything else: a move)
+constexpr int kSmDigitizer = 94;                                   // SM_DIGITIZER
+constexpr int kNidIntegratedTouch = 0x01, kNidExternalTouch = 0x02, kNidReady = 0x80;
+constexpr DWORD kPointerDeviceTypeTouch = 3;                       // POINTER_DEVICE_TYPE_TOUCH
+constexpr uint32_t kMouseSignatureMask = 0xFFFFFF00u, kMouseSignature = 0xFF515700u, kMouseFromTouchBit = 0x80u;   // MI_WP_SIGNATURE
+
+struct OkPointerInfo {            // POINTER_INFO
+    DWORD pointerType;
+    UINT32 pointerId;
+    UINT32 frameId;
+    UINT32 pointerFlags;
+    HANDLE sourceDevice;
+    HWND hwndTarget;
+    POINT ptPixelLocation;
+    POINT ptHimetricLocation;
+    POINT ptPixelLocationRaw;
+    POINT ptHimetricLocationRaw;
+    DWORD dwTime;
+    UINT32 historyCount;
+    INT32 InputData;
+    DWORD dwKeyStates;
+    UINT64 PerformanceCount;
+    int ButtonChangeType;         // POINTER_BUTTON_CHANGE_TYPE (an enum)
+};
+struct OkPointerTouchInfo {       // POINTER_TOUCH_INFO
+    OkPointerInfo pointerInfo;
+    UINT32 touchFlags;
+    UINT32 touchMask;
+    RECT rcContact;
+    RECT rcContactRaw;
+    UINT32 orientation;
+    UINT32 pressure;              // 0..1024
+};
+struct OkPointerDeviceInfo {      // POINTER_DEVICE_INFO
+    DWORD displayOrientation;
+    HANDLE device;
+    DWORD pointerDeviceType;      // POINTER_DEVICE_TYPE (an enum)
+    HMONITOR monitor;
+    ULONG startingCursorId;
+    USHORT maxActiveContacts;
+    WCHAR productString[520];     // POINTER_DEVICE_PRODUCT_STRING_MAX
+};
+struct OkTouchInput {             // TOUCHINPUT
+    LONG x, y;                    // hundredths of a pixel, screen coordinates
+    HANDLE hSource;
+    DWORD dwID;
+    DWORD dwFlags;
+    DWORD dwMask;
+    DWORD dwTime;
+    ULONG_PTR dwExtraInfo;
+    DWORD cxContact, cyContact;
+};
+
+struct Win32TouchApi {
+    typedef BOOL (WINAPI *GetPointerTypeFn)(UINT32, DWORD*);
+    typedef BOOL (WINAPI *GetPointerTouchInfoFn)(UINT32, OkPointerTouchInfo*);
+    typedef BOOL (WINAPI *GetPointerDevicesFn)(UINT32*, OkPointerDeviceInfo*);
+    typedef BOOL (WINAPI *RegisterTouchWindowFn)(HWND, ULONG);
+    typedef BOOL (WINAPI *GetTouchInputInfoFn)(HANDLE, UINT, OkTouchInput*, int);
+    typedef BOOL (WINAPI *CloseTouchInputHandleFn)(HANDLE);
+    GetPointerTypeFn getPointerType = nullptr;
+    GetPointerTouchInfoFn getPointerTouchInfo = nullptr;
+    GetPointerDevicesFn getPointerDevices = nullptr;
+    RegisterTouchWindowFn registerTouchWindow = nullptr;
+    GetTouchInputInfoFn getTouchInputInfo = nullptr;
+    CloseTouchInputHandleFn closeTouchInputHandle = nullptr;
+    bool loaded = false;
+    void Load() {
+        if (loaded) return;
+        loaded = true;
+        HMODULE u = GetModuleHandleW(L"user32.dll");
+        if (!u) return;
+        getPointerType = (GetPointerTypeFn)(void*)GetProcAddress(u, "GetPointerType");
+        getPointerTouchInfo = (GetPointerTouchInfoFn)(void*)GetProcAddress(u, "GetPointerTouchInfo");
+        getPointerDevices = (GetPointerDevicesFn)(void*)GetProcAddress(u, "GetPointerDevices");
+        registerTouchWindow = (RegisterTouchWindowFn)(void*)GetProcAddress(u, "RegisterTouchWindow");
+        getTouchInputInfo = (GetTouchInputInfoFn)(void*)GetProcAddress(u, "GetTouchInputInfo");
+        closeTouchInputHandle = (CloseTouchInputHandleFn)(void*)GetProcAddress(u, "CloseTouchInputHandle");
+    }
+    bool HasPointer() const { return getPointerType && getPointerTouchInfo; }
+    bool HasTouch() const { return registerTouchWindow && getTouchInputInfo && closeTouchInputHandle; }
+};
+/// A mouse message Windows made from a touch contact (GetMessageExtraInfo carries the pen / touch signature with the touch bit).
+bool MouseMessageFromTouch(LPARAM extra) {
+    const uint32_t v = (uint32_t)(uintptr_t)extra;   // the signature is in the low 32 bits
+    return (v & kMouseSignatureMask) == kMouseSignature && (v & kMouseFromTouchBit) != 0;
+}
+/// The client size and the client area's top-left corner on the screen.
+void ClientGeometry(HWND h, int& w, int& hgt, POINT& origin) {
+    RECT r; GetClientRect(h, &r);
+    w = r.right - r.left; hgt = r.bottom - r.top;
+    origin.x = 0; origin.y = 0;
+    ClientToScreen(h, &origin);
 }
 
 class WinBackend;
@@ -371,13 +482,51 @@ public:
                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!h) { m_err = "CreateWindowEx failed"; return nullptr; }
         DragAcceptFiles(h, TRUE);
+        m_touchApi.Load();
+        // Windows 8 and later send touch as WM_POINTER* without asking; registering for WM_TOUCH would replace those, so
+        // WM_TOUCH is asked for only where the pointer functions do not exist (Windows 7).
+        if (!m_touchApi.HasPointer() && m_touchApi.HasTouch()) m_touchApi.registerTouchWindow(h, 0);
         auto* w = new WinWindow(this, h);
         m_wins[h] = w;
         if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : SW_SHOW);
         if (d.fullscreen) w->SetFullscreen(true);
         return std::unique_ptr<Window>(w);
     }
-    void Unregister(HWND h) { m_wins.erase(h); }
+    void Unregister(HWND h) {
+        auto it = m_wins.find(h);
+        if (it != m_wins.end()) m_touch.ForgetWindow(it->second->Id());
+        m_wins.erase(h);
+    }
+
+    int TouchDeviceCount() override {
+        const uint64_t now = TicksMs();
+        if (m_touchCountRead && now - m_touchCountAt < 2000) return m_touchCount;
+        m_touchApi.Load();
+        int n = 0;
+        UINT32 count = 0;
+        if (m_touchApi.getPointerDevices && m_touchApi.getPointerDevices(&count, nullptr) && count > 0) {
+            std::vector<OkPointerDeviceInfo> devs(count);
+            if (m_touchApi.getPointerDevices(&count, devs.data()))
+                for (UINT32 i = 0; i < count && i < devs.size(); ++i) n += devs[i].pointerDeviceType == kPointerDeviceTypeTouch;
+        } else {
+            const int dig = GetSystemMetrics(kSmDigitizer);   // Windows 7: one "touch is ready" answer, not a list
+            n = (dig & kNidReady) && (dig & (kNidIntegratedTouch | kNidExternalTouch)) ? 1 : 0;
+        }
+        m_touchCount = n; m_touchCountAt = now; m_touchCountRead = true;
+        return n;
+    }
+
+    // One touch report (window pixels from a screen position) into finger events.
+    void FeedTouch(HWND h, WinWindow* win, long long id, TouchPhase phase, double screenX, double screenY, float pressure, uint32_t ms) {
+        TouchSample s;
+        POINT origin;
+        ClientGeometry(h, s.winW, s.winH, origin);
+        s.id = id; s.phase = phase; s.x = screenX - origin.x; s.y = screenY - origin.y;
+        s.pressure = pressure; s.windowId = win->Id(); s.timestampMs = ms;
+        std::vector<Event> out;
+        m_touch.Feed(s, out);
+        for (Event& e : out) m_pending.push_back(std::move(e));
+    }
 
     bool PollEvent(Event& out) override {
         MSG msg;
@@ -657,8 +806,46 @@ public:
             if (!text.empty()) { e.type = EventType::TextInput; e.text = text; b->m_pending.push_back(e); }
             return 0;
         }
+        case kWmPointerDown: case kWmPointerUpdate: case kWmPointerUp: {
+            // Touch contacts only; pen and mouse pointers go on to DefWindowProc, which makes their mouse messages. So does a
+            // touch contact afterwards (the primary one's mouse messages, marked fromTouch below), as SDL2 gives both.
+            const UINT32 pid = (UINT32)LOWORD(wp);   // GET_POINTERID_WPARAM
+            DWORD type = 0;
+            if (b->m_touchApi.HasPointer() && b->m_touchApi.getPointerType(pid, &type) && type == kPtTouch) {
+                OkPointerTouchInfo ti; std::memset(&ti, 0, sizeof(ti));
+                if (b->m_touchApi.getPointerTouchInfo(pid, &ti)) {
+                    const bool cancel = (ti.pointerInfo.pointerFlags & kPointerFlagCanceled) != 0;
+                    const TouchPhase ph = m == kWmPointerDown ? TouchPhase::Begin
+                                        : (m == kWmPointerUp || cancel) ? (cancel ? TouchPhase::Cancel : TouchPhase::End)
+                                        : TouchPhase::Move;
+                    const float pressure = (ti.touchMask & kTouchMaskPressure) ? (float)ti.pressure / 1024.0f : 1.0f;
+                    b->FeedTouch(h, win, (long long)pid, ph, ti.pointerInfo.ptPixelLocation.x, ti.pointerInfo.ptPixelLocation.y,
+                                 pressure, e.timestampMs);
+                }
+            }
+            break;   // DefWindowProc: the mouse messages
+        }
+        case kWmTouch: {
+            // Windows 7 (RegisterTouchWindow, see MakeWindow): a batch of contacts, positions in hundredths of a screen pixel.
+            const UINT n = (UINT)LOWORD(wp);
+            HANDLE hti = (HANDLE)lp;
+            if (n > 0 && b->m_touchApi.HasTouch()) {
+                std::vector<OkTouchInput> in(n);
+                if (b->m_touchApi.getTouchInputInfo(hti, n, in.data(), (int)sizeof(OkTouchInput))) {
+                    for (const OkTouchInput& t : in) {
+                        const TouchPhase ph = (t.dwFlags & kTouchEventDown) ? TouchPhase::Begin
+                                            : (t.dwFlags & kTouchEventUp) ? TouchPhase::End : TouchPhase::Move;
+                        b->FeedTouch(h, win, (long long)t.dwID, ph, t.x / 100.0, t.y / 100.0, 1.0f, e.timestampMs);
+                    }
+                }
+                b->m_touchApi.closeTouchInputHandle(hti);
+                return 0;
+            }
+            break;
+        }
         case WM_MOUSEMOVE: {
             e.type = EventType::MouseMove; e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp);
+            e.fromTouch = MouseMessageFromTouch((LPARAM)GetMessageExtraInfo());
             if (b->m_relative) {
                 RECT r; GetClientRect(h, &r);
                 const int cx = r.right / 2, cy = r.bottom / 2;
@@ -680,6 +867,7 @@ public:
                      : (m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) ? MouseRight
                      : (HIWORD(wp) == XBUTTON1 ? MouseX1 : MouseX2);
             e.x = (short)LOWORD(lp); e.y = (short)HIWORD(lp); e.clicks = 1;
+            e.fromTouch = MouseMessageFromTouch((LPARAM)GetMessageExtraInfo());
             if (down) SetCapture(h); else ReleaseCapture();
             b->m_pending.push_back(e);
             return (m == WM_XBUTTONDOWN || m == WM_XBUTTONUP) ? TRUE : 0;
@@ -731,6 +919,9 @@ public:
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
     std::string m_err;
+    Win32TouchApi m_touchApi;      // user32's pointer / touch functions, loaded on first use
+    TouchTracker m_touch{false};   // Windows makes the touch contact's mouse messages itself
+    int m_touchCount = 0; uint64_t m_touchCountAt = 0; bool m_touchCountRead = false;
 
 private:
     bool LoadXInput() {

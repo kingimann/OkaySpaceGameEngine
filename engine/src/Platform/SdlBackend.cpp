@@ -418,11 +418,12 @@ public:
             r.type = EventType::TextInput; r.windowId = e.text.windowID; r.text = e.text.text; return true;
         case SDL_MOUSEMOTION:
             r.type = EventType::MouseMove; r.windowId = e.motion.windowID;
-            r.x = e.motion.x; r.y = e.motion.y; r.dx = e.motion.xrel; r.dy = e.motion.yrel; return true;
+            r.x = e.motion.x; r.y = e.motion.y; r.dx = e.motion.xrel; r.dy = e.motion.yrel;
+            r.fromTouch = e.motion.which == SDL_TOUCH_MOUSEID; return true;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
             r.type = e.type == SDL_MOUSEBUTTONDOWN ? EventType::MouseButtonDown : EventType::MouseButtonUp;
             r.windowId = e.button.windowID; r.button = e.button.button; r.clicks = e.button.clicks;
-            r.x = e.button.x; r.y = e.button.y; return true;
+            r.x = e.button.x; r.y = e.button.y; r.fromTouch = e.button.which == SDL_TOUCH_MOUSEID; return true;
         case SDL_MOUSEWHEEL:
             r.type = EventType::MouseWheel; r.windowId = e.wheel.windowID;
             r.wheelX = (float)e.wheel.x; r.wheelY = (float)e.wheel.y;
@@ -436,7 +437,8 @@ public:
         case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
             r.type = e.type == SDL_FINGERDOWN ? EventType::FingerDown
                    : e.type == SDL_FINGERMOTION ? EventType::FingerMotion : EventType::FingerUp;
-            r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y; return true;
+            r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y;
+            r.pressure = e.tfinger.pressure; return true;
         case SDL_DROPFILE:
             r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
             if (e.drop.file && freeDrop) SDL_free(e.drop.file);

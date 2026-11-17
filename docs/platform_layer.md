@@ -123,7 +123,7 @@ New API (every addition has a default, so a backend that cannot do it says so; b
 | `Backend::RelativeMouseState` | yes | yes (summed from motion events) | yes |
 | `Backend::ModState`, `KeyForChar` | yes | `ModState` yes; `KeyForChar` follows the X keymap | `ModState` yes; `KeyForChar` assumes a US layout |
 | `Backend::IsCursorShown` | yes | yes | yes |
-| Touch events (`FingerDown/Motion/Up`) | yes | never fired | never fired |
+| Touch events (`FingerDown/Motion/Up`, `pressure`), `TouchDeviceCount` | yes | yes (XInput 2.2, see "Touch"; tested with built events, no real touch screen) | yes (`WM_POINTER`, `WM_TOUCH` on Windows 7; MinGW syntax check only) |
 | `Event::wheelFlipped` | yes | never set | never set |
 | `ShowErrorBox` | yes | no (returns false, text goes to stderr) | yes (`MessageBoxW`) |
 | `SetPerMonitorDpiAware` | yes (hint) | nothing to do | yes |
@@ -324,6 +324,45 @@ Play with the three editor switches use it. Tested: `test_platform_display` (the
 with four RandR modes the test adds itself, switched to and back). Not tested: a mode larger than the screen (Xvfb cannot grow its
 screen), a real monitor and window manager, Windows (MinGW syntax check only).
 
+## Touch
+
+`FingerDown` / `FingerMotion` / `FingerUp` carry `fingerId` (the OS's contact id, the same from down to up), `fx` / `fy` (0..1 of
+the window's client area, clamped) and `pressure` (0..1; 1 when the device does not measure it): the shape the sdl2 backend has
+always given (it now fills `pressure` from SDL too). Mouse events that were made from a touch have `fromTouch` set (sdl2:
+`which == SDL_TOUCH_MOUSEID`); our ImGui glue then tells Dear ImGui the mouse source is a touch screen.
+`Backend::TouchDeviceCount()` says how many touch devices there are (read again at most every two seconds, so it can be called every
+frame; the player and the editor's Play turn the on-screen controls on when it is above 0).
+
+Both own backends hand the OS's reports to one shared translator, `TouchTracker` (`engine/src/Platform/Platform.cpp`): it keeps the
+contacts that are down, drops a move or an end of a contact it never saw begin, turns a repeated begin into a move, treats a cancel
+as an end, and can make the mouse events of the first finger (move, left button down and up, a second tap within 400 ms and 24
+pixels is a double click), as SDL does by default.
+
+| backend | where touch comes from | the mouse from a finger | `TouchDeviceCount` |
+|---|---|---|---|
+| sdl2 | `SDL_FINGER*` | SDL's | `SDL_GetNumTouchDevices` |
+| own X11 | XInput 2.2: `XI_TouchBegin` / `XI_TouchUpdate` / `XI_TouchEnd` selected on each of our windows for the master devices (`XISelectEvents`); `detail` is the finger id, `event_x` / `event_y` the position, pressure from the device's "Abs MT Pressure" (else "Abs Pressure") valuator scaled by its range (`XIQueryDevice`, read once per device). `libXi.so.6` is loaded at run time; `XGetEventData` reads the event | `TouchTracker`'s: once a window takes touch events the X server no longer emulates the pointer for it | slave and floating devices with a touch class (`XITouchClass`; direct = touch screen, dependent = touch pad) |
+| own Win32 | `WM_POINTERDOWN` / `UPDATE` / `UP` when `GetPointerType` says `PT_TOUCH` (`GetPointerTouchInfo`: screen position made client-relative, `pressure` / 1024 when `TOUCH_MASK_PRESSURE`, `POINTER_FLAG_CANCELED` = cancel); on Windows 7 (no pointer functions) the window is registered with `RegisterTouchWindow` and `WM_TOUCH` is read (`GetTouchInputInfo`, hundredths of a pixel, no pressure). Every function comes from `user32.dll` at run time; the structures are declared in the file from Microsoft's pages | Windows' own: the pointer message goes on to `DefWindowProc`, which makes the primary contact's mouse messages; those are marked `fromTouch` (`GetMessageExtraInfo`'s pen/touch signature with the touch bit) | `GetPointerDevices`, the `POINTER_DEVICE_TYPE_TOUCH` ones; Windows 7: 1 when `GetSystemMetrics(SM_DIGITIZER)` says touch is ready |
+
+Pen and mouse pointers stay the mouse on Windows (as with SDL2). `EnableMouseInPointer` is not called: it would move every mouse
+message of the process onto `WM_POINTER`. **`OKAY_X11_TOUCH=0`** turns touch off on X11 (nothing is selected; a touch screen then
+acts as the mouse through the X server's own emulation, as before this change). Without libXi or on an X server older than
+XInput 2.2 it is off by itself.
+
+Written from the X Input Extension protocol specification 2.2 ("Touch device support") and Microsoft's documentation of the pointer
+and touch messages and functions named above; no code from elsewhere.
+
+**Tests** (`test_platform_touch`): `platform_touch` (no display): `TouchTracker` (positions, clamping, pressure, ids, the mouse from
+the first finger, a second finger, double taps, cancel, a window going away) and the X11 part fed with `XIDeviceEvent` and
+`XIDeviceInfo` structures the test builds itself (valuator masks, the pressure axis, the three touch event types, touch ids above
+2^31, device counting). `platform_touch_x11` under Xvfb: the server speaks XInput 2.2; `TouchDeviceCount` equals the count over the
+server's own device list (0: Xvfb has no touch device); **the backend really selected touch on its window** (a second client's
+selection of touch on that window fails with `BadAccess`, which the specification gives when another client already has it); and a
+mouse move and click sent with XTEST still arrive, not marked as touch. `platform_touch_x11_off`: the same with `OKAY_X11_TOUCH=0`
+(the second client's selection then succeeds). **Not exercised: a real touch event from an X server** (Xvfb has no touch device,
+XTEST cannot make touch, `xinput create-master` makes only a pointer and a keyboard, and this machine has no uinput or Xorg), a real
+touch screen, and anything on Windows.
+
 ## The own backend
 
 ### Linux (written, tested under Xvfb)
@@ -350,14 +389,15 @@ screen), a real monitor and window manager, Windows (MinGW syntax check only).
 * **Displays** (`Backend::Displays`, see "Displays" below): RandR 1.5 monitors (`libXrandr.so.2` through `dlopen`), else
   Xinerama (`libXinerama.so.1`), else the root window; the usable area from the desktop's `_NET_WORKAREA`; the scale from `Xft.dpi`.
 
-Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), XDND file drop (`EventType::DropFile`
-never fires), touch, display modes, IME composition display, PulseAudio-native or PipeWire-native audio.
+Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), IME composition display, PulseAudio-native or
+PipeWire-native audio. (XDND file drops, display modes and touch were added later: see their sections.)
 
 ### Windows (compiles, untested)
 
 `OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
 `WM_DROPFILES`, the display list (`EnumDisplayMonitors`, `GetMonitorInfoW`, `GetDpiForMonitor` from `shcore.dll` loaded at
-run time) and per-monitor DPI awareness (`SetProcessDpiAwarenessContext`, looked up in `user32.dll` at run time).
+run time) and per-monitor DPI awareness (`SetProcessDpiAwarenessContext`, looked up in `user32.dll` at run time), touch
+(`WM_POINTER` / `WM_TOUCH`, see "Touch").
 **Audio** (`OwnWin32Audio.cpp`): playback and capture on the waveform audio API (`waveOut*` / `waveIn*`, `winmm.dll` loaded
 at run time, nothing linked), written from Microsoft's documentation of those functions. One worker thread per device
 (`CreateThread`, a `CRITICAL_SECTION`, an event the driver sets when a buffer is done, four buffers), queue and callback mode
@@ -377,6 +417,7 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 |---|---|---|
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
+| `platform_touch`, `platform_touch_x11`, `platform_touch_x11_off` | touch: see "Touch" above | nothing; Xvfb for the `_x11` ones (skipped, 77, without it) |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
 | `platform_display` | the keep-on-screen rule (`WindowReachable`, `CenterOnDisplay`), `Xft.dpi` parsing, the work-area clip | nothing |
 | `platform_display_own`, `platform_display_sdl2`, `platform_display_own_xinerama` | own X11: one Xvfb screen; then a work area, `Xft.dpi: 144` and two RandR 1.5 monitors that the test sets on the server itself (`tests/platform_fakedisplay.cpp`), read back fresh, primary first; sdl2 against own on the same screen; two Xvfb screens joined by Xinerama (`OKAY_XVFB_SCREENS`) | Xvfb (skipped, 77, without it) |

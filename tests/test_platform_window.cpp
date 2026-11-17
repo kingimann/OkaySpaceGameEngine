@@ -23,7 +23,7 @@
 #include <thread>
 #include <vector>
 #if defined(__has_include)
-#if __has_include(<SDL.h>)
+#if defined(OKAY_PLATFORM_HAVE_SDL2) && __has_include(<SDL.h>)
 #include <SDL.h>
 #define OKAY_TEST_HAVE_SDL_HEADERS 1
 #endif
@@ -447,7 +447,7 @@ int main(int argc, char** argv) {
     if (kind == BackendKind::Sdl2) {
         // Touch and natural-scrolling events cannot come from XTEST: push them as SDL would.
         SDL_Event fe; SDL_memset(&fe, 0, sizeof(fe));
-        fe.type = SDL_FINGERDOWN; fe.tfinger.fingerId = 7; fe.tfinger.x = 0.25f; fe.tfinger.y = 0.75f;
+        fe.type = SDL_FINGERDOWN; fe.tfinger.fingerId = 7; fe.tfinger.x = 0.25f; fe.tfinger.y = 0.75f; fe.tfinger.pressure = 0.5f;
         SDL_PushEvent(&fe);
         fe.type = SDL_FINGERMOTION; fe.tfinger.x = 0.5f; SDL_PushEvent(&fe);
         fe.type = SDL_FINGERUP; SDL_PushEvent(&fe);
@@ -458,7 +458,7 @@ int main(int argc, char** argv) {
         SDL_PushEvent(&we);
         ev = Pump(*b, 50);
         const Event* fd0 = Find(ev, EventType::FingerDown);
-        CHECK(fd0 && fd0->fingerId == 7 && fd0->fx == 0.25f && fd0->fy == 0.75f);
+        CHECK(fd0 && fd0->fingerId == 7 && fd0->fx == 0.25f && fd0->fy == 0.75f && fd0->pressure == 0.5f);
         CHECK(Find(ev, EventType::FingerMotion, [](const Event& e) { return e.fx == 0.5f; }) != nullptr);
         CHECK(Count(ev, EventType::FingerUp) == 1);
         // Flipped: wheelY is "up = +y" (so +2) and wheelFlipped says the OS value was -2.

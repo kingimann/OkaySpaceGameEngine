@@ -23,6 +23,7 @@ bool X11MessageBox(const std::string&, const std::string&, std::string& err) {
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
 #include <GL/glx.h>
+#include "OwnLinuxXI2.hpp"   // XInput 2.2 touch (OKAY_X11_HAVE_XI2)
 #include <dlfcn.h>
 #include <algorithm>
 #include <cstdio>
@@ -360,6 +361,7 @@ public:
                 }
             }
         }
+        InitTouch();
         return true;
     }
 
@@ -444,13 +446,112 @@ public:
             else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
             if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
         }
+        SelectTouch(w);
         win->m_hidden = d.hidden;
         if (!d.hidden) win->Show();
         m_x.XSync(m_dpy, False);
         return std::unique_ptr<Window>(win);
     }
 
-    void Unregister(::Window w) { m_wins.erase(w); if (m_focus == w) m_focus = 0; }
+    void Unregister(::Window w) {
+        m_wins.erase(w); if (m_focus == w) m_focus = 0;
+#if OKAY_X11_HAVE_XI2
+        m_touch.ForgetWindow((uint32_t)w);
+#endif
+    }
+
+    // ---- touch (XInput 2.2) -------------------------------------------------------------
+    // Written from the X Input Extension protocol specification 2.2 ("Touch device support"). A window that selects
+    // XI_TouchBegin / XI_TouchUpdate / XI_TouchEnd for the master devices gets one event stream per finger (the touch id in
+    // `detail`), and the server then stops emulating the pointer for that window; TouchTracker makes the mouse events from
+    // the first finger again, as SDL does. libXi.so.6 is loaded at run time; without it, an X server older than XI 2.2, or
+    // with OKAY_X11_TOUCH=0, nothing is selected and touch screens keep acting as the mouse (the server's own emulation).
+#if OKAY_X11_HAVE_XI2
+    void InitTouch() {
+        const char* env = std::getenv("OKAY_X11_TOUCH");
+        if (env && std::strcmp(env, "0") == 0) return;
+        m_queryExtension = reinterpret_cast<Bool (*)(Display*, const char*, int*, int*, int*)>(dlsym(m_x.lib, "XQueryExtension"));
+        m_getEventData = reinterpret_cast<Bool (*)(Display*, XGenericEventCookie*)>(dlsym(m_x.lib, "XGetEventData"));
+        m_freeEventData = reinterpret_cast<void (*)(Display*, XGenericEventCookie*)>(dlsym(m_x.lib, "XFreeEventData"));
+        if (!m_queryExtension || !m_getEventData || !m_freeEventData) return;
+        void* xi = dlopen("libXi.so.6", RTLD_NOW | RTLD_GLOBAL);
+        if (!xi) xi = dlopen("libXi.so", RTLD_NOW | RTLD_GLOBAL);
+        if (!xi) return;
+        m_xiQueryVersion = reinterpret_cast<Status (*)(Display*, int*, int*)>(dlsym(xi, "XIQueryVersion"));
+        m_xiSelectEvents = reinterpret_cast<int (*)(Display*, ::Window, XIEventMask*, int)>(dlsym(xi, "XISelectEvents"));
+        m_xiQueryDevice = reinterpret_cast<XIDeviceInfo* (*)(Display*, int, int*)>(dlsym(xi, "XIQueryDevice"));
+        m_xiFreeDeviceInfo = reinterpret_cast<void (*)(XIDeviceInfo*)>(dlsym(xi, "XIFreeDeviceInfo"));
+        if (!m_xiQueryVersion || !m_xiSelectEvents || !m_xiQueryDevice || !m_xiFreeDeviceInfo) return;
+        int op = 0, evBase = 0, errBase = 0;
+        if (!m_queryExtension(m_dpy, "XInputExtension", &op, &evBase, &errBase)) return;
+        int major = 2, minor = 2;   // we speak 2.2; the server answers with what it has (at most that)
+        if (m_xiQueryVersion(m_dpy, &major, &minor) != Success || major < 2 || (major == 2 && minor < 2)) return;
+        m_xiOpcode = op;
+        m_aMtPressure = m_x.XInternAtom(m_dpy, "Abs MT Pressure", False);
+        m_aAbsPressure = m_x.XInternAtom(m_dpy, "Abs Pressure", False);
+        m_xiTouch = true;
+    }
+    void SelectTouch(::Window w) {
+        if (!m_xiTouch) return;
+        unsigned char bits[XIMaskLen(XI_LASTEVENT)] = {};
+        XISetMask(bits, XI_TouchBegin); XISetMask(bits, XI_TouchUpdate); XISetMask(bits, XI_TouchEnd);
+        XIEventMask mask;
+        mask.deviceid = XIAllMasterDevices;
+        mask.mask_len = (int)sizeof(bits);
+        mask.mask = bits;
+        m_xiSelectEvents(m_dpy, w, &mask, 1);
+    }
+    XIPressureAxis PressureAxisFor(int sourceId) {
+        auto it = m_pressureAxes.find(sourceId);
+        if (it != m_pressureAxes.end()) return it->second;
+        XIPressureAxis axis;
+        int n = 0;
+        if (XIDeviceInfo* info = m_xiQueryDevice(m_dpy, sourceId, &n)) {
+            if (n > 0) axis = PressureAxisOf(info[0], m_aMtPressure, m_aAbsPressure);
+            m_xiFreeDeviceInfo(info);
+        }
+        m_pressureAxes[sourceId] = axis;
+        return axis;
+    }
+    void HandleGeneric(XEvent& ev) {
+        if (!m_xiTouch || ev.xcookie.extension != m_xiOpcode) return;
+        if (!m_getEventData(m_dpy, &ev.xcookie)) return;
+        const int t = ev.xcookie.evtype;
+        if (t == XI_TouchBegin || t == XI_TouchUpdate || t == XI_TouchEnd) {
+            const XIDeviceEvent* de = static_cast<const XIDeviceEvent*>(ev.xcookie.data);
+            auto it = m_wins.find(de->event);
+            TouchSample s;
+            if (it != m_wins.end() &&
+                TouchSampleFromXI(*de, PressureAxisFor(de->sourceid), it->second->m_w, it->second->m_h,
+                                  (uint32_t)it->second->m_win, (uint32_t)NowMs(), s)) {
+                std::vector<Event> out;
+                m_touch.Feed(s, out);
+                for (Event& e : out) {
+                    if (e.type == EventType::MouseMove) { m_lastX = e.x; m_lastY = e.y; }
+                    m_pending.push_back(std::move(e));
+                }
+            }
+        }
+        m_freeEventData(m_dpy, &ev.xcookie);
+    }
+    int TouchDeviceCount() override {
+        if (!m_xiTouch) return 0;
+        const uint64_t now = NowMs();
+        if (m_touchCountRead && now - m_touchCountAt < 2000) return m_touchCount;
+        int n = 0;
+        XIDeviceInfo* info = m_xiQueryDevice(m_dpy, XIAllDevices, &n);
+        m_touchCount = info ? CountTouchDevices(info, n) : 0;
+        if (info) m_xiFreeDeviceInfo(info);
+        m_touchCountRead = true; m_touchCountAt = now;
+        m_pressureAxes.clear();   // devices may have come or gone: read their axes again
+        return m_touchCount;
+    }
+#else
+    void InitTouch() {}
+    void SelectTouch(::Window) {}
+    void HandleGeneric(XEvent&) {}
+    int TouchDeviceCount() override { return 0; }
+#endif
 
     // ---- events ---------------------------------------------------------------------
     // Flash(Briefly): the urgency hints whose second is over.
@@ -483,6 +584,7 @@ public:
     }
 
     void Handle(XEvent& ev) {
+        if (ev.type == GenericEvent) { HandleGeneric(ev); return; }   // extension events (XInput 2 touch): no xany.window
         auto it = m_wins.find(ev.xany.window);
         X11Win* win = it == m_wins.end() ? nullptr : it->second;
         Event e;
@@ -1321,6 +1423,22 @@ public:
     Bool (*m_xiIsActive)(Display*) = nullptr;
     XineramaScreen* (*m_xiQuery)(Display*, int*) = nullptr;
     char* (*m_getAtomName)(Display*, Atom) = nullptr;
+#if OKAY_X11_HAVE_XI2
+    // XInput 2.2 touch
+    bool m_xiTouch = false;   // touch events are selected on our windows
+    int m_xiOpcode = -1;
+    Bool (*m_queryExtension)(Display*, const char*, int*, int*, int*) = nullptr;
+    Bool (*m_getEventData)(Display*, XGenericEventCookie*) = nullptr;
+    void (*m_freeEventData)(Display*, XGenericEventCookie*) = nullptr;
+    Status (*m_xiQueryVersion)(Display*, int*, int*) = nullptr;
+    int (*m_xiSelectEvents)(Display*, ::Window, XIEventMask*, int) = nullptr;
+    XIDeviceInfo* (*m_xiQueryDevice)(Display*, int, int*) = nullptr;
+    void (*m_xiFreeDeviceInfo)(XIDeviceInfo*) = nullptr;
+    Atom m_aMtPressure = 0, m_aAbsPressure = 0;
+    std::map<int, XIPressureAxis> m_pressureAxes;   // by source device id
+    TouchTracker m_touch{true};                     // the first finger drives the mouse (the server stops doing it)
+    int m_touchCount = 0; uint64_t m_touchCountAt = 0; bool m_touchCountRead = false;
+#endif
 };
 
 // ---- X11Win methods ------------------------------------------------------------------
@@ -1597,6 +1715,66 @@ bool X11Win::SetSwapInterval(int i) {
 #undef XF
 
 } // namespace
+
+#if OKAY_X11_HAVE_XI2
+// ---- XInput 2.2 touch translation (OwnLinuxXI2.hpp) ----------------------------------------------------------------------
+XIPressureAxis PressureAxisOf(const XIDeviceInfo& dev, Atom mtPressure, Atom absPressure) {
+    XIPressureAxis mt, abs;
+    for (int i = 0; i < dev.num_classes; ++i) {
+        const XIAnyClassInfo* c = dev.classes ? dev.classes[i] : nullptr;
+        if (!c || c->type != XIValuatorClass) continue;
+        const XIValuatorClassInfo* v = reinterpret_cast<const XIValuatorClassInfo*>(c);
+        if (v->label == None) continue;
+        XIPressureAxis a; a.number = v->number; a.min = v->min; a.max = v->max;
+        if (mtPressure && v->label == mtPressure && mt.number < 0) mt = a;
+        else if (absPressure && v->label == absPressure && abs.number < 0) abs = a;
+    }
+    return mt.number >= 0 ? mt : abs;
+}
+
+bool XIValuatorValue(const XIValuatorState& v, int number, double& out) {
+    if (number < 0 || !v.mask || number >= v.mask_len * 8 || !XIMaskIsSet(v.mask, number)) return false;
+    int index = 0;   // the values hold one entry per set bit, lowest bit first
+    for (int b = 0; b < number; ++b) if (XIMaskIsSet(v.mask, b)) ++index;
+    if (!v.values) return false;
+    out = v.values[index];
+    return true;
+}
+
+bool TouchSampleFromXI(const XIDeviceEvent& ev, const XIPressureAxis& axis, int winW, int winH, uint32_t windowId,
+                       uint32_t nowMs, TouchSample& out) {
+    TouchPhase phase;
+    if (ev.evtype == XI_TouchBegin) phase = TouchPhase::Begin;
+    else if (ev.evtype == XI_TouchUpdate) phase = TouchPhase::Move;
+    else if (ev.evtype == XI_TouchEnd) phase = TouchPhase::End;
+    else return false;
+    out = TouchSample{};
+    out.id = (long long)(unsigned)ev.detail;
+    out.phase = phase;
+    out.x = ev.event_x; out.y = ev.event_y;
+    out.winW = winW; out.winH = winH;
+    out.windowId = windowId;
+    out.timestampMs = nowMs;
+    out.pressure = 1.0f;
+    double raw = 0.0;
+    if (axis.number >= 0 && axis.max > axis.min && XIValuatorValue(ev.valuators, axis.number, raw)) {
+        const double f = (raw - axis.min) / (axis.max - axis.min);
+        out.pressure = (float)(f < 0.0 ? 0.0 : f > 1.0 ? 1.0 : f);
+    }
+    return true;
+}
+
+int CountTouchDevices(const XIDeviceInfo* devs, int n) {
+    int count = 0;
+    for (int i = 0; devs && i < n; ++i) {
+        const XIDeviceInfo& d = devs[i];
+        if (d.use != XISlavePointer && d.use != XIFloatingSlave && d.use != XISlaveKeyboard) continue;
+        for (int c = 0; c < d.num_classes; ++c)
+            if (d.classes && d.classes[c] && d.classes[c]->type == XITouchClass) { ++count; break; }
+    }
+    return count;
+}
+#endif
 
 std::unique_ptr<X11System> X11System::Open(std::string& err) {
     std::unique_ptr<X11Impl> s(new X11Impl());

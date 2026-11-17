@@ -151,7 +151,7 @@ bool ImGuiPlatformGlue::ProcessEvent(const plat::Event& e) {
     ImGuiIO& io = ImGui::GetIO();
     switch (e.type) {
     case plat::EventType::MouseMove:
-        io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+        io.AddMouseSourceEvent(e.fromTouch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);   // a finger acting as the mouse
         io.AddMousePosEvent((float)e.x, (float)e.y);
         m_mouseInside = true;
         return true;
@@ -169,7 +169,7 @@ bool ImGuiPlatformGlue::ProcessEvent(const plat::Event& e) {
         }
         if (b < 0) return false;
         const bool down = e.type == plat::EventType::MouseButtonDown;
-        io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+        io.AddMouseSourceEvent(e.fromTouch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
         io.AddMousePosEvent((float)e.x, (float)e.y);
         io.AddMouseButtonEvent(b, down);
         if (m_log) std::fprintf(stderr, "%s: mouse %d %s at %d,%d\n", m_logPrefix, b, down ? "down" : "up", e.x, e.y);

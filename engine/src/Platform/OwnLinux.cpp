@@ -74,6 +74,7 @@ public:
         return m_x11->GlobalMouseState(x, y);
     }
     void PumpEvents() override { if (m_x11) m_x11->PumpEvents(); }
+    int TouchDeviceCount() override { return m_x11 ? m_x11->TouchDeviceCount() : 0; }
     uint32_t MouseState(int* x, int* y) override {
         if (!m_x11) { if (x) *x = 0; if (y) *y = 0; return 0; }
         return m_x11->MouseState(x, y);

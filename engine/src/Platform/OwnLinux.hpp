@@ -49,6 +49,8 @@ public:
     /// Display modes (Backend::DisplayModes / CurrentDisplayMode): the RandR modes of the outputs of the CRTC that shows the display.
     virtual std::vector<VideoMode> DisplayModes(int display) = 0;
     virtual bool CurrentDisplayMode(int display, VideoMode& out) = 0;
+    /// Backend::TouchDeviceCount: XInput 2.2 devices with a touch class (0 without libXi, XI 2.2 or OKAY_X11_TOUCH=0).
+    virtual int TouchDeviceCount() = 0;
 };
 
 /// The local file paths in a text/uri-list (RFC 2483: one URI per line, CR LF or LF, '#' lines are comments), what an XDND

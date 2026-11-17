@@ -277,9 +277,11 @@ still runs on pull requests and on main under the same name. To check it, see `d
   (`ccache-ubuntu-ci-`, `-player-`, `-editor-`, `-ownstack-`, `-anticheat-`, `-assimp-`, `-mingw-ci-`, `-web-`) did not change.
   The main job prints `ccache -s` at its end ("Compiler cache statistics") so the hit rate is visible. `release.yml` still saves its
   own `ccache-mingw-` cache and was not changed.
-* **lld linker** in "Build & test (Ubuntu)": each of the roughly 740 test programs links the whole engine. The Configure step
-  adds `-fuse-ld=lld` only when `ld.lld` is installed (the install step tries `apt-get install lld`); otherwise it links as before
-  and the log says `linker: default`. Compile flags are unchanged, so ccache keeps hitting.
+* **lld linker: tried and removed.** The first CI run of this change linked the tests with lld and 14 tests (the visual-script
+  ones, `examples_work`, `play_start_bench`, `duplicate_components`, `net_anticheat_components`) aborted with an uncaught
+  `std::invalid_argument: stof`, although every `std::stof` in the tree is inside a `try`/`catch (...)`. A handler that does not
+  catch means unwinding broke, and the linker was the one change that touches that, so it was taken out. Not proven by a local
+  rebuild (see UNFINISHED). If lld is tried again, do it in its own PR and run the whole suite.
 * **Nothing built twice, nothing dropped.** The Ubuntu test job used to build the launcher (also built by the "editor" job, which
   configures `OKAY_BUILD_LAUNCHER=ON`) and the sandbox game plus `netdemo` and `physicsdemo` (built nowhere else). The launcher is now
   left to the editor job and the sandbox and examples moved to the "player" job (`-DOKAY_BUILD_SANDBOX=ON`), which runs in

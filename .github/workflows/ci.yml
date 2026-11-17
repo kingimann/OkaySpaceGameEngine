@@ -29,13 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # lld links the roughly 740 test programs (each one links the whole engine) faster than GNU ld. If the
-      # package cannot be installed the build still works: the Configure step only uses lld when it is present.
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
           sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
-          sudo apt-get install -y lld || echo "::warning::lld could not be installed; linking with the default linker"
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v5
@@ -47,10 +44,8 @@ jobs:
 
       - name: Configure
         run: |
-          LINKER=""
-          if command -v ld.lld >/dev/null 2>&1; then LINKER="-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld"; echo "linker: lld"; else echo "linker: default (lld not found)"; fi
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF $LINKER \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build

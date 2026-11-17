@@ -13,8 +13,7 @@ merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR 
 **Steps.**
 1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
    about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
-2. In that job's log, open "Configure". It must print `linker: lld`. If it prints `linker: default`, lld was not installed
-   and the link step was not sped up (the build still works).
+2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
 3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
    means the build was cold.
 4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above

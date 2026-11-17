@@ -19988,7 +19988,14 @@ int main(int argc, char** argv) {
         const ImU32 navAccent = ImGui::GetColorU32(kAccent);
 
         // One sidebar row: icon + label (+ count pill). Returns true on click.
+        // The rows between the header and the pinned footer get shorter, and lose their group labels, on a window too short
+        // for all of them (navItemH / navCompact, decided below from the last frame's counts); the footer rows keep navRowH.
+        float navItemH = navRowH;
+        bool navCompact = false;
+        int navRowsDrawn = 0, navSectionsDrawn = 0;
         auto navRow = [&](const char* id, const char* label, int icon, bool sel, int badge, ImU32 badgeCol) -> bool {
+            const float navRowH = navItemH;   // (this row's height)
+            ++navRowsDrawn;
             ImVec2 mn = ImGui::GetCursorScreenPos();
             float w = ImGui::GetContentRegionAvail().x;
             ImVec2 mx(mn.x + w, mn.y + navRowH);
@@ -20026,7 +20033,8 @@ int main(int argc, char** argv) {
         };
         // Group label (expanded) or a short hairline (collapsed).
         auto navSection = [&](const char* title) {
-            if (g_navCollapsed) {
+            ++navSectionsDrawn;
+            if (g_navCollapsed || navCompact) {   // a short hairline instead of the label
                 ImGui::Dummy(ImVec2(0, 6));
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 float w = ImGui::GetContentRegionAvail().x;
@@ -20115,7 +20123,20 @@ int main(int argc, char** argv) {
         const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
         const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
         const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
-        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
+        // Rows that do not fit used to be cut off at the bottom of this area, right above Notifications (a window about 750
+        // high cut "What's New" in half). Now, from the last frame's counts: when the full layout does not fit, the group
+        // labels become hairlines and the rows 4 px shorter; when even that does not fit, the area shows its scrollbar.
+        const float itemsH = ImGui::GetContentRegionAvail().y - footH;
+        static int s_navRows = 0, s_navSections = 0;
+        const float lineH = ImGui::GetTextLineHeight();
+        const float fullSectionH = 12.0f + 2.0f + lineH * 0.78f + 2.0f + 4.0f + 2.0f;   // navSection's dummies, label and spacing
+        const float fullNeed = s_navRows * (navRowH + 2.0f) + s_navSections * fullSectionH;
+        navCompact = !g_navCollapsed && s_navRows > 0 && fullNeed > itemsH;
+        if (navCompact) navItemH = navRowH - 4.0f;
+        const float compactNeed = s_navRows * (navItemH + 2.0f) + s_navSections * (6.0f + 7.0f + 4.0f);
+        const bool navScroll = s_navRows > 0 && (g_navCollapsed ? fullNeed : compactNeed) > itemsH;
+        ImGui::BeginChild("navitems", ImVec2(0, itemsH), false, navScroll ? 0 : ImGuiWindowFlags_NoScrollbar);
+        navRowsDrawn = 0; navSectionsDrawn = 0;   // count only the rows in this area
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
             char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
@@ -20150,6 +20171,8 @@ int main(int argc, char** argv) {
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
         }
         ImGui::EndChild();   // end scrollable nav items
+        s_navRows = navRowsDrawn; s_navSections = navSectionsDrawn;
+        navItemH = navRowH; navCompact = false;   // the footer rows below are full height
 
         {   // ---- Update card (only while checking/downloading, or with news) ----
             const char* head = (st == Up_Downloading) ? "Updating\xE2\x80\xA6"

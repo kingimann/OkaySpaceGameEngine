@@ -6,7 +6,7 @@
   python3 scripts/branch_lint.py docs     ...
   python3 scripts/branch_lint.py binaries ...      (no built programs or big binary files in git)
   python3 scripts/branch_lint.py all      ...      (includes + secrets + docs)
-  python3 scripts/branch_lint.py mingw    ...      -fsyntax-only with the MinGW win32 compiler on the changed engine/ files
+  python3 scripts/branch_lint.py mingw    ...      -fsyntax-only with the MinGW win32 compiler on the changed engine/ shared/ okayui/ launcher/ editor/ player/ files
 
 includes: CLAUDE.md rule 21a. The Windows programs are cross-compiled with MinGW's "win32" thread model, which has no
           <mutex>, <thread>, <condition_variable> or std::call_once. Added lines that use them under engine/ shared/
@@ -122,14 +122,22 @@ def check_docs(root, base, head, rev=None):
 SKIP_INCLUDE_RE = re.compile(r'#\s*include\s*[<"](SDL|imgui|GL/|GLES|X11/|sodium|curl/|openssl/|libsodium|vulkan|emscripten|stb_)')
 
 
-def check_mingw(root, base, head, rev=None, workers=4):
+MINGW_SCOPE = ("engine/", "shared/", "okayui/", "launcher/", "editor/", "player/")
+# A header is compiled alone and with MinGW's <intrin.h> before and after it: a header that defines its own __cpuid use
+# (the Sha256.hpp problem of 2026-11-17) only fails when <intrin.h> is also in the translation unit.
+HEADER_VARIANTS = (("alone", "", ""), ("after <intrin.h>", "#include <intrin.h>\n", ""), ("before <intrin.h>", "", "\n#include <intrin.h>"))
+
+
+def check_mingw(root, base, head, rev=None, workers=4, strict=False, files=None):
     import shutil, subprocess, tempfile
     from concurrent.futures import ThreadPoolExecutor
     cxx = os.environ.get("MINGW_CXX") or next((c for c in ("x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++") if shutil.which(c)), None)
-    files = [f for f in changed_files(root, base, head, rev) if f.startswith("engine/") and f.endswith((".hpp", ".h", ".cpp"))
+    if files is None:
+        files = changed_files(root, base, head, rev)
+    files = [f for f in files if f.startswith(MINGW_SCOPE) and f.endswith((".hpp", ".h", ".cpp"))
              and os.path.exists(os.path.join(root, f))]
     if not files:
-        print("mingw: no changed engine/ headers or sources, nothing to check", file=sys.stderr); return []
+        print("mingw: no changed headers or sources under " + " ".join(MINGW_SCOPE) + ", nothing to check", file=sys.stderr); return []
     if not cxx:
         print("mingw: no MinGW compiler installed here; skipped", file=sys.stderr); return []
     todo, skipped = [], []
@@ -137,16 +145,22 @@ def check_mingw(root, base, head, rev=None, workers=4):
         try: body = open(os.path.join(root, f), encoding="utf-8", errors="replace").read()
         except OSError: continue
         (skipped if SKIP_INCLUDE_RE.search(body) else todo).append(f)
-    inc = ["-Iengine/include", "-Iengine/src", "-Ishared", "-Iokayui/include"]
+    inc = ["-Iengine/include", "-Iengine/src", "-Ishared", "-Iokayui/include", "-Ilauncher", "-Ieditor", "-Iplayer"]
     tmp = tempfile.mkdtemp(prefix="mingwlint")
+    def compile_one(src):
+        p = subprocess.run([cxx, "-std=c++17", "-fsyntax-only", "-w", "-DNOMINMAX", *inc, src], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=120)
+        return p.returncode, p.stderr
     def one(f):
         src = os.path.join(root, f)
-        if f.endswith((".hpp", ".h")):
-            rel = f[len("engine/include/"):] if f.startswith("engine/include/") else os.path.abspath(src)
-            src = os.path.join(tmp, re.sub(r"\W", "_", f) + ".cpp")
-            open(src, "w").write(f'#include "{rel}"\n')
-        p = subprocess.run([cxx, "-std=c++17", "-fsyntax-only", "-w", "-DNOMINMAX", *inc, src], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=120)
-        return f, p.returncode, p.stderr
+        if not f.endswith((".hpp", ".h")):
+            rc, err = compile_one(src); return f, rc, err
+        rel = f[len("engine/include/"):] if f.startswith("engine/include/") else os.path.abspath(src)
+        for label, pre, post in HEADER_VARIANTS:
+            tu = os.path.join(tmp, re.sub(r"\W", "_", f) + "_" + re.sub(r"\W", "", label) + ".cpp")
+            open(tu, "w").write(f'{pre}#include "{rel}"{post}\n')
+            rc, err = compile_one(tu)
+            if rc: return f, rc, ("(header " + label + ") " if label != "alone" else "") + err
+        return f, 0, ""
     findings = []
     with ThreadPoolExecutor(workers) as ex:
         for f, rc, err in ex.map(one, todo):
@@ -154,7 +168,7 @@ def check_mingw(root, base, head, rev=None, workers=4):
             first = next((l for l in err.splitlines() if "error" in l), err.strip()[:200])
             if "No such file or directory" in first:
                 skipped.append(f + " (a header is not installed here)"); continue
-            findings.append({"sev": "warning", "file": f, "line": 1, "text": first[:160], "msg": "does not compile with the MinGW cross compiler: " + first[:200]})
+            findings.append({"sev": "error" if strict else "warning", "file": f, "line": 1, "text": first[:160], "msg": "does not compile with the MinGW cross compiler: " + first[:200]})
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"mingw: compiler {cxx}; checked {len(todo)} files, skipped {len(skipped)}" + (": " + ", ".join(skipped[:8]) if skipped else ""), file=sys.stderr)
     return findings
@@ -208,6 +222,8 @@ def main():
     ap.add_argument("--root", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--files", nargs="+", help="mingw: check exactly these files (repo-relative) instead of the changed ones")
+    ap.add_argument("--strict", action="store_true", help="mingw: compile errors are errors (exit 1), not warnings")
     ap.add_argument("--rev", help="check one commit (its changes against its parent) instead of base...head")
     a = ap.parse_args()
     root = L.repo_root(a.root)
@@ -225,7 +241,7 @@ def main():
         f = check_docs(root, a.base, a.head, a.rev); emit(f, "docs")
         print(f"docs: {len(f)} finding(s)", file=sys.stderr)
     if a.check == "mingw":
-        f = check_mingw(root, a.base, a.head, a.rev); emit(f, "mingw")
+        f = check_mingw(root, a.base, a.head, a.rev, strict=a.strict, files=a.files); err += emit(f, "mingw")
     return 1 if err else 0
 
 

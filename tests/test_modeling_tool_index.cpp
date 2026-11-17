@@ -63,7 +63,7 @@ int main() {
     int found = 0;
     for (std::sregex_iterator it(body.begin(), body.end(), re), end; it != end; ++it) {
         const std::string lab = (*it)[2];
-        if (lab.rfind("##", 0) == 0 || lab.find("Back to the simple") == 0) continue;
+        if (lab.rfind("##", 0) == 0 || lab.find("Back to the simple") == 0 || lab.find("##mdlfind") != std::string::npos) continue;   // window chrome, not tools
         ++found;
         bool ok = false;
         for (const Tool& t : Tools()) { const std::string id = t.id; if (id.size() > lab.size() && id.compare(id.size() - lab.size(), lab.size(), lab) == 0 && id[id.size() - lab.size() - 1] == ':') ok = true; }

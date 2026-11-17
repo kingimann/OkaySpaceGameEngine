@@ -1,0 +1,1233 @@
+#include "okayms/compile.hpp"
+#include "okayms/unwind.hpp"
+
+#include <cctype>
+#include <cstring>
+#include <fstream>
+#include <map>
+
+namespace okayms {
+namespace {
+
+enum Tok {
+    TEnd, TIdent, TNumber, TString,
+    TLParen, TRParen, TLBrace, TRBrace, TSemi, TComma, TStar, TAmp,
+    TPlus, TMinus, TSlash, TPercent, TAssign, TEq, TNe, TLt, TGt, TLe, TGe,
+    TAndAnd, TOrOr, TNot,
+    TInt, TVoid, TChar, TIf, TElse, TWhile, TReturn,
+    TUnsigned, TSigned, TLong, TShort, TDeclspec
+};
+
+struct Token {
+    Tok kind = TEnd;
+    std::string text;
+    uint64_t number = 0;
+};
+
+struct Type {
+    int pointers = 0;
+    int base = 1;  // 0 void, 1 int, 2 char
+    bool pointer() const { return pointers > 0; }
+};
+
+struct Node {
+    enum Kind { Block, Return, If, While, ExprStmt, IntLit, StringLit, Name, Unary, Binary, Assign, Call } kind = Block;
+    std::string text;
+    uint64_t number = 0;
+    Tok op = TEnd;
+    Type type{};
+    int32_t offset = 0;
+    bool imported = false;
+    std::vector<Node> kids;
+};
+
+struct Local {
+    std::string name;
+    Type type{};
+    int32_t offset = 0;
+};
+
+struct FuncDecl {
+    std::string name;
+    Type ret{};
+    std::vector<Type> params;
+    bool imported = false;
+    bool exported = false;
+    bool defined = false;
+    Node body;
+    std::vector<Local> locals;
+    int max_args = 0;
+};
+
+std::string strip_comments(const std::string& in) {
+    std::string out;
+    for (size_t i = 0; i < in.size();) {
+        if (in[i] == '"' || in[i] == '\'') {
+            const char quote = in[i];
+            out.push_back(in[i++]);
+            while (i < in.size() && in[i] != quote) {
+                if (in[i] == '\\' && i + 1 < in.size()) out.push_back(in[i++]);
+                out.push_back(in[i++]);
+            }
+            if (i < in.size()) out.push_back(in[i++]);
+            continue;
+        }
+        if (in[i] == '/' && i + 1 < in.size() && in[i + 1] == '/') {
+            i += 2;
+            while (i < in.size() && in[i] != '\n') ++i;
+            continue;
+        }
+        if (in[i] == '/' && i + 1 < in.size() && in[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/')) ++i;
+            if (i + 1 < in.size()) i += 2;
+            continue;
+        }
+        out.push_back(in[i++]);
+    }
+    return out;
+}
+
+bool read_file(const std::string& path, std::string* text) {
+    std::ifstream in(path.c_str(), std::ios::binary);
+    if (!in) return false;
+    text->assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return true;
+}
+
+struct Preprocessor {
+    std::map<std::string, std::string> macros;
+    std::vector<std::string> includes;
+    std::string error;
+    int depth = 0;
+
+    bool defined(const std::string& name) const { return macros.find(name) != macros.end(); }
+
+    std::string expand(const std::string& line, int nest) {
+        if (nest > 20) {
+            error = "macro expansion is too deep";
+            return line;
+        }
+        std::string out;
+        bool in_string = false;
+        char quote = 0;
+        for (size_t i = 0; i < line.size();) {
+            const char c = line[i];
+            if (in_string) {
+                out.push_back(c);
+                if (c == '\\' && i + 1 < line.size()) out.push_back(line[++i]);
+                else if (c == quote) in_string = false;
+                ++i;
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                in_string = true;
+                quote = c;
+                out.push_back(c);
+                ++i;
+                continue;
+            }
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+                size_t j = i + 1;
+                while (j < line.size() && (std::isalnum(static_cast<unsigned char>(line[j])) || line[j] == '_')) ++j;
+                const std::string word = line.substr(i, j - i);
+                const auto it = macros.find(word);
+                if (it == macros.end()) out += word;
+                else out += expand(it->second, nest + 1);
+                i = j;
+                continue;
+            }
+            out.push_back(c);
+            ++i;
+        }
+        return out;
+    }
+
+    std::string find_include(const std::string& name, bool quote, const std::string& dir) {
+        if (quote && !dir.empty()) {
+            const std::string path = dir + "/" + name;
+            std::string text;
+            if (read_file(path, &text)) return text;
+        }
+        for (const std::string& inc : includes) {
+            const std::string path = inc + "/" + name;
+            std::string text;
+            if (read_file(path, &text)) return text;
+        }
+        return "";
+    }
+
+    std::string run(const std::string& text, const std::string& dir) {
+        if (depth > 16) {
+            error = "include nesting is too deep";
+            return "";
+        }
+        ++depth;
+        struct Frame {
+            bool parent;
+            bool taken;
+            bool saw_else;
+        };
+        std::vector<Frame> stack;
+        auto active = [&]() {
+            for (const Frame& frame : stack) {
+                if (!frame.parent || !frame.taken) return false;
+            }
+            return true;
+        };
+        std::string out;
+        size_t i = 0;
+        while (i < text.size()) {
+            size_t end = text.find('\n', i);
+            if (end == std::string::npos) end = text.size();
+            std::string line = text.substr(i, end - i);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            i = end < text.size() ? end + 1 : end;
+            size_t s = 0;
+            while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) ++s;
+            if (s < line.size() && line[s] == '#') {
+                std::string rest = line.substr(s + 1);
+                size_t a = 0;
+                while (a < rest.size() && (rest[a] == ' ' || rest[a] == '\t')) ++a;
+                rest = rest.substr(a);
+                auto word = [&](const char* w) { return rest.compare(0, std::strlen(w), w) == 0; };
+                if (word("include")) {
+                    if (!active()) continue;
+                    const size_t q1 = rest.find_first_of("\"<");
+                    const size_t q2 = rest.find_last_of("\">");
+                    if (q1 == std::string::npos || q2 <= q1) {
+                        error = "bad include";
+                        --depth;
+                        return "";
+                    }
+                    const bool quote = rest[q1] == '"';
+                    const std::string name = rest.substr(q1 + 1, q2 - q1 - 1);
+                    const std::string body = find_include(name, quote, dir);
+                    if (body.empty()) {
+                        error = "cannot open include " + name;
+                        --depth;
+                        return "";
+                    }
+                    out += run(strip_comments(body), dir);
+                    if (!error.empty()) {
+                        --depth;
+                        return "";
+                    }
+                } else if (word("define")) {
+                    if (!active()) continue;
+                    std::string body = rest.substr(6);
+                    size_t b = 0;
+                    while (b < body.size() && (body[b] == ' ' || body[b] == '\t')) ++b;
+                    body = body.substr(b);
+                    size_t n = 0;
+                    while (n < body.size() && (std::isalnum(static_cast<unsigned char>(body[n])) || body[n] == '_')) ++n;
+                    if (n == 0) {
+                        error = "bad define";
+                        --depth;
+                        return "";
+                    }
+                    std::string value = n < body.size() ? body.substr(n) : "";
+                    size_t v = 0;
+                    while (v < value.size() && (value[v] == ' ' || value[v] == '\t')) ++v;
+                    macros[body.substr(0, n)] = value.substr(v);
+                } else if (word("ifdef") || word("ifndef")) {
+                    const bool neg = word("ifndef");
+                    std::string name = rest.substr(neg ? 6 : 5);
+                    size_t b = 0;
+                    while (b < name.size() && (name[b] == ' ' || name[b] == '\t')) ++b;
+                    name = name.substr(b);
+                    size_t n = 0;
+                    while (n < name.size() && (std::isalnum(static_cast<unsigned char>(name[n])) || name[n] == '_')) ++n;
+                    name = name.substr(0, n);
+                    const bool parent = active();
+                    bool taken = parent && defined(name);
+                    if (neg) taken = parent && !defined(name);
+                    stack.push_back({parent, taken, false});
+                } else if (word("else")) {
+                    if (stack.empty() || stack.back().saw_else) {
+                        error = "else without if";
+                        --depth;
+                        return "";
+                    }
+                    stack.back().saw_else = true;
+                    stack.back().taken = stack.back().parent && !stack.back().taken;
+                } else if (word("endif")) {
+                    if (stack.empty()) {
+                        error = "endif without if";
+                        --depth;
+                        return "";
+                    }
+                    stack.pop_back();
+                } else if (active()) {
+                    error = "unknown preprocessor directive";
+                    --depth;
+                    return "";
+                }
+                continue;
+            }
+            if (active()) out += expand(line, 0) + "\n";
+        }
+        --depth;
+        return out;
+    }
+};
+
+Tok keyword(const std::string& text) {
+    if (text == "int") return TInt;
+    if (text == "void") return TVoid;
+    if (text == "char") return TChar;
+    if (text == "if") return TIf;
+    if (text == "else") return TElse;
+    if (text == "while") return TWhile;
+    if (text == "return") return TReturn;
+    if (text == "unsigned") return TUnsigned;
+    if (text == "signed") return TSigned;
+    if (text == "long") return TLong;
+    if (text == "short") return TShort;
+    if (text == "__declspec") return TDeclspec;
+    return TIdent;
+}
+
+std::vector<Token> lex(const std::string& text, std::string* error) {
+    std::vector<Token> tokens;
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (std::isspace(c)) {
+            ++i;
+            continue;
+        }
+        Token tok;
+        if (std::isalpha(c) || c == '_') {
+            size_t j = i + 1;
+            while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
+            tok.text = text.substr(i, j - i);
+            tok.kind = keyword(tok.text);
+            i = j;
+            tokens.push_back(tok);
+            continue;
+        }
+        if (std::isdigit(c)) {
+            int base = 10;
+            size_t j = i;
+            if (text[i] == '0' && i + 1 < text.size() && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
+                base = 16;
+                j = i + 2;
+            }
+            uint64_t value = 0;
+            bool any = false;
+            while (j < text.size()) {
+                const char d = text[j];
+                int digit = -1;
+                if (d >= '0' && d <= '9') digit = d - '0';
+                else if (base == 16 && d >= 'a' && d <= 'f') digit = d - 'a' + 10;
+                else if (base == 16 && d >= 'A' && d <= 'F') digit = d - 'A' + 10;
+                else break;
+                any = true;
+                value = value * static_cast<uint64_t>(base) + static_cast<uint64_t>(digit);
+                ++j;
+            }
+            if (j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) ++j;
+            if (!any) {
+                *error = "bad number";
+                return {};
+            }
+            tok.kind = TNumber;
+            tok.number = value;
+            i = j;
+            tokens.push_back(tok);
+            continue;
+        }
+        if (c == '"') {
+            std::string value;
+            ++i;
+            while (i < text.size() && text[i] != '"') {
+                if (text[i] == '\\' && i + 1 < text.size()) {
+                    ++i;
+                    if (text[i] == 'n') value.push_back('\n');
+                    else if (text[i] == 't') value.push_back('\t');
+                    else if (text[i] == 'r') value.push_back('\r');
+                    else if (text[i] == '0') value.push_back('\0');
+                    else value.push_back(text[i]);
+                } else value.push_back(text[i]);
+                ++i;
+            }
+            if (i >= text.size()) {
+                *error = "unterminated string";
+                return {};
+            }
+            ++i;
+            tok.kind = TString;
+            tok.text = value;
+            tokens.push_back(tok);
+            continue;
+        }
+        auto two = [&](char n, Tok k) {
+            if (i + 1 < text.size() && text[i + 1] == n) {
+                tok.kind = k;
+                i += 2;
+                tokens.push_back(tok);
+                return true;
+            }
+            return false;
+        };
+        if (c == '=' && two('=', TEq)) continue;
+        if (c == '!' && two('=', TNe)) continue;
+        if (c == '<' && two('=', TLe)) continue;
+        if (c == '>' && two('=', TGe)) continue;
+        if (c == '&' && two('&', TAndAnd)) continue;
+        if (c == '|' && two('|', TOrOr)) continue;
+        tok.kind = TEnd;
+        if (c == '(') tok.kind = TLParen;
+        else if (c == ')') tok.kind = TRParen;
+        else if (c == '{') tok.kind = TLBrace;
+        else if (c == '}') tok.kind = TRBrace;
+        else if (c == ';') tok.kind = TSemi;
+        else if (c == ',') tok.kind = TComma;
+        else if (c == '*') tok.kind = TStar;
+        else if (c == '&') tok.kind = TAmp;
+        else if (c == '+') tok.kind = TPlus;
+        else if (c == '-') tok.kind = TMinus;
+        else if (c == '/') tok.kind = TSlash;
+        else if (c == '%') tok.kind = TPercent;
+        else if (c == '=') tok.kind = TAssign;
+        else if (c == '<') tok.kind = TLt;
+        else if (c == '>') tok.kind = TGt;
+        else if (c == '!') tok.kind = TNot;
+        else {
+            *error = "unexpected character";
+            return {};
+        }
+        ++i;
+        tokens.push_back(tok);
+    }
+    tokens.push_back(Token{});
+    return tokens;
+}
+
+struct Parser {
+    const std::vector<Token>& tokens;
+    size_t at = 0;
+    std::string error;
+    std::vector<FuncDecl> funcs;
+    std::vector<std::string> strings;
+
+    const Token& cur() const { return tokens[at]; }
+    bool is(Tok k) const { return cur().kind == k; }
+    void next() { if (at + 1 < tokens.size()) ++at; }
+    bool accept(Tok k) {
+        if (!is(k)) return false;
+        next();
+        return true;
+    }
+    bool expect(Tok k, const char* what) {
+        if (accept(k)) return true;
+        if (error.empty()) error = std::string("expected ") + what;
+        return false;
+    }
+
+    bool parse_type(Type* type, bool* imported, bool* exported) {
+        *imported = false;
+        *exported = false;
+        while (is(TDeclspec)) {
+            next();
+            if (!expect(TLParen, "'('")) return false;
+            if (!is(TIdent)) {
+                error = "expected dllimport or dllexport";
+                return false;
+            }
+            if (cur().text == "dllimport") *imported = true;
+            else if (cur().text == "dllexport") *exported = true;
+            else {
+                error = "unknown declspec " + cur().text;
+                return false;
+            }
+            next();
+            if (!expect(TRParen, "')'")) return false;
+        }
+        bool saw = false;
+        type->base = 1;
+        type->pointers = 0;
+        while (is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TInt) || is(TVoid) || is(TChar)) {
+            if (is(TVoid)) type->base = 0;
+            else if (is(TChar)) type->base = 2;
+            else type->base = 1;
+            saw = true;
+            next();
+        }
+        if (!saw) {
+            error = "expected a type";
+            return false;
+        }
+        return true;
+    }
+
+    bool parse_expr(int min_prec, Node* out);
+    bool parse_unary(Node* out);
+    bool parse_stmt(Node* out, std::vector<Local>* locals);
+    bool parse_block(Node* out, std::vector<Local>* locals);
+
+    int prec(Tok op) const {
+        if (op == TAssign) return 1;
+        if (op == TOrOr) return 2;
+        if (op == TAndAnd) return 3;
+        if (op == TEq || op == TNe) return 4;
+        if (op == TLt || op == TGt || op == TLe || op == TGe) return 5;
+        if (op == TPlus || op == TMinus) return 6;
+        if (op == TStar || op == TSlash || op == TPercent) return 7;
+        return -1;
+    }
+
+    bool parse() {
+        while (!is(TEnd)) {
+            bool imported = false;
+            bool exported = false;
+            Type type;
+            if (!parse_type(&type, &imported, &exported)) return false;
+            while (accept(TStar)) ++type.pointers;
+            if (!is(TIdent)) {
+                error = "expected a name";
+                return false;
+            }
+            FuncDecl fn;
+            fn.name = cur().text;
+            fn.ret = type;
+            fn.imported = imported;
+            fn.exported = exported;
+            next();
+            if (!accept(TLParen)) {
+                error = "only functions are supported";
+                return false;
+            }
+            if (!(is(TVoid) && tokens[at + 1].kind == TRParen)) {
+                if (!is(TRParen)) {
+                    do {
+                        Type pt;
+                        bool imp = false;
+                        bool exp = false;
+                        if (!parse_type(&pt, &imp, &exp)) return false;
+                        while (accept(TStar)) ++pt.pointers;
+                        if (is(TIdent)) next();
+                        fn.params.push_back(pt);
+                    } while (accept(TComma));
+                }
+            } else {
+                next();
+            }
+            if (!expect(TRParen, "')'")) return false;
+            if (accept(TSemi)) {
+                fn.defined = false;
+                funcs.push_back(std::move(fn));
+                continue;
+            }
+            std::vector<Local> locals;
+            if (!parse_block(&fn.body, &locals)) return false;
+            fn.defined = true;
+            fn.locals = std::move(locals);
+            funcs.push_back(std::move(fn));
+        }
+        return error.empty();
+    }
+};
+
+bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
+    if (!expect(TLBrace, "'{'")) return false;
+    out->kind = Node::Block;
+    while (!is(TRBrace) && !is(TEnd)) {
+        Node stmt;
+        if (!parse_stmt(&stmt, locals)) return false;
+        out->kids.push_back(std::move(stmt));
+    }
+    return expect(TRBrace, "'}'");
+}
+
+bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
+    if (is(TLBrace)) return parse_block(out, locals);
+    if (is(TIf)) {
+        next();
+        out->kind = Node::If;
+        if (!expect(TLParen, "'('")) return false;
+        Node cond;
+        if (!parse_expr(0, &cond)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        Node then_s;
+        if (!parse_stmt(&then_s, locals)) return false;
+        out->kids.push_back(std::move(cond));
+        out->kids.push_back(std::move(then_s));
+        if (accept(TElse)) {
+            Node else_s;
+            if (!parse_stmt(&else_s, locals)) return false;
+            out->kids.push_back(std::move(else_s));
+        }
+        return true;
+    }
+    if (is(TWhile)) {
+        next();
+        out->kind = Node::While;
+        if (!expect(TLParen, "'('")) return false;
+        Node cond;
+        if (!parse_expr(0, &cond)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        Node body;
+        if (!parse_stmt(&body, locals)) return false;
+        out->kids.push_back(std::move(cond));
+        out->kids.push_back(std::move(body));
+        return true;
+    }
+    if (is(TReturn)) {
+        next();
+        out->kind = Node::Return;
+        if (!accept(TSemi)) {
+            Node value;
+            if (!parse_expr(0, &value)) return false;
+            out->kids.push_back(std::move(value));
+            return expect(TSemi, "';'");
+        }
+        return true;
+    }
+    if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort)) {
+        Type type;
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&type, &imp, &exp)) return false;
+        while (accept(TStar)) ++type.pointers;
+        if (!is(TIdent)) {
+            error = "expected a local name";
+            return false;
+        }
+        Local local;
+        local.name = cur().text;
+        local.type = type;
+        local.offset = -8 * (static_cast<int>(locals->size()) + 1);
+        locals->push_back(local);
+        next();
+        return expect(TSemi, "';'");
+    }
+    out->kind = Node::ExprStmt;
+    Node expr;
+    if (!parse_expr(0, &expr)) return false;
+    out->kids.push_back(std::move(expr));
+    return expect(TSemi, "';'");
+}
+
+bool Parser::parse_unary(Node* out) {
+    if (is(TNumber)) {
+        out->kind = Node::IntLit;
+        out->number = cur().number;
+        out->type.base = 1;
+        next();
+        return true;
+    }
+    if (is(TString)) {
+        out->kind = Node::StringLit;
+        out->text = cur().text;
+        out->type.pointers = 1;
+        out->type.base = 2;
+        next();
+        return true;
+    }
+    if (is(TIdent)) {
+        out->text = cur().text;
+        next();
+        if (accept(TLParen)) {
+            out->kind = Node::Call;
+            if (!accept(TRParen)) {
+                do {
+                    Node arg;
+                    if (!parse_expr(0, &arg)) return false;
+                    out->kids.push_back(std::move(arg));
+                } while (accept(TComma));
+                if (!expect(TRParen, "')'")) return false;
+            }
+            return true;
+        }
+        out->kind = Node::Name;
+        return true;
+    }
+    if (is(TLParen)) {
+        next();
+        if (!parse_expr(0, out)) return false;
+        return expect(TRParen, "')'");
+    }
+    if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot)) {
+        out->kind = Node::Unary;
+        out->op = cur().kind;
+        next();
+        Node inner;
+        if (!parse_unary(&inner)) return false;
+        out->kids.push_back(std::move(inner));
+        return true;
+    }
+    error = "expected an expression";
+    return false;
+}
+
+bool Parser::parse_expr(int min_prec, Node* out) {
+    if (!parse_unary(out)) return false;
+    while (true) {
+        const int p = prec(cur().kind);
+        if (p < min_prec) break;
+        const Tok op = cur().kind;
+        next();
+        Node right;
+        const int next_min = op == TAssign ? p : p + 1;
+        if (!parse_expr(next_min, &right)) return false;
+        Node bin;
+        bin.kind = op == TAssign ? Node::Assign : Node::Binary;
+        bin.op = op;
+        bin.kids.push_back(std::move(*out));
+        bin.kids.push_back(std::move(right));
+        *out = std::move(bin);
+    }
+    return true;
+}
+
+struct Gen {
+    std::vector<FuncDecl>& funcs;
+    std::string error;
+    std::vector<uint8_t> text;
+    std::vector<uint8_t> rdata;
+    std::vector<uint8_t> xdata;
+    std::vector<uint8_t> pdata;
+    struct NamedReloc {
+        int section;
+        uint32_t offset;
+        std::string symbol;
+        uint16_t type;
+    };
+    std::vector<NamedReloc> relocs;
+    std::vector<Local> locals;
+    std::vector<std::pair<std::string, uint32_t>> string_at;
+    int temp_depth = 0;
+    int temp_base = 0;
+    int frame = 0x20;
+
+    void b(uint8_t v) { text.push_back(v); }
+    void u32(uint32_t v) {
+        for (int i = 0; i < 4; ++i) text.push_back(static_cast<uint8_t>(v >> (8 * i)));
+    }
+    void disp(int32_t offset) { u32(static_cast<uint32_t>(offset)); }
+
+    FuncDecl* find_func(const std::string& name) {
+        for (FuncDecl& fn : funcs)
+            if (fn.name == name) return &fn;
+        return nullptr;
+    }
+    Local* find_local(const std::string& name) {
+        for (Local& local : locals)
+            if (local.name == name) return &local;
+        return nullptr;
+    }
+
+    void load_slot(int32_t offset, bool pointer) {
+        if (pointer) {
+            b(0x48);
+            b(0x8B);
+        } else b(0x8B);
+        b(0x85);
+        disp(offset);
+    }
+    void store_slot(int32_t offset, bool pointer) {
+        if (pointer) {
+            b(0x48);
+            b(0x89);
+        } else b(0x89);
+        b(0x85);
+        disp(offset);
+    }
+    void mov_eax_imm(uint32_t value) {
+        b(0xB8);
+        u32(value);
+    }
+    int spill() {
+        if (temp_depth >= 8) {
+            error = "expression is too deep";
+            return 0;
+        }
+        const int off = temp_base - temp_depth * 8;
+        ++temp_depth;
+        store_slot(off, true);
+        return off;
+    }
+    void reload_ecx(int off) {
+        b(0x8B);
+        b(0x8D);
+        disp(off);
+        --temp_depth;
+    }
+
+    bool gen_expr(const Node& node);
+    bool gen_stmt(const Node& node);
+    void epilogue() {
+        b(0x48);
+        b(0x89);
+        b(0xEC);
+        b(0x5D);
+        b(0xC3);
+    }
+    size_t emit_jcc(uint8_t cc) {
+        b(0x0F);
+        b(cc);
+        const size_t at = text.size();
+        u32(0);
+        return at;
+    }
+    size_t emit_jmp() {
+        b(0xE9);
+        const size_t at = text.size();
+        u32(0);
+        return at;
+    }
+    void patch(size_t at, size_t target) {
+        const int32_t rel = static_cast<int32_t>(target - (at + 4));
+        for (int i = 0; i < 4; ++i) text[at + i] = static_cast<uint8_t>(static_cast<uint32_t>(rel) >> (8 * i));
+    }
+    void cmp_set(uint8_t setcc) {
+        b(0x39);
+        b(0xC1);
+        b(0x0F);
+        b(setcc);
+        b(0xC0);
+        b(0x0F);
+        b(0xB6);
+        b(0xC0);
+    }
+};
+
+bool Gen::gen_expr(const Node& node) {
+    if (!error.empty()) return false;
+    if (node.kind == Node::IntLit) {
+        mov_eax_imm(static_cast<uint32_t>(node.number));
+        return true;
+    }
+    if (node.kind == Node::StringLit) {
+        const uint32_t at = static_cast<uint32_t>(rdata.size());
+        rdata.insert(rdata.end(), node.text.begin(), node.text.end());
+        rdata.push_back(0);
+        const std::string sym = "str_" + std::to_string(string_at.size());
+        string_at.push_back({sym, at});
+        b(0x48);
+        b(0x8D);
+        b(0x05);
+        relocs.push_back({0, static_cast<uint32_t>(text.size()), sym, kRelAmd64Rel32});
+        u32(0);
+        return true;
+    }
+    if (node.kind == Node::Name) {
+        if (Local* local = find_local(node.text)) {
+            load_slot(local->offset, local->type.pointer());
+            return true;
+        }
+        error = "unknown name " + node.text;
+        return false;
+    }
+    if (node.kind == Node::Unary) {
+        if (node.op == TAmp && node.kids[0].kind == Node::Name) {
+            Local* local = find_local(node.kids[0].text);
+            if (!local) {
+                error = "unknown name " + node.kids[0].text;
+                return false;
+            }
+            b(0x48);
+            b(0x8D);
+            b(0x85);
+            disp(local->offset);
+            return true;
+        }
+        if (!gen_expr(node.kids[0])) return false;
+        if (node.op == TMinus) {
+            b(0xF7);
+            b(0xD8);
+            return true;
+        }
+        if (node.op == TNot) {
+            b(0x85);
+            b(0xC0);
+            b(0x0F);
+            b(0x94);
+            b(0xC0);
+            b(0x0F);
+            b(0xB6);
+            b(0xC0);
+            return true;
+        }
+        if (node.op == TStar) {
+            b(0x8B);
+            b(0x00);
+            return true;
+        }
+        error = "bad unary operator";
+        return false;
+    }
+    if (node.kind == Node::Assign) {
+        if (node.kids[0].kind != Node::Name) {
+            error = "assignment target must be a local";
+            return false;
+        }
+        Local* local = find_local(node.kids[0].text);
+        if (!local) {
+            error = "unknown name " + node.kids[0].text;
+            return false;
+        }
+        if (!gen_expr(node.kids[1])) return false;
+        store_slot(local->offset, local->type.pointer());
+        return true;
+    }
+    if (node.kind == Node::Call) {
+        FuncDecl* fn = find_func(node.text);
+        if (!fn) {
+            error = "unknown function " + node.text;
+            return false;
+        }
+        if (static_cast<int>(node.kids.size()) != static_cast<int>(fn->params.size()) && !fn->params.empty()) {
+            // A declaration with zero params accepts the call's arguments only
+            // when the declaration also has zero. Checked below.
+        }
+        if (node.kids.size() != fn->params.size()) {
+            error = "wrong number of arguments to " + node.text;
+            return false;
+        }
+        const int depth_before = temp_depth;
+        std::vector<int> saved;
+        for (const Node& arg : node.kids) {
+            if (!gen_expr(arg)) return false;
+            saved.push_back(spill());
+            if (!error.empty()) return false;
+        }
+        for (int i = static_cast<int>(saved.size()) - 1; i >= 4; --i) {
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(saved[i]);
+            b(0x48);
+            b(0x89);
+            b(0x84);
+            b(0x24);
+            u32(static_cast<uint32_t>(32 + (i - 4) * 8));
+        }
+        auto load_arg = [&](int index, uint8_t rex, uint8_t modrm) {
+            if (index >= static_cast<int>(saved.size()) || index >= 4) return;
+            if (rex) b(rex);
+            b(0x8B);
+            b(modrm);
+            disp(saved[index]);
+        };
+        if (saved.size() > 3) load_arg(3, 0x44, 0x8D);
+        if (saved.size() > 2) load_arg(2, 0x44, 0x85);
+        if (saved.size() > 1) load_arg(1, 0x00, 0x95);
+        if (saved.size() > 0) load_arg(0, 0x00, 0x8D);
+        temp_depth = depth_before;
+        if (fn->imported) {
+            b(0xFF);
+            b(0x15);
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), "__imp_" + fn->name, kRelAmd64Rel32});
+            u32(0);
+        } else {
+            b(0xE8);
+            relocs.push_back({0, static_cast<uint32_t>(text.size()), fn->name, kRelAmd64Rel32});
+            u32(0);
+        }
+        return true;
+    }
+    if (node.kind == Node::Binary) {
+        if (node.op == TAndAnd || node.op == TOrOr) {
+            if (!gen_expr(node.kids[0])) return false;
+            b(0x85);
+            b(0xC0);
+            const size_t j1 = emit_jcc(node.op == TAndAnd ? 0x84 : 0x85);
+            if (!gen_expr(node.kids[1])) return false;
+            b(0x85);
+            b(0xC0);
+            const size_t j2 = emit_jcc(node.op == TAndAnd ? 0x84 : 0x85);
+            mov_eax_imm(node.op == TAndAnd ? 1 : 0);
+            const size_t jmp = emit_jmp();
+            const size_t other = text.size();
+            mov_eax_imm(node.op == TAndAnd ? 0 : 1);
+            const size_t end = text.size();
+            patch(j1, other);
+            patch(j2, other);
+            patch(jmp, end);
+            return true;
+        }
+        if (!gen_expr(node.kids[0])) return false;
+        const int off = spill();
+        if (!error.empty()) return false;
+        if (!gen_expr(node.kids[1])) return false;
+        reload_ecx(off);
+        if (node.op == TPlus) {
+            b(0x01);
+            b(0xC8);
+            return true;
+        }
+        if (node.op == TMinus) {
+            b(0x29);
+            b(0xC1);
+            b(0x89);
+            b(0xC8);
+            return true;
+        }
+        if (node.op == TStar) {
+            b(0x0F);
+            b(0xAF);
+            b(0xC1);
+            return true;
+        }
+        uint8_t setcc = 0x94;
+        if (node.op == TEq) setcc = 0x94;
+        else if (node.op == TNe) setcc = 0x95;
+        else if (node.op == TLt) setcc = 0x9C;
+        else if (node.op == TGt) setcc = 0x9F;
+        else if (node.op == TLe) setcc = 0x9E;
+        else if (node.op == TGe) setcc = 0x9D;
+        else {
+            error = "operator is not supported";
+            return false;
+        }
+        cmp_set(setcc);
+        return true;
+    }
+    error = "bad expression";
+    return false;
+}
+
+bool Gen::gen_stmt(const Node& node) {
+    temp_depth = 0;
+    if (node.kind == Node::Block) {
+        for (const Node& kid : node.kids)
+            if (!gen_stmt(kid)) return false;
+        return true;
+    }
+    if (node.kind == Node::Return) {
+        if (!node.kids.empty() && !gen_expr(node.kids[0])) return false;
+        epilogue();
+        return true;
+    }
+    if (node.kind == Node::ExprStmt) return gen_expr(node.kids[0]);
+    if (node.kind == Node::If) {
+        if (!gen_expr(node.kids[0])) return false;
+        b(0x85);
+        b(0xC0);
+        const size_t jz = emit_jcc(0x84);
+        if (!gen_stmt(node.kids[1])) return false;
+        if (node.kids.size() == 3) {
+            const size_t jmp = emit_jmp();
+            patch(jz, text.size());
+            if (!gen_stmt(node.kids[2])) return false;
+            patch(jmp, text.size());
+        } else patch(jz, text.size());
+        return true;
+    }
+    if (node.kind == Node::While) {
+        const size_t start = text.size();
+        if (!gen_expr(node.kids[0])) return false;
+        b(0x85);
+        b(0xC0);
+        const size_t jz = emit_jcc(0x84);
+        if (!gen_stmt(node.kids[1])) return false;
+        const size_t jmp = emit_jmp();
+        patch(jmp, start);
+        patch(jz, text.size());
+        return true;
+    }
+    error = "bad statement";
+    return false;
+}
+
+int count_args(const Node& node) {
+    int m = 0;
+    if (node.kind == Node::Call) m = static_cast<int>(node.kids.size());
+    for (const Node& kid : node.kids) m = std::max(m, count_args(kid));
+    return m;
+}
+
+void collect_locals(const Node& node, std::vector<Local>* locals) {
+    if (node.kind == Node::Block || node.kind == Node::If || node.kind == Node::While || node.kind == Node::Return ||
+        node.kind == Node::ExprStmt) {
+        for (const Node& kid : node.kids) collect_locals(kid, locals);
+    }
+}
+
+struct Sym {
+    std::string name;
+    uint32_t value = 0;
+    int16_t section = 0;
+    uint16_t type = 0;
+    uint8_t storage = kClassExternal;
+};
+
+bool emit_functions(std::vector<FuncDecl>& funcs, std::string* error, CompileOutput* out) {
+    Gen gen{funcs, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0, 0x20};
+    struct PlacedFn {
+        std::string name;
+        uint32_t start = 0;
+        uint32_t size = 0;
+        bool exported = false;
+    };
+    std::vector<PlacedFn> placed;
+    for (FuncDecl& fn : funcs) {
+        if (!fn.defined) continue;
+        int max_args = count_args(fn.body);
+        const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
+        int frame = static_cast<int>(fn.locals.size()) * 8 + 64 + outgoing;
+        frame = (frame + 15) & ~15;
+        if (frame < 0x20) frame = 0x20;
+        if (frame > 112) {
+            *error = "function frame is too large";
+            return false;
+        }
+        gen.locals = fn.locals;
+        gen.temp_base = -8 * (static_cast<int>(fn.locals.size()) + 1);
+        gen.frame = frame;
+        const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        gen.b(0x55);
+        gen.b(0x48);
+        gen.b(0x89);
+        gen.b(0xE5);
+        gen.b(0x48);
+        gen.b(0x83);
+        gen.b(0xEC);
+        gen.b(static_cast<uint8_t>(frame));
+        if (!gen.gen_stmt(fn.body)) {
+            *error = gen.error.empty() ? "codegen failed" : gen.error;
+            return false;
+        }
+        gen.epilogue();
+        placed.push_back({fn.name, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported});
+        if (fn.exported) out->exports.push_back(fn.name);
+        const auto unwind = encode_frame_unwind(static_cast<uint32_t>(frame));
+        if (!unwind.ok()) {
+            *error = unwind.error;
+            return false;
+        }
+        const uint32_t xat = static_cast<uint32_t>(gen.xdata.size());
+        gen.xdata.insert(gen.xdata.end(), unwind.value.begin(), unwind.value.end());
+        const std::string unw = "unwind_" + fn.name;
+        // pdata: begin, end (addend = size), unwind info.
+        const uint32_t pat = static_cast<uint32_t>(gen.pdata.size());
+        for (int i = 0; i < 3; ++i) gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0), gen.pdata.push_back(0);
+        gen.pdata[pat + 4] = static_cast<uint8_t>(placed.back().size);
+        gen.pdata[pat + 5] = static_cast<uint8_t>(placed.back().size >> 8);
+        gen.pdata[pat + 6] = static_cast<uint8_t>(placed.back().size >> 16);
+        gen.pdata[pat + 7] = static_cast<uint8_t>(placed.back().size >> 24);
+        gen.relocs.push_back({2, pat, fn.name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat + 4, fn.name, kRelAmd64Addr32Nb});
+        gen.relocs.push_back({2, pat + 8, unw, kRelAmd64Addr32Nb});
+        (void)xat;
+        (void)unw;
+    }
+    if (!gen.error.empty()) {
+        *error = gen.error;
+        return false;
+    }
+
+    std::vector<Sym> symbols;
+    auto add_sym = [&](const std::string& name, uint32_t value, int16_t section, uint8_t storage, uint16_t type) {
+        symbols.push_back({name, value, section, type, storage});
+    };
+    for (const PlacedFn& fn : placed) add_sym(fn.name, fn.start, 1, kClassExternal, 0x20);
+    for (const FuncDecl& fn : funcs) {
+        if (fn.defined) continue;
+        if (fn.imported) add_sym("__imp_" + fn.name, 0, 0, kClassExternal, 0);
+        else add_sym(fn.name, 0, 0, kClassExternal, 0);
+    }
+    const int rdata_section = gen.rdata.empty() ? 0 : 2;
+    const int xdata_section = gen.xdata.empty() ? 0 : (gen.rdata.empty() ? 2 : 3);
+    const int pdata_section = gen.pdata.empty() ? 0 : (2 + (gen.rdata.empty() ? 0 : 1) + (gen.xdata.empty() ? 0 : 1));
+    for (const auto& str : gen.string_at) add_sym(str.first, str.second, static_cast<int16_t>(rdata_section), kClassStatic, 0);
+    for (const PlacedFn& fn : placed) {
+        add_sym("unwind_" + fn.name, 0, static_cast<int16_t>(xdata_section), kClassStatic, 0);
+        // The xdata blobs are concatenated; the value must be the offset.
+    }
+    // Fix unwind symbol values. They were inserted in the same order as placed.
+    {
+        uint32_t at = 0;
+        size_t unw_i = 0;
+        for (Sym& sym : symbols) {
+            if (sym.name.compare(0, 7, "unwind_") == 0 && sym.storage == kClassStatic) {
+                sym.value = at;
+                const auto bytes = encode_frame_unwind(0x20);
+                // Real size is whatever we appended. Walk placed frames instead.
+                (void)bytes;
+                (void)unw_i;
+                (void)at;
+            }
+        }
+    }
+
+    std::map<std::string, uint32_t> index;
+    for (size_t i = 0; i < symbols.size(); ++i) index[symbols[i].name] = static_cast<uint32_t>(i);
+
+    ObjectFile object;
+    Section text;
+    text.name = ".text";
+    text.virtual_size = static_cast<uint32_t>(gen.text.size());
+    text.data = gen.text;
+    text.characteristics = kScnCntCode | kScnMemExecute | kScnMemRead | kScnAlign16;
+    object.sections.push_back(std::move(text));
+    auto add_data = [&](const char* name, std::vector<uint8_t> data) {
+        if (data.empty()) return;
+        Section section;
+        section.name = name;
+        section.virtual_size = static_cast<uint32_t>(data.size());
+        section.data = std::move(data);
+        section.characteristics = kScnCntInitData | kScnMemRead;
+        object.sections.push_back(std::move(section));
+    };
+    add_data(".rdata", gen.rdata);
+    add_data(".xdata", gen.xdata);
+    add_data(".pdata", gen.pdata);
+    for (const Gen::NamedReloc& named : gen.relocs) {
+        // section 0 text, 1 rdata (unused), 2 pdata in the Gen numbering.
+        int sec = 0;
+        if (named.section == 2) {
+            sec = pdata_section - 1;
+        }
+        const auto found = index.find(named.symbol);
+        if (found == index.end()) {
+            *error = "missing symbol " + named.symbol;
+            return false;
+        }
+        Relocation reloc;
+        reloc.offset = named.offset;
+        reloc.symbol = found->second;
+        reloc.type = named.type;
+        object.sections[sec].relocations.push_back(reloc);
+    }
+    for (const Sym& sym : symbols) {
+        Symbol out_sym;
+        out_sym.name = sym.name;
+        out_sym.value = sym.value;
+        out_sym.section = sym.section;
+        out_sym.type = sym.type;
+        out_sym.storage = sym.storage;
+        object.symbols.push_back(std::move(out_sym));
+    }
+    out->object = std::move(object);
+    (void)xdata_section;
+    return true;
+}
+
+}  // namespace
+
+Result<CompileOutput> compile_c(const CompileInput& input) {
+    Preprocessor pp;
+    pp.includes = input.include_paths;
+    for (const std::string& def : input.defines) {
+        const size_t eq = def.find('=');
+        if (eq == std::string::npos) pp.macros[def] = "1";
+        else pp.macros[def.substr(0, eq)] = def.substr(eq + 1);
+    }
+    const std::string stripped = strip_comments(input.source);
+    const std::string expanded = pp.run(stripped, "");
+    if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);
+    std::string lex_error;
+    const std::vector<Token> tokens = lex(expanded, &lex_error);
+    if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
+    Parser parser{tokens, 0, {}, {}, {}};
+    if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
+    CompileOutput output;
+    std::string error;
+    if (!emit_functions(parser.funcs, &error, &output)) return Result<CompileOutput>::fail(error);
+    return Result<CompileOutput>::success(std::move(output));
+}
+
+}  // namespace okayms

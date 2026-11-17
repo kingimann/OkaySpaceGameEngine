@@ -1591,7 +1591,8 @@ the 3D views' OpenGL through our own code"); with `OKAY_PLATFORM_BACKEND=own` as
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
 the screens that have an OkayUI port change; everything else stays Dear ImGui. In the launcher: What's New, Tips, Downloads,
-Achievements and the Notifications panel (the bell). In the editor: Console, Crash Log and Audio Mixer.
+Achievements and the Notifications panel (the bell). In the editor: Console, Crash Log, Audio Mixer, Problems, Stats, History,
+Tags and Layers, Physics, Profiler, Import settings, Post-processing, and the Player and Rendering settings.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`.
 
@@ -1627,28 +1628,31 @@ What to look for after the anti-aliasing step (docs/own_ui_toolkit.md section 8.
 - **Speed**: with `set OKAY_UI_TIMING=1`, compare the "build + render" figure of each screen with and without
   `set OKAY_UI_BACKEND=okayui`: OkayUI's should be lower (on Linux it was 12% to 18% lower).
 
-**New in the change "own UI 3": the Stats window (and what else is new).**
-It is developer-only on purpose (owner rule: no own replacement is on until declared ready), so a normal run still shows
-Dear ImGui everywhere. To try it:
-1. Open the Command Prompt, go to the folder with `Tools\OkayEngine.exe`, and type `set OKAY_DEV=1` then
-   `set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. (The About popup should say `ui=okayui`.)
-2. Open the **Stats** window: it is in the editor's View menu (the list of panels; it is closed in the default layout).
-3. You should see: a big green frame-rate number (yellow below 55, red below 30) with the frame time and
-   "avg / min", a line graph of the last 120 frames with a faint green line at 60 fps, the scene counts in four columns
-   (the numbers 10,000 and up show as `12.3k`, a million as `1.5M`, zeros are dim), and the switches **Frustum culling**,
-   **Occlusion**, **Static batching**, **Dynamic batching**. Click a switch: it changes the real setting (the same one the
-   Dear ImGui window changes). Hold the pointer still on **Occlusion** or **Dynamic batching** for half a second: a
-   help box with two lines appears.
-4. To compare: close the window, `set OKAY_UI_BACKEND=imgui` (or unset it) and open Stats again: same content in Dear ImGui.
-Pictures (headless renders, not screenshots of the editor): `docs/images/okayui/stats_side_by_side.png` (Dear ImGui left,
-OkayUI right; the ImGui side is a copy of the ImGui calls with fixed data in ImGui's default look), `stats_okayui.png`,
-`stats_okayui_tooltip.png`.
-What is not visible to you yet: tab reordering, the table column hide menu, the dock layout builder and the code editor's
-line commands exist as library code with headless tests (`test_okayui_imcompat`, `test_okayui_dockbuilder`,
-`test_okayui_codeedit`); no editor screen uses them yet, so there is nothing to click. The one place you can try a
-code-editor command today is the script editor with the developer switch on (the same two `set` lines plus `OKAY_DEV=1`):
-open any script, click in the text, and press **Ctrl+/** (comment the line), **Alt+Up** / **Alt+Down** (move the line),
-**Ctrl+Shift+D** (duplicate it). The Windows keyboard host maps the slash key; this was not run on a real keyboard.
+To turn it on for the editor: open the Command Prompt in the folder with `Tools\OkayEngine.exe`, type `set OKAY_DEV=1`, then
+`set OKAY_UI_BACKEND=okayui`, then `Tools\OkayEngine.exe`. To compare, start it again with `set OKAY_UI_BACKEND=imgui`.
+
+The editor screens with an OkayUI port (`docs/own_ui_toolkit.md` sections 6, 9, 10 and 11):
+
+| Where | How to open it | What to try |
+|---|---|---|
+| Console, Crash Log, Audio Mixer | View > Panels | as before |
+| Problems | View > Panels > Problems | type in the search box (a magnifier at the left; the cross at the right empties it), right-click a row: the menu looks like Dear ImGui's |
+| Stats, History | View > Panels > Stats, History | click a culling or batching switch (it changes the real setting); right-click the census or a history row; the current history row has a flat blue tint |
+| Profiler | View > Panels > Profiler | tick Pause, drag the "frame" slider (it shows "frame N"), Copy CSV; the hot section is red |
+| Project Settings > Tags and Layers | Edit > Project Settings..., open "Tags and Layers" | add a tag, Rename (a small window under the pointer), Remove; type a layer name and click elsewhere or press Enter: it is saved once; Reset |
+| Project Settings > Physics | Edit > Project Settings... | drag the gravity numbers and "Steps per second" (it shows whole numbers), switch Quality between Classic and Improved, drag Solver iterations, Apply to current scene |
+| Project Settings > Player, Rendering | Edit > Project Settings... (both open at the top) | type a Company and Version, click the - and + next to Width and Height, drag Ambient, untick Skybox, Apply to current scene; Save, close and reopen: the values stay |
+| Lighting > Post-processing | View > Panels > Lighting (a tab next to the Inspector) | choose a Look Preset, Reset, tick Bloom and Colour Grading (more rows appear), drag Exposure and the three Lift numbers; the Scene view changes as you drag |
+| Import settings | click a picture, a model or a sound in the Project panel: its settings show in the Inspector | change "Largest side", a model's Normals and Scale, or "Mix down to one channel": Apply and Revert become clickable; Apply saves next to the asset. The Project panel's own "Import Settings" popup stays Dear ImGui |
+
+| Script editor (code widget) | open any script | click in the text and press Ctrl+/ (comment the line), Alt+Up / Alt+Down (move it), Ctrl+Shift+D (duplicate it) |
+
+Tab reordering, the table column hide menu and the dock layout builder are library pieces with headless tests only; no editor
+screen uses them yet, so there is nothing to click.
+
+You should see the same panels as with Dear ImGui, with small differences listed in `docs/own_ui_toolkit.md` 11.7
+(mostly text edges). Check boxes (a frame with a tick), the combo arrows and the scroll bars now look like Dear ImGui's. If a panel looks broken, set `OKAY_UI_BACKEND=imgui` (or untick the
+setting) to go back. Unverified: none of this was opened in a real editor window.
 
 ### 12b. Our own code editor in the Script Editor (`OKAY_CODE_EDITOR=own`)
 

@@ -4,6 +4,7 @@
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>
+#include <string>
 #include <cmath>
 
 namespace OkayUI {

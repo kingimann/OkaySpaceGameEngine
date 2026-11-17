@@ -5,8 +5,6 @@
 #include "OkayUITestKit.hpp"
 #include "OkayUIPanels.hpp"
 
-#include <cmath>
-#include <limits>
 #include <cstring>
 #include <cstdio>
 
@@ -93,30 +91,6 @@ struct MixRig {
     }
     ~MixRig() { UI::UseLauncherLook(false); }
     void Frame() { sim.Frame([&] { res = S::DrawAudioMixer(model, 10, 10, 500, h); }); }
-    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
-    void Click(const UI::Rect& r) { sim.Move(CX(r), CY(r)); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
-};
-
-// ---- Stats ----
-struct StatsRig {
-    Sim sim{560, 520};
-    float hist[120] = {0};
-    bool frustum = true, occ = false, stat = true, dyn = false;
-    S::StatsModel model;
-    S::StatsResult res;
-    StatsRig(float fps = 58.0f, int used = 100) {
-        Reset(); UI::UseLauncherLook(true); UI::Style().caretBlink = false;
-        for (int i = 0; i < used; ++i) hist[i] = 40.0f + 30.0f * (0.5f + 0.5f * std::sin(i * 0.2f));
-        model.framerate = fps; model.history = hist; model.historyCount = 120; model.historyOffset = used % 120;
-        const char* names[] = {"Objects", "Triangles", "Meshes", "Sprites", "Lights", "Colliders", "Scripts", "NPCs", "Particles", "Drawn", "Culled"};
-        const int vals[] = {42, 1500000, 17, 0, 3, 12000, 5, 0, 250, 30, 12};
-        for (int i = 0; i < 11; ++i) model.rows.push_back({names[i], vals[i]});
-        model.frustumCulling = &frustum; model.occlusionCulling = &occ; model.staticBatching = &stat; model.dynamicBatching = &dyn;
-        model.skinning = "GPU";
-    }
-    ~StatsRig() { UI::UseLauncherLook(false); }
-    float h = 500;
-    void Frame() { sim.Frame([&] { res = S::DrawStats(model, 10, 10, 540, h); }); }
     void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
     void Click(const UI::Rect& r) { sim.Move(CX(r), CY(r)); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
 };
@@ -303,78 +277,6 @@ int main() {
         m.Frames(3);
         CHECK(m.res.duckToggle.w == 0);
         m.Click(m.res.resetButton);
-    }
-    // ================= Stats =================
-    {   // the pure helpers
-        CHECK(S::FpsBand(60) == 0 && S::FpsBand(55) == 0 && S::FpsBand(54.9f) == 1 && S::FpsBand(30) == 1 && S::FpsBand(29) == 2 && S::FpsBand(0) == 2);
-        CHECK(S::FpsBand(std::numeric_limits<float>::quiet_NaN()) == 2 && S::FpsBand(std::numeric_limits<float>::infinity()) == 2);   // not a usable rate: the poor band
-        CHECK(S::FormatCount(0) == "0" && S::FormatCount(9999) == "9999" && S::FormatCount(10000) == "10.0k" && S::FormatCount(12345) == "12.3k");
-        CHECK(S::FormatCount(1000000) == "1.0M" && S::FormatCount(2500000) == "2.5M" && S::FormatCount(-5) == "-5");
-        CHECK(S::PlotScale(0) == 75 && S::PlotScale(60) == 75 && S::PlotScale(std::numeric_limits<float>::quiet_NaN()) == 75);
-        CHECK_NEAR(S::PlotScale(100), 120.0f, 1e-3);
-        float mn, mx, av;
-        const float h[6] = {0, 30, 60, std::numeric_limits<float>::quiet_NaN(), 90, 0};
-        S::HistoryStats(h, 6, &mn, &mx, &av);
-        CHECK(mn == 30 && mx == 90 && av == 60);                          // zeros and NaN are unused slots
-        S::HistoryStats(nullptr, 5, &mn, &mx, &av);
-        CHECK(mn == 0 && mx == 0 && av == 0);
-        S::HistoryStats(h, 0, nullptr, nullptr, nullptr);
-    }
-    {   // the window: readout, plot, grid of two per line, check boxes
-        StatsRig s; s.Frames(4);
-        CHECK(s.res.fpsBand == 0 && s.res.fpsReadout.w > 20 && s.res.fpsReadout.h > 14);
-        CHECK(s.res.plot.w > 300 && s.res.plot.h == 48);
-        CHECK(s.res.cellsDrawn == 11);
-        CHECK(s.res.frustum.w > 0 && s.res.occlusion.w > 0 && s.res.staticBatch.w > 0 && s.res.dynamicBatch.w > 0);
-        CHECK(s.res.occlusion.x > s.res.frustum.x && s.res.staticBatch.y > s.res.frustum.y);     // two per line
-        CHECK(s.res.plotMax >= 75);
-        CHECK(UI::DroppedGeometry() == 0);
-        Check("stats_default", s.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
-    }
-    {   // the switches edit the host's values in place, each its own
-        StatsRig s; s.Frames(3);
-        s.Click(s.res.occlusion);
-        CHECK(s.occ && s.frustum && s.stat && !s.dyn);
-        CHECK(s.res.changed);                                         // reported on the frame the click lands
-        s.Frame();
-        CHECK(!s.res.changed);
-        s.Click(s.res.frustum);
-        CHECK(!s.frustum && s.occ);
-        s.Click(s.res.dynamicBatch);
-        CHECK(s.dyn && s.stat);
-    }
-    {   // the hover help on a switch: a tooltip with its text shows after a short wait, and not before
-        StatsRig s; s.Frames(3);
-        s.sim.Move(CX(s.res.occlusion), CY(s.res.occlusion)); s.Frame();
-        const unsigned bg = ThemeRgba(UI::Style().panel);
-        (void)bg;
-        const int below0 = CountNot(s.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]), (int)CX(s.res.occlusion) + 16, (int)CY(s.res.occlusion) + 16, (int)CX(s.res.occlusion) + 300, (int)CY(s.res.occlusion) + 60, Rgba(kHostBg[0], kHostBg[1], kHostBg[2]));
-        s.Frames(40);
-        const Bitmap& b = s.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]);
-        const int below1 = CountNot(b, (int)CX(s.res.occlusion) + 16, (int)CY(s.res.occlusion) + 16, (int)CX(s.res.occlusion) + 300, (int)CY(s.res.occlusion) + 60, Rgba(kHostBg[0], kHostBg[1], kHostBg[2]));
-        CHECK(below1 > below0 + 300);                                    // the box with two lines of text appeared
-        Check("stats_tooltip", b);
-    }
-    {   // colours by band: a poor rate and a middling one change the readout; an empty history and no switches do not break anything
-        StatsRig lo(20.0f); lo.Frames(3);
-        CHECK(lo.res.fpsBand == 2);
-        StatsRig mid(40.0f); mid.Frames(3);
-        CHECK(mid.res.fpsBand == 1);
-        StatsRig none(60.0f, 0); none.model.history = nullptr; none.model.historyCount = 0;
-        none.model.frustumCulling = none.model.occlusionCulling = none.model.staticBatching = none.model.dynamicBatching = nullptr;
-        none.model.rows.clear(); none.Frames(3);
-        CHECK(none.res.cellsDrawn == 0 && none.res.frustum.w == 0 && none.res.plot.w > 0);
-        StatsRig odd(std::numeric_limits<float>::quiet_NaN(), 10); odd.model.historyOffset = -7; odd.hist[3] = std::numeric_limits<float>::infinity(); odd.Frames(3);
-        CHECK(odd.res.fpsBand == 2 && UI::DroppedGeometry() == 0);
-    }
-    {   // a short window scrolls: the last switch is below the fold until the wheel brings it up
-        StatsRig s; s.sim = Sim(560, 260); s.h = 240;
-        s.Frame(); s.Frames(2);
-        CHECK(s.res.dynamicBatch.y > 260);
-        s.sim.Move(200, 150);
-        for (int i = 0; i < 40; ++i) { s.sim.wheel = -3.0f; s.Frame(); }
-        s.Frames(2);
-        CHECK(s.res.dynamicBatch.y < 260);
     }
     TEST_MAIN_RESULT();
 }

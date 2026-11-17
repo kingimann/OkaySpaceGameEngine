@@ -1,7 +1,10 @@
 #pragma once
-// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/own_ui_toolkit.md section 6): the Crash Log, the
-// Audio Mixer and the Stats window. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
+// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/own_ui_toolkit.md sections 6, 9, 10 and 11): the Crash
+// Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, Project Settings' Tags and Layers, Physics, Player and Rendering
+// sections, the Project panel's import settings and the Lighting window's Post-processing section. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
 // okayui/screens/OkayUIPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI).
+#include "EditorPanelModels.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -21,17 +24,29 @@ bool DrawCrashLogOkayUI(bool* open, const std::string& text, const std::string& 
 /// Draw the Audio Mixer window with OkayUI, editing okay::AudioMixer in place. Same return value as above.
 bool DrawAudioMixerOkayUI(bool* open);
 
-/// What the Stats window shows (the Dear ImGui window reads the same data): the frame rate and its history ring (zeros are unused), the scene
-/// counts, and the host's culling and batching switches, edited in place.
-struct StatsHostData {
-    float framerate = 0.0f;
-    const float* history = nullptr; int historyCount = 0; int historyOffset = 0;
-    std::vector<std::pair<std::string, int>> rows;
-    bool* frustumCulling = nullptr; bool* occlusionCulling = nullptr; bool* staticBatching = nullptr; bool* dynamicBatching = nullptr;
-    std::string skinning = "CPU";
-};
+/// The Problems, Stats and History panels with OkayUI (okayui/screens/OkayUIEditorPanels): the same models the Dear ImGui bodies in
+/// EditorPanelViews draw, the same intents back. Same return value as above (false: draw the Dear ImGui version this frame). `title`
+/// is the ImGui window name (Problems carries its error count in it).
+bool DrawProblemsOkayUI(const char* title, bool* open, const okaypanels::ProblemsModel& model, okaypanels::ProblemsState& state,
+                        okaypanels::ProblemsIntent& intent);
+/// Stats fills its model only while the window is visible, through `fill`; "Copy stats" goes to the clipboard here.
+bool DrawStatsOkayUI(bool* open, const std::function<void(okaypanels::StatsModel&)>& fill);
+bool DrawHistoryOkayUI(bool* open, const okaypanels::HistoryModel& model, okaypanels::HistoryIntent& intent);
 
-/// Draw the Stats window with OkayUI. Same return value as above.
-bool DrawStatsOkayUI(bool* open, const StatsHostData& data);
+/// Project Settings' Tags and Layers and Physics sections with OkayUI, drawn inside the current ImGui window (under their collapsing
+/// header) in a placeholder as tall as the section was on the last frame; only the part of it the window shows is drawn and takes
+/// the mouse. Same return value as above.
+bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::TagsLayersState& state, okaypanels::TagsLayersIntent& intent);
+bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent);
+/// The Profiler window with OkayUI. It fills its model only while the window is visible, through `fill`.
+bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent);
+/// Sections drawn inside the current ImGui window like Tags and Layers above: the Project panel's import settings, Lighting >
+/// Post-processing, and Project Settings > Player and > Rendering. `id` keeps two hosts of the same section apart (the import settings
+/// are shown in two places). Same return value as above.
+bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
+                              okaypanels::ImportSettingsIntent& intent);
+bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent);
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent);
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent);
 
 } // namespace oked

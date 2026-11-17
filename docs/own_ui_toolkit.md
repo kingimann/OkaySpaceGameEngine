@@ -655,6 +655,8 @@ Tested in `okayui/tests/test_okayui_dockbuilder.cpp` (52 checks, one golden pict
 
 ### 4.40 Gap-closing step 36: the Stats window, ported (tables, plots, check boxes, tooltips)
 
+**Superseded (merge into `claude2/okayui-editor-panels-2`, 2026-11-16):** the editor's Stats window had two OkayUI ports, this one and the one in section 9 (a shared model with the Dear ImGui body, compared in `okayui_editor_panels_imgui`: 38% fewer instructions by callgrind, 5.65% of pixels clearly different against the editor's own theme and font, and run in CI). The section 9 port is kept because it is the better measured one; this section's screen (`okayuiscreens::DrawStats(StatsModel ...)` in `OkayUIPanels`), its tests, goldens, comparison tool and pictures were removed. `CollectStatRows` stays: the section 9 model is filled from it. The toolkit pieces of this step (tooltips, hover delays, the plot label fix) all stay.
+
 The editor's Stats window (View menu, `DrawStats` in `editor/main.cpp`) is now also drawn by OkayUI behind the developer-only opt-in backend (section 5): the big frame-rate readout coloured by band, the frame time and average / minimum, an auto-scaled plot of the last 120 frames with a 60 fps guide, the scene counts in a four-column grid, and the culling and batching switches with their hover help. Dear ImGui is still the default and still draws it unless the switch is on.
 
 - `okayui/screens/OkayUIPanels.{hpp,cpp}`: `okayuiscreens::DrawStats(StatsModel, x, y, w, h)` plus pure helpers `FpsBand`, `HistoryStats`, `PlotScale`, `FormatCount`. Written from what the editor's window shows (its fields, thresholds and colours), using OkayUI's plot with a ring offset, a table, check boxes and the new `BeginTooltip` and hover delay flags.
@@ -663,7 +665,7 @@ The editor's Stats window (View menu, `DrawStats` in `editor/main.cpp`) is now a
 
 Differences from the ImGui window, measured on the side-by-side picture: the rows of the count grid are about 31 pixels apart against 19 in the ImGui window (OkayUI's table cells are one full widget row high), so the OkayUI window needs about 40 pixels more height before the switches are on screen, and it scrolls when it is shorter; the readout is OkayUI's 2x text, not a separate heading font; the plot is OkayUI's (hover highlight and a tooltip on a point, which the ImGui plot does not have); the two hover helps use a tooltip box that appears after a short delay instead of at once; the "moved to the Lighting tab" line is not tinted. Tested: `test_okayui_panels.cpp` now has 103 checks (was 74): the pure helpers (bands, history statistics, plot scale, count format, with NaN and infinity), the layout, each switch editing only its own value, the hover help appearing after the delay and not before, the three frame-rate bands, an empty history and no switches, hostile numbers, a short window that scrolls, and two goldens (`stats_default`, `stats_tooltip`). Not verified: a real editor window (nothing here ran the editor; `editor/OkayPanels.cpp` and `editor/main.cpp` were only compiled with `-fsyntax-only` against the real headers); Windows.
 
-How the comparison picture was made: `tools/okayui_stats_compare.cpp` draws the SAME ImGui calls (copied there with fixed data, in ImGui's default dark style and built-in font, not the editor's skin) and the real OkayUI screen side by side, both headless. Pictures: `docs/images/okayui/stats_side_by_side.png` (ImGui left, OkayUI right), `stats_okayui.png`, `stats_okayui_tooltip.png`. These are headless renders, not screenshots of the editor. The other pictures of this step are `tabs_reordered.png`, `table_hide_menu.png`, `children_tooltip_shapes.png` and `dockbuilder_tall_preset.png` (the goldens of the tests, launcher look, headless).
+(Removed with this port, see the note above.) How the comparison picture was made: `tools/okayui_stats_compare.cpp` drew the SAME ImGui calls (copied there with fixed data, in ImGui's default dark style and built-in font, not the editor's skin) and the real OkayUI screen side by side, both headless. Pictures: `docs/images/okayui/stats_side_by_side.png` (ImGui left, OkayUI right), `stats_okayui.png`, `stats_okayui_tooltip.png`. These are headless renders, not screenshots of the editor. The other pictures of this step are `tabs_reordered.png`, `table_hide_menu.png`, `children_tooltip_shapes.png` and `dockbuilder_tall_preset.png` (the goldens of the tests, launcher look, headless).
 
 ### 4.41 Test results and how close Dear ImGui is to removal (steps 32 to 36)
 
@@ -1166,3 +1168,415 @@ golden changed (anti-aliasing and the popup look are off by default), so the edi
 affected by this step. In the real launcher with `xdotool`: Remove on a download, A to Z in the sort list, Copy id in the
 right-click menu (its toast), typing "owl" in the search, the Unread chip and a click on a notification (the panel closed and
 Friends opened) all worked. Not run on Windows or on a real GPU.
+## 9. Three editor panels: Problems, Stats, History
+
+Same pattern as sections 5 and 6: the Dear ImGui window stays (dock tab, title, close box) and hands its free area to an OkayUI
+screen; Dear ImGui is still the default and the OkayUI version is used only with the developer switch (`OKAY_UI_BACKEND=okayui`,
+or View > Rendering & Performance > UI backend with `OKAY_DEV=1`). A panel falls back to its Dear ImGui version for any frame an
+ImGui popup covers it. Written from what the editor's own panels show and do, from Dear ImGui's documented behaviour where the
+OkayUI gaps needed it, and from our own measurements; no code from any other project. (Section 8 is the launcher's ports, on the
+`claude2/okayui-port-next` branch.)
+
+### 9.1 Why these three
+
+From `docs/imgui_port_report.md`: all three are fully or almost fully covered by OkayUI names (Problems 95.9% before the split, its
+one missing call `GetStyle`; Stats and History 100%), and they are panels people keep open: Problems is the list of what is wrong in
+the scene (the status bar and the build gate point at it), Stats is the frame-rate and census panel, History is the undo list. Each
+also needed a different OkayUI piece (a filtered, grouped list with buttons in rows; a plot and a table; selectable rows with a drawn
+rail), so between them they test more of the toolkit than three similar panels would.
+
+### 9.2 The shared model and the two versions
+
+| Piece | File | What it is |
+|---|---|---|
+| Model | `shared/EditorPanelModels.hpp` | std only: `ProblemsModel`, `StatsModel`, `HistoryModel`, the state each keeps, the intent each returns (what the person asked for), and the rules both versions must agree on: the filter and grouping (`GroupProblems`), group headers, tooltips, number format (`FormatStatNumber`), FPS summary and colour, history rows (`HistoryRows`) |
+| Dear ImGui bodies | `editor/EditorPanelViews.cpp` | what `DrawProblems`, `DrawStats` and `DrawHistory` drew, now drawn from the model; only Dear ImGui and the model header, so the comparison test compiles it as is |
+| OkayUI ports | `okayui/screens/OkayUIEditorPanels.cpp` | `okayuiscreens::DrawProblems`, `DrawStats`, `DrawHistory`: same model, same intent, plus the rectangles they drew (for the tests) |
+| Editor glue | `editor/ProblemsPanel.cpp`, `editor/main.cpp` (`DrawStats`, `DrawHistory`), `editor/OkayPanels.cpp` | builds the model from the editor's state, calls one version, carries out the intent (open the object or script, apply the fix with undo, undo or redo n steps, copy to the clipboard) |
+
+The right-click menus are new in both versions: a Problems row has Go to source, Fix (when it has one) and Copy message; the Stats
+census has Copy stats; a History row has Jump to this state and Copy name. The Problems demo (`OKAY_UI_DIAG=1`) now opens and fixes
+its row through the same intent instead of queuing mouse clicks at screen positions.
+
+### 9.3 Gaps closed in OkayUI (all tested in `okayui_editor_panels`)
+
+- **Text rows** (`StyleVar_TextRowHeight`, OkayUI's own): a plain text line can take one text line's height instead of a frame's,
+  as in Dear ImGui; a short text line after a taller item on its line is centred on it. This was the largest visible difference
+  (every OkayUI text line was a button tall).
+- **`ButtonTextAlign`** (x), **`CellPadding`** (x across; y above and below, then the row ends without the item spacing),
+  **`FramePadding`** (y, for check and radio boxes only), all accepted-and-ignored before.
+- **`BeginChild(id, size, ChildFlags)`** with `ChildFlags_Borders`, `ChildFlags_AlwaysUseWindowPadding` and
+  `ChildFlags_AutoResizeY`: Dear ImGui's default of no padding without a frame, room for the scrollbar only when the content
+  overflowed, and a child as tall as its content. (The usage report counts the ImGui names now: 172 type uses.)
+- **`##` hidden** on button and plot labels (a pill labelled `4##pe` showed `4##pe`).
+- **Bug fixed:** a host's `PushTextScale` around `Begin` / `End` grew the text a step every frame (`End` restored the window's
+  base scale but did not forget it, and the next `BeginFrame` restored that scaled value as the new base). The editor's hosted
+  panels push the UI scale this way, so any UI scale other than 1 would have grown them.
+- **Also taken from `claude2/okayui-port-next`, unchanged** so the two branches merge cleanly: `Button(label, size)`, the
+  right-click menu that opens only where a left click would land, several hosted rectangles in `okayuihost::Region` (three hosted
+  panels can be open at once), the ASCII glyph table, and the cached circle and corner points.
+
+### 9.4 Tests
+
+- `okayui_editor_panels` (`okayui/tests/test_okayui_editor_panels.cpp`, 102 checks, headless): the model rules (sorting, grouping,
+  duplicates, filter, tooltip and copy text, number format, FPS summary, history rows with missing names); the gaps of 9.3; Problems
+  (rows, Fix buttons, the three pills, typing, Backspace and select-all in the search, the right-click menu's three entries and that
+  a menu click does not also open the row under it, a click outside closes it, 600 rows scrolled with the wheel, hostile text and a
+  filter without a terminator); Stats (the plot and the 60 FPS line, the four switches through their pointers, a null switch is not
+  drawn, Copy stats from the right-click menu, a short panel scrolls to the footer, no history); History (Undo, Redo, a click on a
+  row jumps that many steps, the current row does nothing, the right-click menu, disabled buttons, the empty state, 200 states
+  scrolled). Seven golden images in `okayui/tests/golden/editorpanels_*.png`.
+- `okayui_editor_panels_imgui` (`tests/test_okayui_editor_panels_imgui.cpp`): both versions headless on a 560 x 420 canvas in the
+  editor's panel colour, Dear ImGui with the editor's font (Roboto Medium 18) and the Slate theme and spacing of `ApplyTheme`.
+  Both pictures go through the same rasteriser (OkayUI's software render backend; Dear ImGui's vertices and its font texture are
+  handed to it unchanged). It checks that the same click asks for the same thing (row 2 of Problems opens model row 2 in both, the
+  sixth History row undoes three steps in both) and that the two layouts put those rows within a few pixels of each other, prints
+  the speed and pixel tables below, and writes the pictures with `OKAYUI_SHOT_DIR=<dir>`.
+- All the other OkayUI suites (golden images unchanged), `okayui_host` (the several-rectangles Region) and `ui_backend` pass.
+  `editor/main.cpp` passes the compiler's syntax-only check with and without `OKAY_HAVE_OKAYUI`; `OkayPanels.cpp`,
+  `ProblemsPanel.cpp` and `EditorPanelViews.cpp` were compiled.
+
+### 9.5 Speed
+
+Per frame, the panel only ("build": Dear ImGui `NewFrame` to `Render`, OkayUI `BeginFrame` to `EndFrameData`), with the sample data
+of `okayui/tests/EditorPanelFixtures.hpp`, Linux, GCC, Release. Instructions are counted with callgrind
+(`OKAY_UI_PROFILE=<panel>:<imgui|okayui>`, 200 frames after a warm-up; they do not depend on how busy the machine is). Wall time is
+the median of 300 frames, three runs on a shared and busy machine (4 cores, load about 7), the range of the three medians shown.
+
+| Panel | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Faster? |
+|---|---:|---:|---:|---:|---|
+| Problems | 163,000 | 119,000 (27% fewer) | 51 to 65 us | 31 to 35 us | met |
+| Stats | 195,000 | 152,000 (22% fewer) | 43 to 47 us | 18 to 21 us | met |
+| History | 118,000 | 80,000 (32% fewer) | 40 to 47 us | 14 to 16 us | met |
+
+Before the profiling fixes OkayUI was slower on two of the three by instructions (Problems 203,000, Stats 221,000, History 110,000):
+callgrind showed glyph lookups (a binary search per character), the fallback-font check decoding every string, and a sine and
+cosine per rounded corner and circle. The ASCII table, the ASCII fast path and the cached corner and circle points (9.3) fixed
+that; every existing golden image is unchanged.
+
+"Build + render" (the panel plus rasterising the frame on the CPU) is also printed by the test: Dear ImGui 15 to 20 ms, OkayUI 3 to
+9 ms. That figure is about the software rasteriser, not about the toolkits: Dear ImGui draws every filled shape through its font
+texture's white pixel, so every pixel of its window background is a texture lookup on the CPU, where OkayUI draws plain colour. On a
+GPU that difference does not exist, and no GPU was used.
+
+### 9.6 Pixels
+
+Both versions at 560 x 420, same rectangle, same rasteriser. "Average difference" is the mean absolute difference per colour
+channel (0 to 255); "clearly different" is the share of pixels where some channel differs by more than 48.
+
+| Panel | Before the fixes: average, clearly different | After: average, clearly different |
+|---|---:|---:|
+| Problems | 12.0, 11.1% | 9.2, 8.2% |
+| Stats | 10.1, 7.3% | 5.7, 4.4% |
+| History | 7.7, 8.3% | 6.4, 5.5% |
+
+What was fixed to get there: text lines one line tall (9.3), Dear ImGui's 12 and 8 pixel spacing, the editor's 18-pixel text
+(`kEditorTextScale`, pushed by the host on top of the UI scale), one-pixel dividers in place of OkayUI's taller separator, Fix
+buttons one text line tall, the severity pills filled with the accent when on and their counts at the right, no padding in the
+scrolling lists, the plot on a rounded field with the frame padding, no lines between the census columns and the editor's cell
+padding, frame-tall check boxes, the History rows 26 pixels apart. The test fails above 12% clearly different.
+
+What still differs (blunt):
+- **Text** is OkayUI's own rasteriser (Roboto baked at 20 px, drawn at 18) against Dear ImGui's (Roboto at 18 with 2x
+  oversampling): glyph edges differ everywhere there is text, which is most of the remaining difference.
+- **Problems.** The search field has no magnifier icon or clear button (the editor's Dear ImGui field has both; the comparison test
+  uses a plain field on both sides), its hint starts 4 pixels further left; the right-click menu is OkayUI's popup (taller rows,
+  slightly see-through).
+- **Stats.** The big number is drawn by scaling (22/18), not by a second font.
+- **History.** The selected row has OkayUI's accent tint with a bar on the left (over the rail's dot), not Dear ImGui's flat header
+  colour.
+- **All three.** One frame of latency for who owns the mouse (5.2); no hover cursor change; the right-click menu's look.
+
+Pictures: `scratchpad/shots/oep/<panel>-imgui.png` and `-okayui.png` in the session that made this step (not committed: they are
+the test's output, re-made with `OKAYUI_SHOT_DIR`).
+
+### 9.7 Not verified
+
+- **No real editor window.** The editor was not built (its `main.cpp` is too large for this machine's memory); it was checked with
+  the syntax-only pass, and the panels were tested headless. The host code (`OkayPanels.cpp`) has never run.
+- **Windows** was not built or run. No GPU was used.
+- The comparison's Dear ImGui side uses a plain search field and the editor's theme values copied into the test (they would need
+  the same change if `ApplyTheme` changes).
+
+### 9.8 Coverage (usage report, before and after this step)
+
+| What | Before | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,038 of 27,356 (98.8%) | 27,052 of 27,370 (98.8%) |
+| Types, flags and enums available | 9,712 of 12,082 (80.4%) | 9,883 of 12,075 (81.8%) |
+| Call sites in ported functions | 182 (0.7%) | 313 (1.1%) |
+
+(The "before" column is the report regenerated on `main` at the start of this step, not the committed one, which was older.) The
+type coverage rose because of the `ChildFlags_*` names of 9.3.
+
+## 10. Three more editor panels: Tags and Layers, Physics, Profiler; the search field, menus and selected rows
+
+Same method as section 9: a std-only model in `shared/EditorPanelModels.hpp`, the Dear ImGui body in `editor/EditorPanelViews.cpp`
+(the editor itself calls it), the OkayUI port in `okayui/screens/OkayUIEditorPanels.*`, and the two test suites. Dear ImGui stays the
+default; the ports are used only with the developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`). Written from what the editor's
+panels show and do and from Dear ImGui's documented behaviour; no code from any other project. This branch also merged
+`claude/own-ui-3` (section 4.36 onwards): its ImGui-shaped names (`OkayUIImCompat.hpp`: `ChildFlags`, `BeginChild(id, size, childFlags)`,
+`IsItemEdited`, `IsItemDeactivatedAfterEdit`, the table flags) are used here instead of second copies.
+
+### 10.1 Why these three
+
+From the usage report, each fully covered by OkayUI names, each a screen people use, and each needing a kind of widget the first
+six ports did not:
+
+| Panel | Where | What it needed |
+|---|---|---|
+| Tags and Layers | Edit > Project Settings..., "Tags and Layers" | text fields in rows that commit on Enter or when left after an edit (`IsItemDeactivatedAfterEdit`, 32 layer fields), framed child lists, a rename popup, a section hosted inside part of an ImGui window |
+| Physics | Edit > Project Settings..., "Physics" | formatted drag fields (`Gravity 2D/3D`, `Steps per second` shown as `%.0f`), a combo, a framed integer slider, check boxes, rows that appear with the quality |
+| Profiler | View > Panels > Profiler | two plots with overlay text and labelled guide lines, a framed slider showing "frame N", progress bars with text, wrapped text after a label, a scrolling table with a header row, outer border, row bands and indented, red hot rows |
+
+Not chosen: the Stats window (already ported in section 9; see 4.40 for the duplicate removed in the merge), the Console filters (the
+Console is ported), the Lighting window and Build Settings (much larger, and they mostly repeat widgets these three cover).
+
+### 10.2 Gaps closed in OkayUI (`okayui/src/OkayUI.cpp`, `OkayUI.hpp`; all tested in `okayui_editor_panels`)
+
+- **Search field** (`SearchField`): the editor's field, a magnifier at the left (the text starts after it) and a clear cross at the
+  right while it has text; the cross empties it and gives up the keyboard. Problems uses it, and the comparison now uses the editor's
+  own field on the Dear ImGui side.
+- **Menus like Dear ImGui's**: `StyleVar_PopupPadding` and `StyleVar_PopupWidth` (OkayUI's own) size a popup; with a pushed padding the
+  popup is exactly as tall as its content; popups now stay inside the display. The panels' `MenuLook` uses the editor's popup colour,
+  16 and 12 pixels of padding and rows one text line plus the spacing tall. All four right-click menus (Problems, Stats, History) use it.
+- **Selected rows**: `Selectable_Header` draws Dear ImGui's flat, square header colours (selected, hovered, held) with the label half the
+  spacing in. History's current row uses it.
+- **Formatted fields**: `DragFloat/2/3(..., format)` and framed `SliderInt / SliderFloat(..., format)` draw Dear ImGui's frame with the
+  value centred in a printf format (one numeric conversion; anything else falls back), `StyleVar_ItemInnerSpacing` (x) spaces their cells.
+- **Edit tracking** (own-ui-3's `IsItemDeactivatedAfterEdit`, two fixes): with `InputText_EnterReturnsTrue` the Enter is not counted as
+  an edit and commits the text (a later loss of the keyboard does not commit it again), and a field that loses the keyboard reports once.
+  Text fields keep their caret state in 64 slots recycled least recently used (it was 32 and then a stateless fallback, which typed
+  backwards in the 33rd field).
+- **Layout**: `StyleVar_FramePadding` (y) now sets every frame's height (Dear ImGui's frame height); `SameLine` then `SetCursorPosX`
+  stays on the line (the next line used to start below the short item); `CenterNextOnLine` centres a small button on a frame-tall row;
+  bordered children (`ChildFlags_Borders`) draw Dear ImGui's one-pixel outline and take a pushed `StyleVar_WindowPadding` (x and y);
+  `Table_BordersOuter` draws its frame; wrapped text in Dear ImGui's text rows is one text line per line and continues at the left edge.
+- **Fixes**: "##" was shown in check box, slider and drag labels; a long Combo item ran over the arrow and the label.
+- **Speed**: shapes wholly outside the current clip are not emitted (a 32-row list showing seven, a section scrolled out of view); the
+  wrap measures each word once. No older golden image changed; the table clipper test now expects no more geometry with the clipper
+  on, and nothing dropped without it.
+
+### 10.3 Hosting a section inside an ImGui window
+
+Tags and Layers and Physics are sections of the Project Settings window, under collapsing headers. `HostSection` in
+`editor/OkayPanels.cpp` reserves a placeholder as tall as the OkayUI body was on the last frame, offers OkayUI only the part the ImGui
+window shows (and clips to it, so a section scrolled half out of view draws and takes clicks only in its visible half), and offers the
+open rename popup too. The editor carries out the intents as before (validation, saving the project, undo for a tag rename, the
+console lines).
+
+### 10.4 Tests
+
+- `okayui_editor_panels` (181 checks, was 102): every gap of 10.2 (search field typing and clearing; deactivation after an edit by a
+  click elsewhere, another field, Escape and Enter; 70 fields keeping their caret; formatted drags, clamping, Ctrl+click typing; the framed
+  slider; the menu look and header colours; centring, the framed child, a host clip around a bare window); Tags and Layers (Strict, Add
+  them, Remove, Add tag with Enter, Reset, Reset all, a layer field committed once when left, the field showing the host's answer, the
+  rename popup opening with the name, asking for the rename, closing on the host's word; hostile buffers and long names); Physics (a
+  drag of 20 pixels at 0.05 each, the smoothing and continuous boxes, the slider, Apply, the quality list hiding the solver rows, missing
+  pointers, the step-rate clamp); Profiler (the rules: row order, hot rows, diagnosis, CSV, bar text; Pause starting the scrub at the
+  newest frame, the slider, Copy CSV, an empty profile). Five new golden images (`editorpanels_tagslayers`, `_tagslayers_rename`,
+  `_physics`, `_profiler`, `_profiler_paused`); the seven older `editorpanels_*` images were re-made for the new frame height, search
+  field, menus and selected row.
+- `okayui_editor_panels_imgui`: the three new panels (Tags and Layers and Profiler on a 560 x 780 canvas, they are tall) and the
+  Problems right-click menu, drawn by both toolkits from the same model; the same click asks for the same thing in both (Remove on
+  the second tag, Add tag, Apply, Pause), a 10-pixel drag moves the step rate in both.
+- All other OkayUI suites and `ui_backend` pass (30 of 30 with `ctest -R "okayui|ui_backend"`). `editor/main.cpp` passes the syntax-only
+  check with and without `OKAY_HAVE_OKAYUI`; `OkayPanels.cpp` and `EditorPanelViews.cpp` were compiled.
+
+### 10.5 Speed and pixels
+
+Instructions per frame (callgrind, `OKAY_UI_PROFILE=<panel>:<imgui|okayui>`, 200 frames after a warm-up, panel build only); wall time:
+median of 150 frames, three runs on a shared machine, the range shown. "Clearly different": share of pixels where a channel differs by
+more than 48 (the gate is 12%).
+
+| Panel | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Average difference | Clearly different |
+|---|---:|---:|---:|---:|---:|---:|
+| Tags and Layers | 262,000 | 245,000 (6% fewer) | 90 to 98 us | 48 to 57 us | 5.04 | 3.73% |
+| Physics | 122,000 | 79,000 (36% fewer) | 43 to 73 us | 18 to 28 us | 5.67 | 4.81% |
+| Profiler | 548,000 | 428,000 (22% fewer) | 141 to 145 us | 85 to 89 us | 10.98 | 7.93% |
+| Problems (now with the search field on both sides) | 168,000 | 128,000 (24% fewer) | 73 to 91 us | 36 to 57 us | 7.20 | 6.82% |
+| Problems' right-click menu (picture only) | | | | | 7.36 | 6.71% |
+| Stats | 195,000 | 122,000 (38% fewer) | 57 to 79 us | 21 to 32 us | 7.45 | 5.65% |
+| History | 118,000 | 82,000 (31% fewer) | 42 to 61 us | 14 to 19 us | 3.48 | 2.88% |
+
+"Build + render" (the panel plus the CPU rasteriser) is also faster with OkayUI for all six in all three runs. Pictures:
+`<scratchpad>/shots/oe2/<panel>-imgui.png`, `-okayui.png` and `side-<panel>.png` in the session that made this step (not committed;
+re-made with `OKAYUI_SHOT_DIR`).
+
+Tags and Layers first counted more instructions than Dear ImGui (324,000 against 262,000): it drew all 32 layer fields where seven show.
+Culling shapes outside the clip and the cheaper wrap brought it to 247,000; after the merge (own-ui-3's edit marks) it was 261,500, and
+the child outline drawn as edges and fixed arcs (it was a stroked path with a sine per corner point, and before that a fill over a fill)
+brought it to 245,000. Its "build + render" time on the CPU rasteriser was slower than Dear ImGui's until the outline stopped filling the
+whole child twice. As in section 9, "build + render" is about the software rasteriser, not about the toolkits.
+
+### 10.6 What still differs (blunt)
+
+- Text edges everywhere (OkayUI's baked Roboto against Dear ImGui's): most of the remaining difference.
+- Check boxes: OkayUI fills the box with the accent and draws a white tick; Dear ImGui draws an accent tick on the field colour.
+- The Physics Quality box: OkayUI's chevron, not Dear ImGui's square arrow button.
+- The Profiler table: header row a little taller, number columns a few pixels narrower (their widths are measured from the content,
+  not Dear ImGui's proportional sizing).
+- Tags and Layers: the tag list does not show a scroll bar where Dear ImGui does (four rows just fit; Dear ImGui counts the gap after
+  the last row), so the Rename and Remove buttons sit 10 pixels further right.
+- The Profiler's diagnosis and the physics rows come out the same; tooltips and the hover cursor are OkayUI's.
+
+### 10.7 Not verified
+
+- No real editor window: the editor was not built (its `main.cpp` is too big for this machine) and nothing ran the editor; the host code
+  (`HostSection`, the Profiler window) has never run. Windows was not built; no GPU was used.
+- The Project Settings sections with OkayUI under a real ImGui window scroll were tested only with the headless host clip test.
+
+### 10.8 Coverage (usage report)
+
+| What | Before this step (committed report) | After (with own-ui-3 merged) |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,052 of 27,370 (98.8%) | 27,133 of 27,371 (99.1%) |
+| Types, flags and enums available | 9,883 of 12,075 (81.8%) | 11,752 of 12,083 (97.3%) |
+| Call sites in ported functions | 313 (1.1%) | 441 (1.6%) |
+
+Most of the rise in types and flags is own-ui-3's names; this step added `IsItemDeactivatedAfterEdit` usage (now available) and the
+three ported functions (128 call sites).
+
+## 11. Three more: Import settings, Lighting > Post-processing, Project Settings > Player and Rendering; Dear ImGui's check boxes, combos and scroll bars
+
+Same method as sections 9 and 10: a std-only model in `shared/EditorPanelModels.hpp`, the Dear ImGui body in `editor/EditorPanelViews.cpp`
+(the editor calls it; Dear ImGui stays the default), the OkayUI port in `okayui/screens/OkayUIEditorPanels.*`, hosted with `HostSection` in
+`editor/OkayPanels.cpp`, and the two test suites. Used only with the developer switch (`OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`). Written
+from what the editor's panels show and do, Dear ImGui's documented behaviour, and pixel measurements of Dear ImGui's output in the comparison
+test; no code from any other project.
+
+### 11.1 Why these three
+
+| Panel | Where | Why |
+|---|---|---|
+| Import settings | the Inspector, for a picture, model or sound clicked in the Project panel (`editor/ProjectPanelUI.cpp`) | seen every time an asset is picked; 33 calls, 100% covered by name; combos, a formatted drag (`%.4f`, `%.0f deg`), check boxes, disabled Apply and Revert, a failure popup |
+| Lighting > Post-processing | View > Panels > Lighting, first section (`editor/main.cpp` `DrawLookSections`) | the most used part of the Lighting window; 41 calls, 100% covered; a combo with a list of presets, framed sliders with formats, three-cell sliders (`SliderFloat3` with a format, new here), rows that appear with their switch, wrapped notes |
+| Project Settings > Player and Rendering | Edit > Project Settings, the two sections open at the top | with Physics and Tags and Layers (section 10) four of the window's five sections are now ported; text fields, `InputInt` with its step buttons (new look here), a slider, a check box, a button |
+
+Not chosen: Build Settings (much larger, and it repeats these widgets), Preferences (menu items, not a panel), the Animation clip list
+(inside the Animator window, which uses canvas and drag-drop calls OkayUI only half has), the rest of the Lighting window (Fog has
+`ColorEdit3`, whose look is still OkayUI's own; Weather has the editor's asset slot).
+
+### 11.2 Gaps closed in OkayUI (`okayui/src/OkayUI.cpp`, `OkayUI.hpp`; all tested in `okayui_editor_panels`)
+
+- **Check boxes like Dear ImGui's** (`StyleVar_FramedWidgets`, OkayUI's own, off by default): a rounded frame in `Col_FrameBg`, the accent at
+  45% once ticked, and a tick in `Col_CheckMark` (the editor's is the light accent, not the text colour; measured from Dear ImGui's output). The
+  launcher look's filled box with a white tick stays when the style is not pushed.
+- **The combo arrow**: with the same style a combo is a field in `Col_FrameBg` with a square button as tall as the field at its right end in
+  `Col_Button` and a filled triangle in the text colour; the text starts `FramePadding.x` in (the x of a pushed `FramePadding` is now kept).
+- **Scroll bars**: `StyleVar_ScrollbarSize` (accepted and ignored before) sets the width of a child's bar and of a scrolling table's vertical bar.
+  When pushed the bar sits inside a framed child's or a bordered table's one-pixel outline, its grab is 2 pixels inside it on every side, and
+  the child's content is cut where the bar starts, as in Dear ImGui (a row wider than the list is no longer drawn under the bar).
+- **The tag list's scroll bar**: the editor's version steps its list clipper by its row height, so four tags overflow the list by a few pixels
+  and Dear ImGui shows a bar; the port now counts the content the same way, so it shows the bar too and the Rename and Remove buttons sit where
+  Dear ImGui's do.
+- **Table column widths**: the Profiler's number columns are their widest text plus the cell padding on both sides (10 and 10; it was 14 in
+  all), which is what Dear ImGui's proportional sizing gives there (measured: within 2 pixels per column).
+- **`InputInt` with the framed look**: a field with the number `FramePadding.x` in and cut at the field's edge, two square step buttons
+  `ItemInnerSpacing.x` apart, the label after them. **Bug fixed**: `InputInt` drew the `##` part of its label (in both looks).
+- **`SliderFloat2` / `SliderFloat3` with a format**: two or three framed slider cells sharing a label.
+- **The editor's dim text colour** (0.70, 0.74, 0.82) is pushed by the panels (it is brighter than the launcher's).
+- **Speed**: a text field wholly outside the clip that neither has the keyboard nor is about to get it is not worked out at all (its caret,
+  text and box). A focused field scrolled out of view still takes typing (tested).
+
+No golden image outside the `editorpanels_*` ones changed. Those were re-made: the panels now push the framed widgets, the 14-pixel scroll bar
+and the dim text colour.
+
+### 11.3 Tags and Layers: from 6% to 23% fewer instructions
+
+Callgrind showed the 32 layer fields costing about 2,500 instructions each per frame although only seven are in view: the earlier step stopped
+emitting their shapes but still worked out each field's caret, text widths and hint. With the out-of-clip shortcut above Tags and Layers went
+from 245,000 to 201,700 instructions a frame (Dear ImGui: 262,300), 23% fewer. Its picture did not change.
+
+### 11.4 Tests
+
+- `okayui_editor_panels` (251 checks, was 181): the framed check box (frame and tint colours, the tick's pixels, a click), the framed combo (the
+  arrow button's and the field's colours, the triangle, picking the third row), `ScrollbarSize` (the content width with and without overflow
+  and without the push, the grab inside the outline, a wide row cut at the bar), the framed `InputInt` (no `##` drawn, both steppers),
+  `SliderFloat3` with a format (a click on the second cell changes only it), a focused field scrolled out of view still typing; Import settings
+  (the rules `ImportSame` and `ImportSizeIndex`; Apply ignored while nothing changed, enabled after a change, Revert; the normals list hiding
+  the smoothing row; a 10-pixel scale drag at 0.01 a pixel; the failure popup; a texture with the sampler rows and its size list; a sound; a
+  file from a newer editor; no settings); Post-processing (the preset list and the preset it asks for, Reset, Bloom hiding its four rows, the
+  exposure slider, the tonemap list, depth of field showing its rows, no values); Player and Rendering (typing in Version, the Width + and
+  Height - buttons, Ambient, Skybox, Apply, missing pointers, an unterminated buffer). Six new golden images: `editorpanels_import`,
+  `_import_fail`, `_import_texture`, `_post`, `_post_presets`, `_player_rendering`.
+- `okayui_editor_panels_imgui` (38 checks): the four new bodies drawn by both toolkits from the same model; the same click asks for the same
+  thing in both (Import animations then Apply, Bloom off, the exposure slider's left end, Width +, Skybox and Apply to current scene).
+- `ctest -R "okayui|ui_backend"`: 31 of 31 pass. `editor/main.cpp` passes the syntax-only check with and without `OKAY_HAVE_OKAYUI`;
+  `OkayPanels.cpp`, `EditorPanelViews.cpp` and `ProjectPanelUI.cpp` were compiled.
+
+### 11.5 Speed
+
+Instructions per frame (callgrind, `OKAY_UI_PROFILE=<panel>:<imgui|okayui>`, 200 frames after a warm-up, the panel's build only; they do not
+depend on how busy the machine is). Wall time: the median of 150 frames, three runs on a shared machine (load about 6 to 9), the range shown.
+
+| Panel | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build |
+|---|---:|---:|---:|---:|
+| Import settings (a model) | 96,800 | 59,600 (38% fewer) | 30 to 32 us | 7 to 11 us |
+| Post-processing | 402,400 | 273,400 (32% fewer) | 96 to 102 us | 45 to 54 us |
+| Player | 63,500 | 37,300 (41% fewer) | 10 to 19 us | 4 to 5 us |
+| Rendering | 45,800 | 20,100 (56% fewer) | 9 to 21 us | 3 to 4 us |
+| Tags and Layers | 262,300 | 201,700 (23% fewer; was 6%) | 74 to 89 us | 30 to 36 us |
+| Problems | 167,700 | 129,000 (23% fewer) | 61 to 68 us | 39 to 43 us |
+| Stats | 195,400 | 122,600 (37% fewer) | 39 to 55 us | 16 to 20 us |
+| History | 118,100 | 81,900 (31% fewer) | 28 to 37 us | 14 us |
+| Physics | 122,500 | 76,400 (38% fewer) | 37 to 41 us | 14 to 15 us |
+| Profiler | 548,400 | 427,300 (22% fewer) | 132 to 144 us | 68 to 83 us |
+
+"Build + render" (the panel and the CPU rasteriser) is faster with OkayUI for all ten in all three runs; as before, that figure is about the
+software rasteriser, not the toolkits.
+
+### 11.6 Pixels
+
+Both versions on a 560-pixel-wide canvas (420 tall; 780 for Tags and Layers and the Profiler; 1240 for Post-processing), same rasteriser.
+"Clearly different": the share of pixels where a channel differs by more than 48 (the gate is 12%).
+
+| Panel | Average difference | Clearly different | Before this step |
+|---|---:|---:|---:|
+| Import settings (a model) | 4.40 | 3.75% | (new) |
+| Import settings (a texture, picture only) | 1.67 | 1.43% | (new) |
+| Import settings (a sound, picture only) | 4.43 | 3.76% | (new) |
+| Post-processing | 4.95 | 4.22% | (new) |
+| Player | 1.16 | 0.84% | (new) |
+| Rendering | 0.62 | 0.53% | (new) |
+| Physics | 4.21 | 3.53% | 4.81% |
+| Tags and Layers | 4.23 | 3.33% | 3.73% |
+| Profiler | 10.18 | 7.44% | 7.93% |
+| Problems | 7.36 | 6.72% | 6.82% |
+| Problems' right-click menu | 7.54 | 6.63% | 6.71% |
+| Stats | 7.85 | 5.76% | 5.65% |
+| History | 3.52 | 2.89% | 2.88% |
+
+Stats and History moved by about 0.1 point the wrong way: the brighter dim text (the editor's colour) makes their glyph edges differ a little
+more. Pictures: `<scratchpad>/shots/oe3/final/<panel>-imgui.png`, `-okayui.png` and `side-<panel>.png` in the session that made this step (not
+committed; re-made with `OKAYUI_SHOT_DIR`).
+
+### 11.7 What still differs (blunt)
+
+- Text edges everywhere (OkayUI's baked Roboto against Dear ImGui's): most of what is left.
+- Disabled buttons (Import settings' Apply and Revert): OkayUI fades them halfway to the panel colour; Dear ImGui at 60% opacity, a little
+  brighter.
+- The Look Preset list, the import failure popup and the other popups are OkayUI's (the editor's colour and padding, but OkayUI's placement).
+- Stats: the editor's window puts its 14-pixel scroll bar in the window's right padding, outside the area a host gives OkayUI; the port keeps
+  OkayUI's narrow bar inside its area.
+- Profiler: the header row is a little taller; Post-processing: the Reset button is cut at the panel's edge where Dear ImGui lets it run past.
+- A ticked check box's frame tint is the accent at 45%, measured; a hovered ticked box is 55%, a guess.
+
+### 11.8 Not verified
+
+- No real editor window: the editor was not built (its `main.cpp` is too big for this machine) and nothing ran it; the new host code
+  (`HostSection` for four more sections, `ProjectPanelUI.cpp`'s copy to and from the engine's import settings) has never run. Windows was not
+  built; no GPU was used.
+- Inside the Project panel's "Import Settings" popup the Dear ImGui version is always used: `HostSection` falls back while an ImGui popup covers
+  the window, and that window is the popup.
+
+### 11.9 Coverage (usage report)
+
+| What | Before this step (committed report) | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,133 of 27,371 (99.1%) | 27,138 of 27,376 (99.1%) |
+| Types, flags and enums available | 11,752 of 12,083 (97.3%) | 11,752 of 12,083 (97.3%) |
+| Call sites in ported functions | 441 (1.6%) | 530 (1.9%) |
+
+The call count rose by 5 because the Post-processing body has its own tooltip and renderer-note helpers (5 calls) while the editor keeps its
+own for the Sky section.

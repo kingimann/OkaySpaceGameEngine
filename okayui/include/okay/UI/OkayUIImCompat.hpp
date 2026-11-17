@@ -94,9 +94,12 @@ enum ChildFlags : int {
     ChildFlags_AutoResizeX = 16, ChildFlags_AutoResizeY = 32, ChildFlags_AlwaysAutoResize = 64, ChildFlags_FrameStyle = 128,
     ChildFlags_NavFlattened = 256,
 };
-/// A child region of `size` (x <= 0 takes the width left, y <= 0 a default height of four rows; a negative size is the space left minus
-/// that much). Pair with EndChild. Without ChildFlags_Borders there is no panel behind it (the one-call BeginChild in OkayUI.hpp draws
-/// one by default).
+/// A child region of `size` (Dear ImGui's sizes: 0 in an axis fills what is left, a negative value leaves that many pixels free). Pair with
+/// EndChild. ChildFlags_Borders (or ChildFlags_FrameStyle) draws Dear ImGui's frame, a one-pixel rounded outline in Col_Border filled with
+/// Col_ChildBg when that is set, and pads the content (6 pixels, or a pushed StyleVar_WindowPadding x and y); ChildFlags_AlwaysUseWindowPadding
+/// pads without a frame; with neither the content starts at the child's edge. ChildFlags_AutoResizeY makes the child as tall as its content
+/// was on the last frame (one row on the first), so it never scrolls. Room for the scroll bar is taken only when the content overflowed on
+/// the last frame, and the gap after the last item is not content. The other flags and the window flags are accepted and ignored.
 bool BeginChild(const char* id, Vec2 size, int childFlags, int windowFlags = 0);
 
 // ---- Edit tracking and item width ---------------------------------------------------------------------------------------

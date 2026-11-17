@@ -154,12 +154,14 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
   - 40.8.2 Tabs and tables extras - `okayui/src/OkayUI.cpp` - `BeginTabBar(id, flags)` with `TabBarFlags_Reorderable`, `TabDragTarget`; `Col_NoResize`, `Col_DefaultHide`, `Col_NoHide`, `Table_Hideable`, `TableSetColumnEnabled`, `TableGetHoveredColumn`
   - 40.8.3 Dock builder - `okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUIDockBuilder.cpp` - `DockBuilderTree`, `DockBuilderSplitNode`, `DockBuilderDockWindow`, `DockBuilderFinish`
   - 40.8.4 Code editor line commands - `okayui/src/OkayUICodeEdit.cpp` - `ToggleLineComment`, `MoveLines`, `DuplicateLines`, keys Ctrl+/, Alt+Up/Down, Ctrl+Shift+D
-  - 40.8.5 Stats window port - `okayui/screens/OkayUIPanels.cpp`, `editor/OkayPanels.cpp`, `editor/main.cpp` - `okayuiscreens::DrawStats`, `oked::DrawStatsOkayUI`; side-by-side tool `tools/okayui_stats_compare.cpp`
-- **Code:** `okayui/include/okay/UI/OkayUIImCompat.hpp`, `okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUIDockBuilder.cpp`, `okayui/src/OkayUICodeEdit.cpp`, `okayui/screens/OkayUIPanels.cpp`, `editor/OkayPanels.cpp`, `tools/okayui_stats_compare.cpp`
+  - 40.8.5 Stats window port - `okayui/screens/OkayUIEditorPanels.cpp`, `editor/OkayPanels.cpp`, `editor/main.cpp` - `okayuiscreens::DrawStats`, `oked::DrawStatsOkayUI` (the model-based port of `docs/own_ui_toolkit.md` section 9; the first port of step 36 was removed)
+  - 40.8.6 Tags and Layers, Physics and Profiler ports - `okayui/screens/OkayUIEditorPanels.cpp`, `editor/EditorPanelViews.cpp`, `editor/OkayPanels.cpp`, `shared/EditorPanelModels.hpp` - `okayuiscreens::DrawTagsLayers`, `DrawPhysicsSettings`, `DrawProfiler`, `oked::HostSection` (docs/own_ui_toolkit.md section 10)
+  - 40.8.7 Dear ImGui look pieces - `okayui/src/OkayUI.cpp` - `SearchField`, `StyleVar_PopupPadding`, `StyleVar_PopupWidth`, `Selectable_Header`, formatted `DragFloat`/`SliderInt`, `CenterNextOnLine`, `Table_BordersOuter`, clip culling
+- **Code:** `okayui/include/okay/UI/OkayUIImCompat.hpp`, `okayui/include/okay/UI/OkayUIDockBuilder.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUIDockBuilder.cpp`, `okayui/src/OkayUICodeEdit.cpp`, `okayui/screens/OkayUIPanels.cpp`, `editor/OkayPanels.cpp`
 - **API:** namespace `OkayUI`: see the parts; `okayuiscreens::DrawStats`, `oked::DrawStatsOkayUI`
-- **Editor:** developer-only: `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, then View > (panel list) > Stats draws the OkayUI version; script editor: Ctrl+/, Alt+Up/Down, Ctrl+Shift+D with the OkayUI code widget
-- **Docs:** `docs/own_ui_toolkit.md` (sections 4.36 to 4.40), `docs/own_ui_code_editor.md`, `docs/imgui_port_report.md`, `docs/try_it.md` (section 12)
-- **Tests:** `okayui_imcompat`, `okayui_dockbuilder`, `okayui_codeedit` (line commands), `okayui_panels` (Stats, golden pictures)
+- **Editor:** developer-only: `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, then View > Panels > Stats, Profiler and Edit > Project Settings... (Tags and Layers, Physics) draw the OkayUI versions; script editor: Ctrl+/, Alt+Up/Down, Ctrl+Shift+D with the OkayUI code widget
+- **Docs:** `docs/own_ui_toolkit.md` (sections 4.36 to 4.40 and 10), `docs/own_ui_code_editor.md`, `docs/imgui_port_report.md`, `docs/try_it.md` (section 12)
+- **Tests:** `okayui_imcompat`, `okayui_dockbuilder`, `okayui_codeedit` (line commands), `okayui_editor_panels`, `okayui_editor_panels_imgui`
 - **Status:** Works - implemented and tested headless; the editor part (Stats hosting, `CollectStatRows`) was only syntax-checked, never run in a real editor window; off by default behind the developer switch
 - **Open:** column reordering, tab overflow strip, `GetStyle`, `SetNextWindowDockID` and the editor's own dock bookkeeping, `ImRect` / `ImGuiPayload` / `ImFont` style internals, `InputTextFlags_Password` and callbacks, moved lines do not carry breakpoints
 - **Related:** 40.1, 40.7, 40.4

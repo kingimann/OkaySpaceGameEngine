@@ -361,6 +361,7 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
+/// Dear ImGui's form, BeginChild(id, size, childFlags, windowFlags), and its ChildFlags are in OkayUIImCompat.hpp.
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
 /// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
@@ -507,6 +508,9 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
 /// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
 void SetKeyboardFocusHere();
+/// The next item, when it is on the line of a taller item (after SameLine), is centred on that item instead of sharing its top: Dear
+/// ImGui lines up a small button with the text of a frame-tall row this way. Applies to one item.
+void CenterNextOnLine();
 /// An integer field with [-]/[+] stepper buttons that change *value by `step`.
 /// Returns true on any frame the value changed.
 bool InputInt(const char* label, int* value, int step = 1);
@@ -556,6 +560,24 @@ bool DragInt3(const char* label, int v[3], float speed = 0.25f, int minV = 0, in
 bool DragInt4(const char* label, int v[4], float speed = 0.25f, int minV = 0, int maxV = 0);
 /// A low and a high value in one row: the low cell never goes above the high one and the high never below the low.
 bool DragFloatRange2(const char* label, float* lo, float* hi, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+/// Dear ImGui's formatted fields: the same scrubbing (and Ctrl+click to type), drawn as a frame in the Col_FrameBg colours with the value
+/// in the middle, formatted with `format` (one float conversion such as "%.0f" or "%.2f m"; anything else, or null, is "%.3f"). The cells
+/// of a row are StyleVar_ItemInnerSpacing.x apart (default 4) and the label follows at that gap (default 8). "##" hides the rest of a label.
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format);
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* format);
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* format);
+/// Framed sliders (Dear ImGui's look): a frame, a grab block (16 pixels, or one step of an integer range when that is wider) and the value
+/// in the middle, formatted with `format` ("frame %d", "%.2f"; anything else is "%d" / "%.3f"). Click or drag anywhere on the frame;
+/// Ctrl+click types a number. The plain SliderInt / SliderFloat keep OkayUI's groove-and-knob look.
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char* format);
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format);
+/// Two or three framed sliders in a row sharing one label (each a frame, a grab and its value in `format`), ItemInnerSpacing (x) apart.
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* format);
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* format);
+/// The editor's search field: a text field with a magnifier drawn at the left (the text starts after it), `hint` while it is empty, and a
+/// clear button (a cross) at the right while it has text. A click on the cross empties the buffer, gives up the keyboard and returns true.
+/// `width` > 0 is the width; 0 or less fills the width left minus |width|. At least three rows wide. True on any frame the text changed.
+bool SearchField(const char* id, const char* hint, char* buf, int cap, float width = 0.0f);
 
 /// Two, three or four sliders in one row sharing one label; every cell runs over [minV, maxV]. True on any change.
 bool SliderFloat2(const char* label, float v[2], float minV, float maxV);
@@ -658,7 +680,11 @@ bool Selectable(const char* label, bool selected);
 /// the row toggles *p_selected when clicked. Flags: Disabled (dim, no hover or click), ClosePopup (choosing it closes the innermost
 /// popup), SpanAllColumns (in a table: the row covers every column; the cell widgets after it stay in place), DoubleClickOnly (only a
 /// double click chooses it).
-enum SelectableFlags : unsigned { Selectable_None = 0, Selectable_Disabled = 1, Selectable_ClosePopup = 2, Selectable_SpanAllColumns = 4, Selectable_DoubleClickOnly = 8 };
+/// Selectable_Header (OkayUI's own) draws Dear ImGui's row: flat and square, Col_Header when selected, Col_HeaderHovered under the
+/// pointer, Col_HeaderActive while held, the label half the item spacing in from the row's left edge (Dear ImGui's highlight reaches
+/// that far past its text). Without it a row has OkayUI's look (the launcher look: a rounded accent tint and a bar when selected).
+enum SelectableFlags : unsigned { Selectable_None = 0, Selectable_Disabled = 1, Selectable_ClosePopup = 2, Selectable_SpanAllColumns = 4, Selectable_DoubleClickOnly = 8,
+                                  Selectable_Header = 16 };
 bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size = Vec2{});
 bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 size = Vec2{});
 
@@ -745,8 +771,9 @@ enum TableFlags : int {
     Table_ScrollX      = 64,  // horizontal scrolling inside the outer size
     Table_ScrollY      = 128, // vertical scrolling inside the outer size
     Table_Hideable     = 256, // a right click on the header row opens a menu that shows and hides columns
+    Table_BordersOuter = 2048, // a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box)
     // Accepted so ported tables compile: columns here are resizable unless Table_NoResize, and there is no column reordering yet.
-    Table_Resizable    = 512, Table_Reorderable = 1024, Table_BordersOuter = 2048, Table_BordersInnerV = 4096, Table_NoSavedSettings = 8192,
+    Table_Resizable    = 512, Table_Reorderable = 1024, Table_BordersInnerV = 4096, Table_NoSavedSettings = 8192,
     Table_SizingFixedFit = 16384, Table_SizingStretchProp = 32768, Table_PadOuterX = 65536,
 };
 enum TableColumnFlags : int {
@@ -1106,16 +1133,35 @@ bool IsKeyDown(KeyId key);
 bool IsKeyPressed(KeyId key, bool repeat = true);
 bool IsKeyReleased(KeyId key);
 /// Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
-/// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x), FrameRounding and ChildRounding (corner radius),
-/// WindowRounding, BorderSize (all three ImGui border sizes), FramePadding (a frame row is the text height plus twice y; text
-/// fields and combo boxes start their text x in), ScrollbarSize (a child's scrollbar width) and ChildPadding (x: the space inside
-/// a child around its content; a pushed ChildPadding also makes the child keep room for its scrollbar only while its content
-/// overflowed last frame, and draws the thumb inset in the bar, the way Dear ImGui children do). The others are accepted and do
-/// nothing, so ported code compiles: ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, Alpha.
+/// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x for windows; x and y for the padded and framed
+/// children of the flags form of BeginChild, which otherwise pad by 6), FrameRounding and ChildRounding (corner radius),
+/// WindowRounding, BorderSize (all three ImGui border sizes), ButtonTextAlign (x only: where a button's label sits, 0 left, 0.5
+/// centred, 1 right), CellPadding (a table cell's inner gap: x across, default 4; y above the first item and below the last one, which
+/// then ends the row without its item spacing; by default a row ends after the last item's spacing), FramePadding (y only: every
+/// frame, button, field and row is a text line plus twice y tall, and the box of Checkbox and RadioButton too; by default a frame is a
+/// text line plus 15 (12 without the launcher look) and a box a text line plus 6). The others are accepted and do
+/// nothing, so ported code compiles: SelectableTextAlign, Alpha.
+/// TextRowHeight is OkayUI's own: the height a line of plain text (Text, TextColored, TextDisabled, TextUnformatted, wrapped lines)
+/// takes in the layout. 0 (the default) is a frame's height, so text lines up with buttons and fields on its row; a value above 0 is
+/// that many pixels (Dear ImGui's text rows: pass GetFontSize() for one text line). A shorter text line that follows a taller item
+/// on the same line is centred on it.
+/// PopupPadding and PopupWidth are OkayUI's own too, read when a popup or context menu begins: the padding inside it (x, y; default
+/// 6 and 6) and its width (default 160). With a pushed padding the popup is exactly as tall as its content (no item spacing after the
+/// last item), as in Dear ImGui. ItemInnerSpacing (x only) is the gap inside the formatted drag rows and before their label.
+/// FramePadding's x is read by framed combos only (where their text starts; see FramedWidgets).
+/// ScrollbarSize sets the width of the scroll bars of children (the flags form of BeginChild) and the vertical bar of scrolling tables (default: OkayUI's
+/// own 10-pixel bar); with a pushed size the bar sits inside a framed child's or a bordered table's one-pixel outline and its grab is 2
+/// pixels inside the bar on every side and fully rounded, Dear ImGui's proportions.
+/// FramedWidgets is OkayUI's own (0 off, the default; anything else on): Checkbox draws Dear ImGui's box (a rounded frame in Col_FrameBg, or
+/// the accent at 45% once ticked, and a tick in Col_CheckMark), and Combo and BeginCombo draw a field in Col_FrameBg with a square arrow
+/// button at its right end (Col_Button, a filled triangle in the text colour) and the text FramePadding.x in.
+/// ChildPadding is OkayUI's own: the old form of BeginChild (id, w, h, border) pads its content by x on every side, and its scroll bar
+/// takes room only while the content overflowed last frame, with the thumb inset in it (the launcher's children, Dear ImGui's look).
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_ChildPadding, StyleVar_COUNT
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_TextRowHeight, StyleVar_CellPadding, StyleVar_PopupPadding,
+    StyleVar_PopupWidth, StyleVar_FramedWidgets, StyleVar_ChildPadding, StyleVar_COUNT
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);

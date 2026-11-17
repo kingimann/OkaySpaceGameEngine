@@ -1544,6 +1544,24 @@ target_include_directories(test_font_raster_compare PRIVATE ${CMAKE_SOURCE_DIR}/
 target_link_libraries(test_font_raster_compare PRIVATE okay::engine ${OKAY_FONTCMP_IMGUI})
 add_test(NAME font_raster_compare COMMAND test_font_raster_compare)
 set_tests_properties(font_raster_compare PROPERTIES TIMEOUT 600)
+# The editor's Problems, Stats and History panels: the Dear ImGui bodies (editor/EditorPanelViews.cpp) against their OkayUI ports,
+# headless, through one software rasteriser: same input gives the same intent, speed and pixel difference (docs/own_ui_toolkit.md
+# section 9). Needs OkayUI (SDL2 present) and the Dear ImGui sources (the editor's, or the copy fetched just above).
+if(TARGET okay_ui_render AND OKAY_BUILD_OKAYUI_TESTS)
+    add_executable(test_okayui_editor_panels_imgui test_okayui_editor_panels_imgui.cpp ${CMAKE_SOURCE_DIR}/editor/EditorPanelViews.cpp)
+    if(TARGET okay_imgui)
+        target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_imgui)
+    else()
+        target_sources(test_okayui_editor_panels_imgui PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                       ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_include_directories(test_okayui_editor_panels_imgui SYSTEM PRIVATE ${imgui_SOURCE_DIR})
+    endif()
+    target_link_libraries(test_okayui_editor_panels_imgui PRIVATE okay_ui_render)
+    target_include_directories(test_okayui_editor_panels_imgui PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/okayui/tests
+                               ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor)
+    add_test(NAME okayui_editor_panels_imgui COMMAND test_okayui_editor_panels_imgui)
+    set_tests_properties(okayui_editor_panels_imgui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+endif()
 
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})

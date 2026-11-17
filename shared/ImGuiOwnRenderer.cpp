@@ -50,7 +50,6 @@ ImGuiPainterRenderer::ImGuiPainterRenderer(plat::Painter& p) : m_p(p) {
 ImGuiPainterRenderer::~ImGuiPainterRenderer() {
     ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
     if (m_windowOf) {
-        if (m_onPanel) m_p.SetTarget(nullptr);
         pio.Renderer_RenderWindow = nullptr;
         pio.Renderer_SwapBuffers = nullptr;
         ImGui::GetIO().BackendRendererUserData = nullptr;
@@ -196,14 +195,18 @@ bool ImGuiPainterRenderer::EnableViewports(ViewportWindowFn windowOf, std::uint8
     return true;
 }
 
-// RenderPlatformWindowsDefault calls, for each panel window: (platform render), VpRender, (platform swap), VpSwap. The painter is
-// pointed at the panel's window for the draw and back at the main window after the swap, so nothing else ever draws into a panel.
+// ImGui::RenderPlatformWindowsDefault draws every panel window first (Renderer_RenderWindow for each), THEN swaps each one
+// (Renderer_SwapBuffers for each). With two panel windows (a dragged-out panel and a tooltip over it) the painter still pointed at
+// the LAST one drawn when the swaps came, so the first panel was never shown: its window kept its old picture, and after a resize
+// from outside (the X server clears a resized window) it stayed black until the tooltip went away. Pointing the painter back at
+// each window for its swap does not work either: the GL driver (Mesa's software one, at least) does not keep a window's back
+// buffer when the context moves to another window and back, so the swap shows nothing. So each panel window is drawn AND shown
+// here, in one go, and SwapBuffers has nothing left to do. The painter is on the main window again afterwards.
 void ImGuiPainterRenderer::VpRender(ImGuiViewport* vp, void*) {
     ImGuiPainterRenderer* self = (ImGuiPainterRenderer*)ImGui::GetIO().BackendRendererUserData;
     if (!self || !self->m_windowOf || !vp) return;
     plat::Window* w = self->m_windowOf(vp);
-    if (!w || !self->m_p.SetTarget(w)) { ++self->m_panelsFailed; self->m_onPanel = false; return; }
-    self->m_onPanel = true;
+    if (!w || !self->m_p.SetTarget(w)) { ++self->m_panelsFailed; self->m_p.SetTarget(nullptr); return; }
     if (!(vp->Flags & ImGuiViewportFlags_NoRendererClear)) {
         self->m_p.SetScale(1.0f, 1.0f);
         self->m_p.SetClipRect(nullptr);
@@ -212,14 +215,13 @@ void ImGuiPainterRenderer::VpRender(ImGuiViewport* vp, void*) {
     }
     self->Render(vp->DrawData);
     ++self->m_panelsDrawn;
+    if (self->m_panelRead) self->m_panelRead(vp);
+    self->m_p.Present();             // the panel window's buffers
+    ++self->m_panelsPresented;
+    self->m_p.SetTarget(nullptr);    // the main window again (nothing else ever draws into a panel)
 }
 
-void ImGuiPainterRenderer::VpSwap(ImGuiViewport* vp, void*) {
-    ImGuiPainterRenderer* self = (ImGuiPainterRenderer*)ImGui::GetIO().BackendRendererUserData;
-    if (!self || !vp || !self->m_onPanel) return;
-    self->m_p.Present();             // the panel window's buffers
-    self->m_p.SetTarget(nullptr);    // the main window again
-    self->m_onPanel = false;
-}
+// Shown already (VpRender).
+void ImGuiPainterRenderer::VpSwap(ImGuiViewport*, void*) {}
 
 } // namespace okay::imguiown

@@ -27,6 +27,17 @@
 
 #include "imgui.h"
 
+#if defined(__linux__) && __has_include(<X11/Xlib.h>)
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <dlfcn.h>
+#undef None      // X11's macros: plat::BlendMode::None and friends below
+#undef Bool
+#undef Status
+#undef Success
+#define OKAY_TEST_READ_X 1
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -93,7 +104,7 @@ void PanelUi(Ctx& c, ImVec2 pos, ImVec2 size, ImGuiCond cond) {
 }
 
 // One frame: events (the backend's, then injected ones), ImGui, the main window, then the panel windows. `readPanel` / `readMain`:
-// the panel's and the main window's pixels as drawn this frame (before their swaps).
+// the panel's and the main window's pixels as drawn this frame (before their swaps; with several panel windows, the last one's).
 void Frame(Ctx& c, const std::function<void()>& ui, std::vector<std::uint8_t>* readPanel = nullptr, int* pw = nullptr, int* ph = nullptr,
            std::vector<std::uint8_t>* readMain = nullptr) {
     plat::Event e;
@@ -111,19 +122,16 @@ void Frame(Ctx& c, const std::function<void()>& ui, std::vector<std::uint8_t>* r
     if (readMain) { int w = 0, h = 0; c.painter->ReadPixels(*readMain, w, h); }
     c.painter->Present();
     ImGui::UpdatePlatformWindows();
-    if (!readPanel) { ImGui::RenderPlatformWindowsDefault(); return; }
-    // What RenderPlatformWindowsDefault does, with a read-back of each panel window between its draw and its swap.
-    ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
-    for (int i = 1; i < pio.Viewports.Size; ++i) {
-        ImGuiViewport* vp = pio.Viewports[i];
-        if (vp->Flags & ImGuiViewportFlags_IsMinimized) continue;
-        pio.Renderer_RenderWindow(vp, nullptr);
-        int w = 0, h = 0;
-        c.painter->ReadPixels(*readPanel, w, h);
-        if (pw) *pw = w;
-        if (ph) *ph = h;
-        pio.Renderer_SwapBuffers(vp, nullptr);
-    }
+    // Each panel window's pixels as drawn, read between its draw and its swap (the renderer's test hook).
+    if (readPanel)
+        c.ren->SetPanelReadback([&](ImGuiViewport*) {
+            int w = 0, h = 0;
+            c.painter->ReadPixels(*readPanel, w, h);
+            if (pw) *pw = w;
+            if (ph) *ph = h;
+        });
+    ImGui::RenderPlatformWindowsDefault();
+    c.ren->SetPanelReadback(nullptr);
 }
 
 bool PixelIs(const std::vector<std::uint8_t>& px, int w, int x, int y, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
@@ -139,6 +147,34 @@ plat::Event MouseEv(plat::EventType t, std::uint32_t win, int x, int y, int butt
     e.type = t; e.windowId = win; e.x = x; e.y = y; e.button = button; e.clicks = 1;
     return e;
 }
+
+#ifdef OKAY_TEST_READ_X
+// What the X server shows at (x, y) of a window (its real on-screen pixels, after the swaps), through libX11 loaded at run time
+// (the engine loads it the same way). False when it cannot be read.
+bool ScreenPixel(unsigned long xwin, int x, int y, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
+    static void* lib = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!lib) return false;
+    using OpenFn = Display* (*)(const char*);
+    using CloseFn = int (*)(Display*);
+    using GetImageFn = XImage* (*)(Display*, Drawable, int, int, unsigned, unsigned, unsigned long, int);
+    auto open = (OpenFn)dlsym(lib, "XOpenDisplay");
+    auto close = (CloseFn)dlsym(lib, "XCloseDisplay");
+    auto getImage = (GetImageFn)dlsym(lib, "XGetImage");
+    if (!open || !close || !getImage) return false;
+    Display* d = open(nullptr);
+    if (!d) return false;
+    XImage* img = getImage(d, (Drawable)xwin, x, y, 1, 1, ~0ul, ZPixmap);
+    bool ok = false;
+    if (img) {
+        const unsigned long px = img->f.get_pixel(img, 0, 0);
+        r = (std::uint8_t)((px & img->red_mask) >> 16); g = (std::uint8_t)((px & img->green_mask) >> 8); b = (std::uint8_t)(px & img->blue_mask);
+        ok = img->red_mask == 0xff0000ul && img->green_mask == 0xff00ul && img->blue_mask == 0xfful;   // 24-bit TrueColor (Xvfb's)
+        img->f.destroy_image(img);
+    }
+    close(d);
+    return ok;
+}
+#endif
 
 void Run(plat::BackendKind kind) {
     std::printf("[suite] viewports on the %s backend\n", plat::BackendName(kind));
@@ -378,6 +414,71 @@ void Run(plat::BackendKind kind) {
             if (apart) CHECK(pw->DisplayIndex() == 1);
             else std::printf("    (the two displays overlap here: which one holds the window is not checked)\n");
         }
+    }
+
+    // 8. Two panel windows at once (in the editor: a dragged-out panel and a tooltip over it). ImGui draws every panel window first,
+    //    then swaps each one: every one must be swapped, not only the last one drawn. Then the first one is sized by the OS (the X
+    //    server clears a resized window): the next frame shows its panel again. Before the fix the first window was never swapped
+    //    while the second existed and stayed black after a resize until the tooltip went away.
+    {
+        bool openA = true, openB = true;
+        const std::uint8_t kBR = 30, kBG = 150, kBB = 220;   // panel B's box
+        auto box = [](std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(wp.x + 10, wp.y + 40), ImVec2(wp.x + 50, wp.y + 80), IM_COL32(r, g, b, 255));
+        };
+        auto two = [&] {
+            ImGui::SetNextWindowPos(ImVec2(500, 150), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(200, 150), ImGuiCond_Once);
+            if (openA) {
+                if (ImGui::Begin("Panel A", &openA, ImGuiWindowFlags_NoSavedSettings)) box(kBoxR, kBoxG, kBoxB);
+                ImGui::End();
+            }
+            ImGui::SetNextWindowPos(ImVec2(500, 340), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(200, 150), ImGuiCond_Always);
+            if (openB) {
+                if (ImGui::Begin("Panel B", &openB, ImGuiWindowFlags_NoSavedSettings)) box(kBR, kBG, kBB);
+                ImGui::End();
+            }
+        };
+        for (int i = 0; i < 4; ++i) Frame(c, two);
+        CHECK(c.glue->PanelWindowCount() == 2);
+        const int presented = c.ren->PanelsPresented();
+        Frame(c, two);
+        std::printf("  two panel windows: %d swapped in one frame (want 2)\n", c.ren->PanelsPresented() - presented);
+        CHECK(c.ren->PanelsPresented() == presented + 2);
+        int ow2 = 0, oh2 = 0;
+        c.painter->OutputSize(&ow2, &oh2);
+        CHECK(ow2 == kMainW && oh2 == kMainH);   // the painter is back on the main window after the swaps
+        plat::Window* wa = nullptr;
+        for (ImGuiViewport* v : pio.Viewports)
+            if (v != ImGui::GetMainViewport() && v->Pos.x == 500.0f && v->Pos.y == 150.0f) wa = io::ImGuiPlatformGlue::WindowOf(v);
+        CHECK(wa != nullptr);
+#ifdef OKAY_TEST_READ_X
+        if (wa && kind == plat::BackendKind::Own) {   // the own backend's NativeHandle is the X window
+            const unsigned long xa = (unsigned long)(std::uintptr_t)wa->NativeHandle();
+            // the frame's drawing reaches the server when the backend next talks to it (an event poll sends what is queued)
+            auto settle = [&] { c.b->DelayMs(30); plat::Event e; while (c.b->PollEvent(e)) c.glue->ProcessEvent(e); c.b->DelayMs(30); };
+            settle();
+            std::uint8_t r = 0, g = 0, b = 0;
+            if (ScreenPixel(xa, 30, 60, r, g, b)) {
+                std::printf("  panel A on screen: %d,%d,%d\n", r, g, b);
+                CHECK(r == kBoxR && g == kBoxG && b == kBoxB);
+                wa->SetSize(260, 170);   // sized from outside: the server clears it
+                for (int i = 0; i < 3; ++i) { c.b->DelayMs(10); Frame(c, two); }
+                settle();
+                CHECK(ScreenPixel(xa, 30, 60, r, g, b));
+                std::printf("  panel A on screen after an outside resize: %d,%d,%d\n", r, g, b);
+                CHECK(r == kBoxR && g == kBoxG && b == kBoxB);
+                CHECK(ScreenPixel(xa, 240, 150, r, g, b));   // in the part the resize added: the panel's background, not black
+                std::printf("  panel A's new corner: %d,%d,%d\n", r, g, b);
+                CHECK(r + g + b > 0);
+            } else std::printf("  (the X server's pixels could not be read: the on-screen check is skipped)\n");
+        }
+#endif
+        openA = openB = false;
+        for (int i = 0; i < 6; ++i) Frame(c, two);
+        CHECK(c.glue->PanelWindowCount() == 0);
     }
 
     // 7. shut-down

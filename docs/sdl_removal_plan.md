@@ -549,8 +549,14 @@ line says `...; panel windows on)`.
 * **Renderer side** (`shared/ImGuiOwnRenderer.*`, `ImGuiPainterRenderer::EnableViewports`): `Renderer_RenderWindow` points our GL
   painter at the panel's window (new `Painter::SetTarget`) **with the main window's GL context** (new
   `Window::MakeCurrentWithContextOf`: X11 `glXMakeCurrent` on the panel window, Win32 the owner's pixel format + `wglMakeCurrent`, sdl2
-  `SDL_GL_MakeCurrent`), clears it and draws its draw data; `Renderer_SwapBuffers` swaps it and points the painter back at the main
-  window. One context, so every texture works in a panel window: ImGui's font, the Project panel's thumbnails, the Scene and Game views.
+  `SDL_GL_MakeCurrent`), clears it, draws its draw data, **swaps it right there** and points the painter back at the main window;
+  `Renderer_SwapBuffers` does nothing. One context, so every texture works in a panel window: ImGui's font, the Project panel's
+  thumbnails, the Scene and Game views. (Fixed 2026-11-17, branch `claude2/own-switch-on-fixes`: the swap used to be in
+  `Renderer_SwapBuffers`, but ImGui draws every panel window first and swaps them after, so with two panel windows (a dragged-out
+  panel and a tooltip over it) only the last one drawn was ever swapped; the other kept its old picture and, after a resize from
+  outside, stayed black until the tooltip went away. Pointing the painter back at each window for its swap does not help: Mesa does
+  not keep a window's back buffer when the context moves to another window and back. Test: `editor_viewports_*` step 8, two panel
+  windows, both swapped every frame, the first one's real on-screen pixels read from the X server before and after an outside resize.)
 * **okay::platform additions** (each with its X11, Win32 and sdl2 side): `Window::MakeCurrentWithContextOf`, `Window::SetOpacity`
   (`_NET_WM_WINDOW_OPACITY`, a layered window, `SDL_SetWindowOpacity`), `WindowDesc::skipTaskbar / topmost / noActivate`
   (`_NET_WM_STATE_SKIP_TASKBAR` / `_ABOVE` / `_NET_WM_USER_TIME` 0; `WS_EX_TOOLWINDOW` / `WS_EX_TOPMOST` / `SW_SHOWNA`;

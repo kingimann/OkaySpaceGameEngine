@@ -14,6 +14,7 @@
 #include "okay/Platform/Painter.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 struct ImDrawData;
@@ -57,6 +58,11 @@ public:
     /// the log.
     int PanelsDrawn() const { return m_panelsDrawn; }
     int PanelsFailed() const { return m_panelsFailed; }
+    /// Panel-window swaps (Present on a panel's window) since EnableViewports: one per panel window drawn, every frame.
+    int PanelsPresented() const { return m_panelsPresented; }
+    /// Tests: called for each panel window after it is drawn and before it is shown, with the painter still on that window (so
+    /// Painter::ReadPixels reads the panel's picture). Null (the default) = none.
+    void SetPanelReadback(std::function<void(ImGuiViewport*)> fn) { m_panelRead = std::move(fn); }
 
 private:
     okay::platform::Painter& m_p;
@@ -66,8 +72,8 @@ private:
     int m_lastCmds = 0;
     ViewportWindowFn m_windowOf = nullptr;
     std::uint8_t m_clear[3] = {15, 16, 20};
-    int m_panelsDrawn = 0, m_panelsFailed = 0;
-    bool m_onPanel = false;   // the painter targets a panel window (between RenderWindow and SwapBuffers)
+    int m_panelsDrawn = 0, m_panelsFailed = 0, m_panelsPresented = 0;
+    std::function<void(ImGuiViewport*)> m_panelRead;
     static void VpRender(ImGuiViewport* vp, void* arg);
     static void VpSwap(ImGuiViewport* vp, void* arg);
 };

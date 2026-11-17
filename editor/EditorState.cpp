@@ -733,18 +733,6 @@ void EditorState::NewThirdPerson() {
     StartDocument();
 }
 
-void EditorState::NewHumanoid() {
-    NewScene();
-    m_suppressUndo = true;
-    Templates::Humanoid(m_scene);
-    m_suppressUndo = false;
-    view3D = true;
-    camTarget = {0, 1, 0};
-    camDist = 8.0f;
-    m_selected = m_scene.Find("Player");
-    StartDocument();
-}
-
 void EditorState::NewThirdPersonShooter() {
     NewScene();
     m_suppressUndo = true;

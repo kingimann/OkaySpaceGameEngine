@@ -40,7 +40,7 @@ build/tests/test_examples_work
 
 The interaction checks, by family:
 
-* First Person, Third Person, Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
+* First / Third Person (it replaced the separate First Person and Third Person templates on 2026-11-17; the old titles still build for old --template arguments), Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
   it slows down; Space jumps and gravity brings it back; moving the mouse turns the view.  Third Person Shooter also holds the left mouse button and the targets lose health.
 * Platformer, 2.5D Platformer: D moves, Space jumps and lands; 2.5D: W hops to the layer behind, S back.
 * Top-Down: D moves, and the walls stop the player. Top-Down Shooter: it moves, Space dashes, the left mouse button fires and
@@ -72,7 +72,7 @@ Besides the per-template table, the test checks the table itself (`editor/Templa
 * the version gate really asks about an older project and about one with no stamp, so "no question" for a new project means
   something.
 
-**Scenes nothing offers.** `EditorState` has seven builders that no menu, launcher card or New Project form calls (the two older ones are listed first; Coin Collector, Snake, Brick Breaker, Inventory and Humanoid were taken off the New Project lists on 2026-11-16 and stay here so they keep being tested):
+**Scenes nothing offers.** `EditorState` has six builders that no menu, launcher card or New Project form calls (the two older ones are listed first; Coin Collector, Snake, Brick Breaker and Inventory were taken off the New Project lists on 2026-11-16 and stay here so they keep being tested; the Humanoid scene and its builder were deleted on 2026-11-17):
 `NewPlatformer3D` (a 3D platformer) and `NewTerrainSandbox` (the older heightmap sandbox that the voxel Sandbox replaced in the
 launcher). A person cannot start them, so under the owner's rule 4a they are not "done"; they are listed in `MakeNotOffered()`
 with that reason and run through the same seven columns as the templates (all pass today: the 3D platformer's player walks 4.8 m
@@ -153,8 +153,8 @@ suite stays green. A listed failure that stops happening fails the test, so the 
 * **Two scenes nothing offers.** `NewPlatformer3D` and `NewTerrainSandbox` in `EditorState` are not reachable from the launcher or
   any editor menu (see "Scenes nothing offers" above). They work and are tested; whether to offer or delete them is the owner's
   call.
-* **Duplicate names in the Problems panel.** Brand new First Person, Third Person, Third Person Shooter, Top-Down Shooter, Point
-  and Click, Vehicle (3D), Vehicle (get in and drive), Vehicle (2D), Coin Collector and Humanoid projects show one or more
+* **Duplicate names in the Problems panel.** Brand new First / Third Person, Third Person Shooter, Top-Down Shooter, Point
+  and Click, Vehicle (3D), Vehicle (get in and drive), Vehicle (2D) and Coin Collector projects show one or more
   "N objects are named 'Crate' at the scene root" warnings (Crate, Target, Target Dummy, Cover, Block, Lane Dash, Cone, Coin, Step). They are
   warnings, not errors, and the scripts and tests look the objects up by those names, so they were not renamed.
 
@@ -167,10 +167,10 @@ Fixed in the templates and examples (data and builders):
 * Third Person Shooter: left mouse fired nothing (the controller only announces a shot; no gun was attached) and the targets
   had no health. It now has a Ranged Weapon (hitscan, 12 rounds) and the targets take damage and come back.
 * Top-Down: the walls had no collider and the player no body, so the player walked through them.
-* Humanoid: root motion lost its hips link on the first save (only the name is saved); the template now sets the name.
+* Humanoid (since deleted): root motion lost its hips link on the first save (only the name is saved); the template now sets the name.
 * Sandbox: the terrain was built with full precision but saved with one byte per voxel, so the first Play, Stop or reopen
   changed it and the editor asked to save a scene nobody had changed. The terrain is now rounded to what the file stores.
-* Humanoid: the project read as changed after the first Play and Stop, so the editor asked to save a scene nobody had touched.
+* Humanoid (since deleted): the project read as changed after the first Play and Stop, so the editor asked to save a scene nobody had touched.
   Cause: the scene file numbers objects by their place in the scene, and the part rig that Foot IK is wired to is generated
   (the file leaves it out and it is rebuilt on load), so a scene with the rig came out with a gap in the numbers and the same
   scene reloaded did not. The template now puts the camera in before the player, so the rig is last and leaves no gap. The

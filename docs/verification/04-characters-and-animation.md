@@ -9,7 +9,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
 - [ ] **V-CH-001** First person player
   - **Map:** 4.1, 4.2. **Where:** editor
   - **Steps:**
-    1. Choose **File > New Project...** and the **First Person** template (or **GameObject > Player > First Person**).
+    1. Choose **File > New Project...** and the **First / Third Person** template (or **GameObject > Player > Player Controller**), then press **V** once to go to the eyes (or set View to First Person in the Player Controller panel).
     2. Press Play (Ctrl+P). Walk with W A S D and look with the mouse.
     3. Press Ctrl to crouch and Z to go prone (crouch toggles with a tap by default; prone key is Z).
   - **You should see (expected, not yet seen on Windows):** you walk and look in first person; the camera lowers when you crouch and lowers more when prone; running is off while crouched or prone.
@@ -19,7 +19,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
 - [ ] **V-CH-002** Third person player
   - **Map:** 4.1, 4.2. **Where:** editor
   - **Steps:**
-    1. Choose the **Third Person** template (or **GameObject > Player > Third Person**).
+    1. Choose the **First / Third Person** template (or **GameObject > Player > Third Person**).
     2. Press Play. Move with W A S D, look with the mouse, jump with Space.
     3. Press Z for prone and Ctrl for crouch.
   - **You should see (expected, not yet seen on Windows):** the character walks, the camera orbits behind it, and the crouch and prone stances change its height.
@@ -62,10 +62,10 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
   - **You should see (expected, not yet seen on Windows):** the clip plays on the selected object in the Scene view.
   - **Known partial:** none known; you need an object with clips.
 
-- [ ] **V-CH-007** Humanoid with foot IK
+- [ ] **V-CH-007** Foot IK on a player
   - **Map:** 5, 4. **Where:** editor, GameObject menu
   - **Steps:**
-    1. Open **GameObject > Player** and choose **Humanoid (foot IK)**.
+    1. Open **GameObject > Player** and choose **Player Controller (first / third person)**, then in the Inspector use **Add Component** and pick **Foot IK** (the Humanoid entry was removed: one Player Controller does it).
     2. Press Play and walk over stairs (**GameObject > 3D Object > Stairs**) or a slope.
   - **You should see (expected, not yet seen on Windows):** the feet are placed on the steps instead of floating or sinking.
   - **Known partial:** "feet slide on slopes" is a listed symptom in map 5; report if seen.
@@ -82,7 +82,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
   - **More:** [../../try_it.md](../../try_it.md)
 
 - [ ] **V-CH-S3** Area 3: 3D modeling & import (smoke test, steps unverified)
-  - **Map:** [3](../feature_map/03-modeling-import.md), 10 sub-areas, 10 built.
+  - **Map:** [3](../feature_map/03-modeling-import.md), 11 sub-areas, 11 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 3.1 Edit mode [Works]. Where: Modeling window (View > Editors & Tools > Modeling), the 3D view's Object/Edit header and status line, Edit...
     - 3.2 Edge and loop tools [Works]. Where: Modeling window > Edit Mesh > Edge loops group; Ctrl+R / Ctrl+B / K in the 3D view
@@ -94,8 +94,9 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 3.8 Sculpt and paint brushes [Basic]. Where: Modeling > Edit Mesh > Sculpt Brush and Paint Brush ticks
     - 3.9 Generate and whole-mesh operations [Works]. Where: Modeling window > Generate and Edit tabs
     - 3.10 Add library and procedural props [Works]. Where: Modeling window > Add (filter box, categories) and Shape tab; GameObject > 3D Object > Nature / Props /...
+    - 3.11 Guided creation (templates, parts, safe regeneration) [Partial]. Where: Modeling window > Guided
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/03-modeling-import.md](../feature_map/03-modeling-import.md) (area 3, sections 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/03-modeling-import.md](../feature_map/03-modeling-import.md) (area 3, sections 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make G snap to the grid while Ctrl is held"; "Extrude Faces leaves the collider behind"
 
 - [ ] **V-CH-S4** Area 4: Characters & cameras (smoke test, steps unverified)
@@ -110,7 +111,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 4.7 First-person camera and hands [Works]. Where: First Person Hands component panel (Open Preview), "First Person Hands" window
     - 4.8 Virtual cameras and dollies [Works]. Where: Inspector panels for Virtual Camera, Cinemachine Brain, Dolly Path, Dolly Cart; Add Component menu "Virtual...
     - 4.9 Blocky Character and customization [Works]. Where: Character inspector, "Separate Into Parts (editable rig)", Unrig, Animation tab
-    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector; GameObject > Create Camera
+    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector; GameObject > Camera > Camera
     - 4.11 Seats and sitting [Works]. Where: Seat inspector panel
     - 4.12 Premade players [Works]. Where: GameObject > Player submenu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).

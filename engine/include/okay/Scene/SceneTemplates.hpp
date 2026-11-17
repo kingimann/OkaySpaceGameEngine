@@ -518,47 +518,6 @@ inline void ThirdPerson(Scene& scene) {
     AddTemplateHoldables(scene, player);
 }
 
-/// A "drop-in humanoid" starter: the same third-person scene, but the player is a
-/// fully-wired humanoid (part rig + physics capsule + foot IK that plants the feet
-/// on uneven ground + root motion hooked to the hips). Shows the one-call setup
-/// AddHumanoidPlayer() gives you. Stepped ground so the foot IK is visible.
-inline void Humanoid(Scene& scene) {
-    scene.Clear();
-    scene.SetName("Humanoid");
-
-    GameObject* light = scene.CreateGameObject("Directional Light");
-    light->AddComponent<Light>();
-    light->transform->localRotation = Quat::Euler({50, -30, 0});
-
-    GameObject* ground = scene.CreateGameObject("Ground");
-    ground->transform->localPosition = {0, -0.5f, 0};
-    ground->transform->localScale = {40, 1, 40};
-    auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Cube();
-    gmr->color = Color::FromBytes(95, 110, 95);
-    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
-    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
-
-    // A couple of low steps so foot IK has uneven ground to plant on.
-    const Vec3 steps[2] = {{2.0f, 0.1f, 0}, {3.0f, 0.25f, 0}};
-    for (int i = 0; i < 2; ++i) {
-        GameObject* s = scene.CreateGameObject("Step");
-        s->transform->localPosition = steps[i];
-        s->transform->localScale = {1.5f, 0.2f + 0.3f * i, 1.5f};
-        auto* mr = s->AddComponent<MeshRenderer>();
-        mr->mesh = Mesh::Cube();
-        mr->color = Color::FromBytes(120, 120, 130);
-        s->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
-        s->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
-    }
-
-    // The camera goes in BEFORE the player. The player's part rig (generated objects the scene file leaves out) then comes last
-    // in the scene, so the file's object numbers have no gap after it: a scene with the rig and the same scene reloaded
-    // (rig not rebuilt yet) save the same text, and Play then Stop does not make the project read as changed.
-    EnsureMainCamera(scene);
-    AddHumanoidPlayer(scene, {0, 1.0f, 0});   // rig + capsule + camera + foot IK, wired
-}
-
 /// A third-person SHOOTER starter: the blocky Character driven by a
 /// ThirdPersonShooterController (over-the-shoulder aim, RMB aims, LMB fires), on a
 /// ground with some cover crates and a row of shootable targets to aim at.

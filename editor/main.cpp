@@ -7191,20 +7191,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ConsoleLog("Created Character");
         }
     } else if (id == "create.player") {
-        if (ImGui::MenuItem("Third Person")) {
+        // One Player Controller for first and third person: the View setting in its Inspector picks First, Third or Both
+        // (V switches in Both). Third Person Shooter below is a different game mode (fires, own settings) and stays.
+        if (ImGui::MenuItem("Player Controller (first / third person)")) {
             ed.PushUndo();
             ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
-            ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
-        }
-        if (ImGui::MenuItem("Humanoid (foot IK)")) {
-            ed.PushUndo();
-            ed.Select(ed.SettleSpawn(okay::Templates::AddHumanoidPlayer(ed.scene())));
-            ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
-        }
-        if (ImGui::MenuItem("First Person")) {
-            ed.PushUndo();
-            ed.Select(ed.SettleSpawn(okay::Templates::AddFirstPersonPlayer(ed.scene())));
-            ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
+            ConsoleLog("Added Player Controller (View: Both, starts in third person; change View in the Inspector)"); ed.dirty = true; created = true;
         }
         if (ImGui::MenuItem("Third Person Shooter")) {
             ed.PushUndo();

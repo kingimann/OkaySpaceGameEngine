@@ -2665,6 +2665,17 @@ public:
     }
     Mesh Mirrored(int axis = 0, bool weld = true) const { Mesh m = *this; m.Mirror(axis, weld); return m; }
 
+    /// Symmetrize: keep the positive half across the `axis` plane through the pivot (0=X 1=Y 2=Z), then mirror it
+    /// over the other side and weld the seam, so the mesh is exactly symmetric. The one implementation behind the
+    /// Modeling window's Symmetrize buttons (Mirror X/Y/Z, by contrast, adds a mirrored copy of the whole mesh).
+    void Symmetrize(int axis) {
+        if (axis < 0 || axis > 2 || vertices.empty()) return;
+        const Vec3 n{axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f};
+        Bisect({0, 0, 0}, n, false, true);   // keep + half, seam open
+        Mirror(axis);                        // reflect + weld the seam
+        name = "";
+    }
+
     /// Push every vertex toward a sphere centred on the mesh, by `amount` in [0,1]
     /// (0 = unchanged, 1 = fully spherical) — round off a cube into a ball, or just
     /// soften a blocky shape. The sphere radius is the average vertex distance.
@@ -4794,11 +4805,11 @@ public:
         RefreshNormals();
     }
 
-    /// Loop Cut: insert `count` evenly-spaced edge loops across the mesh
-    /// perpendicular to `axis` (0=X 1=Y 2=Z) — Blender's Ctrl+R. Robust on any
-    /// topology (it slices, not quad-walks): great for adding editable divisions
-    /// to a wall/box/extruded shape. Welds the new cut vertices into clean loops.
-    void LoopCut(int axis, int count) {
+    /// Slice: cut the whole mesh with `count` evenly spaced planes across `axis`
+    /// (0=X 1=Y 2=Z) and weld the cut vertices into rings — adds editable divisions
+    /// to a wall/box/extruded shape on any topology. (This was called "Loop Cut";
+    /// the real edge-ring Loop Cut is modeling::LoopCut, Ctrl+R in Edit Mesh.)
+    void SliceAxis(int axis, int count) {
         if (axis < 0 || axis > 2 || count < 1 || vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         float a0 = (&lo.x)[axis], a1 = (&hi.x)[axis];

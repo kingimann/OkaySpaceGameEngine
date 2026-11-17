@@ -34,6 +34,9 @@ struct Type {
     // 0 void, 1 int, 2 char, 3 struct or union, 4 short
     int base = 1;
     int array_len = -1;
+    // Further dimensions of an array. int a[2][3][4] is 2, then 3, then 4.
+    int dim2 = -1;
+    int dim3 = -1;
     int struct_id = -1;
     int func_id = -1;
     int bits = -1;
@@ -71,7 +74,20 @@ struct Global {
     bool bss = true;
     bool is_static = false;
     uint32_t init = 0;
+    std::vector<uint8_t> init_bytes;
 };
+
+Type peel_array(const Type& type) {
+    Type elem = type;
+    if (elem.array_len >= 0) {
+        elem.array_len = elem.dim2;
+        elem.dim2 = elem.dim3;
+        elem.dim3 = -1;
+        return elem;
+    }
+    if (elem.pointers > 0) --elem.pointers;
+    return elem;
+}
 
 struct Node {
     enum Kind {
@@ -759,6 +775,40 @@ uint64_t ieee_real(uint64_t sig, int pow10, bool neg, bool single) {
     return (neg ? 0x8000000000000000ull : 0) | (static_cast<uint64_t>(encoded) << 52) | mant;
 }
 
+int hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// i points at the character after the backslash. On success it points past the escape.
+bool decode_escape(const std::string& text, size_t* i, unsigned char* out) {
+    if (*i >= text.size()) return false;
+    const char c = text[*i];
+    if (c == 'n') *out = '\n';
+    else if (c == 't') *out = '\t';
+    else if (c == 'r') *out = '\r';
+    else if (c == '0') *out = 0;
+    else if (c == 'x') {
+        ++*i;
+        int value = 0;
+        int count = 0;
+        while (count < 2 && *i < text.size()) {
+            const int digit = hex_digit(text[*i]);
+            if (digit < 0) break;
+            value = value * 16 + digit;
+            ++*i;
+            ++count;
+        }
+        if (count == 0) return false;
+        *out = static_cast<unsigned char>(value);
+        return true;
+    } else *out = static_cast<unsigned char>(c);
+    ++*i;
+    return true;
+}
+
 std::vector<Token> lex(const std::string& text, std::string* error) {
     std::vector<Token> tokens;
     for (size_t i = 0; i < text.size();) {
@@ -859,14 +909,12 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 return {};
             }
             unsigned char value = 0;
-            if (text[i] == '\\' && i + 1 < text.size()) {
+            if (text[i] == '\\') {
                 ++i;
-                if (text[i] == 'n') value = '\n';
-                else if (text[i] == 't') value = '\t';
-                else if (text[i] == 'r') value = '\r';
-                else if (text[i] == '0') value = 0;
-                else value = static_cast<unsigned char>(text[i]);
-                ++i;
+                if (!decode_escape(text, &i, &value)) {
+                    *error = "bad character escape";
+                    return {};
+                }
             } else {
                 value = static_cast<unsigned char>(text[i]);
                 ++i;
@@ -885,15 +933,18 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             std::string value;
             ++i;
             while (i < text.size() && text[i] != '"') {
-                if (text[i] == '\\' && i + 1 < text.size()) {
+                if (text[i] == '\\') {
                     ++i;
-                    if (text[i] == 'n') value.push_back('\n');
-                    else if (text[i] == 't') value.push_back('\t');
-                    else if (text[i] == 'r') value.push_back('\r');
-                    else if (text[i] == '0') value.push_back('\0');
-                    else value.push_back(text[i]);
-                } else value.push_back(text[i]);
-                ++i;
+                    unsigned char escaped = 0;
+                    if (!decode_escape(text, &i, &escaped)) {
+                        *error = "bad string escape";
+                        return {};
+                    }
+                    value.push_back(static_cast<char>(escaped));
+                } else {
+                    value.push_back(text[i]);
+                    ++i;
+                }
             }
             if (i >= text.size()) {
                 *error = "unterminated string";
@@ -1023,11 +1074,7 @@ struct Parser {
         return -1;
     }
     int size_of(const Type& type) const {
-        if (type.array_len >= 0) {
-            Type elem = type;
-            elem.array_len = -1;
-            return type.array_len * size_of(elem);
-        }
+        if (type.array_len >= 0) return type.array_len * size_of(peel_array(type));
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
         if (type.base == 4) return 2;
@@ -1039,11 +1086,7 @@ struct Parser {
         return 4;
     }
     int align_of(const Type& type) const {
-        if (type.array_len >= 0) {
-            Type elem = type;
-            elem.array_len = -1;
-            return align_of(elem);
-        }
+        if (type.array_len >= 0) return align_of(peel_array(type));
         if (type.pointers > 0) return 8;
         if (type.base == 2) return 1;
         if (type.base == 4) return 2;
@@ -1205,6 +1248,32 @@ struct Parser {
         std::vector<std::string> param_names;
     };
 
+    bool add_dim(Type* type, int length) {
+        if (type->array_len < 0) type->array_len = length;
+        else if (type->dim2 < 0) type->dim2 = length;
+        else if (type->dim3 < 0) type->dim3 = length;
+        else {
+            error = "too many array dimensions";
+            return false;
+        }
+        return true;
+    }
+    bool parse_brackets(Type* type) {
+        while (accept(TLBrack)) {
+            if (!is(TNumber)) {
+                error = "expected an array length";
+                return false;
+            }
+            const int length = static_cast<int>(cur().number);
+            next();
+            if (!expect(TRBrack, "']'")) return false;
+            if (!add_dim(type, length)) return false;
+        }
+        return true;
+    }
+    bool parse_init(Node* out);
+    bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
+
     bool parse_param_list(Declarator* out) {
         if (is(TVoid) && at + 1 < tokens.size() && tokens[at + 1].kind == TRParen) {
             next();
@@ -1230,15 +1299,7 @@ struct Parser {
                 pname = cur().text;
                 next();
             }
-            if (accept(TLBrack)) {
-                if (!is(TNumber)) {
-                    error = "expected an array length";
-                    return false;
-                }
-                pt.array_len = static_cast<int>(cur().number);
-                next();
-                if (!expect(TRBrack, "']'")) return false;
-            }
+            if (!parse_brackets(&pt)) return false;
             out->params.push_back(pt);
             out->param_names.push_back(pname);
         } while (accept(TComma));
@@ -1257,15 +1318,7 @@ struct Parser {
             }
             out->name = cur().text;
             next();
-            if (accept(TLBrack)) {
-                if (!is(TNumber)) {
-                    error = "expected an array length";
-                    return false;
-                }
-                out->type.array_len = static_cast<int>(cur().number);
-                next();
-                if (!expect(TRBrack, "']'")) return false;
-            }
+            if (!parse_brackets(&out->type)) return false;
             if (!expect(TRParen, "')'")) return false;
             if (!expect(TLParen, "'('")) return false;
             if (!parse_param_list(out)) return false;
@@ -1288,15 +1341,7 @@ struct Parser {
         }
         out->name = cur().text;
         next();
-        if (accept(TLBrack)) {
-            if (!is(TNumber)) {
-                error = "expected an array length";
-                return false;
-            }
-            out->type.array_len = static_cast<int>(cur().number);
-            next();
-            if (!expect(TRBrack, "']'")) return false;
-        }
+        if (!parse_brackets(&out->type)) return false;
         if (!is(TLParen)) return true;
         next();
         out->is_function = true;
@@ -1350,15 +1395,7 @@ struct Parser {
             }
             field.name = cur().text;
             next();
-            if (accept(TLBrack)) {
-                if (!is(TNumber)) {
-                    error = "expected an array length";
-                    return false;
-                }
-                field.type.array_len = static_cast<int>(cur().number);
-                next();
-                if (!expect(TRBrack, "']'")) return false;
-            }
+            if (!parse_brackets(&field.type)) return false;
             if (accept(TColon)) {
                 if (!is(TNumber)) {
                     error = "expected a bitfield width";
@@ -1463,13 +1500,10 @@ struct Parser {
                 global.type = decl.type;
                 global.is_static = is_static;
                 if (accept(TAssign)) {
-                    if (!is(TNumber)) {
-                        error = "global initializer must be a number";
-                        return false;
-                    }
+                    Node init;
+                    if (!parse_init(&init)) return false;
                     global.bss = false;
-                    global.init = static_cast<uint32_t>(cur().number);
-                    next();
+                    if (!flatten_init(decl.type, init, &global.init_bytes, 0)) return false;
                 }
                 if (!expect(TSemi, "';'")) return false;
                 globals.push_back(global);
@@ -1522,6 +1556,61 @@ struct Parser {
         return error.empty();
     }
 };
+
+bool Parser::parse_init(Node* out) {
+    if (is(TLBrace)) {
+        next();
+        out->kind = Node::Block;
+        out->text = "init";
+        while (!is(TRBrace) && !is(TEnd)) {
+            Node item;
+            if (!parse_init(&item)) return false;
+            out->kids.push_back(std::move(item));
+            if (!accept(TComma)) break;
+        }
+        return expect(TRBrace, "'}'");
+    }
+    return parse_expr(1, out);
+}
+
+bool Parser::flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at) {
+    auto ensure = [&](int n) {
+        if (static_cast<int>(bytes->size()) < n) bytes->resize(static_cast<size_t>(n), 0);
+    };
+    if (node.kind == Node::Block && node.text == "init") {
+        if (type.array_len >= 0) {
+            const Type elem = peel_array(type);
+            const int step = std::max(1, size_of(elem));
+            for (size_t i = 0; i < node.kids.size(); ++i) {
+                if (!flatten_init(elem, node.kids[i], bytes, at + static_cast<int>(i) * step)) return false;
+            }
+            ensure(at + type.array_len * step);
+            return true;
+        }
+        if (type.base == 3 && type.pointers == 0 && type.struct_id >= 0 &&
+            type.struct_id < static_cast<int>(structs.size())) {
+            const StructDef& def = structs[static_cast<size_t>(type.struct_id)];
+            for (size_t i = 0; i < node.kids.size() && i < def.fields.size(); ++i) {
+                const Field& field = def.fields[i];
+                if (!flatten_init(field.type, node.kids[i], bytes, at + field.offset)) return false;
+            }
+            ensure(at + def.size);
+            return true;
+        }
+        error = "initializer does not match the type";
+        return false;
+    }
+    if (node.kind != Node::IntLit) {
+        error = "global initializer must be a constant";
+        return false;
+    }
+    const int width = std::max(1, size_of(type));
+    ensure(at + width);
+    const uint64_t value = node.number;
+    for (int i = 0; i < width && i < 8; ++i)
+        (*bytes)[static_cast<size_t>(at + i)] = static_cast<uint8_t>(value >> (8 * i));
+    return true;
+}
 
 bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
     if (!expect(TLBrace, "'{'")) return false;
@@ -1659,12 +1748,16 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             arm.kind = Node::Case;
             if (is(TCase)) {
                 next();
-                if (!is(TNumber)) {
+                if (is(TNumber)) {
+                    arm.number = cur().number;
+                    next();
+                } else if (is(TIdent) && enum_values.find(cur().text) != enum_values.end()) {
+                    arm.number = enum_values[cur().text];
+                    next();
+                } else {
                     error = "expected a case value";
                     return false;
                 }
-                arm.number = cur().number;
-                next();
                 if (!expect(TColon, "':'")) return false;
             } else if (is(TDefault)) {
                 next();
@@ -1737,7 +1830,7 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         Node init;
         bool has_init = false;
         if (accept(TAssign)) {
-            if (!parse_expr(1, &init)) return false;
+            if (!parse_init(&init)) return false;
             has_init = true;
         }
         if (is_static) {
@@ -1746,9 +1839,9 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             global.type = decl.type;
             global.is_static = true;
             global.bss = true;
-            if (has_init && init.kind == Node::IntLit) {
+            if (has_init) {
                 global.bss = false;
-                global.init = static_cast<uint32_t>(init.number);
+                if (!flatten_init(decl.type, init, &global.init_bytes, 0)) return false;
                 has_init = false;
             }
             local.symbol = global.name;
@@ -1765,7 +1858,10 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             name.text = decl.name;
             assign.kids.push_back(std::move(name));
             assign.kids.push_back(std::move(init));
-            out->kids.push_back(std::move(assign));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            out->kids.push_back(std::move(stmt));
         }
         return expect(TSemi, "';'");
     }
@@ -1787,15 +1883,7 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
-            if (accept(TLBrack)) {
-                if (!is(TNumber)) {
-                    error = "expected an array length";
-                    return false;
-                }
-                ty.array_len = static_cast<int>(cur().number);
-                next();
-                if (!expect(TRBrack, "']'")) return false;
-            }
+            if (!parse_brackets(&ty)) return false;
             bytes = size_of(ty);
         } else {
             Node inner;
@@ -2159,6 +2247,7 @@ struct Gen {
     }
 
     bool gen_expr(const Node& node);
+    bool store_init(const Type& type, int offset, const Node& node);
     bool gen_stmt(const Node& node);
     bool gen_addr(const Node& node);
     int size_of(const Type& type) const;
@@ -2207,11 +2296,7 @@ struct Gen {
 };
 
 int Gen::size_of(const Type& type) const {
-    if (type.array_len >= 0) {
-        Type elem = type;
-        elem.array_len = -1;
-        return type.array_len * size_of(elem);
-    }
+    if (type.array_len >= 0) return type.array_len * size_of(peel_array(type));
     if (type.pointers > 0) return 8;
     if (type.base == 2) return 1;
     if (type.base == 4) return 2;
@@ -2237,15 +2322,7 @@ Global* Gen::find_global(const std::string& name) {
     return nullptr;
 }
 
-Type Gen::element_type(const Type& type) const {
-    Type elem = type;
-    if (elem.array_len >= 0) {
-        elem.array_len = -1;
-        return elem;
-    }
-    if (elem.pointers > 0) --elem.pointers;
-    return elem;
-}
+Type Gen::element_type(const Type& type) const { return peel_array(type); }
 
 bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Name) {
@@ -2424,6 +2501,55 @@ void Gen::promote(Type* type) const {
         type->base = 1;
         type->is_unsigned = false;
     }
+}
+
+bool Gen::store_init(const Type& type, int offset, const Node& node) {
+    if (node.kind == Node::Block && node.text == "init") {
+        if (type.array_len >= 0) {
+            const Type elem = peel_array(type);
+            const int step = std::max(1, size_of(elem));
+            for (size_t i = 0; i < node.kids.size(); ++i) {
+                if (!store_init(elem, offset + static_cast<int>(i) * step, node.kids[i])) return false;
+            }
+            return true;
+        }
+        if (type.base == 3 && type.pointers == 0 && structs != nullptr && type.struct_id >= 0 &&
+            type.struct_id < static_cast<int>(structs->size())) {
+            const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
+            for (size_t i = 0; i < node.kids.size() && i < def.fields.size(); ++i) {
+                const Field& field = def.fields[i];
+                if (!store_init(field.type, offset + field.offset, node.kids[i])) return false;
+            }
+            return true;
+        }
+        error = "initializer does not match the type";
+        return false;
+    }
+    if (node.kind != Node::IntLit) {
+        error = "initializer must be a constant";
+        return false;
+    }
+    const int width = type.pointers > 0 ? 8 : std::max(1, size_of(type));
+    const uint32_t value = static_cast<uint32_t>(node.number);
+    if (width == 1) {
+        b(0xC6);
+        b(0x85);
+        disp(offset);
+        b(static_cast<uint8_t>(value));
+    } else if (width == 2) {
+        b(0x66);
+        b(0xC7);
+        b(0x85);
+        disp(offset);
+        b(static_cast<uint8_t>(value));
+        b(static_cast<uint8_t>(value >> 8));
+    } else {
+        b(0xC7);
+        b(0x85);
+        disp(offset);
+        u32(value);
+    }
+    return true;
 }
 
 bool Gen::gen_expr(const Node& node) {
@@ -2726,6 +2852,12 @@ bool Gen::gen_expr(const Node& node) {
         return false;
     }
     if (node.kind == Node::Assign) {
+        if (node.kids.size() == 2 && node.kids[1].kind == Node::Block && node.kids[1].text == "init" &&
+            node.kids[0].kind == Node::Name) {
+            if (Local* local = find_local(node.kids[0].text)) return store_init(local->type, local->offset, node.kids[1]);
+            error = "initializer is not a local";
+            return false;
+        }
         if (node.kids[0].kind == Node::Name && (node.op == TAssign || node.op == TEnd)) {
             if (Local* local = find_local(node.kids[0].text)) {
                 if (local->reg != 0) {
@@ -3892,12 +4024,18 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         } else {
             const uint32_t at = align_to(static_cast<uint32_t>(data_bytes.size()), static_cast<uint32_t>(align));
             data_bytes.resize(at, 0);
-            const uint32_t value = global.init;
-            data_bytes.push_back(static_cast<uint8_t>(value));
-            data_bytes.push_back(static_cast<uint8_t>(value >> 8));
-            data_bytes.push_back(static_cast<uint8_t>(value >> 16));
-            data_bytes.push_back(static_cast<uint8_t>(value >> 24));
-            if (size > 4) data_bytes.resize(at + static_cast<uint32_t>(size), 0);
+            if (!global.init_bytes.empty()) {
+                data_bytes.insert(data_bytes.end(), global.init_bytes.begin(), global.init_bytes.end());
+                if (static_cast<int>(global.init_bytes.size()) < size)
+                    data_bytes.resize(at + static_cast<uint32_t>(size), 0);
+            } else {
+                const uint32_t value = global.init;
+                data_bytes.push_back(static_cast<uint8_t>(value));
+                data_bytes.push_back(static_cast<uint8_t>(value >> 8));
+                data_bytes.push_back(static_cast<uint8_t>(value >> 16));
+                data_bytes.push_back(static_cast<uint8_t>(value >> 24));
+                if (size > 4) data_bytes.resize(at + static_cast<uint32_t>(size), 0);
+            }
             add_sym(global.name, at, 0, global.is_static ? kClassStatic : kClassExternal, 0);
         }
     }

@@ -105,10 +105,45 @@ static void testMingwCompdb() {
     if (system("which x86_64-w64-mingw32-g++-win32 >/dev/null 2>&1") == 0) { int rc; o = sh("", &rc); check(rc == 0 && fs::exists(gRoot / "build/a.exe"), "real mingw cross build produced a.exe", o); }
 }
 
+static void testStatShortcut() {
+    printf("test: no-op does not hash old inputs (stat shortcut); same-mtime edit with new size still caught\n"); fresh("stat"); basicProject();
+    auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
+    for (auto f : {"inc/util.h", "src/util.cpp", "src/main.cpp"}) fs::last_write_time(gRoot / f, old);
+    sh(); string o = sh("-v"); check(o.find("trusted size+mtime for") != string::npos, "stats line present", o);
+    int hashed = atoi(o.c_str() + o.find("hashed ") + 7); check(hashed <= 4, "no-op hashed at most the build outputs, sources trusted by stat", o);
+    string o2 = sh("--no-stat -v"); check(atoi(o2.c_str() + o2.find("hashed ") + 7) > hashed, "--no-stat hashes more", o2);
+    write("inc/util.h", "#pragma once\nint util();\nint other();\n"); fs::last_write_time(gRoot / "inc/util.h", old);
+    o = sh("--explain"); check(ran(o) >= 2 && o.find("util.h changed") != string::npos, "edit with restored mtime but new size is caught", o);
+}
+static void testSpacesBuildDirRsp() {
+    printf("test: paths with spaces, --build-dir, response file for long link lines\n"); fresh("sp");
+    write("my src/a b.cpp", "int ab(){return 2;}\n"); write("my src/main.cpp", "int ab(); int main(){return ab()==2?0:1;}\n");
+    write("build.okay", "toolchain\n rsp_threshold = 40\nend\ntarget lib1 lib\n sources = \"my src/a b.cpp\"\nend\ntarget app exe\n sources = \"my src/main.cpp\"\n deps = lib1\nend\n");
+    string bd = "--build-dir '" + (gRoot / "out dir").string() + "'";
+    int rc; string o = sh(bd, &rc); check(rc == 0 && ran(o) == 4, "builds with spaces", o);
+    check(fs::exists(gRoot / "out dir/build/app") && !fs::exists(gRoot / ".okaybuild"), "outputs and state live in the build dir");
+    check(fs::exists(gRoot / "out dir/.okaybuild/state") && fs::exists(gRoot / "out dir/.okaybuild/rsp"), "state and response files in build dir");
+    check(system(("'" + (gRoot / "out dir/build/app").string() + "'").c_str()) == 0, "program linked through response file runs");
+    o = sh(bd); check(ran(o) == 0, "no-op in build dir", o);
+}
+static void testRawActions() {
+    printf("test: raw action blocks (importer form): edges, depfile, dir, selection\n"); fresh("raw");
+    write("src/x.cpp", "#include \"x.h\"\nint x(){return X;}\n"); write("src/x.h", "#define X 3\n"); write("src/m.cpp", "int x(); int main(){return x()==3?0:1;}\n");
+    string rd = (gRoot / "run").string(), sx = (gRoot / "src/x.cpp").string(), sm = (gRoot / "src/m.cpp").string(); fs::create_directories(gRoot / "run");
+    write("build.okay", "action\n dir = \"" + rd + "\"\n cmd = g++ -MD -MF x.o.d -c " + sx + " -o x.o\n output = x.o\n depfile = x.o.d\n inputs = " + sx + "\nend\n"
+          "action\n dir = \"" + rd + "\"\n cmd = g++ -c " + sm + " -o m.o\n output = m.o\n inputs = " + sm + "\nend\n"
+          "action\n dir = \"" + rd + "\"\n cmd = g++ m.o x.o -o prog\n output = prog\n inputs = m.o x.o\nend\n");
+    int rc; string o = sh("-j2 prog", &rc); check(rc == 0 && ran(o) == 3, "3 raw steps with inferred link edge", o);
+    check(system(("'" + rd + "/prog'").c_str()) == 0, "prog runs");
+    check(ran(sh()) == 0, "no-op");
+    write("src/x.h", "#define X 4\n"); o = sh("--explain"); check(ran(o) == 2 && o.find("x.h changed") != string::npos, "depfile header change rebuilds x.o and relinks", o);
+    o = sh("x.o --dry-run"); check(ran(o) == 0, "selecting one output works", o);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
-    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb();
+    testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testStatShortcut(); testSpacesBuildDirRsp(); testRawActions();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

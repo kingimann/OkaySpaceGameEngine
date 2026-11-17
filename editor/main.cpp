@@ -30052,7 +30052,12 @@ void DrawInspector(EditorState& ed) {
         EmptyState("\xE2\x97\x88", "Locked object is gone",
                    "The object this Inspector is locked to no longer exists (deleted or undone). "
                    "Undo can bring it back, or unlock to follow the selection.");
-        if (ImGui::Button("Unlock Inspector")) s_lock.Unlock();
+        {   // centred under the message, like the text above it
+            const float bw = ImGui::CalcTextSize("Unlock Inspector").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+            const float x0 = ImGui::GetCursorPosX();
+            ImGui::SetCursorPosX(x0 + std::max(0.0f, (ImGui::GetContentRegionAvail().x - bw) * 0.5f));
+            if (ImGui::Button("Unlock Inspector")) s_lock.Unlock();
+        }
         ImGui::PopStyleVar(3); g_inspSectionGap = 0.0f;
         ImGui::End();
         return;

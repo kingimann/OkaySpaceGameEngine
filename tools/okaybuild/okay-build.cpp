@@ -81,7 +81,17 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
+    bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
 };
+static bool applyPreset(Toolchain& c, const string& name) {
+    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
+    if (name == "gcc") {}
+    else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
+    else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
+    else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
+    else return false;
+    d.name = name; c = d; return true;
+}
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
     string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
@@ -172,14 +182,8 @@ static Manifest parseManifest(const string& file) {
             if (t[0] == "toolchain") {
                 mode = TC; Toolchain& c = m.tc;
                 if (t.size() > 1) {
-                    c.name = t[1];
-                    if (t[1] == "gcc") {}
-                    else if (t[1] == "clang") { c.cc = "clang"; c.cxx = "clang++"; }
-                    else if (t[1] == "mingw") { c.cc = "x86_64-w64-mingw32-gcc-win32"; c.cxx = "x86_64-w64-mingw32-g++-win32";
-                                                c.ar = "x86_64-w64-mingw32-ar"; c.exe = ".exe"; }
-                    else if (t[1] == "msvc") { c.cc = "cl.exe"; c.cxx = "cl.exe"; c.ld = "link.exe"; c.ar = "lib.exe";
-                                               c.obj = ".obj"; c.exe = ".exe"; c.libp = ""; c.libs = ".lib"; c.msvc = true; c.rspUtf16 = true; }
-                    else throw err("unknown toolchain preset '" + t[1] + "' (gcc, clang, mingw, msvc)");
+                    if (t[1] == "auto") { c.autoPick = true; c.name = "auto"; }
+                    else if (!applyPreset(c, t[1])) throw err("unknown toolchain preset '" + t[1] + "' (auto, gcc, clang, mingw, msvc)");
                 }
                 continue;
             }
@@ -242,7 +246,7 @@ static Manifest parseManifest(const string& file) {
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
         auto add = [&](vector<string>& d) { d.insert(d.end(), v.begin(), v.end()); };
         if (mode == TC) {
-            Toolchain& c = m.tc; auto one = [&](string& d) { if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
+            Toolchain& c = m.tc; auto one = [&](string& d) { c.setKeys.push_back(k); if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
             if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
@@ -2495,19 +2499,20 @@ static vector<string> vsRootsFromRegistry() {
 #else
 static vector<string> vsRootsFromRegistry() { return {}; }
 #endif
-static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
+struct Detected { string name, cc, cxx, ld, ar, probe, host; bool found = false; };
+// Looks for every preset. Directories are searched in the order given, then PATH.
+static vector<Detected> detectToolchains(const vector<string>& extra, const vector<string>& roots) {
     vector<string> dirs = extra;
     const char* env = getenv("PATH");
     if (env) { auto p = splitEnv(env); dirs.insert(dirs.end(), p.begin(), p.end()); }
-    string gcc = findNamed(dirs, {"gcc", "gcc.exe"}), gxx = findNamed(dirs, {"g++", "g++.exe"});
-    if (!gcc.empty() && !gxx.empty()) printf("gcc\tfound\tcc=%s\tcxx=%s\n", gcc.c_str(), gxx.c_str());
-    else printf("gcc\tmissing\n");
-    string clang = findNamed(dirs, {"clang", "clang.exe"}), clangxx = findNamed(dirs, {"clang++", "clang++.exe"});
-    if (!clang.empty() && !clangxx.empty()) printf("clang\tfound\tcc=%s\tcxx=%s\n", clang.c_str(), clangxx.c_str());
-    else printf("clang\tmissing\n");
-    string mingw = findNamed(dirs, {"x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++-win32.exe", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-g++.exe"});
-    if (!mingw.empty()) printf("mingw\tfound\tcxx=%s\n", mingw.c_str());
-    else printf("mingw\tmissing\n");
+    vector<Detected> out;
+    { Detected d; d.name = "gcc"; d.cc = findNamed(dirs, {"gcc", "gcc.exe"}); d.cxx = findNamed(dirs, {"g++", "g++.exe"});
+      d.ar = findNamed(dirs, {"ar", "ar.exe"}); d.found = !d.cc.empty() && !d.cxx.empty(); out.push_back(d); }
+    { Detected d; d.name = "clang"; d.cc = findNamed(dirs, {"clang", "clang.exe"}); d.cxx = findNamed(dirs, {"clang++", "clang++.exe"});
+      d.ar = findNamed(dirs, {"ar", "ar.exe"}); d.found = !d.cc.empty() && !d.cxx.empty(); out.push_back(d); }
+    { Detected d; d.name = "mingw"; d.cxx = findNamed(dirs, {"x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++-win32.exe", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-g++.exe"});
+      d.cc = findNamed(dirs, {"x86_64-w64-mingw32-gcc-win32", "x86_64-w64-mingw32-gcc-win32.exe", "x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc.exe"});
+      d.ar = findNamed(dirs, {"x86_64-w64-mingw32-ar", "x86_64-w64-mingw32-ar.exe"}); d.found = !d.cxx.empty(); out.push_back(d); }
 #ifdef _WIN32
     string cl = findNamed(dirs, {"cl.exe", "cl"}), link = findNamed(dirs, {"link.exe", "link"});
 #else
@@ -2518,17 +2523,56 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
 #ifdef _WIN32
     if (const char* e = getenv("VSINSTALLDIR")) all.push_back(e);
     if (const char* e = getenv("VCToolsInstallDir")) all.push_back(e);
-    const char* host = "windows";
-    string probe = roots.empty() ? "registry+path" : "root+registry+path";
+    string host = "windows", probe = roots.empty() ? "registry+path" : "root+registry+path";
 #else
-    const char* host = "posix";
-    string probe = roots.empty() ? "path" : "root+path";
+    string host = "posix", probe = roots.empty() ? "path" : "root+path";
 #endif
     for (auto& r : vsRootsFromRegistry()) all.push_back(r);
     for (auto& r : all) findMsvcUnder(r, cl, link);
-    if (!cl.empty() && !link.empty()) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s\n", cl.c_str(), link.c_str(), probe.c_str(), host);
-    else printf("msvc\tmissing\tprobe=%s\thost=%s\n", probe.c_str(), host);
+    Detected d; d.name = "msvc"; d.cc = cl; d.cxx = cl; d.ld = link; d.probe = probe; d.host = host; d.found = !cl.empty() && !link.empty();
+    if (d.found) { string lib = findNamed({fs::path(link).parent_path().generic_string()}, {"lib.exe"}); d.ar = lib; }
+    out.push_back(d);
+    return out;
+}
+static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
+    for (auto& d : detectToolchains(extra, roots)) {
+        if (d.name == "msvc") {
+            if (d.found) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s\n", d.cc.c_str(), d.ld.c_str(), d.probe.c_str(), d.host.c_str());
+            else printf("msvc\tmissing\tprobe=%s\thost=%s\n", d.probe.c_str(), d.host.c_str());
+        } else if (!d.found) printf("%s\tmissing\n", d.name.c_str());
+        else if (d.name == "mingw") printf("mingw\tfound\tcxx=%s\n", d.cxx.c_str());
+        else printf("%s\tfound\tcc=%s\tcxx=%s\n", d.name.c_str(), d.cc.c_str(), d.cxx.c_str());
+    }
     return 0;
+}
+// 'toolchain auto' in the manifest, or --toolchain NAME on the command line: detect the compilers and fill the toolchain from the
+// first one found (or the named one). Tool fields the manifest set by hand are kept.
+static void resolveToolchain(Manifest& m, const string& cliName, const vector<string>& extra, const vector<string>& roots) {
+    string want = !cliName.empty() ? cliName : (m.tc.autoPick ? "auto" : "");
+    if (want.empty()) return;
+    auto found = detectToolchains(extra, roots);
+    const Detected* pick = nullptr;
+    if (want == "auto") {
+#ifdef _WIN32
+        const char* order[] = {"msvc", "clang", "gcc", "mingw"};
+#else
+        const char* order[] = {"gcc", "clang", "mingw", "msvc"};
+#endif
+        for (const char* n : order) { for (auto& d : found) if (d.name == n && d.found) { pick = &d; break; } if (pick) break; }
+        if (!pick) throw Fail("toolchain auto: no compiler found (looked for gcc, clang, mingw and msvc; try --search DIR or --msvc-root DIR)");
+    } else {
+        for (auto& d : found) if (d.name == want) pick = &d;
+        if (!pick) throw Fail("unknown toolchain '" + want + "' (auto, gcc, clang, mingw, msvc)");
+        if (!pick->found) throw Fail("toolchain " + want + " was not found on this machine (see: okay-build toolchains)");
+    }
+    Toolchain& c = m.tc; bool autoFlag = c.autoPick;
+    Toolchain hand = c;
+    applyPreset(c, pick->name); c.autoPick = autoFlag;
+    auto kept = [&](const char* k) { return std::find(hand.setKeys.begin(), hand.setKeys.end(), k) != hand.setKeys.end(); };
+    if (kept("cc")) c.cc = hand.cc; else if (!pick->cc.empty()) c.cc = pick->cc;
+    if (kept("cxx")) c.cxx = hand.cxx; else if (!pick->cxx.empty()) c.cxx = pick->cxx;
+    if (kept("ld")) c.ld = hand.ld; else if (!pick->ld.empty()) c.ld = pick->ld;
+    if (kept("ar")) c.ar = hand.ar; else if (!pick->ar.empty()) c.ar = pick->ar;
 }
 
 static uint64_t hashPackageTree(const string& root) {
@@ -2666,7 +2710,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, onInt);
 #endif
     adoptJobserver();
-    Opts o; string cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
+    Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
         for (int i = 1; i < argc; ++i) {
@@ -2705,12 +2749,13 @@ int main(int argc, char** argv) {
                 if (eq == string::npos || eq == 0) throw Fail("--opt wants name=value");
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
+            else if (a == "--toolchain" && i + 1 < argc) toolchainName = argv[++i];
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -2734,6 +2779,7 @@ int main(int argc, char** argv) {
         fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
+        if (cmd == "build" || cmd == "test" || cmd == "package" || cmd == "graph" || cmd == "compdb") resolveToolchain(m, toolchainName, searchDirs, msvcRoots);
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);

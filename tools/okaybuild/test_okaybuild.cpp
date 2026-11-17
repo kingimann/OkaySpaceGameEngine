@@ -1059,11 +1059,44 @@ static void testGraphTargets() {
     check(rc == 2 && o.find("unknown pool") != string::npos, "unknown pool is an error", o);
 }
 
+static void testToolchainAuto() {
+    printf("test: toolchain auto and --toolchain pick a detected compiler\n");
+    fresh("tcauto");
+    write("main.cpp", "int main(){return 0;}\n");
+    fs::path bin = gRoot / "probe"; fs::create_directories(bin);
+    string gxx = capture("command -v g++", nullptr); while (!gxx.empty() && (gxx.back() == '\n')) gxx.pop_back();
+    string gcc = capture("command -v gcc", nullptr); while (!gcc.empty() && (gcc.back() == '\n')) gcc.pop_back();
+    fs::create_symlink(gxx, bin / "g++"); fs::create_symlink(gcc, bin / "gcc");
+    write("build.okay", "toolchain auto\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    int rc; string o = sh("-j1 --search '" + bin.string() + "'", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/app"), "toolchain auto builds with a detected gcc", o);
+    o = sh("compdb --search '" + bin.string() + "'", &rc);
+    check(readFile(gRoot / "compile_commands.json").find((bin / "g++").string()) != string::npos, "the build uses the detected compiler path", readFile(gRoot / "compile_commands.json"));
+    // a hand-set cc is kept
+    write("build.okay", "toolchain auto\n cxx = /opt/mine/g++\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    o = sh("compdb --search '" + bin.string() + "'", &rc);
+    check(readFile(gRoot / "compile_commands.json").find("/opt/mine/g++") != string::npos, "a cxx set by hand wins over detection");
+    // --toolchain overrides the manifest, msvc comes from --msvc-root
+    write("build.okay", "target app exe\n sources = main.cpp\nend\n");
+    fs::create_directories(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64");
+    for (const char* n : {"cl.exe", "link.exe", "lib.exe"}) { write(string("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/") + n, ""); fs::permissions(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64" / n, fs::perms::owner_all); }
+    o = sh("compdb --toolchain msvc --msvc-root '" + (gRoot / "fakevs").string() + "'", &rc);
+    string db = readFile(gRoot / "compile_commands.json");
+    check(rc == 0 && db.find("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe") != string::npos && db.find(".obj") != string::npos, "--toolchain msvc uses the detected cl.exe and .obj", o + db);
+    o = sh("compdb --toolchain msvc", &rc);
+    check(rc == 2 && o.find("msvc") != string::npos && o.find("not found") != string::npos, "a toolchain that is not installed is an error", o);
+    o = sh("compdb --toolchain nosuch", &rc);
+    check(rc == 2 && o.find("unknown toolchain") != string::npos, "an unknown toolchain name is an error", o);
+    write("build.okay", "toolchain auto\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    o = capture("cd '" + gRoot.string() + "' && PATH=/nonexistent " + gTool + " compdb 2>&1", &rc);
+    check(rc == 2 && o.find("no compiler found") != string::npos, "toolchain auto with nothing installed says so", o);
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

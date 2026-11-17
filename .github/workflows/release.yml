@@ -57,6 +57,9 @@ jobs:
       CCACHE_MAXSIZE: 2G
       # "true" when the repo has the secret that the Supabase publish step needs.
       SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      # "true" when the repo has the repository secret OKAY_UPDATE_SIGNING_SEED (the PRIVATE update-signing key; the owner adds it in
+      # Settings > Secrets and variables > Actions > Secrets; docs/security.md "Updater signing"). Without it the steps that use it are skipped.
+      UPDATE_SIGNING: ${{ secrets.OKAY_UPDATE_SIGNING_SEED != '' }}
       # The launcher's trusted anti-cheat keys: public keys, so a repository
       # variable (Settings > Secrets and variables > Actions > Variables).
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
@@ -324,9 +327,19 @@ jobs:
 
       # Also publish to the Supabase "releases" bucket (launchers check it first),
       # when the repo has a SUPABASE_SERVICE_KEY secret. Without it this is skipped.
+      # The seed must make a public key the programs just built trust (OKAY_UPDATE_TRUSTED_KEYS), or every launcher would refuse this release.
+      # Skipped when the secret is absent. (set -x is never on: the script refuses it while the seed is in scope.)
+      - name: Check the update signing key
+        env:
+          OKAY_UPDATE_SIGNING_SEED: ${{ secrets.OKAY_UPDATE_SIGNING_SEED }}
+        if: env.UPDATE_SIGNING == 'true' && env.SUPABASE_PUBLISH == 'true'
+        run: scripts/sign-release.sh check-key
+
       - name: Publish to Supabase
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # publish-supabase.sh signs versions.json with this (scripts/sign_index.py) when it is set, and verifies the published pair.
+          OKAY_UPDATE_SIGNING_SEED: ${{ secrets.OKAY_UPDATE_SIGNING_SEED }}
           SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
           CHANNEL: ${{ inputs.channel || 'latest' }}
         if: env.SUPABASE_PUBLISH == 'true'

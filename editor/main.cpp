@@ -1958,6 +1958,10 @@ bool FetchVerified(const std::string& version, const std::string& asset, const f
     okayversions::Sources src;
     src.bucketBase = SupabaseReleasesBase();
     src.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
+    {   // an old signed list replayed is refused (shared/UpdateGuard.hpp); the floor sits beside this program
+        const fs::path self = okay::restart::CurrentExecutable();
+        if (!self.empty()) src.floorFile = self.parent_path() / okayupdate::kFloorName;
+    }
     std::error_code ec;
     static unsigned n = 0;
     const okayversions::Index index = okayversions::LoadIndex(src, [&](const std::string& url, std::string& out) {
@@ -19754,6 +19758,12 @@ void DrawAboutPopup() {
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
+        {   // the update signature check: ON, or OFF with the reason (docs/security.md "Updater signing")
+            static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+            ImGui::TextColored(sigStatus.state == okayupdate::SigState::On ? ImVec4(0.45f, 0.80f, 0.55f, 1.0f) : ImVec4(0.93f, 0.74f, 0.35f, 1.0f), "%s", sigStatus.line.c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
@@ -49690,6 +49700,7 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();

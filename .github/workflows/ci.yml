@@ -815,6 +815,9 @@ jobs:
       - name: Update signing tool and the publish script's guards
         run: bash tests/scripts/test_sign_index.sh
 
+      - name: Release signing wrapper (sign-release.sh)
+        run: bash tests/scripts/test_sign_release.sh
+
       - name: Publish script checks
         run: bash tests/scripts/test_publish_supabase_checks.sh
 

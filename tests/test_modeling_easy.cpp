@@ -109,7 +109,7 @@ int main() {
     }
     std::printf("clicks, all 8 jobs: before %d, after %d\n", b, a);
 
-    EasyPrefs p; CHECK(!p.showAdvanced && p.mirrorOnNew);   // beginner mode by default
+    EasyPrefs p; CHECK(!p.showAdvanced);   // beginner mode by default
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("modeling_easy: all passed\n");
     return 0;

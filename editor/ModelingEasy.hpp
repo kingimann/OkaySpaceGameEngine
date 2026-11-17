@@ -221,13 +221,13 @@ inline const std::vector<Job>& Jobs() {
          {"Shape tab: House starter"}},
         {"Round a corner",
          {"Edit Mesh page", "Edit button", "Vertex mode", "Click corner", "Bevel Verts amount", "Bevel Verts button"},
-         {"Click corner", "round.corners"}},
+         {"Pick corners", "Click corner", "round.corners"}},
         {"Add a window hole",
          {"Edit Mesh page", "Edit button", "Face mode", "Click face", "Inset", "Delete faces", "Leave edit mode"},
-         {"Click face", "make.hole"}},
+         {"Pick faces", "Click face", "make.hole"}},
         {"Make a symmetric face",
          {"Edit page", "Modifiers page", "Add Mirror", "Pick axis"},
-         {"Mirror is already on for a new model"}},
+         {"mirror"}},
         {"Stretch a shape",
          {"Edit page", "Stretch axis", "Stretch amount"},
          {"squash"}},
@@ -239,13 +239,13 @@ inline const std::vector<Job>& Jobs() {
          {"add.ball", "smooth"}},
         {"Paint two colours",
          {"Shape page", "Open colour picker", "Pick colour", "Edit Mesh page", "Edit button", "Face mode", "Click faces", "Material Slots page", "Pick colour"},
-         {"paint.all", "Click faces", "paint.faces"}},
+         {"Pick faces", "Click faces", "paint.faces", "Pick colour"}},
     };
     return j;
 }
 
 // ---- Settings ---------------------------------------------------------------------------------------------------------
 /// Beginner mode is the default; "Show advanced tools" is remembered (ViewPrefs key "modelingadvanced").
-struct EasyPrefs { bool showAdvanced = false; bool mirrorOnNew = true; };
+struct EasyPrefs { bool showAdvanced = false; };
 
 } // namespace oked::easymodel

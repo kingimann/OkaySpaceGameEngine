@@ -3973,3 +3973,9 @@ add_executable(test_modeling_starters test_modeling_starters.cpp)
 target_include_directories(test_modeling_starters PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_modeling_starters PRIVATE okay::engine)
 add_test(NAME modeling_starters COMMAND test_modeling_starters)
+
+# The beginner tools mapped onto the engine's own mesh operations (editor/ModelingEasyOps.hpp), run headless on real meshes.
+add_executable(test_modeling_easy_ops test_modeling_easy_ops.cpp)
+target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
+add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)

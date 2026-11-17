@@ -67,7 +67,9 @@ namespace {
 
 // Text placed the way the launcher's text is placed: its position cut to whole pixels (Dear ImGui truncates; OkayUI's own
 // text rounds to the nearest pixel).
-void Txt(const UI::DrawList& dl, UI::Vec2 p, UI::Color32 col, const char* s) { dl.AddText(V(Tr(p.x), Tr(p.y)), col, s); }
+// While set, the Versions page lays a card out without drawing it (the card is outside the visible band).
+bool g_layoutOnly = false;
+void Txt(const UI::DrawList& dl, UI::Vec2 p, UI::Color32 col, const char* s) { if (!g_layoutOnly) dl.AddText(V(Tr(p.x), Tr(p.y)), col, s); }
 void CenteredT(const UI::DrawList& dl, float x, float y, float width, const char* s, UI::Color32 col) {
     Txt(dl, V(x + std::max(0.0f, (width - UI::CalcTextSize(s).x) * 0.5f), y), col, s);
 }
@@ -215,10 +217,12 @@ std::string FriendStatusLine(const FriendRow& f, int* colour) {
 
 std::vector<FriendSection> FriendSections(const FriendsModel& m, int view, const std::string& filter) {
     const std::string q = Lower(filter);
+    std::vector<std::string> lname(m.friends.size());   // each name lowered once (the sorts compare them many times)
+    for (std::size_t i = 0; i < m.friends.size(); ++i) lname[i] = Lower(m.friends[i].name);
     std::vector<int> reqs, favs, online, offline, pending;
     for (int i = 0; i < (int)m.friends.size(); ++i) {
         const FriendRow& f = m.friends[(std::size_t)i];
-        if (!q.empty() && Lower(f.name + " @" + f.username).find(q) == std::string::npos) continue;
+        if (!q.empty() && (lname[(std::size_t)i] + " @" + Lower(f.username)).find(q) == std::string::npos) continue;
         if (f.kind == 1) reqs.push_back(i);
         else if (f.kind == 2) pending.push_back(i);
         else if (f.favorite) favs.push_back(i);
@@ -229,7 +233,7 @@ std::vector<FriendSection> FriendSections(const FriendsModel& m, int view, const
         const FriendRow& x = m.friends[(std::size_t)a];
         const FriendRow& y = m.friends[(std::size_t)b];
         if (x.online != y.online) return x.online > y.online;
-        return Lower(x.name) < Lower(y.name);
+        return lname[(std::size_t)a] < lname[(std::size_t)b];
     };
     std::sort(favs.begin(), favs.end(), byName);
     std::sort(online.begin(), online.end(), byName);
@@ -535,7 +539,14 @@ FriendsResult DrawFriends(const FriendsModel& m, FriendsState& st, float x, floa
                 SearchPill(dl, "##friendsearch", "Search friends", st.filter, (int)sizeof(st.filter), o.x, ly, lw - 1.0f, res.searchField);   // width -1: a pixel short of the edge
                 ly = NextY(ly, res.searchField.h);
                 contentEnd = ly - kSpY;
-                const std::vector<FriendSection> secs = FriendSections(m, st.view, st.filter);
+                // the sections are worked out again only when the model, the view or the search changed
+                static std::vector<FriendSection> secCache;
+                static unsigned secRev = 0; static int secView = -1; static std::string secFilter; static std::size_t secN = 0;
+                if (m.revision == 0 || m.revision != secRev || st.view != secView || secFilter != st.filter || secN != m.friends.size()) {
+                    secCache = FriendSections(m, st.view, st.filter);
+                    secRev = m.revision; secView = st.view; secFilter = st.filter; secN = m.friends.size();
+                }
+                const std::vector<FriendSection>& secs = secCache;
                 const float rowH = 62.0f, A = 40.0f, d = 34.0f;
                 for (const FriendSection& sec : secs) {
                     ly = SectionLabel(dl, o.x, ly, lw, sec.title, (int)sec.rows.size());
@@ -1106,12 +1117,17 @@ CommunityResult DrawCommunity(const CommunityModel& m, CommunityState& st, float
 
 namespace {
 
+void Fill(const UI::DrawList& dl, UI::Vec2 a, UI::Vec2 b, UI::Color32 c, float r = 0.0f) { if (!g_layoutOnly) dl.AddRectFilled(a, b, c, r); }
+bool Btn(const char* id, const char* label, float x, float y, float w, float h, bool enabled = true, bool primary = false) {
+    return !g_layoutOnly && FlatButton(id, label, x, y, w, h, enabled, primary);
+}
+
 // The Versions module's small rounded label: text at 86% size, padded 7 x 2.5; returns its width.
 float Pill(const UI::DrawList& dl, float x, float y, const char* text, UI::Color32 bg, UI::Color32 fg) {
     UI::PushTextScale(0.86f);   // an exact size (14.62 px), as the module draws its pills
     const UI::Vec2 ts = UI::CalcTextSize(text);
     const float w = ts.x + 14.0f, hgt = ts.y + 5.0f;
-    dl.AddRectFilled(V(x, y), V(x + w, y + hgt), bg, hgt * 0.5f);
+    Fill(dl, V(x, y), V(x + w, y + hgt), bg, hgt * 0.5f);
     Txt(dl, V(x + 7.0f, y + 2.5f), fg, text);
     UI::PopTextScale();
     return w;
@@ -1122,6 +1138,7 @@ UI::Color32 CAmber() { return Rgb(240, 200, 100); }
 
 // A combo box the launcher's way (frame colour, arrow button, 6 px corners); returns true when the choice changed.
 bool LauncherCombo(const char* id, const std::vector<std::string>& items, int* current, float x, float y, float w, UI::Rect& rect) {
+    if (g_layoutOnly) return false;
     std::vector<const char*> ptrs;
     for (const std::string& s : items) ptrs.push_back(s.c_str());
     UI::SetCursorScreenPos(V(x, y));
@@ -1136,13 +1153,14 @@ bool LauncherCombo(const char* id, const std::vector<std::string>& items, int* c
 
 // The Versions module's danger button: a translucent red, solid red under the mouse.
 bool DangerButton(const char* id, const char* label, float x, float y, float w, float h, const UI::Vec2 mouse) {
+    if (g_layoutOnly) return false;
     UI::SetCursorScreenPos(V(x, y));
     const bool clicked = UI::InvisibleButton(id, w, h);
     const bool hov = UI::IsItemHovered(), held = hov && UI::IsItemActive();
     (void)mouse;
     const unsigned char* acc = UI::Style().accent;
     const UI::DrawList& dl = UI::GetWindowDrawList();
-    dl.AddRectFilled(V(x, y), V(x + w, y + h), held ? Rgb(acc[0], acc[1], acc[2]) : hov ? Rgb(191, 66, 66) : Rgb(140, 51, 51, 140), 6.0f);
+    Fill(dl, V(x, y), V(x + w, y + h), held ? Rgb(acc[0], acc[1], acc[2]) : hov ? Rgb(191, 66, 66) : Rgb(140, 51, 51, 140), 6.0f);
     const UI::Vec2 ts = UI::CalcTextSize(label);
     Txt(dl, V(x + (w - ts.x) * 0.5f, y + (h - ts.y) * 0.5f), Col(UI::Style().text), label);
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
@@ -1176,7 +1194,9 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             float* hh = nullptr;
             for (auto& e : heights) if (e.first == title) hh = &e.second;
             if (!hh) { heights.push_back({title, 0.0f}); hh = &heights.back().second; }
-            if (*hh > 0.0f) dl.AddRectFilled(V(x, cy), V(x + w, cy + *hh), CRaised(), 10.0f);
+            // a card wholly outside the visible band (by last frame's height) is laid out but not drawn
+            g_layoutOnly = *hh > 0.0f && (cy + *hh < viewY0 || cy > viewY1);
+            if (*hh > 0.0f) Fill(dl, V(x, cy), V(x + w, cy + *hh), CRaised(), 10.0f);
             if (title) {
                 PushScale(0.80f);
                 const float lh = UI::GetTextLineHeight();
@@ -1187,6 +1207,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             yy = body(px, yy, iw);              // where the next item would go
             const float bottom = yy + 2.0f;   // CardEnd's 2 px spacer where the next item would go
             *hh = bottom + 14.0f - cy;
+            g_layoutOnly = false;
             cy = NextY(NextY(cy, *hh), 10.0f);
         };
 
@@ -1195,10 +1216,10 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             const float px = x + 18.0f, iw = w - 36.0f;
             const std::vector<std::string>& lines = WrapCached(m.bannerText, iw - 90.0f);
             const float hgt = 12.0f + std::max(fs * (float)lines.size(), fs) + 12.0f;
-            dl.AddRectFilled(V(x, cy), V(x + w, cy + hgt), m.bannerGreen ? Rgb(110, 204, 140, 36) : Rgb(240, 199, 99, 36), 10.0f);
+            Fill(dl, V(x, cy), V(x + w, cy + hgt), m.bannerGreen ? Rgb(110, 204, 140, 36) : Rgb(240, 199, 99, 36), 10.0f);
             DrawWrapped(dl, px, cy + 12.0f, iw - 90.0f, m.bannerText, cText);
             const float bw = UI::CalcTextSize("Dismiss").x + 2.0f * kFrameX;
-            if (FlatButton("##verdismiss", "Dismiss", px + iw - 76.0f, cy + 12.0f, bw, fs)) res.dismissBanner = true;
+            if (Btn("##verdismiss", "Dismiss", px + iw - 76.0f, cy + 12.0f, bw, fs)) res.dismissBanner = true;
             res.dismissButton = UI::GetItemRect();
             cy = NextY(NextY(cy, hgt), 10.0f);
         }
@@ -1213,9 +1234,9 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             if (m.runningLatest) tx += Pill(dl, tx, p0.y + 5.0f, "Latest", AccentAlpha(0.32f), cText) + 6.0f;
             if (m.runningLts) tx += Pill(dl, tx, p0.y + 5.0f, "LTS", Rgb(70, 170, 120, 90), cText) + 6.0f;
             Txt(dl, V(p0.x, p0.y + 30.0f), cDim, FitTextWidth(m.runningSub, iw - 330.0f).c_str());
-            if (FlatButton("##vercheck", m.checking ? "Checking\xE2\x80\xA6" : "Check again", p0.x + iw - 306.0f, p0.y + 8.0f, 140.0f, 30.0f, !m.checking)) res.checkAgain = true;
+            if (Btn("##vercheck", m.checking ? "Checking\xE2\x80\xA6" : "Check again", p0.x + iw - 306.0f, p0.y + 8.0f, 140.0f, 30.0f, !m.checking)) res.checkAgain = true;
             res.checkButton = UI::GetItemRect();
-            if (FlatButton("##verfolder", "Open install folder", p0.x + iw - 306.0f + 148.0f, p0.y + 8.0f, 158.0f, 30.0f)) res.openFolder = true;
+            if (Btn("##verfolder", "Open install folder", p0.x + iw - 306.0f + 148.0f, p0.y + 8.0f, 158.0f, 30.0f)) res.openFolder = true;
             res.folderButton = UI::GetItemRect();
             yy = NextY(p0.y + 54.0f, 0.0f);
             if (m.statusKind == 1 || m.statusKind == 2) { Txt(dl, V(px, yy), m.statusKind == 2 ? CRed() : cDim, m.status.c_str()); yy = NextY(yy, fs); }
@@ -1238,7 +1259,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                     Txt(dl, V(px, yy + kFrameY), cText, m.ltsSentence.c_str());
                     const float sx = px + UI::CalcTextSize(m.ltsSentence.c_str()).x + 12.0f;
                     const float bw = UI::CalcTextSize(m.ltsButton.c_str()).x + 2.0f * kFrameX;
-                    if (FlatButton("##verlts", m.ltsButton.c_str(), sx, yy, bw, fh, !m.ltsButtonDisabled, true)) res.ltsAction = true;
+                    if (Btn("##verlts", m.ltsButton.c_str(), sx, yy, bw, fh, !m.ltsButtonDisabled, true)) res.ltsAction = true;
                     res.ltsButton = UI::GetItemRect();
                     yy = NextY(yy, fh);
                 } else {
@@ -1251,10 +1272,10 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                         Txt(dl, V(px, yy + kFrameY), CGreenV(), m.ltsDefaultText.c_str());
                         const float sx = px + UI::CalcTextSize(m.ltsDefaultText.c_str()).x + 12.0f;
                         const float bw = UI::CalcTextSize(m.ltsDefaultButton.c_str()).x + 2.0f * kFrameX;
-                        if (FlatButton("##verltsdef", m.ltsDefaultButton.c_str(), sx, yy, bw, fh)) res.ltsDefaultAction = true;
+                        if (Btn("##verltsdef", m.ltsDefaultButton.c_str(), sx, yy, bw, fh)) res.ltsDefaultAction = true;
                     } else {
                         const float bw = UI::CalcTextSize(m.ltsDefaultButton.c_str()).x + 2.0f * kFrameX;
-                        if (FlatButton("##verltsdef", m.ltsDefaultButton.c_str(), px, yy, bw, fh, true, true)) res.ltsDefaultAction = true;
+                        if (Btn("##verltsdef", m.ltsDefaultButton.c_str(), px, yy, bw, fh, true, true)) res.ltsDefaultAction = true;
                     }
                     res.ltsDefaultButton = UI::GetItemRect();
                     yy = NextY(yy, fh);
@@ -1262,7 +1283,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             }
             if (m.defaultRow) {
                 yy = NextY(yy, 8.0f);
-                dl.AddRectFilled(V(px, yy), V(px + iw, yy + 1.0f), Rgb(255, 255, 255, 15));
+                Fill(dl, V(px, yy), V(px + iw, yy + 1.0f), Rgb(255, 255, 255, 15));
                 yy = NextY(NextY(yy, 1.0f), 6.0f);
                 Txt(dl, V(px, yy + kFrameY), cText, "Default editor");
                 const float lx = px + UI::CalcTextSize("Default editor").x + 12.0f;
@@ -1286,8 +1307,8 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             return tx;
         };
         auto highlight = [&](UI::Vec2 p0, float rw, float rh) {
-            dl.AddRectFilled(V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.10f), 8.0f);
-            OutlineRect(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.70f), 8.0f, 1.4f);
+            Fill(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.10f), 8.0f);
+            if (!g_layoutOnly) OutlineRect(dl, V(p0.x - 8.0f, p0.y + 1.0f), V(p0.x + rw + 8.0f, p0.y + rh - 2.0f), AccentAlpha(0.70f), 8.0f, 1.4f);
         };
 
         // ---- installed next to this version ----
@@ -1307,17 +1328,17 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                 const float btnW = 120.0f + 8.0f + 96.0f, sizeW = 92.0f;
                 Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextWidth(r.sub, iw - btnW - sizeW - 24.0f).c_str());
                 Txt(dl, V(p0.x + iw - btnW - 14.0f - UI::CalcTextSize(r.size.c_str()).x, p0.y + 19.0f), cDim, r.size.c_str());
-                if (FlatButton("##vermkdef", r.isDefault ? "Default" : "Make default", p0.x + iw - btnW, p0.y + 14.0f, 120.0f, 30.0f, !r.isDefault)) res.makeDefault = (int)i;
+                if (Btn("##vermkdef", r.isDefault ? "Default" : "Make default", p0.x + iw - btnW, p0.y + 14.0f, 120.0f, 30.0f, !r.isDefault)) res.makeDefault = (int)i;
                 res.makeDefaultButtons[i] = UI::GetItemRect();
                 if (DangerButton("##verrm", "Remove", p0.x + iw - 96.0f, p0.y + 14.0f, 96.0f, 30.0f, UI::GetMousePos())) res.remove = (int)i;
                 res.removeButtons[i] = UI::GetItemRect();
                 yy = NextY(p0.y + rh, 0.0f);
-                if (i + 1 < m.installed.size()) dl.AddRectFilled(V(p0.x, yy - 1.0f), V(p0.x + iw, yy), Rgb(255, 255, 255, 14));
+                if (i + 1 < m.installed.size()) Fill(dl, V(p0.x, yy - 1.0f), V(p0.x + iw, yy), Rgb(255, 255, 255, 14));
                 UI::PopID();
             }
             // keep previous versions
             yy = NextY(yy, 6.0f);
-            dl.AddRectFilled(V(px, yy), V(px + iw, yy + 1.0f), Rgb(255, 255, 255, 15));
+            Fill(dl, V(px, yy), V(px + iw, yy + 1.0f), Rgb(255, 255, 255, 15));
             yy = NextY(NextY(yy, 1.0f), 6.0f);
             Txt(dl, V(px, yy + kFrameY), cText, "Keep previous versions:");
             const float kx = px + UI::CalcTextSize("Keep previous versions:").x + 10.0f;
@@ -1332,7 +1353,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                 Txt(dl, V(px, yy + kFrameY), CAmber(), m.prune.c_str());
                 const float sx = px + UI::CalcTextSize(m.prune.c_str()).x + 12.0f;
                 const float bw = UI::CalcTextSize("Remove them now").x + 2.0f * kFrameX;
-                if (FlatButton("##verprune", "Remove them now", sx, yy, bw, fh)) res.pruneNow = true;
+                if (Btn("##verprune", "Remove them now", sx, yy, bw, fh)) res.pruneNow = true;
                 res.pruneButton = UI::GetItemRect();
                 yy = NextY(yy, fh);
             }
@@ -1344,7 +1365,7 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
             if (m.availableState == 0) { Txt(dl, V(px, yy), cDim, "Looking up the version list\xE2\x80\xA6"); return NextY(yy, fs); }
             if (m.availableState == 1) {
                 yy = NextY(yy, DrawWrapped(dl, px, yy, iw, m.availableError, CRed()));
-                if (FlatButton("##verretry", "Try again", px, yy, 120.0f, 30.0f, !m.retryDisabled)) res.retry = true;
+                if (Btn("##verretry", "Try again", px, yy, 120.0f, 30.0f, !m.retryDisabled)) res.retry = true;
                 res.retryButton = UI::GetItemRect();
                 return NextY(yy, 30.0f);
             }
@@ -1361,30 +1382,30 @@ VersionsResult DrawVersions(const VersionsModel& m, float x, float y, float w, f
                 Txt(dl, V(p0.x, p0.y + 33.0f), cDim, FitTextWidth(r.sub, iw - rightW - 16.0f).c_str());
                 if (r.downloading) {
                     const float bx = p0.x + iw - rightW, by = p0.y + 17.0f, bw = rightW - 100.0f, bh = 24.0f;
-                    dl.AddRectFilled(V(bx, by), V(bx + bw, by + bh), CField(), 6.0f);
+                    Fill(dl, V(bx, by), V(bx + bw, by + bh), CField(), 6.0f);
                     const float fill = bw * std::max(0.0f, std::min(1.0f, r.progress == r.progress ? r.progress : 0.0f));
                     if (fill > 0.0f) {
                         dl.PushClipRect(V(bx, by), V(bx + std::max(1.0f, fill), by + bh));
-                        dl.AddRectFilled(V(bx, by), V(bx + bw, by + bh), Col(th.accent), 6.0f);
+                        Fill(dl, V(bx, by), V(bx + bw, by + bh), Col(th.accent), 6.0f);
                         dl.PopClipRect();
                     }
                     const UI::Vec2 ts = UI::CalcTextSize(r.overlay.c_str());
                     Txt(dl, V(std::max(bx, std::min(bx + fill + kSpX, bx + bw - ts.x - kInnerX)), by + (bh - ts.y) * 0.5f), cText, r.overlay.c_str());
-                    if (FlatButton("##vercancel", "Cancel", bx + rightW - 92.0f, by, 84.0f, 24.0f, !r.cancelDisabled)) res.cancelDownload = true;
+                    if (Btn("##vercancel", "Cancel", bx + rightW - 92.0f, by, 84.0f, 24.0f, !r.cancelDisabled)) res.cancelDownload = true;
                     res.cancelButtons[i] = UI::GetItemRect();
                 } else {
-                    if (FlatButton("##verinstall", "Install", p0.x + iw - 120.0f, p0.y + 14.0f, 120.0f, 30.0f, !r.installDisabled, true)) res.install = (int)i;
+                    if (Btn("##verinstall", "Install", p0.x + iw - 120.0f, p0.y + 14.0f, 120.0f, 30.0f, !r.installDisabled, true)) res.install = (int)i;
                     res.installButtons[i] = UI::GetItemRect();
                 }
                 if (hasNote) DrawWrapped(dl, p0.x, p0.y + 56.0f, iw, r.note, r.noteBad ? CRed() : CGreenV());
                 yy = NextY(p0.y + rh, 0.0f);
-                if (i + 1 < m.available.size()) dl.AddRectFilled(V(p0.x, yy - 1.0f), V(p0.x + iw, yy), Rgb(255, 255, 255, 14));
+                if (i + 1 < m.available.size()) Fill(dl, V(p0.x, yy - 1.0f), V(p0.x + iw, yy), Rgb(255, 255, 255, 14));
                 UI::PopID();
             }
             if (!m.moreButton.empty()) {
                 yy = NextY(yy, 4.0f);
                 const float bw = UI::CalcTextSize(m.moreButton.c_str()).x + 2.0f * kFrameX;
-                if (FlatButton("##vermore", m.moreButton.c_str(), px, yy, bw, fs)) res.toggleShowAll = true;
+                if (Btn("##vermore", m.moreButton.c_str(), px, yy, bw, fs)) res.toggleShowAll = true;
                 res.moreButton = UI::GetItemRect();
                 yy = NextY(yy, fs);
             }

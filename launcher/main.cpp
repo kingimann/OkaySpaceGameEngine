@@ -15456,6 +15456,7 @@ struct FriendsPageData {
     std::string err, ok;               // the Add friend card's last message
     FriendsUiState ui;
     std::string nickUid; char nickBuf[48] = ""; bool nickOpen = false;   // the Set nickname dialog (a Dear ImGui modal on both pages)
+    unsigned gen = 0;                  // bumped whenever the lists above are replaced (the OkayUI page rebuilds its model then)
 };
 // The Set nickname dialog (both Friends pages open it through FriendsPageData::nickOpen).
 static void DrawFriendNicknameModal(FriendsPageData& d) {
@@ -15467,7 +15468,7 @@ static void DrawFriendNicknameModal(FriendsPageData& d) {
         if (ImGui::Button("Save", ImVec2(110, 0)) || ok) {
             if (!d.nickUid.empty()) {
                 if (d.nickBuf[0]) g_friendNicks[d.nickUid] = d.nickBuf; else g_friendNicks.erase(d.nickUid);
-                SavePrefs();
+                SavePrefs(); ++d.gen;
             }
             d.nickUid.clear(); ImGui::CloseCurrentPopup();
         }
@@ -15509,7 +15510,7 @@ static FriendsPageData& FriendsPageDataRefresh(okay::account::AccountService& ac
         SDL_LockMutex(g_flMutex);
         if (g_flReady) {
             g_flReady = false;
-            d.following = g_flFollowing; d.followers = g_flFollowers; d.followSupported = g_flSupported;
+            d.following = g_flFollowing; d.followers = g_flFollowers; d.followSupported = g_flSupported; ++d.gen;
             if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
             g_flMsg.clear();
         }
@@ -15550,7 +15551,7 @@ static FriendsPageData& FriendsPageDataRefresh(okay::account::AccountService& ac
         }
         if (g_frMutex) {
             SDL_LockMutex(g_frMutex);
-            if (g_frReady) { d.list = g_frList; d.feed = g_frFeed; d.code = g_frCode; g_frReady = false; }
+            if (g_frReady) { d.list = g_frList; d.feed = g_frFeed; d.code = g_frCode; g_frReady = false; ++d.gen; }
             SDL_UnlockMutex(g_frMutex);
         }
     }
@@ -24177,7 +24178,17 @@ int main(int argc, char** argv) {
                 const ImVec4 c = NameColor(name);
                 out[0] = (unsigned char)(c.x * 0.55f * 255.0f + 0.5f); out[1] = (unsigned char)(c.y * 0.55f * 255.0f + 0.5f); out[2] = (unsigned char)(c.z * 0.55f * 255.0f + 0.5f);
             };
-            okayuiscreens::FriendsModel fm;
+            // The model is rebuilt when the data changed (a new list from the worker, a favourite, a nickname, a message to show) or
+            // once a second (the "Last online" and "4m ago" texts), not every frame.
+            static okayuiscreens::FriendsModel fm;
+            static Uint32 fmNext = 0;
+            static std::string fmSig;
+            const std::string sig = std::to_string(fd.gen) + "|" + std::to_string(g_favFriends.size()) + "|" + std::to_string(g_friendNicks.size()) + "|" +
+                                    std::to_string(g_onlineStatus) + "|" + std::to_string(fd.list.size()) + "|" + std::to_string(fd.following.size()) + "|" +
+                                    std::to_string(fd.followers.size()) + "|" + (g_flBusy ? "b" : "") + (MpCanInvite() ? "i" : "") + MpPartyId() + "|" + fd.err + "|" + fd.ok + "|" + fd.code;
+            if (sig != fmSig || okay::platform::TicksMs32() >= fmNext) {
+            fmSig = sig; fmNext = okay::platform::TicksMs32() + 1000;
+            fm = okayuiscreens::FriendsModel();
             for (const okay::Friend& f : fd.list) {
                 okayuiscreens::FriendRow r;
                 r.rowId = f.rowId; r.id = f.id; r.username = f.username; r.name = nameOf(f);
@@ -24219,6 +24230,9 @@ int main(int argc, char** argv) {
             fm.canInvite = MpCanInvite(); fm.inviteLabel = "Invite to " + MpGameTitle();
             fm.partyLabel = MpPartyId().empty() ? "Start a party with them" : "Invite to party";
             fm.addError = fd.err; fm.addOk = fd.ok;
+            static unsigned fmRev = 0;
+            fm.revision = ++fmRev;
+            }
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's lists end; the footer stays below
@@ -24281,6 +24295,8 @@ int main(int argc, char** argv) {
                 } else QueueFollowJob(actKind, act);
             };
             followAct(r.followBack, 1); followAct(r.unfollow, 2); followAct(r.removeFollower, 3);
+            if (r.toggleFavorite >= 0 || r.clearNickname >= 0 || !r.followBack.empty() || !r.unfollow.empty() || !r.removeFollower.empty() || r.presence >= 0)
+                ++fd.gen;   // shown at once, not a second later
             DrawFriendNicknameModal(fd);
 #endif
         } else if (tab == 6) {                            // ---- Friends ----
@@ -27541,9 +27557,11 @@ int main(int argc, char** argv) {
             // Same cards, rows, buttons and choices as the Dear ImGui page below, decided by the same rules in VersionsUI.cpp; the
             // page scrolls with the launcher's own page (the wheel stays with Dear ImGui). Differences in docs/own_ui_toolkit.md 8.8.
             uitiming::Scope uiT("Versions", "OkayUI");
-            const okayversionsui::Host vh = VersionsHost();
+            const okayversionsui::Host& vh = VersionsHost();
+            // The model (texts worked out by the module's rules) is rebuilt ten times a second, and at once after a click.
             static okayuiscreens::VersionsModel vm;
-            okayversionsui::BuildOkayUIModel(vh, vm);
+            static Uint32 vmNext = 0;
+            if (okay::platform::TicksMs32() >= vmNext) { okayversionsui::BuildOkayUIModel(vh, vm); vmNext = okay::platform::TicksMs32() + 100; }
             static float vContentH = 900.0f;   // the page's height last frame (the scroll range Dear ImGui keeps)
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             const float vw = std::max(ImGui::GetContentRegionAvail().x, 8.0f);
@@ -27554,6 +27572,8 @@ int main(int argc, char** argv) {
             const okayuiscreens::VersionsResult vr = okayuiscreens::DrawVersions(vm, rp.x, rp.y, vw, clip.Min.y, clip.Max.y);
             if (vr.contentHeight > 0.0f) vContentH = vr.contentHeight;
             okayversionsui::ApplyOkayUIResult(vh, vr);
+            if (vr.dismissBanner || vr.checkAgain || vr.ltsAction || vr.ltsDefaultAction || vr.pruneNow || vr.retry || vr.cancelDownload || vr.toggleShowAll ||
+                vr.channel >= 0 || vr.defaultChoice >= 0 || vr.keep >= 0 || vr.makeDefault >= 0 || vr.remove >= 0 || vr.install >= 0) vmNext = 0;
             okayversionsui::DrawDialogs(vh);
 #endif
         } else if (tab == 15) {                           // ---- Versions ----

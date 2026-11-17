@@ -46,6 +46,7 @@ struct FriendsModel {
     bool canInvite = false;              // a game is running that friends can be invited to
     std::string inviteLabel = "Invite to game", partyLabel = "Start a party with them";
     std::string addError, addOk;         // the Add friend card's last message
+    unsigned revision = 0;               // the host bumps it whenever it rebuilds the model (0 = never reuse last frame's sorting)
 };
 
 /// What both versions of the page share (the host keeps one and hands it to whichever draws).

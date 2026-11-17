@@ -2248,6 +2248,8 @@ struct Gen {
     int temp_depth = 0;
     int temp_base = 0;
     int frame = 0x20;
+    // First byte of the caller-made copies of big struct arguments.
+    int struct_copy = 0;
     const std::vector<StructDef>* structs = nullptr;
     const std::vector<Global>* globals = nullptr;
     const std::vector<FuncType>* func_types = nullptr;
@@ -3399,13 +3401,47 @@ bool Gen::gen_expr(const Node& node) {
             }
             disp(spill_off);
         };
+        spill_caller();
+        int copy_at = struct_copy;
+        for (size_t arg_i = 0; arg_i < nargs; ++arg_i) {
+            const bool named = arg_i < sig.params.size();
+            const Type param = named ? sig.params[arg_i] : Type{};
+            if (!(named && param.base == 3 && param.pointers == 0 && !fits_register(param))) continue;
+            const int bytes = std::max(1, size_of(param));
+            const int step = (bytes + 7) & ~7;
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(saved[arg_i]);
+            b(0x48);
+            b(0x89);
+            b(0xC6);
+            b(0x48);
+            b(0x8D);
+            b(0xBD);
+            disp(copy_at);
+            b(0xB9);
+            u32(static_cast<uint32_t>(bytes));
+            b(0xF3);
+            b(0xA4);
+            b(0x48);
+            b(0x8D);
+            b(0x85);
+            disp(copy_at);
+            b(0x48);
+            b(0x89);
+            b(0x85);
+            disp(saved[arg_i]);
+            copy_at += step;
+        }
+        reload_reg(6);
+        reload_reg(7);
         if (sret) {
             b(0x48);
             b(0x8D);
             b(0x8D);
             disp(hidden);
         }
-        spill_caller();
         for (int i = 0; i < static_cast<int>(saved.size()); ++i) {
             const int reg = i + reg_base;
             const Type& at = saved_types[static_cast<size_t>(i)];
@@ -4257,6 +4293,27 @@ void walk_inline(Node* node, FuncDecl* caller, const std::vector<FuncDecl>& func
     }
 }
 
+int struct_arg_space(const Node& node, const std::vector<FuncDecl>& funcs, const Gen& gen) {
+    int best = 0;
+    if (node.kind == Node::Call && !node.text.empty()) {
+        const FuncDecl* fn = nullptr;
+        for (const FuncDecl& item : funcs)
+            if (item.name == node.text) fn = &item;
+        if (fn != nullptr) {
+            int sum = 0;
+            const int n = std::min(static_cast<int>(node.kids.size()), static_cast<int>(fn->params.size()));
+            for (int i = 0; i < n; ++i) {
+                const Type& param = fn->params[static_cast<size_t>(i)];
+                if (param.base == 3 && param.pointers == 0 && !gen.fits_register(param))
+                    sum += (std::max(1, gen.size_of(param)) + 7) & ~7;
+            }
+            best = sum;
+        }
+    }
+    for (const Node& kid : node.kids) best = std::max(best, struct_arg_space(kid, funcs, gen));
+    return best;
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
                     int opt_level, std::string* error, CompileOutput* out) {
@@ -4297,7 +4354,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         int max_args = count_args(fn.body);
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
-        int frame = local_end + 64 + outgoing;
+        const int copy_bytes = struct_arg_space(fn.body, funcs, gen);
+        int frame = local_end + 64 + copy_bytes + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
         bool needs_nv = false;
@@ -4372,6 +4430,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.extra_pops.clear();
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
+        gen.struct_copy = -((((local_end + 7) & ~7) + 64 + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
         uint8_t cursor = 0;

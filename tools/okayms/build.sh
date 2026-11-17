@@ -32,6 +32,15 @@ if [ -d src ]; then
   done
 fi
 
+if [ -d cmd ]; then
+  for c in cmd/*.cpp; do
+    [ -f "$c" ] || continue
+    base=$(basename "$c" .cpp)
+    # shellcheck disable=SC2086
+    cc "$c" $objs -o "build/${base}"
+  done
+fi
+
 fail=0
 ran=0
 for t in tests/test_*.cpp; do

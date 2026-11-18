@@ -3584,7 +3584,7 @@ struct Parser {
             if (out->type.pointers == 0) out->type.rref = true;
         }
         if (!is(TIdent)) {
-            error = "expected a name";
+            error = "expected a name (in " + current_fn + ", token " + (is(TEnd) ? std::string("end") : cur().text) + ", after " + (at > 0 ? tokens[at - 1].text : std::string()) + ")";
             return false;
         }
         out->name = cur().text;
@@ -3642,6 +3642,12 @@ struct Parser {
 
     bool is_decl_start() const {
         if (qualified_expr_ahead()) return false;
+        if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen && cur_class >= 0 &&
+            cur_class < static_cast<int>(structs.size())) {
+            // `Bounds(lo, hi);` inside a class that has a member function Bounds: a call, not a declaration of a Bounds object.
+            for (const Method& hm : structs[static_cast<size_t>(cur_class)].methods)
+                if (hm.name == cur().text) return false;
+        }
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
@@ -9311,6 +9317,20 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             }
             if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
                 return false;
+            if (!braced_ret && cur_ret.base == 3 && cur_ret.pointers == 0 && cur_ret.struct_id >= 0 && !cur_ret_ref &&
+                cur_locals != nullptr && class_needs_ctor(structs[static_cast<size_t>(cur_ret.struct_id)])) {
+                // return nullptr; / return "text"; / return 5; for a function returning a class: a converting constructor makes
+                // the result ([stmt.return], copy-initialisation of the result object).
+                Type vt;
+                if (static_type(value, &vt) && !(vt.base == 3 && vt.pointers == 0 && !vt.is_array()) && !vt.is_array()) {
+                    std::vector<Node> one;
+                    one.push_back(std::move(value));
+                    Type want = cur_ret;
+                    want.is_ref = false;
+                    if (!adjust_args({want}, &one)) return false;
+                    value = std::move(one[0]);
+                }
+            }
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
             dtor_skip.clear();

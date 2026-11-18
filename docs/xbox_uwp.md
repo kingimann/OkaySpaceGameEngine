@@ -26,7 +26,7 @@ The audit that led here is [xbox_uwp_audit.md](xbox_uwp_audit.md).
 * The Xbox app shell has **two modes**. Default: it opens a window, draws a test triangle with Direct3D 11 and reads a gamepad (left stick moves
   the triangle, A centres it, B exits); that proves the package pipeline. **Engine mode** (a tick box next to the build button, `-DOKAY_XBOX_APP_ENGINE=ON`)
   links the engine (`okay_engine_uwp`) and runs the exported game in `package\Data`: scene loading, scripts, fixed-step physics, animation, the 3D view
-  through a Direct3D 11 swap chain, gamepad and keyboard input, WASAPI audio output. **Not drawn yet: the 2D / UI layer** (UICanvas elements),
+  through a Direct3D 11 swap chain, gamepad and keyboard input, WASAPI audio output. **The 2D / UI layer** (UICanvas elements) is software-painted and blended over the 3D view since round 3 (never seen on a screen),
   because the software painter has no present path wired. Engine mode has **never been compiled with Microsoft's UWP compiler** (the engine is only ever
   built with MinGW today), so expect compile errors on the first try. Nothing in engine mode ever ran.
 
@@ -123,7 +123,7 @@ component and with ARM64-only extras, both installed, and several toolset folder
 
 `-EngineMode` builds the app with the real engine (`-DOKAY_XBOX_APP_ENGINE=ON -DOKAY_SOURCE_ROOT=<repo>`) and, with `-MinimalTest`, the test export also contains `package\Data\game.okayconfig` and a tiny scene (a cube and a camera,
 `okay-xbox-export --with-scene`). It prints that engine mode is on, whether `Data\game.okayconfig` is in the package and the exe size. Then pack, sign and install exactly as for the triangle. If the engine fails to compile, send `<ExportDir>\build.log`; drop `-EngineMode` to get the triangle test back.
-Expected if it works: a window with an orange cube turning to face the camera on a blue sky (no UI layer), `B` closes it. Whether it even compiles is the open question.
+Expected if it works: a window with an orange cube (turned a little) on a blue sky and, top left, a dark UI panel with the text "Hello Xbox (UI layer)", `B` closes it. If the cube shows but the panel does not, the UI overlay is the suspect (the log says "no UI overlay" when its shaders are missing). Whether it even compiles is the open question.
 
 What is new:
 * **C++20 shell, C++17 engine.** The shell (`main.cpp`, `engine_shell.hpp`, C++/WinRT) is its own C++20 target; the engine and `engine_bridge.cpp` (UwpBackend, renderer, presenter, WASAPI, game runtime) are C++17 targets (`okay_engine_uwp`, `okay_xbox_engine_bridge`). Only plain C++ crosses, `app/engine_bridge.hpp`
@@ -135,6 +135,20 @@ What is new:
 * **The tiny scene** was loaded once with the engine's real `SceneSerializer` (against a prebuilt engine library of unknown revision found on this machine, so only a sanity check): 2 objects, 1 mesh renderer, 1 camera. The committed Linux test checks the text format (object count, field counts, config resolves) but does not load it.
 * **Link line of the engine target:** `WindowsApp`, `d3d11`, `dxgi`, `ws2_32`, `bcrypt`, `mmdevapi`. Not linked: `d3dcompiler`, `d3d12`, `dxguid`, `winhttp`, `dbghelp`, `user32`, `gdi32`, `opengl32`, SDL2, libsodium.
 * The Windows release's `xbox-src` folder now also carries `engine/src`, `engine/CMakeLists.txt`, `engine/third_party` and `shared/`, which engine mode needs.
+
+## Engine mode, round 3: UI layer, device loss, suspend save, HTTP (2026-11-18, late; ALL UNVERIFIED)
+
+The owner's command is unchanged (`-MinimalTest -EngineMode`); the tiny test scene now also has a screen-space UI panel with a text label (copied from `examples/ui_text`), so the UI layer is visible.
+* **2D / UI layer on UWP.** `XboxSoftRaster.hpp` (pure: premultiplied RGBA surface, fills, lines, textured blits with scale / flip / rotation / colour and alpha mods, triangles with vertex colour, clip, dirty rectangle) and `XboxSoftPainter.hpp`
+  (an `okay::platform::Painter` over it: SDL_Renderer is not available, and okayui's software painter would pull in the whole okayui library) draw the engine's own `RenderSceneUI` pass into a CPU buffer. `XboxOverlay.hpp` uploads the buffer as an R8G8B8A8 texture and blends it over the finished 3D frame in the swap chain's
+  after-render hook with a full-screen triangle (`VSOverlay` / `PSOverlay` in `D3D11OverlayHlsl.hpp`, compiled offline into the shader bundle with the others: 17 entries now; the desktop HLSL text is unchanged) and One / InvSrcAlpha blending. `XboxOverlayMath.hpp` (buffer size capped at 1080p worth of pixels, layout size, DIP to UI pixel, draw / clear-once state, dirty-row copy) and the rasteriser are tested on Linux. The runtime now publishes the UI size, the world-to-screen hooks and
+  UI layout before each update (as the player does) and feeds the mouse. A scene without UI costs nothing. **Checked once on Linux with the engine's real `RenderSceneUI`** (against a prebuilt engine library of unknown revision): the test scene's panel and label painted about 39,000 pixels through this painter. Never composited on a GPU.
+* **Device loss.** `XboxRecovery.hpp` (pure, tested): rebuild with 100 / 200 / 400 / 800 / 1600 ms backoff, give up after 5 failed attempts, or when the device is lost 5 times in 20 s even if every rebuild "worked"; a rebuild that stays healthy 5 s clears the count. The bridge, on `DXGI_ERROR_DEVICE_REMOVED / RESET`, releases overlay, swap chain and renderer, makes the device again, reloads the shaders from the bundle, rebuilds the swap chain and overlay and carries on; when it gives up it logs a plain reason and exits. Rebuilt GPU resources of the scene (textures, buffers) come back lazily.
+* **Suspend / resume.** On suspend the runtime captures the scene with the engine's save framework (`SaveSystem::CaptureScene`, written with `SaveStore` into `LocalFolder\saves`, slot `xbox_suspend`) and writes a marker file, before the 4.5 s deadline, then the shell trims the GPU. On resume the marker is removed; on a clean exit too. If the next start finds the marker (the system ended the app while suspended) it puts the state back over the freshly loaded scene (`DecideStart`, tested).
+  **Only objects marked Saveable are captured** (the framework's rule); a game must mark what matters. Checked once on Linux (against the same prebuilt library): start, a frame, suspend save, marker written, restart consumed the marker. Lifecycle ordering is in the earlier tests.
+* **HTTP for content delivery (hook only).** `XboxHttp.hpp` (pure, tested with a fake client): URL checks (https; no user info; host characters; port), percent-encoded joins, `Range: bytes=N-`, `Content-Range` / `Content-Length` / `Retry-After` parsing, redirects (max 5, never https to http), retries of 429 / 503 with the server's wait (the driver never sleeps),
+  a 206 whose range is not the asked one is an error, a server that ignores Range is reported as 200, 416 carries the total, cut-short and too-big bodies are errors. `XboxContentTransport.hpp` is an `okaycontent::Transport` adapter that compiles only when `ContentTransport.hpp` of `claude/content-delivery-1` is on the include path (it was compiled once against that branch's header copied to a scratch folder; the branch is NOT merged here);
+  `app/xbox_winhttp.hpp` is the Windows.Web.Http client behind it (C++/WinRT, blocking, worker thread only, **uncompiled, never run**, not wired into the bridge). The manifest already has the `internetClient` capability.
 
 ## One command, no editor needed (`-MinimalTest`)
 

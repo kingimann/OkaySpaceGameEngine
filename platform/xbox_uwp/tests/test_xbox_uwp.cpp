@@ -295,7 +295,7 @@ static void ExportTests() {
     std::ifstream rd((tmp / "README_XBOX.txt").string()); std::stringstream rs; rs << rd.rdbuf();
     CHECK(rs.str().find("UNVERIFIED") != std::string::npos);
     CHECK(rs.str().find("does not load Data/") != std::string::npos);
-    CHECK(rs.str().find("Engine mode") != std::string::npos && rs.str().find("NOT drawn yet") != std::string::npos);   // says honestly what runs
+    CHECK(rs.str().find("Engine mode") != std::string::npos && rs.str().find("software-painted") != std::string::npos);   // says honestly what runs
     CHECK(rs.str().find("one administrator prompt") != std::string::npos);
     // a real icon: the placeholder flag stays off and the placeholder note is not written
     fs::remove_all(tmp, ec);

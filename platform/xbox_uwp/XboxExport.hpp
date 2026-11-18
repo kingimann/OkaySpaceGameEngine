@@ -11,7 +11,7 @@
 //
 // It does NOT build the UWP app, pack or sign: the editor's one-click build (XboxBuildPlan.hpp) or scripts/build-xbox-uwp.ps1 does, on Windows.
 // The UWP app shell (platform/xbox_uwp/app) draws a test triangle by default. Only when built in "engine mode" (EXPERIMENTAL, never compiled)
-// does it run the game in package/Data: 3D view, scripts, physics and pads, no UI layer yet. Say so wherever this is shown.
+// does it run the game in package/Data: 3D view, scripts, physics, pads and (EXPERIMENTAL) a software-painted 2D / UI layer. Say so wherever this is shown.
 //
 // UNVERIFIED on Windows and on an Xbox. Written from Microsoft's public documentation.
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ inline constexpr const char* kLimitationsText =
     "limited by the UWP sandbox (no desktop-only Windows APIs, memory and CPU budgets for a Developer Mode app, Direct3D 11 "
     "only). By default the Xbox app shell does not run your game: it opens a window, draws a test triangle and reads a "
     "gamepad, to prove the packaging steps. \"Engine mode\" (a tick box next to the build button, EXPERIMENTAL) also links the engine and runs your game's "
-    "3D scene, scripts, physics and gamepad; the 2D / UI layer is not drawn yet, and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
+    "3D scene, scripts, physics and gamepad; the 2D / UI layer is software-painted over the 3D view (EXPERIMENTAL, never run), and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
 struct ExportInputs {
@@ -86,7 +86,7 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
     t += "IMPORTANT: by default the Xbox app shell does not load Data/. It opens a window, draws a test triangle with\n"
          "Direct3D 11 and reads a gamepad (left stick moves it, A centres it, B exits). That proves the packaging pipeline, not your game.\n"
          "Tick 'Engine mode' before building to try the EXPERIMENTAL game run: it links the engine and plays package/Data (3D scene,\n"
-         "scripts, physics, gamepad and keyboard). The 2D / UI layer is NOT drawn yet. Nobody has compiled it with Microsoft's compiler,\n"
+         "scripts, physics, gamepad and keyboard). The 2D / UI layer is software-painted and blended over the 3D view (never run on a screen, so NOT drawn yet as far as anyone has seen). Nobody has compiled it with Microsoft's compiler,\n"
          "so it may fail to build; untick it to get the triangle back.\n\n";
     t += "Next steps, on a Windows PC (see docs/xbox_uwp.md in the OkaySpace source):\n"
          "  1. Install Visual Studio once: 2022 with the 'Universal Windows Platform development' workload, or a newer Visual Studio with the\n"

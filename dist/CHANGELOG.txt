@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.886.0
+  Simpler Modeling, Project panel, Visual Script and Scene menu
+  - Modeling no longer has an Advanced menu. Every tool is in the page list
+    and the pages have plain names.
+  - The Project panel can be one column (folders open in place) or two
+    columns (folder tree and contents). Pick it in the panel.
+  - Visual Script can be moved around easily: a Pan button, hold Space and
+    drag, arrow keys, and a trackpad option where plain scrolling pans.
+  - An empty Visual Script shows big recipe cards, with Start empty if you
+    want a blank page. New blocks join the selected block by themselves.
+  - Problems are explained in plain words, with a Fix it for me button for
+    unconnected blocks and wires of the wrong kind. A short note under a
+    running block says what just happened, and a one-line hint tells you
+    the next step.
+  - Right-click in the Scene view opens an Add menu (shapes, lights, camera,
+    character, UI, audio, effects, prefabs, search) and places the new
+    object where you clicked.
+
 v2.885.0
   Easier scripts and modeling
   - Visual Script is much simpler: Quick blocks do a whole job in one block

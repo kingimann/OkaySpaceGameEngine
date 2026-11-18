@@ -14,12 +14,12 @@
 namespace oked::easymodel {
 
 // ---- Tabs -------------------------------------------------------------------------------------------------------------
-enum class Tab { Shape, Reshape, Details, Colour, Finish, Pick, Advanced };   // Pick = the buttons of the "Pick parts" row, not a tab
-constexpr int kBeginnerTabCount = 5;   // Advanced is a switch, not a tab, so a beginner never sees more than five
+enum class Tab { Shape, Reshape, Details, Colour, Finish, Pick };   // Pick = the buttons of the "Pick parts" row, not a tab
+constexpr int kBeginnerTabCount = 5;   // a beginner never sees more than five (every other tool is a page in the list on the left of the window)
 inline const char* TabName(Tab t) {
     switch (t) {
         case Tab::Shape: return "Shape";   case Tab::Reshape: return "Reshape"; case Tab::Details: return "Details";
-        case Tab::Colour: return "Colour"; case Tab::Finish: return "Finish";   default: return "Advanced";
+        case Tab::Colour: return "Colour"; case Tab::Finish: return "Finish";   default: return "Pick";
     }
 }
 inline const char* TabHelp(Tab t) {
@@ -30,7 +30,7 @@ inline const char* TabHelp(Tab t) {
         case Tab::Colour:  return "Paint the whole model or just the faces you picked.";
         case Tab::Finish:  return "Fix problems, put it on the ground, give it a solid body and save it.";
         case Tab::Pick:    return "Pick the whole part, or everything that looks the same.";
-        default:           return "The full toolset for people who know 3D modeling.";
+        default:           return "";
     }
 }
 
@@ -256,35 +256,32 @@ struct Job { const char* name; std::vector<const char*> before; std::vector<cons
 inline const std::vector<Job>& Jobs() {
     static const std::vector<Job> j = {
         {"Box with a roof",
-         {"Add page", "Cube", "Edit Mesh page", "Edit button", "Face mode", "Click top face", "Extrude", "Drag amount", "Scale top"},
+         {"Add shapes page", "Cube", "Fix the surface page", "Edit button", "Face mode", "Click top face", "Extrude", "Drag amount", "Scale top"},
          {"Shape tab: House starter"}},
         {"Round a corner",
-         {"Edit Mesh page", "Edit button", "Vertex mode", "Click corner", "Bevel Verts amount", "Bevel Verts button"},
+         {"Fix the surface page", "Edit button", "Vertex mode", "Click corner", "Bevel Verts amount", "Bevel Verts button"},
          {"Pick corners", "Click corner", "round.corners"}},
         {"Add a window hole",
-         {"Edit Mesh page", "Edit button", "Face mode", "Click face", "Inset", "Delete faces", "Leave edit mode"},
+         {"Fix the surface page", "Edit button", "Face mode", "Click face", "Inset", "Delete faces", "Leave edit mode"},
          {"Pick faces", "Click face", "make.hole"}},
         {"Make a symmetric face",
-         {"Edit page", "Modifiers page", "Add Mirror", "Pick axis"},
+         {"Bend and cut page", "Effects page", "Add Mirror", "Pick axis"},
          {"mirror"}},
         {"Stretch a shape",
-         {"Edit page", "Stretch axis", "Stretch amount"},
+         {"Bend and cut page", "Stretch axis", "Stretch amount"},
          {"squash"}},
         {"Add legs to a table",
-         {"Add page", "Cube", "Edit Mesh page", "Edit button", "Face mode", "Click bottom face", "Inset", "Extrude", "Drag amount", "Leave edit mode"},
+         {"Add shapes page", "Cube", "Fix the surface page", "Edit button", "Face mode", "Click bottom face", "Inset", "Extrude", "Drag amount", "Leave edit mode"},
          {"Shape tab: Table starter"}},
         {"Smooth a rock",
-         {"Add page", "Rock", "Edit page", "Subdiv + Smooth", "Smooth"},
+         {"Add shapes page", "Rock", "Bend and cut page", "Subdiv + Smooth", "Smooth"},
          {"add.ball", "smooth"}},
         {"Paint two colours",
-         {"Shape page", "Open colour picker", "Pick colour", "Edit Mesh page", "Edit button", "Face mode", "Click faces", "Material Slots page", "Pick colour"},
+         {"Change the shape page", "Open colour picker", "Pick colour", "Fix the surface page", "Edit button", "Face mode", "Click faces", "Material Slots page", "Pick colour"},
          {"Pick faces", "Click faces", "paint.faces", "Pick colour"}},
     };
     return j;
 }
 
 // ---- Settings ---------------------------------------------------------------------------------------------------------
-/// Beginner mode is the default; "Show advanced tools" is remembered (ViewPrefs key "modelingadvanced").
-struct EasyPrefs { bool showAdvanced = false; };
-
 } // namespace oked::easymodel

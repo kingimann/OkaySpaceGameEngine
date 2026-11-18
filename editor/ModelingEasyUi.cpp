@@ -92,14 +92,14 @@ void ToolGrid(Host& h, const std::vector<const Tool*>& tools, ImVec2 size) {
 }
 } // namespace
 
-void DrawEasyModeling(Host& h, bool& showAdvanced) {
+void DrawEasyModeling(Host& h) {
     const ImVec2 big(150, 54);
     if (!g_ui.recentLoaded) { g_ui.recentLoaded = true; if (h.loadRecent) g_ui.recent = h.loadRecent(); }
     g_ui.noteAge += ImGui::GetIO().DeltaTime;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 8));
 
-    // Row 1: Undo / Redo / Repeat always on screen, the size of the model, the switch to the full window.
+    // Row 1: Undo / Redo / Repeat always on screen, the size of the model.
     {
         const bool cu = h.canUndo && h.canUndo(), cr = h.canRedo && h.canRedo();
         ImGui::BeginDisabled(!cu);
@@ -126,13 +126,6 @@ void DrawEasyModeling(Host& h, bool& showAdvanced) {
             ImGui::SameLine(); ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("Size: %s", SizeLine(sz.x, sz.y, sz.z).c_str());
         }
-        const char* sw = "Show advanced tools";
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(sw).x - 40));
-        ImGui::AlignTextToFramePadding();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12, 12));   // a bigger tick box: easy to find and to hit
-        ImGui::Checkbox("Show advanced tools##easy", &showAdvanced);
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Switch to the full toolset for people who know 3D modeling.\nIt is remembered next time.");
     }
 
     // Row 2: what to click next.

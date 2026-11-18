@@ -70,11 +70,12 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.3.10 Mobile emulator and shared game resolution - `editor/main.cpp` (~41398-41507, ~42845-42925) - phone and tablet frames shared by Game view and UI editing
   - 15.3.11 Play mode - `editor/EditorState.*`, `editor/main.cpp` - Play snapshots the scene and Stop restores it; mouse capture rules; Error Pause
   - 15.3.12 Orthographic views - `editor/LevelTools.*` - View options > Perspective / Orthographic and Top, Bottom, Front, Back, Right, Left (numpad 7, 1, 3 with Ctrl for the opposite, numpad 5 switches projection); a true orthographic projection of the Scene view, zoomed with the wheel; a label names the view
+  - 15.3.13 Scene view right-click "add here" menu - `editor/SceneAddMenu.hpp` (click versus drag, where the object goes, menu groups, search; tested), `editor/main.cpp` (`SceneAddMenuTick`, `SceneAddRun`, `SceneAddPlace`, and the shared `Add*Object` creators that `DrawCreateSlot` also uses) - a right-click (not a drag) opens a menu at the cursor with the Hierarchy create groups, Prefabs, a search box, and Focus, Rename, Duplicate, Copy, Paste Here, Delete for the object under the cursor; the new object lands on the surface under the cursor, else the ground, else 10 m in front of the camera (the clicked point in 2D), snapped when Snap is on, and is selected; one undo step (`docs/scene_right_click_add.md`)
 - **Code:** `editor/main.cpp`, `editor/SplineTools.*`, `editor/NavigationWindow.*`, `editor/EditorState.*`, `editor/UIPreviewPainter.*`
 - **API:** View > Panels > Game; Scene toolbar; GameObject > Effects > Spline
 - **Editor:** Scene panel, Game panel, UI panel (12.10)
-- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/splines.md`, `docs/web_mobile.md`
-- **Tests:** `editor` (selftest, play and stop in `EditorState`), `splines` (engine side)
+- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/splines.md`, `docs/web_mobile.md`, `docs/scene_right_click_add.md`
+- **Tests:** `editor` (selftest, play and stop in `EditorState`), `splines` (engine side), `scene_add_menu` (15.3.13: no ImGui)
 - **Status:** Works - used daily; only the non-GUI play and snapshot logic is tested
 - **Open:** world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code comments call it the biggest per-frame cost); live editing during Play is planned (area 34)
 - **Related:** 15.9, 12.10, 2.1, 2.7, 6.5
@@ -87,6 +88,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
   - 15.4.8 Project panel tab strip - `editor/ProjectTabs.hpp`, `editor/main.cpp` (`DrawProject`) - Assets / Favourites / Recent tabs (Search shows while the box has text) above the panes; Favourites is a flat list view of the starred items (smart view 102), Recent is the existing Recently Changed view; the last tab and folder are remembered per project in `.okay/projectview.txt`
+  - 15.4.9 Project panel One column / Two columns - `editor/ProjectLayout.hpp`, `editor/EditorLayoutMath.hpp` (`ViewPrefs::projectColumns`), `editor/main.cpp` (`DrawProject`) - a switch on the tab row: Two columns (folder tree on the left, contents on the right, draggable divider that keeps minimum widths) or One column (a single list; the arrow of a folder opens it in place and shows its contents beneath); Left / Right open, close and step in and out, Up / Down / Home / End move, Enter opens; the choice is saved in `okay_settings.txt` (`projectcolumns`, old files mean two columns); the Assets / Favourites / Recent tabs work in both
   - 15.4.2 Asset icons and thumbnails - `editor/main.cpp`, `editor/ProjectBrowser.*` - drawn icons per asset kind while a picture is not made yet; pictures from `ThumbnailCache` (textures, audio waveforms, models, meshes, materials, prefabs, scenes), tile size Small / Medium / Large and a slider, grid or list
   - 15.4.3 Asset color labels - `editor/main.cpp` (~8542-8589) - per-project labels stored in `.okaylabels`
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
@@ -97,7 +99,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
 - **Docs:** `docs/editor.md` (Drag & drop from Project), `docs/project_panel.md` (Right-click menus), `docs/try_it.md`
-- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`, `project_tabs`
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`, `project_tabs`, `project_layout`
 - **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
 - **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget; the right-click menus have no Export Package (no package exporter exists), no Select Dependencies (a selection cannot reach into other folders), no Localization table or Animation in Create, and their drawing, the Move to... and Properties windows and the Explorer and default-app launches were never seen in a running editor
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2

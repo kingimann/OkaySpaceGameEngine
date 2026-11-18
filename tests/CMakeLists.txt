@@ -3976,10 +3976,20 @@ add_test(NAME scripting_density COMMAND test_scripting_density)
 add_executable(test_project_tabs test_project_tabs.cpp)
 target_include_directories(test_project_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME project_tabs COMMAND test_project_tabs)
+# The Project panel's One column / Two columns layouts as data (editor/ProjectLayout.hpp): divider clamp, widths, open-in-place rows, keys, saved choice.
+add_executable(test_project_layout test_project_layout.cpp)
+target_include_directories(test_project_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME project_layout COMMAND test_project_layout)
 add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# The Scene view's right-click "add here" menu as data (editor/SceneAddMenu.hpp): click versus drag, where the new object goes
+# (surface, ground, in front of the camera, 2D, snapping), the menu groups and the search box.
+add_executable(test_scene_add_menu test_scene_add_menu.cpp)
+target_include_directories(test_scene_add_menu PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME scene_add_menu COMMAND test_scene_add_menu)
 
 # Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
@@ -4091,6 +4101,7 @@ add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
 # Beginner layer of the Modeling window as pure data (editor/ModelingEasy.hpp): plain names, banned-jargon check, hints, quick actions, recent tools, click counts.
 add_executable(test_modeling_easy test_modeling_easy.cpp)
 target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_easy PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_easy COMMAND test_modeling_easy)
 
 # One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
@@ -4105,14 +4116,28 @@ target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/ed
 target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
 add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
 
-# The advanced Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# The Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
 # Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
 add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
 target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
 
-# Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+# Fold state and width maths of the Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
 add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
 target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_sidebar PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)
+
+add_executable(test_vs_pan test_vs_pan.cpp)
+target_include_directories(test_vs_pan PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_pan COMMAND test_vs_pan)
+# Easier canvas use: auto-connect, place beside, split a wire, delete and rejoin, start screen, hints, plain words.
+foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happened)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_${vs_usage_test}.cpp)
+        add_executable(test_${vs_usage_test} test_${vs_usage_test}.cpp)
+        target_include_directories(test_${vs_usage_test} PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+        target_link_libraries(test_${vs_usage_test} PRIVATE okay::engine)
+        add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
+    endif()
+endforeach()

@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.886.0 | UI bundle: Modeling without the Advanced menu and with plain page names; Project panel one or two columns; Visual Script panning (Pan button, Space-drag, arrow keys, trackpad option); Visual Script start screen recipe cards, blocks that auto-connect, plain error messages with Fix it for me, what-just-happened notes; right-click Add menu in the Scene view |
 | 2.885.0 | Visual Script made simple: Quick blocks (one block does a whole job), recipe cards on an empty script, a 55-node Add node list, a roomier window and a bigger node search popup; Project panel tabs; easier Modeling with a foldable sidebar |
 | 2.884.0 | Save before stopping, Timeline key drags and LOD distances fixed (#977); prefab variants refuse a cut-short file and long Windows paths (#995); release gate waits longer for the checksum list (#994) |
 | 2.883.0 | Editor Dark/Light mode replaces Preferences, Auto anti-aliasing and VSync (#964); #888 fixes: project numbers, texture tagging, material paths (#979), OkayScript references and Rigidbody API (#981); script prefab path guard (#970); launcher and editor visual fixes (#983); locked Inspector after undo (#990); viewport window setting (#973); own HTTP client, off by default (#971); release speed (#976); guided roundtrip test race (#972); branch lint comment fix (#989) |
